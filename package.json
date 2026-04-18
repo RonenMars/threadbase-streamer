@@ -1,0 +1,49 @@
+{
+  "name": "@threadbase/streamer",
+  "version": "0.1.0",
+  "description": "PTY session management, WebSocket streaming, and REST API server for Claude Code conversations",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "threadbase-streamer": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit && npx biome check .",
+    "format": "npx biome format --write .",
+    "check": "npx biome check --write .",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@threadbase/scanner": "file:../scanner",
+    "commander": "^12.0.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.12",
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
