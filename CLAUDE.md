@@ -39,7 +39,7 @@ Key modules and their responsibilities:
 
 ## Code Conventions
 
-- Conventional commits (`feat:`, `fix:`, `chore:`, etc.)
+- Conventional commits (`feat:`, `fix:`, `chore:`, etc.) and branch names (`feat/`, `fix/`, `chore/`)
 - Every new feature must have tests in `__tests__/`
 - Vitest globals are enabled — no need to import `describe`, `it`, `expect`
 - `node-pty` is dynamically imported to allow graceful failure when not installed
