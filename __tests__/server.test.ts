@@ -71,7 +71,7 @@ describe("StreamerServer", () => {
 
       expect(res.status).toBe(200);
       expect(body).toHaveProperty("version");
-      expect(body).toHaveProperty("hostname");
+      expect(body).toHaveProperty("machineName");
       expect(body).toHaveProperty("platform");
     });
   });

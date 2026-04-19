@@ -1,4 +1,10 @@
-import { getConversation, scan, search } from "@threadbase/scanner";
+import {
+  type Conversation,
+  type ConversationMeta,
+  ConversationScanner,
+  scan,
+  search,
+} from "@threadbase/scanner";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { WebSocketServer } from "ws";
 import { validateApiKey } from "./auth";
@@ -184,8 +190,9 @@ export class StreamerServer {
     const { hostname } = require("os");
     json(res, 200, {
       version: "0.1.0",
-      hostname: hostname(),
+      machineName: hostname(),
       platform: process.platform,
+      activeSessions: this.sessionStore.list().filter((s: any) => s.status === "running").length,
     });
   }
 
@@ -202,21 +209,73 @@ export class StreamerServer {
       project,
     });
 
+    const adapted = (result.conversations as ConversationMeta[]).map((c) => ({
+      id:
+        c.id
+          .split("/")
+          .pop()
+          ?.replace(/\.jsonl$/, "") ?? c.id,
+      title: c.projectName,
+      projectPath: c.projectPath,
+      branch: c.gitBranch ?? undefined,
+      messageCount: c.messageCount,
+      lastActivity: c.timestamp,
+    }));
     json(res, 200, {
-      conversations: result.conversations,
+      conversations: adapted,
       hasMore: offset + limit < result.total,
       offset,
       total: result.total,
     });
   }
 
+  private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
+    const scanner = new ConversationScanner();
+    await scanner.scan();
+    const meta = [...scanner.getMetadataCache().values()].find((m) =>
+      m.id.endsWith(`/${uuid}.jsonl`),
+    );
+    if (!meta) return null;
+    return scanner.getConversation(meta.id);
+  }
+
   private async handleGetConversation(id: string, res: ServerResponse): Promise<void> {
-    const conversation = await getConversation(id);
+    const conversation = await this.findConversationByUuid(id);
     if (!conversation) {
       json(res, 404, { error: "Conversation not found" });
       return;
     }
-    json(res, 200, conversation);
+    json(res, 200, {
+      meta: {
+        id: conversation.id,
+        profile_id: (conversation as any).account,
+        project_name: (conversation as any).projectName,
+        project_path: (conversation as any).projectPath,
+        file_path: (conversation as any).filePath,
+        last_updated_at: (conversation as any).timestamp,
+        message_count: (conversation as any).messageCount,
+      },
+      messages: conversation.messages.map((m: any) => ({
+        role: m.role,
+        timestamp: m.timestamp,
+        text: m.text,
+        tool_calls: m.metadata?.toolUses ?? [],
+        content: [
+          ...(m.metadata?.toolUseBlocks ?? []).map((b: any) => ({
+            type: "tool_use",
+            id: b.id,
+            name: b.name,
+            input: b.input,
+          })),
+          ...(m.metadata?.toolResults ?? []).map((r: any) => ({
+            type: "tool_result",
+            tool_use_id: r.toolUseId,
+            content: JSON.stringify(r.content),
+            is_error: r.isError ?? false,
+          })),
+        ],
+      })),
+    });
   }
 
   private async handleSearch(url: URL, res: ServerResponse): Promise<void> {
@@ -253,11 +312,21 @@ export class StreamerServer {
 
   private async handleResume(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readBody(req);
-    const { conversationId, projectPath } = body;
+    const { conversationId, projectPath: explicitPath } = body;
 
-    if (!conversationId || !projectPath) {
-      json(res, 400, { error: "Missing conversationId or projectPath" });
+    if (!conversationId) {
+      json(res, 400, { error: "Missing conversationId" });
       return;
+    }
+
+    let projectPath = explicitPath;
+    if (!projectPath) {
+      const conv = await this.findConversationByUuid(conversationId);
+      if (!conv) {
+        json(res, 404, { error: "Conversation not found" });
+        return;
+      }
+      projectPath = (conv as any).projectPath;
     }
 
     const session = await this.ptyManager.start({
@@ -324,7 +393,7 @@ export class StreamerServer {
 
   private async watchConversationFile(sessionId: string, conversationId: string): Promise<void> {
     try {
-      const conversation = await getConversation(conversationId);
+      const conversation = await this.findConversationByUuid(conversationId);
       if (conversation?.filePath) {
         this.sessionFileMap.set(sessionId, conversation.filePath);
         this.fileWatcher.watch(conversation.filePath);
