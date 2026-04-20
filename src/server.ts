@@ -5,7 +5,10 @@ import {
   scan,
   search,
 } from "@threadbase/scanner";
+import { readdirSync, existsSync } from "fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
+import { homedir } from "os";
+import { join } from "path";
 import { WebSocketServer } from "ws";
 import { validateApiKey } from "./auth";
 import { FileWatcher } from "./file-watcher";
@@ -23,6 +26,8 @@ export class StreamerServer {
   private wsHub: WSHub;
   private fileWatcher: FileWatcher;
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
+  private scanner: ConversationScanner | null = null;
+  private scannerReady: Promise<unknown> | null = null;
   private apiKey: string;
   private localNoAuth: boolean;
   private verbose: boolean;
@@ -123,6 +128,10 @@ export class StreamerServer {
       return;
     }
 
+    if (this.verbose) {
+      console.log(`${req.method} ${req.url}`);
+    }
+
     if (!this.authenticate(req)) {
       json(res, 401, { error: "Unauthorized" });
       return;
@@ -135,6 +144,8 @@ export class StreamerServer {
     try {
       // Static routes
       if (method === "GET" && path === "/api/info") return this.handleInfo(res);
+      if (method === "GET" && path === "/api/profiles") return json(res, 200, []);
+      if (method === "POST" && path === "/api/push/register") return json(res, 200, { ok: true });
       if (method === "GET" && path === "/api/conversations")
         return await this.handleListConversations(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
@@ -229,14 +240,53 @@ export class StreamerServer {
     });
   }
 
+  private async getScanner(): Promise<ConversationScanner> {
+    if (this.scanner) return this.scanner;
+    if (this.scannerReady) {
+      await this.scannerReady;
+      return this.scanner!;
+    }
+    this.scanner = new ConversationScanner();
+    this.scannerReady = this.scanner.scan();
+    await this.scannerReady;
+    return this.scanner;
+  }
+
+  private findJsonlPath(uuid: string): string | null {
+    const projectsDir = join(homedir(), ".claude", "projects");
+    if (!existsSync(projectsDir)) return null;
+    const filename = `${uuid}.jsonl`;
+    for (const dir of readdirSync(projectsDir)) {
+      // Direct conversation
+      const fp = join(projectsDir, dir, filename);
+      if (existsSync(fp)) return fp;
+      // Subagent conversations: <project>/<parentId>/subagents/<agentId>.jsonl
+      const projectDir = join(projectsDir, dir);
+      try {
+        for (const sub of readdirSync(projectDir)) {
+          const subagentPath = join(projectDir, sub, "subagents", filename);
+          if (existsSync(subagentPath)) return subagentPath;
+        }
+      } catch {
+        // Not a directory or no access
+      }
+    }
+    return null;
+  }
+
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
-    const scanner = new ConversationScanner();
-    await scanner.scan();
-    const meta = [...scanner.getMetadataCache().values()].find((m) =>
-      m.id.endsWith(`/${uuid}.jsonl`),
-    );
-    if (!meta) return null;
-    return scanner.getConversation(meta.id);
+    // Fast path: direct file lookup by UUID without full scan
+    const filePath = this.findJsonlPath(uuid);
+    if (!filePath) return null;
+    const scanner = await this.getScanner();
+    // Ensure this file is in the metadata cache
+    const meta = scanner.getMetadataCache().get(filePath);
+    if (meta) return scanner.getConversation(filePath);
+    // File found on disk but not in cache — re-scan
+    this.scanner = null;
+    this.scannerReady = null;
+    const freshScanner = await this.getScanner();
+    return freshScanner.getConversation(filePath);
   }
 
   private async handleGetConversation(id: string, res: ServerResponse): Promise<void> {
@@ -255,26 +305,32 @@ export class StreamerServer {
         last_updated_at: (conversation as any).timestamp,
         message_count: (conversation as any).messageCount,
       },
-      messages: conversation.messages.map((m: any) => ({
-        role: m.role,
-        timestamp: m.timestamp,
-        text: m.text,
-        tool_calls: m.metadata?.toolUses ?? [],
-        content: [
-          ...(m.metadata?.toolUseBlocks ?? []).map((b: any) => ({
-            type: "tool_use",
-            id: b.id,
-            name: b.name,
-            input: b.input,
-          })),
-          ...(m.metadata?.toolResults ?? []).map((r: any) => ({
-            type: "tool_result",
-            tool_use_id: r.toolUseId,
-            content: JSON.stringify(r.content),
-            is_error: r.isError ?? false,
-          })),
-        ],
-      })),
+      messages: conversation.messages
+        .filter((m: any) => {
+          // Skip tool-result-only messages — the tool_use card already represents the interaction
+          if (m.role === "user" && m.isToolResult) return false;
+          return true;
+        })
+        .map((m: any) => ({
+          role: m.role,
+          timestamp: m.timestamp,
+          text: m.text,
+          tool_calls: m.metadata?.toolUses ?? [],
+          content: [
+            ...(m.metadata?.toolUseBlocks ?? []).map((b: any) => ({
+              type: "tool_use",
+              id: b.id,
+              name: b.name,
+              input: b.input,
+            })),
+            ...(m.metadata?.toolResults ?? []).map((r: any) => ({
+              type: "tool_result",
+              tool_use_id: r.toolUseId,
+              content: JSON.stringify(r.content),
+              is_error: r.isError ?? false,
+            })),
+          ],
+        })),
     });
   }
 
@@ -287,7 +343,24 @@ export class StreamerServer {
 
     const limit = intParam(url, "limit", 50);
     const results = await search(q, { limit });
-    json(res, 200, results);
+    const adapted = results.map((r: any) => ({
+      id:
+        r.meta.id
+          .split("/")
+          .pop()
+          ?.replace(/\.jsonl$/, "") ?? r.meta.id,
+      title: r.meta.projectName,
+      projectPath: r.meta.projectPath,
+      branch: r.meta.gitBranch ?? undefined,
+      messageCount: r.meta.messageCount,
+      lastActivity: r.meta.timestamp,
+    }));
+    json(res, 200, {
+      conversations: adapted,
+      hasMore: false,
+      offset: 0,
+      total: adapted.length,
+    });
   }
 
   private handleListSessions(res: ServerResponse): void {
@@ -370,6 +443,11 @@ export class StreamerServer {
   }
 
   private handleGetOutput(sessionId: string, res: ServerResponse): void {
+    // Discovered sessions (disc_*) have no PTY output — return empty
+    if (sessionId.startsWith("disc_")) {
+      json(res, 200, { output: "" });
+      return;
+    }
     try {
       const output = this.ptyManager.getOutput(sessionId);
       json(res, 200, { output });

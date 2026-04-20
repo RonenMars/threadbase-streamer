@@ -17,7 +17,7 @@ export default defineConfig([
     sourcemap: true,
     outDir: "dist",
     external: ["node-pty"],
-    noExternal: [/.*/],
+    noExternal: [/^(?!node-pty).*/],
     splitting: false,
     outExtension: () => ({ js: ".js" }),
   },
