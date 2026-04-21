@@ -13,8 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone scanner
-        run: git clone https://github.com/RonenMars/threadbase-scanner.git ../scanner
+      - uses: actions/checkout@v4
+        with:
+          repository: RonenMars/threadbase-scanner
+          token: ${{ secrets.SCANNER_TOKEN }}
+          path: ../scanner
 
       - uses: actions/setup-node@v4
         with:
@@ -33,8 +36,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone scanner
-        run: git clone https://github.com/RonenMars/threadbase-scanner.git ../scanner
+      - uses: actions/checkout@v4
+        with:
+          repository: RonenMars/threadbase-scanner
+          token: ${{ secrets.SCANNER_TOKEN }}
+          path: ../scanner
 
       - uses: actions/setup-node@v4
         with:
@@ -62,8 +68,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone scanner
-        run: git clone https://github.com/RonenMars/threadbase-scanner.git ../scanner
+      - uses: actions/checkout@v4
+        with:
+          repository: RonenMars/threadbase-scanner
+          token: ${{ secrets.SCANNER_TOKEN }}
+          path: ../scanner
 
       - uses: actions/setup-node@v4
         with:
