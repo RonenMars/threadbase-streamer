@@ -230,6 +230,7 @@ export class StreamerServer {
           ?.replace(/\.jsonl$/, "") ||
         c.id,
       title: c.projectName,
+      sessionName: c.sessionName || undefined,
       projectPath: c.projectPath,
       branch: c.gitBranch ?? undefined,
       messageCount: c.messageCount,
@@ -355,6 +356,7 @@ export class StreamerServer {
           ?.replace(/\.jsonl$/, "") ||
         r.meta.id,
       title: r.meta.projectName,
+      sessionName: r.meta.sessionName || undefined,
       projectPath: r.meta.projectPath,
       branch: r.meta.gitBranch ?? undefined,
       messageCount: r.meta.messageCount,
