@@ -33,11 +33,16 @@ export class SessionStore {
   list(): SessionResponse[] {
     const results: SessionResponse[] = [];
 
+    // Collect managed conversation IDs so we can skip discovered duplicates
+    const managedConvIds = new Set<string>();
     for (const s of this.managed.values()) {
       results.push(managedToResponse(s));
+      if (s.conversationId) managedConvIds.add(s.conversationId);
     }
 
     for (const d of this.discovered.values()) {
+      // Skip discovered processes that are already tracked as managed sessions
+      if (d.conversationId && managedConvIds.has(d.conversationId)) continue;
       results.push(discoveredToResponse(d));
     }
 
