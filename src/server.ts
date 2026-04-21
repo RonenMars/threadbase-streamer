@@ -218,14 +218,11 @@ export class StreamerServer {
       limit,
       offset,
       project,
+      include: "conversations",
     });
 
     const adapted = (result.conversations as ConversationMeta[]).map((c) => ({
-      id:
-        c.id
-          .split("/")
-          .pop()
-          ?.replace(/\.jsonl$/, "") ?? c.id,
+      id: c.sessionId || c.id.split("/").pop()?.replace(/\.jsonl$/, "") || c.id,
       title: c.projectName,
       projectPath: c.projectPath,
       branch: c.gitBranch ?? undefined,
@@ -342,13 +339,9 @@ export class StreamerServer {
     }
 
     const limit = intParam(url, "limit", 50);
-    const results = await search(q, { limit });
+    const results = await search(q, { limit, include: "conversations" });
     const adapted = results.map((r: any) => ({
-      id:
-        r.meta.id
-          .split("/")
-          .pop()
-          ?.replace(/\.jsonl$/, "") ?? r.meta.id,
+      id: r.meta.sessionId || r.meta.id.split("/").pop()?.replace(/\.jsonl$/, "") || r.meta.id,
       title: r.meta.projectName,
       projectPath: r.meta.projectPath,
       branch: r.meta.gitBranch ?? undefined,
