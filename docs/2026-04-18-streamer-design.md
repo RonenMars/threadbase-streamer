@@ -300,7 +300,7 @@ No HTTP framework — uses Node.js built-in `node:http` for the REST server. Kee
 Same dual-build pattern as scanner (tsup):
 
 1. **Library:** `src/index.ts` → `dist/index.js` (ESM) + `dist/index.cjs` (CJS) + types
-2. **CLI:** `cli/index.ts` → `dist/cli.js` (ESM with shebang)
+2. **CLI:** `cli/index.ts` → `dist/cli.cjs` (CJS with shebang — `.cjs` required because `package.json` has `"type": "module"`)
 
 Prebuilt `node-pty` binaries bundled via `prebuild-install` in the `postinstall` script.
 

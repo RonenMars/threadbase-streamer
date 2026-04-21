@@ -19,6 +19,6 @@ export default defineConfig([
     external: ["node-pty"],
     noExternal: [/^(?!node-pty).*/],
     splitting: false,
-    outExtension: () => ({ js: ".js" }),
+    outExtension: () => ({ js: ".cjs" }),
   },
 ]);
