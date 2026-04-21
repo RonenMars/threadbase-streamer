@@ -161,7 +161,8 @@ describe("StreamerServer", () => {
       const body = await res.json();
 
       expect(res.status).toBe(200);
-      expect(Array.isArray(body)).toBe(true);
+      expect(body).toHaveProperty("conversations");
+      expect(Array.isArray(body.conversations)).toBe(true);
     });
   });
 
