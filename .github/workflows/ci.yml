@@ -13,11 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-        with:
-          repository: RonenMars/threadbase-scanner
-          token: ${{ secrets.SCANNER_TOKEN }}
-          path: ../scanner
+      - name: Clone scanner
+        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git ../scanner
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -36,11 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-        with:
-          repository: RonenMars/threadbase-scanner
-          token: ${{ secrets.SCANNER_TOKEN }}
-          path: ../scanner
+      - name: Clone scanner
+        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git ../scanner
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -68,11 +66,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-        with:
-          repository: RonenMars/threadbase-scanner
-          token: ${{ secrets.SCANNER_TOKEN }}
-          path: ../scanner
+      - name: Clone scanner
+        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git ../scanner
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
