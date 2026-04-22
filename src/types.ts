@@ -65,6 +65,13 @@ export interface ServerConfig {
   apiKey?: string;
   localNoAuth?: boolean;
   verbose?: boolean;
+  scanProfiles?: Array<{
+    id: string;
+    label: string;
+    configDir: string;
+    enabled: boolean;
+    emoji: string;
+  }>;
 }
 
 // ─── PTY Manager ───────────────────────────────────────────────────

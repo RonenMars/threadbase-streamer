@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "MessageSnapshot": {
+      "type": "object",
+      "required": ["text", "timestamp"],
+      "properties": {
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "MobileConversation": {
+      "type": "object",
+      "required": ["id", "title", "projectPath", "messageCount", "lastActivity"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "sessionName": { "type": "string" },
+        "filePath": { "type": "string" },
+        "projectPath": { "type": "string" },
+        "branch": { "type": "string" },
+        "account": { "type": "string" },
+        "preview": { "type": "string" },
+        "messageCount": { "type": "integer", "minimum": 0 },
+        "lastActivity": { "type": "string", "format": "date-time" },
+        "model": { "type": "string" },
+        "firstMessage": { "$ref": "#/$defs/MessageSnapshot" },
+        "lastMessage": { "$ref": "#/$defs/MessageSnapshot" }
+      }
+    },
+    "MobileConversationPage": {
+      "type": "object",
+      "required": ["conversations", "hasMore", "offset", "total"],
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MobileConversation" }
+        },
+        "hasMore": { "type": "boolean" },
+        "offset": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "MobileDetailMeta": {
+      "type": "object",
+      "required": ["id", "project_name", "project_path", "file_path", "message_count"],
+      "properties": {
+        "id": { "type": "string" },
+        "profile_id": { "type": "string" },
+        "project_name": { "type": "string" },
+        "project_path": { "type": "string" },
+        "file_path": { "type": "string" },
+        "last_updated_at": { "type": "string", "format": "date-time" },
+        "message_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "MobileContentBlock": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["tool_use", "tool_result"] },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "input": { "type": "object" },
+        "tool_use_id": { "type": "string" },
+        "content": { "type": "string" },
+        "is_error": { "type": "boolean" }
+      }
+    },
+    "MobileMessage": {
+      "type": "object",
+      "required": ["role", "timestamp", "text"],
+      "properties": {
+        "role": { "type": "string", "enum": ["user", "assistant"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "text": { "type": "string" },
+        "tool_calls": { "type": "array", "items": { "type": "string" } },
+        "content": { "type": "array", "items": { "$ref": "#/$defs/MobileContentBlock" } }
+      }
+    },
+    "MobileConversationDetail": {
+      "type": "object",
+      "required": ["meta", "messages"],
+      "properties": {
+        "meta": { "$ref": "#/$defs/MobileDetailMeta" },
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/MobileMessage" } }
+      }
+    }
+  }
+}

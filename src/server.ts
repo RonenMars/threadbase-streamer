@@ -31,11 +31,15 @@ export class StreamerServer {
   private apiKey: string;
   private localNoAuth: boolean;
   private verbose: boolean;
+  private scanProfiles:
+    | Array<{ id: string; label: string; configDir: string; enabled: boolean; emoji: string }>
+    | undefined;
 
   constructor(config: ServerConfig & { apiKey: string }) {
     this.apiKey = config.apiKey;
     this.localNoAuth = config.localNoAuth ?? false;
     this.verbose = config.verbose ?? false;
+    this.scanProfiles = config.scanProfiles;
     this.sessionStore = new SessionStore();
     this.wsHub = new WSHub();
 
@@ -219,6 +223,7 @@ export class StreamerServer {
       offset,
       project,
       include: "conversations",
+      ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
     });
 
     const adapted = (result.conversations as ConversationMeta[]).map((c) => ({
@@ -240,6 +245,7 @@ export class StreamerServer {
       lastActivity: c.timestamp,
       firstMessage: c.firstMessage ?? undefined,
       lastMessage: c.lastMessage ?? undefined,
+      model: c.model ?? undefined,
     }));
     json(res, 200, {
       conversations: adapted,
@@ -256,7 +262,7 @@ export class StreamerServer {
       if (this.scanner) return this.scanner;
     }
     this.scanner = new ConversationScanner();
-    this.scannerReady = this.scanner.scan();
+    this.scannerReady = this.scanner.scan(this.scanProfiles ? { profiles: this.scanProfiles } : {});
     await this.scannerReady;
     return this.scanner;
   }
@@ -284,6 +290,18 @@ export class StreamerServer {
   }
 
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
+    // When scan profiles are configured, look up by sessionId in the scanner cache
+    if (this.scanProfiles) {
+      const scanner = await this.getScanner();
+      const cache = scanner.getMetadataCache();
+      for (const [filePath, meta] of cache) {
+        if (meta.sessionId === uuid || meta.id === uuid) {
+          return scanner.getConversation(filePath);
+        }
+      }
+      return null;
+    }
+
     // Fast path: direct file lookup by UUID without full scan
     const filePath = this.findJsonlPath(uuid);
     if (!filePath) return null;
@@ -351,7 +369,11 @@ export class StreamerServer {
     }
 
     const limit = intParam(url, "limit", 50);
-    const results = await search(q, { limit, include: "conversations" });
+    const results = await search(q, {
+      limit,
+      include: "conversations",
+      ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+    });
     const adapted = results.map((r: any) => ({
       id:
         r.meta.sessionId ||

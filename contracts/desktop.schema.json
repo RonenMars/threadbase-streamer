@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "DesktopSearchResult": {
+      "type": "object",
+      "required": ["id", "projectName", "projectPath", "sessionId", "sessionName", "preview", "timestamp", "messageCount", "lastMessageSender", "account"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "projectName": { "type": "string" },
+        "projectPath": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "sessionName": { "type": "string" },
+        "preview": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "messageCount": { "type": "integer", "minimum": 0 },
+        "score": { "type": "number" },
+        "lastMessageSender": { "type": "string", "enum": ["user", "assistant"] },
+        "account": { "type": "string" },
+        "provider": { "type": "string" }
+      }
+    },
+    "DesktopSearchResultArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/DesktopSearchResult" }
+    },
+    "DesktopConversationMessage": {
+      "type": "object",
+      "required": ["type", "content", "timestamp"],
+      "properties": {
+        "type": { "type": "string", "enum": ["user", "assistant", "system"] },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "uuid": { "type": "string" },
+        "isToolResult": { "type": "boolean" }
+      }
+    },
+    "DesktopConversation": {
+      "type": "object",
+      "required": ["id", "filePath", "projectPath", "projectName", "sessionId", "sessionName", "messages", "fullText", "timestamp", "messageCount", "account"],
+      "properties": {
+        "id": { "type": "string" },
+        "filePath": { "type": "string" },
+        "projectPath": { "type": "string" },
+        "projectName": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "sessionName": { "type": "string" },
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/DesktopConversationMessage" } },
+        "fullText": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "messageCount": { "type": "integer", "minimum": 0 },
+        "account": { "type": "string" }
+      }
+    },
+    "DesktopActiveSession": {
+      "type": "object",
+      "required": ["id", "instanceId", "projectPath", "projectName", "status", "lastOutput", "elapsedMs", "promptCount", "startedAt"],
+      "properties": {
+        "id": { "type": "string" },
+        "instanceId": { "type": "string" },
+        "projectPath": { "type": "string" },
+        "projectName": { "type": "string" },
+        "status": { "type": "string" },
+        "branch": { "type": "string" },
+        "machineName": { "type": "string" },
+        "lastOutput": { "type": "string" },
+        "elapsedMs": { "type": "number" },
+        "promptCount": { "type": "number" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string" }
+      }
+    }
+  }
+}

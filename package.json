@@ -30,7 +30,13 @@
     "lint": "tsc --noEmit && npx biome check .",
     "format": "npx biome format --write .",
     "check": "npx biome check --write .",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test:contracts": "vitest run __tests__/contracts/",
+    "test:e2e": "vitest run __tests__/e2e/",
+    "update-schema": "tsx scripts/update-schema.ts",
+    "update-schema:mobile": "tsx scripts/update-schema.ts --mobile",
+    "update-schema:desktop": "tsx scripts/update-schema.ts --desktop",
+    "update-schema:shared": "tsx scripts/update-schema.ts --shared"
   },
   "dependencies": {
     "@threadbase/scanner": "file:../scanner",
@@ -42,7 +48,10 @@
     "@biomejs/biome": "^2.4.12",
     "@types/node": "^20.0.0",
     "@types/ws": "^8.5.0",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "tsup": "^8.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   }
