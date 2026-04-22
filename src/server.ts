@@ -231,10 +231,15 @@ export class StreamerServer {
         c.id,
       title: c.projectName,
       sessionName: c.sessionName || undefined,
+      filePath: c.filePath,
       projectPath: c.projectPath,
       branch: c.gitBranch ?? undefined,
+      account: c.account,
+      preview: c.preview || undefined,
       messageCount: c.messageCount,
       lastActivity: c.timestamp,
+      firstMessage: c.firstMessage ?? undefined,
+      lastMessage: c.lastMessage ?? undefined,
     }));
     json(res, 200, {
       conversations: adapted,
@@ -357,10 +362,15 @@ export class StreamerServer {
         r.meta.id,
       title: r.meta.projectName,
       sessionName: r.meta.sessionName || undefined,
+      filePath: r.meta.filePath,
       projectPath: r.meta.projectPath,
       branch: r.meta.gitBranch ?? undefined,
+      account: r.meta.account,
+      preview: r.meta.preview || undefined,
       messageCount: r.meta.messageCount,
       lastActivity: r.meta.timestamp,
+      firstMessage: r.meta.firstMessage ?? undefined,
+      lastMessage: r.meta.lastMessage ?? undefined,
     }));
     json(res, 200, {
       conversations: adapted,
