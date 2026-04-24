@@ -1,6 +1,11 @@
 import { randomBytes } from "crypto";
 import { basename } from "path";
-import type { ManagedSession, PTYManagerOptions, StartSessionOptions } from "./types";
+import type {
+  ManagedSession,
+  PTYManagerOptions,
+  StartFreshSessionOptions,
+  StartSessionOptions,
+} from "./types";
 
 const OUTPUT_BUFFER_MAX = 65536;
 
@@ -55,6 +60,52 @@ export class PTYManager {
       projectPath: options.projectPath,
       projectName,
       branch: options.branch ?? "",
+      status: "running",
+      startedAt: new Date(),
+      completedAt: null,
+      promptCount: 0,
+      lastOutput: "",
+      process: proc,
+      outputBuffer: Buffer.alloc(0),
+    };
+
+    this.sessions.set(sessionId, session);
+
+    proc.onData((data: string) => {
+      this.handleOutput(sessionId, data);
+    });
+
+    proc.onExit(({ exitCode }: { exitCode: number }) => {
+      this.handleExit(sessionId, exitCode);
+    });
+
+    return toPublicSession(session);
+  }
+
+  async startFresh(options: StartFreshSessionOptions): Promise<ManagedSession> {
+    const nodePty = await loadPty();
+    const sessionId = `ses_${randomBytes(8).toString("hex")}`;
+    const projectName = options.projectName ?? basename(options.projectPath);
+
+    const args: string[] = [];
+    if (options.systemPrompt) {
+      args.push("--system-prompt", options.systemPrompt);
+    }
+
+    const proc = nodePty.spawn("claude", args, {
+      name: "xterm-256color",
+      cols: 120,
+      rows: 40,
+      cwd: options.projectPath,
+      env: process.env as Record<string, string>,
+    });
+
+    const session: InternalSession = {
+      id: sessionId,
+      conversationId: "",
+      projectPath: options.projectPath,
+      projectName,
+      branch: "",
       status: "running",
       startedAt: new Date(),
       completedAt: null,

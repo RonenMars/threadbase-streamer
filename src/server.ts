@@ -26,6 +26,10 @@ import { SessionStore } from "./session-store";
 import type { ServerConfig } from "./types";
 import { WSHub } from "./ws-hub";
 
+const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
+  `You are working within the project boundary: ${browseRoot}. ` +
+  `Do not read, write, or execute commands that access files or directories outside this boundary.`;
+
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
   private wss: WebSocketServer;
@@ -202,6 +206,8 @@ export class StreamerServer {
       if (method === "GET" && path === "/api/browse") return await this.handleBrowse(url, res);
       if (method === "POST" && path === "/api/browse/mkdir")
         return await this.handleMkdir(req, res);
+      if (method === "POST" && path === "/api/sessions/start")
+        return await this.handleStartSession(req, res);
 
       // Parameterized routes
       const convMatch = path.match(/^\/api\/conversations\/(.+)$/);
@@ -590,6 +596,46 @@ export class StreamerServer {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to cancel";
       json(res, 400, { error: message });
+    }
+  }
+
+  private async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.browseRoot) {
+      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server." });
+      return;
+    }
+    const body = await readBody(req);
+    const { path: relativePath } = body;
+
+    if (typeof relativePath !== "string") {
+      json(res, 400, { error: "Missing path field" });
+      return;
+    }
+
+    let resolvedPath: string;
+    try {
+      resolvedPath = await resolveBrowsePath(this.browseRoot, relativePath);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Invalid path";
+      json(res, 400, { error: message });
+      return;
+    }
+
+    try {
+      const session = await this.ptyManager.startFresh({
+        projectPath: resolvedPath,
+        projectName: body.projectName,
+        systemPrompt: BROWSE_SYSTEM_PROMPT(this.browseRoot),
+      });
+
+      this.sessionStore.addManaged(session);
+      this.wsHub.broadcast({ type: "session_list", sessions: this.sessionStore.list() });
+
+      const resp = this.sessionStore.get(session.id);
+      json(res, 201, resp ?? session);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to start session";
+      json(res, 500, { error: message });
     }
   }
 
