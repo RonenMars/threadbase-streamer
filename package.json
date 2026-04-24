@@ -30,6 +30,7 @@
     "lint": "tsc --noEmit && npx biome check .",
     "format": "npx biome format --write .",
     "check": "npx biome check --write .",
+    "postinstall": "node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty'),'..','..','prebuilds',process.platform+'-'+process.arch,'spawn-helper'),0o755)}catch{}\"",
     "prepublishOnly": "npm run build",
     "test:contracts": "vitest run __tests__/contracts/",
     "test:e2e": "vitest run __tests__/e2e/",

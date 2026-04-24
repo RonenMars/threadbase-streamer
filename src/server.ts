@@ -635,6 +635,7 @@ export class StreamerServer {
       json(res, 201, resp ?? session);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
+      console.error(`[startSession] ${message}`);
       json(res, 500, { error: message });
     }
   }
