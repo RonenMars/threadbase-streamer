@@ -1,16 +1,24 @@
 import {
+  applyIncludeFilter,
+  applyPagination,
+  applyProjectFilter,
+  applySort,
   type Conversation,
   type ConversationMeta,
   ConversationScanner,
-  scan,
+  type SortOrder,
   search,
 } from "@threadbase/scanner";
 import { existsSync, readdirSync } from "fs";
+import { realpath } from "fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
 import { join } from "path";
 import { WebSocketServer } from "ws";
-import { validateApiKey } from "./auth";
+import { loadBrowseRoot, validateApiKey } from "./auth";
+import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
+import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
+import { PgSessionPersistence } from "./db/pg-session-persistence";
 import { FileWatcher } from "./file-watcher";
 import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
@@ -34,12 +42,26 @@ export class StreamerServer {
   private scanProfiles:
     | Array<{ id: string; label: string; configDir: string; enabled: boolean; emoji: string }>
     | undefined;
+  private dbPool: Awaited<ReturnType<typeof createPool>> | null = null;
+  private browseRoot: string | null = null;
 
   constructor(config: ServerConfig & { apiKey: string }) {
     this.apiKey = config.apiKey;
     this.localNoAuth = config.localNoAuth ?? false;
     this.verbose = config.verbose ?? false;
     this.scanProfiles = config.scanProfiles;
+    // Resolve browseRoot: env var > YAML config > CLI flag
+    const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
+    if (rawRoot) {
+      realpath(rawRoot)
+        .then((resolved) => {
+          this.browseRoot = resolved;
+          if (this.verbose) console.log(`Browse root: ${resolved}`);
+        })
+        .catch(() => {
+          console.warn(`Warning: browse root does not exist: ${rawRoot}`);
+        });
+    }
     this.sessionStore = new SessionStore();
     this.wsHub = new WSHub();
 
@@ -99,11 +121,29 @@ export class StreamerServer {
   }
 
   async listen(port: number): Promise<void> {
+    // Set up optional DB persistence (lazy import of pg to avoid loading native module when unused)
+    const dbConfig = getDbConfig();
+    if (dbConfig) {
+      this.dbPool = await createPool(dbConfig);
+      const persistence = new PgSessionPersistence(this.dbPool);
+      this.sessionStore = new SessionStore(persistence);
+      if (this.verbose) {
+        console.log(`Database enabled: ${maskConnectionString(dbConfig.connectionString)}`);
+      }
+      await runMigrations(this.dbPool);
+      await this.sessionStore.rehydrate();
+      if (this.verbose) {
+        console.log("Database migrations applied, sessions rehydrated");
+      }
+    }
+
     return new Promise((resolve) => {
       this.httpServer.listen(port, () => {
         if (this.verbose) {
           console.log(`Streamer server listening on port ${port}`);
         }
+        // Warm the conversation index so the first History request is less likely to block on disk I/O.
+        void this.getScanner().catch(() => {});
         resolve();
       });
     });
@@ -113,6 +153,9 @@ export class StreamerServer {
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.wsHub.dispose();
+    if (this.dbPool) {
+      await this.dbPool.end();
+    }
     return new Promise((resolve) => {
       this.httpServer.close(() => resolve());
     });
@@ -156,10 +199,14 @@ export class StreamerServer {
       if (method === "GET" && path === "/api/sessions") return this.handleListSessions(res);
       if (method === "POST" && path === "/api/sessions/resume")
         return await this.handleResume(req, res);
+      if (method === "GET" && path === "/api/browse") return await this.handleBrowse(url, res);
+      if (method === "POST" && path === "/api/browse/mkdir")
+        return await this.handleMkdir(req, res);
 
       // Parameterized routes
       const convMatch = path.match(/^\/api\/conversations\/(.+)$/);
-      if (method === "GET" && convMatch) return await this.handleGetConversation(convMatch[1], res);
+      if (method === "GET" && convMatch)
+        return await this.handleGetConversation(decodeURIComponent(convMatch[1]), url, res);
 
       const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)$/);
       if (method === "GET" && sessionMatch) return this.handleGetSession(sessionMatch[1], res);
@@ -214,19 +261,28 @@ export class StreamerServer {
   private async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
     const limit = intParam(url, "limit", 50);
     const offset = intParam(url, "offset", 0);
-    const sort = url.searchParams.get("sort") ?? "recent";
+    const sort = (url.searchParams.get("sort") ?? "recent") as SortOrder;
     const project = url.searchParams.get("project") ?? undefined;
+    const bustCache = url.searchParams.get("refresh") === "1";
 
-    const result = await scan({
-      sort: sort as any,
-      limit,
-      offset,
-      project,
-      include: "conversations",
-      ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
-    });
+    // Reuse the same ConversationScanner as detail/search paths — a standalone `scan()`
+    // rescans every JSONL on every request, which makes History feel very slow vs Sessions.
+    if (bustCache) {
+      this.scanner = null;
+      this.scannerReady = null;
+    }
 
-    const adapted = (result.conversations as ConversationMeta[]).map((c) => ({
+    const scanner = await this.getScanner();
+    let metas = [...scanner.getMetadataCache().values()];
+    metas = applyIncludeFilter(metas, "conversations");
+    if (project) {
+      metas = applyProjectFilter(metas, project);
+    }
+    metas = applySort(metas, sort);
+    const total = metas.length;
+    const page = applyPagination(metas, limit, offset);
+
+    const adapted = (page.items as ConversationMeta[]).map((c) => ({
       id:
         c.sessionId ||
         c.id
@@ -249,9 +305,9 @@ export class StreamerServer {
     }));
     json(res, 200, {
       conversations: adapted,
-      hasMore: offset + limit < result.total,
+      hasMore: offset + limit < total,
       offset,
-      total: result.total,
+      total,
     });
   }
 
@@ -316,13 +372,67 @@ export class StreamerServer {
     return freshScanner.getConversation(filePath);
   }
 
-  private async handleGetConversation(id: string, res: ServerResponse): Promise<void> {
+  private async handleGetConversation(id: string, url: URL, res: ServerResponse): Promise<void> {
     const conversation = await this.findConversationByUuid(id);
     if (!conversation) {
       json(res, 404, { error: "Conversation not found" });
       return;
     }
-    json(res, 200, {
+
+    const filtered = conversation.messages.filter((m: any) => {
+      if (m.role === "user" && m.isToolResult) return false;
+      return true;
+    });
+    const total = filtered.length;
+
+    const usePaging = url.searchParams.has("msg_limit") || url.searchParams.has("before_index");
+
+    let slice = filtered;
+    let fromIdx = 0;
+    let messagePagination: Record<string, unknown> | undefined;
+
+    if (usePaging) {
+      const limit = Math.min(Math.max(intParam(url, "msg_limit", 80), 1), 500);
+      let beforeIndex = total;
+      if (url.searchParams.has("before_index")) {
+        beforeIndex = intParam(url, "before_index", total);
+        beforeIndex = Math.min(Math.max(beforeIndex, 0), total);
+      }
+      const start = Math.max(0, beforeIndex - limit);
+      slice = filtered.slice(start, beforeIndex);
+      fromIdx = start;
+      messagePagination = {
+        total,
+        before_index: beforeIndex,
+        from_index: start,
+        has_more_older: start > 0,
+        next_before_index: start > 0 ? start : null,
+      };
+    }
+
+    const messagesPayload = slice.map((m: any, localIdx: number) => ({
+      message_index: fromIdx + localIdx,
+      role: m.role,
+      timestamp: m.timestamp,
+      text: m.text,
+      tool_calls: m.metadata?.toolUses ?? [],
+      content: [
+        ...(m.metadata?.toolUseBlocks ?? []).map((b: any) => ({
+          type: "tool_use",
+          id: b.id,
+          name: b.name,
+          input: b.input,
+        })),
+        ...(m.metadata?.toolResults ?? []).map((r: any) => ({
+          type: "tool_result",
+          tool_use_id: r.toolUseId,
+          content: JSON.stringify(r.content),
+          is_error: r.isError ?? false,
+        })),
+      ],
+    }));
+
+    const body: Record<string, unknown> = {
       meta: {
         id: conversation.id,
         profile_id: (conversation as any).account,
@@ -332,33 +442,10 @@ export class StreamerServer {
         last_updated_at: (conversation as any).timestamp,
         message_count: (conversation as any).messageCount,
       },
-      messages: conversation.messages
-        .filter((m: any) => {
-          // Skip tool-result-only messages — the tool_use card already represents the interaction
-          if (m.role === "user" && m.isToolResult) return false;
-          return true;
-        })
-        .map((m: any) => ({
-          role: m.role,
-          timestamp: m.timestamp,
-          text: m.text,
-          tool_calls: m.metadata?.toolUses ?? [],
-          content: [
-            ...(m.metadata?.toolUseBlocks ?? []).map((b: any) => ({
-              type: "tool_use",
-              id: b.id,
-              name: b.name,
-              input: b.input,
-            })),
-            ...(m.metadata?.toolResults ?? []).map((r: any) => ({
-              type: "tool_result",
-              tool_use_id: r.toolUseId,
-              content: JSON.stringify(r.content),
-              is_error: r.isError ?? false,
-            })),
-          ],
-        })),
-    });
+      messages: messagesPayload,
+    };
+    if (messagePagination) body.message_pagination = messagePagination;
+    json(res, 200, body);
   }
 
   private async handleSearch(url: URL, res: ServerResponse): Promise<void> {
@@ -517,6 +604,51 @@ export class StreamerServer {
       }
     } catch {
       // Best-effort: if we can't find the JSONL file, raw terminal output still works
+    }
+  }
+
+  private async handleBrowse(url: URL, res: ServerResponse): Promise<void> {
+    if (!this.browseRoot) {
+      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server." });
+      return;
+    }
+    const relativePath = url.searchParams.get("path") ?? "";
+    try {
+      const resolved = await resolveBrowsePath(this.browseRoot, relativePath);
+      const directories = await listDirectories(resolved);
+      json(res, 200, { path: relativePath, directories });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Browse failed";
+      json(res, 400, { error: message });
+    }
+  }
+
+  private async handleMkdir(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.browseRoot) {
+      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server." });
+      return;
+    }
+    const body = await readBody(req);
+    const { path: relativePath, name } = body;
+    if (!name || typeof name !== "string") {
+      json(res, 400, { error: "Missing name field" });
+      return;
+    }
+    try {
+      const parentPath = await resolveBrowsePath(this.browseRoot, relativePath ?? "");
+      await createDirectory(parentPath, name);
+      const parentRelative = relativePath ?? "";
+      const created = parentRelative ? `${parentRelative}/${name}` : name;
+      json(res, 201, { created });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create directory";
+      if (message.includes("already exists")) {
+        json(res, 409, { error: message });
+      } else if (message.includes("Invalid directory name")) {
+        json(res, 400, { error: message });
+      } else {
+        json(res, 400, { error: message });
+      }
     }
   }
 }
