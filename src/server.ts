@@ -590,7 +590,12 @@ export class StreamerServer {
     }
 
     try {
-      this.ptyManager.sendInput(sessionId, input);
+      const promptCount = this.ptyManager.sendInput(sessionId, input);
+      this.sessionStore.updateManaged(sessionId, { promptCount });
+      const updated = this.sessionStore.get(sessionId);
+      if (updated) {
+        this.wsHub.broadcast({ type: "session_update", session: updated });
+      }
       json(res, 200, { ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send input";

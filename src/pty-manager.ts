@@ -128,14 +128,15 @@ export class PTYManager {
     return toPublicSession(session);
   }
 
-  sendInput(sessionId: string, input: string): void {
+  sendInput(sessionId: string, input: string): number {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
     if (session.status === "completed" || session.status === "failed") {
       throw new Error(`Session already ${session.status}: ${sessionId}`);
     }
-    session.process.write(`${input}\n`);
+    session.process.write(`${input}\r`);
     session.promptCount++;
+    return session.promptCount;
   }
 
   cancel(sessionId: string): void {
