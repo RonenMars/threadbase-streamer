@@ -23,7 +23,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && cp -r src/db/migrations dist/",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -41,12 +41,15 @@
   "dependencies": {
     "@threadbase/scanner": "file:../scanner",
     "commander": "^12.0.0",
+    "dotenv": "^17.4.2",
     "node-pty": "^1.1.0",
+    "pg": "^8.20.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
     "@types/node": "^20.0.0",
+    "@types/pg": "^8.20.0",
     "@types/ws": "^8.5.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",

@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync } from "fs";
-import { join } from "path";
 import { tmpdir } from "os";
-import { resolveBrowsePath, listDirectories, createDirectory } from "../src/browse";
+import { join } from "path";
+import { createDirectory, listDirectories, resolveBrowsePath } from "../src/browse";
 
 const TEST_ROOT = join(tmpdir(), "threadbase-browse-test");
 

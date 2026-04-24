@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { Command } from "commander";
 import { loadOrCreateApiKey } from "../src/auth";
 import { StreamerServer } from "../src/server";

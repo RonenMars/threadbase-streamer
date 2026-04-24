@@ -1,26 +1,46 @@
+import type { SessionPersistence } from "./db/session-persistence";
 import type { DiscoveredProcess, ManagedSession, SessionResponse } from "./types";
 
 export class SessionStore {
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();
+  private persistence: SessionPersistence | null;
+
+  constructor(persistence?: SessionPersistence) {
+    this.persistence = persistence ?? null;
+  }
 
   addManaged(session: ManagedSession): void {
     this.managed.set(session.id, session);
+    this.persistence?.save(session);
   }
 
   updateManaged(sessionId: string, updates: Partial<ManagedSession>): ManagedSession | null {
     const session = this.managed.get(sessionId);
     if (!session) return null;
     Object.assign(session, updates);
+    this.persistence?.update(sessionId, updates);
     return session;
   }
 
   removeManaged(sessionId: string): boolean {
-    return this.managed.delete(sessionId);
+    const existed = this.managed.delete(sessionId);
+    if (existed) {
+      this.persistence?.remove(sessionId);
+    }
+    return existed;
   }
 
   getManaged(sessionId: string): ManagedSession | null {
     return this.managed.get(sessionId) ?? null;
+  }
+
+  async rehydrate(): Promise<void> {
+    if (!this.persistence) return;
+    const sessions = await this.persistence.loadAll();
+    for (const session of sessions) {
+      this.managed.set(session.id, session);
+    }
   }
 
   setDiscovered(processes: DiscoveredProcess[]): void {

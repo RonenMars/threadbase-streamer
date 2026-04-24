@@ -1,4 +1,4 @@
-import { readdir, mkdir, realpath, stat } from "fs/promises";
+import { mkdir, readdir, realpath, stat } from "fs/promises";
 import { join, resolve } from "path";
 
 export async function resolveBrowsePath(browseRoot: string, relativePath: string): Promise<string> {
