@@ -16,6 +16,7 @@ program
   .option("--api-key <key>", "API key for authentication")
   .option("--local-no-auth", "Skip auth for localhost requests", false)
   .option("-v, --verbose", "Verbose output", false)
+  .option("--browse-root <path>", "Root directory for file browsing")
   .action(async (opts) => {
     const port = Number.parseInt(opts.port, 10);
     const apiKey = opts.apiKey ?? loadOrCreateApiKey();
@@ -25,6 +26,7 @@ program
       apiKey,
       localNoAuth: opts.localNoAuth,
       verbose: opts.verbose,
+      browseRoot: opts.browseRoot,
     });
 
     await server.listen(port);

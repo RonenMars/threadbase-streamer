@@ -31,3 +31,14 @@ export function loadOrCreateApiKey(): string {
   writeFileSync(CONFIG_FILE, `api_key: ${key}\n`, "utf-8");
   return key;
 }
+
+export function loadBrowseRoot(): string | undefined {
+  try {
+    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const match = content.match(/browse_root:\s*(.+)/);
+    if (match?.[1]) return match[1].trim();
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}

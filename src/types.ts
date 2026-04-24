@@ -65,6 +65,7 @@ export interface ServerConfig {
   apiKey?: string;
   localNoAuth?: boolean;
   verbose?: boolean;
+  browseRoot?: string;
   scanProfiles?: Array<{
     id: string;
     label: string;
@@ -86,6 +87,12 @@ export interface StartSessionOptions {
   projectPath: string;
   projectName?: string;
   branch?: string;
+}
+
+export interface StartFreshSessionOptions {
+  projectPath: string;
+  projectName?: string;
+  systemPrompt?: string;
 }
 
 // ─── File Watcher ──────────────────────────────────────────────────
