@@ -630,7 +630,7 @@ export class StreamerServer {
 
   private async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.browseRoot) {
-      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server." });
+      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server.", code: "BROWSE_ROOT_NOT_SET" });
       return;
     }
     const body = await readBody(req);
@@ -685,7 +685,7 @@ export class StreamerServer {
 
   private async handleBrowse(url: URL, res: ServerResponse): Promise<void> {
     if (!this.browseRoot) {
-      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server." });
+      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server.", code: "BROWSE_ROOT_NOT_SET" });
       return;
     }
     const relativePath = url.searchParams.get("path") ?? "";
@@ -701,7 +701,7 @@ export class StreamerServer {
 
   private async handleMkdir(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.browseRoot) {
-      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server." });
+      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server.", code: "BROWSE_ROOT_NOT_SET" });
       return;
     }
     const body = await readBody(req);
