@@ -16,6 +16,16 @@ function makeSession(overrides: Partial<ManagedSession> = {}): ManagedSession {
     completedAt: null,
     promptCount: 0,
     lastOutput: "",
+    sessionName: "test-session",
+    model: "claude-opus-4-6",
+    account: "default",
+    messageCount: 42,
+    preview: "Hello world",
+    firstMessageText: "Hi there",
+    firstMessageAt: new Date("2026-04-18T09:55:00Z"),
+    lastMessageText: "Goodbye",
+    lastMessageAt: new Date("2026-04-18T10:00:00Z"),
+    filePath: "/tmp/conv.jsonl",
     ...overrides,
   };
 }
@@ -56,6 +66,19 @@ describe("PgSessionPersistence", () => {
       const [sql] = mockQuery.mock.calls[0];
       expect(sql).toContain("ON CONFLICT");
     });
+
+    it("includes conversation metadata columns in insert", async () => {
+      mockQuery.mockResolvedValueOnce({});
+      await persistence.save(makeSession());
+
+      const [sql, params] = mockQuery.mock.calls[0];
+      expect(sql).toContain("session_name");
+      expect(sql).toContain("model");
+      expect(sql).toContain("file_path");
+      expect(params).toContain("test-session");
+      expect(params).toContain("claude-opus-4-6");
+      expect(params).toContain("/tmp/conv.jsonl");
+    });
   });
 
   describe("update", () => {
@@ -94,7 +117,7 @@ describe("PgSessionPersistence", () => {
   });
 
   describe("loadAll", () => {
-    it("returns deserialized ManagedSession objects", async () => {
+    it("returns deserialized ManagedSession objects with metadata", async () => {
       mockQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -108,18 +131,59 @@ describe("PgSessionPersistence", () => {
             completed_at: null,
             prompt_count: 0,
             last_output: "",
+            session_name: "test-session",
+            model: "claude-opus-4-6",
+            account: "default",
+            message_count: 42,
+            preview: "Hello world",
+            first_message_text: "Hi there",
+            first_message_at: new Date("2026-04-18T09:55:00Z"),
+            last_message_text: "Goodbye",
+            last_message_at: new Date("2026-04-18T10:00:00Z"),
+            file_path: "/tmp/conv.jsonl",
           },
         ],
       });
-
       const sessions = await persistence.loadAll();
-
       expect(sessions).toHaveLength(1);
-      expect(sessions[0].id).toBe("ses_abc123");
-      expect(sessions[0].conversationId).toBe("conv_xyz");
-      expect(sessions[0].projectPath).toBe("/tmp/project");
-      expect(sessions[0].startedAt).toEqual(new Date("2026-04-18T10:00:00Z"));
-      expect(sessions[0].completedAt).toBeNull();
+      expect(sessions[0].sessionName).toBe("test-session");
+      expect(sessions[0].model).toBe("claude-opus-4-6");
+      expect(sessions[0].messageCount).toBe(42);
+      expect(sessions[0].firstMessageText).toBe("Hi there");
+      expect(sessions[0].filePath).toBe("/tmp/conv.jsonl");
+    });
+
+    it("handles null metadata fields from DB", async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: "ses_abc123",
+            conversation_id: "conv_xyz",
+            project_path: "/tmp/project",
+            project_name: "project",
+            branch: "main",
+            status: "running",
+            started_at: new Date("2026-04-18T10:00:00Z"),
+            completed_at: null,
+            prompt_count: 0,
+            last_output: "",
+            session_name: null,
+            model: null,
+            account: null,
+            message_count: 0,
+            preview: null,
+            first_message_text: null,
+            first_message_at: null,
+            last_message_text: null,
+            last_message_at: null,
+            file_path: null,
+          },
+        ],
+      });
+      const sessions = await persistence.loadAll();
+      expect(sessions[0].sessionName).toBeUndefined();
+      expect(sessions[0].model).toBeUndefined();
+      expect(sessions[0].filePath).toBeUndefined();
     });
 
     it("returns empty array when no rows", async () => {

@@ -525,8 +525,8 @@ export class StreamerServer {
     }
 
     let projectPath = explicitPath;
+    const conv = await this.findConversationByUuid(conversationId);
     if (!projectPath) {
-      const conv = await this.findConversationByUuid(conversationId);
       if (!conv) {
         json(res, 404, { error: "Conversation not found" });
         return;
@@ -540,6 +540,30 @@ export class StreamerServer {
       projectName: body.projectName,
       branch: body.branch,
     });
+
+    // Enrich session with conversation metadata
+    if (conv) {
+      session.sessionName = (conv as any).sessionName ?? undefined;
+      session.messageCount = (conv as any).messageCount ?? 0;
+      session.account = (conv as any).account ?? undefined;
+      session.filePath = (conv as any).filePath ?? undefined;
+
+      // Look up ConversationMeta from scanner cache for richer fields
+      const scanner = await this.getScanner();
+      const meta = conv.filePath ? scanner.getMetadataCache().get(conv.filePath) : undefined;
+      if (meta) {
+        session.model = meta.model ?? undefined;
+        session.preview = meta.preview ?? undefined;
+        session.firstMessageText = meta.firstMessage?.text ?? undefined;
+        session.firstMessageAt = meta.firstMessage?.timestamp
+          ? new Date(meta.firstMessage.timestamp)
+          : undefined;
+        session.lastMessageText = meta.lastMessage?.text ?? undefined;
+        session.lastMessageAt = meta.lastMessage?.timestamp
+          ? new Date(meta.lastMessage.timestamp)
+          : undefined;
+      }
+    }
 
     this.sessionStore.addManaged(session);
 

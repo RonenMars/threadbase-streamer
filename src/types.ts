@@ -13,6 +13,16 @@ export interface ManagedSession {
   completedAt: Date | null;
   promptCount: number;
   lastOutput: string;
+  sessionName?: string;
+  model?: string;
+  account?: string;
+  messageCount?: number;
+  preview?: string;
+  firstMessageText?: string;
+  firstMessageAt?: Date;
+  lastMessageText?: string;
+  lastMessageAt?: Date;
+  filePath?: string;
 }
 
 export interface DiscoveredProcess {
@@ -49,6 +59,16 @@ export interface SessionResponse {
   conversationId: string;
   source: "managed" | "discovered";
   pid?: number;
+  sessionName?: string;
+  model?: string;
+  account?: string;
+  messageCount?: number;
+  preview?: string;
+  firstMessageText?: string;
+  firstMessageAt?: string;
+  lastMessageText?: string;
+  lastMessageAt?: string;
+  filePath?: string;
 }
 
 export interface ConversationListResponse {

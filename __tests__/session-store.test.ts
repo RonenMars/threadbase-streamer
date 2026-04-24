@@ -132,6 +132,43 @@ describe("SessionStore", () => {
       expect(resp?.startedAt).toBe("2026-04-18T10:00:00.000Z");
       expect(resp?.completedAt).toBeNull();
     });
+
+    it("maps conversation metadata fields to response", () => {
+      store.addManaged(
+        makeManagedSession({
+          sessionName: "test-session",
+          model: "claude-opus-4-6",
+          account: "default",
+          messageCount: 42,
+          preview: "Hello world",
+          firstMessageText: "Hi there",
+          firstMessageAt: new Date("2026-04-18T09:55:00Z"),
+          lastMessageText: "Goodbye",
+          lastMessageAt: new Date("2026-04-18T10:00:00Z"),
+          filePath: "/tmp/conv.jsonl",
+        }),
+      );
+
+      const resp = store.get("ses_abc123");
+      expect(resp?.sessionName).toBe("test-session");
+      expect(resp?.model).toBe("claude-opus-4-6");
+      expect(resp?.account).toBe("default");
+      expect(resp?.messageCount).toBe(42);
+      expect(resp?.preview).toBe("Hello world");
+      expect(resp?.firstMessageText).toBe("Hi there");
+      expect(resp?.firstMessageAt).toBe("2026-04-18T09:55:00.000Z");
+      expect(resp?.lastMessageText).toBe("Goodbye");
+      expect(resp?.lastMessageAt).toBe("2026-04-18T10:00:00.000Z");
+      expect(resp?.filePath).toBe("/tmp/conv.jsonl");
+    });
+
+    it("omits undefined metadata fields from response", () => {
+      store.addManaged(makeManagedSession());
+
+      const resp = store.get("ses_abc123");
+      expect(resp?.sessionName).toBeUndefined();
+      expect(resp?.model).toBeUndefined();
+    });
   });
 });
 

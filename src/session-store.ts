@@ -98,6 +98,16 @@ function managedToResponse(s: ManagedSession): SessionResponse {
     completedAt: s.completedAt?.toISOString() ?? null,
     conversationId: s.conversationId,
     source: "managed",
+    ...(s.sessionName != null && { sessionName: s.sessionName }),
+    ...(s.model != null && { model: s.model }),
+    ...(s.account != null && { account: s.account }),
+    ...(s.messageCount != null && { messageCount: s.messageCount }),
+    ...(s.preview != null && { preview: s.preview }),
+    ...(s.firstMessageText != null && { firstMessageText: s.firstMessageText }),
+    ...(s.firstMessageAt != null && { firstMessageAt: s.firstMessageAt.toISOString() }),
+    ...(s.lastMessageText != null && { lastMessageText: s.lastMessageText }),
+    ...(s.lastMessageAt != null && { lastMessageAt: s.lastMessageAt.toISOString() }),
+    ...(s.filePath != null && { filePath: s.filePath }),
   };
 }
 

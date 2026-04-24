@@ -9,13 +9,18 @@ export class PgSessionPersistence implements SessionPersistence {
     await this.pool.query(
       `INSERT INTO managed_sessions (
         id, conversation_id, project_path, project_name, branch,
-        status, started_at, completed_at, prompt_count, last_output
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        status, started_at, completed_at, prompt_count, last_output,
+        session_name, model, account, message_count, preview,
+        first_message_text, first_message_at, last_message_text, last_message_at, file_path
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       ON CONFLICT (id) DO UPDATE SET
         status = EXCLUDED.status,
         completed_at = EXCLUDED.completed_at,
         prompt_count = EXCLUDED.prompt_count,
         last_output = EXCLUDED.last_output,
+        message_count = EXCLUDED.message_count,
+        last_message_text = EXCLUDED.last_message_text,
+        last_message_at = EXCLUDED.last_message_at,
         updated_at = NOW()`,
       [
         session.id,
@@ -28,6 +33,16 @@ export class PgSessionPersistence implements SessionPersistence {
         session.completedAt,
         session.promptCount,
         session.lastOutput,
+        session.sessionName ?? null,
+        session.model ?? null,
+        session.account ?? null,
+        session.messageCount ?? 0,
+        session.preview ?? null,
+        session.firstMessageText ?? null,
+        session.firstMessageAt ?? null,
+        session.lastMessageText ?? null,
+        session.lastMessageAt ?? null,
+        session.filePath ?? null,
       ],
     );
   }
@@ -43,6 +58,16 @@ export class PgSessionPersistence implements SessionPersistence {
       completedAt: "completed_at",
       promptCount: "prompt_count",
       lastOutput: "last_output",
+      sessionName: "session_name",
+      model: "model",
+      account: "account",
+      messageCount: "message_count",
+      preview: "preview",
+      firstMessageText: "first_message_text",
+      firstMessageAt: "first_message_at",
+      lastMessageText: "last_message_text",
+      lastMessageAt: "last_message_at",
+      filePath: "file_path",
     };
 
     const setClauses: string[] = [];
@@ -84,6 +109,16 @@ export class PgSessionPersistence implements SessionPersistence {
       completed_at: Date | null;
       prompt_count: number;
       last_output: string;
+      session_name: string | null;
+      model: string | null;
+      account: string | null;
+      message_count: number;
+      preview: string | null;
+      first_message_text: string | null;
+      first_message_at: Date | null;
+      last_message_text: string | null;
+      last_message_at: Date | null;
+      file_path: string | null;
     }>("SELECT * FROM managed_sessions ORDER BY started_at DESC");
 
     return rows.map((row) => ({
@@ -97,6 +132,16 @@ export class PgSessionPersistence implements SessionPersistence {
       completedAt: row.completed_at,
       promptCount: row.prompt_count,
       lastOutput: row.last_output,
+      ...(row.session_name != null && { sessionName: row.session_name }),
+      ...(row.model != null && { model: row.model }),
+      ...(row.account != null && { account: row.account }),
+      ...(row.message_count && { messageCount: row.message_count }),
+      ...(row.preview != null && { preview: row.preview }),
+      ...(row.first_message_text != null && { firstMessageText: row.first_message_text }),
+      ...(row.first_message_at != null && { firstMessageAt: row.first_message_at }),
+      ...(row.last_message_text != null && { lastMessageText: row.last_message_text }),
+      ...(row.last_message_at != null && { lastMessageAt: row.last_message_at }),
+      ...(row.file_path != null && { filePath: row.file_path }),
     }));
   }
 }
