@@ -37,7 +37,7 @@ describe("PgSessionPersistence", () => {
 
   beforeEach(() => {
     mockQuery.mockReset();
-    persistence = new PgSessionPersistence(mockPool as any);
+    persistence = new PgSessionPersistence(mockPool as any, "test-instance");
   });
 
   describe("save", () => {
@@ -112,7 +112,8 @@ describe("PgSessionPersistence", () => {
       expect(mockQuery).toHaveBeenCalledTimes(1);
       const [sql, params] = mockQuery.mock.calls[0];
       expect(sql).toContain("DELETE FROM managed_sessions");
-      expect(params).toEqual(["ses_abc123"]);
+      expect(sql).toContain("instance_id = $2 OR instance_id IS NULL");
+      expect(params).toEqual(["ses_abc123", "test-instance"]);
     });
   });
 

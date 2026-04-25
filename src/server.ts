@@ -129,10 +129,11 @@ export class StreamerServer {
     const dbConfig = getDbConfig();
     if (dbConfig) {
       this.dbPool = await createPool(dbConfig);
-      const persistence = new PgSessionPersistence(this.dbPool);
+      const persistence = new PgSessionPersistence(this.dbPool, dbConfig.instanceId);
       this.sessionStore = new SessionStore(persistence);
       if (this.verbose) {
         console.log(`Database enabled: ${maskConnectionString(dbConfig.connectionString)}`);
+        console.log(`Instance ID: ${dbConfig.instanceId}`);
       }
       await runMigrations(this.dbPool);
       await this.sessionStore.rehydrate();
@@ -630,7 +631,10 @@ export class StreamerServer {
 
   private async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.browseRoot) {
-      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server.", code: "BROWSE_ROOT_NOT_SET" });
+      json(res, 403, {
+        error: "File browsing not configured. Set browseRoot on the server.",
+        code: "BROWSE_ROOT_NOT_SET",
+      });
       return;
     }
     const body = await readBody(req);
@@ -685,7 +689,10 @@ export class StreamerServer {
 
   private async handleBrowse(url: URL, res: ServerResponse): Promise<void> {
     if (!this.browseRoot) {
-      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server.", code: "BROWSE_ROOT_NOT_SET" });
+      json(res, 403, {
+        error: "File browsing not configured. Set browseRoot on the server.",
+        code: "BROWSE_ROOT_NOT_SET",
+      });
       return;
     }
     const relativePath = url.searchParams.get("path") ?? "";
@@ -701,7 +708,10 @@ export class StreamerServer {
 
   private async handleMkdir(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.browseRoot) {
-      json(res, 403, { error: "File browsing not configured. Set browseRoot on the server.", code: "BROWSE_ROOT_NOT_SET" });
+      json(res, 403, {
+        error: "File browsing not configured. Set browseRoot on the server.",
+        code: "BROWSE_ROOT_NOT_SET",
+      });
       return;
     }
     const body = await readBody(req);

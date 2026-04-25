@@ -80,12 +80,18 @@ You should see the `_migrations` and `managed_sessions` tables with your data.
 
 ## Step 3: Configure the Streamer
 
-Set the `THREADBASE_DATABASE_URL` environment variable to the Neon connection string. How you do this depends on how the streamer runs.
+Set the following environment variables:
+
+- **`THREADBASE_DATABASE_URL`** — the Neon connection string (required)
+- **`THREADBASE_INSTANCE_ID`** — a unique name for this server (e.g., `ronens-mbp`, `office-mac`, `ci-server`). Defaults to the OS hostname if unset. **Required when multiple instances share a database** — each instance only sees sessions tagged with its own ID.
+
+How you set these depends on how the streamer runs.
 
 ### Environment variable (direct)
 
 ```bash
 export THREADBASE_DATABASE_URL="postgresql://neondb_owner:<password>@ep-xxx.region.aws.neon.tech/threadbase?sslmode=require"
+export THREADBASE_INSTANCE_ID="my-server-name"
 node dist/cli.cjs serve --port 8766 --verbose
 ```
 
@@ -95,6 +101,7 @@ Create a `.env` file in the streamer directory:
 
 ```env
 THREADBASE_DATABASE_URL=postgresql://neondb_owner:<password>@ep-xxx.region.aws.neon.tech/threadbase?sslmode=require
+THREADBASE_INSTANCE_ID=my-server-name
 ```
 
 ### macOS launchd (LaunchAgent)
@@ -102,6 +109,8 @@ THREADBASE_DATABASE_URL=postgresql://neondb_owner:<password>@ep-xxx.region.aws.n
 If the streamer runs as a LaunchAgent, add the env var to the plist's `EnvironmentVariables` dict:
 
 ```xml
+<key>THREADBASE_INSTANCE_ID</key>
+<string>my-server-name</string>
 <key>THREADBASE_DATABASE_URL</key>
 <string>postgresql://neondb_owner:PASSWORD@ep-xxx.region.aws.neon.tech/threadbase?sslmode=require</string>
 ```
@@ -119,6 +128,7 @@ Add to the `[Service]` section of the unit file:
 
 ```ini
 Environment=THREADBASE_DATABASE_URL=postgresql://neondb_owner:PASSWORD@ep-xxx.region.aws.neon.tech/threadbase?sslmode=require
+Environment=THREADBASE_INSTANCE_ID=my-server-name
 ```
 
 Then reload:
@@ -135,6 +145,7 @@ services:
   streamer:
     environment:
       THREADBASE_DATABASE_URL: "postgresql://neondb_owner:PASSWORD@ep-xxx.region.aws.neon.tech/threadbase?sslmode=require"
+      THREADBASE_INSTANCE_ID: "my-server-name"
 ```
 
 ## Step 4: Verify
@@ -143,6 +154,7 @@ After restarting the streamer, check the logs for:
 
 ```
 Database enabled: postgresql://neondb_owner:***@ep-xxx.region.aws.neon.tech/threadbase?sslmode=require
+Instance ID: my-server-name
 Database migrations applied, sessions rehydrated
 ```
 
@@ -217,3 +229,5 @@ Unset or remove `THREADBASE_DATABASE_URL` from your environment / plist / unit f
 | `password authentication failed` | Wrong credentials | Re-check with `neonctl connection-string` |
 | Logs show no "Database enabled" line | Env var not reaching the process | Verify with `ps eww <PID> \| grep DATABASE` or check your plist/unit file |
 | Tables missing after startup | Build is stale (pre-DB feature) | Run `npm run build` in the streamer directory |
+| Managed sessions missing after migration | Existing rows have `NULL` instance_id | Run: `UPDATE managed_sessions SET instance_id = 'your-id' WHERE instance_id IS NULL;` |
+| Sessions from another server showing up | Same or missing `THREADBASE_INSTANCE_ID` | Set a unique `THREADBASE_INSTANCE_ID` on each server |

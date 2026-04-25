@@ -3,11 +3,16 @@ export interface DbConfig {
   max: number;
   ssl?: string;
   statementTimeout?: number;
+  instanceId: string;
 }
 
 export function isDbEnabled(): boolean {
   const url = process.env.THREADBASE_DATABASE_URL;
   return typeof url === "string" && url.length > 0;
+}
+
+export function getInstanceId(): string {
+  return process.env.THREADBASE_INSTANCE_ID || require("os").hostname();
 }
 
 export function getDbConfig(): DbConfig | null {
@@ -26,5 +31,6 @@ export function getDbConfig(): DbConfig | null {
     max: Number.isNaN(poolMax) ? 10 : poolMax,
     ssl,
     statementTimeout: Number.isNaN(stmtTimeout) ? undefined : stmtTimeout,
+    instanceId: getInstanceId(),
   };
 }

@@ -3,7 +3,10 @@ import type { ManagedSession } from "../types";
 import type { SessionPersistence } from "./session-persistence";
 
 export class PgSessionPersistence implements SessionPersistence {
-  constructor(private pool: pg.Pool) {}
+  constructor(
+    private pool: pg.Pool,
+    private instanceId: string,
+  ) {}
 
   async save(session: ManagedSession): Promise<void> {
     await this.pool.query(
@@ -11,8 +14,9 @@ export class PgSessionPersistence implements SessionPersistence {
         id, conversation_id, project_path, project_name, branch,
         status, started_at, completed_at, prompt_count, last_output,
         session_name, model, account, message_count, preview,
-        first_message_text, first_message_at, last_message_text, last_message_at, file_path
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        first_message_text, first_message_at, last_message_text, last_message_at, file_path,
+        instance_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
       ON CONFLICT (id) DO UPDATE SET
         status = EXCLUDED.status,
         completed_at = EXCLUDED.completed_at,
@@ -21,6 +25,7 @@ export class PgSessionPersistence implements SessionPersistence {
         message_count = EXCLUDED.message_count,
         last_message_text = EXCLUDED.last_message_text,
         last_message_at = EXCLUDED.last_message_at,
+        instance_id = EXCLUDED.instance_id,
         updated_at = NOW()`,
       [
         session.id,
@@ -43,6 +48,7 @@ export class PgSessionPersistence implements SessionPersistence {
         session.lastMessageText ?? null,
         session.lastMessageAt ?? null,
         session.filePath ?? null,
+        this.instanceId,
       ],
     );
   }
@@ -86,15 +92,19 @@ export class PgSessionPersistence implements SessionPersistence {
 
     setClauses.push(`updated_at = NOW()`);
     values.push(sessionId);
+    values.push(this.instanceId);
 
     await this.pool.query(
-      `UPDATE managed_sessions SET ${setClauses.join(", ")} WHERE id = $${paramIdx}`,
+      `UPDATE managed_sessions SET ${setClauses.join(", ")} WHERE id = $${paramIdx} AND (instance_id = $${paramIdx + 1} OR instance_id IS NULL)`,
       values,
     );
   }
 
   async remove(sessionId: string): Promise<void> {
-    await this.pool.query("DELETE FROM managed_sessions WHERE id = $1", [sessionId]);
+    await this.pool.query(
+      "DELETE FROM managed_sessions WHERE id = $1 AND (instance_id = $2 OR instance_id IS NULL)",
+      [sessionId, this.instanceId],
+    );
   }
 
   async loadAll(): Promise<ManagedSession[]> {
@@ -119,7 +129,10 @@ export class PgSessionPersistence implements SessionPersistence {
       last_message_text: string | null;
       last_message_at: Date | null;
       file_path: string | null;
-    }>("SELECT * FROM managed_sessions ORDER BY started_at DESC");
+    }>(
+      "SELECT * FROM managed_sessions WHERE instance_id = $1 OR instance_id IS NULL ORDER BY started_at DESC",
+      [this.instanceId],
+    );
 
     return rows.map((row) => ({
       id: row.id,
