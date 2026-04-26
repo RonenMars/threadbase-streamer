@@ -146,7 +146,7 @@ export class PTYManager {
   cancel(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
-    session.process.kill();
+    session.process.kill("SIGINT");
   }
 
   getOutput(sessionId: string): string {
