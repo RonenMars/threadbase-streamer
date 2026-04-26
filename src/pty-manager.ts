@@ -46,13 +46,17 @@ export class PTYManager {
     const sessionId = `ses_${randomBytes(8).toString("hex")}`;
     const projectName = options.projectName ?? basename(options.projectPath);
 
-    const proc = nodePty.spawn("claude", ["--resume", options.conversationId], {
-      name: "xterm-256color",
-      cols: 120,
-      rows: 40,
-      cwd: options.projectPath,
-      env: process.env as Record<string, string>,
-    });
+    const proc = nodePty.spawn(
+      "claude",
+      ["--dangerously-skip-permissions", "--resume", options.conversationId],
+      {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+        cwd: options.projectPath,
+        env: process.env as Record<string, string>,
+      },
+    );
 
     const session: InternalSession = {
       id: sessionId,
@@ -87,7 +91,7 @@ export class PTYManager {
     const sessionId = `ses_${randomBytes(8).toString("hex")}`;
     const projectName = options.projectName ?? basename(options.projectPath);
 
-    const args: string[] = [];
+    const args: string[] = ["--dangerously-skip-permissions"];
     if (options.systemPrompt) {
       args.push("--system-prompt", options.systemPrompt);
     }
