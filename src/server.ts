@@ -19,11 +19,13 @@ import { loadBrowseRoot, validateApiKey } from "./auth";
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { PgSessionPersistence } from "./db/pg-session-persistence";
+import { recordUpload } from "./db/upload-records";
 import { FileWatcher } from "./file-watcher";
 import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
 import { SessionStore } from "./session-store";
 import type { ServerConfig } from "./types";
+import { saveUploadFile } from "./uploads";
 import { WSHub } from "./ws-hub";
 
 const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
@@ -47,6 +49,7 @@ export class StreamerServer {
     | Array<{ id: string; label: string; configDir: string; enabled: boolean; emoji: string }>
     | undefined;
   private dbPool: Awaited<ReturnType<typeof createPool>> | null = null;
+  private dbInstanceId: string | null = null;
   private browseRoot: string | null = null;
 
   constructor(config: ServerConfig & { apiKey: string }) {
@@ -129,6 +132,7 @@ export class StreamerServer {
     const dbConfig = getDbConfig();
     if (dbConfig) {
       this.dbPool = await createPool(dbConfig);
+      this.dbInstanceId = dbConfig.instanceId;
       const persistence = new PgSessionPersistence(this.dbPool, dbConfig.instanceId);
       this.sessionStore = new SessionStore(persistence);
       if (this.verbose) {
@@ -221,6 +225,10 @@ export class StreamerServer {
       const inputMatch = path.match(/^\/api\/sessions\/([^/]+)\/input$/);
       if (method === "POST" && inputMatch)
         return await this.handleSendInput(inputMatch[1], req, res);
+
+      const filesMatch = path.match(/^\/api\/sessions\/([^/]+)\/files$/);
+      if (method === "POST" && filesMatch)
+        return await this.handleUploadFile(filesMatch[1], req, res);
 
       const outputMatch = path.match(/^\/api\/sessions\/([^/]+)\/output$/);
       if (method === "GET" && outputMatch) return this.handleGetOutput(outputMatch[1], res);
@@ -600,6 +608,65 @@ export class StreamerServer {
       json(res, 200, { ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send input";
+      json(res, 400, { error: message });
+    }
+  }
+
+  private async handleUploadFile(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = this.sessionStore.get(sessionId);
+    if (!session) {
+      json(res, 404, { error: "Session not found" });
+      return;
+    }
+    if (!session.projectPath) {
+      json(res, 400, { error: "Session has no project path" });
+      return;
+    }
+
+    const body = await readBody(req);
+    const { filename, mimeType, dataBase64 } = body ?? {};
+    if (typeof filename !== "string" || typeof mimeType !== "string" || typeof dataBase64 !== "string") {
+      json(res, 400, { error: "Missing filename, mimeType, or dataBase64" });
+      return;
+    }
+
+    try {
+      const saved = await saveUploadFile({
+        sessionId,
+        projectPath: session.projectPath,
+        originalName: filename,
+        mimeType,
+        dataBase64,
+      });
+
+      try {
+        await recordUpload(this.dbPool, this.dbInstanceId, {
+          id: saved.id,
+          sessionId,
+          filePath: saved.filePath,
+          originalName: saved.originalName,
+          mimeType: saved.mimeType,
+          sizeBytes: saved.sizeBytes,
+        });
+      } catch (err) {
+        if (this.verbose) {
+          console.warn(`[uploads] DB record failed: ${err}`);
+        }
+      }
+
+      json(res, 201, {
+        id: saved.id,
+        path: saved.filePath,
+        originalName: saved.originalName,
+        mimeType: saved.mimeType,
+        sizeBytes: saved.sizeBytes,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Upload failed";
       json(res, 400, { error: message });
     }
   }
