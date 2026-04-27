@@ -42,3 +42,40 @@ export function loadBrowseRoot(): string | undefined {
   }
   return undefined;
 }
+
+export function loadPublicUrl(): string | undefined {
+  try {
+    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const match = content.match(/public_url:\s*(.+)/);
+    if (match?.[1]) return match[1].trim();
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
+export type PublicUrlValidation = { ok: true; normalized: string } | { ok: false; error: string };
+
+export function validatePublicUrl(raw: string): PublicUrlValidation {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false, error: `Invalid URL: ${raw}` };
+  }
+  const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+  if (parsed.protocol === "https:") {
+    return { ok: true, normalized: stripTrailingSlash(parsed.toString()) };
+  }
+  if (parsed.protocol === "http:" && localHosts.has(parsed.hostname)) {
+    return { ok: true, normalized: stripTrailingSlash(parsed.toString()) };
+  }
+  return {
+    ok: false,
+    error: `publicUrl must be https:// (got ${parsed.protocol}//). Plain http is only allowed for localhost.`,
+  };
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.endsWith("/") ? url.slice(0, -1) : url;
+}

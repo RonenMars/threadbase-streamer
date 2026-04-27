@@ -15,7 +15,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
 import { join } from "path";
 import { WebSocketServer } from "ws";
-import { loadBrowseRoot, validateApiKey } from "./auth";
+import { loadBrowseRoot, loadPublicUrl, validateApiKey, validatePublicUrl } from "./auth";
+import { PairTokenStore } from "./pair-store";
+import { seal } from "./seal";
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { PgSessionPersistence } from "./db/pg-session-persistence";
@@ -51,6 +53,9 @@ export class StreamerServer {
   private dbPool: Awaited<ReturnType<typeof createPool>> | null = null;
   private dbInstanceId: string | null = null;
   private browseRoot: string | null = null;
+  private publicUrl: string | null = null;
+  private pairTokens = new PairTokenStore();
+  private exchangeAttempts = new Map<string, number[]>();
 
   constructor(config: ServerConfig & { apiKey: string }) {
     this.apiKey = config.apiKey;
@@ -68,6 +73,18 @@ export class StreamerServer {
         .catch(() => {
           console.warn(`Warning: browse root does not exist: ${rawRoot}`);
         });
+    }
+
+    // Resolve publicUrl: env var > YAML config > CLI flag
+    const rawPublicUrl = process.env.THREADBASE_PUBLIC_URL ?? loadPublicUrl() ?? config.publicUrl;
+    if (rawPublicUrl) {
+      const result = validatePublicUrl(rawPublicUrl);
+      if (result.ok) {
+        this.publicUrl = result.normalized;
+        if (this.verbose) console.log(`Public URL: ${this.publicUrl}`);
+      } else {
+        console.warn(`Warning: ${result.error}`);
+      }
     }
     this.sessionStore = new SessionStore();
     this.wsHub = new WSHub();
@@ -162,6 +179,7 @@ export class StreamerServer {
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.wsHub.dispose();
+    this.pairTokens.dispose();
     if (this.dbPool) {
       await this.dbPool.end();
     }
@@ -188,20 +206,26 @@ export class StreamerServer {
       console.log(`${req.method} ${req.url}`);
     }
 
-    if (!this.authenticate(req)) {
-      json(res, 401, { error: "Unauthorized" });
-      return;
-    }
-
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
     const path = url.pathname;
     const method = req.method ?? "GET";
+
+    // /api/pair/exchange is intentionally unauthenticated — it's the bootstrap
+    // endpoint where mobile clients trade a short-lived pair token for the api key.
+    const isPublicRoute = method === "POST" && path === "/api/pair/exchange";
+    if (!isPublicRoute && !this.authenticate(req)) {
+      json(res, 401, { error: "Unauthorized" });
+      return;
+    }
 
     try {
       // Static routes
       if (method === "GET" && path === "/api/info") return this.handleInfo(res);
       if (method === "GET" && path === "/api/profiles") return json(res, 200, []);
       if (method === "POST" && path === "/api/push/register") return json(res, 200, { ok: true });
+      if (method === "POST" && path === "/api/pair/start") return this.handlePairStart(res);
+      if (method === "POST" && path === "/api/pair/exchange")
+        return await this.handlePairExchange(req, res);
       if (method === "GET" && path === "/api/conversations")
         return await this.handleListConversations(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
@@ -270,7 +294,88 @@ export class StreamerServer {
       machineName: hostname(),
       platform: process.platform,
       activeSessions: this.sessionStore.list().filter((s: any) => s.status === "running").length,
+      publicUrl: this.publicUrl,
     });
+  }
+
+  private handlePairStart(res: ServerResponse): void {
+    const minted = this.pairTokens.mint();
+    json(res, 200, {
+      token: minted.token,
+      expiresAt: minted.expiresAt,
+      expiresInSeconds: minted.expiresInSeconds,
+      publicUrl: this.publicUrl,
+    });
+  }
+
+  private async handlePairExchange(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const ct = req.headers["content-type"] ?? "";
+    if (!String(ct).toLowerCase().includes("application/json")) {
+      json(res, 415, { error: "Content-Type: application/json required" });
+      return;
+    }
+
+    const ip = req.socket.remoteAddress ?? "unknown";
+    if (!this.checkExchangeRateLimit(ip)) {
+      json(res, 429, { error: "Too many pair exchange attempts; try again in a minute" });
+      return;
+    }
+
+    let body: any;
+    try {
+      body = await readBody(req);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Invalid body";
+      json(res, 400, { error: message });
+      return;
+    }
+
+    const { token, clientPublicKey } = body ?? {};
+    if (typeof token !== "string" || typeof clientPublicKey !== "string") {
+      json(res, 400, { error: "Missing token or clientPublicKey" });
+      return;
+    }
+
+    const result = this.pairTokens.consume(token);
+    if (!result.ok) {
+      json(res, 401, { error: `Pair token ${result.reason}` });
+      return;
+    }
+
+    let sealed;
+    try {
+      sealed = seal(this.apiKey, clientPublicKey);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Invalid clientPublicKey";
+      json(res, 400, { error: message });
+      return;
+    }
+
+    const { hostname } = require("os");
+    const ts = new Date().toISOString();
+    console.log(`[pair] token exchanged from ${ip} at ${ts}`);
+
+    json(res, 200, {
+      ciphertext: sealed.ciphertext,
+      nonce: sealed.nonce,
+      ephemeralPublicKey: sealed.ephemeralPublicKey,
+      publicUrl: this.publicUrl,
+      machineName: hostname(),
+    });
+  }
+
+  private checkExchangeRateLimit(ip: string): boolean {
+    const now = Date.now();
+    const windowMs = 60_000;
+    const limit = 5;
+    const arr = (this.exchangeAttempts.get(ip) ?? []).filter((t) => now - t < windowMs);
+    if (arr.length >= limit) {
+      this.exchangeAttempts.set(ip, arr);
+      return false;
+    }
+    arr.push(now);
+    this.exchangeAttempts.set(ip, arr);
+    return true;
   }
 
   private async handleListConversations(url: URL, res: ServerResponse): Promise<void> {

@@ -86,6 +86,7 @@ export interface ServerConfig {
   localNoAuth?: boolean;
   verbose?: boolean;
   browseRoot?: string;
+  publicUrl?: string;
   scanProfiles?: Array<{
     id: string;
     label: string;
