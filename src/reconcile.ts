@@ -22,8 +22,7 @@ export async function reconcileOrphanedSessions(
   sessionStore: SessionStore,
   options: { claudeProjectsRoot?: string; now?: Date } = {},
 ): Promise<ReconcileResult[]> {
-  const claudeProjectsRoot =
-    options.claudeProjectsRoot ?? join(homedir(), ".claude", "projects");
+  const claudeProjectsRoot = options.claudeProjectsRoot ?? join(homedir(), ".claude", "projects");
   const now = options.now ?? new Date();
   const results: ReconcileResult[] = [];
 

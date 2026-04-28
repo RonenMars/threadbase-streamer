@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, utimes, mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { findConversationIdForSession, reconcileOrphanedSessions } from "../src/reconcile";
@@ -161,10 +161,7 @@ describe("reconcileOrphanedSessions", () => {
     await writeFile(file, "{}\n");
     await utimes(file, startedAt, startedAt);
 
-    const found = await findConversationIdForSession(
-      { projectPath, startedAt },
-      projectsRoot,
-    );
+    const found = await findConversationIdForSession({ projectPath, startedAt }, projectsRoot);
     expect(found).toBe(uuid);
   });
 });
