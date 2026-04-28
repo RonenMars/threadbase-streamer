@@ -30,7 +30,7 @@
     "lint": "tsc --noEmit && npx biome check .",
     "format": "npx biome format --write .",
     "check": "npx biome check --write .",
-    "postinstall": "node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty'),'..','..','prebuilds',process.platform+'-'+process.arch,'spawn-helper'),0o755)}catch{}\"",
+    "postinstall": "patch-package && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty'),'..','..','prebuilds',process.platform+'-'+process.arch,'spawn-helper'),0o755)}catch{}\"",
     "prepublishOnly": "npm run build",
     "test:contracts": "vitest run __tests__/contracts/",
     "test:e2e": "vitest run __tests__/e2e/",
@@ -40,7 +40,7 @@
     "update-schema:shared": "tsx scripts/update-schema.ts --shared"
   },
   "dependencies": {
-    "@threadbase/scanner": "file:../scanner",
+    "@threadbase/scanner": "file:./vendor/scanner",
     "commander": "^12.0.0",
     "dotenv": "^17.4.2",
     "node-pty": "^1.1.0",
@@ -58,6 +58,7 @@
     "@types/ws": "^8.5.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
+    "patch-package": "^8.0.1",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.5.0",

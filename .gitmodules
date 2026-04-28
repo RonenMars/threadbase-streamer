@@ -1,0 +1,3 @@
+[submodule "vendor/scanner"]
+	path = vendor/scanner
+	url = git@github.com:RonenMars/threadbase-scanner.git
