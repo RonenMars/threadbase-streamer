@@ -50,6 +50,10 @@ export class SessionStore {
     }
   }
 
+  listManaged(): ManagedSession[] {
+    return Array.from(this.managed.values());
+  }
+
   list(): SessionResponse[] {
     const results: SessionResponse[] = [];
 

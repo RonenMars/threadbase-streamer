@@ -25,6 +25,7 @@ import { recordUpload } from "./db/upload-records";
 import { FileWatcher } from "./file-watcher";
 import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
+import { reconcileOrphanedSessions } from "./reconcile";
 import { SessionStore } from "./session-store";
 import type { ServerConfig } from "./types";
 import { saveUploadFile } from "./uploads";
@@ -160,6 +161,15 @@ export class StreamerServer {
       await this.sessionStore.rehydrate();
       if (this.verbose) {
         console.log("Database migrations applied, sessions rehydrated");
+      }
+      try {
+        const reconciled = await reconcileOrphanedSessions(this.sessionStore);
+        if (this.verbose && reconciled.length > 0) {
+          console.log(`Reconciled ${reconciled.length} orphaned/incomplete session(s)`);
+        }
+      } catch (err) {
+        // Reconciliation is best-effort — never block startup on it.
+        console.warn("Session reconciliation failed:", err);
       }
     }
 
