@@ -211,7 +211,7 @@ Register-ScheduledTask -TaskName 'Threadbase' `
 Start-ScheduledTask -TaskName 'Threadbase'
 ```
 
-For DB mode, persist the connection string at User scope in the registry, then **read it back and inline it directly in `$psArg`**. Do not rely on env var inheritance: tasks started via `Start-ScheduledTask` within the same terminal session that called `SetEnvironmentVariable` will NOT pick up the new var — the user session's environment block is frozen at logon and the registry write doesn't update live processes.
+**Windows DB mode — inline env vars into the task action; do not rely on inheritance.** Persist the connection string at User scope in the registry, then read it back and embed it directly in `$psArg`. On Windows, tasks started via `Start-ScheduledTask` within the same terminal session that called `SetEnvironmentVariable` will NOT pick up the new var — the user session's environment block is frozen at logon and the registry write doesn't update live processes.
 
 ```powershell
 # Persist to registry (survives reboots, future sessions)
@@ -225,7 +225,7 @@ $instId = [Environment]::GetEnvironmentVariable('THREADBASE_INSTANCE_ID', 'User'
 $psArg = "-NonInteractive -WindowStyle Hidden -Command `"`$env:THREADBASE_DATABASE_URL='$dbUrl'; `$env:THREADBASE_INSTANCE_ID='$instId'; & '$nodePath' '$cliPath' serve --port {PORT} --verbose >> '$logOut' 2>> '$logErr'`""
 ```
 
-When diagnosing DB connectivity failures: if `%TEMP%\threadbase.err` shows `EACCES` on port 5432 (not ECONNREFUSED), the env var is missing from the task action — the server starts but crashes when it can't find the DB URI. Test reachability first with `Test-NetConnection -ComputerName <host> -Port 5432`; if that succeeds, the issue is the missing env var, not a firewall.
+**Windows DB connectivity diagnosis:** if `%TEMP%\threadbase.err` shows `EACCES` on port 5432 (not `ECONNREFUSED`), the env var is missing from the task action — the server starts but crashes when it can't find the DB URI. Test reachability first with `Test-NetConnection -ComputerName <host> -Port 5432`; if that succeeds, the issue is the missing env var, not a Windows Firewall rule.
 
 **Stale instance check (Windows):** Before starting the task, kill any node process already listening on port 8766 (old streamer version, previous deploy, etc.). Skipping this causes the new task to fail silently because the port is taken:
 ```powershell
