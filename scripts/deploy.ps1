@@ -318,10 +318,11 @@ function Invoke-Deploy {
 
     Write-Log "stamping release: $relFilename"
     Copy-Item -Path (Join-Path $repoRoot 'dist\cli.cjs') -Destination (Join-Path $releasesDir $relFilename) -Force
-    # Copy migrations alongside CLI so __dirname resolution works at runtime
+    # On Windows, cli.js is a real file at $installDir so __dirname = $installDir.
+    # Copy migrations to the install root (not releases/) so the CJS bundle finds them.
     $migrationsrc = Join-Path $repoRoot 'dist\migrations'
     if (Test-Path $migrationsrc) {
-      Copy-Item -Path $migrationsrc -Destination (Join-Path $releasesDir 'migrations') -Recurse -Force
+      Copy-Item -Path $migrationsrc -Destination (Join-Path $installDir 'migrations') -Recurse -Force
     }
 
     Write-Log "activating cli.js"

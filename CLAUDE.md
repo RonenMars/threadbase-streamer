@@ -40,7 +40,9 @@ Key modules and their responsibilities:
 ## Build notes
 
 - **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and all other deps must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
-- **Migrations at deploy**: `scripts/deploy.sh` (and Linux/Windows equivalents) copies `dist/migrations/` alongside `dist/cli.cjs` into `~/.threadbase/releases/`. The CJS bundle resolves `__dirname` to the releases directory at runtime, so the SQL files must be co-located.
+- **Migrations at deploy**: deploy scripts copy `dist/migrations/` so the CJS bundle can find them at runtime via `__dirname`.
+  - macOS/Linux: symlink makes `__dirname` = `~/.threadbase/releases/` → copy to `~/.threadbase/releases/migrations/`
+  - Windows: `cli.js` is a real copy at `~/.threadbase/` so `__dirname` = `~/.threadbase/` → copy to `~/.threadbase/migrations/`
 
 ## Windows-specific notes
 

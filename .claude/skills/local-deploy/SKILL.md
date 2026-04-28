@@ -239,7 +239,7 @@ npm run deploy:windows:force
 
 Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/` to `~/.threadbase/releases/migrations/`** → activate (symlink swap on macOS/Linux, atomic file replace on Windows) → restart the service → healthcheck on `http://localhost:8766/healthz`.
 
-> The migrations copy is required because the CJS bundle resolves `__dirname` to the `releases/` directory at runtime. If the healthcheck fails with `ENOENT … releases/migrations`, the deploy script is missing this copy step.
+> **Migrations path differs by OS.** macOS/Linux: `cli.js` is a symlink → Node resolves `__dirname` to `releases/` → copy to `releases/migrations/`. Windows: `cli.js` is a real file at the install root → `__dirname` = `~/.threadbase/` → copy to `~/.threadbase/migrations/`. If the healthcheck fails with `ENOENT … migrations`, the deploy script is copying to the wrong location.
 
 ## Step 5 — Report
 
