@@ -7,8 +7,7 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "threadbase-streamer": "dist/cli.cjs",
-    "tb": "dist/cli.cjs"
+    "threadbase-streamer": "dist/cli.cjs"
   },
   "exports": {
     ".": {

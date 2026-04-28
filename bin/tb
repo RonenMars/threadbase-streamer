@@ -1,0 +1,21 @@
+#!/bin/sh
+# tb — Threadbase Streamer CLI launcher (macOS / Linux / Git Bash / WSL).
+# Requires `node` (>=18) on PATH. Override the bundle location with
+# THREADBASE_CLI if you don't deploy via scripts/deploy.sh.
+set -e
+
+CLI="${THREADBASE_CLI:-$HOME/.threadbase/cli.js}"
+
+if [ ! -e "$CLI" ]; then
+  echo "tb: CLI bundle not found at $CLI" >&2
+  echo "tb: deploy a release first (npm run deploy) or set THREADBASE_CLI." >&2
+  exit 1
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "tb: 'node' not found on PATH" >&2
+  echo "tb: install Node.js 18+ from https://nodejs.org or your package manager." >&2
+  exit 1
+fi
+
+exec node "$CLI" "$@"

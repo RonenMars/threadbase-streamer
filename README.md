@@ -128,6 +128,39 @@ If the mobile device can't reach `localhost`, point clients at a reachable addre
 
 `https://` is required (except for `localhost`).
 
+## Installing the `tb` command
+
+`tb` is a thin shim that runs the deployed CLI bundle (`~/.threadbase/cli.js`, maintained by `scripts/deploy.sh`). It is independent of any Node version manager and only needs `node` (>=18) on `PATH`.
+
+**macOS / Linux / WSL / Git Bash:**
+
+```bash
+scripts/install-tb.sh
+# Symlinks bin/tb -> ~/.local/bin/tb (override with TB_INSTALL_DIR=/some/dir)
+```
+
+If `~/.local/bin` isn't on your `PATH`, the installer prints the line to add to your shell rc.
+
+**Windows (PowerShell):**
+
+```powershell
+pwsh scripts/install-tb.ps1
+# Copies bin/tb*, tb.cmd, tb.ps1 to %USERPROFILE%\.threadbase\bin and adds it to user PATH.
+# Open a new terminal to pick up the PATH change.
+```
+
+**Verify:**
+
+```bash
+tb --version
+tb pair          # against a running server on default port 3456
+tb pair -p 8766  # different port
+```
+
+**Override the bundle location** with the `THREADBASE_CLI` env var (or `%THREADBASE_CLI%` on Windows) — useful for pointing at a dev build without redeploying.
+
+> **Lazy-nvm note:** if your shell wraps `node`/`npm` in a lazy nvm function (functions that source `~/.nvm/nvm.sh` on first call), `node` is *not* on `PATH` in fresh shells until you invoke it once. `tb` will fail with "node not found" in that state. Cheapest fix: run `node -v` once per session, or eager-load nvm (`nvm use default --silent` after defining the lazy wrappers).
+
 ## Development
 
 ```bash
