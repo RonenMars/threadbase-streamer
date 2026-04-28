@@ -79,7 +79,12 @@ describe("Pair endpoints", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: "pt_nope", clientPublicKey: "x" }),
       });
-      expect(res.status).not.toBe(401);
+      // Public endpoint: any 401 must come from the handler (e.g. unknown
+      // token), never from the auth gate. The gate's 401 carries error="Unauthorized".
+      if (res.status === 401) {
+        const body = (await res.json()) as { error?: string };
+        expect(body.error).not.toBe("Unauthorized");
+      }
     });
 
     it("rejects non-JSON content types", async () => {
