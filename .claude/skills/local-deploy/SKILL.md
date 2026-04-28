@@ -46,6 +46,8 @@ Get-ScheduledTask -TaskName 'Threadbase' -ErrorAction SilentlyContinue
 If everything is present → **update**, skip to Step 4.
 If any signal is missing → **fresh install**, do Step 3 first.
 
+**Stale plist check (macOS):** even if the plist file exists, check that its `ProgramArguments` entry references `~/.threadbase/cli.js` (not a hardcoded path like a dev workspace). If it doesn't, treat as fresh: run `launchctl bootout "gui/$(id -u)/com.ronen.threadbase"` first, rewrite the plist (Step 3c), then bootstrap. The deploy script's `kickstart` call will fail with "could not find service" if the service was booted out but never re-bootstrapped.
+
 ## Step 3 — Fresh-install bootstrap
 
 The shared head (do these on every platform):
@@ -222,7 +224,9 @@ npm run deploy:windows
 npm run deploy:windows:force
 ```
 
-Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → activate (symlink swap on macOS/Linux, atomic file replace on Windows) → restart the service → healthcheck on `http://localhost:8766/healthz`.
+Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/` to `~/.threadbase/releases/migrations/`** → activate (symlink swap on macOS/Linux, atomic file replace on Windows) → restart the service → healthcheck on `http://localhost:8766/healthz`.
+
+> The migrations copy is required because the CJS bundle resolves `__dirname` to the `releases/` directory at runtime. If the healthcheck fails with `ENOENT … releases/migrations`, the deploy script is missing this copy step.
 
 ## Step 5 — Report
 

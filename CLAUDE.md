@@ -37,6 +37,11 @@ Key modules and their responsibilities:
 - `ws` — WebSocket server
 - `commander` — CLI argument parsing
 
+## Build notes
+
+- **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and all other deps must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
+- **Migrations at deploy**: `scripts/deploy.sh` (and Linux/Windows equivalents) copies `dist/migrations/` alongside `dist/cli.cjs` into `~/.threadbase/releases/`. The CJS bundle resolves `__dirname` to the releases directory at runtime, so the SQL files must be co-located.
+
 ## Code Conventions
 
 - Conventional commits (`feat:`, `fix:`, `chore:`, etc.) and branch names (`feat/`, `fix/`, `chore/`)
