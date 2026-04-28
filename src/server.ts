@@ -800,7 +800,10 @@ export class StreamerServer {
   }
 
   private handleGetOutput(sessionId: string, res: ServerResponse): void {
-    // Discovered sessions (disc_*) have no PTY output — return empty
+    // Discovered sessions (disc_*) have no PTY output — return empty.
+    // Managed sessions whose PTY is not currently tracked (e.g. orphaned after a
+    // streamer restart) also have no recoverable buffer — return empty rather than
+    // 404 so clients render the session as "no buffered output" instead of an error.
     if (sessionId.startsWith("disc_")) {
       json(res, 200, { output: "" });
       return;
@@ -808,9 +811,8 @@ export class StreamerServer {
     try {
       const output = this.ptyManager.getOutput(sessionId);
       json(res, 200, { output });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to get output";
-      json(res, 404, { error: message });
+    } catch {
+      json(res, 200, { output: "" });
     }
   }
 

@@ -122,11 +122,13 @@ describe("StreamerServer", () => {
   });
 
   describe("GET /api/sessions/:id/output", () => {
-    it("returns 404 for nonexistent session", async () => {
+    it("returns empty output for an untracked session id", async () => {
       const res = await fetch(`${baseUrl}/api/sessions/nonexistent/output`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
-      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body).toEqual({ output: "" });
     });
   });
 
