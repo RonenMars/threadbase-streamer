@@ -1,10 +1,10 @@
 import { mkdir, readdir, realpath, stat } from "fs/promises";
-import { join, resolve } from "path";
+import { join, resolve, sep } from "path";
 
 export async function resolveBrowsePath(browseRoot: string, relativePath: string): Promise<string> {
   const normalizedRoot = resolve(browseRoot);
   const target = relativePath ? resolve(normalizedRoot, relativePath) : normalizedRoot;
-  if (!target.startsWith(normalizedRoot + "/") && target !== normalizedRoot) {
+  if (!target.startsWith(`${normalizedRoot}${sep}`) && target !== normalizedRoot) {
     throw new Error("Path outside browse root");
   }
   // Verify the path exists (throws if not)
