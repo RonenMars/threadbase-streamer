@@ -173,10 +173,19 @@ If the user wants the service to keep running after they log out, mention `login
 
 #### Windows — Task Scheduler "at logon"
 
+**Important:** Task Scheduler doesn't support native stdout/stderr redirection. The action must use `pwsh.exe` as the executor so PowerShell can redirect output to the log files that the deploy script's healthcheck reads (`%TEMP%\threadbase.log` / `%TEMP%\threadbase.err`).
+
 ```powershell
+$nodePath = (Get-Command node).Source
+$cliPath  = "$env:USERPROFILE\.threadbase\cli.js"
+$logOut   = "$env:TEMP\threadbase.log"
+$logErr   = "$env:TEMP\threadbase.err"
+$psArg    = "-NonInteractive -WindowStyle Hidden -Command `"& '$nodePath' '$cliPath' serve --port {PORT} --verbose >> '$logOut' 2>> '$logErr'`""
+
 $action = New-ScheduledTaskAction `
-  -Execute (Get-Command node).Source `
-  -Argument "`"$env:USERPROFILE\.threadbase\cli.js`" serve --port {PORT} --verbose"
+  -Execute "pwsh.exe" `
+  -Argument $psArg `
+  -WorkingDirectory "$env:USERPROFILE\.threadbase"
 $trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet `
   -RestartCount 3 `
@@ -186,14 +195,9 @@ $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
 
-# Add env vars (DB mode only) by composing a CIM XML attribute or by setting
-# them on the user PATH/USER env vars before invoking node. The simplest path
-# for the DB URI is a per-task XML attribute on the action; document this in
-# the bootstrap step.
-
 Register-ScheduledTask -TaskName 'Threadbase' `
   -Action $action -Trigger $trigger -Settings $settings -Principal $principal `
-  -Description 'Threadbase Streamer (managed by local-deploy skill)'
+  -Description 'Threadbase Streamer (managed by local-deploy skill)' -Force
 Start-ScheduledTask -TaskName 'Threadbase'
 ```
 
@@ -203,7 +207,16 @@ For DB mode, set `THREADBASE_DATABASE_URL` as a user environment variable so the
 [Environment]::SetEnvironmentVariable('THREADBASE_INSTANCE_ID', $env:COMPUTERNAME, 'User')
 ```
 
-Standard out/err go to files specified in the action's working directory; default to `%TEMP%\threadbase.log` and `%TEMP%\threadbase.err` (the deploy script's healthcheck reads from there).
+**Stale instance check (Windows):** Before starting the task, kill any node process already listening on port 8766 (old streamer version, previous deploy, etc.). Skipping this causes the new task to fail silently because the port is taken:
+```powershell
+$pid8766 = (netstat -ano | Select-String ':8766\s').ToString().Trim() -split '\s+' | Select-Object -Last 1
+if ($pid8766 -match '^\d+$') { Stop-Process -Id $pid8766 -Force -ErrorAction SilentlyContinue }
+```
+
+**Submodule SSH → HTTPS (Windows without SSH keys):** If `git submodule update --init` fails with "Permission denied (publickey)", redirect SSH URLs to HTTPS before the first deploy:
+```powershell
+git config --global url."https://github.com/".insteadOf "git@github.com:"
+```
 
 ## Step 4 — Run the deploy
 

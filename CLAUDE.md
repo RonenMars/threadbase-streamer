@@ -42,6 +42,14 @@ Key modules and their responsibilities:
 - **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and all other deps must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
 - **Migrations at deploy**: `scripts/deploy.sh` (and Linux/Windows equivalents) copies `dist/migrations/` alongside `dist/cli.cjs` into `~/.threadbase/releases/`. The CJS bundle resolves `__dirname` to the releases directory at runtime, so the SQL files must be co-located.
 
+## Windows-specific notes
+
+- **Path separators**: `path.resolve()` returns backslash-separated paths on Windows. Always use `path.sep` (not `"/"`) for path prefix guards. Same applies to any `startsWith` checks on resolved paths.
+- **File timestamps**: `fs.stat().birthtimeMs` reflects the real Windows creation time and is unaffected by `fs.utimes()`. Use `mtimeMs` for any timestamp matching that needs to survive cross-platform test assertions.
+- **Task Scheduler log redirection**: Task Scheduler has no native stdout/stderr redirection. The scheduled task action must use `pwsh.exe` as the executor and redirect inside the PowerShell command string (`>> logfile 2>> errfile`). Without this, `%TEMP%\threadbase.err` is never written and healthcheck failures are undiagnosable.
+- **Stale port 8766**: Before starting the task after a deploy, check for and kill any node process already bound to port 8766 (old streamer version, leftover dev process). The new task will fail silently if the port is taken.
+- **Submodule SSH → HTTPS**: Windows machines without SSH keys configured will fail `git submodule update --init` with "Permission denied (publickey)". Fix once: `git config --global url."https://github.com/".insteadOf "git@github.com:"`.
+
 ## Code Conventions
 
 - Conventional commits (`feat:`, `fix:`, `chore:`, etc.) and branch names (`feat/`, `fix/`, `chore/`)

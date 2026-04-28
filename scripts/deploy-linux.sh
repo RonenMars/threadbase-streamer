@@ -268,6 +268,8 @@ cmd_deploy() {
   log "stamping release: $rel_filename"
   cp dist/cli.cjs "$RELEASES_DIR/$rel_filename"
   chmod +x "$RELEASES_DIR/$rel_filename"
+  # Copy migrations alongside CLI so __dirname resolution works at runtime
+  [ -d dist/migrations ] && cp -r dist/migrations "$RELEASES_DIR/migrations"
 
   log "activating symlink"
   activate_release "$rel_path"
