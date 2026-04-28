@@ -43,7 +43,17 @@
     "deploy:update-scanner": "scripts/deploy.sh deploy --update-scanner",
     "deploy:rollback": "scripts/deploy.sh rollback",
     "deploy:status": "scripts/deploy.sh status",
-    "deploy:healthcheck": "scripts/deploy.sh healthcheck"
+    "deploy:healthcheck": "scripts/deploy.sh healthcheck",
+    "deploy:linux": "scripts/deploy-linux.sh deploy",
+    "deploy:linux:force": "scripts/deploy-linux.sh deploy --force",
+    "deploy:linux:rollback": "scripts/deploy-linux.sh rollback",
+    "deploy:linux:status": "scripts/deploy-linux.sh status",
+    "deploy:linux:healthcheck": "scripts/deploy-linux.sh healthcheck",
+    "deploy:windows": "pwsh scripts/deploy.ps1 deploy",
+    "deploy:windows:force": "pwsh scripts/deploy.ps1 deploy -Force",
+    "deploy:windows:rollback": "pwsh scripts/deploy.ps1 rollback",
+    "deploy:windows:status": "pwsh scripts/deploy.ps1 status",
+    "deploy:windows:healthcheck": "pwsh scripts/deploy.ps1 healthcheck"
   },
   "dependencies": {
     "@threadbase/scanner": "file:./vendor/scanner",
