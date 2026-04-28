@@ -100,6 +100,33 @@ src/
 | GET | `/api/conversations` | Paginated conversation history |
 | GET | `/api/conversations/:id` | Full conversation with messages |
 | GET | `/api/search?q=...` | Full-text search across conversations |
+| POST | `/api/pair/start` | Mint a short-lived pair token (authenticated) |
+| POST | `/api/pair/exchange` | Trade a pair token + client public key for a sealed API key (unauthenticated) |
+
+## Mobile Pairing (QR)
+
+Mobile clients pair by scanning a QR that encodes a `threadbase://pair?url=…&token=…&exp=…` URL. The token is single-use and expires after 180 seconds; the client then trades it (with its X25519 public key) at `/api/pair/exchange` for a sealed-box-encrypted API key, so the key never appears in the QR.
+
+A QR is printed automatically when the server starts:
+
+```bash
+node dist/cli.cjs serve
+```
+
+Skip it with `--no-pair-qr`. To re-print a fresh QR while a server is already running:
+
+```bash
+node dist/cli.cjs pair          # uses default port 3456
+node dist/cli.cjs pair -p 4000
+```
+
+If the mobile device can't reach `localhost`, point clients at a reachable address so the QR encodes it. In order of precedence:
+
+1. `--public-url <https-url>` flag on `serve`
+2. `THREADBASE_PUBLIC_URL` environment variable
+3. `public_url:` in `~/.threadbase/server.yaml`
+
+`https://` is required (except for `localhost`).
 
 ## Development
 
