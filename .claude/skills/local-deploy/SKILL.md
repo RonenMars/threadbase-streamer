@@ -52,13 +52,23 @@ If any signal is missing → **fresh install**, do Step 3 first.
 
 The shared head (do these on every platform):
 
-### 3a. Ask DB vs memory (use `AskUserQuestion`)
+### 3a. Ensure npm deps are installed
+
+Before anything else, confirm `node_modules` is present and up to date. A fresh clone or a repo where new packages were added since last install will fail the lint/build step with "Cannot find module" errors:
+
+```bash
+npm install
+```
+
+On Windows the `postinstall` script patches `qrcode-terminal` and sets permissions on the `node-pty` prebuild — this must complete successfully before the deploy can proceed.
+
+### 3b. Ask DB vs memory (use `AskUserQuestion`)
 
 Two options:
 - **postgres** — managed sessions survive restarts; requires a `postgresql://…` URI (Neon, RDS, local Docker). Ask for the connection string as a follow-up.
 - **memory** — sessions held in memory only, lost on restart. Zero config.
 
-### 3b. Generate an API key if missing
+### 3c. Generate an API key if missing
 
 ```bash
 mkdir -p "$HOME/.threadbase"
@@ -90,7 +100,7 @@ api_key: tb_…
 browse_root: /path/to/your/projects
 ```
 
-### 3c. Write the platform service definition
+### 3d. Write the platform service definition
 
 #### macOS — launchd plist
 
@@ -201,11 +211,21 @@ Register-ScheduledTask -TaskName 'Threadbase' `
 Start-ScheduledTask -TaskName 'Threadbase'
 ```
 
-For DB mode, set `THREADBASE_DATABASE_URL` as a user environment variable so the task inherits it:
+For DB mode, persist the connection string at User scope in the registry, then **read it back and inline it directly in `$psArg`**. Do not rely on env var inheritance: tasks started via `Start-ScheduledTask` within the same terminal session that called `SetEnvironmentVariable` will NOT pick up the new var — the user session's environment block is frozen at logon and the registry write doesn't update live processes.
+
 ```powershell
+# Persist to registry (survives reboots, future sessions)
 [Environment]::SetEnvironmentVariable('THREADBASE_DATABASE_URL', 'postgresql://…', 'User')
 [Environment]::SetEnvironmentVariable('THREADBASE_INSTANCE_ID', $env:COMPUTERNAME, 'User')
+
+# Read back from registry and inline into the task action
+$dbUrl  = [Environment]::GetEnvironmentVariable('THREADBASE_DATABASE_URL', 'User')
+$instId = [Environment]::GetEnvironmentVariable('THREADBASE_INSTANCE_ID', 'User')
+
+$psArg = "-NonInteractive -WindowStyle Hidden -Command `"`$env:THREADBASE_DATABASE_URL='$dbUrl'; `$env:THREADBASE_INSTANCE_ID='$instId'; & '$nodePath' '$cliPath' serve --port {PORT} --verbose >> '$logOut' 2>> '$logErr'`""
 ```
+
+When diagnosing DB connectivity failures: if `%TEMP%\threadbase.err` shows `EACCES` on port 5432 (not ECONNREFUSED), the env var is missing from the task action — the server starts but crashes when it can't find the DB URI. Test reachability first with `Test-NetConnection -ComputerName <host> -Port 5432`; if that succeeds, the issue is the missing env var, not a firewall.
 
 **Stale instance check (Windows):** Before starting the task, kill any node process already listening on port 8766 (old streamer version, previous deploy, etc.). Skipping this causes the new task to fail silently because the port is taken:
 ```powershell
@@ -237,7 +257,11 @@ npm run deploy:windows
 npm run deploy:windows:force
 ```
 
-Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/` to `~/.threadbase/releases/migrations/`** → activate (symlink swap on macOS/Linux, atomic file replace on Windows) → restart the service → healthcheck on `http://localhost:8766/healthz`.
+Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/`** → activate → restart the service → healthcheck on `http://localhost:8766/healthz`.
+
+The migrations destination differs by platform because Node resolves `__dirname` from the *real* file location (not symlink source):
+- **macOS/Linux**: `cli.js` is a symlink → `__dirname` = `releases/` → copy to `~/.threadbase/releases/migrations/`
+- **Windows**: `cli.js` is a real file copy at install root → `__dirname` = `~/.threadbase/` → copy to `~/.threadbase/migrations/`
 
 > **Migrations path differs by OS.** macOS/Linux: `cli.js` is a symlink → Node resolves `__dirname` to `releases/` → copy to `releases/migrations/`. Windows: `cli.js` is a real file at the install root → `__dirname` = `~/.threadbase/` → copy to `~/.threadbase/migrations/`. If the healthcheck fails with `ENOENT … migrations`, the deploy script is copying to the wrong location.
 
