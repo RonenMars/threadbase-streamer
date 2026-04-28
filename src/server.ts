@@ -16,16 +16,16 @@ import { homedir } from "os";
 import { join } from "path";
 import { WebSocketServer } from "ws";
 import { loadBrowseRoot, loadPublicUrl, validateApiKey, validatePublicUrl } from "./auth";
-import { PairTokenStore } from "./pair-store";
-import { seal } from "./seal";
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { PgSessionPersistence } from "./db/pg-session-persistence";
 import { recordUpload } from "./db/upload-records";
 import { FileWatcher } from "./file-watcher";
+import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
 import { reconcileOrphanedSessions } from "./reconcile";
+import { seal } from "./seal";
 import { SessionStore } from "./session-store";
 import type { ServerConfig } from "./types";
 import { saveUploadFile } from "./uploads";
@@ -222,7 +222,10 @@ export class StreamerServer {
 
     // /api/pair/exchange is intentionally unauthenticated — it's the bootstrap
     // endpoint where mobile clients trade a short-lived pair token for the api key.
-    const isPublicRoute = method === "POST" && path === "/api/pair/exchange";
+    // /healthz is unauthenticated so deploy scripts can probe liveness without the API key.
+    const isPublicRoute =
+      (method === "POST" && path === "/api/pair/exchange") ||
+      (method === "GET" && path === "/healthz");
     if (!isPublicRoute && !this.authenticate(req)) {
       json(res, 401, { error: "Unauthorized" });
       return;
@@ -230,6 +233,8 @@ export class StreamerServer {
 
     try {
       // Static routes
+      if (method === "GET" && path === "/healthz")
+        return json(res, 200, { ok: true, version: __VERSION__ });
       if (method === "GET" && path === "/api/info") return this.handleInfo(res);
       if (method === "GET" && path === "/api/profiles") return json(res, 200, []);
       if (method === "POST" && path === "/api/push/register") return json(res, 200, { ok: true });
@@ -242,8 +247,7 @@ export class StreamerServer {
         return await this.handleConversationsCount(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
       if (method === "GET" && path === "/api/sessions") return this.handleListSessions(res);
-      if (method === "GET" && path === "/api/sessions/count")
-        return this.handleSessionsCount(res);
+      if (method === "GET" && path === "/api/sessions/count") return this.handleSessionsCount(res);
       if (method === "POST" && path === "/api/sessions/resume")
         return await this.handleResume(req, res);
       if (method === "GET" && path === "/api/browse") return await this.handleBrowse(url, res);
@@ -304,7 +308,7 @@ export class StreamerServer {
   private handleInfo(res: ServerResponse): void {
     const { hostname } = require("os");
     json(res, 200, {
-      version: "0.1.0",
+      version: __VERSION__,
       machineName: hostname(),
       platform: process.platform,
       activeSessions: this.sessionStore.list().filter((s: any) => s.status === "running").length,
@@ -356,7 +360,7 @@ export class StreamerServer {
       return;
     }
 
-    let sealed;
+    let sealed: ReturnType<typeof seal>;
     try {
       sealed = seal(this.apiKey, clientPublicKey);
     } catch (err) {
@@ -767,7 +771,11 @@ export class StreamerServer {
 
     const body = await readBody(req);
     const { filename, mimeType, dataBase64 } = body ?? {};
-    if (typeof filename !== "string" || typeof mimeType !== "string" || typeof dataBase64 !== "string") {
+    if (
+      typeof filename !== "string" ||
+      typeof mimeType !== "string" ||
+      typeof dataBase64 !== "string"
+    ) {
       json(res, 400, { error: "Missing filename, mimeType, or dataBase64" });
       return;
     }

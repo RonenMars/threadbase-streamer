@@ -49,7 +49,8 @@ export async function saveUploadFile(input: SaveUploadInput): Promise<SavedUploa
   if (buffer.length > MAX_BYTES) throw new Error(`File exceeds ${MAX_BYTES} bytes`);
 
   const id = `up_${randomBytes(8).toString("hex")}`;
-  const safeName = sanitizeFilename(input.originalName) || `image${MIME_TO_EXT[input.mimeType] ?? ""}`;
+  const safeName =
+    sanitizeFilename(input.originalName) || `image${MIME_TO_EXT[input.mimeType] ?? ""}`;
   const dir = join(input.projectPath, UPLOAD_DIR_NAME, input.sessionId);
   await mkdir(dir, { recursive: true });
 

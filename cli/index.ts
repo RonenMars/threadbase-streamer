@@ -10,7 +10,7 @@ const program = new Command();
 program
   .name("threadbase-streamer")
   .description("PTY session management, WebSocket streaming, and REST API server for Claude Code")
-  .version("0.1.0");
+  .version(__VERSION__);
 
 program
   .command("serve")
@@ -41,7 +41,7 @@ program
 
     await server.listen(port);
 
-    console.log(`\nThreadbase Streamer v0.1.0`);
+    console.log(`\nThreadbase Streamer v${__VERSION__}`);
     console.log(`Listening on http://localhost:${port}`);
     console.log(`WebSocket at ws://localhost:${port}/ws`);
     console.log(`API key: ${apiKey}\n`);
@@ -109,7 +109,5 @@ async function printPairQR({
   qrcode.generate(payload, { small: true });
   console.log(`Server URL : ${url}`);
   console.log(`Pair URL   : ${payload}`);
-  console.log(
-    `Expires    : ${new Date(expiresAt).toLocaleTimeString()} (${expiresInSeconds}s)\n`,
-  );
+  console.log(`Expires    : ${new Date(expiresAt).toLocaleTimeString()} (${expiresInSeconds}s)\n`);
 }

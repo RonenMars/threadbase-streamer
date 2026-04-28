@@ -105,7 +105,7 @@ describe("API E2E tests", () => {
     it("returns valid server info", async () => {
       const { status, body } = await get(baseUrl, "/api/info", headers);
       expect(status).toBe(200);
-      expect(body.version).toBe("0.1.0");
+      expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
       expect(typeof body.machineName).toBe("string");
       expect(typeof body.platform).toBe("string");
       expect(typeof body.activeSessions).toBe("number");
