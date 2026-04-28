@@ -228,8 +228,12 @@ export class StreamerServer {
         return await this.handlePairExchange(req, res);
       if (method === "GET" && path === "/api/conversations")
         return await this.handleListConversations(url, res);
+      if (method === "GET" && path === "/api/conversations/count")
+        return await this.handleConversationsCount(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
       if (method === "GET" && path === "/api/sessions") return this.handleListSessions(res);
+      if (method === "GET" && path === "/api/sessions/count")
+        return this.handleSessionsCount(res);
       if (method === "POST" && path === "/api/sessions/resume")
         return await this.handleResume(req, res);
       if (method === "GET" && path === "/api/browse") return await this.handleBrowse(url, res);
@@ -429,6 +433,25 @@ export class StreamerServer {
       offset,
       total,
     });
+  }
+
+  private async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
+    const project = url.searchParams.get("project") ?? undefined;
+    if (url.searchParams.get("refresh") === "1") {
+      this.scanner = null;
+      this.scannerReady = null;
+    }
+    const scanner = await this.getScanner();
+    let metas = [...scanner.getMetadataCache().values()];
+    metas = applyIncludeFilter(metas, "conversations");
+    if (project) {
+      metas = applyProjectFilter(metas, project);
+    }
+    json(res, 200, { total: metas.length });
+  }
+
+  private handleSessionsCount(res: ServerResponse): void {
+    json(res, 200, { total: this.sessionStore.list().length });
   }
 
   private async getScanner(): Promise<ConversationScanner> {
