@@ -81,6 +81,13 @@ if (-not (Test-Path $cfg)) {
 
 Confirm a port with the user (default `8766`). Use `command -v node` (POSIX) or `(Get-Command node).Source` (PowerShell) to resolve the absolute node binary.
 
+The deploy script (Step 4) will interactively prompt for `browse_root` if it is not set. To configure it upfront, add it to `server.yaml` now:
+
+```yaml
+api_key: tb_…
+browse_root: /path/to/your/projects
+```
+
 ### 3c. Write the platform service definition
 
 #### macOS — launchd plist
@@ -215,7 +222,7 @@ npm run deploy:windows
 npm run deploy:windows:force
 ```
 
-Each script does the same shape: predeploy check → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → activate (symlink swap on macOS/Linux, atomic file replace on Windows) → restart the service → healthcheck on `http://localhost:8766/healthz`.
+Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → activate (symlink swap on macOS/Linux, atomic file replace on Windows) → restart the service → healthcheck on `http://localhost:8766/healthz`.
 
 ## Step 5 — Report
 

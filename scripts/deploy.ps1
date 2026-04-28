@@ -242,8 +242,55 @@ function Invoke-Rollback {
   Invoke-Healthcheck
 }
 
+function Invoke-CheckBrowseRoot {
+  $yaml = Join-Path $installDir 'server.yaml'
+  $current = $null
+
+  if (Test-Path $yaml) {
+    $line = Get-Content $yaml | Where-Object { $_ -match '^browse_root:\s*\S' } | Select-Object -First 1
+    if ($line) { $current = ($line -replace '^browse_root:\s*', '').Trim() }
+  }
+
+  if ($current -and (Test-Path $current -PathType Container)) { return }
+
+  if ($current) {
+    Write-Warn "browse_root is configured but the directory does not exist: $current"
+  } else {
+    Write-Log "browse_root is not set in $yaml"
+    Write-Host "  The browse root lets the mobile app navigate your filesystem."
+    Write-Host "  Set it to any directory you want to expose (e.g. C:\Users\you\dev)."
+  }
+
+  do {
+    $raw   = (Read-Host "  Enter browse root path").Trim()
+    $input = $raw -replace '^~', $env:USERPROFILE
+    if (-not $input) { Write-Warn "Path cannot be empty."; continue }
+    if (-not (Test-Path $input -PathType Container)) {
+      Write-Warn "Directory does not exist: $input"
+      $yn = (Read-Host "  Create it? [y/N]").Trim()
+      if ($yn -notin @('y', 'Y')) { continue }
+      New-Item -ItemType Directory -Path $input -Force | Out-Null
+    }
+    break
+  } while ($true)
+
+  if (-not (Test-Path $yaml)) {
+    Set-Content -Path $yaml -Value "browse_root: $input" -Encoding Ascii
+  } elseif (Get-Content $yaml | Where-Object { $_ -match '^browse_root:' }) {
+    $lines = (Get-Content $yaml) | ForEach-Object {
+      if ($_ -match '^browse_root:') { "browse_root: $input" } else { $_ }
+    }
+    Set-Content -Path $yaml -Value $lines -Encoding Ascii
+  } else {
+    Add-Content -Path $yaml -Value "browse_root: $input" -Encoding Ascii
+  }
+  Write-Ok "browse_root set to: $input"
+}
+
 function Invoke-Deploy {
   Invoke-PredeployCheck
+  Invoke-CheckBrowseRoot
+
   Ensure-ScannerBuilt -UpdateRemote:$UpdateScanner
 
   Push-Location $repoRoot

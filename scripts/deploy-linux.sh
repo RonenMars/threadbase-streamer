@@ -70,6 +70,63 @@ ensure_scanner_built() {
   fi
 }
 
+cmd_check_browse_root() {
+  local yaml="$INSTALL_DIR/server.yaml"
+  local current=""
+
+  if [[ -f "$yaml" ]]; then
+    current="$(grep -E '^browse_root:' "$yaml" | sed 's/^browse_root:[[:space:]]*//' | sed 's/[[:space:]]*$//' | head -1)"
+  fi
+
+  if [[ -n "$current" ]] && [[ -d "$current" ]]; then
+    return 0
+  fi
+
+  if [[ -n "$current" ]]; then
+    warn "browse_root is configured but the directory does not exist: $current"
+  else
+    log "browse_root is not set in $yaml"
+    printf '  The browse root lets the mobile app navigate your filesystem.\n'
+    printf '  Set it to any directory you want to expose (e.g. ~/dev).\n'
+  fi
+
+  if [[ ! -t 0 ]]; then
+    err "No interactive terminal. Add 'browse_root: /your/path' to $yaml and re-run."
+    exit 1
+  fi
+
+  local input
+  while true; do
+    printf '  Enter browse root path: '
+    read -r input
+    input="${input/#\~/$HOME}"
+    [[ -z "$input" ]] && { warn "Path cannot be empty."; continue; }
+    if [[ ! -d "$input" ]]; then
+      warn "Directory does not exist: $input"
+      printf '  Create it? [y/N] '
+      local yn; read -r yn
+      [[ "${yn,,}" != "y" ]] && continue
+      mkdir -p "$input"
+    fi
+    break
+  done
+
+  local tmp
+  tmp="$(mktemp)"
+  if [[ -f "$yaml" ]] && grep -q '^browse_root:' "$yaml"; then
+    awk -v root="$input" '/^browse_root:/ {print "browse_root: " root; next} {print}' "$yaml" > "$tmp"
+    mv "$tmp" "$yaml"
+  elif [[ -f "$yaml" ]]; then
+    printf 'browse_root: %s\n' "$input" >> "$yaml"
+    rm -f "$tmp"
+  else
+    printf 'browse_root: %s\n' "$input" > "$yaml"
+    chmod 600 "$yaml"
+    rm -f "$tmp"
+  fi
+  ok "browse_root set to: $input"
+}
+
 cmd_predeploy_check() {
   local force="${1:-}"
   cd "$REPO_ROOT"
@@ -185,6 +242,8 @@ cmd_deploy() {
   done
 
   cmd_predeploy_check "$force"
+  cmd_check_browse_root
+
   ensure_scanner_built "$update_scanner"
 
   cd "$REPO_ROOT"
