@@ -84,7 +84,7 @@ export async function findConversationIdForSession(
     let fileMs: number;
     try {
       const s = await stat(join(dir, name));
-      fileMs = s.birthtimeMs || s.ctimeMs || s.mtimeMs;
+      fileMs = s.mtimeMs;
     } catch {
       continue;
     }
