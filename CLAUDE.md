@@ -44,6 +44,20 @@ Key modules and their responsibilities:
   - macOS/Linux: symlink makes `__dirname` = `~/.threadbase/releases/` → copy to `~/.threadbase/releases/migrations/`
   - Windows: `cli.js` is a real copy at `~/.threadbase/` so `__dirname` = `~/.threadbase/` → copy to `~/.threadbase/migrations/`
 
+## Cloudflare Tunnel
+
+The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running as a Windows service). The active mapping is `https://tb-pc.rbv1000.win` → `http://127.0.0.1:8766`. Set `public_url: https://tb-pc.rbv1000.win` in `~/.threadbase/server.yaml` so the pairing QR code embeds the correct URL.
+
+**Cloudflare Access behaviour:** the tunnel hostname is protected by Cloudflare Access. Requests without an `Authorization` header receive `401 Unauthorized` from the CF edge — including unauthenticated probes of `/healthz`. Requests that carry `Authorization: Bearer <api_key>` pass through to the origin. This means:
+- Deploy-script healthchecks (which hit `http://localhost:8766/healthz` directly) are unaffected.
+- External clients must always include the Bearer token — there is no anonymous access through the public URL, even for `/healthz`.
+- `Test-NetConnection` and browser probes will be blocked by CF Access; use `Invoke-RestMethod` with the Bearer header to test the public URL.
+
+**cloudflared config files:**
+- `~/.cloudflared/config.yml` — user-level config (read when running `cloudflared` manually)
+- `~/.cloudflared/config-system.yml` — used by the Windows service (runs under SYSTEM); this is the one that matters for the always-on tunnel
+- Both must be kept in sync. After editing either file, restart the service: `Restart-Service cloudflared`
+
 ## Windows-specific notes
 
 - **`npm install` before first deploy**: A fresh clone (or a branch that added new packages) will fail lint/build with "Cannot find module" if `node_modules` is missing or stale. Run `npm install` before the first `npm run deploy:windows`. The `postinstall` script also patches `qrcode-terminal` and sets permissions on the `node-pty` prebuild.

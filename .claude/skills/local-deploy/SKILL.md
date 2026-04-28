@@ -265,6 +265,29 @@ The migrations destination differs by platform because Node resolves `__dirname`
 
 > **Migrations path differs by OS.** macOS/Linux: `cli.js` is a symlink → Node resolves `__dirname` to `releases/` → copy to `releases/migrations/`. Windows: `cli.js` is a real file at the install root → `__dirname` = `~/.threadbase/` → copy to `~/.threadbase/migrations/`. If the healthcheck fails with `ENOENT … migrations`, the deploy script is copying to the wrong location.
 
+## Cloudflare Tunnel (Windows)
+
+The Windows install uses a `cloudflared` Windows service with two config files that must be kept in sync:
+- `~/.cloudflared/config.yml` — used when running `cloudflared` manually
+- `~/.cloudflared/config-system.yml` — used by the Windows service (SYSTEM account); this is the active one
+
+The active public hostname is **`https://tb-pc.rbv1000.win`** → `http://127.0.0.1:8766`.
+
+After verifying the tunnel works, add `public_url` to `~/.threadbase/server.yaml` so the pairing QR code embeds the correct URL:
+```yaml
+api_key: tb_…
+browse_root: C:\…
+public_url: https://tb-pc.rbv1000.win
+```
+Then restart the Threadbase task to pick it up.
+
+**Cloudflare Access nuance:** the hostname is behind Cloudflare Access. Any request without an `Authorization` header gets `401 Unauthorized` from the CF edge — including `/healthz`. Requests with `Authorization: Bearer <api_key>` pass through to the origin. Practical consequences:
+- The deploy-script healthcheck hits `http://localhost:8766/healthz` directly and is not affected.
+- To verify the public URL manually, always include the Bearer header: `Invoke-RestMethod -Uri https://tb-pc.rbv1000.win/api/info -Headers @{Authorization="Bearer <key>"}`
+- Browser and `Test-NetConnection` probes will be blocked at the CF edge; that is expected and correct.
+
+To apply config changes: edit **both** config files, then `Restart-Service cloudflared`.
+
 ## Step 5 — Report
 
 Run the matching `:status` script and summarize:
