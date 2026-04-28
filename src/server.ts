@@ -469,10 +469,13 @@ export class StreamerServer {
   }
 
   private async getScanner(): Promise<ConversationScanner> {
-    if (this.scanner) return this.scanner;
+    // `this.scanner` is non-null as soon as construction starts, but the cache
+    // isn't populated until `scan()` resolves. Always await `scannerReady` so
+    // concurrent callers (e.g. the warmup in listen() racing with the first
+    // request) don't read an empty metadata cache.
     if (this.scannerReady) {
       await this.scannerReady;
-      if (this.scanner) return this.scanner;
+      return this.scanner as ConversationScanner;
     }
     this.scanner = new ConversationScanner();
     this.scannerReady = this.scanner.scan(this.scanProfiles ? { profiles: this.scanProfiles } : {});

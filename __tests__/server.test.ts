@@ -1,5 +1,16 @@
 import { createServer } from "http";
+import { join } from "path";
 import { StreamerServer } from "../src/server";
+
+const FIXTURE_PROFILES = [
+  {
+    id: "test",
+    label: "Test",
+    configDir: join(__dirname, "../vendor/scanner/__fixtures__/contract-projects"),
+    enabled: true,
+    emoji: "🧪",
+  },
+];
 
 // Use a random available port for each test
 async function getRandomPort(): Promise<number> {
@@ -28,6 +39,7 @@ describe("StreamerServer", () => {
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
+      scanProfiles: FIXTURE_PROFILES,
     });
     await server.listen(port);
   });
@@ -204,6 +216,7 @@ describe("StreamerServer", () => {
         apiKey: API_KEY,
         localNoAuth: true,
         verbose: false,
+        scanProfiles: FIXTURE_PROFILES,
       });
       await localServer.listen(localPort);
     });
