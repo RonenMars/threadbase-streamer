@@ -37,7 +37,13 @@
     "update-schema": "tsx scripts/update-schema.ts",
     "update-schema:mobile": "tsx scripts/update-schema.ts --mobile",
     "update-schema:desktop": "tsx scripts/update-schema.ts --desktop",
-    "update-schema:shared": "tsx scripts/update-schema.ts --shared"
+    "update-schema:shared": "tsx scripts/update-schema.ts --shared",
+    "deploy": "scripts/deploy.sh deploy",
+    "deploy:force": "scripts/deploy.sh deploy --force",
+    "deploy:update-scanner": "scripts/deploy.sh deploy --update-scanner",
+    "deploy:rollback": "scripts/deploy.sh rollback",
+    "deploy:status": "scripts/deploy.sh status",
+    "deploy:healthcheck": "scripts/deploy.sh healthcheck"
   },
   "dependencies": {
     "@threadbase/scanner": "file:./vendor/scanner",
