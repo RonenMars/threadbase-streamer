@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Known deploy/runtime issues and their fixes: [docs/troubleshooting.md](docs/troubleshooting.md)
+
 ## Project
 
 `@threadbase/streamer` — PTY session management, WebSocket streaming, and REST API server for Claude Code conversations. TypeScript library + CLI that manages live Claude sessions via `node-pty`, broadcasts terminal output over WebSocket, and serves a REST API. Replaces the Go CLI's `cch serve` command.
