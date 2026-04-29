@@ -81,3 +81,7 @@ The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running 
 ## Testing
 
 Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP server on random ports. Run the full verification before committing: `npm run lint && npm test`
+
+## Contributing to docs
+
+If you hit an undocumented issue during setup, deploy, or runtime — ask the user: "This doesn't seem to be covered in `docs/troubleshooting.md`. Would you like me to add it?" Then add a new section following the existing format (symptom → cause → fix) and commit it alongside any code fix.
