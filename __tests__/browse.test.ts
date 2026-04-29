@@ -32,6 +32,16 @@ describe("resolveBrowsePath", () => {
     expect(resolved).toBe(join(TEST_ROOT, "projectA", "src"));
   });
 
+  it("strips a leading slash so the path is relative to browseRoot", async () => {
+    const resolved = await resolveBrowsePath(TEST_ROOT, "/projectA");
+    expect(resolved).toBe(join(TEST_ROOT, "projectA"));
+  });
+
+  it("strips a leading backslash so the path is relative to browseRoot", async () => {
+    const resolved = await resolveBrowsePath(TEST_ROOT, "\\projectA");
+    expect(resolved).toBe(join(TEST_ROOT, "projectA"));
+  });
+
   it("rejects path traversal with ../", async () => {
     await expect(resolveBrowsePath(TEST_ROOT, "../")).rejects.toThrow("outside browse root");
   });

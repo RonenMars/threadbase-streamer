@@ -23,7 +23,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsup && cp -r src/db/migrations dist/",
+    "build": "tsup && node -e \"const{cpSync}=require('fs');cpSync('src/db/migrations','dist/migrations',{recursive:true})\"",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -150,6 +150,20 @@ describe("reconcileOrphanedSessions", () => {
     expect(found).toBeNull();
   });
 
+  it("encodes Windows-style paths ('\\' and ':' in addition to '/' and '.') as '-'", async () => {
+    const startedAt = new Date("2026-04-25T08:00:00Z");
+    const projectPath = "C:\\Users\\PC\\Desktop\\dev";
+    const encodedDir = join(projectsRoot, "C--Users-PC-Desktop-dev");
+    await mkdir(encodedDir, { recursive: true });
+    const uuid = "deadbeef-1111-2222-3333-444444444444";
+    const file = join(encodedDir, `${uuid}.jsonl`);
+    await writeFile(file, "{}\n");
+    await utimes(file, startedAt, startedAt);
+
+    const found = await findConversationIdForSession({ projectPath, startedAt }, projectsRoot);
+    expect(found).toBe(uuid);
+  });
+
   it("encodes both '/' and '.' as '-' when locating the project dir", async () => {
     const startedAt = new Date("2026-04-25T08:00:00Z");
     // Project path with an embedded "." segment, like a worktree.

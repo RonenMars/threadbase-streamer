@@ -1,6 +1,6 @@
 import { execFileSync } from "child_process";
 import { platform } from "os";
-import { basename } from "path";
+import { basename, dirname } from "path";
 import type { DiscoveredProcess } from "./types";
 
 export function discoverClaudeProcesses(): DiscoveredProcess[] {
@@ -137,7 +137,11 @@ function getProcessInfoWindows(pid: number): { cwd: string; args: string; starte
       ],
       { encoding: "utf-8", timeout: 5000 },
     );
-    const lines = output.trim().split("\n").filter(Boolean);
+    // wmic uses CRLF; split on \r?\n so the blank separator line becomes "" and is filtered out.
+    const lines = output
+      .trim()
+      .split(/\r?\n/)
+      .filter((l) => l.trim().length > 0);
     if (lines.length < 2) return null;
 
     const parts = lines[1].split(",");
@@ -152,10 +156,11 @@ function getProcessInfoWindows(pid: number): { cwd: string; args: string; starte
     const min = creationDate.slice(10, 12);
     const sec = creationDate.slice(12, 14);
     const startedAt = new Date(`${year}-${month}-${day}T${hour}:${min}:${sec}`);
+    if (Number.isNaN(startedAt.getTime())) return null;
 
-    // CWD is not directly available via wmic; use the executable path's directory as fallback
+    // CWD is not directly available via wmic; use the executable path's parent directory as fallback
     const exePath = parts[3] ?? "";
-    const cwd = exePath ? basename(exePath) : "";
+    const cwd = exePath ? dirname(exePath) : "";
 
     return { cwd, args, startedAt };
   } catch {

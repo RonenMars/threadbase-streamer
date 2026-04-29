@@ -65,7 +65,9 @@ export async function findConversationIdForSession(
   session: Pick<ManagedSession, "projectPath" | "startedAt">,
   claudeProjectsRoot: string,
 ): Promise<string | null> {
-  const encoded = session.projectPath.replace(/[/.]/g, "-");
+  // Claude encodes the project path by replacing /, \, :, and . with "-".
+  // On Windows paths (e.g. C:\Users\PC\Desktop\dev) this gives C--Users-PC-Desktop-dev.
+  const encoded = session.projectPath.replace(/[/\\:.]/g, "-");
   const dir = join(claudeProjectsRoot, encoded);
 
   let entries: string[];
