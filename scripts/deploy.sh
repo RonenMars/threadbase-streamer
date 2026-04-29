@@ -5,6 +5,7 @@
 #   scripts/deploy.sh                   # build + deploy current HEAD (uses pinned scanner submodule)
 #   scripts/deploy.sh --force           # deploy even if working tree is dirty / not on main
 #   scripts/deploy.sh --update-scanner  # bump vendor/scanner to its remote main, then deploy
+#   scripts/deploy.sh setup             # first-time: write launchd plist + ask about auto-startup
 #   scripts/deploy.sh rollback          # repoint cli.js to the previous release
 #   scripts/deploy.sh status            # show current release, PID, and recent releases
 #   scripts/deploy.sh healthcheck       # probe /healthz on the running server
@@ -150,7 +151,62 @@ cmd_predeploy_check() {
   fi
 }
 
+cmd_setup() {
+  local plist_path="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+  local logs_dir="$INSTALL_DIR/logs"
+  local node_bin
+  node_bin="$(command -v node)" || { err "node not found in PATH"; exit 1; }
+
+  mkdir -p "$logs_dir" "$(dirname "$plist_path")"
+
+  local run_at_load="true"
+  if [[ -t 0 ]]; then
+    printf '\n  Launch server automatically at login? [Y/n] '
+    local yn; read -r yn
+    [[ "${yn,,}" == "n" ]] && run_at_load="false"
+  fi
+
+  log "writing launchd plist → $plist_path"
+  cat > "$plist_path" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LAUNCHD_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$node_bin</string>
+    <string>$ACTIVE_LINK</string>
+    <string>serve</string>
+  </array>
+  <key>RunAtLoad</key>
+  <$run_at_load/>
+  <key>KeepAlive</key>
+  <$run_at_load/>
+  <key>StandardOutPath</key>
+  <string>$logs_dir/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>$logs_dir/stderr.log</string>
+</dict>
+</plist>
+PLIST
+
+  launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$plist_path"
+
+  if [[ "$run_at_load" == "true" ]]; then
+    ok "auto-startup at login: enabled"
+  else
+    ok "auto-startup at login: disabled — run 'launchctl start $LAUNCHD_LABEL' to start manually"
+  fi
+}
+
 cmd_kickstart() {
+  if ! launchctl list "$LAUNCHD_LABEL" >/dev/null 2>&1; then
+    warn "$LAUNCHD_LABEL not loaded — run 'scripts/deploy.sh setup' to initialize the service"
+    return 0
+  fi
   launchctl kickstart -k "gui/$(id -u)/$LAUNCHD_LABEL"
 }
 
@@ -283,6 +339,11 @@ cmd_deploy() {
   log "activating symlink"
   activate_release "$rel_path"
 
+  if ! launchctl list "$LAUNCHD_LABEL" >/dev/null 2>&1; then
+    log "service not registered — running first-time setup"
+    cmd_setup
+  fi
+
   log "kickstarting $LAUNCHD_LABEL"
   cmd_kickstart
 
@@ -295,6 +356,7 @@ cmd_deploy() {
 }
 
 case "${1:-deploy}" in
+  setup)  cmd_setup ;;
   deploy)
     shift
     cmd_deploy "$@"

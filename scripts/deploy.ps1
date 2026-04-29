@@ -21,7 +21,7 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
   [Parameter(Position = 0)]
-  [ValidateSet('deploy', 'rollback', 'status', 'healthcheck', '')]
+  [ValidateSet('deploy', 'setup', 'rollback', 'status', 'healthcheck', '')]
   [string]$Command = 'deploy',
 
   [switch]$Force,
@@ -128,10 +128,36 @@ function Invoke-PredeployCheck {
   }
 }
 
+function Invoke-Setup {
+  $logsDir = Join-Path $installDir 'logs'
+  New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
+
+  $nodeBin = (Get-Command node -ErrorAction SilentlyContinue)?.Source
+  if (-not $nodeBin) { Write-Err "node not found in PATH"; exit 1 }
+
+  $enableAutostart = $true
+  if (-not [Console]::IsInputRedirected) {
+    $response = (Read-Host "`n  Launch server automatically at login? [Y/n]").Trim()
+    if ($response -in @('n', 'N')) { $enableAutostart = $false }
+  }
+
+  $action   = New-ScheduledTaskAction -Execute $nodeBin -Argument "`"$activeFile`" serve" -WorkingDirectory $installDir
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)
+
+  if ($enableAutostart) {
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null
+    Write-Ok "auto-startup at login: enabled"
+  } else {
+    Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings -RunLevel Limited -Force | Out-Null
+    Write-Ok "auto-startup at login: disabled — run 'Start-ScheduledTask -TaskName $taskName' to start manually"
+  }
+}
+
 function Invoke-Kickstart {
   $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   if (-not $task) {
-    Write-Warn "scheduled task '$taskName' not found; the local-deploy skill installs it on fresh setup"
+    Write-Warn "scheduled task '$taskName' not found — run 'pwsh scripts/deploy.ps1 setup' to initialize"
     return
   }
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -328,6 +354,12 @@ function Invoke-Deploy {
     Write-Log "activating cli.js"
     Invoke-Activate -RelFilename $relFilename
 
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if (-not $task) {
+      Write-Log "service not registered — running first-time setup"
+      Invoke-Setup
+    }
+
     Write-Log "restarting scheduled task '$taskName'"
     Invoke-Kickstart
 
@@ -348,6 +380,7 @@ function Invoke-Deploy {
 switch ($Command) {
   ''            { Invoke-Deploy }
   'deploy'      { Invoke-Deploy }
+  'setup'       { Invoke-Setup }
   'rollback'    { Invoke-Rollback }
   'status'      { Invoke-Status }
   'healthcheck' { Invoke-Healthcheck }

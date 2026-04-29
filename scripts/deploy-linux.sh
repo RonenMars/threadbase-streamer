@@ -7,6 +7,7 @@
 #   scripts/deploy-linux.sh                   # build + deploy current HEAD
 #   scripts/deploy-linux.sh --force           # skip lint/test gates and dirty-tree check
 #   scripts/deploy-linux.sh --update-scanner  # bump vendor/scanner pin first
+#   scripts/deploy-linux.sh setup             # first-time: write systemd unit + ask about auto-startup
 #   scripts/deploy-linux.sh rollback          # repoint cli.js to the previous release
 #   scripts/deploy-linux.sh status            # show current release and unit status
 #   scripts/deploy-linux.sh healthcheck       # probe /healthz
@@ -151,9 +152,52 @@ cmd_predeploy_check() {
   fi
 }
 
+cmd_setup() {
+  local unit_dir="$HOME/.config/systemd/user"
+  local unit_file="$unit_dir/$SYSTEMD_UNIT"
+  local logs_dir="$INSTALL_DIR/logs"
+  local node_bin
+  node_bin="$(command -v node)" || { err "node not found in PATH"; exit 1; }
+
+  mkdir -p "$unit_dir" "$logs_dir"
+
+  local enable_autostart="y"
+  if [[ -t 0 ]]; then
+    printf '\n  Launch server automatically at login? [Y/n] '
+    local yn; read -r yn
+    [[ "${yn,,}" == "n" ]] && enable_autostart="n"
+  fi
+
+  log "writing systemd unit → $unit_file"
+  cat > "$unit_file" <<UNIT
+[Unit]
+Description=Threadbase Streamer
+After=network.target
+
+[Service]
+ExecStart=$node_bin $ACTIVE_LINK serve
+Restart=on-failure
+StandardOutput=append:$logs_dir/stdout.log
+StandardError=append:$logs_dir/stderr.log
+
+[Install]
+WantedBy=default.target
+UNIT
+
+  systemctl --user daemon-reload
+  systemctl --user start "$SYSTEMD_UNIT"
+
+  if [[ "$enable_autostart" == "y" ]]; then
+    systemctl --user enable "$SYSTEMD_UNIT"
+    ok "auto-startup at login: enabled"
+  else
+    ok "auto-startup at login: disabled — run 'systemctl --user start $SYSTEMD_UNIT' to start manually"
+  fi
+}
+
 cmd_kickstart() {
   if ! systemctl --user list-unit-files "$SYSTEMD_UNIT" >/dev/null 2>&1; then
-    warn "systemd unit '$SYSTEMD_UNIT' not found; the local-deploy skill installs it on fresh setup"
+    warn "systemd unit '$SYSTEMD_UNIT' not found — run 'scripts/deploy-linux.sh setup' to initialize"
     return 0
   fi
   systemctl --user daemon-reload
@@ -274,6 +318,11 @@ cmd_deploy() {
   log "activating symlink"
   activate_release "$rel_path"
 
+  if ! systemctl --user list-unit-files "$SYSTEMD_UNIT" >/dev/null 2>&1; then
+    log "service not registered — running first-time setup"
+    cmd_setup
+  fi
+
   log "restarting $SYSTEMD_UNIT"
   cmd_kickstart
 
@@ -286,6 +335,7 @@ cmd_deploy() {
 }
 
 case "${1:-deploy}" in
+  setup)        cmd_setup ;;
   deploy)       shift; cmd_deploy "$@" ;;
   --force|--update-scanner)  cmd_deploy "$@" ;;
   "")           cmd_deploy ;;
