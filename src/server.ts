@@ -610,6 +610,33 @@ export class StreamerServer {
   }
 
   private async handleGetConversation(id: string, url: URL, res: ServerResponse): Promise<void> {
+    const isFirstLoad = !url.searchParams.has("msg_limit") && !url.searchParams.has("before_index");
+    if (isFirstLoad && this.cache) {
+      const tail = this.cache.getConversationTail(id);
+      if (tail && tail.messages.length > 0) {
+        const messagesPayload = tail.messages.map((m, idx) => ({
+          message_index: idx,
+          role: m.role,
+          timestamp: m.timestamp,
+          text: m.text,
+          tool_calls: [] as unknown[],
+          content: [] as unknown[],
+        }));
+        json(res, 200, {
+          meta: { id },
+          messages: messagesPayload,
+          message_pagination: {
+            total: tail.tailSize,
+            before_index: tail.tailSize,
+            from_index: 0,
+            has_more_older: false,
+            next_before_index: null,
+          },
+        });
+        return;
+      }
+    }
+
     const conversation = await this.findConversationByUuid(id);
     if (!conversation) {
       json(res, 404, { error: "Conversation not found" });
