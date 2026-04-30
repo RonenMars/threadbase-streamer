@@ -53,6 +53,7 @@ export class StreamerServer {
     | undefined;
   private dbPool: Awaited<ReturnType<typeof createPool>> | null = null;
   private dbInstanceId: string | null = null;
+  private disableDb = false;
   private browseRoot: string | null = null;
   private publicUrl: string | null = null;
   private pairTokens = new PairTokenStore();
@@ -62,6 +63,7 @@ export class StreamerServer {
     this.apiKey = config.apiKey;
     this.localNoAuth = config.localNoAuth ?? false;
     this.verbose = config.verbose ?? false;
+    this.disableDb = config.disableDb ?? false;
     this.scanProfiles = config.scanProfiles;
     // Resolve browseRoot: env var > YAML config > CLI flag
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
@@ -76,8 +78,8 @@ export class StreamerServer {
         });
     }
 
-    // Resolve publicUrl: env var > YAML config > CLI flag
-    const rawPublicUrl = process.env.THREADBASE_PUBLIC_URL ?? loadPublicUrl() ?? config.publicUrl;
+    // Resolve publicUrl: env var > explicit constructor option > YAML config
+    const rawPublicUrl = process.env.THREADBASE_PUBLIC_URL ?? config.publicUrl ?? loadPublicUrl();
     if (rawPublicUrl) {
       const result = validatePublicUrl(rawPublicUrl);
       if (result.ok) {
@@ -147,7 +149,7 @@ export class StreamerServer {
 
   async listen(port: number): Promise<void> {
     // Set up optional DB persistence (lazy import of pg to avoid loading native module when unused)
-    const dbConfig = getDbConfig();
+    const dbConfig = this.disableDb ? null : getDbConfig();
     if (dbConfig) {
       this.dbPool = await createPool(dbConfig);
       this.dbInstanceId = dbConfig.instanceId;

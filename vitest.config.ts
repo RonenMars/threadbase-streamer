@@ -22,5 +22,7 @@ export default defineConfig({
   test: {
     globals: true,
     include: ["__tests__/**/*.test.ts"],
+    pool: "forks",
+    poolOptions: { forks: { singleFork: true } },
   },
 });

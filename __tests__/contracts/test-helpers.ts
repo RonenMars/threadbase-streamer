@@ -44,6 +44,7 @@ export async function createTestServer(fixtureDir: string) {
     apiKey: TEST_API_KEY,
     localNoAuth: false,
     verbose: false,
+    disableDb: true,
     scanProfiles: createFixtureProfiles(fixtureDir),
   });
   await server.listen(port);

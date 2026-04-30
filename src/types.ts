@@ -87,6 +87,7 @@ export interface ServerConfig {
   verbose?: boolean;
   browseRoot?: string;
   publicUrl?: string;
+  disableDb?: boolean;
   scanProfiles?: Array<{
     id: string;
     label: string;
