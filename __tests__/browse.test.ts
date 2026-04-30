@@ -32,8 +32,14 @@ describe("resolveBrowsePath", () => {
     expect(resolved).toBe(join(TEST_ROOT, "projectA", "src"));
   });
 
-  it("strips a leading slash so the path is relative to browseRoot", async () => {
+  it("strips a leading slash so the path is relative to browseRoot (bare name)", async () => {
     const resolved = await resolveBrowsePath(TEST_ROOT, "/projectA");
+    expect(resolved).toBe(join(TEST_ROOT, "projectA"));
+  });
+
+  it("accepts an absolute path that is already under browseRoot (Unix)", async () => {
+    if (process.platform === "win32") return;
+    const resolved = await resolveBrowsePath(TEST_ROOT, join(TEST_ROOT, "projectA"));
     expect(resolved).toBe(join(TEST_ROOT, "projectA"));
   });
 

@@ -3,9 +3,21 @@ import { join, resolve, sep } from "path";
 
 export async function resolveBrowsePath(browseRoot: string, relativePath: string): Promise<string> {
   const normalizedRoot = resolve(browseRoot);
-  // Strip any leading separators so that "/foo" or "\foo" is treated as relative to browseRoot
-  // rather than as a drive-root-relative path on Windows (where path.resolve would return C:\foo).
-  const sanitized = relativePath.replace(/^[/\\]+/, "");
+  // On Unix, if relativePath is already an absolute path under browseRoot, use it directly.
+  // Only strip the leading separator for bare names like "/projectA" sent by the mobile browse
+  // tree — not for full paths like "/Users/foo/bar" which are absolute, not drive-root-relative.
+  // On Windows we always strip because "\foo" means "drive root relative", never a full path.
+  let sanitized: string;
+  if (
+    process.platform !== "win32" &&
+    relativePath.startsWith("/") &&
+    relativePath.length > 1 &&
+    relativePath.includes("/", 1)
+  ) {
+    sanitized = relativePath;
+  } else {
+    sanitized = relativePath.replace(/^[/\\]+/, "");
+  }
   const target = sanitized ? resolve(normalizedRoot, sanitized) : normalizedRoot;
   // Build the allowed prefix with exactly one separator — normalizedRoot may already end with sep
   // when browseRoot is a drive root (e.g. "C:\"), which would otherwise create a double-sep prefix.
