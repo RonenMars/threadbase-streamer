@@ -31,6 +31,26 @@ Key modules and their responsibilities:
 - `ws-hub.ts` — WebSocket hub broadcasting terminal_output, session_update, session_list events
 - `server.ts` — HTTP server wiring REST endpoints + WebSocket upgrade + auth
 - `auth.ts` — bearer token generation/validation with constant-time comparison
+- `idle-sweeper.ts` — periodic sweep that puts idle `waiting_input` sessions on hold after a configurable timeout
+
+## Session lifecycle
+
+Sessions move through these statuses:
+
+```
+running ──(╭ prompt marker)──► waiting_input ──(idle 60s / hold_session WS msg)──► on_hold
+   │                                 │
+   └──(user sends input)─────────────┘ (back to running)
+   
+running / waiting_input ──(exit 0)──► completed
+running / waiting_input ──(exit ≠ 0)──► failed
+running / waiting_input ──(server restart)──► on_hold   (reconcile.ts)
+```
+
+- **`waiting_input`**: Claude printed its `╭` prompt marker — it's idling, waiting for user input. The idle clock starts here (`lastActivityAt` is set).
+- **`on_hold`**: PTY process was killed (SIGINT) after 60 s of inactivity, or explicitly by the client sending `{ type: "hold_session", sessionId }` over WebSocket. Conversation history is intact; resume via `POST /api/sessions/resume` with the same `conversationId`.
+- `IdleSweeper` runs every 30 s, checks `lastActivityAt` against the threshold, and calls `PTYManager.putOnHold()` which sets a `holdAt` tombstone before killing to prevent the exit handler from overwriting the `on_hold` status with `failed`.
+- Idle timeout is configurable via `ServerConfig.idleTimeoutMs` (default 60 000 ms). Set to `0` to disable.
 
 ## Dependencies
 

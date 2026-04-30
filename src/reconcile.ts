@@ -29,8 +29,11 @@ export async function reconcileOrphanedSessions(
   for (const session of sessionStore.listManaged()) {
     const updates: Partial<ManagedSession> = {};
 
-    if (session.status === "running" || session.status === "waiting_input") {
-      updates.status = "failed";
+    if (session.status === "running") {
+      updates.status = "on_hold";
+      updates.completedAt = now;
+    } else if (session.status === "waiting_input") {
+      updates.status = "on_hold";
       updates.completedAt = now;
     }
 

@@ -111,6 +111,7 @@ function managedToResponse(s: ManagedSession): SessionResponse {
     ...(s.firstMessageAt != null && { firstMessageAt: s.firstMessageAt.toISOString() }),
     ...(s.lastMessageText != null && { lastMessageText: s.lastMessageText }),
     ...(s.lastMessageAt != null && { lastMessageAt: s.lastMessageAt.toISOString() }),
+    ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt.toISOString() }),
     ...(s.filePath != null && { filePath: s.filePath }),
   };
 }

@@ -1,6 +1,6 @@
 // ─── Session Lifecycle ─────────────────────────────────────────────
 
-export type SessionStatus = "running" | "waiting_input" | "completed" | "failed";
+export type SessionStatus = "running" | "waiting_input" | "completed" | "failed" | "on_hold";
 
 export interface ManagedSession {
   id: string;
@@ -22,6 +22,7 @@ export interface ManagedSession {
   firstMessageAt?: Date;
   lastMessageText?: string;
   lastMessageAt?: Date;
+  lastActivityAt?: Date;
   filePath?: string;
 }
 
@@ -68,6 +69,7 @@ export interface SessionResponse {
   firstMessageAt?: string;
   lastMessageText?: string;
   lastMessageAt?: string;
+  lastActivityAt?: string;
   filePath?: string;
 }
 
@@ -95,6 +97,8 @@ export interface ServerConfig {
     enabled: boolean;
     emoji: string;
   }>;
+  idleTimeoutMs?: number;
+  idleSweeperIntervalMs?: number;
 }
 
 // ─── PTY Manager ───────────────────────────────────────────────────

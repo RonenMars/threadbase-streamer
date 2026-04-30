@@ -36,6 +36,7 @@ async function loadPty(): Promise<typeof import("node-pty")> {
 interface InternalSession extends ManagedSession {
   process: any; // node-pty IPty
   outputBuffer: Buffer;
+  holdAt?: Date;
 }
 
 export class PTYManager {
@@ -153,6 +154,7 @@ export class PTYManager {
       this.onStatusChange?.(toPublicSession(session));
     }
     session.process.write(`${input}\r`);
+    session.lastActivityAt = new Date();
     session.promptCount++;
     return session.promptCount;
   }
@@ -161,6 +163,17 @@ export class PTYManager {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
     session.process.kill("SIGINT");
+  }
+
+  putOnHold(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    session.holdAt = new Date();
+    try {
+      session.process.kill("SIGINT");
+    } catch {
+      // already dead
+    }
   }
 
   getOutput(sessionId: string): string {
@@ -210,6 +223,7 @@ export class PTYManager {
     // The ╭ box-drawing character appears at the start of Claude's input box
     // and is the most reliable signal that it is waiting for user input.
     if (session.status === "running" && stripped.includes(CLAUDE_PROMPT_MARKER)) {
+      session.lastActivityAt = new Date();
       session.status = "waiting_input";
       this.onStatusChange?.(toPublicSession(session));
     }
@@ -220,6 +234,11 @@ export class PTYManager {
   private handleExit(sessionId: string, exitCode: number): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+
+    if (session.holdAt) {
+      this.sessions.delete(sessionId);
+      return;
+    }
 
     session.completedAt = new Date();
     session.status = exitCode === 0 ? "completed" : "failed";
@@ -239,6 +258,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     completedAt: s.completedAt,
     promptCount: s.promptCount,
     lastOutput: s.lastOutput,
+    ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt }),
   };
 }
 

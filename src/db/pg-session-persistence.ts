@@ -15,8 +15,8 @@ export class PgSessionPersistence implements SessionPersistence {
         status, started_at, completed_at, prompt_count, last_output,
         session_name, model, account, message_count, preview,
         first_message_text, first_message_at, last_message_text, last_message_at, file_path,
-        instance_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+        instance_id, last_activity_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       ON CONFLICT (id) DO UPDATE SET
         status = EXCLUDED.status,
         completed_at = EXCLUDED.completed_at,
@@ -26,6 +26,7 @@ export class PgSessionPersistence implements SessionPersistence {
         last_message_text = EXCLUDED.last_message_text,
         last_message_at = EXCLUDED.last_message_at,
         instance_id = EXCLUDED.instance_id,
+        last_activity_at = EXCLUDED.last_activity_at,
         updated_at = NOW()`,
       [
         session.id,
@@ -49,6 +50,7 @@ export class PgSessionPersistence implements SessionPersistence {
         session.lastMessageAt ?? null,
         session.filePath ?? null,
         this.instanceId,
+        session.lastActivityAt ?? null,
       ],
     );
   }
@@ -73,6 +75,7 @@ export class PgSessionPersistence implements SessionPersistence {
       firstMessageAt: "first_message_at",
       lastMessageText: "last_message_text",
       lastMessageAt: "last_message_at",
+      lastActivityAt: "last_activity_at",
       filePath: "file_path",
     };
 
@@ -128,6 +131,7 @@ export class PgSessionPersistence implements SessionPersistence {
       first_message_at: Date | null;
       last_message_text: string | null;
       last_message_at: Date | null;
+      last_activity_at: Date | null;
       file_path: string | null;
     }>(
       "SELECT * FROM managed_sessions WHERE instance_id = $1 OR instance_id IS NULL ORDER BY started_at DESC",
@@ -154,6 +158,7 @@ export class PgSessionPersistence implements SessionPersistence {
       ...(row.first_message_at != null && { firstMessageAt: row.first_message_at }),
       ...(row.last_message_text != null && { lastMessageText: row.last_message_text }),
       ...(row.last_message_at != null && { lastMessageAt: row.last_message_at }),
+      ...(row.last_activity_at != null && { lastActivityAt: row.last_activity_at }),
       ...(row.file_path != null && { filePath: row.file_path }),
     }));
   }

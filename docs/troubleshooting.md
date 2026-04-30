@@ -223,6 +223,24 @@ Restart the streamer to pick it up.
 
 ---
 
+## Session idle / on_hold
+
+### Session transitions to `on_hold` unexpectedly
+
+**When:** A session in `waiting_input` becomes `on_hold` after roughly a minute of inactivity, even though the user intended to resume it.
+**Cause:** `IdleSweeper` runs every 30 s and puts any `waiting_input` session whose `lastActivityAt` is older than `idleTimeoutMs` (default: 60 000 ms) on hold. The PTY process is killed and status is set to `on_hold`.
+**Fix:** Resume the conversation with `POST /api/sessions/resume` using the same `conversationId`. A new PTY session will be spawned against the existing conversation history. To raise the threshold, set `idle_timeout_ms` in `~/.threadbase/server.yaml` (e.g. `idle_timeout_ms: 300000` for 5 minutes) or pass `--idle-timeout 300000` on the CLI. Set to `0` to disable idle sweep entirely.
+
+---
+
+### `on_hold` session incorrectly shows as `failed` after server restart
+
+**When:** A session that was `on_hold` before the server restarted is now listed as `failed`.
+**Cause:** Running an older build of the streamer that does not include the `on_hold` status. The reconcile pass in older builds marks all non-terminal sessions (including `on_hold`) as `failed`.
+**Fix:** Deploy the current build. The reconcile pass now treats `on_hold` as an intentional terminal-ish state and leaves it unchanged across restarts.
+
+---
+
 ## Server / API issues
 
 ### Sessions show empty output on first request after startup

@@ -35,7 +35,7 @@ describe("reconcileOrphanedSessions", () => {
     await rm(projectsRoot, { recursive: true, force: true });
   });
 
-  it("marks running sessions as failed", async () => {
+  it("marks running sessions as on_hold", async () => {
     store.addManaged(makeSession({ id: "ses_a", status: "running" }));
 
     const results = await reconcileOrphanedSessions(store, {
@@ -44,12 +44,12 @@ describe("reconcileOrphanedSessions", () => {
     });
 
     const updated = store.getManaged("ses_a");
-    expect(updated?.status).toBe("failed");
+    expect(updated?.status).toBe("on_hold");
     expect(updated?.completedAt).toEqual(NOW);
-    expect(results[0]?.updates.status).toBe("failed");
+    expect(results[0]?.updates.status).toBe("on_hold");
   });
 
-  it("marks waiting_input sessions as failed", async () => {
+  it("marks waiting_input sessions as on_hold", async () => {
     store.addManaged(makeSession({ id: "ses_b", status: "waiting_input" }));
 
     await reconcileOrphanedSessions(store, {
@@ -57,7 +57,31 @@ describe("reconcileOrphanedSessions", () => {
       now: NOW,
     });
 
-    expect(store.getManaged("ses_b")?.status).toBe("failed");
+    const updated = store.getManaged("ses_b");
+    expect(updated?.status).toBe("on_hold");
+    expect(updated?.completedAt).toEqual(NOW);
+  });
+
+  it("leaves on_hold sessions unchanged", async () => {
+    const completedAt = new Date("2026-04-21T10:00:00Z");
+    store.addManaged(
+      makeSession({
+        id: "ses_hold",
+        status: "on_hold",
+        conversationId: "conv_hold",
+        completedAt,
+      }),
+    );
+
+    const results = await reconcileOrphanedSessions(store, {
+      claudeProjectsRoot: projectsRoot,
+      now: NOW,
+    });
+
+    expect(results).toHaveLength(0);
+    const after = store.getManaged("ses_hold");
+    expect(after?.status).toBe("on_hold");
+    expect(after?.completedAt).toEqual(completedAt);
   });
 
   it("leaves completed sessions alone", async () => {

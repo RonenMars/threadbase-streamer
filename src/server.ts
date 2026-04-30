@@ -21,6 +21,7 @@ import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./
 import { PgSessionPersistence } from "./db/pg-session-persistence";
 import { recordUpload } from "./db/upload-records";
 import { FileWatcher } from "./file-watcher";
+import { IdleSweeper } from "./idle-sweeper";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
@@ -58,6 +59,9 @@ export class StreamerServer {
   private publicUrl: string | null = null;
   private pairTokens = new PairTokenStore();
   private exchangeAttempts = new Map<string, number[]>();
+  private idleSweeper: IdleSweeper | null = null;
+  private idleTimeoutMs: number;
+  private idleSweeperIntervalMs: number;
 
   constructor(config: ServerConfig & { apiKey: string }) {
     this.apiKey = config.apiKey;
@@ -65,6 +69,8 @@ export class StreamerServer {
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
     this.scanProfiles = config.scanProfiles;
+    this.idleTimeoutMs = config.idleTimeoutMs ?? 60_000;
+    this.idleSweeperIntervalMs = config.idleSweeperIntervalMs ?? 30_000;
     // Resolve browseRoot: env var > YAML config > CLI flag
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
     if (rawRoot) {
@@ -112,6 +118,7 @@ export class StreamerServer {
         this.sessionStore.updateManaged(session.id, {
           status: session.status,
           completedAt: session.completedAt,
+          ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
         });
         // Stop watching JSONL when session completes
         if (session.status === "completed" || session.status === "failed") {
@@ -143,6 +150,16 @@ export class StreamerServer {
         // Send current session list on connect
         const sessions = this.sessionStore.list();
         ws.send(JSON.stringify({ type: "session_list", sessions }));
+        ws.on("message", (raw) => {
+          try {
+            const msg = JSON.parse(String(raw));
+            if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
+              this.idleSweeper?.putSessionOnHold(msg.sessionId);
+            }
+          } catch {
+            // malformed JSON, ignore
+          }
+        });
       });
     });
   }
@@ -175,6 +192,17 @@ export class StreamerServer {
       }
     }
 
+    if (this.idleTimeoutMs !== 0) {
+      this.idleSweeper = new IdleSweeper({
+        ptyManager: this.ptyManager,
+        sessionStore: this.sessionStore,
+        wsHub: this.wsHub,
+        idleTimeoutMs: this.idleTimeoutMs,
+        intervalMs: this.idleSweeperIntervalMs,
+      });
+      this.idleSweeper.start();
+    }
+
     return new Promise((resolve) => {
       this.httpServer.listen(port, () => {
         if (this.verbose) {
@@ -188,6 +216,7 @@ export class StreamerServer {
   }
 
   async close(): Promise<void> {
+    this.idleSweeper?.dispose();
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.wsHub.dispose();
