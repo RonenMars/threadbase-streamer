@@ -358,13 +358,15 @@ function Invoke-Deploy {
       New-Item -ItemType Directory -Path (Split-Path $nodePtyDst) -Force | Out-Null
       Copy-Item -Path $nodePtySrc -Destination $nodePtyDst -Recurse -Force
     }
-    # better-sqlite3 is external to the tsup bundle (native addon). Copy it from source
-    # node_modules so the deployed cli.js can resolve it without a full node_modules tree.
-    $sqliteSrc = Join-Path $repoRoot 'node_modules\better-sqlite3'
-    if (Test-Path $sqliteSrc) {
-      $sqliteDst = Join-Path $installDir 'node_modules\better-sqlite3'
-      New-Item -ItemType Directory -Path (Split-Path $sqliteDst) -Force | Out-Null
-      Copy-Item -Path $sqliteSrc -Destination $sqliteDst -Recurse -Force
+    # better-sqlite3 is external to the tsup bundle (native addon). Copy it and its
+    # transitive deps (bindings, file-uri-to-path) from source node_modules.
+    foreach ($mod in @('better-sqlite3', 'bindings', 'file-uri-to-path')) {
+      $modSrc = Join-Path $repoRoot "node_modules\$mod"
+      if (Test-Path $modSrc) {
+        $modDst = Join-Path $installDir "node_modules\$mod"
+        New-Item -ItemType Directory -Path (Split-Path $modDst) -Force | Out-Null
+        Copy-Item -Path $modSrc -Destination $modDst -Recurse -Force
+      }
     }
 
     Write-Log "activating cli.js"
