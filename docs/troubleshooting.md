@@ -33,6 +33,14 @@ Collected from fixed bugs, deploy incidents, and CLAUDE.md/SKILL.md history. Eac
 
 ---
 
+### `Cannot find module 'bindings'` at runtime (after adding a native dependency)
+
+**When:** Deployed CLI crashes with `Error: Cannot find module 'bindings'` when a new native addon (e.g. `better-sqlite3`) was added.
+**Cause:** Native addons declared as `external` in tsup are copied to `~/.threadbase/node_modules/<package>` by the deploy script, but their transitive dependencies (e.g. `bindings`, `file-uri-to-path` for `better-sqlite3`) are not automatically included. Node resolves them from the same `node_modules` tree, so they must also be present.
+**Fix:** Add the missing transitive packages to the deploy script's copy loop alongside the native addon. For `better-sqlite3`, the deploy scripts (`scripts/deploy.ps1` and `scripts/deploy-linux.sh`) now copy `bindings` and `file-uri-to-path` in addition to `better-sqlite3` itself. If you add another native dependency in future, check what it requires with `node -e "require('<package>')"` in the repo root and add any missing modules to the copy loop.
+
+---
+
 ### Deploy script hangs with no output
 
 **When:** Running any deploy script on a machine where `browse_root` is not set.
