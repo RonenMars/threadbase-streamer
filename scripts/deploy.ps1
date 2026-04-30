@@ -154,6 +154,22 @@ function Invoke-Setup {
   }
 }
 
+function Invoke-KillStalePort {
+  param([int]$Port = 8766)
+  # netstat -ano lists listening sockets; parse the owning PID and kill it so the
+  # new task can bind cleanly (Stop-ScheduledTask doesn't kill orphaned node processes).
+  $lines = netstat -ano 2>$null | Select-String ":$Port\s"
+  foreach ($line in $lines) {
+    $parts = ($line.ToString().Trim() -split '\s+')
+    $pidStr = $parts[-1]
+    if ($pidStr -match '^\d+$' -and [int]$pidStr -ne 0) {
+      Write-Warn "killing stale process PID $pidStr on port $Port"
+      Stop-Process -Id ([int]$pidStr) -Force -ErrorAction SilentlyContinue
+    }
+  }
+  if ($lines) { Start-Sleep -Milliseconds 300 }
+}
+
 function Invoke-Kickstart {
   $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   if (-not $task) {
@@ -162,6 +178,7 @@ function Invoke-Kickstart {
   }
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
+  Invoke-KillStalePort -Port 8766
   Start-ScheduledTask -TaskName $taskName
 }
 
