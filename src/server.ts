@@ -15,7 +15,15 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
 import { join } from "path";
 import { WebSocketServer } from "ws";
-import { loadBrowseRoot, loadPublicUrl, validateApiKey, validatePublicUrl } from "./auth";
+import {
+  loadBrowseRoot,
+  loadCacheDir,
+  loadPublicUrl,
+  loadTailSize,
+  validateApiKey,
+  validatePublicUrl,
+} from "./auth";
+import { ConversationCache } from "./conversation-cache";
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { PgSessionPersistence } from "./db/pg-session-persistence";
@@ -62,6 +70,9 @@ export class StreamerServer {
   private idleSweeper: IdleSweeper | null = null;
   private idleTimeoutMs: number;
   private idleSweeperIntervalMs: number;
+  private cache: ConversationCache | null = null;
+  private cacheDir: string;
+  private tailSize: number;
 
   constructor(config: ServerConfig & { apiKey: string }) {
     this.apiKey = config.apiKey;
@@ -71,6 +82,8 @@ export class StreamerServer {
     this.scanProfiles = config.scanProfiles;
     this.idleTimeoutMs = config.idleTimeoutMs ?? 60_000;
     this.idleSweeperIntervalMs = config.idleSweeperIntervalMs ?? 30_000;
+    this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
+    this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
     // Resolve browseRoot: env var > YAML config > CLI flag
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
     if (rawRoot) {
@@ -100,6 +113,7 @@ export class StreamerServer {
 
     this.fileWatcher = new FileWatcher({
       onNewLine: (filePath, line) => {
+        this.cache?.updateFromLine(filePath, line);
         // Find which session this file belongs to
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
           if (watchedPath === filePath) {
@@ -208,14 +222,24 @@ export class StreamerServer {
         if (this.verbose) {
           console.log(`Streamer server listening on port ${port}`);
         }
-        // Warm the conversation index so the first History request is less likely to block on disk I/O.
-        void this.getScanner().catch(() => {});
+        try {
+          this.cache = ConversationCache.open(join(this.cacheDir, "cache.db"), this.tailSize);
+        } catch (err) {
+          console.warn("ConversationCache failed to open (running without cache):", err);
+        }
+        void this.getScanner()
+          .then((scanner) => {
+            if (!this.cache) return;
+            this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+          })
+          .catch(() => {});
         resolve();
       });
     });
   }
 
   async close(): Promise<void> {
+    this.cache?.close();
     this.idleSweeper?.dispose();
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
