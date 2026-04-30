@@ -12,11 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Clone scanner
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git ../scanner
-        env:
-          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+        with:
+          submodules: true
+          token: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -26,7 +24,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
 
       - name: Build scanner
-        run: cd ../scanner && npm install && npm run build
+        run: cd vendor/scanner && npm install && npm run build
 
       - run: npm install
 
@@ -37,11 +35,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Clone scanner
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git ../scanner
-        env:
-          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+        with:
+          submodules: true
+          token: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -51,7 +47,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
 
       - name: Build scanner
-        run: cd ../scanner && npm install && npm run build
+        run: cd vendor/scanner && npm install && npm run build
 
       - run: npm install
 
@@ -71,11 +67,9 @@ jobs:
         node-version: [18, 20, 22]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Clone scanner
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git ../scanner
-        env:
-          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+        with:
+          submodules: true
+          token: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -85,7 +79,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
 
       - name: Build scanner
-        run: cd ../scanner && npm install && npm run build
+        run: cd vendor/scanner && npm install && npm run build
 
       - run: npm install
 
