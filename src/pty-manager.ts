@@ -1,5 +1,8 @@
+import { execFileSync } from "child_process";
 import { randomBytes } from "crypto";
-import { basename } from "path";
+import { existsSync } from "fs";
+import { homedir, platform } from "os";
+import { basename, join } from "path";
 import type {
   ManagedSession,
   PTYManagerOptions,
@@ -8,6 +11,51 @@ import type {
 } from "./types";
 
 const OUTPUT_BUFFER_MAX = 65536;
+
+// Cached resolved path to the claude executable.
+let _claudeExe: string | undefined;
+
+function resolveClaudeExe(): string {
+  if (_claudeExe !== undefined) return _claudeExe;
+  if (platform() === "win32") {
+    // where.exe searches the process's PATH — works in interactive sessions but
+    // Task Scheduler tasks often have a stripped PATH that omits user-local dirs.
+    try {
+      const found = execFileSync("where.exe", ["claude"], {
+        encoding: "utf-8",
+        windowsHide: true,
+        timeout: 3000,
+      })
+        .trim()
+        .split("\n")[0]
+        .trim();
+      if (found) {
+        _claudeExe = found;
+        return _claudeExe;
+      }
+    } catch {}
+    // Check common install locations that may not be in Task Scheduler PATH.
+    const candidates = [
+      // npm/scoop/manual installs often land here
+      join(homedir(), ".local", "bin", "claude.exe"),
+      // Windows Store app execution alias
+      join(
+        process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
+        "Microsoft",
+        "WindowsApps",
+        "claude.exe",
+      ),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) {
+        _claudeExe = p;
+        return _claudeExe;
+      }
+    }
+  }
+  _claudeExe = "claude";
+  return _claudeExe;
+}
 
 // node-pty is a native addon — import dynamically to allow graceful failure
 let pty: typeof import("node-pty") | null = null;
@@ -47,7 +95,7 @@ export class PTYManager {
     const projectName = options.projectName ?? basename(options.projectPath);
 
     const proc = nodePty.spawn(
-      "claude",
+      resolveClaudeExe(),
       ["--dangerously-skip-permissions", "--resume", options.conversationId],
       {
         name: "xterm-256color",
@@ -96,7 +144,9 @@ export class PTYManager {
       args.push("--system-prompt", options.systemPrompt);
     }
 
-    const proc = nodePty.spawn("claude", args, {
+    const exePath = resolveClaudeExe();
+
+    const proc = nodePty.spawn(exePath, args, {
       name: "xterm-256color",
       cols: 120,
       rows: 40,

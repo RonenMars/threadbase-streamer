@@ -93,6 +93,15 @@ if ($pid8766 -match '^\d+$') { Stop-Process -Id $pid8766 -Force -ErrorAction Sil
 
 ---
 
+### ConPTY crash during session start — no JavaScript logs appear *(Windows only)*
+
+**When:** `POST /api/sessions/start` crashes the server process silently. No log lines appear even when logging is placed at the very first line of `handleRequest` (before CORS headers, before auth). The process exits with no output.
+**Cause:** The crash happens inside the native ConPTY C++ layer before any JavaScript runs. This can occur when the PTY is spawned with an invalid executable path or environment. In testing, this manifested when CF-proxied requests triggered session starts under conditions the SYSTEM service's environment didn't support.
+**Diagnosis:** If zero JS log output appears for a request (not even the first line of `handleRequest`), the crash is native, not JS. Check that `resolveClaudeExe()` resolves to a valid path in the Task Scheduler environment (PATH is stripped vs. interactive sessions).
+**Fix:** Verify `where.exe claude` succeeds in a non-interactive context, or add fallback candidates to `resolveClaudeExe()` in `src/pty-manager.ts`.
+
+---
+
 ### `git submodule update --init` fails with `Permission denied (publickey)`
 
 **When:** Fresh Windows clone without SSH keys configured.
@@ -134,6 +143,37 @@ Deploy-script healthchecks hit `http://localhost:8766/healthz` directly and are 
 
 ---
 
+### Tunnel returns `502` despite local server being healthy *(Windows only)*
+
+**When:** `https://tb-pc.rbv1000.win` returns `error code: 502` but `http://localhost:8766/healthz` returns OK. The `cloudflared` service shows as Running and `cloudflared tunnel info` shows an active connector.
+**Cause:** The `cloudflared` Windows service runs as LocalSystem and reads from `C:\Windows\system32\config\systemprofile\.cloudflared\config.yml` — a separate file from `~/.cloudflared/config-system.yml`. When new ingress hostnames are added to the user config they are **not** automatically applied to the SYSTEM copy. Cloudflare returns 502 for any hostname with no matching ingress rule.
+**Diagnosis:** If the local server is healthy, the tunnel is connected, and `cloudflared tunnel route dns` confirms the hostname points to the right tunnel, the SYSTEM config is almost certainly stale.
+**Fix (requires admin):**
+```powershell
+# Run as Administrator
+Copy-Item "$env:USERPROFILE\.cloudflared\config-system.yml" `
+  "C:\Windows\system32\config\systemprofile\.cloudflared\config.yml" -Force
+Restart-Service cloudflared
+```
+
+---
+
+### `Restart-Service cloudflared` silently does nothing without admin *(Windows only)*
+
+**When:** Running `Restart-Service cloudflared` from a non-elevated terminal returns no error and reports the service as "Running", but the tunnel still misbehaves and no new events appear in the Windows event log.
+**Cause:** The cloudflared service runs as LocalSystem. Restarting a system service requires elevation. PowerShell silently ignores the restart rather than throwing an access-denied error.
+**Fix:** Open a PowerShell window as Administrator before running `Restart-Service cloudflared`. Confirm the restart happened by checking `Get-WinEvent -ProviderName cloudflared -MaxEvents 3` for a new "service starting" event.
+
+---
+
+### Adding a second user-context cloudflared connector doesn't help *(Windows: SYSTEM vs user; all platforms: Cloudflare routing)*
+
+**When:** You start a second `cloudflared tunnel run` process with a correct config as a workaround, but tunnel requests still 100% fail.
+**Cause:** Cloudflare routes all traffic to the longest-running (SYSTEM service) connector. User-context connectors registered later receive zero requests regardless of how many connections they hold. `cloudflared tunnel cleanup` removes all connectors simultaneously — the SYSTEM service reconnects in ~1 second and grabs all traffic again before the user connector can re-establish.
+**Fix:** Fix the SYSTEM config and restart the service (see above). There is no user-space workaround.
+
+---
+
 ### Tunnel routes to wrong port after config change
 
 **When:** `cloudflared` service is running but traffic goes to the old port.
@@ -141,7 +181,7 @@ Deploy-script healthchecks hit `http://localhost:8766/healthz` directly and are 
 - `~/.cloudflared/config.yml` — used when running `cloudflared` manually
 - `~/.cloudflared/config-system.yml` — used by the Windows service (SYSTEM account); this is the one that matters
 
-**Fix:** Edit **both** files, then restart: `Restart-Service cloudflared`.
+**Fix:** Edit **both** files, then restart the service as admin: `Restart-Service cloudflared`.
 
 ---
 
@@ -154,6 +194,16 @@ Deploy-script healthchecks hit `http://localhost:8766/healthz` directly and are 
 public_url: https://tb-pc.rbv1000.win
 ```
 Restart the streamer to pick it up.
+
+---
+
+## Mobile app error messages
+
+### "Failed to start session — File not found:" via public URL
+
+**When:** Session start works fine from `localhost` but the mobile app shows "Failed to start session — File not found:" (or similar) when connecting through `https://tb-pc.rbv1000.win`.
+**Cause:** The Cloudflare tunnel is returning `502 Bad Gateway`, not a real path error. The mobile app surfaces the raw error text from the JSON response, which can be misleading. The 502 is almost always the SYSTEM cloudflared config being stale and missing the tunnel hostname's ingress rule.
+**Fix:** See "Tunnel returns 502 despite local server being healthy" above.
 
 ---
 

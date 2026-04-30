@@ -350,6 +350,14 @@ function Invoke-Deploy {
     if (Test-Path $migrationsrc) {
       Copy-Item -Path $migrationsrc -Destination (Join-Path $installDir 'migrations') -Recurse -Force
     }
+    # node-pty is external to the tsup bundle (native addon). Copy it from source
+    # node_modules so the deployed cli.js can resolve it without a full node_modules tree.
+    $nodePtySrc = Join-Path $repoRoot 'node_modules\node-pty'
+    if (Test-Path $nodePtySrc) {
+      $nodePtyDst = Join-Path $installDir 'node_modules\node-pty'
+      New-Item -ItemType Directory -Path (Split-Path $nodePtyDst) -Force | Out-Null
+      Copy-Item -Path $nodePtySrc -Destination $nodePtyDst -Recurse -Force
+    }
 
     Write-Log "activating cli.js"
     Invoke-Activate -RelFilename $relFilename

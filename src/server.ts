@@ -506,30 +506,26 @@ export class StreamerServer {
   }
 
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
-    // When scan profiles are configured, look up by sessionId in the scanner cache
-    if (this.scanProfiles) {
-      const scanner = await this.getScanner();
-      const cache = scanner.getMetadataCache();
-      for (const [filePath, meta] of cache) {
-        if (meta.sessionId === uuid || meta.id === uuid) {
-          return scanner.getConversation(filePath);
-        }
-      }
-      return null;
-    }
+    const scanner = await this.getScanner();
 
-    // Fast path: direct file lookup by UUID without full scan
+    // Use the scanner's sessionIdIndex via getConversation(uuid) — avoids the
+    // path-separator mismatch between fast-glob (forward slashes) and path.join
+    // (backslashes on Windows) that breaks metadataCache key lookups.
+    const fromIndex = await scanner.getConversation(uuid);
+    if (fromIndex) return fromIndex;
+
+    // Conversation not in the warm cache. For scan-profile mode the scanner is
+    // authoritative — new files would require a manual refresh.
+    if (this.scanProfiles) return null;
+
+    // Default mode: file may have been created after the last scan. Look it up
+    // on disk, bust the cache, re-scan, then retry by UUID.
     const filePath = this.findJsonlPath(uuid);
     if (!filePath) return null;
-    const scanner = await this.getScanner();
-    // Ensure this file is in the metadata cache
-    const meta = scanner.getMetadataCache().get(filePath);
-    if (meta) return scanner.getConversation(filePath);
-    // File found on disk but not in cache — re-scan
     this.scanner = null;
     this.scannerReady = null;
     const freshScanner = await this.getScanner();
-    return freshScanner.getConversation(filePath);
+    return freshScanner.getConversation(uuid);
   }
 
   private async handleGetConversation(id: string, url: URL, res: ServerResponse): Promise<void> {
@@ -886,7 +882,6 @@ export class StreamerServer {
       json(res, 201, resp ?? session);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
-      console.error(`[startSession] ${message}`);
       json(res, 500, { error: message });
     }
   }
