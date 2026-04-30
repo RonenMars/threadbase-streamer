@@ -21,7 +21,7 @@ Known deploy/runtime issues and their fixes: [docs/troubleshooting.md](docs/trou
 
 Three layers: **core engine** (src/*.ts) → **API layer** (src/index.ts exports) → **CLI wrapper** (cli/).
 
-The library and CLI are built as separate tsup entries — `src/index.ts` produces `dist/index.js` (ESM) + `dist/index.cjs` (CJS) + types, while `cli/index.ts` produces `dist/cli.js` with a shebang.
+The library and CLI are built as separate tsup entries — `src/index.ts` produces `dist/index.js` (ESM) + `dist/index.cjs` (CJS) + types, while `cli/index.ts` produces `dist/cli.cjs` with a shebang.
 
 Key modules and their responsibilities:
 - `pty-manager.ts` — spawn/resume Claude sessions via node-pty, ring buffer output (64KB cap)

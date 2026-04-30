@@ -76,6 +76,14 @@ src/
   file-watcher.ts     Tail JSONL files for structured events
   ws-hub.ts           WebSocket broadcast hub
   auth.ts             Bearer token generation/validation
+  idle-sweeper.ts     Periodic sweep putting idle sessions on_hold
+  reconcile.ts        Mark in-flight sessions on_hold on server restart
+  browse.ts           File system browser (list/mkdir)
+  uploads.ts          File upload handling for session file attachments
+  pair-store.ts       Short-lived pairing token registry
+  seal.ts             X25519 sealed-box encryption for mobile pairing
+  platform.ts         Platform detection and path resolution
+  lan-url.ts          LAN IP resolution for QR code URLs
   db/
     config.ts           Env var parsing (isDbEnabled, getDbConfig)
     pool.ts             pg.Pool creation with password masking
@@ -90,16 +98,25 @@ src/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/healthz` | Health check (version) |
 | GET | `/api/info` | Server info (version, platform, active sessions) |
 | GET | `/api/sessions` | List managed + discovered sessions |
+| GET | `/api/sessions/count` | Count of active managed sessions |
 | GET | `/api/sessions/:id` | Get single session |
+| POST | `/api/sessions/start` | Start a new Claude session in a given directory |
 | POST | `/api/sessions/resume` | Resume a conversation (creates managed session) |
 | POST | `/api/sessions/:id/input` | Send input to a managed session |
 | POST | `/api/sessions/:id/cancel` | Cancel a managed session |
 | GET | `/api/sessions/:id/output` | Get terminal output buffer |
+| POST | `/api/sessions/:id/files` | Upload a file attachment to a session |
 | GET | `/api/conversations` | Paginated conversation history |
+| GET | `/api/conversations/count` | Count conversations matching optional filters |
 | GET | `/api/conversations/:id` | Full conversation with messages |
 | GET | `/api/search?q=...` | Full-text search across conversations |
+| GET | `/api/browse` | Browse the file system |
+| POST | `/api/browse/mkdir` | Create a directory |
+| GET | `/api/profiles` | List scan profiles |
+| POST | `/api/push/register` | Register a push notification token |
 | POST | `/api/pair/start` | Mint a short-lived pair token (authenticated) |
 | POST | `/api/pair/exchange` | Trade a pair token + client public key for a sealed API key (unauthenticated) |
 
