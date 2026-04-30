@@ -458,19 +458,38 @@ export class StreamerServer {
     const project = url.searchParams.get("project") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
-    // Reuse the same ConversationScanner as detail/search paths — a standalone `scan()`
-    // rescans every JSONL on every request, which makes History feel very slow vs Sessions.
     if (bustCache) {
+      this.cache?.invalidate();
       this.scanner = null;
       this.scannerReady = null;
     }
 
+    if (this.cache && !bustCache) {
+      const { conversations, total } = this.cache.listConversations({ project, limit, offset });
+      const adapted = conversations.map((c) => ({
+        id: c.id,
+        title: c.projectName,
+        sessionName: undefined as string | undefined,
+        filePath: c.filePath,
+        projectPath: c.projectPath,
+        branch: c.branch ?? undefined,
+        account: c.account ?? undefined,
+        preview: c.preview ?? undefined,
+        messageCount: c.messageCount,
+        lastActivity: c.lastActivity,
+        firstMessage: c.firstMessage ? (JSON.parse(c.firstMessage) as unknown) : undefined,
+        lastMessage: c.lastMessage ? (JSON.parse(c.lastMessage) as unknown) : undefined,
+        model: c.model ?? undefined,
+      }));
+      json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
+      return;
+    }
+
+    // Fallback: scanner (first boot before cache is populated, or after bust)
     const scanner = await this.getScanner();
     let metas = [...scanner.getMetadataCache().values()];
     metas = applyIncludeFilter(metas, "conversations");
-    if (project) {
-      metas = applyProjectFilter(metas, project);
-    }
+    if (project) metas = applyProjectFilter(metas, project);
     metas = applySort(metas, sort);
     const total = metas.length;
     const page = applyPagination(metas, limit, offset);
@@ -496,26 +515,33 @@ export class StreamerServer {
       lastMessage: c.lastMessage ?? undefined,
       model: c.model ?? undefined,
     }));
-    json(res, 200, {
-      conversations: adapted,
-      hasMore: offset + limit < total,
-      offset,
-      total,
-    });
+    json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
+
+    if (this.cache && bustCache) {
+      this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+    }
   }
 
   private async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
     const project = url.searchParams.get("project") ?? undefined;
-    if (url.searchParams.get("refresh") === "1") {
+    const bustCache = url.searchParams.get("refresh") === "1";
+
+    if (bustCache) {
+      this.cache?.invalidate();
       this.scanner = null;
       this.scannerReady = null;
     }
+
+    if (this.cache && !bustCache) {
+      const { total } = this.cache.listConversations({ project, limit: 0, offset: 0 });
+      json(res, 200, { total });
+      return;
+    }
+
     const scanner = await this.getScanner();
     let metas = [...scanner.getMetadataCache().values()];
     metas = applyIncludeFilter(metas, "conversations");
-    if (project) {
-      metas = applyProjectFilter(metas, project);
-    }
+    if (project) metas = applyProjectFilter(metas, project);
     json(res, 200, { total: metas.length });
   }
 
