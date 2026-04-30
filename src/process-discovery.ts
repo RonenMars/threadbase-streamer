@@ -1,6 +1,6 @@
-import { execFileSync } from "child_process";
 import { platform } from "os";
 import { basename, dirname } from "path";
+import { execHidden } from "./platform";
 import type { DiscoveredProcess } from "./types";
 
 export function discoverClaudeProcesses(): DiscoveredProcess[] {
@@ -65,11 +65,7 @@ function discoverWindows(): DiscoveredProcess[] {
 
 function getPidsUnix(): number[] {
   try {
-    const output = execFileSync("pgrep", ["-x", "claude"], {
-      encoding: "utf-8",
-      timeout: 5000,
-      windowsHide: true,
-    });
+    const output = execHidden("pgrep", ["-x", "claude"], { encoding: "utf-8", timeout: 5000 });
     return output
       .trim()
       .split("\n")
@@ -81,28 +77,25 @@ function getPidsUnix(): number[] {
 }
 
 function getProcessCwdUnix(pid: number): string {
-  const output = execFileSync("lsof", ["-p", String(pid), "-a", "-d", "cwd", "-Fn"], {
+  const output = execHidden("lsof", ["-p", String(pid), "-a", "-d", "cwd", "-Fn"], {
     encoding: "utf-8",
     timeout: 5000,
-    windowsHide: true,
   });
   const match = output.match(/n(.+)/);
   return match?.[1] ?? "";
 }
 
 function getProcessArgsUnix(pid: number): string {
-  return execFileSync("ps", ["-p", String(pid), "-o", "args="], {
+  return execHidden("ps", ["-p", String(pid), "-o", "args="], {
     encoding: "utf-8",
     timeout: 5000,
-    windowsHide: true,
   }).trim();
 }
 
 function getProcessStartTimeUnix(pid: number): Date {
-  const raw = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+  const raw = execHidden("ps", ["-p", String(pid), "-o", "lstart="], {
     encoding: "utf-8",
     timeout: 5000,
-    windowsHide: true,
   }).trim();
   return new Date(raw);
 }
@@ -111,11 +104,10 @@ function getProcessStartTimeUnix(pid: number): Date {
 
 function getPidsWindows(): number[] {
   try {
-    const output = execFileSync(
-      "tasklist",
-      ["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"],
-      { encoding: "utf-8", timeout: 5000, windowsHide: true },
-    );
+    const output = execHidden("tasklist", ["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
     return output
       .trim()
       .split("\n")
@@ -132,7 +124,7 @@ function getPidsWindows(): number[] {
 
 function getProcessInfoWindows(pid: number): { cwd: string; args: string; startedAt: Date } | null {
   try {
-    const output = execFileSync(
+    const output = execHidden(
       "wmic",
       [
         "process",
@@ -142,7 +134,7 @@ function getProcessInfoWindows(pid: number): { cwd: string; args: string; starte
         "CommandLine,CreationDate,ExecutablePath",
         "/FORMAT:CSV",
       ],
-      { encoding: "utf-8", timeout: 5000, windowsHide: true },
+      { encoding: "utf-8", timeout: 5000 },
     );
     // wmic uses CRLF; split on \r?\n so the blank separator line becomes "" and is filtered out.
     const lines = output
@@ -184,12 +176,11 @@ function extractResumeId(args: string): string | null {
 
 function readGitBranch(dir: string): string {
   try {
-    return execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+    return execHidden("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
       cwd: dir,
       encoding: "utf-8",
       timeout: 3000,
       stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
     }).trim();
   } catch {
     return "";
