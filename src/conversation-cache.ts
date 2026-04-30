@@ -173,12 +173,16 @@ export class ConversationCache {
           tail_size     = excluded.tail_size,
           updated_at    = excluded.updated_at
       `),
-      list: db.prepare("SELECT * FROM conversation_meta ORDER BY last_activity DESC LIMIT ? OFFSET ?"),
+      list: db.prepare(
+        "SELECT * FROM conversation_meta ORDER BY last_activity DESC LIMIT ? OFFSET ?",
+      ),
       count: db.prepare("SELECT COUNT(*) as n FROM conversation_meta"),
       listByProject: db.prepare(
         "SELECT * FROM conversation_meta WHERE project_path = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?",
       ),
-      countByProject: db.prepare("SELECT COUNT(*) as n FROM conversation_meta WHERE project_path = ?"),
+      countByProject: db.prepare(
+        "SELECT COUNT(*) as n FROM conversation_meta WHERE project_path = ?",
+      ),
       deleteById: db.prepare("DELETE FROM conversation_meta WHERE id = ?"),
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
       deleteTailAll: db.prepare("DELETE FROM conversation_tail"),
@@ -230,7 +234,11 @@ export class ConversationCache {
 
     let convId = this.fileIndex.get(filePath);
     if (!convId) {
-      const pseudoId = filePath.split(/[/\\]/).pop()?.replace(/\.jsonl$/, "") ?? filePath;
+      const pseudoId =
+        filePath
+          .split(/[/\\]/)
+          .pop()
+          ?.replace(/\.jsonl$/, "") ?? filePath;
       this.stmts.insertSkeleton.run(pseudoId, filePath, now);
       this.fileIndex.set(filePath, pseudoId);
       convId = pseudoId;
@@ -254,7 +262,13 @@ export class ConversationCache {
     const cutoff = Date.now() - 86_400_000;
     const run = this.db.transaction((items: ScannerMeta[]) => {
       for (const m of items) {
-        const id = m.sessionId || m.id.split("/").pop()?.replace(/\.jsonl$/, "") || m.id;
+        const id =
+          m.sessionId ||
+          m.id
+            .split("/")
+            .pop()
+            ?.replace(/\.jsonl$/, "") ||
+          m.id;
         const lastActivityMs = m.timestamp ? new Date(m.timestamp).getTime() : null;
         this.stmts.upsertFull.run({
           id,
@@ -278,11 +292,10 @@ export class ConversationCache {
     run(metas);
   }
 
-  listConversations(opts: {
-    project?: string;
-    limit: number;
-    offset: number;
-  }): { conversations: ConversationListItem[]; total: number } {
+  listConversations(opts: { project?: string; limit: number; offset: number }): {
+    conversations: ConversationListItem[];
+    total: number;
+  } {
     const { project, limit, offset } = opts;
     let total: number;
     let rows: MetaRow[];
@@ -336,7 +349,10 @@ export class ConversationCache {
       this.stmts.deleteById.run(id);
       if (this.fileIndexLoaded) {
         for (const [fp, cid] of this.fileIndex) {
-          if (cid === id) { this.fileIndex.delete(fp); break; }
+          if (cid === id) {
+            this.fileIndex.delete(fp);
+            break;
+          }
         }
       }
     } else {
