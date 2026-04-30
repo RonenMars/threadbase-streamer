@@ -10,6 +10,12 @@ import type {
 
 const OUTPUT_BUFFER_MAX = 65536;
 
+// Claude's interactive prompt starts with this box-drawing character when it is
+// waiting for user input (the top-left corner of its input box UI).
+// Detecting it lets us transition status: "running" → "waiting_input" so the
+// mobile app knows Claude is ready to receive a message.
+const CLAUDE_PROMPT_MARKER = "╭";
+
 // node-pty is a native addon — import dynamically to allow graceful failure
 let pty: typeof import("node-pty") | null = null;
 
@@ -141,6 +147,11 @@ export class PTYManager {
     if (session.status === "completed" || session.status === "failed") {
       throw new Error(`Session already ${session.status}: ${sessionId}`);
     }
+    // Input was received — Claude is no longer waiting; flip back to running.
+    if (session.status === "waiting_input") {
+      session.status = "running";
+      this.onStatusChange?.(toPublicSession(session));
+    }
     session.process.write(`${input}\r`);
     session.promptCount++;
     return session.promptCount;
@@ -192,7 +203,17 @@ export class PTYManager {
       );
     }
 
-    session.lastOutput = stripAnsi(data);
+    const stripped = stripAnsi(data);
+    session.lastOutput = stripped;
+
+    // Detect Claude's input-ready prompt to transition running → waiting_input.
+    // The ╭ box-drawing character appears at the start of Claude's input box
+    // and is the most reliable signal that it is waiting for user input.
+    if (session.status === "running" && stripped.includes(CLAUDE_PROMPT_MARKER)) {
+      session.status = "waiting_input";
+      this.onStatusChange?.(toPublicSession(session));
+    }
+
     this.onOutput?.(sessionId, data);
   }
 
