@@ -15,7 +15,7 @@ function git(...args: string[]): string {
 }
 
 const sha = git("rev-parse", "--short", "HEAD") || "unknown";
-const dirty = git("status", "--porcelain").length > 0;
+const dirty = git("status", "--porcelain", "--untracked-files=no").length > 0;
 const version = `${pkg.version}+${sha}${dirty ? "-dirty" : ""}`;
 
 export default defineConfig([
