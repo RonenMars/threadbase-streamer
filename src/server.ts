@@ -71,6 +71,10 @@ export class StreamerServer {
   private idleTimeoutMs: number;
   private idleSweeperIntervalMs: number;
   private cache: ConversationCache | null = null;
+  private discoveryCache: {
+    entries: ReturnType<typeof discoverClaudeProcesses>;
+    fetchedAt: number;
+  } | null = null;
   private cacheDir: string;
   private tailSize: number;
 
@@ -754,13 +758,19 @@ export class StreamerServer {
   }
 
   private handleListSessions(res: ServerResponse): void {
-    // Refresh discovered processes
-    try {
-      const discovered = discoverClaudeProcesses();
-      this.sessionStore.setDiscovered(discovered);
-    } catch {
-      // Discovery is best-effort
+    const DISCOVERY_TTL_MS = 5_000;
+    const now = Date.now();
+
+    if (!this.discoveryCache || now - this.discoveryCache.fetchedAt >= DISCOVERY_TTL_MS) {
+      try {
+        const discovered = discoverClaudeProcesses();
+        this.sessionStore.setDiscovered(discovered);
+        this.discoveryCache = { entries: discovered, fetchedAt: now };
+      } catch {
+        // Discovery is best-effort
+      }
     }
+
     json(res, 200, this.sessionStore.list());
   }
 
@@ -774,6 +784,7 @@ export class StreamerServer {
   }
 
   private async handleResume(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    this.discoveryCache = null;
     const body = await readBody(req);
     const { conversationId, projectPath: explicitPath } = body;
 
@@ -942,6 +953,7 @@ export class StreamerServer {
   }
 
   private handleCancel(sessionId: string, res: ServerResponse): void {
+    this.discoveryCache = null;
     try {
       this.ptyManager.cancel(sessionId);
       json(res, 200, { ok: true });
@@ -976,6 +988,7 @@ export class StreamerServer {
       return;
     }
 
+    this.discoveryCache = null;
     try {
       const session = await this.ptyManager.startFresh({
         projectPath: resolvedPath,
