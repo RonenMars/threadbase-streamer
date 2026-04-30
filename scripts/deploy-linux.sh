@@ -321,6 +321,11 @@ cmd_deploy() {
     mkdir -p "$RELEASES_DIR/node_modules"
     cp -r node_modules/node-pty "$RELEASES_DIR/node_modules/node-pty"
   fi
+  # better-sqlite3 is external to the tsup bundle (native addon). Copy alongside cli.
+  if [ -d "node_modules/better-sqlite3" ]; then
+    mkdir -p "$RELEASES_DIR/node_modules"
+    cp -r node_modules/better-sqlite3 "$RELEASES_DIR/node_modules/better-sqlite3"
+  fi
 
   log "activating symlink"
   activate_release "$rel_path"
