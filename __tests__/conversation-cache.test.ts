@@ -118,8 +118,8 @@ describe("updateFromLine()", () => {
     }
     const tail = cache.getConversationTail("abc-123");
     expect(tail).not.toBeNull();
-    expect(tail!.messages).toHaveLength(3);
-    expect(tail!.messages[2].text).toContain("msg 4");
+    expect(tail?.messages).toHaveLength(3);
+    expect(tail?.messages[2].text).toContain("msg 4");
   });
 
   it("ignores lines that are not valid JSON", () => {
@@ -228,9 +228,9 @@ describe("getConversationTail()", () => {
     );
     const tail = cache.getConversationTail("abc-123");
     expect(tail).not.toBeNull();
-    expect(tail!.messages).toHaveLength(1);
-    expect(tail!.messages[0].role).toBe("user");
-    expect(tail!.messages[0].text).toBe("hello");
+    expect(tail?.messages).toHaveLength(1);
+    expect(tail?.messages[0].role).toBe("user");
+    expect(tail?.messages[0].text).toBe("hello");
   });
 });
 
