@@ -93,6 +93,14 @@ if ($pid8766 -match '^\d+$') { Stop-Process -Id $pid8766 -Force -ErrorAction Sil
 
 ---
 
+### Blank PowerShell window flashes briefly during Claude Code sessions *(Windows only)*
+
+**When:** A blank Windows Terminal tab or window labelled "PowerShell" appears and disappears while Claude Code is running. Hovering the tab shows only the generic name "PowerShell" with no custom title.
+**Cause:** When Claude Code executes its `PowerShell` tool, it spawns a `pwsh` process on the system. Windows Terminal detects the new shell process and briefly surfaces it as a tab before the process exits. The window is blank because the process runs non-interactively and produces no interactive output.
+**Fix:** None required — it is harmless and can be safely closed. The command Claude Code was running has already completed (or will complete) regardless of whether you close the window.
+
+---
+
 ### ConPTY crash during session start — no JavaScript logs appear *(Windows only)*
 
 **When:** `POST /api/sessions/start` crashes the server process silently. No log lines appear even when logging is placed at the very first line of `handleRequest` (before CORS headers, before auth). The process exits with no output.
