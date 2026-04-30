@@ -99,6 +99,8 @@ export interface ServerConfig {
   }>;
   idleTimeoutMs?: number;
   idleSweeperIntervalMs?: number;
+  cacheDir?: string;
+  tailSize?: number;
 }
 
 // ─── PTY Manager ───────────────────────────────────────────────────

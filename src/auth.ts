@@ -54,6 +54,28 @@ export function loadPublicUrl(): string | undefined {
   return undefined;
 }
 
+export function loadCacheDir(): string | undefined {
+  try {
+    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const match = content.match(/cache_dir:\s*(.+)/);
+    if (match?.[1]) return match[1].trim();
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
+export function loadTailSize(): number | undefined {
+  try {
+    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const match = content.match(/tail_size:\s*(\d+)/);
+    if (match?.[1]) return Number.parseInt(match[1], 10);
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
 export type PublicUrlValidation = { ok: true; normalized: string } | { ok: false; error: string };
 
 export function validatePublicUrl(raw: string): PublicUrlValidation {
