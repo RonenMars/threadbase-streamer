@@ -522,7 +522,11 @@ export class StreamerServer {
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
 
     if (this.cache && bustCache) {
-      this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+      try {
+        this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+      } catch {
+        // Best-effort; response already sent
+      }
     }
   }
 

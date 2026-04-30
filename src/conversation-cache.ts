@@ -162,7 +162,7 @@ export class ConversationCache {
           last_message  = excluded.last_message,
           preview       = excluded.preview,
           updated_at    = excluded.updated_at
-        WHERE conversation_meta.updated_at < excluded.updated_at - 86400000
+        WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
       upsertTail: db.prepare(`
@@ -239,7 +239,7 @@ export class ConversationCache {
           .split(/[/\\]/)
           .pop()
           ?.replace(/\.jsonl$/, "") ?? filePath;
-      this.stmts.insertSkeleton.run(pseudoId, filePath, now);
+      this.stmts.insertSkeleton.run(pseudoId, filePath, 0);
       this.fileIndex.set(filePath, pseudoId);
       convId = pseudoId;
     }
@@ -259,7 +259,6 @@ export class ConversationCache {
   }
 
   upsertFromScannerMeta(metas: ScannerMeta[]): void {
-    const cutoff = Date.now() - 86_400_000;
     const run = this.db.transaction((items: ScannerMeta[]) => {
       for (const m of items) {
         const id =
@@ -275,7 +274,7 @@ export class ConversationCache {
           file_path: m.filePath,
           project_path: m.projectPath ?? null,
           project_name: m.projectName ?? null,
-          title: m.projectName ?? null,
+          title: m.title ?? m.projectName ?? null,
           model: m.model ?? null,
           account: m.account ?? null,
           branch: m.gitBranch ?? null,
@@ -284,7 +283,7 @@ export class ConversationCache {
           first_message: m.firstMessage ? JSON.stringify(m.firstMessage) : null,
           last_message: m.lastMessage ? JSON.stringify(m.lastMessage) : null,
           preview: m.preview ?? null,
-          updated_at: cutoff - 1,
+          updated_at: 0,
         });
         if (this.fileIndexLoaded) this.fileIndex.set(m.filePath, id);
       }
