@@ -12,9 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
-          token: ${{ secrets.SCANNER_TOKEN }}
+
+      - name: Init scanner submodule
+        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -35,9 +37,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
-          token: ${{ secrets.SCANNER_TOKEN }}
+
+      - name: Init scanner submodule
+        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -67,9 +71,11 @@ jobs:
         node-version: [18, 20, 22]
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
-          token: ${{ secrets.SCANNER_TOKEN }}
+
+      - name: Init scanner submodule
+        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
