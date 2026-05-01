@@ -1,13 +1,13 @@
 import { discoverClaudeProcesses } from "../src/process-discovery";
 
 describe("process-discovery", () => {
-  it("returns an array (may be empty if no claude processes running)", () => {
-    const result = discoverClaudeProcesses();
+  it("returns an array (may be empty if no claude processes running)", async () => {
+    const result = await discoverClaudeProcesses();
     expect(Array.isArray(result)).toBe(true);
   });
 
-  it("each discovered process has required fields", () => {
-    const results = discoverClaudeProcesses();
+  it("each discovered process has required fields", async () => {
+    const results = await discoverClaudeProcesses();
     for (const proc of results) {
       expect(proc).toHaveProperty("pid");
       expect(typeof proc.pid).toBe("number");

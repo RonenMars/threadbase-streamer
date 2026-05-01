@@ -1,71 +1,93 @@
+import { execFile } from "child_process";
 import { platform } from "os";
 import { basename, dirname } from "path";
-import { execHidden } from "./platform";
+import { isWindows } from "./platform";
 import type { DiscoveredProcess } from "./types";
 
-export function discoverClaudeProcesses(): DiscoveredProcess[] {
-  const os = platform();
-  if (os === "win32") return discoverWindows();
+export async function discoverClaudeProcesses(): Promise<DiscoveredProcess[]> {
+  if (platform() === "win32") return discoverWindows();
   return discoverUnix();
 }
 
-function discoverUnix(): DiscoveredProcess[] {
-  const pids = getPidsUnix();
-  const results: DiscoveredProcess[] = [];
+async function discoverUnix(): Promise<DiscoveredProcess[]> {
+  const pids = await getPidsUnix();
 
-  for (const pid of pids) {
-    try {
-      const cwd = getProcessCwdUnix(pid);
-      const args = getProcessArgsUnix(pid);
-      const startedAt = getProcessStartTimeUnix(pid);
-      const conversationId = extractResumeId(args);
+  const results = await Promise.all(
+    pids.map(async (pid) => {
+      try {
+        const [cwd, args, startedAt] = await Promise.all([
+          getProcessCwdUnix(pid),
+          getProcessArgsUnix(pid),
+          getProcessStartTimeUnix(pid),
+        ]);
+        const conversationId = extractResumeId(args);
 
-      results.push({
-        pid,
-        projectPath: cwd,
-        projectName: basename(cwd),
-        branch: readGitBranch(cwd),
-        conversationId,
-        startedAt,
-      });
-    } catch {
-      // Process may have exited between pgrep and enrichment
-    }
-  }
+        return {
+          pid,
+          projectPath: cwd,
+          projectName: basename(cwd),
+          branch: await readGitBranch(cwd),
+          conversationId,
+          startedAt,
+        } satisfies DiscoveredProcess;
+      } catch {
+        return null;
+      }
+    }),
+  );
 
-  return results;
+  return results.filter((r): r is DiscoveredProcess => r !== null);
 }
 
-function discoverWindows(): DiscoveredProcess[] {
-  const pids = getPidsWindows();
-  const results: DiscoveredProcess[] = [];
+async function discoverWindows(): Promise<DiscoveredProcess[]> {
+  const pids = await getPidsWindows();
 
-  for (const pid of pids) {
-    try {
-      const info = getProcessInfoWindows(pid);
-      if (!info) continue;
+  const results = await Promise.all(
+    pids.map(async (pid) => {
+      try {
+        const info = await getProcessInfoWindows(pid);
+        if (!info) return null;
 
-      results.push({
-        pid,
-        projectPath: info.cwd,
-        projectName: basename(info.cwd),
-        branch: readGitBranch(info.cwd),
-        conversationId: extractResumeId(info.args),
-        startedAt: info.startedAt,
-      });
-    } catch {
-      // Process may have exited
-    }
-  }
+        return {
+          pid,
+          projectPath: info.cwd,
+          projectName: basename(info.cwd),
+          branch: await readGitBranch(info.cwd),
+          conversationId: extractResumeId(info.args),
+          startedAt: info.startedAt,
+        } satisfies DiscoveredProcess;
+      } catch {
+        return null;
+      }
+    }),
+  );
 
-  return results;
+  return results.filter((r): r is DiscoveredProcess => r !== null);
 }
 
 // ─── Unix Helpers ──────────────────────────────────────────────────
 
-function getPidsUnix(): number[] {
+function run(
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; timeout?: number } = {},
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      cmd,
+      args,
+      { windowsHide: isWindows, encoding: "utf-8", timeout: opts.timeout ?? 5000, cwd: opts.cwd },
+      (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout as string);
+      },
+    );
+  });
+}
+
+async function getPidsUnix(): Promise<number[]> {
   try {
-    const output = execHidden("pgrep", ["-x", "claude"], { encoding: "utf-8", timeout: 5000 });
+    const output = await run("pgrep", ["-x", "claude"]);
     return output
       .trim()
       .split("\n")
@@ -76,38 +98,26 @@ function getPidsUnix(): number[] {
   }
 }
 
-function getProcessCwdUnix(pid: number): string {
-  const output = execHidden("lsof", ["-p", String(pid), "-a", "-d", "cwd", "-Fn"], {
-    encoding: "utf-8",
-    timeout: 5000,
-  });
+async function getProcessCwdUnix(pid: number): Promise<string> {
+  const output = await run("lsof", ["-p", String(pid), "-a", "-d", "cwd", "-Fn"]);
   const match = output.match(/n(.+)/);
   return match?.[1] ?? "";
 }
 
-function getProcessArgsUnix(pid: number): string {
-  return execHidden("ps", ["-p", String(pid), "-o", "args="], {
-    encoding: "utf-8",
-    timeout: 5000,
-  }).trim();
+async function getProcessArgsUnix(pid: number): Promise<string> {
+  return (await run("ps", ["-p", String(pid), "-o", "args="])).trim();
 }
 
-function getProcessStartTimeUnix(pid: number): Date {
-  const raw = execHidden("ps", ["-p", String(pid), "-o", "lstart="], {
-    encoding: "utf-8",
-    timeout: 5000,
-  }).trim();
+async function getProcessStartTimeUnix(pid: number): Promise<Date> {
+  const raw = (await run("ps", ["-p", String(pid), "-o", "lstart="])).trim();
   return new Date(raw);
 }
 
 // ─── Windows Helpers ───────────────────────────────────────────────
 
-function getPidsWindows(): number[] {
+async function getPidsWindows(): Promise<number[]> {
   try {
-    const output = execHidden("tasklist", ["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"], {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
+    const output = await run("tasklist", ["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"]);
     return output
       .trim()
       .split("\n")
@@ -122,20 +132,18 @@ function getPidsWindows(): number[] {
   }
 }
 
-function getProcessInfoWindows(pid: number): { cwd: string; args: string; startedAt: Date } | null {
+async function getProcessInfoWindows(
+  pid: number,
+): Promise<{ cwd: string; args: string; startedAt: Date } | null> {
   try {
-    const output = execHidden(
-      "wmic",
-      [
-        "process",
-        "where",
-        `ProcessId=${pid}`,
-        "get",
-        "CommandLine,CreationDate,ExecutablePath",
-        "/FORMAT:CSV",
-      ],
-      { encoding: "utf-8", timeout: 5000 },
-    );
+    const output = await run("wmic", [
+      "process",
+      "where",
+      `ProcessId=${pid}`,
+      "get",
+      "CommandLine,CreationDate,ExecutablePath",
+      "/FORMAT:CSV",
+    ]);
     // wmic uses CRLF; split on \r?\n so the blank separator line becomes "" and is filtered out.
     const lines = output
       .trim()
@@ -174,14 +182,11 @@ function extractResumeId(args: string): string | null {
   return match?.[1] ?? null;
 }
 
-function readGitBranch(dir: string): string {
+async function readGitBranch(dir: string): Promise<string> {
   try {
-    return execHidden("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-      cwd: dir,
-      encoding: "utf-8",
-      timeout: 3000,
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
+    return (
+      await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, timeout: 3000 })
+    ).trim();
   } catch {
     return "";
   }

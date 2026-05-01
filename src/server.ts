@@ -33,7 +33,7 @@ import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
 import { seal } from "./seal";
 import { SessionStore } from "./session-store";
-import type { ServerConfig } from "./types";
+import type { DiscoveredProcess, ServerConfig } from "./types";
 import { saveUploadFile } from "./uploads";
 import { WSHub } from "./ws-hub";
 
@@ -73,7 +73,7 @@ export class StreamerServer {
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
   private cache: ConversationCache | null = null;
   private discoveryCache: {
-    entries: ReturnType<typeof discoverClaudeProcesses>;
+    entries: DiscoveredProcess[];
     fetchedAt: number;
   } | null = null;
   private cacheDir: string;
@@ -350,7 +350,7 @@ export class StreamerServer {
       if (method === "GET" && path === "/api/conversations/count")
         return await this.handleConversationsCount(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
-      if (method === "GET" && path === "/api/sessions") return this.handleListSessions(res);
+      if (method === "GET" && path === "/api/sessions") return await this.handleListSessions(res);
       if (method === "GET" && path === "/api/sessions/count") return this.handleSessionsCount(res);
       if (method === "POST" && path === "/api/sessions/resume")
         return await this.handleResume(req, res);
@@ -810,13 +810,13 @@ export class StreamerServer {
     });
   }
 
-  private handleListSessions(res: ServerResponse): void {
-    const DISCOVERY_TTL_MS = 5_000;
+  private async handleListSessions(res: ServerResponse): Promise<void> {
+    const DISCOVERY_TTL_MS = 15_000;
     const now = Date.now();
 
     if (!this.discoveryCache || now - this.discoveryCache.fetchedAt >= DISCOVERY_TTL_MS) {
       try {
-        const discovered = discoverClaudeProcesses();
+        const discovered = await discoverClaudeProcesses();
         this.sessionStore.setDiscovered(discovered);
         this.discoveryCache = { entries: discovered, fetchedAt: now };
       } catch {
@@ -1039,7 +1039,7 @@ export class StreamerServer {
     }
 
     // Refresh discovery so we have the latest metadata
-    const discovered = discoverClaudeProcesses();
+    const discovered = await discoverClaudeProcesses();
     this.sessionStore.setDiscovered(discovered);
     this.discoveryCache = null;
 
