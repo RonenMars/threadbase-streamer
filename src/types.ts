@@ -48,6 +48,7 @@ export type WSMessage =
 
 export interface SessionResponse {
   id: string; // JSONL UUID
+  conversationId: string; // alias for id — mobile uses this to build deep-link URLs
   status: SessionStatus;
   projectPath: string;
   projectName: string;
