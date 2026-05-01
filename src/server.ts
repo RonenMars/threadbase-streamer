@@ -1040,33 +1040,32 @@ export class StreamerServer {
     this.sessionStore.setDiscovered(discovered);
     this.discoveryCache = null;
 
-    const discSession = this.sessionStore.get(sessionId);
+    const discSession = this.sessionStore.get(sessionId, this.ptyAttachedIds());
     if (!discSession) {
       json(res, 404, { error: "Discovered session not found" });
       return;
     }
 
-    const { projectPath, projectName, branch, conversationId } = discSession;
+    const { projectPath, projectName, branch } = discSession;
+    const convId = discSession.id;
 
     // Kill the external process
     this.ptyManager.killPid(pid);
 
-    // Start a new managed session, resuming the conversation if we have an ID
-    const session = conversationId
-      ? await this.ptyManager.start({
-          conversationId,
-          projectPath,
-          projectName,
-          branch,
-        })
-      : await this.ptyManager.startFresh({ projectPath, projectName });
+    // Start a new managed session, resuming the conversation
+    const session = await this.ptyManager.start(convId, {
+      projectPath,
+      projectName,
+      branch,
+    });
 
     this.sessionStore.addManaged(session);
-    if (conversationId) {
-      this.watchConversationFile(session.id, conversationId);
-    }
+    void this.watchConversationFile(session.id);
 
-    this.wsHub.broadcast({ type: "session_list", sessions: this.sessionStore.list() });
+    this.wsHub.broadcast({
+      type: "session_list",
+      sessions: this.sessionStore.list(this.ptyAttachedIds()),
+    });
 
     json(res, 201, { sessionId: session.id });
   }
