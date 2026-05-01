@@ -61,9 +61,7 @@ export class SessionStore {
     if (managed) return managedToResponse(managed, ptyAttachedIds.has(sessionId));
 
     for (const d of this.discovered.values()) {
-      if (d.conversationId === sessionId || `disc_${d.pid}` === sessionId) {
-        return discoveredToResponse(d);
-      }
+      if (d.conversationId === sessionId) return discoveredToResponse(d);
     }
 
     return null;
