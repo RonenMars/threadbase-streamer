@@ -71,6 +71,7 @@ export class SessionStore {
 function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResponse {
   return {
     id: s.id,
+    conversationId: s.id,
     status: s.status,
     projectPath: s.projectPath,
     projectName: s.projectName,
@@ -99,6 +100,7 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
 function discoveredToResponse(d: DiscoveredProcess): SessionResponse {
   return {
     id: d.conversationId!,
+    conversationId: d.conversationId!,
     status: "idle",
     projectPath: d.projectPath,
     projectName: d.projectName,
