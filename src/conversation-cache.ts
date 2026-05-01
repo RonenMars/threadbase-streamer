@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync, readFileSync } from "fs";
+import { closeSync, mkdirSync, openSync, readSync, statSync } from "fs";
 import { dirname } from "path";
 
 export interface ConversationListItem {
@@ -111,6 +111,9 @@ export class ConversationCache {
   private tailSize: number;
   private fileIndex = new Map<string, string>();
   private fileIndexLoaded = false;
+  // Monotonically increasing counter for tail updated_at — guarantees strict
+  // ordering even when multiple updateFromLine() calls land within the same ms.
+  private tailSeq = Date.now();
 
   private stmts: {
     getById: Database.Statement;
@@ -174,6 +177,7 @@ export class ConversationCache {
           messages_json = excluded.messages_json,
           tail_size     = excluded.tail_size,
           updated_at    = excluded.updated_at
+        WHERE conversation_tail.updated_at < excluded.updated_at
       `),
       list: db.prepare(
         "SELECT * FROM conversation_meta ORDER BY last_activity DESC LIMIT ? OFFSET ?",
@@ -230,7 +234,7 @@ export class ConversationCache {
 
     const text = line.content?.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
     const lastMessage = JSON.stringify({ role, timestamp, text });
-    const now = Date.now();
+    const seq = ++this.tailSeq;
 
     this.ensureFileIndex();
 
@@ -246,7 +250,7 @@ export class ConversationCache {
       convId = pseudoId;
     }
 
-    const result = this.stmts.updateMeta.run(activityMs, lastMessage, now, convId);
+    const result = this.stmts.updateMeta.run(activityMs, lastMessage, seq, convId);
     if (result.changes === 0) return;
 
     const tailRow = this.stmts.getTail.get(convId) as TailRow | undefined;
@@ -257,7 +261,7 @@ export class ConversationCache {
     msgs.push({ role, timestamp, text });
     if (msgs.length > this.tailSize) msgs.splice(0, msgs.length - this.tailSize);
 
-    this.stmts.upsertTail.run(convId, JSON.stringify(msgs), msgs.length, now);
+    this.stmts.upsertTail.run(convId, JSON.stringify(msgs), msgs.length, seq);
   }
 
   upsertFromScannerMeta(metas: ScannerMeta[]): void {
@@ -294,20 +298,49 @@ export class ConversationCache {
   }
 
   // Reads the last `tailSize` qualifying lines from a JSONL file and writes them
-  // to conversation_tail. Uses updated_at=0 so any live updateFromLine() call
-  // (which uses Date.now()) always wins the upsert conflict.
+  // to conversation_tail. Reads backward in 8 KB chunks so memory usage is
+  // bounded regardless of file size. Uses updated_at=0 so any live
+  // updateFromLine() call (which uses Date.now()) always wins the upsert.
   // Returns false if the file cannot be read or the tail already exists.
   populateTailFromFile(convId: string, filePath: string): boolean {
     if (this.stmts.hasTail.get(convId)) return false;
-    let raw: string;
+
+    let fileSize: number;
+    let fd: number;
     try {
-      raw = readFileSync(filePath, "utf8");
+      fileSize = statSync(filePath).size;
+      fd = openSync(filePath, "r");
     } catch {
       return false;
     }
-    const lines = raw.split("\n");
+
+    const CHUNK = 8192;
+    const buf = Buffer.allocUnsafe(CHUNK);
+    let pos = fileSize;
+    let partial = "";
+    const lines: string[] = [];
+
+    try {
+      while (pos > 0 && lines.length < this.tailSize * 4) {
+        const toRead = Math.min(CHUNK, pos);
+        pos -= toRead;
+        readSync(fd, buf, 0, toRead, pos);
+        const chunk = buf.subarray(0, toRead).toString("utf8");
+        const combined = chunk + partial;
+        const parts = combined.split("\n");
+        // parts[0] may be a partial line — keep it for the next iteration
+        partial = parts[0];
+        for (let i = parts.length - 1; i >= 1; i--) {
+          lines.push(parts[i]);
+        }
+      }
+      if (partial) lines.push(partial);
+    } finally {
+      closeSync(fd);
+    }
+
     const msgs: CachedTailMessage[] = [];
-    for (let i = lines.length - 1; i >= 0 && msgs.length < this.tailSize; i--) {
+    for (let i = 0; i < lines.length && msgs.length < this.tailSize; i++) {
       const line = lines[i].trim();
       if (!line) continue;
       let parsed: JsonlLine;
