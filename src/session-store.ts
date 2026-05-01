@@ -47,10 +47,10 @@ export class SessionStore {
     }
 
     for (const d of this.discovered.values()) {
-      const id = d.conversationId ?? `disc_${d.pid}`;
-      if (seenIds.has(id)) continue;
+      if (!d.conversationId) continue;
+      if (seenIds.has(d.conversationId)) continue;
       results.push(discoveredToResponse(d));
-      seenIds.add(id);
+      seenIds.add(d.conversationId);
     }
 
     return results;
@@ -96,9 +96,8 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
 }
 
 function discoveredToResponse(d: DiscoveredProcess): SessionResponse {
-  const id = d.conversationId ?? `disc_${d.pid}`;
   return {
-    id,
+    id: d.conversationId!,
     status: "idle",
     projectPath: d.projectPath,
     projectName: d.projectName,
