@@ -47,12 +47,11 @@ export class SessionStore {
     }
 
     for (const d of this.discovered.values()) {
-      // Skip if already represented by a managed session
-      if (d.conversationId && seenIds.has(d.conversationId)) continue;
-      const id = d.conversationId ?? `disc_${d.pid}`;
-      if (seenIds.has(id)) continue;
+      // Skip processes with no JSONL UUID — they have no conversation to link to
+      if (!d.conversationId) continue;
+      if (seenIds.has(d.conversationId)) continue;
       results.push(discoveredToResponse(d));
-      seenIds.add(id);
+      seenIds.add(d.conversationId);
     }
 
     return results;
@@ -62,11 +61,8 @@ export class SessionStore {
     const managed = this.managed.get(sessionId);
     if (managed) return managedToResponse(managed, ptyAttachedIds.has(sessionId));
 
-    // Fall back to discovered by UUID or disc_<pid> format
     for (const d of this.discovered.values()) {
-      if (d.conversationId === sessionId || `disc_${d.pid}` === sessionId) {
-        return discoveredToResponse(d);
-      }
+      if (d.conversationId === sessionId) return discoveredToResponse(d);
     }
 
     return null;
