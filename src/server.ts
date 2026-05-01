@@ -752,7 +752,7 @@ export class StreamerServer {
 
     const body: Record<string, unknown> = {
       meta: {
-        id: conversation.id,
+        id,
         profile_id: (conversation as any).account,
         project_name: (conversation as any).projectName,
         project_path: (conversation as any).projectPath,
