@@ -92,6 +92,7 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     ...(s.lastMessageAt != null && { lastMessageAt: s.lastMessageAt.toISOString() }),
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt.toISOString() }),
     ...(s.filePath != null && { filePath: s.filePath }),
+    ...(s.failureReason != null && { failureReason: s.failureReason }),
   };
 }
 

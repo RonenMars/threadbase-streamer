@@ -833,6 +833,9 @@ export class StreamerServer {
       json(res, 404, { error: "Session not found" });
       return;
     }
+    if (!existsSync(session.projectPath)) {
+      session.failureReason = `Project directory not found: ${session.projectPath}`;
+    }
     json(res, 200, session);
   }
 

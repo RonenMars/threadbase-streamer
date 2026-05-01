@@ -12,6 +12,7 @@ export interface ManagedSession {
   completedAt: Date | null;
   promptCount: number;
   lastOutput: string;
+  failureReason?: string;
   sessionName?: string;
   model?: string;
   account?: string;
@@ -57,6 +58,7 @@ export interface SessionResponse {
   startedAt: string;
   completedAt: string | null;
   ptyAttached: boolean; // true when a live PTY is spawned for this session
+  failureReason?: string;
   pid?: number;
   sessionName?: string;
   model?: string;

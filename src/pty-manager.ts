@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto";
+import { existsSync } from "fs";
 import { basename } from "path";
 import { resolveClaudeExe } from "./platform";
 import type {
@@ -248,14 +249,25 @@ export class PTYManager {
     this.onOutput?.(sessionId, data);
   }
 
-  private handleExit(sessionId: string, _exitCode: number): void {
+  private handleExit(sessionId: string, exitCode: number): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    // PTY exited — mark idle regardless of exit code. Session history lives
-    // in the JSONL file on disk; we don't need to distinguish completed/failed.
     session.completedAt = new Date();
     session.status = "idle";
+
+    // Instant exit with no output — diagnose the most likely cause.
+    const elapsedMs = session.completedAt.getTime() - session.startedAt.getTime();
+    if (exitCode !== 0 && elapsedMs < 2000 && session.lastOutput === "") {
+      if (!existsSync(session.projectPath)) {
+        session.failureReason = `Project directory not found: ${session.projectPath}`;
+      } else {
+        session.failureReason =
+          `Process exited immediately (code ${exitCode}). ` +
+          `Check that the Claude binary is installed and accessible.`;
+      }
+    }
+
     this.onStatusChange?.(toPublicSession(session));
     this.sessions.delete(sessionId);
   }
@@ -272,6 +284,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     completedAt: s.completedAt,
     promptCount: s.promptCount,
     lastOutput: s.lastOutput,
+    ...(s.failureReason != null && { failureReason: s.failureReason }),
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
   };
