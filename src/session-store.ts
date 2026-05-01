@@ -47,11 +47,10 @@ export class SessionStore {
     }
 
     for (const d of this.discovered.values()) {
-      // Skip processes with no JSONL UUID — they have no conversation to link to
-      if (!d.conversationId) continue;
-      if (seenIds.has(d.conversationId)) continue;
+      const id = d.conversationId ?? `disc_${d.pid}`;
+      if (seenIds.has(id)) continue;
       results.push(discoveredToResponse(d));
-      seenIds.add(d.conversationId);
+      seenIds.add(id);
     }
 
     return results;
@@ -62,7 +61,9 @@ export class SessionStore {
     if (managed) return managedToResponse(managed, ptyAttachedIds.has(sessionId));
 
     for (const d of this.discovered.values()) {
-      if (d.conversationId === sessionId) return discoveredToResponse(d);
+      if (d.conversationId === sessionId || `disc_${d.pid}` === sessionId) {
+        return discoveredToResponse(d);
+      }
     }
 
     return null;
