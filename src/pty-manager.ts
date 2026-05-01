@@ -12,8 +12,6 @@ const OUTPUT_BUFFER_MAX = 65536;
 
 // Claude's interactive prompt starts with this box-drawing character when it is
 // waiting for user input (the top-left corner of its input box UI).
-// Detecting it lets us transition status: "running" → "waiting_input" so the
-// mobile app knows Claude is ready to receive a message.
 const CLAUDE_PROMPT_MARKER = "╭";
 
 // node-pty is a native addon — import dynamically to allow graceful failure
@@ -36,7 +34,6 @@ async function loadPty(): Promise<typeof import("node-pty")> {
 interface InternalSession extends ManagedSession {
   process: any; // node-pty IPty
   outputBuffer: Buffer;
-  holdAt?: Date;
 }
 
 export class PTYManager {
@@ -49,14 +46,14 @@ export class PTYManager {
     this.onStatusChange = options.onStatusChange;
   }
 
-  async start(options: StartSessionOptions): Promise<ManagedSession> {
+  // Resume an existing Claude conversation. sessionId is the JSONL UUID.
+  async start(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
-    const sessionId = `ses_${randomBytes(8).toString("hex")}`;
     const projectName = options.projectName ?? basename(options.projectPath);
 
     const proc = nodePty.spawn(
       resolveClaudeExe(),
-      ["--dangerously-skip-permissions", "--resume", options.conversationId],
+      ["--dangerously-skip-permissions", "--resume", sessionId],
       {
         name: "xterm-256color",
         cols: 120,
@@ -68,7 +65,6 @@ export class PTYManager {
 
     const session: InternalSession = {
       id: sessionId,
-      conversationId: options.conversationId,
       projectPath: options.projectPath,
       projectName,
       branch: options.branch ?? "",
@@ -94,9 +90,12 @@ export class PTYManager {
     return toPublicSession(session);
   }
 
+  // Start a brand-new Claude session with no existing conversationId.
+  // Returns a session with a temporary pending_* id. The server watches the
+  // project directory for the JSONL file Claude creates and re-keys the entry.
   async startFresh(options: StartFreshSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
-    const sessionId = `ses_${randomBytes(8).toString("hex")}`;
+    const pendingId = `pending_${randomBytes(8).toString("hex")}`;
     const projectName = options.projectName ?? basename(options.projectPath);
 
     const args: string[] = ["--dangerously-skip-permissions"];
@@ -104,9 +103,7 @@ export class PTYManager {
       args.push("--system-prompt", options.systemPrompt);
     }
 
-    const exePath = resolveClaudeExe();
-
-    const proc = nodePty.spawn(exePath, args, {
+    const proc = nodePty.spawn(resolveClaudeExe(), args, {
       name: "xterm-256color",
       cols: 120,
       rows: 40,
@@ -115,8 +112,7 @@ export class PTYManager {
     });
 
     const session: InternalSession = {
-      id: sessionId,
-      conversationId: "",
+      id: pendingId,
       projectPath: options.projectPath,
       projectName,
       branch: "",
@@ -129,26 +125,35 @@ export class PTYManager {
       outputBuffer: Buffer.alloc(0),
     };
 
-    this.sessions.set(sessionId, session);
+    this.sessions.set(pendingId, session);
 
     proc.onData((data: string) => {
-      this.handleOutput(sessionId, data);
+      this.handleOutput(pendingId, data);
     });
 
     proc.onExit(({ exitCode }: { exitCode: number }) => {
-      this.handleExit(sessionId, exitCode);
+      this.handleExit(pendingId, exitCode);
     });
 
     return toPublicSession(session);
   }
 
+  // Re-key a pending_ session to its real JSONL UUID once Claude creates the file.
+  rekeySession(pendingId: string, realId: string): boolean {
+    const session = this.sessions.get(pendingId);
+    if (!session) return false;
+    session.id = realId;
+    this.sessions.delete(pendingId);
+    this.sessions.set(realId, session);
+    return true;
+  }
+
   sendInput(sessionId: string, input: string): number {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
-    if (session.status === "completed" || session.status === "failed") {
-      throw new Error(`Session already ${session.status}: ${sessionId}`);
+    if (session.status === "idle") {
+      throw new Error(`Session is idle (no active PTY): ${sessionId}`);
     }
-    // Input was received — Claude is no longer waiting; flip back to running.
     if (session.status === "waiting_input") {
       session.status = "running";
       this.onStatusChange?.(toPublicSession(session));
@@ -165,15 +170,19 @@ export class PTYManager {
     session.process.kill("SIGINT");
   }
 
+  // Kill the PTY and mark the session idle. Called by the WS grace timer.
   putOnHold(sessionId: string): void {
     const session = this.sessions.get(sessionId);
-    if (!session) throw new Error(`Session not found: ${sessionId}`);
-    session.holdAt = new Date();
+    if (!session) return;
     try {
       session.process.kill("SIGINT");
     } catch {
       // already dead
     }
+    session.status = "idle";
+    session.completedAt = new Date();
+    this.sessions.delete(sessionId);
+    this.onStatusChange?.(toPublicSession(session));
   }
 
   getOutput(sessionId: string): string {
@@ -185,6 +194,10 @@ export class PTYManager {
   getSession(sessionId: string): ManagedSession | null {
     const session = this.sessions.get(sessionId);
     return session ? toPublicSession(session) : null;
+  }
+
+  hasSession(sessionId: string): boolean {
+    return this.sessions.has(sessionId);
   }
 
   listSessions(): ManagedSession[] {
@@ -209,7 +222,6 @@ export class PTYManager {
     const chunk = Buffer.from(data, "utf-8");
     session.outputBuffer = Buffer.concat([session.outputBuffer, chunk]);
 
-    // Ring buffer pruning
     if (session.outputBuffer.length > OUTPUT_BUFFER_MAX) {
       session.outputBuffer = session.outputBuffer.subarray(
         session.outputBuffer.length - OUTPUT_BUFFER_MAX,
@@ -219,9 +231,6 @@ export class PTYManager {
     const stripped = stripAnsi(data);
     session.lastOutput = stripped;
 
-    // Detect Claude's input-ready prompt to transition running → waiting_input.
-    // The ╭ box-drawing character appears at the start of Claude's input box
-    // and is the most reliable signal that it is waiting for user input.
     if (session.status === "running" && stripped.includes(CLAUDE_PROMPT_MARKER)) {
       session.lastActivityAt = new Date();
       session.status = "waiting_input";
@@ -231,25 +240,22 @@ export class PTYManager {
     this.onOutput?.(sessionId, data);
   }
 
-  private handleExit(sessionId: string, exitCode: number): void {
+  private handleExit(sessionId: string, _exitCode: number): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    if (session.holdAt) {
-      this.sessions.delete(sessionId);
-      return;
-    }
-
+    // PTY exited — mark idle regardless of exit code. Session history lives
+    // in the JSONL file on disk; we don't need to distinguish completed/failed.
     session.completedAt = new Date();
-    session.status = exitCode === 0 ? "completed" : "failed";
+    session.status = "idle";
     this.onStatusChange?.(toPublicSession(session));
+    this.sessions.delete(sessionId);
   }
 }
 
 function toPublicSession(s: InternalSession): ManagedSession {
   return {
     id: s.id,
-    conversationId: s.conversationId,
     projectPath: s.projectPath,
     projectName: s.projectName,
     branch: s.branch,
@@ -259,6 +265,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     promptCount: s.promptCount,
     lastOutput: s.lastOutput,
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt }),
+    ...(s.filePath != null && { filePath: s.filePath }),
   };
 }
 

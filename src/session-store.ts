@@ -1,46 +1,26 @@
-import type { SessionPersistence } from "./db/session-persistence";
 import type { DiscoveredProcess, ManagedSession, SessionResponse } from "./types";
 
 export class SessionStore {
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();
-  private persistence: SessionPersistence | null;
-
-  constructor(persistence?: SessionPersistence) {
-    this.persistence = persistence ?? null;
-  }
 
   addManaged(session: ManagedSession): void {
     this.managed.set(session.id, session);
-    this.persistence?.save(session);
   }
 
   updateManaged(sessionId: string, updates: Partial<ManagedSession>): ManagedSession | null {
     const session = this.managed.get(sessionId);
     if (!session) return null;
     Object.assign(session, updates);
-    this.persistence?.update(sessionId, updates);
     return session;
   }
 
   removeManaged(sessionId: string): boolean {
-    const existed = this.managed.delete(sessionId);
-    if (existed) {
-      this.persistence?.remove(sessionId);
-    }
-    return existed;
+    return this.managed.delete(sessionId);
   }
 
   getManaged(sessionId: string): ManagedSession | null {
     return this.managed.get(sessionId) ?? null;
-  }
-
-  async rehydrate(): Promise<void> {
-    if (!this.persistence) return;
-    const sessions = await this.persistence.loadAll();
-    for (const session of sessions) {
-      this.managed.set(session.id, session);
-    }
   }
 
   setDiscovered(processes: DiscoveredProcess[]): void {
@@ -54,41 +34,46 @@ export class SessionStore {
     return Array.from(this.managed.values());
   }
 
-  list(): SessionResponse[] {
+  // Build the session list: live PTY sessions (managed) merged with externally
+  // discovered Claude processes. Managed sessions keyed by JSONL UUID take
+  // priority — discovered processes with the same UUID are skipped.
+  list(ptyAttachedIds: Set<string>): SessionResponse[] {
     const results: SessionResponse[] = [];
+    const seenIds = new Set<string>();
 
-    // Collect managed conversation IDs so we can skip discovered duplicates
-    const managedConvIds = new Set<string>();
     for (const s of this.managed.values()) {
-      results.push(managedToResponse(s));
-      if (s.conversationId) managedConvIds.add(s.conversationId);
+      results.push(managedToResponse(s, ptyAttachedIds.has(s.id)));
+      seenIds.add(s.id);
     }
 
     for (const d of this.discovered.values()) {
-      // Skip discovered processes that are already tracked as managed sessions
-      if (d.conversationId && managedConvIds.has(d.conversationId)) continue;
+      // Skip if already represented by a managed session
+      if (d.conversationId && seenIds.has(d.conversationId)) continue;
+      const id = d.conversationId ?? `disc_${d.pid}`;
+      if (seenIds.has(id)) continue;
       results.push(discoveredToResponse(d));
+      seenIds.add(id);
     }
 
     return results;
   }
 
-  get(sessionId: string): SessionResponse | null {
+  get(sessionId: string, ptyAttachedIds: Set<string>): SessionResponse | null {
     const managed = this.managed.get(sessionId);
-    if (managed) return managedToResponse(managed);
+    if (managed) return managedToResponse(managed, ptyAttachedIds.has(sessionId));
 
-    // Check discovered by disc_<pid> format
-    if (sessionId.startsWith("disc_")) {
-      const pid = Number.parseInt(sessionId.slice(5), 10);
-      const disc = this.discovered.get(pid);
-      if (disc) return discoveredToResponse(disc);
+    // Fall back to discovered by UUID or disc_<pid> format
+    for (const d of this.discovered.values()) {
+      if (d.conversationId === sessionId || `disc_${d.pid}` === sessionId) {
+        return discoveredToResponse(d);
+      }
     }
 
     return null;
   }
 }
 
-function managedToResponse(s: ManagedSession): SessionResponse {
+function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResponse {
   return {
     id: s.id,
     status: s.status,
@@ -100,8 +85,7 @@ function managedToResponse(s: ManagedSession): SessionResponse {
     promptCount: s.promptCount,
     startedAt: s.startedAt.toISOString(),
     completedAt: s.completedAt?.toISOString() ?? null,
-    conversationId: s.conversationId,
-    source: "managed",
+    ptyAttached,
     ...(s.sessionName != null && { sessionName: s.sessionName }),
     ...(s.model != null && { model: s.model }),
     ...(s.account != null && { account: s.account }),
@@ -117,9 +101,10 @@ function managedToResponse(s: ManagedSession): SessionResponse {
 }
 
 function discoveredToResponse(d: DiscoveredProcess): SessionResponse {
+  const id = d.conversationId ?? `disc_${d.pid}`;
   return {
-    id: `disc_${d.pid}`,
-    status: "running",
+    id,
+    status: "idle",
     projectPath: d.projectPath,
     projectName: d.projectName,
     branch: d.branch,
@@ -128,8 +113,7 @@ function discoveredToResponse(d: DiscoveredProcess): SessionResponse {
     promptCount: 0,
     startedAt: d.startedAt.toISOString(),
     completedAt: null,
-    conversationId: d.conversationId ?? "",
-    source: "discovered",
+    ptyAttached: false,
     pid: d.pid,
   };
 }

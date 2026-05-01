@@ -1,8 +1,6 @@
 export { generateApiKey, loadOrCreateApiKey, validateApiKey } from "./auth";
-export type { DbConfig, SessionPersistence } from "./db";
+export type { DbConfig } from "./db";
 export { createPool, getDbConfig, isDbEnabled, maskConnectionString } from "./db";
-export { MemorySessionPersistence } from "./db/memory-persistence";
-export { PgSessionPersistence } from "./db/pg-session-persistence";
 export { FileWatcher } from "./file-watcher";
 export { discoverClaudeProcesses } from "./process-discovery";
 export { PTYManager } from "./pty-manager";

@@ -40,7 +40,7 @@ export async function getRandomPort(): Promise<number> {
 
 export async function createTestServer(fixtureDir: string) {
   const port = await getRandomPort();
-  const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-test-"));
+  const cacheDir = mkdtempSync(join(tmpdir(), "tb-test-cache-"));
   const server = new StreamerServer({
     port,
     apiKey: TEST_API_KEY,
@@ -50,7 +50,7 @@ export async function createTestServer(fixtureDir: string) {
     cacheDir,
     scanProfiles: createFixtureProfiles(fixtureDir),
   });
-  await server.listen(port);
+  await server.listen(port, { awaitReady: true });
   const baseUrl = `http://localhost:${port}`;
   const headers = { Authorization: `Bearer ${TEST_API_KEY}` };
 
