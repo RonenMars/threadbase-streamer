@@ -95,12 +95,12 @@ describe("SessionStore", () => {
       expect(resp?.status).toBe("idle");
     });
 
-    it("falls back to disc_<pid> id when conversationId is null", () => {
+    it("skips discovered processes with null conversationId", () => {
       store.setDiscovered([makeDiscoveredProcess({ conversationId: null })]);
 
       const resp = store.get("disc_12345", noPty);
-      expect(resp).not.toBeNull();
-      expect(resp?.id).toBe("disc_12345");
+      expect(resp).toBeNull();
+      expect(store.list(noPty)).toHaveLength(0);
     });
 
     it("replaces previous discovered processes on setDiscovered", () => {
@@ -138,12 +138,13 @@ describe("SessionStore", () => {
       expect(all[0].id).toBe(UUID_A);
     });
 
-    it("does not dedupe discovered when conversationId is null", () => {
+    it("omits discovered process when conversationId is null", () => {
       store.addManaged(makeManagedSession());
       store.setDiscovered([makeDiscoveredProcess({ conversationId: null })]);
 
       const all = store.list(noPty);
-      expect(all).toHaveLength(2);
+      expect(all).toHaveLength(1);
+      expect(all[0].id).toBe(UUID_A);
     });
   });
 
