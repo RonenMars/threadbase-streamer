@@ -669,7 +669,7 @@ export class StreamerServer {
             timestamp: m.timestamp,
             text: m.text,
             tool_calls: [] as unknown[],
-            content: [] as unknown[],
+            content: (m.content ?? []).filter((b: any) => b.type !== "text"),
           }));
           json(res, 200, {
             meta: {

@@ -22,6 +22,7 @@ export interface CachedTailMessage {
   role: string;
   timestamp: string;
   text: string;
+  content?: unknown[];
 }
 
 export interface CachedTail {
@@ -75,7 +76,11 @@ interface JsonlLine {
   role?: string;
   type?: string;
   timestamp?: string;
-  content?: Array<{ type: string; text?: string }>;
+  content?: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  message?: {
+    role?: string;
+    content?: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  };
 }
 
 const SCHEMA = `
@@ -234,7 +239,8 @@ export class ConversationCache {
     const activityMs = new Date(timestamp).getTime();
     if (Number.isNaN(activityMs)) return;
 
-    const text = line.content?.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
+    const contentBlocks = line.message?.content ?? line.content ?? [];
+    const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
     const lastMessage = JSON.stringify({ role, timestamp, text });
     const seq = ++this.tailSeq;
 
@@ -260,7 +266,7 @@ export class ConversationCache {
       ? (JSON.parse(tailRow.messages_json) as CachedTailMessage[])
       : [];
 
-    msgs.push({ role, timestamp, text });
+    msgs.push({ role, timestamp, text, content: contentBlocks });
     if (msgs.length > this.tailSize) msgs.splice(0, msgs.length - this.tailSize);
 
     this.stmts.upsertTail.run(convId, JSON.stringify(msgs), msgs.length, seq);
@@ -354,8 +360,9 @@ export class ConversationCache {
       const role = parsed.role ?? parsed.type;
       if (!role) continue;
       const timestamp = parsed.timestamp ?? "";
-      const text = parsed.content?.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
-      msgs.unshift({ role, timestamp, text });
+      const contentBlocks = parsed.message?.content ?? parsed.content ?? [];
+      const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
+      msgs.unshift({ role, timestamp, text, content: contentBlocks });
     }
     if (msgs.length === 0) return false;
     this.stmts.upsertTail.run(convId, JSON.stringify(msgs), msgs.length, 0);
