@@ -182,7 +182,7 @@ export class StreamerServer {
     });
   }
 
-  async listen(port: number): Promise<void> {
+  async listen(port: number, opts?: { awaitReady?: boolean }): Promise<void> {
     // Set up optional DB persistence (lazy import of pg to avoid loading native module when unused)
     const dbConfig = this.disableDb ? null : getDbConfig();
     if (dbConfig) {
@@ -221,7 +221,7 @@ export class StreamerServer {
       this.idleSweeper.start();
     }
 
-    return new Promise((resolve) => {
+    const warmUp = new Promise<void>((resolveWarm) => {
       this.httpServer.listen(port, () => {
         if (this.verbose) {
           console.log(`Streamer server listening on port ${port}`);
@@ -257,9 +257,10 @@ export class StreamerServer {
             }
           })
           .catch(() => {})
-          .finally(() => resolve());
+          .finally(() => resolveWarm());
       });
     });
+    if (opts?.awaitReady) await warmUp;
   }
 
   async close(): Promise<void> {
@@ -356,6 +357,9 @@ export class StreamerServer {
 
       const cancelMatch = path.match(/^\/api\/sessions\/([^/]+)\/cancel$/);
       if (method === "POST" && cancelMatch) return this.handleCancel(cancelMatch[1], res);
+
+      const adoptMatch = path.match(/^\/api\/sessions\/(disc_[^/]+)\/adopt$/);
+      if (method === "POST" && adoptMatch) return await this.handleAdopt(adoptMatch[1], res);
 
       json(res, 404, { error: "Not found" });
     } catch (err) {
@@ -638,43 +642,49 @@ export class StreamerServer {
   }
 
   private async handleGetConversation(id: string, url: URL, res: ServerResponse): Promise<void> {
-    const isFirstLoad = !url.searchParams.has("msg_limit") && !url.searchParams.has("before_index");
-    if (isFirstLoad && this.cache) {
-      const tail = this.cache.getConversationTail(id);
-      if (tail && tail.messages.length > 0) {
-        const messagesPayload = tail.messages.map((m, idx) => ({
-          message_index: idx,
-          role: m.role,
-          timestamp: m.timestamp,
-          text: m.text,
-          tool_calls: [] as unknown[],
-          content: [] as unknown[],
-        }));
-        const cachedMeta = this.cache.getConversationMeta(id);
-        json(res, 200, {
-          meta: {
-            id,
-            profile_id: cachedMeta?.account ?? undefined,
-            project_name: cachedMeta?.projectName ?? undefined,
-            project_path: cachedMeta?.projectPath ?? undefined,
-            file_path: cachedMeta?.filePath ?? undefined,
-            last_updated_at: cachedMeta?.lastActivity ?? undefined,
-            message_count: cachedMeta?.messageCount ?? undefined,
-          },
-          messages: messagesPayload,
-          message_pagination: {
-            total: tail.tailSize,
-            before_index: tail.tailSize,
-            from_index: 0,
-            has_more_older: false,
-            next_before_index: null,
-          },
-        });
-        return;
+    // Try the scanner first (has full content including tool_use blocks).
+    // Fall back to the cache tail only when the scanner can't find the file —
+    // e.g. a conversation that existed in a previous run but whose JSONL was deleted.
+    const conversation = await this.findConversationByUuid(id);
+
+    if (!conversation && this.cache) {
+      const isFirstLoad =
+        !url.searchParams.has("msg_limit") && !url.searchParams.has("before_index");
+      if (isFirstLoad) {
+        const tail = this.cache.getConversationTail(id);
+        if (tail && tail.messages.length > 0) {
+          const cachedMeta = this.cache.getMetaById(id);
+          const messagesPayload = tail.messages.map((m, idx) => ({
+            message_index: idx,
+            role: m.role,
+            timestamp: m.timestamp,
+            text: m.text,
+            tool_calls: [] as unknown[],
+            content: [] as unknown[],
+          }));
+          json(res, 200, {
+            meta: {
+              id,
+              profile_id: cachedMeta?.account ?? undefined,
+              project_name: cachedMeta?.projectName ?? undefined,
+              project_path: cachedMeta?.projectPath ?? undefined,
+              file_path: cachedMeta?.filePath ?? undefined,
+              last_updated_at: cachedMeta?.lastActivity ?? undefined,
+              message_count: cachedMeta?.messageCount ?? undefined,
+            },
+            messages: messagesPayload,
+            message_pagination: {
+              total: tail.tailSize,
+              before_index: tail.tailSize,
+              from_index: 0,
+              has_more_older: false,
+              next_before_index: null,
+            },
+          });
+          return;
+        }
       }
     }
-
-    const conversation = await this.findConversationByUuid(id);
     if (!conversation) {
       json(res, 404, { error: "Conversation not found" });
       return;
@@ -994,6 +1004,54 @@ export class StreamerServer {
       const message = err instanceof Error ? err.message : "Failed to cancel";
       json(res, 400, { error: message });
     }
+  }
+
+  private async handleAdopt(sessionId: string, res: ServerResponse): Promise<void> {
+    if (!sessionId.startsWith("disc_")) {
+      json(res, 400, { error: "Not a discovered session" });
+      return;
+    }
+
+    const pid = Number.parseInt(sessionId.slice(5), 10);
+    if (Number.isNaN(pid)) {
+      json(res, 400, { error: "Invalid disc_ session id" });
+      return;
+    }
+
+    // Refresh discovery so we have the latest metadata
+    const discovered = discoverClaudeProcesses();
+    this.sessionStore.setDiscovered(discovered);
+    this.discoveryCache = null;
+
+    const discSession = this.sessionStore.get(sessionId);
+    if (!discSession) {
+      json(res, 404, { error: "Discovered session not found" });
+      return;
+    }
+
+    const { projectPath, projectName, branch, conversationId } = discSession;
+
+    // Kill the external process
+    this.ptyManager.killPid(pid);
+
+    // Start a new managed session, resuming the conversation if we have an ID
+    const session = conversationId
+      ? await this.ptyManager.start({
+          conversationId,
+          projectPath,
+          projectName,
+          branch,
+        })
+      : await this.ptyManager.startFresh({ projectPath, projectName });
+
+    this.sessionStore.addManaged(session);
+    if (conversationId) {
+      this.watchConversationFile(session.id, conversationId);
+    }
+
+    this.wsHub.broadcast({ type: "session_list", sessions: this.sessionStore.list() });
+
+    json(res, 201, { sessionId: session.id });
   }
 
   private async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
