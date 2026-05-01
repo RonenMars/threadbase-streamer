@@ -66,6 +66,32 @@ program
   });
 
 program
+  .command("cache")
+  .description("Manage the local SQLite conversation cache")
+  .addCommand(
+    new Command("clear")
+      .description("Delete the cache DB so it rebuilds from disk on next startup")
+      .option(
+        "--cache-dir <path>",
+        "Cache directory (default: ~/.threadbase/cache)",
+        `${process.env.HOME}/.threadbase/cache`,
+      )
+      .action((opts) => {
+        const { rmSync, existsSync } = require("node:fs");
+        const { join } = require("node:path");
+        const dbPath = join(opts.cacheDir, "cache.db");
+        for (const suffix of ["", "-shm", "-wal"]) {
+          const f = dbPath + suffix;
+          if (existsSync(f)) {
+            rmSync(f);
+            console.log(`Deleted ${f}`);
+          }
+        }
+        console.log("Cache cleared. Restart the server to rebuild.");
+      }),
+  );
+
+program
   .command("pair")
   .description("Print a pairing QR code (server must already be running)")
   .option("-p, --port <number>", "Port the server is listening on", "3456")

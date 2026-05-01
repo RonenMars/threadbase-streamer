@@ -1,10 +1,9 @@
 // ─── Session Lifecycle ─────────────────────────────────────────────
 
-export type SessionStatus = "running" | "waiting_input" | "completed" | "failed" | "on_hold";
+export type SessionStatus = "running" | "waiting_input" | "idle";
 
 export interface ManagedSession {
-  id: string;
-  conversationId: string;
+  id: string; // JSONL UUID — the .jsonl filename under ~/.claude/projects/
   projectPath: string;
   projectName: string;
   branch: string;
@@ -31,7 +30,7 @@ export interface DiscoveredProcess {
   projectPath: string;
   projectName: string;
   branch: string;
-  conversationId: string | null;
+  conversationId: string | null; // JSONL UUID extracted from --resume arg
   startedAt: Date;
 }
 
@@ -47,7 +46,7 @@ export type WSMessage =
 // ─── REST Response Shapes ──────────────────────────────────────────
 
 export interface SessionResponse {
-  id: string;
+  id: string; // JSONL UUID
   status: SessionStatus;
   projectPath: string;
   projectName: string;
@@ -57,8 +56,7 @@ export interface SessionResponse {
   promptCount: number;
   startedAt: string;
   completedAt: string | null;
-  conversationId: string;
-  source: "managed" | "discovered";
+  ptyAttached: boolean; // true when a live PTY is spawned for this session
   pid?: number;
   sessionName?: string;
   model?: string;
@@ -97,8 +95,7 @@ export interface ServerConfig {
     enabled: boolean;
     emoji: string;
   }>;
-  idleTimeoutMs?: number;
-  idleSweeperIntervalMs?: number;
+  ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 45000)
   cacheDir?: string;
   tailSize?: number;
 }
@@ -111,7 +108,6 @@ export interface PTYManagerOptions {
 }
 
 export interface StartSessionOptions {
-  conversationId: string;
   projectPath: string;
   projectName?: string;
   branch?: string;

@@ -9,12 +9,12 @@ import {
   type SortOrder,
   search,
 } from "@threadbase/scanner";
-import { existsSync, readdirSync } from "fs";
+import { existsSync, watch as fsWatch, readdirSync } from "fs";
 import { realpath } from "fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
 import { join } from "path";
-import { WebSocketServer } from "ws";
+import { type WebSocket, WebSocketServer } from "ws";
 import {
   loadBrowseRoot,
   loadCacheDir,
@@ -26,14 +26,11 @@ import {
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
 import { ConversationCache } from "./conversation-cache";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
-import { PgSessionPersistence } from "./db/pg-session-persistence";
 import { recordUpload } from "./db/upload-records";
 import { FileWatcher } from "./file-watcher";
-import { IdleSweeper } from "./idle-sweeper";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
-import { reconcileOrphanedSessions } from "./reconcile";
 import { seal } from "./seal";
 import { SessionStore } from "./session-store";
 import type { ServerConfig } from "./types";
@@ -43,6 +40,8 @@ import { WSHub } from "./ws-hub";
 const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
   `You are working within the project boundary: ${browseRoot}. ` +
   `Do not read, write, or execute commands that access files or directories outside this boundary.`;
+
+const DEFAULT_PTY_GRACE_PERIOD_MS = 45_000;
 
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
@@ -67,9 +66,11 @@ export class StreamerServer {
   private publicUrl: string | null = null;
   private pairTokens = new PairTokenStore();
   private exchangeAttempts = new Map<string, number[]>();
-  private idleSweeper: IdleSweeper | null = null;
-  private idleTimeoutMs: number;
-  private idleSweeperIntervalMs: number;
+  private ptyGracePeriodMs: number;
+  // Map of sessionId → grace timer; fires to kill PTY after WS disconnect
+  private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Map of sessionId → set of subscribed WS clients
+  private sessionSubscribers = new Map<string, Set<WebSocket>>();
   private cache: ConversationCache | null = null;
   private discoveryCache: {
     entries: ReturnType<typeof discoverClaudeProcesses>;
@@ -84,11 +85,10 @@ export class StreamerServer {
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
     this.scanProfiles = config.scanProfiles;
-    this.idleTimeoutMs = config.idleTimeoutMs ?? 60_000;
-    this.idleSweeperIntervalMs = config.idleSweeperIntervalMs ?? 30_000;
+    this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
-    // Resolve browseRoot: env var > YAML config > CLI flag
+
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
     if (rawRoot) {
       realpath(rawRoot)
@@ -101,7 +101,6 @@ export class StreamerServer {
         });
     }
 
-    // Resolve publicUrl: env var > explicit constructor option > YAML config
     const rawPublicUrl = process.env.THREADBASE_PUBLIC_URL ?? config.publicUrl ?? loadPublicUrl();
     if (rawPublicUrl) {
       const result = validatePublicUrl(rawPublicUrl);
@@ -112,13 +111,13 @@ export class StreamerServer {
         console.warn(`Warning: ${result.error}`);
       }
     }
+
     this.sessionStore = new SessionStore();
     this.wsHub = new WSHub();
 
     this.fileWatcher = new FileWatcher({
       onNewLine: (filePath, line) => {
         this.cache?.updateFromLine(filePath, line);
-        // Find which session this file belongs to
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
           if (watchedPath === filePath) {
             this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
@@ -138,15 +137,15 @@ export class StreamerServer {
           completedAt: session.completedAt,
           ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
         });
-        // Stop watching JSONL when session completes
-        if (session.status === "completed" || session.status === "failed") {
+        // Stop watching JSONL when PTY exits (session goes idle)
+        if (session.status === "idle") {
           const filePath = this.sessionFileMap.get(session.id);
           if (filePath) {
             this.fileWatcher.unwatch(filePath);
             this.sessionFileMap.delete(session.id);
           }
         }
-        const resp = this.sessionStore.get(session.id);
+        const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
         if (resp) {
           this.wsHub.broadcast({ type: "session_update", session: resp });
         }
@@ -165,60 +164,91 @@ export class StreamerServer {
 
       this.wss.handleUpgrade(req, socket, head, (ws) => {
         this.wsHub.addClient(ws);
-        // Send current session list on connect
-        const sessions = this.sessionStore.list();
+
+        const sessions = this.sessionStore.list(this.ptyAttachedIds());
         ws.send(JSON.stringify({ type: "session_list", sessions }));
+
         ws.on("message", (raw) => {
           try {
             const msg = JSON.parse(String(raw));
+            // Client subscribes to a session's terminal stream
+            if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
+              this.addSessionSubscriber(msg.sessionId, ws);
+            }
+            // Client explicitly releases the session (kill PTY immediately)
             if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
-              this.idleSweeper?.putSessionOnHold(msg.sessionId);
+              this.startGraceTimer(msg.sessionId, 0);
             }
           } catch {
             // malformed JSON, ignore
+          }
+        });
+
+        ws.on("close", () => {
+          // Start grace timers for all sessions this client was subscribed to
+          for (const [sessionId, subscribers] of this.sessionSubscribers) {
+            subscribers.delete(ws);
+            if (subscribers.size === 0) {
+              this.startGraceTimer(sessionId, this.ptyGracePeriodMs);
+            }
           }
         });
       });
     });
   }
 
+  // ─── PTY Grace Timer ────────────────────────────────────────────
+
+  private ptyAttachedIds(): Set<string> {
+    return new Set(this.ptyManager.listSessions().map((s) => s.id));
+  }
+
+  private addSessionSubscriber(sessionId: string, ws: WebSocket): void {
+    let subs = this.sessionSubscribers.get(sessionId);
+    if (!subs) {
+      subs = new Set();
+      this.sessionSubscribers.set(sessionId, subs);
+    }
+    subs.add(ws);
+    // Cancel any pending grace timer since someone is now watching
+    const existing = this.ptyGraceTimers.get(sessionId);
+    if (existing) {
+      clearTimeout(existing);
+      this.ptyGraceTimers.delete(sessionId);
+    }
+  }
+
+  private startGraceTimer(sessionId: string, delayMs: number): void {
+    const existing = this.ptyGraceTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this.ptyGraceTimers.delete(sessionId);
+      this.sessionSubscribers.delete(sessionId);
+      if (this.ptyManager.hasSession(sessionId)) {
+        if (this.verbose) console.log(`[grace] killing idle PTY for ${sessionId}`);
+        this.ptyManager.putOnHold(sessionId);
+        const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+        if (resp) this.wsHub.broadcast({ type: "session_update", session: resp });
+      }
+    }, delayMs);
+
+    this.ptyGraceTimers.set(sessionId, timer);
+  }
+
   async listen(port: number, opts?: { awaitReady?: boolean }): Promise<void> {
-    // Set up optional DB persistence (lazy import of pg to avoid loading native module when unused)
+    // DB is still used for upload records and other non-session purposes.
+    // Session state is no longer persisted to DB.
     const dbConfig = this.disableDb ? null : getDbConfig();
     if (dbConfig) {
       this.dbPool = await createPool(dbConfig);
       this.dbInstanceId = dbConfig.instanceId;
-      const persistence = new PgSessionPersistence(this.dbPool, dbConfig.instanceId);
-      this.sessionStore = new SessionStore(persistence);
       if (this.verbose) {
         console.log(`Database enabled: ${maskConnectionString(dbConfig.connectionString)}`);
         console.log(`Instance ID: ${dbConfig.instanceId}`);
       }
       await runMigrations(this.dbPool);
-      await this.sessionStore.rehydrate();
-      if (this.verbose) {
-        console.log("Database migrations applied, sessions rehydrated");
-      }
-      try {
-        const reconciled = await reconcileOrphanedSessions(this.sessionStore);
-        if (this.verbose && reconciled.length > 0) {
-          console.log(`Reconciled ${reconciled.length} orphaned/incomplete session(s)`);
-        }
-      } catch (err) {
-        // Reconciliation is best-effort — never block startup on it.
-        console.warn("Session reconciliation failed:", err);
-      }
-    }
-
-    if (this.idleTimeoutMs !== 0) {
-      this.idleSweeper = new IdleSweeper({
-        ptyManager: this.ptyManager,
-        sessionStore: this.sessionStore,
-        wsHub: this.wsHub,
-        idleTimeoutMs: this.idleTimeoutMs,
-        intervalMs: this.idleSweeperIntervalMs,
-      });
-      this.idleSweeper.start();
+      if (this.verbose) console.log("Database migrations applied");
     }
 
     const warmUp = new Promise<void>((resolveWarm) => {
@@ -236,8 +266,6 @@ export class StreamerServer {
             if (!this.cache) return;
             const metas = [...scanner.getMetadataCache().values()] as any[];
             this.cache.upsertFromScannerMeta(metas);
-            // Populate tail for each conversation in batches so we don't starve
-            // the event loop. Each batch yields before continuing.
             const BATCH = 50;
             for (let i = 0; i < metas.length; i += BATCH) {
               const batch = metas.slice(i, i + BATCH);
@@ -264,8 +292,9 @@ export class StreamerServer {
   }
 
   async close(): Promise<void> {
+    for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
+    this.ptyGraceTimers.clear();
     this.cache?.close();
-    this.idleSweeper?.dispose();
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.wsHub.dispose();
@@ -281,7 +310,6 @@ export class StreamerServer {
   // ─── Request Router ────────────────────────────────────────────
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
@@ -300,9 +328,6 @@ export class StreamerServer {
     const path = url.pathname;
     const method = req.method ?? "GET";
 
-    // /api/pair/exchange is intentionally unauthenticated — it's the bootstrap
-    // endpoint where mobile clients trade a short-lived pair token for the api key.
-    // /healthz is unauthenticated so deploy scripts can probe liveness without the API key.
     const isPublicRoute =
       (method === "POST" && path === "/api/pair/exchange") ||
       (method === "GET" && path === "/healthz");
@@ -312,7 +337,6 @@ export class StreamerServer {
     }
 
     try {
-      // Static routes
       if (method === "GET" && path === "/healthz")
         return json(res, 200, { ok: true, version: __VERSION__ });
       if (method === "GET" && path === "/api/info") return this.handleInfo(res);
@@ -336,7 +360,6 @@ export class StreamerServer {
       if (method === "POST" && path === "/api/sessions/start")
         return await this.handleStartSession(req, res);
 
-      // Parameterized routes
       const convMatch = path.match(/^\/api\/conversations\/(.+)$/);
       if (method === "GET" && convMatch)
         return await this.handleGetConversation(decodeURIComponent(convMatch[1]), url, res);
@@ -378,7 +401,6 @@ export class StreamerServer {
       return validateApiKey(authHeader.slice(7), this.apiKey);
     }
 
-    // Fallback: query param (for WebSocket connections)
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
     const key = url.searchParams.get("key");
     if (key) return validateApiKey(key, this.apiKey);
@@ -390,11 +412,13 @@ export class StreamerServer {
 
   private handleInfo(res: ServerResponse): void {
     const { hostname } = require("os");
+    const ptyIds = this.ptyAttachedIds();
     json(res, 200, {
       version: __VERSION__,
       machineName: hostname(),
       platform: process.platform,
-      activeSessions: this.sessionStore.list().filter((s: any) => s.status === "running").length,
+      activeSessions: this.sessionStore.list(ptyIds).filter((s: any) => s.status === "running")
+        .length,
       publicUrl: this.publicUrl,
     });
   }
@@ -513,7 +537,6 @@ export class StreamerServer {
       return;
     }
 
-    // Fallback: scanner (first boot before cache is populated, or after bust)
     const scanner = await this.getScanner();
     let metas = [...scanner.getMetadataCache().values()];
     metas = applyIncludeFilter(metas, "conversations");
@@ -578,14 +601,10 @@ export class StreamerServer {
   }
 
   private handleSessionsCount(res: ServerResponse): void {
-    json(res, 200, { total: this.sessionStore.list().length });
+    json(res, 200, { total: this.sessionStore.list(this.ptyAttachedIds()).length });
   }
 
   private async getScanner(): Promise<ConversationScanner> {
-    // `this.scanner` is non-null as soon as construction starts, but the cache
-    // isn't populated until `scan()` resolves. Always await `scannerReady` so
-    // concurrent callers (e.g. the warmup in listen() racing with the first
-    // request) don't read an empty metadata cache.
     if (this.scannerReady) {
       await this.scannerReady;
       return this.scanner as ConversationScanner;
@@ -601,10 +620,8 @@ export class StreamerServer {
     if (!existsSync(projectsDir)) return null;
     const filename = `${uuid}.jsonl`;
     for (const dir of readdirSync(projectsDir)) {
-      // Direct conversation
       const fp = join(projectsDir, dir, filename);
       if (existsSync(fp)) return fp;
-      // Subagent conversations: <project>/<parentId>/subagents/<agentId>.jsonl
       const projectDir = join(projectsDir, dir);
       try {
         for (const sub of readdirSync(projectDir)) {
@@ -620,19 +637,11 @@ export class StreamerServer {
 
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
     const scanner = await this.getScanner();
-
-    // Use the scanner's sessionIdIndex via getConversation(uuid) — avoids the
-    // path-separator mismatch between fast-glob (forward slashes) and path.join
-    // (backslashes on Windows) that breaks metadataCache key lookups.
     const fromIndex = await scanner.getConversation(uuid);
     if (fromIndex) return fromIndex;
 
-    // Conversation not in the warm cache. For scan-profile mode the scanner is
-    // authoritative — new files would require a manual refresh.
     if (this.scanProfiles) return null;
 
-    // Default mode: file may have been created after the last scan. Look it up
-    // on disk, bust the cache, re-scan, then retry by UUID.
     const filePath = this.findJsonlPath(uuid);
     if (!filePath) return null;
     this.scanner = null;
@@ -685,6 +694,7 @@ export class StreamerServer {
         }
       }
     }
+
     if (!conversation) {
       json(res, 404, { error: "Conversation not found" });
       return;
@@ -745,7 +755,7 @@ export class StreamerServer {
 
     const body: Record<string, unknown> = {
       meta: {
-        id: conversation.id,
+        id,
         profile_id: (conversation as any).account,
         project_name: (conversation as any).projectName,
         project_path: (conversation as any).projectPath,
@@ -814,11 +824,11 @@ export class StreamerServer {
       }
     }
 
-    json(res, 200, this.sessionStore.list());
+    json(res, 200, this.sessionStore.list(this.ptyAttachedIds()));
   }
 
   private handleGetSession(sessionId: string, res: ServerResponse): void {
-    const session = this.sessionStore.get(sessionId);
+    const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
     if (!session) {
       json(res, 404, { error: "Session not found" });
       return;
@@ -829,25 +839,36 @@ export class StreamerServer {
   private async handleResume(req: IncomingMessage, res: ServerResponse): Promise<void> {
     this.discoveryCache = null;
     const body = await readBody(req);
-    const { conversationId, projectPath: explicitPath } = body;
+    // Accept both sessionId (new) and conversationId (legacy alias)
+    const sessionId: string | undefined = body.sessionId ?? body.conversationId;
+    const explicitPath: string | undefined = body.projectPath;
 
-    if (!conversationId) {
-      json(res, 400, { error: "Missing conversationId" });
+    if (!sessionId) {
+      json(res, 400, { error: "Missing sessionId" });
       return;
     }
 
-    let projectPath = explicitPath;
-    const conv = await this.findConversationByUuid(conversationId);
+    // If a PTY is already running for this session, return it immediately
+    if (this.ptyManager.hasSession(sessionId)) {
+      const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+      if (resp) {
+        json(res, 200, resp);
+        return;
+      }
+    }
+
+    const conv = await this.findConversationByUuid(sessionId);
+    const projectPath: string = explicitPath ?? (conv as any)?.projectPath;
     if (!projectPath) {
       if (!conv) {
         json(res, 404, { error: "Conversation not found" });
         return;
       }
-      projectPath = (conv as any).projectPath;
+      json(res, 400, { error: "Could not determine project path" });
+      return;
     }
 
-    const session = await this.ptyManager.start({
-      conversationId,
+    const session = await this.ptyManager.start(sessionId, {
       projectPath,
       projectName: body.projectName,
       branch: body.branch,
@@ -860,7 +881,6 @@ export class StreamerServer {
       session.account = (conv as any).account ?? undefined;
       session.filePath = (conv as any).filePath ?? undefined;
 
-      // Look up ConversationMeta from scanner cache for richer fields
       const scanner = await this.getScanner();
       const meta = conv.filePath ? scanner.getMetadataCache().get(conv.filePath) : undefined;
       if (meta) {
@@ -880,10 +900,13 @@ export class StreamerServer {
     this.sessionStore.addManaged(session);
 
     // Watch the conversation's JSONL file for structured events
-    this.watchConversationFile(session.id, conversationId);
+    void this.watchConversationFile(sessionId);
 
-    const resp = this.sessionStore.get(session.id);
-    this.wsHub.broadcast({ type: "session_list", sessions: this.sessionStore.list() });
+    const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
+    this.wsHub.broadcast({
+      type: "session_list",
+      sessions: this.sessionStore.list(this.ptyAttachedIds()),
+    });
 
     json(res, 201, resp ?? session);
   }
@@ -904,7 +927,7 @@ export class StreamerServer {
     try {
       const promptCount = this.ptyManager.sendInput(sessionId, input);
       this.sessionStore.updateManaged(sessionId, { promptCount });
-      const updated = this.sessionStore.get(sessionId);
+      const updated = this.sessionStore.get(sessionId, this.ptyAttachedIds());
       if (updated) {
         this.wsHub.broadcast({ type: "session_update", session: updated });
       }
@@ -920,7 +943,7 @@ export class StreamerServer {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const session = this.sessionStore.get(sessionId);
+    const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
     if (!session) {
       json(res, 404, { error: "Session not found" });
       return;
@@ -979,14 +1002,8 @@ export class StreamerServer {
   }
 
   private handleGetOutput(sessionId: string, res: ServerResponse): void {
-    // Discovered sessions (disc_*) have no PTY output — return empty.
-    // Managed sessions whose PTY is not currently tracked (e.g. orphaned after a
-    // streamer restart) also have no recoverable buffer — return empty rather than
-    // 404 so clients render the session as "no buffered output" instead of an error.
-    if (sessionId.startsWith("disc_")) {
-      json(res, 200, { output: "" });
-      return;
-    }
+    // Return PTY ring buffer if a PTY is attached; otherwise return empty
+    // so clients render "no buffered output" instead of an error.
     try {
       const output = this.ptyManager.getOutput(sessionId);
       json(res, 200, { output });
@@ -1088,9 +1105,17 @@ export class StreamerServer {
       });
 
       this.sessionStore.addManaged(session);
-      this.wsHub.broadcast({ type: "session_list", sessions: this.sessionStore.list() });
 
-      const resp = this.sessionStore.get(session.id);
+      // Watch the project directory for the JSONL file Claude creates.
+      // Once found, re-key the session to the real UUID.
+      this.watchForNewJsonl(session.id, resolvedPath);
+
+      this.wsHub.broadcast({
+        type: "session_list",
+        sessions: this.sessionStore.list(this.ptyAttachedIds()),
+      });
+
+      const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
       json(res, 201, resp ?? session);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
@@ -1100,15 +1125,107 @@ export class StreamerServer {
 
   // ─── File Watcher Wiring ─────────────────────────────────────────
 
-  private async watchConversationFile(sessionId: string, conversationId: string): Promise<void> {
+  private async watchConversationFile(sessionId: string): Promise<void> {
     try {
-      const conversation = await this.findConversationByUuid(conversationId);
+      const conversation = await this.findConversationByUuid(sessionId);
       if (conversation?.filePath) {
         this.sessionFileMap.set(sessionId, conversation.filePath);
         this.fileWatcher.watch(conversation.filePath);
       }
     } catch {
       // Best-effort: if we can't find the JSONL file, raw terminal output still works
+    }
+  }
+
+  // Watch the project directory for a new JSONL file Claude creates on startFresh.
+  // When it appears, re-key the pending session to the real UUID.
+  private watchForNewJsonl(pendingId: string, projectPath: string): void {
+    const encoded = projectPath.replace(/[/\\:.]/g, "-");
+    const projectsDir = join(homedir(), ".claude", "projects", encoded);
+    const deadline = Date.now() + 120_000; // give up after 2 minutes
+
+    let watcher: ReturnType<typeof fsWatch> | null = null;
+    const cleanup = () => {
+      try {
+        watcher?.close();
+      } catch {
+        // ignore
+      }
+    };
+
+    const tryResolve = () => {
+      if (!this.ptyManager.hasSession(pendingId)) {
+        cleanup();
+        return;
+      }
+      if (Date.now() > deadline) {
+        cleanup();
+        return;
+      }
+      if (!existsSync(projectsDir)) return;
+
+      try {
+        const files = readdirSync(projectsDir).filter((f) => f.endsWith(".jsonl"));
+        if (files.length === 0) return;
+
+        // Pick the most recently modified file
+        let newest = files[0];
+        let newestMs = 0;
+        for (const f of files) {
+          const { mtimeMs } = require("fs").statSync(join(projectsDir, f));
+          if (mtimeMs > newestMs) {
+            newestMs = mtimeMs;
+            newest = f;
+          }
+        }
+        const realId = newest.replace(/\.jsonl$/, "");
+
+        cleanup();
+        const rekeyed = this.ptyManager.rekeySession(pendingId, realId);
+        if (!rekeyed) return;
+
+        // Update the store entry
+        const existing = this.sessionStore.getManaged(pendingId);
+        if (existing) {
+          this.sessionStore.removeManaged(pendingId);
+          existing.id = realId;
+          this.sessionStore.addManaged(existing);
+        }
+
+        // Wire up JSONL watching for structured events
+        const filePath = join(projectsDir, newest);
+        this.sessionFileMap.set(realId, filePath);
+        this.fileWatcher.watch(filePath);
+
+        // Bust scanner cache so the new conversation is discoverable
+        this.scanner = null;
+        this.scannerReady = null;
+
+        // Notify mobile: the pending session now has its real UUID
+        const resp = this.sessionStore.get(realId, this.ptyAttachedIds());
+        if (resp) {
+          this.wsHub.broadcast({ type: "session_update", session: { ...resp, id: realId } });
+          this.wsHub.broadcast({
+            type: "session_list",
+            sessions: this.sessionStore.list(this.ptyAttachedIds()),
+          });
+        }
+        if (this.verbose) console.log(`[startFresh] resolved ${pendingId} → ${realId}`);
+      } catch {
+        // directory not ready yet, will retry on next fs.watch event
+      }
+    };
+
+    // Poll once immediately, then watch for changes
+    tryResolve();
+
+    try {
+      // mkdir -p so watch doesn't fail before Claude creates the dir
+      require("fs").mkdirSync(projectsDir, { recursive: true });
+      watcher = fsWatch(projectsDir, tryResolve);
+      watcher.on("error", cleanup);
+    } catch {
+      // fs.watch not available (e.g. in tests), ignore
     }
   }
 

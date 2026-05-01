@@ -4,6 +4,27 @@ Collected from fixed bugs, deploy incidents, and CLAUDE.md/SKILL.md history. Eac
 
 ---
 
+## Session list / cache issues
+
+### Stale `disc_*` or `ses_*` sessions appearing in the list after a server upgrade
+
+**When:** After deploying a new streamer version, the mobile session list shows sessions with old-format IDs (`disc_12345`, `ses_abc`) that 404 when opened.
+**Cause:** The SQLite conversation cache (`~/.threadbase/cache/cache.db`) still holds rows written by the previous server version. The new server serves the cached list but can't find matching JSONL files because the IDs don't correspond to real filenames.
+**Fix:** Clear the cache and restart — the server will rebuild it from JSONL files on disk:
+
+```sh
+node ~/.threadbase/cli.js cache clear
+# then restart the server
+node ~/.threadbase/cli.js serve
+```
+
+Or manually:
+```sh
+rm ~/.threadbase/cache/cache.db*
+```
+
+---
+
 ## Deploy failures
 
 ### `Cannot find module` on lint or build
