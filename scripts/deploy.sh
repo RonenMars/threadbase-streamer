@@ -336,12 +336,14 @@ cmd_deploy() {
   # Copy migrations alongside the CLI so __dirname resolution works at runtime
   cp -r dist/migrations "$RELEASES_DIR/migrations"
 
-  # node-pty is external to the tsup bundle (native addon). Copy it from source
-  # node_modules so the deployed cli.js can resolve it without a full node_modules tree.
-  if [[ -d "node_modules/node-pty" ]]; then
-    mkdir -p "$RELEASES_DIR/node_modules"
-    cp -r node_modules/node-pty "$RELEASES_DIR/node_modules/node-pty"
-  fi
+  # Native addons are external to the tsup bundle. Copy them and their transitive
+  # deps so the deployed cli.js can resolve them without a full node_modules tree.
+  mkdir -p "$RELEASES_DIR/node_modules"
+  for mod in node-pty better-sqlite3 bindings file-uri-to-path; do
+    if [[ -d "node_modules/$mod" ]]; then
+      cp -r "node_modules/$mod" "$RELEASES_DIR/node_modules/$mod"
+    fi
+  done
 
   log "activating symlink"
   activate_release "$rel_path"
