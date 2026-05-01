@@ -28,8 +28,10 @@ export class FileWatcher {
       offset = 0;
     }
 
+    // On Windows, fs.watch fires "rename" instead of "change" for appends.
+    // Accept both to avoid silently dropping events.
     const watcher = watch(filePath, (eventType) => {
-      if (eventType !== "change") return;
+      if (eventType !== "change" && eventType !== "rename") return;
       this.readNewLines(filePath);
     });
 
