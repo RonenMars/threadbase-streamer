@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "fs";
+import { mkdirSync, readFileSync } from "fs";
 import { dirname } from "path";
 
 export interface ConversationListItem {
@@ -118,6 +118,7 @@ export class ConversationCache {
     insertSkeleton: Database.Statement;
     upsertFull: Database.Statement;
     getTail: Database.Statement;
+    hasTail: Database.Statement;
     upsertTail: Database.Statement;
     list: Database.Statement;
     count: Database.Statement;
@@ -165,6 +166,7 @@ export class ConversationCache {
         WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
+      hasTail: db.prepare("SELECT 1 FROM conversation_tail WHERE conversation_id = ? LIMIT 1"),
       upsertTail: db.prepare(`
         INSERT INTO conversation_tail (conversation_id, messages_json, tail_size, updated_at)
         VALUES (?, ?, ?, ?)
@@ -289,6 +291,40 @@ export class ConversationCache {
       }
     });
     run(metas);
+  }
+
+  // Reads the last `tailSize` qualifying lines from a JSONL file and writes them
+  // to conversation_tail. Uses updated_at=0 so any live updateFromLine() call
+  // (which uses Date.now()) always wins the upsert conflict.
+  // Returns false if the file cannot be read or the tail already exists.
+  populateTailFromFile(convId: string, filePath: string): boolean {
+    if (this.stmts.hasTail.get(convId)) return false;
+    let raw: string;
+    try {
+      raw = readFileSync(filePath, "utf8");
+    } catch {
+      return false;
+    }
+    const lines = raw.split("\n");
+    const msgs: CachedTailMessage[] = [];
+    for (let i = lines.length - 1; i >= 0 && msgs.length < this.tailSize; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let parsed: JsonlLine;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const role = parsed.role ?? parsed.type;
+      if (!role) continue;
+      const timestamp = parsed.timestamp ?? "";
+      const text = parsed.content?.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
+      msgs.unshift({ role, timestamp, text });
+    }
+    if (msgs.length === 0) return false;
+    this.stmts.upsertTail.run(convId, JSON.stringify(msgs), msgs.length, 0);
+    return true;
   }
 
   listConversations(opts: { project?: string; limit: number; offset: number }): {

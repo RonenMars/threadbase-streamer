@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -231,6 +231,81 @@ describe("getConversationTail()", () => {
     expect(tail?.messages).toHaveLength(1);
     expect(tail?.messages[0].role).toBe("user");
     expect(tail?.messages[0].text).toBe("hello");
+  });
+});
+
+describe("populateTailFromFile()", () => {
+  let jsonlPath: string;
+
+  beforeEach(() => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    jsonlPath = join(dbDir, "abc-123.jsonl");
+  });
+
+  it("returns false for a non-existent file", () => {
+    expect(cache.populateTailFromFile("abc-123", "/no/such/file.jsonl")).toBe(false);
+  });
+
+  it("returns false when tail already exists", () => {
+    writeFileSync(
+      jsonlPath,
+      `${JSON.stringify({ role: "user", timestamp: "2024-01-01T00:00:00.000Z", content: [] })}\n`,
+    );
+    cache.populateTailFromFile("abc-123", jsonlPath);
+    expect(cache.populateTailFromFile("abc-123", jsonlPath)).toBe(false);
+  });
+
+  it("reads last tailSize lines and writes tail", () => {
+    const lines = Array.from({ length: 5 }, (_, i) =>
+      JSON.stringify({
+        role: i % 2 === 0 ? "user" : "assistant",
+        timestamp: `2024-01-0${i + 1}T00:00:00.000Z`,
+        content: [{ type: "text", text: `msg ${i}` }],
+      }),
+    );
+    writeFileSync(jsonlPath, `${lines.join("\n")}\n`);
+    const result = cache.populateTailFromFile("abc-123", jsonlPath);
+    expect(result).toBe(true);
+    const tail = cache.getConversationTail("abc-123");
+    expect(tail).not.toBeNull();
+    expect(tail?.messages).toHaveLength(3); // tailSize is 3
+    expect(tail?.messages[2].text).toBe("msg 4");
+  });
+
+  it("skips lines without a role or type field", () => {
+    const lines = [
+      JSON.stringify({ no_role: true, timestamp: "2024-01-01T00:00:00.000Z" }),
+      JSON.stringify({ role: "user", timestamp: "2024-01-02T00:00:00.000Z", content: [] }),
+    ];
+    writeFileSync(jsonlPath, `${lines.join("\n")}\n`);
+    cache.populateTailFromFile("abc-123", jsonlPath);
+    const tail = cache.getConversationTail("abc-123");
+    expect(tail?.messages).toHaveLength(1);
+    expect(tail?.messages[0].role).toBe("user");
+  });
+
+  it("does not overwrite a tail written by updateFromLine", () => {
+    writeFileSync(
+      jsonlPath,
+      `${JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T00:00:00.000Z",
+        content: [{ type: "text", text: "from file" }],
+      })}\n`,
+    );
+    // updateFromLine writes updated_at = Date.now() (wins over populateTailFromFile's 0)
+    cache.updateFromLine(
+      BASE_META.filePath,
+      JSON.stringify({
+        role: "assistant",
+        timestamp: "2024-01-02T00:00:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    );
+    // populateTailFromFile skips because tail already exists
+    cache.populateTailFromFile("abc-123", jsonlPath);
+    const tail = cache.getConversationTail("abc-123");
+    expect(tail?.messages[tail?.messages.length - 1].text).toBe("live message");
   });
 });
 

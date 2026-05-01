@@ -232,9 +232,29 @@ export class StreamerServer {
           console.warn("ConversationCache failed to open (running without cache):", err);
         }
         void this.getScanner()
-          .then((scanner) => {
+          .then(async (scanner) => {
             if (!this.cache) return;
-            this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+            const metas = [...scanner.getMetadataCache().values()] as any[];
+            this.cache.upsertFromScannerMeta(metas);
+            // Populate tail for each conversation in batches so we don't starve
+            // the event loop. Each batch yields before continuing.
+            const BATCH = 50;
+            for (let i = 0; i < metas.length; i += BATCH) {
+              const batch = metas.slice(i, i + BATCH);
+              for (const m of batch) {
+                if (m.filePath) {
+                  const id =
+                    m.sessionId ||
+                    m.id
+                      ?.split("/")
+                      .pop()
+                      ?.replace(/\.jsonl$/, "") ||
+                    m.id;
+                  this.cache.populateTailFromFile(id, m.filePath);
+                }
+              }
+              await new Promise<void>((r) => setImmediate(r));
+            }
           })
           .catch(() => {});
         resolve();
