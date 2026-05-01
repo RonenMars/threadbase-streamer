@@ -195,6 +195,7 @@ export class ConversationCache {
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
       deleteTailAll: db.prepare("DELETE FROM conversation_tail"),
       allFilePaths: db.prepare("SELECT id, file_path FROM conversation_meta"),
+      getFullById: db.prepare("SELECT * FROM conversation_meta WHERE id = ?"),
     };
   }
 
@@ -400,7 +401,7 @@ export class ConversationCache {
     };
   }
 
-  getConversationMeta(id: string): ConversationListItem | null {
+  getMetaById(id: string): ConversationListItem | null {
     const row = this.stmts.getFullById.get(id) as MetaRow | undefined;
     if (!row) return null;
     return {
