@@ -165,6 +165,14 @@ export class PTYManager {
     session.process.kill("SIGINT");
   }
 
+  killPid(pid: number): void {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Process may already be gone
+    }
+  }
+
   putOnHold(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
