@@ -1,7 +1,8 @@
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
-import { readFileSync } from "fs";
+import { mkdtempSync, readFileSync } from "fs";
 import { createServer } from "http";
+import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../../src/server";
 
@@ -39,12 +40,14 @@ export async function getRandomPort(): Promise<number> {
 
 export async function createTestServer(fixtureDir: string) {
   const port = await getRandomPort();
+  const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-test-"));
   const server = new StreamerServer({
     port,
     apiKey: TEST_API_KEY,
     localNoAuth: false,
     verbose: false,
     disableDb: true,
+    cacheDir,
     scanProfiles: createFixtureProfiles(fixtureDir),
   });
   await server.listen(port);

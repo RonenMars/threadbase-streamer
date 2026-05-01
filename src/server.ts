@@ -231,7 +231,7 @@ export class StreamerServer {
         } catch (err) {
           console.warn("ConversationCache failed to open (running without cache):", err);
         }
-        void this.getScanner()
+        this.getScanner()
           .then(async (scanner) => {
             if (!this.cache) return;
             const metas = [...scanner.getMetadataCache().values()] as any[];
@@ -256,8 +256,8 @@ export class StreamerServer {
               await new Promise<void>((r) => setImmediate(r));
             }
           })
-          .catch(() => {});
-        resolve();
+          .catch(() => {})
+          .finally(() => resolve());
       });
     });
   }
@@ -650,8 +650,17 @@ export class StreamerServer {
           tool_calls: [] as unknown[],
           content: [] as unknown[],
         }));
+        const cachedMeta = this.cache.getConversationMeta(id);
         json(res, 200, {
-          meta: { id },
+          meta: {
+            id,
+            profile_id: cachedMeta?.account ?? undefined,
+            project_name: cachedMeta?.projectName ?? undefined,
+            project_path: cachedMeta?.projectPath ?? undefined,
+            file_path: cachedMeta?.filePath ?? undefined,
+            last_updated_at: cachedMeta?.lastActivity ?? undefined,
+            message_count: cachedMeta?.messageCount ?? undefined,
+          },
           messages: messagesPayload,
           message_pagination: {
             total: tail.tailSize,

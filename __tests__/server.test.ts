@@ -1,4 +1,6 @@
+import { mkdtempSync } from "fs";
 import { createServer } from "http";
+import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
 
@@ -39,6 +41,8 @@ describe("StreamerServer", () => {
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
+      disableDb: true,
+      cacheDir: mkdtempSync(join(tmpdir(), "threadbase-server-test-")),
       scanProfiles: FIXTURE_PROFILES,
     });
     await server.listen(port);

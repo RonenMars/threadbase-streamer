@@ -117,6 +117,7 @@ export class ConversationCache {
 
   private stmts: {
     getById: Database.Statement;
+    getFullById: Database.Statement;
     updateMeta: Database.Statement;
     insertSkeleton: Database.Statement;
     upsertFull: Database.Statement;
@@ -139,6 +140,7 @@ export class ConversationCache {
     db.exec(SCHEMA);
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
+      getFullById: db.prepare("SELECT * FROM conversation_meta WHERE id = ?"),
       updateMeta: db.prepare(
         "UPDATE conversation_meta SET message_count = message_count + 1, last_activity = ?, last_message = ?, updated_at = ? WHERE id = ?",
       ),
@@ -226,7 +228,7 @@ export class ConversationCache {
     }
 
     const role = line.role ?? line.type;
-    if (!role) return;
+    if (role !== "user" && role !== "assistant") return;
 
     const timestamp = line.timestamp ?? new Date().toISOString();
     const activityMs = new Date(timestamp).getTime();
@@ -395,6 +397,28 @@ export class ConversationCache {
         lastMessage: r.last_message,
         preview: r.preview,
       })),
+    };
+  }
+
+  getConversationMeta(id: string): ConversationListItem | null {
+    const row = this.stmts.getFullById.get(id) as MetaRow | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      filePath: row.file_path,
+      projectPath: row.project_path,
+      projectName: row.project_name,
+      title: row.title,
+      model: row.model,
+      account: row.account,
+      branch: row.branch,
+      messageCount: row.message_count,
+      lastActivity: row.last_activity
+        ? new Date(row.last_activity).toISOString()
+        : new Date(0).toISOString(),
+      firstMessage: row.first_message,
+      lastMessage: row.last_message,
+      preview: row.preview,
     };
   }
 
