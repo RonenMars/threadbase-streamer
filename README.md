@@ -65,32 +65,61 @@ See [docs/database.md](docs/database.md) for full details on the database config
 
 ## Architecture
 
-Three layers: **core engine** (`src/*.ts`) -> **API layer** (`src/index.ts` exports) -> **CLI wrapper** (`cli/`).
+Three layers: **core engine** (`src/*.ts`) → **API layer** (`src/index.ts` exports) → **CLI wrapper** (`cli/`).
+
+### How it works
+
+**Session start → PTY → broadcast**
+
+When a client calls `POST /api/sessions/start` (new conversation) or `POST /api/sessions/resume` (existing conversation), `server.ts` delegates to `PTYManager`, which spawns a `claude` process inside a PTY via `node-pty`. The server returns `202 Accepted` immediately — the PTY launch is async. As the PTY emits output, `PTYManager` appends it to an in-memory ring buffer (64 KB cap per session) and forwards each chunk to `WSHub`, which fans it out to every connected WebSocket client as a `terminal_output` event.
+
+When a WebSocket client subscribes to a session (`subscribe_session`), the server unicasts the full ring buffer as a `terminal_replay` event so the client can reconstruct the current terminal state without an extra HTTP round-trip. Once the PTY process is ready (Claude's first prompt marker appears), the server broadcasts a `session_ready` event with the full session object.
+
+**Session registry**
+
+`SessionStore` is the single source of truth for in-flight state. It holds two maps: *managed sessions* (those with an active or recently-active PTY) and *discovered processes* (externally-running `claude` processes found by `process-discovery.ts` via `pgrep`/`lsof` on Unix or `tasklist`/`wmic` on Windows). When building the session list, managed sessions take priority — a discovered process whose `conversationId` matches an existing managed session is suppressed.
+
+**Conversation cache**
+
+`ConversationCache` (`src/conversation-cache.ts`) maintains a SQLite database of conversation metadata and message tails. It is updated incrementally: `FileWatcher` tails JSONL conversation files via `fs.watch` and emits new lines, which `ConversationCache` parses and upserts. The cache backs the `GET /api/conversations` and `GET /api/sessions` endpoints, avoiding a full filesystem scan on every request. Metadata TTL is 5 seconds; the discovery process cache is 15 seconds.
+
+**Idle management & reconciliation**
+
+`IdleSweeper` runs every 30 seconds. When a managed session has been in `waiting_input` state for longer than `idleTimeoutMs` (default 60 s), it calls `PTYManager.putOnHold()`, which sets a tombstone timestamp and sends `SIGINT` to the PTY before the exit handler can misclassify the exit as `failed`. On server restart, `reconcile.ts` scans the session store for any sessions that were `running` or `waiting_input` and marks them `on_hold` — their conversation history is intact and they can be resumed via `POST /api/sessions/resume`.
+
+Clients can also explicitly hold a session by sending `{ type: "hold_session", sessionId }` over WebSocket.
+
+**Mobile pairing**
+
+On startup (or via `tb pair`), the server prints a QR code encoding a `threadbase://pair?url=…&token=…&exp=…` deep-link URL. The token is minted by `pair-store.ts` (single-use, 180 s TTL). The mobile client trades it at `POST /api/pair/exchange` along with its X25519 public key; `seal.ts` encrypts the API key into a NaCl sealed box so the key never appears in the QR or in transit unencrypted.
+
+**Module reference**
 
 ```
 src/
-  server.ts           HTTP + WebSocket server, request routing, auth
-  session-store.ts    In-memory registry with optional DB persistence
-  pty-manager.ts      Spawn/resume Claude sessions via node-pty
-  process-discovery.ts  Find running claude processes (pgrep/lsof)
-  file-watcher.ts     Tail JSONL files for structured events
-  ws-hub.ts           WebSocket broadcast hub
-  auth.ts             Bearer token generation/validation
-  idle-sweeper.ts     Periodic sweep putting idle sessions on_hold
-  reconcile.ts        Mark in-flight sessions on_hold on server restart
-  browse.ts           File system browser (list/mkdir)
-  uploads.ts          File upload handling for session file attachments
-  pair-store.ts       Short-lived pairing token registry
-  seal.ts             X25519 sealed-box encryption for mobile pairing
-  platform.ts         Platform detection and path resolution
-  lan-url.ts          LAN IP resolution for QR code URLs
+  server.ts               HTTP + WebSocket server, request routing, auth
+  session-store.ts        In-memory registry of managed + discovered sessions
+  pty-manager.ts          Spawn/resume Claude sessions via node-pty, ring buffer
+  process-discovery.ts    Find running claude processes (pgrep/lsof on Unix, tasklist/wmic on Windows)
+  conversation-cache.ts   SQLite cache of conversation metadata + message tails, file-watch driven
+  file-watcher.ts         Tail JSONL files via fs.watch, emit new lines
+  ws-hub.ts               WebSocket broadcast hub, 30 s ping keepalive
+  idle-sweeper.ts         Periodic sweep putting idle waiting_input sessions on_hold
+  reconcile.ts            Mark in-flight sessions on_hold on server restart
+  auth.ts                 Bearer token generation/validation (constant-time compare)
+  browse.ts               File system browser (list/mkdir)
+  uploads.ts              File upload handling for session file attachments
+  pair-store.ts           Short-lived pairing token registry
+  seal.ts                 X25519 sealed-box encryption for mobile pairing
+  platform.ts             Platform detection and path resolution
+  lan-url.ts              LAN IP resolution for QR code URLs
   db/
-    config.ts           Env var parsing (isDbEnabled, getDbConfig)
-    pool.ts             pg.Pool creation with password masking
-    migrations.ts       SQL migration runner
-    migrations/         Versioned .sql files
-    session-persistence.ts  SessionPersistence interface
-    memory-persistence.ts   No-op implementation (default)
+    config.ts             Env var parsing (isDbEnabled, getDbConfig)
+    pool.ts               pg.Pool creation with password masking
+    migrations.ts         SQL migration runner
+    migrations/           Versioned .sql files
+    session-persistence.ts     SessionPersistence interface
+    memory-persistence.ts      No-op implementation (default)
     pg-session-persistence.ts  Postgres implementation
 ```
 

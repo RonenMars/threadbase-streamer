@@ -27,11 +27,17 @@ Key modules and their responsibilities:
 - `pty-manager.ts` — spawn/resume Claude sessions via node-pty, ring buffer output (64KB cap)
 - `session-store.ts` — in-memory registry of managed (PTY) + discovered (process) sessions
 - `process-discovery.ts` — find running claude processes via pgrep/lsof (Unix) or tasklist/wmic (Windows)
+- `conversation-cache.ts` — SQLite cache of conversation metadata + message tails, updated incrementally by FileWatcher; backs `/api/conversations` and `/api/sessions` to avoid full filesystem scans
 - `file-watcher.ts` — tail JSONL files via fs.watch, emit new lines for structured parsing
-- `ws-hub.ts` — WebSocket hub broadcasting terminal_output, session_update, session_list events
+- `ws-hub.ts` — WebSocket hub broadcasting terminal_output, session_update, session_list events; also unicasts terminal_replay on subscribe and session_ready on PTY spawn
 - `server.ts` — HTTP server wiring REST endpoints + WebSocket upgrade + auth
 - `auth.ts` — bearer token generation/validation with constant-time comparison
 - `idle-sweeper.ts` — periodic sweep that puts idle `waiting_input` sessions on hold after a configurable timeout
+- `reconcile.ts` — on server restart, marks any in-flight running/waiting_input sessions as on_hold
+- `db/config.ts` — env var parsing (`isDbEnabled`, `getDbConfig`, `getInstanceId`)
+- `db/pool.ts` — pg.Pool creation with connection string password masking
+- `db/migrations.ts` — SQL migration runner; migrations live in `db/migrations/*.sql`
+- `db/session-persistence.ts` — `SessionPersistence` interface; `memory-persistence.ts` (no-op default) and `pg-session-persistence.ts` (Postgres) implement it
 
 ## Session lifecycle
 
@@ -52,11 +58,32 @@ running / waiting_input ──(server restart)──► on_hold   (reconcile.ts)
 - `IdleSweeper` runs every 30 s, checks `lastActivityAt` against the threshold, and calls `PTYManager.putOnHold()` which sets a `holdAt` tombstone before killing to prevent the exit handler from overwriting the `on_hold` status with `failed`.
 - Idle timeout is configurable via `ServerConfig.idleTimeoutMs` (default 60 000 ms). Set to `0` to disable.
 
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `THREADBASE_DATABASE_URL` | PostgreSQL connection URI — enables DB persistence when set |
+| `THREADBASE_DATABASE_SSL` | `require` or `disable` |
+| `THREADBASE_DATABASE_POOL_MAX` | Max pool connections (default `10`) |
+| `THREADBASE_DATABASE_STATEMENT_TIMEOUT_MS` | Query timeout in ms |
+| `THREADBASE_INSTANCE_ID` | Stable identifier for this server instance (defaults to `os.hostname()`); used to scope DB-persisted sessions |
+| `THREADBASE_PUBLIC_URL` | Public HTTPS URL for QR pairing (overrides `public_url:` in server.yaml) |
+
+## ServerConfig options (beyond CLI flags)
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `idleTimeoutMs` | `60000` | How long a `waiting_input` session idles before being put on_hold; `0` disables |
+| `ptyGracePeriodMs` | `45000` | Ms to keep the PTY alive after all WebSocket subscribers disconnect |
+| `cacheDir` | `~/.threadbase/cache` | Directory for the SQLite conversation cache |
+| `tailSize` | `10` | Number of tail messages cached per conversation for fast session-list enrichment |
+
 ## Dependencies
 
 - `@threadbase/scanner` — scan, parse, search, filter conversation history (used for REST endpoints)
 - `node-pty` — native PTY management (external, not bundled by tsup)
 - `ws` — WebSocket server
+- `better-sqlite3` — SQLite driver for `ConversationCache`
 - `commander` — CLI argument parsing
 
 ## Build notes
@@ -121,7 +148,7 @@ Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP ser
 `limit`, `offset`, `sort`, `project`, `refresh`, `msg_limit`, `before_index`, `q`, `path`
 
 **Response field names** — these are deserialized by name in mobile types; casing matters:
-- Session: `id`, `status`, `projectPath`, `projectName`, `branch`, `lastOutput`, `elapsedMs`, `promptCount`, `conversationId`, `source`, `startedAt`, `completedAt`, `lastActivityAt`
+- Session: `id`, `status`, `projectPath`, `projectName`, `branch`, `lastOutput`, `elapsedMs`, `promptCount`, `conversationId`, `source`, `startedAt`, `completedAt`, `lastActivityAt`, `failureReason`, `ptyAttached`
 - Conversation list item: `id`, `title`, `projectPath`, `messageCount`, `lastActivity`, `firstMessage`, `lastMessage`, `preview`, `model`
 - Conversation detail: `meta` object + `messages` array + `message_pagination` object
 - Message: `message_index` (snake_case), `role`, `timestamp`, `text`, `content` (array), `tool_use_id` (snake_case)
