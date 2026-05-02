@@ -39,12 +39,83 @@ $taskName     = if ($env:THREADBASE_TASK_NAME) { $env:THREADBASE_TASK_NAME } els
 $healthUrl    = if ($env:THREADBASE_HEALTH_URL) { $env:THREADBASE_HEALTH_URL } else { 'http://localhost:8766/healthz' }
 $keepReleases = 5
 
-$scannerDir = Join-Path $repoRoot 'vendor\scanner'
+$scannerDir  = Join-Path $repoRoot 'vendor\scanner'
+$menubarDir  = Join-Path $repoRoot 'vendor\menubar'
 
 function Write-Log  { param($m) Write-Host "▶ $m" -ForegroundColor Blue }
 function Write-Warn { param($m) Write-Host "! $m" -ForegroundColor Yellow }
 function Write-Err  { param($m) Write-Host "✗ $m" -ForegroundColor Red }
 function Write-Ok   { param($m) Write-Host "✓ $m" -ForegroundColor Green }
+
+function Ensure-MenubarDeployed {
+  if (-not (Test-Path (Join-Path $menubarDir 'package.json'))) {
+    Write-Log "initializing vendor/menubar submodule"
+    Invoke-Native git @('submodule', 'update', '--init', '--recursive', 'vendor/menubar')
+  }
+
+  $currentSha = (& git -C $menubarDir rev-parse HEAD).Trim()
+
+  $builtShaFile = Join-Path $menubarDir 'dist\.build-sha'
+  $builtSha = if (Test-Path $builtShaFile) { (Get-Content $builtShaFile).Trim() } else { '' }
+
+  if ($currentSha -eq $builtSha) {
+    Write-Log "menubar is up-to-date ($currentSha)"
+  } else {
+    Write-Log "menubar needs rebuild (built: $(if ($builtSha) { $builtSha } else { 'none' }), current: $currentSha)"
+    Push-Location $menubarDir
+    try {
+      if (-not (Test-Path node_modules)) { Invoke-Native npm @('install', '--silent') }
+      Invoke-Native npm @('run', 'build')
+    } finally {
+      Pop-Location
+    }
+    Set-Content -Path $builtShaFile -Value $currentSha -NoNewline -Encoding Ascii
+    Write-Ok "menubar built: $currentSha"
+  }
+
+  # Kill stale electron processes before checking if we need to relaunch.
+  # Electron spawns ~10 child processes; kill all before any state check.
+  if ($currentSha -ne $builtSha) {
+    Write-Log "stopping stale menubar processes"
+    Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+  }
+
+  $running = Get-Process electron -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($running) {
+    Write-Ok "menubar already running (PID $($running.Id))"
+    return
+  }
+
+  $electronExe = Join-Path $menubarDir 'node_modules\electron\dist\electron.exe'
+  if (-not (Test-Path $electronExe)) {
+    Write-Warn "electron.exe not found at $electronExe — skipping menubar launch"
+    return
+  }
+
+  Write-Log "launching menubar"
+  $logFile = Join-Path $env:TEMP 'threadbase-menubar.log'
+  $proc = Start-Process -FilePath $electronExe `
+    -ArgumentList "." `
+    -WorkingDirectory $menubarDir `
+    -Environment @{
+      THREADBASE_PORT = '8766'
+      USERPROFILE     = $env:USERPROFILE
+      APPDATA         = $env:APPDATA
+      TEMP            = $env:TEMP
+      SystemRoot      = $env:SystemRoot
+      PATH            = $env:PATH
+    } `
+    -RedirectStandardOutput $logFile `
+    -PassThru
+  Start-Sleep -Seconds 3
+  $alive = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+  if ($alive) {
+    Write-Ok "menubar running (PID $($proc.Id))"
+  } else {
+    Write-Warn "menubar exited immediately — check $logFile"
+  }
+}
 
 function Invoke-Native {
   param([string]$Command, [string[]]$ArgList)
@@ -405,6 +476,8 @@ function Invoke-Deploy {
       Sort-Object LastWriteTime -Descending |
       Select-Object -Skip $keepReleases |
       Remove-Item -Force
+
+    Ensure-MenubarDeployed
 
     Write-Ok "deploy complete: $relFilename"
   } finally {

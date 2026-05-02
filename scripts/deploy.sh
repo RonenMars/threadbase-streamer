@@ -31,6 +31,56 @@ err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
 ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 
 SCANNER_DIR="$REPO_ROOT/vendor/scanner"
+MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
+
+# Ensure the menubar submodule is built and running with the current submodule SHA.
+# Compares vendor/menubar/dist/.build-sha against the pinned submodule HEAD; rebuilds
+# and relaunches if they differ (or if .build-sha is absent).
+ensure_menubar_deployed() {
+  if [[ ! -f "$MENUBAR_DIR/package.json" ]]; then
+    log "initializing vendor/menubar submodule"
+    git submodule update --init --recursive vendor/menubar
+  fi
+
+  local current_sha
+  current_sha="$(cd "$MENUBAR_DIR" && git rev-parse HEAD)"
+
+  local built_sha=""
+  [[ -f "$MENUBAR_DIR/dist/.build-sha" ]] && built_sha="$(cat "$MENUBAR_DIR/dist/.build-sha")"
+
+  if [[ "$current_sha" == "$built_sha" ]]; then
+    log "menubar is up-to-date ($current_sha)"
+  else
+    log "menubar needs rebuild (built: ${built_sha:-none}, current: ${current_sha})"
+    ( cd "$MENUBAR_DIR" && npm install --silent && npm run build )
+    printf '%s' "$current_sha" > "$MENUBAR_DIR/dist/.build-sha"
+    ok "menubar built: $current_sha"
+  fi
+
+  # Relaunch if not running, or if the running process predates the new build.
+  local running_pid=""
+  running_pid="$(pgrep -f "vendor/menubar" 2>/dev/null | head -1 || true)"
+
+  if [[ -n "$running_pid" ]] && [[ "$current_sha" != "$built_sha" ]]; then
+    log "stopping stale menubar (pid $running_pid)"
+    pkill -f "vendor/menubar" 2>/dev/null || true
+    sleep 0.5
+    running_pid=""
+  fi
+
+  if [[ -z "$running_pid" ]]; then
+    log "launching menubar"
+    ( cd "$MENUBAR_DIR" && nohup npx electron . </dev/null >>/tmp/threadbase-menubar.log 2>&1 & disown )
+    sleep 1
+    if pgrep -f "vendor/menubar" >/dev/null 2>&1; then
+      ok "menubar running"
+    else
+      warn "menubar exited immediately — check /tmp/threadbase-menubar.log"
+    fi
+  else
+    ok "menubar already running (pid $running_pid)"
+  fi
+}
 
 # Ensure the scanner submodule is checked out and built. Idempotent — skips
 # `npm install`/`npm run build` if scanner's dist/ is already up-to-date with
@@ -360,6 +410,8 @@ cmd_deploy() {
 
   log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
+
+  ensure_menubar_deployed
 
   ok "deploy complete: $rel_filename"
 }
