@@ -107,27 +107,25 @@ describe("PTYManager onReady callback", () => {
     expect(onReady.mock.calls[0][0].id).toBe(session.id);
   });
 
-  it("fires onReady after startFresh()", async () => {
+  it("does NOT fire onReady after startFresh() — server fires it after rekeySession", async () => {
     const onReady = vi.fn();
     const mgr = new PTYManager({ onReady });
 
-    await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
 
-    expect(onReady).toHaveBeenCalledOnce();
-    expect(onReady.mock.calls[0][0].status).toBe("running");
+    expect(onReady).not.toHaveBeenCalled();
+    expect(session.status).toBe("running");
   });
 
-  it("uses caller-supplied pendingId in startFresh()", async () => {
-    const onReady = vi.fn();
-    const mgr = new PTYManager({ onReady });
+  it("generates a UUID id in startFresh()", async () => {
+    const mgr = new PTYManager();
 
-    await mgr.startFresh({
+    const session = await mgr.startFresh({
       projectPath: "/tmp/test",
       projectName: "test",
-      pendingId: "pending_custom123",
     });
 
-    expect(onReady.mock.calls[0][0].id).toBe("pending_custom123");
+    expect(session.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
   it("does not fire onReady when callback is omitted", async () => {

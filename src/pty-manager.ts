@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
 import { resolveClaudeExe } from "./platform";
@@ -42,6 +42,8 @@ export class PTYManager {
   private onOutput: PTYManagerOptions["onOutput"];
   private onStatusChange: PTYManagerOptions["onStatusChange"];
   private onReady: PTYManagerOptions["onReady"];
+  // Tracks which sessions were started fresh (not resume) and haven't fired onReady yet
+  private pendingReady = new Set<string>();
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
@@ -94,15 +96,15 @@ export class PTYManager {
     return toPublicSession(session);
   }
 
-  // Start a brand-new Claude session with no existing conversationId.
-  // Returns a session with a temporary pending_* id. The server watches the
-  // project directory for the JSONL file Claude creates and re-keys the entry.
+  // Start a brand-new Claude session. A stable UUID is generated here and passed
+  // to Claude via --session-id so the JSONL filename matches from the start.
+  // onReady fires once Claude reaches its first prompt (waiting_input).
   async startFresh(options: StartFreshSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
-    const pendingId = options.pendingId ?? `pending_${randomBytes(8).toString("hex")}`;
+    const sessionId = randomUUID();
     const projectName = options.projectName ?? basename(options.projectPath);
 
-    const args: string[] = ["--dangerously-skip-permissions"];
+    const args = ["--dangerously-skip-permissions", "--session-id", sessionId];
     if (options.systemPrompt) {
       args.push("--system-prompt", options.systemPrompt);
     }
@@ -116,7 +118,7 @@ export class PTYManager {
     });
 
     const session: InternalSession = {
-      id: pendingId,
+      id: sessionId,
       projectPath: options.projectPath,
       projectName,
       branch: "",
@@ -129,28 +131,19 @@ export class PTYManager {
       outputBuffer: Buffer.alloc(0),
     };
 
-    this.sessions.set(pendingId, session);
+    this.sessions.set(sessionId, session);
+    this.pendingReady.add(sessionId);
 
     proc.onData((data: string) => {
-      this.handleOutput(pendingId, data);
+      this.handleOutput(sessionId, data);
     });
 
     proc.onExit(({ exitCode }: { exitCode: number }) => {
-      this.handleExit(pendingId, exitCode);
+      this.pendingReady.delete(sessionId);
+      this.handleExit(sessionId, exitCode);
     });
 
-    this.onReady?.(toPublicSession(session));
     return toPublicSession(session);
-  }
-
-  // Re-key a pending_ session to its real JSONL UUID once Claude creates the file.
-  rekeySession(pendingId: string, realId: string): boolean {
-    const session = this.sessions.get(pendingId);
-    if (!session) return false;
-    session.id = realId;
-    this.sessions.delete(pendingId);
-    this.sessions.set(realId, session);
-    return true;
   }
 
   sendInput(sessionId: string, input: string): number {
@@ -187,6 +180,7 @@ export class PTYManager {
   putOnHold(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    this.pendingReady.delete(sessionId);
     try {
       session.process.kill("SIGINT");
     } catch {
@@ -255,6 +249,10 @@ export class PTYManager {
       session.lastActivityAt = new Date();
       session.status = "waiting_input";
       this.onStatusChange?.(toPublicSession(session));
+      if (this.pendingReady.has(sessionId)) {
+        this.pendingReady.delete(sessionId);
+        this.onReady?.(toPublicSession(session));
+      }
     }
 
     this.onOutput?.(sessionId, data);

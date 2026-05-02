@@ -9,7 +9,6 @@ import {
   type SortOrder,
   search,
 } from "@threadbase/scanner";
-import { randomBytes } from "crypto";
 import { existsSync, watch as fsWatch, readdirSync } from "fs";
 import { realpath } from "fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -1113,25 +1112,20 @@ export class StreamerServer {
 
     this.discoveryCache = null;
 
-    // Respond immediately with a pending ID — the PTY spawns async and fires
-    // onReady (→ session_ready WS event) once it's up. This eliminates the
-    // HTTP round-trip delay before the client can navigate to the session screen.
-    const pendingId = `pending_${randomBytes(8).toString("hex")}`;
-    json(res, 202, { id: pendingId, status: "pending" });
-
     try {
       const session = await this.ptyManager.startFresh({
         projectPath: resolvedPath,
         projectName: body.projectName,
         systemPrompt: BROWSE_SYSTEM_PROMPT(this.browseRoot),
-        pendingId,
       });
 
       this.sessionStore.addManaged(session);
 
-      // Watch the project directory for the JSONL file Claude creates.
-      // Once found, re-key the session to the real UUID.
-      this.watchForNewJsonl(session.id, resolvedPath);
+      // Return the real UUID immediately — no pending_ dance needed.
+      json(res, 202, { id: session.id, status: "pending" });
+
+      // Wire up JSONL watching once Claude creates the conversation file.
+      this.watchForJsonl(session.id, resolvedPath);
 
       this.wsHub.broadcast({
         type: "session_list",
@@ -1140,6 +1134,7 @@ export class StreamerServer {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
       if (this.verbose) console.error(`[start] failed to start session: ${message}`);
+      json(res, 500, { error: message });
     }
   }
 
@@ -1157,24 +1152,27 @@ export class StreamerServer {
     }
   }
 
-  // Watch the project directory for a new JSONL file Claude creates on startFresh.
-  // When it appears, re-key the pending session to the real UUID.
-  private watchForNewJsonl(pendingId: string, projectPath: string): void {
+  // Watch the project directory for the JSONL file Claude creates for sessionId.
+  // Once found, wire up structured event streaming. No rekeying needed — the UUID
+  // was passed to Claude via --session-id so the filename matches from the start.
+  private watchForJsonl(sessionId: string, projectPath: string): void {
     const encoded = projectPath.replace(/[/\\:.]/g, "-");
     const projectsDir = join(homedir(), ".claude", "projects", encoded);
-    const deadline = Date.now() + 120_000; // give up after 2 minutes
+    const expectedFile = `${sessionId}.jsonl`;
+    const filePath = join(projectsDir, expectedFile);
+    const deadline = Date.now() + 120_000;
 
     let watcher: ReturnType<typeof fsWatch> | null = null;
     const cleanup = () => {
       try {
         watcher?.close();
       } catch {
-        // ignore
+        /* ignore */
       }
     };
 
-    const tryResolve = () => {
-      if (!this.ptyManager.hasSession(pendingId)) {
+    const tryWire = () => {
+      if (!this.ptyManager.hasSession(sessionId)) {
         cleanup();
         return;
       }
@@ -1182,67 +1180,22 @@ export class StreamerServer {
         cleanup();
         return;
       }
-      if (!existsSync(projectsDir)) return;
+      if (!existsSync(filePath)) return;
 
-      try {
-        const files = readdirSync(projectsDir).filter((f) => f.endsWith(".jsonl"));
-        if (files.length === 0) return;
-
-        // Pick the most recently modified file
-        let newest = files[0];
-        let newestMs = 0;
-        for (const f of files) {
-          const { mtimeMs } = require("fs").statSync(join(projectsDir, f));
-          if (mtimeMs > newestMs) {
-            newestMs = mtimeMs;
-            newest = f;
-          }
-        }
-        const realId = newest.replace(/\.jsonl$/, "");
-
-        cleanup();
-        const rekeyed = this.ptyManager.rekeySession(pendingId, realId);
-        if (!rekeyed) return;
-
-        // Update the store entry
-        const existing = this.sessionStore.getManaged(pendingId);
-        if (existing) {
-          this.sessionStore.removeManaged(pendingId);
-          existing.id = realId;
-          this.sessionStore.addManaged(existing);
-        }
-
-        // Wire up JSONL watching for structured events
-        const filePath = join(projectsDir, newest);
-        this.sessionFileMap.set(realId, filePath);
-        this.fileWatcher.watch(filePath);
-
-        // Bust scanner cache so the new conversation is discoverable
-        this.scanner = null;
-        this.scannerReady = null;
-
-        // Notify mobile: the pending session now has its real UUID
-        const resp = this.sessionStore.get(realId, this.ptyAttachedIds());
-        if (resp) {
-          this.wsHub.broadcast({ type: "session_update", session: { ...resp, id: realId } });
-          this.wsHub.broadcast({
-            type: "session_list",
-            sessions: this.sessionStore.list(this.ptyAttachedIds()),
-          });
-        }
-        if (this.verbose) console.log(`[startFresh] resolved ${pendingId} → ${realId}`);
-      } catch {
-        // directory not ready yet, will retry on next fs.watch event
-      }
+      cleanup();
+      this.sessionFileMap.set(sessionId, filePath);
+      this.fileWatcher.watch(filePath);
+      this.scanner = null;
+      this.scannerReady = null;
+      if (this.verbose) console.log(`[startFresh] wired JSONL for ${sessionId}`);
     };
 
-    // Poll once immediately, then watch for changes
-    tryResolve();
+    tryWire();
+    if (this.sessionFileMap.has(sessionId)) return; // already found
 
     try {
-      // mkdir -p so watch doesn't fail before Claude creates the dir
       require("fs").mkdirSync(projectsDir, { recursive: true });
-      watcher = fsWatch(projectsDir, tryResolve);
+      watcher = fsWatch(projectsDir, tryWire);
       watcher.on("error", cleanup);
     } catch {
       // fs.watch not available (e.g. in tests), ignore

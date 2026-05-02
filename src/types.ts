@@ -123,7 +123,6 @@ export interface StartFreshSessionOptions {
   projectPath: string;
   projectName?: string;
   systemPrompt?: string;
-  pendingId?: string; // caller-supplied pending ID to use instead of generating one
 }
 
 // ─── File Watcher ──────────────────────────────────────────────────
