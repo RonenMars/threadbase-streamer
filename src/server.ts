@@ -392,8 +392,16 @@ export class StreamerServer {
       const cancelMatch = path.match(/^\/api\/sessions\/([^/]+)\/cancel$/);
       if (method === "POST" && cancelMatch) return this.handleCancel(cancelMatch[1], res);
 
-      const adoptMatch = path.match(/^\/api\/sessions\/(disc_[^/]+)\/adopt$/);
-      if (method === "POST" && adoptMatch) return await this.handleAdopt(adoptMatch[1], res);
+      const pathParts = path.split("/");
+      if (
+        method === "POST" &&
+        pathParts[1] === "api" &&
+        pathParts[2] === "sessions" &&
+        pathParts[4] === "adopt" &&
+        pathParts.length === 5
+      ) {
+        return await this.handleAdopt(pathParts[3], res);
+      }
 
       json(res, 404, { error: "Not found" });
     } catch (err) {
@@ -1038,24 +1046,13 @@ export class StreamerServer {
   }
 
   private async handleAdopt(sessionId: string, res: ServerResponse): Promise<void> {
-    if (!sessionId.startsWith("disc_")) {
-      json(res, 400, { error: "Not a discovered session" });
-      return;
-    }
-
-    const pid = Number.parseInt(sessionId.slice(5), 10);
-    if (Number.isNaN(pid)) {
-      json(res, 400, { error: "Invalid disc_ session id" });
-      return;
-    }
-
     // Refresh discovery so we have the latest metadata
     const discovered = await discoverClaudeProcesses();
     this.sessionStore.setDiscovered(discovered);
     this.discoveryCache = null;
 
     const discSession = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-    if (!discSession) {
+    if (!discSession || discSession.ptyAttached) {
       json(res, 404, { error: "Discovered session not found" });
       return;
     }
@@ -1063,8 +1060,13 @@ export class StreamerServer {
     const { projectPath, projectName, branch } = discSession;
     const convId = discSession.id;
 
+    if (discSession.pid == null) {
+      json(res, 400, { error: "Session has no known PID" });
+      return;
+    }
+
     // Kill the external process
-    this.ptyManager.killPid(pid);
+    this.ptyManager.killPid(discSession.pid);
 
     // Start a new managed session, resuming the conversation
     const session = await this.ptyManager.start(convId, {
