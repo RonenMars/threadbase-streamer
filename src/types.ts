@@ -42,7 +42,9 @@ export type WSMessage =
   | { type: "session_update"; session: SessionResponse }
   | { type: "session_list"; sessions: SessionResponse[] }
   | { type: "conversation_event"; sessionId: string; line: string }
-  | { type: "ping"; ts: number };
+  | { type: "ping"; ts: number }
+  | { type: "terminal_replay"; sessionId: string; lines: string[] }
+  | { type: "session_ready"; session: SessionResponse };
 
 // ─── REST Response Shapes ──────────────────────────────────────────
 
@@ -108,6 +110,7 @@ export interface ServerConfig {
 export interface PTYManagerOptions {
   onOutput?: (sessionId: string, data: string) => void;
   onStatusChange?: (session: ManagedSession) => void;
+  onReady?: (session: ManagedSession) => void;
 }
 
 export interface StartSessionOptions {
@@ -120,6 +123,7 @@ export interface StartFreshSessionOptions {
   projectPath: string;
   projectName?: string;
   systemPrompt?: string;
+  pendingId?: string; // caller-supplied pending ID to use instead of generating one
 }
 
 // ─── File Watcher ──────────────────────────────────────────────────

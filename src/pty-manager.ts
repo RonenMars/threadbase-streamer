@@ -41,10 +41,12 @@ export class PTYManager {
   private sessions = new Map<string, InternalSession>();
   private onOutput: PTYManagerOptions["onOutput"];
   private onStatusChange: PTYManagerOptions["onStatusChange"];
+  private onReady: PTYManagerOptions["onReady"];
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
     this.onStatusChange = options.onStatusChange;
+    this.onReady = options.onReady;
   }
 
   // Resume an existing Claude conversation. sessionId is the JSONL UUID.
@@ -88,6 +90,7 @@ export class PTYManager {
       this.handleExit(sessionId, exitCode);
     });
 
+    this.onReady?.(toPublicSession(session));
     return toPublicSession(session);
   }
 
@@ -96,7 +99,7 @@ export class PTYManager {
   // project directory for the JSONL file Claude creates and re-keys the entry.
   async startFresh(options: StartFreshSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
-    const pendingId = `pending_${randomBytes(8).toString("hex")}`;
+    const pendingId = options.pendingId ?? `pending_${randomBytes(8).toString("hex")}`;
     const projectName = options.projectName ?? basename(options.projectPath);
 
     const args: string[] = ["--dangerously-skip-permissions"];
@@ -136,6 +139,7 @@ export class PTYManager {
       this.handleExit(pendingId, exitCode);
     });
 
+    this.onReady?.(toPublicSession(session));
     return toPublicSession(session);
   }
 
@@ -198,6 +202,13 @@ export class PTYManager {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
     return session.outputBuffer.toString("utf-8");
+  }
+
+  getOutputLines(sessionId: string, maxLines: number): string[] {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    const raw = session.outputBuffer.toString("utf-8");
+    return raw.split("\n").slice(-maxLines);
   }
 
   getSession(sessionId: string): ManagedSession | null {
