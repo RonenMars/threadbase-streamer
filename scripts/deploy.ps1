@@ -178,7 +178,7 @@ function Invoke-PredeployCheck {
   Push-Location $repoRoot
   try {
     $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
-    $dirty  = (& git status --porcelain) -ne $null -and (& git status --porcelain).Length -gt 0
+    $dirty  = (& git diff --name-only HEAD) -ne $null -and (& git diff --name-only HEAD).Length -gt 0
 
     if ($Force) {
       if ($branch -ne 'main') { Write-Warn "branch is '$branch', forcing" }

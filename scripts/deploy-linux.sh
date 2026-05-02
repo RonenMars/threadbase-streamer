@@ -180,7 +180,7 @@ cmd_predeploy_check() {
   local branch dirty
   branch="$(git rev-parse --abbrev-ref HEAD)"
   dirty=""
-  [[ -n "$(git status --porcelain)" ]] && dirty="dirty"
+  [[ -n "$(git diff --name-only HEAD)" ]] && dirty="dirty"
 
   if [[ "$force" == "--force" ]]; then
     [[ "$branch" != "main" ]] && warn "branch is '$branch', forcing"
