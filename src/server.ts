@@ -9,6 +9,7 @@ import {
   type SortOrder,
   search,
 } from "@threadbase/scanner";
+import { randomBytes } from "crypto";
 import { existsSync, watch as fsWatch, readdirSync } from "fs";
 import { realpath } from "fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -131,6 +132,10 @@ export class StreamerServer {
       onOutput: (sessionId, data) => {
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
       },
+      onReady: (session) => {
+        const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
+        if (resp) this.wsHub.broadcast({ type: "session_ready", session: resp });
+      },
       onStatusChange: (session) => {
         this.sessionStore.updateManaged(session.id, {
           status: session.status,
@@ -174,6 +179,12 @@ export class StreamerServer {
             // Client subscribes to a session's terminal stream
             if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
               this.addSessionSubscriber(msg.sessionId, ws);
+              if (this.ptyManager.hasSession(msg.sessionId)) {
+                const lines = this.ptyManager.getOutputLines(msg.sessionId, 200);
+                ws.send(
+                  JSON.stringify({ type: "terminal_replay", sessionId: msg.sessionId, lines }),
+                );
+              }
             }
             // Client explicitly releases the session (kill PTY immediately)
             if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
@@ -1099,11 +1110,19 @@ export class StreamerServer {
     }
 
     this.discoveryCache = null;
+
+    // Respond immediately with a pending ID — the PTY spawns async and fires
+    // onReady (→ session_ready WS event) once it's up. This eliminates the
+    // HTTP round-trip delay before the client can navigate to the session screen.
+    const pendingId = `pending_${randomBytes(8).toString("hex")}`;
+    json(res, 202, { id: pendingId, status: "pending" });
+
     try {
       const session = await this.ptyManager.startFresh({
         projectPath: resolvedPath,
         projectName: body.projectName,
         systemPrompt: BROWSE_SYSTEM_PROMPT(this.browseRoot),
+        pendingId,
       });
 
       this.sessionStore.addManaged(session);
@@ -1116,12 +1135,9 @@ export class StreamerServer {
         type: "session_list",
         sessions: this.sessionStore.list(this.ptyAttachedIds()),
       });
-
-      const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
-      json(res, 201, resp ?? session);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
-      json(res, 500, { error: message });
+      if (this.verbose) console.error(`[start] failed to start session: ${message}`);
     }
   }
 
