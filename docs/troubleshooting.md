@@ -309,3 +309,93 @@ Restart the streamer to pick it up.
 4. Then `launchctl kickstart` will succeed.
 
 **Stale-plist check:** even if the plist file exists, verify the `ProgramArguments` entry references `~/.threadbase/cli.js` and not a hardcoded workspace path. If it doesn't, treat as a fresh install.
+
+---
+
+### Server runs but binds to port 3456 instead of 8766
+
+**When:** Healthcheck on `http://localhost:8766/healthz` fails with "couldn't connect", but `~/.threadbase/logs/stdout.log` shows `Listening on http://localhost:3456`. `~/.threadbase/server.yaml` clearly has `port: 8766`.
+**Cause:** `cli.js serve` does not honour the `port:` key from `server.yaml` — the port must come from the CLI flag `--port`. If the launchd plist's `ProgramArguments` has only `["node", "cli.js", "serve"]` with no `--port`, the server falls back to its built-in default (3456).
+**Fix:** Edit `~/Library/LaunchAgents/com.ronen.threadbase.plist` so `ProgramArguments` includes the port flag (and `--verbose` for log parity with the deploy script):
+
+```xml
+<key>ProgramArguments</key>
+<array>
+  <string>/usr/local/bin/node</string>
+  <string>/Users/ronen/.threadbase/cli.js</string>
+  <string>serve</string>
+  <string>--port</string>
+  <string>8766</string>
+  <string>--verbose</string>
+</array>
+```
+
+Then bootout + re-bootstrap to apply (launchd reads the plist at bootstrap time, not at every kickstart):
+```sh
+launchctl bootout "gui/$(id -u)/com.ronen.threadbase" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.ronen.threadbase.plist
+launchctl kickstart "gui/$(id -u)/com.ronen.threadbase"
+```
+
+---
+
+### `launchctl print` reports a non-existent plist `path`
+
+**When:** `launchctl print "gui/$(id -u)/com.ronen.threadbase"` shows `path = /some/old/location/com.ronen.threadbase.plist`, but that file no longer exists on disk. The service is still `state = running` and serving requests.
+**Cause:** launchd caches the path of whichever plist was last bootstrapped. If that plist file was deleted or moved (e.g. a dotfiles symlink was overwritten by a real file copy), launchd keeps the path string in its in-memory metadata even though the on-disk file is gone. The running process is fine — launchd only reads the plist at bootstrap time, so the program continues to execute normally.
+**Why it matters:** future `kickstart -k` calls still work, but they restart the program string launchd cached at bootstrap, not whatever the canonical plist now contains. Edits to `~/Library/LaunchAgents/com.ronen.threadbase.plist` are silently ignored until the next bootout/bootstrap cycle.
+**Fix:** Bootout the stale entry and re-bootstrap from the canonical plist path:
+```sh
+launchctl bootout "gui/$(id -u)/com.ronen.threadbase"
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.ronen.threadbase.plist
+launchctl kickstart "gui/$(id -u)/com.ronen.threadbase"
+```
+After this, `launchctl print` should show `path = /Users/<you>/Library/LaunchAgents/com.ronen.threadbase.plist`.
+
+---
+
+### Deploy reports success but the running process predates the build
+
+**When:** `npm run deploy` reports `✓ healthcheck passed: {"ok":true,"version":"0.1.0+<sha>"}` and `✓ deploy complete`. But `ps -o pid,etime` on the listening node shows an elapsed time longer than the deploy itself, and `launchctl print` reports a `path` to a plist that no longer exists.
+**Cause:** This is a benign confusion, not a deploy failure. Three signals were misread:
+1. The PID's `etime` looks "too old" because investigation took longer than expected — `etime` keeps growing while `ps` is invoked, so a 30-second-old process can show 30+ minutes of elapsed time after a long debugging session.
+2. The shim path on `program = /usr/local/bin/threadbase-streamer` looks suspicious but is a real symlink chain that resolves to `~/.threadbase/cli.js`.
+3. The stale `path` in `launchctl print` (see above) makes the service look like it's loaded from a missing file.
+
+The deploy is actually fine if the healthcheck reports the new SHA. To verify:
+```sh
+curl -sS http://localhost:8766/healthz   # should report new SHA
+ps -o pid,lstart,command -p $(pgrep -f 'threadbase.*serve')   # STARTED column should match symlink mtime
+ls -la ~/.threadbase/cli.js              # symlink target should be the new release
+```
+Only re-bootstrap (above section) if you actually need launchd's cached metadata to reflect the canonical plist.
+
+---
+
+## Native modules / ABI mismatches
+
+### `better-sqlite3` `ERR_DLOPEN_FAILED` after a Node major upgrade
+
+**When:** Server starts and accepts requests, but `~/.threadbase/logs/stderr.log` (or `/tmp/threadbase.err`) repeats:
+```
+ConversationCache failed to open (running without cache):
+The module '…/better-sqlite3/build/Release/better_sqlite3.node' was compiled
+against a different Node.js version using NODE_MODULE_VERSION 127.
+This version of Node.js requires NODE_MODULE_VERSION 141.
+{ code: 'ERR_DLOPEN_FAILED' }
+```
+The mobile session list still works — just slower, since every request scans JSONL files instead of hitting the SQLite cache.
+**Cause:** Node was upgraded (e.g. system Node went from v22 to v24) after the streamer was deployed. `better-sqlite3`'s prebuilt `.node` binary at `~/.threadbase/releases/node_modules/better-sqlite3/build/Release/` is locked to the old `NODE_MODULE_VERSION`. The streamer catches the load error and degrades gracefully: cache disabled, server continues.
+**Fix:** Rebuild the native module against the current Node:
+```sh
+cd ~/.threadbase/releases && npm rebuild better-sqlite3
+launchctl kickstart -k "gui/$(id -u)/com.ronen.threadbase"
+```
+
+If the `releases/` directory has no `package.json` to rebuild from, the simpler fix is to wipe the cached `node_modules` and let the next deploy rehydrate it from a fresh `npm install` against the current Node:
+```sh
+rm -rf ~/.threadbase/releases/node_modules
+npm run deploy
+```
+
+**Diagnosis cue:** the error is non-fatal — the server keeps running. If you only check `/healthz` you won't notice. Look in stderr.log if the mobile app feels noticeably slower after a Node upgrade.

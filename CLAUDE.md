@@ -69,6 +69,12 @@ running / waiting_input ──(server restart)──► on_hold   (reconcile.ts)
 | `THREADBASE_INSTANCE_ID` | Stable identifier for this server instance (defaults to `os.hostname()`); used to scope DB-persisted sessions |
 | `THREADBASE_PUBLIC_URL` | Public HTTPS URL for QR pairing (overrides `public_url:` in server.yaml) |
 
+## CLI flags vs. `server.yaml`
+
+`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`) from it, but most runtime knobs come exclusively from CLI flags — `--port` is the canonical example. Setting `port: 8766` in `server.yaml` does nothing; the server falls back to the CLI default `3456` if `--port` is missing.
+
+Practical consequence: any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly, even if `server.yaml` has a `port:` line. The deploy scripts already do this; only hand-written or stale plists are at risk.
+
 ## ServerConfig options (beyond CLI flags)
 
 | Field | Default | Description |
