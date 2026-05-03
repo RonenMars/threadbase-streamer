@@ -22,7 +22,8 @@ RELEASES_DIR="$INSTALL_DIR/releases"
 HISTORY_FILE="$RELEASES_DIR/.history"
 ACTIVE_LINK="$INSTALL_DIR/cli.js"
 LAUNCHD_LABEL="com.ronen.threadbase"
-HEALTH_URL="${THREADBASE_HEALTH_URL:-http://localhost:8766/healthz}"
+PORT="${THREADBASE_PORT:-8766}"
+HEALTH_URL="${THREADBASE_HEALTH_URL:-http://localhost:$PORT/healthz}"
 KEEP_RELEASES=5
 
 log()  { printf '\033[1;34m▶\033[0m %s\n' "$*"; }
@@ -69,7 +70,7 @@ ensure_menubar_deployed() {
   fi
 
   if [[ -z "$running_pid" ]]; then
-    log "launching menubar"
+    log "launching menubar (detached — deploy.sh exits regardless of menubar window state)"
     ( cd "$MENUBAR_DIR" && nohup npx electron . </dev/null >>/tmp/threadbase-menubar.log 2>&1 & disown )
     sleep 1
     if pgrep -f "vendor/menubar" >/dev/null 2>&1; then
@@ -229,6 +230,9 @@ cmd_setup() {
     <string>$node_bin</string>
     <string>$ACTIVE_LINK</string>
     <string>serve</string>
+    <string>--port</string>
+    <string>$PORT</string>
+    <string>--verbose</string>
   </array>
   <key>RunAtLoad</key>
   <$run_at_load/>
@@ -252,12 +256,72 @@ PLIST
   fi
 }
 
+# Best-effort: warn if launchd's cached plist path differs from the canonical
+# ~/Library/LaunchAgents path, which means a stale bootstrap is in effect and
+# any plist edits will be silently ignored until the next bootout/bootstrap.
+check_launchd_path_drift() {
+  local canonical="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+  local cached
+  cached="$(launchctl print "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null \
+            | awk -F' = ' '/^[[:space:]]*path =/ {print $2; exit}')"
+  if [[ -n "$cached" ]] && [[ "$cached" != "$canonical" ]]; then
+    warn "launchd cached plist path differs from canonical:"
+    warn "  cached    = $cached"
+    warn "  canonical = $canonical"
+    warn "  fix: launchctl bootout gui/$(id -u)/$LAUNCHD_LABEL && \\"
+    warn "       launchctl bootstrap gui/$(id -u) $canonical"
+  fi
+}
+
+# Best-effort: report PID + start time for the currently-loaded service so the
+# user can verify that the post-kickstart process is actually fresh.
+print_service_pid_info() {
+  local label="$1" prefix="${2:-}"
+  local pid
+  pid="$(launchctl list 2>/dev/null | awk -v l="$LAUNCHD_LABEL" '$3==l {print $1}')"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && (( pid > 0 )); then
+    local started
+    started="$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//')"
+    printf '  %s pid=%s started=%s\n' "$prefix" "$pid" "${started:-?}"
+  fi
+}
+
 cmd_kickstart() {
   if ! launchctl list "$LAUNCHD_LABEL" >/dev/null 2>&1; then
     warn "$LAUNCHD_LABEL not loaded — run 'scripts/deploy.sh setup' to initialize the service"
     return 0
   fi
+  check_launchd_path_drift
+  print_service_pid_info "$LAUNCHD_LABEL" "before kickstart:"
   launchctl kickstart -k "gui/$(id -u)/$LAUNCHD_LABEL"
+}
+
+# Locate the streamer's stderr log. The plist writes to $INSTALL_DIR/logs/stderr.log;
+# /tmp/threadbase.err is a legacy fallback for older plist layouts.
+streamer_stderr_log() {
+  local primary="$INSTALL_DIR/logs/stderr.log"
+  if [[ -s "$primary" ]]; then
+    printf '%s' "$primary"
+  elif [[ -s /tmp/threadbase.err ]]; then
+    printf '%s' /tmp/threadbase.err
+  else
+    printf '%s' "$primary"
+  fi
+}
+
+# Surface non-fatal startup warnings the server logs but doesn't propagate to /healthz.
+# Currently checks for the better-sqlite3 ABI mismatch that disables ConversationCache
+# silently after a Node major upgrade.
+report_startup_warnings() {
+  local stderr_log
+  stderr_log="$(streamer_stderr_log)"
+  [[ -s "$stderr_log" ]] || return 0
+  if tail -n 200 "$stderr_log" 2>/dev/null | grep -q "ERR_DLOPEN_FAILED"; then
+    warn "ConversationCache native module ABI mismatch detected in $stderr_log"
+    warn "  cache disabled — server runs fine, mobile session list is unaccelerated"
+    warn "  fix: cd $RELEASES_DIR && npm rebuild better-sqlite3 && \\"
+    warn "       launchctl kickstart -k gui/$(id -u)/$LAUNCHD_LABEL"
+  fi
 }
 
 cmd_healthcheck() {
@@ -266,13 +330,15 @@ cmd_healthcheck() {
   while (( SECONDS < deadline )); do
     if last_status="$(curl -fsS --max-time 2 "$HEALTH_URL" 2>/dev/null)"; then
       ok "healthcheck passed: $last_status"
+      print_service_pid_info "$LAUNCHD_LABEL" "after kickstart: "
+      report_startup_warnings
       return 0
     fi
     sleep 0.5
   done
   err "healthcheck failed after 15s ($HEALTH_URL)"
   warn "last 20 lines of stderr log:"
-  tail -n 20 /tmp/threadbase.err 2>/dev/null || true
+  tail -n 20 "$(streamer_stderr_log)" 2>/dev/null || true
   return 1
 }
 
