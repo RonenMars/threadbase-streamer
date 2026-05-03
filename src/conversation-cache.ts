@@ -109,6 +109,12 @@ CREATE TABLE IF NOT EXISTS conversation_tail (
   tail_size       INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_names (
+  session_id  TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
 `;
 
 export class ConversationCache {
@@ -119,6 +125,8 @@ export class ConversationCache {
   // Monotonically increasing counter for tail updated_at — guarantees strict
   // ordering even when multiple updateFromLine() calls land within the same ms.
   private tailSeq = Date.now();
+  // Monotonically increasing counter for session_names updated_at.
+  private nameSeq = Date.now();
 
   private stmts: {
     getById: Database.Statement;
@@ -137,6 +145,9 @@ export class ConversationCache {
     deleteAll: Database.Statement;
     deleteTailAll: Database.Statement;
     allFilePaths: Database.Statement;
+    upsertSessionName: Database.Statement;
+    getSessionName: Database.Statement;
+    listSessionNames: Database.Statement;
   };
 
   private constructor(db: Database.Database, tailSize: number) {
@@ -200,6 +211,20 @@ export class ConversationCache {
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
       deleteTailAll: db.prepare("DELETE FROM conversation_tail"),
       allFilePaths: db.prepare("SELECT id, file_path FROM conversation_meta"),
+      upsertSessionName: db.prepare(`
+        INSERT INTO session_names (session_id, name, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(session_id) DO UPDATE SET
+          name       = excluded.name,
+          updated_at = excluded.updated_at
+        WHERE session_names.updated_at < excluded.updated_at
+      `),
+      getSessionName: db.prepare(
+        "SELECT name FROM session_names WHERE session_id = ?"
+      ),
+      listSessionNames: db.prepare(
+        "SELECT session_id, name FROM session_names"
+      ),
     };
   }
 
@@ -441,6 +466,20 @@ export class ConversationCache {
 
   hasConversation(id: string): boolean {
     return !!this.stmts.getById.get(id);
+  }
+
+  upsertSessionName(sessionId: string, name: string): void {
+    this.stmts.upsertSessionName.run(sessionId, name, ++this.nameSeq);
+  }
+
+  getSessionName(sessionId: string): string | null {
+    const row = this.stmts.getSessionName.get(sessionId) as { name: string } | undefined;
+    return row?.name ?? null;
+  }
+
+  listSessionNames(): Record<string, string> {
+    const rows = this.stmts.listSessionNames.all() as { session_id: string; name: string }[];
+    return Object.fromEntries(rows.map((r) => [r.session_id, r.name]));
   }
 
   invalidate(id?: string): void {
