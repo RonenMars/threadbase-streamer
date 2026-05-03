@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { ConversationCache } from "../../src/conversation-cache";
 import { mkdtempSync, rmSync } from "fs";
-import { join } from "path";
 import { tmpdir } from "os";
+import { join } from "path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ConversationCache } from "../../src/conversation-cache";
 
 let tmpDir: string;
 let cache: ConversationCache;
@@ -42,9 +42,9 @@ describe("session_names", () => {
 
   it("does not overwrite with a stale timestamp", () => {
     // Write name with a high timestamp directly via the prepared statement
-    ;(cache as any).stmts.upsertSessionName.run("sess_1", "current-name", 9999999999999);
+    (cache as any).stmts.upsertSessionName.run("sess_1", "current-name", 9999999999999);
     // Attempt to overwrite with a lower timestamp — should be rejected by WHERE guard
-    ;(cache as any).stmts.upsertSessionName.run("sess_1", "stale-name", 1);
+    (cache as any).stmts.upsertSessionName.run("sess_1", "stale-name", 1);
     expect(cache.getSessionName("sess_1")).toBe("current-name");
   });
 });

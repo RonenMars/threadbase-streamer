@@ -219,12 +219,8 @@ export class ConversationCache {
           updated_at = excluded.updated_at
         WHERE session_names.updated_at < excluded.updated_at
       `),
-      getSessionName: db.prepare(
-        "SELECT name FROM session_names WHERE session_id = ?"
-      ),
-      listSessionNames: db.prepare(
-        "SELECT session_id, name FROM session_names"
-      ),
+      getSessionName: db.prepare("SELECT name FROM session_names WHERE session_id = ?"),
+      listSessionNames: db.prepare("SELECT session_id, name FROM session_names"),
     };
   }
 
