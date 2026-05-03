@@ -39,4 +39,12 @@ describe("session_names", () => {
     const names = cache.listSessionNames();
     expect(names).toEqual({ sess_1: "name-one", sess_2: "name-two" });
   });
+
+  it("does not overwrite with a stale timestamp", () => {
+    // Write name with a high timestamp directly via the prepared statement
+    ;(cache as any).stmts.upsertSessionName.run("sess_1", "current-name", 9999999999999);
+    // Attempt to overwrite with a lower timestamp — should be rejected by WHERE guard
+    ;(cache as any).stmts.upsertSessionName.run("sess_1", "stale-name", 1);
+    expect(cache.getSessionName("sess_1")).toBe("current-name");
+  });
 });
