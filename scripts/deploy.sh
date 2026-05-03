@@ -71,7 +71,13 @@ ensure_menubar_deployed() {
 
   if [[ -z "$running_pid" ]]; then
     log "launching menubar (detached — deploy.sh exits regardless of menubar window state)"
-    ( cd "$MENUBAR_DIR" && nohup npx electron . </dev/null >>/tmp/threadbase-menubar.log 2>&1 & disown )
+    # Launch nohup'd in the foreground bash (no subshell wrapper) and disown.
+    # The previous `( … & disown )` subshell was keeping deploy.sh alive in
+    # bash 5.3+ as a zombie process-group leader after the script finished.
+    cd "$MENUBAR_DIR"
+    nohup npx electron . </dev/null >>/tmp/threadbase-menubar.log 2>&1 &
+    disown
+    cd "$REPO_ROOT"
     sleep 1
     if pgrep -f "vendor/menubar" >/dev/null 2>&1; then
       ok "menubar running"
