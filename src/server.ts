@@ -321,7 +321,7 @@ export class StreamerServer {
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
 
     if (req.method === "OPTIONS") {
@@ -374,6 +374,10 @@ export class StreamerServer {
       if (method === "GET" && convMatch)
         return await this.handleGetConversation(decodeURIComponent(convMatch[1]), url, res);
 
+      if (method === "GET" && path === "/api/sessions/names") {
+        return this.handleGetSessionNames(res);
+      }
+
       const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)$/);
       if (method === "GET" && sessionMatch) return this.handleGetSession(sessionMatch[1], res);
 
@@ -390,6 +394,9 @@ export class StreamerServer {
 
       const cancelMatch = path.match(/^\/api\/sessions\/([^/]+)\/cancel$/);
       if (method === "POST" && cancelMatch) return this.handleCancel(cancelMatch[1], res);
+
+      const nameMatch = path.match(/^\/api\/sessions\/([^/]+)\/name$/);
+      if (method === "PATCH" && nameMatch) return this.handleSetSessionName(nameMatch[1], req, res);
 
       const pathParts = path.split("/");
       if (
@@ -1251,6 +1258,39 @@ export class StreamerServer {
         json(res, 400, { error: message });
       }
     }
+  }
+
+  private async handleSetSessionName(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!this.cache) {
+      json(res, 503, { error: "Cache not available" });
+      return;
+    }
+    let parsed: { name?: string };
+    try {
+      parsed = await readBody(req);
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+      return;
+    }
+    const name = parsed.name?.trim();
+    if (!name) {
+      json(res, 400, { error: "name is required" });
+      return;
+    }
+    this.cache.upsertSessionName(sessionId, name);
+    json(res, 200, { ok: true });
+  }
+
+  private handleGetSessionNames(res: ServerResponse): void {
+    if (!this.cache) {
+      json(res, 200, {});
+      return;
+    }
+    json(res, 200, this.cache.listSessionNames());
   }
 }
 
