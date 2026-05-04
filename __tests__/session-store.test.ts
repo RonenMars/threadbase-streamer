@@ -1,4 +1,4 @@
-import { SessionStore } from "../src/session-store";
+import { decodeCursor, encodeCursor, SessionStore } from "../src/session-store";
 import type { DiscoveredProcess, ManagedSession } from "../src/types";
 
 const UUID_A = "039fd3ce-ad78-4980-b441-1cfa05edaec7";
@@ -200,6 +200,116 @@ describe("SessionStore", () => {
       const resp = store.get(UUID_A, noPty);
       expect(resp?.sessionName).toBeUndefined();
       expect(resp?.model).toBeUndefined();
+    });
+  });
+
+  describe("paginate", () => {
+    function seed(n: number): string[] {
+      // Sessions are ordered such that startedAt and id both monotonically
+      // increase with i — i.e. the newest session has the largest id.
+      const ids: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const id = `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`;
+        ids.push(id);
+        store.addManaged(
+          makeManagedSession({
+            id,
+            startedAt: new Date(Date.UTC(2026, 0, 1, 0, i)),
+            projectName: `proj-${i}`,
+          }),
+        );
+      }
+      return ids;
+    }
+
+    it("returns all items in a single page when total ≤ limit", () => {
+      seed(3);
+      const page = store.paginate(noPty, { limit: 10, sortBy: "startedAt", order: "desc" });
+      expect(page.sessions).toHaveLength(3);
+      expect(page.total).toBe(3);
+      expect(page.nextCursor).toBeNull();
+    });
+
+    it("paginates by startedAt DESC and the union of pages equals the unpaginated sorted list", () => {
+      const ids = seed(5);
+      const expected = [...ids].reverse(); // newest first
+
+      const page1 = store.paginate(noPty, { limit: 2, sortBy: "startedAt", order: "desc" });
+      expect(page1.sessions.map((s) => s.id)).toEqual(expected.slice(0, 2));
+      expect(page1.total).toBe(5);
+      expect(page1.nextCursor).not.toBeNull();
+
+      if (!page1.nextCursor) throw new Error("expected page1.nextCursor");
+      const page2 = store.paginate(noPty, {
+        limit: 2,
+        sortBy: "startedAt",
+        order: "desc",
+        cursor: page1.nextCursor,
+      });
+      expect(page2.sessions.map((s) => s.id)).toEqual(expected.slice(2, 4));
+
+      if (!page2.nextCursor) throw new Error("expected page2.nextCursor");
+      const page3 = store.paginate(noPty, {
+        limit: 2,
+        sortBy: "startedAt",
+        order: "desc",
+        cursor: page2.nextCursor,
+      });
+      expect(page3.sessions.map((s) => s.id)).toEqual(expected.slice(4, 5));
+      expect(page3.nextCursor).toBeNull();
+    });
+
+    it("uses id as a tiebreaker when sort key values collide", () => {
+      const sameTime = new Date("2026-01-01T00:00:00Z");
+      const idLow = "00000000-0000-0000-0000-000000000001";
+      const idHigh = "00000000-0000-0000-0000-000000000002";
+      store.addManaged(makeManagedSession({ id: idLow, startedAt: sameTime, projectName: "a" }));
+      store.addManaged(makeManagedSession({ id: idHigh, startedAt: sameTime, projectName: "b" }));
+
+      const desc = store.paginate(noPty, { limit: 10, sortBy: "startedAt", order: "desc" });
+      // Tiebreaker on id is always ascending, so when sort key ties we fall
+      // back to id ASC regardless of `order`.
+      expect(desc.sessions.map((s) => s.id)).toEqual([idLow, idHigh]);
+    });
+
+    it("filters by status before paginating, and total reflects the filter", () => {
+      store.addManaged(makeManagedSession({ id: "a-id", status: "running" }));
+      store.addManaged(makeManagedSession({ id: "b-id", status: "idle" }));
+      store.addManaged(makeManagedSession({ id: "c-id", status: "running" }));
+
+      const page = store.paginate(noPty, {
+        limit: 10,
+        sortBy: "startedAt",
+        order: "desc",
+        status: ["running"],
+      });
+      expect(page.sessions.map((s) => s.id).sort()).toEqual(["a-id", "c-id"]);
+      expect(page.total).toBe(2);
+    });
+
+    it("sorts by projectName ASC", () => {
+      store.addManaged(makeManagedSession({ id: "id-c", projectName: "c-proj" }));
+      store.addManaged(makeManagedSession({ id: "id-a", projectName: "a-proj" }));
+      store.addManaged(makeManagedSession({ id: "id-b", projectName: "b-proj" }));
+
+      const page = store.paginate(noPty, { limit: 10, sortBy: "projectName", order: "asc" });
+      expect(page.sessions.map((s) => s.projectName)).toEqual(["a-proj", "b-proj", "c-proj"]);
+    });
+
+    it("encodeCursor/decodeCursor round-trip preserves values", () => {
+      const cursor = { k: "2026-01-01T00:00:00.000Z", id: UUID_A };
+      const encoded = encodeCursor(cursor);
+      expect(decodeCursor(encoded)).toEqual(cursor);
+    });
+
+    it("decodeCursor throws INVALID_CURSOR on garbage input", () => {
+      expect(() => decodeCursor("not-base64-!!!")).toThrow("INVALID_CURSOR");
+      expect(() => decodeCursor(Buffer.from("not json", "utf8").toString("base64url"))).toThrow(
+        "INVALID_CURSOR",
+      );
+      expect(() =>
+        decodeCursor(Buffer.from(JSON.stringify({ id: 5, k: "x" }), "utf8").toString("base64url")),
+      ).toThrow("INVALID_CURSOR");
     });
   });
 });

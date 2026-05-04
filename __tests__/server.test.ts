@@ -93,7 +93,7 @@ describe("StreamerServer", () => {
   });
 
   describe("GET /api/sessions", () => {
-    it("returns empty session list initially", async () => {
+    it("returns empty session list initially (legacy plain array)", async () => {
       const res = await fetch(`${baseUrl}/api/sessions`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
@@ -101,6 +101,71 @@ describe("StreamerServer", () => {
 
       expect(res.status).toBe(200);
       expect(Array.isArray(body)).toBe(true);
+    });
+
+    it("returns the paginated envelope when ?limit is set", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions?limit=10`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(body)).toBe(false);
+      expect(body).toHaveProperty("sessions");
+      expect(body).toHaveProperty("nextCursor");
+      expect(body).toHaveProperty("total");
+      expect(Array.isArray(body.sessions)).toBe(true);
+      // total reflects whatever the OS-level discovery turns up in the test
+      // env; we just assert it's a non-negative integer and the envelope
+      // shape is correct.
+      expect(typeof body.total).toBe("number");
+      expect(body.total).toBeGreaterThanOrEqual(0);
+    });
+
+    it("uses the envelope when only ?sortBy is set", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions?sortBy=projectName`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty("sessions");
+    });
+
+    it("rejects an unknown sortBy with 400", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions?sortBy=bogus`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/sortBy/);
+    });
+
+    it("rejects a malformed cursor with 400", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions?cursor=garbage!!!`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/cursor/i);
+    });
+
+    it("rejects a limit outside 1..500 with 400", async () => {
+      const tooBig = await fetch(`${baseUrl}/api/sessions?limit=9999`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(tooBig.status).toBe(400);
+
+      const tooSmall = await fetch(`${baseUrl}/api/sessions?limit=0`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(tooSmall.status).toBe(400);
+    });
+
+    it("rejects an unknown status entry with 400", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions?status=running,bogus`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(400);
     });
   });
 

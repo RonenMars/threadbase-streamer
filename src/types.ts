@@ -83,6 +83,32 @@ export interface ConversationListResponse {
   total: number;
 }
 
+// ─── Sessions Pagination ───────────────────────────────────────────
+
+export type SessionSortKey = "startedAt" | "lastActivityAt" | "projectName" | "status";
+export type SortOrder = "asc" | "desc";
+
+export interface SessionListPage {
+  sessions: SessionResponse[];
+  nextCursor: string | null;
+  total: number;
+}
+
+export interface SessionListQuery {
+  limit: number;
+  cursor?: string;
+  sortBy: SessionSortKey;
+  order: SortOrder;
+  status?: SessionStatus[];
+}
+
+// Decoded cursor payload. `k` is the value of the chosen sort key for the
+// last item on the previous page; `id` is the tiebreaker.
+export interface SessionCursor {
+  k: string | number;
+  id: string;
+}
+
 // ─── Configuration ─────────────────────────────────────────────────
 
 export interface ServerConfig {

@@ -33,7 +33,13 @@ import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
 import { seal } from "./seal";
 import { SessionStore } from "./session-store";
-import type { DiscoveredProcess, ServerConfig } from "./types";
+import type {
+  DiscoveredProcess,
+  ServerConfig,
+  SessionSortKey,
+  SortOrder as SessionSortOrder,
+  SessionStatus,
+} from "./types";
 import { saveUploadFile } from "./uploads";
 import { WSHub } from "./ws-hub";
 
@@ -360,7 +366,8 @@ export class StreamerServer {
       if (method === "GET" && path === "/api/conversations/count")
         return await this.handleConversationsCount(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
-      if (method === "GET" && path === "/api/sessions") return await this.handleListSessions(res);
+      if (method === "GET" && path === "/api/sessions")
+        return await this.handleListSessions(url, res);
       if (method === "GET" && path === "/api/sessions/count") return this.handleSessionsCount(res);
       if (method === "POST" && path === "/api/sessions/resume")
         return await this.handleResume(req, res);
@@ -835,7 +842,7 @@ export class StreamerServer {
     });
   }
 
-  private async handleListSessions(res: ServerResponse): Promise<void> {
+  private async handleListSessions(url: URL, res: ServerResponse): Promise<void> {
     const DISCOVERY_TTL_MS = 15_000;
     const now = Date.now();
 
@@ -849,7 +856,36 @@ export class StreamerServer {
       }
     }
 
-    json(res, 200, this.sessionStore.list(this.ptyAttachedIds()));
+    // Backwards compat: a bare GET /api/sessions returns the legacy plain
+    // array. Any pagination param switches to the new envelope.
+    const hasPaginationParams =
+      url.searchParams.has("limit") ||
+      url.searchParams.has("cursor") ||
+      url.searchParams.has("sortBy") ||
+      url.searchParams.has("order") ||
+      url.searchParams.has("status");
+
+    if (!hasPaginationParams) {
+      json(res, 200, this.sessionStore.list(this.ptyAttachedIds()));
+      return;
+    }
+
+    const parsed = parseSessionListQuery(url);
+    if ("error" in parsed) {
+      json(res, 400, { error: parsed.error });
+      return;
+    }
+
+    try {
+      const page = this.sessionStore.paginate(this.ptyAttachedIds(), parsed.query);
+      json(res, 200, page);
+    } catch (err) {
+      if (err instanceof Error && err.message === "INVALID_CURSOR") {
+        json(res, 400, { error: "Invalid cursor" });
+        return;
+      }
+      throw err;
+    }
   }
 
   private handleGetSession(sessionId: string, res: ServerResponse): void {
@@ -1306,6 +1342,58 @@ function intParam(url: URL, name: string, defaultValue: number): number {
   if (!val) return defaultValue;
   const parsed = Number.parseInt(val, 10);
   return Number.isNaN(parsed) ? defaultValue : parsed;
+}
+
+const VALID_SORT_KEYS: SessionSortKey[] = ["startedAt", "lastActivityAt", "projectName", "status"];
+const VALID_ORDERS: SessionSortOrder[] = ["asc", "desc"];
+const VALID_STATUSES: SessionStatus[] = ["running", "waiting_input", "idle"];
+
+const SESSIONS_DEFAULT_LIMIT = 200;
+const SESSIONS_MAX_LIMIT = 500;
+
+type ParsedSessionListQuery = { query: import("./types").SessionListQuery } | { error: string };
+
+function parseSessionListQuery(url: URL): ParsedSessionListQuery {
+  const limitRaw = url.searchParams.get("limit");
+  let limit = SESSIONS_DEFAULT_LIMIT;
+  if (limitRaw !== null) {
+    const n = Number.parseInt(limitRaw, 10);
+    if (!Number.isFinite(n) || n < 1 || n > SESSIONS_MAX_LIMIT) {
+      return { error: `limit must be 1..${SESSIONS_MAX_LIMIT}` };
+    }
+    limit = n;
+  }
+
+  const sortByRaw = url.searchParams.get("sortBy") ?? "startedAt";
+  if (!VALID_SORT_KEYS.includes(sortByRaw as SessionSortKey)) {
+    return { error: `sortBy must be one of ${VALID_SORT_KEYS.join(",")}` };
+  }
+  const sortBy = sortByRaw as SessionSortKey;
+
+  const orderRaw = url.searchParams.get("order") ?? "desc";
+  if (!VALID_ORDERS.includes(orderRaw as SessionSortOrder)) {
+    return { error: `order must be asc or desc` };
+  }
+  const order = orderRaw as SessionSortOrder;
+
+  const statusRaw = url.searchParams.get("status");
+  let status: SessionStatus[] | undefined;
+  if (statusRaw) {
+    const parts = statusRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const p of parts) {
+      if (!VALID_STATUSES.includes(p as SessionStatus)) {
+        return { error: `status entry "${p}" is invalid` };
+      }
+    }
+    status = parts as SessionStatus[];
+  }
+
+  const cursor = url.searchParams.get("cursor") ?? undefined;
+
+  return { query: { limit, sortBy, order, status, cursor } };
 }
 
 function isLocalRequest(req: IncomingMessage): boolean {
