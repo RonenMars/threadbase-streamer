@@ -386,9 +386,15 @@ This version of Node.js requires NODE_MODULE_VERSION 141.
 ```
 The mobile session list still works — just slower, since every request scans JSONL files instead of hitting the SQLite cache.
 **Cause:** Node was upgraded (e.g. system Node went from v22 to v24) after the streamer was deployed. `better-sqlite3`'s prebuilt `.node` binary at `~/.threadbase/releases/node_modules/better-sqlite3/build/Release/` is locked to the old `NODE_MODULE_VERSION`. The streamer catches the load error and degrades gracefully: cache disabled, server continues.
-**Fix:** Rebuild the native module against the current Node:
+**Fix:** Rebuild the native module against the current Node — but use the **same Node binary launchd runs** (not whatever your shell's `node` resolves to). The launchd plist hardcodes `/usr/local/bin/node`; if your shell uses nvm or another Node manager, `npm rebuild` will silently produce a binary for the wrong ABI and the error will persist after restart.
+
 ```sh
-cd ~/.threadbase/releases && npm rebuild better-sqlite3
+# Compare the two Nodes first — if they differ, you must use the service's npm explicitly:
+/usr/local/bin/node -p "process.versions.modules + ' (' + process.version + ')'"
+node -p "process.versions.modules + ' (' + process.version + ')'"
+
+# Rebuild with the service's npm (PATH override ensures node-gyp finds the v24 headers):
+cd ~/.threadbase/releases && PATH="/usr/local/bin:$PATH" /usr/local/bin/npm rebuild better-sqlite3
 launchctl kickstart -k "gui/$(id -u)/com.ronen.threadbase"
 ```
 
@@ -399,3 +405,11 @@ npm run deploy
 ```
 
 **Diagnosis cue:** the error is non-fatal — the server keeps running. If you only check `/healthz` you won't notice. Look in stderr.log if the mobile app feels noticeably slower after a Node upgrade.
+
+**Confirming the fix worked:** after `kickstart -k`, the *file* `stderr.log` is appended to, not truncated, so old errors stay visible. To verify the fresh process is clean, truncate the log first:
+```sh
+: > ~/.threadbase/logs/stderr.log
+launchctl kickstart -k "gui/$(id -u)/com.ronen.threadbase"
+sleep 3
+cat ~/.threadbase/logs/stderr.log   # should be empty if the cache loaded successfully
+```
