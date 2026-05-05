@@ -14,6 +14,7 @@ import { realpath } from "fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
 import { join } from "path";
+import pinoHttp, { type HttpLogger } from "pino-http";
 import { type WebSocket, WebSocketServer } from "ws";
 import {
   loadBrowseRoot,
@@ -28,6 +29,7 @@ import { ConversationCache } from "./conversation-cache";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { recordUpload } from "./db/upload-records";
 import { FileWatcher } from "./file-watcher";
+import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
@@ -84,6 +86,22 @@ export class StreamerServer {
   } | null = null;
   private cacheDir: string;
   private tailSize: number;
+  private log = getLogger("server");
+  private httpLog: HttpLogger = pinoHttp({
+    logger: this.log.pino,
+    customLogLevel: (_req, res, err) => {
+      if (err || (res.statusCode ?? 0) >= 500) return "error";
+      if ((res.statusCode ?? 0) >= 400) return "warn";
+      return "info";
+    },
+    customProps: (req) => {
+      const fwd = req.headers["x-forwarded-for"];
+      const fwdFirst = Array.isArray(fwd)
+        ? fwd[0]
+        : (fwd as string | undefined)?.split(",")[0]?.trim();
+      return { ip: fwdFirst || req.socket?.remoteAddress || "-" };
+    },
+  });
 
   constructor(config: ServerConfig & { apiKey: string }) {
     this.apiKey = config.apiKey;
@@ -100,10 +118,10 @@ export class StreamerServer {
       realpath(rawRoot)
         .then((resolved) => {
           this.browseRoot = resolved;
-          if (this.verbose) console.log(`Browse root: ${resolved}`);
+          if (this.verbose) this.log.info(`Browse root: ${resolved}`, { browseRoot: resolved });
         })
         .catch(() => {
-          console.warn(`Warning: browse root does not exist: ${rawRoot}`);
+          this.log.warn(`Warning: browse root does not exist: ${rawRoot}`, { browseRoot: rawRoot });
         });
     }
 
@@ -112,9 +130,10 @@ export class StreamerServer {
       const result = validatePublicUrl(rawPublicUrl);
       if (result.ok) {
         this.publicUrl = result.normalized;
-        if (this.verbose) console.log(`Public URL: ${this.publicUrl}`);
+        if (this.verbose)
+          this.log.info(`Public URL: ${this.publicUrl}`, { publicUrl: this.publicUrl });
       } else {
-        console.warn(`Warning: ${result.error}`);
+        this.log.warn(`Warning: ${result.error}`, { error: result.error });
       }
     }
 
@@ -242,7 +261,11 @@ export class StreamerServer {
       this.ptyGraceTimers.delete(sessionId);
       this.sessionSubscribers.delete(sessionId);
       if (this.ptyManager.hasSession(sessionId)) {
-        if (this.verbose) console.log(`[grace] killing idle PTY for ${sessionId}`);
+        this.log.info(
+          `[grace] killing idle PTY for ${sessionId}`,
+          { sessionId, event: "pty.grace_kill" },
+          "pino",
+        );
         this.ptyManager.putOnHold(sessionId);
         const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
         if (resp) this.wsHub.broadcast({ type: "session_update", session: resp });
@@ -259,23 +282,30 @@ export class StreamerServer {
     if (dbConfig) {
       this.dbPool = await createPool(dbConfig);
       this.dbInstanceId = dbConfig.instanceId;
-      if (this.verbose) {
-        console.log(`Database enabled: ${maskConnectionString(dbConfig.connectionString)}`);
-        console.log(`Instance ID: ${dbConfig.instanceId}`);
-      }
+      const masked = maskConnectionString(dbConfig.connectionString);
+      this.log.info(`Database enabled: ${masked}`, {
+        connectionString: masked,
+        instanceId: dbConfig.instanceId,
+      });
+      this.log.info(`Instance ID: ${dbConfig.instanceId}`, { instanceId: dbConfig.instanceId });
       await runMigrations(this.dbPool);
-      if (this.verbose) console.log("Database migrations applied");
+      this.log.info("Database migrations applied", { event: "db.migrations_applied" });
     }
 
     const warmUp = new Promise<void>((resolveWarm) => {
       this.httpServer.listen(port, () => {
-        if (this.verbose) {
-          console.log(`Streamer server listening on port ${port}`);
-        }
+        this.log.info(`Streamer server listening on port ${port}`, {
+          port,
+          event: "server.listening",
+        });
         try {
           this.cache = ConversationCache.open(join(this.cacheDir, "cache.db"), this.tailSize);
         } catch (err) {
-          console.warn("ConversationCache failed to open (running without cache):", err);
+          const message = err instanceof Error ? err.message : String(err);
+          this.log.warn(`ConversationCache failed to open (running without cache): ${message}`, {
+            error: message,
+            event: "cache.open_failed",
+          });
         }
         this.getScanner()
           .then(async (scanner) => {
@@ -336,9 +366,7 @@ export class StreamerServer {
       return;
     }
 
-    if (this.verbose) {
-      console.log(`${req.method} ${req.url}`);
-    }
+    this.httpLog(req, res);
 
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
     const path = url.pathname;
@@ -510,7 +538,11 @@ export class StreamerServer {
 
     const { hostname } = require("os");
     const ts = new Date().toISOString();
-    console.log(`[pair] token exchanged from ${ip} at ${ts}`);
+    this.log.info(`[pair] token exchanged from ${ip} at ${ts}`, {
+      event: "pair.token_exchanged",
+      ip,
+      ts,
+    });
 
     json(res, 200, {
       ciphertext: sealed.ciphertext,
@@ -1047,9 +1079,12 @@ export class StreamerServer {
           sizeBytes: saved.sizeBytes,
         });
       } catch (err) {
-        if (this.verbose) {
-          console.warn(`[uploads] DB record failed: ${err}`);
-        }
+        const message = err instanceof Error ? err.message : String(err);
+        this.log.warn(
+          `[uploads] DB record failed: ${message}`,
+          { event: "uploads.db_record_failed", error: message },
+          "pino",
+        );
       }
 
       json(res, 201, {
@@ -1176,7 +1211,10 @@ export class StreamerServer {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
-      if (this.verbose) console.error(`[start] failed to start session: ${message}`);
+      this.log.error(`[start] failed to start session: ${message}`, {
+        event: "session.start_failed",
+        error: message,
+      });
       json(res, 500, { error: message });
     }
   }
@@ -1230,7 +1268,11 @@ export class StreamerServer {
       this.fileWatcher.watch(filePath);
       this.scanner = null;
       this.scannerReady = null;
-      if (this.verbose) console.log(`[startFresh] wired JSONL for ${sessionId}`);
+      this.log.info(
+        `[startFresh] wired JSONL for ${sessionId}`,
+        { event: "session.jsonl_wired", sessionId, filePath },
+        "pino",
+      );
     };
 
     tryWire();

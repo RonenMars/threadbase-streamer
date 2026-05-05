@@ -3,7 +3,10 @@ import { Command } from "commander";
 import qrcode from "qrcode-terminal";
 import { loadOrCreateApiKey, loadPublicUrl } from "../src/auth";
 import { resolveServerUrl } from "../src/lan-url";
+import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
+
+const log = getLogger("cli");
 
 const program = new Command();
 
@@ -41,22 +44,22 @@ program
 
     await server.listen(port);
 
-    console.log(`\nThreadbase Streamer v${__VERSION__}`);
-    console.log(`Listening on http://localhost:${port}`);
-    console.log(`WebSocket at ws://localhost:${port}/ws`);
-    console.log(`API key: ${apiKey}\n`);
+    log.info(`Threadbase Streamer v${__VERSION__}`, { version: __VERSION__, port });
+    log.info(`Listening on http://localhost:${port}`, { url: `http://localhost:${port}` });
+    log.info(`WebSocket at ws://localhost:${port}/ws`, { wsUrl: `ws://localhost:${port}/ws` });
+    log.info(`API key: ${apiKey}`, { apiKeyMasked: `${apiKey.slice(0, 6)}…` });
 
     if (opts.pairQr !== false) {
       try {
         await printPairQR({ port, apiKey, publicUrl });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`(skipped pairing QR: ${message})`);
+        log.warn(`(skipped pairing QR: ${message})`, { reason: message });
       }
     }
 
     const shutdown = async () => {
-      console.log("\nShutting down...");
+      log.info("Shutting down...");
       await server.close();
       process.exit(0);
     };
@@ -84,10 +87,10 @@ program
           const f = dbPath + suffix;
           if (existsSync(f)) {
             rmSync(f);
-            console.log(`Deleted ${f}`);
+            log.info(`Deleted ${f}`, { path: f }, "console");
           }
         }
-        console.log("Cache cleared. Restart the server to rebuild.");
+        log.info("Cache cleared. Restart the server to rebuild.", undefined, "console");
       }),
   );
 
@@ -131,9 +134,13 @@ async function printPairQR({
   const expSeconds = Math.floor(expiresAt / 1000);
   const payload = `threadbase://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}`;
 
-  console.log("Scan to pair a mobile client:\n");
+  log.info("Scan to pair a mobile client:\n", undefined, "console");
   qrcode.generate(payload, { small: true });
-  console.log(`Server URL : ${url}`);
-  console.log(`Pair URL   : ${payload}`);
-  console.log(`Expires    : ${new Date(expiresAt).toLocaleTimeString()} (${expiresInSeconds}s)\n`);
+  log.info(`Server URL : ${url}`, undefined, "console");
+  log.info(`Pair URL   : ${payload}`, undefined, "console");
+  log.info(
+    `Expires    : ${new Date(expiresAt).toLocaleTimeString()} (${expiresInSeconds}s)\n`,
+    undefined,
+    "console",
+  );
 }
