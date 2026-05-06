@@ -34,9 +34,20 @@ ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 SCANNER_DIR="$REPO_ROOT/vendor/scanner"
 MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
 
-# Ensure the menubar submodule is built and running with the current submodule SHA.
-# Compares vendor/menubar/dist/.build-sha against the pinned submodule HEAD; rebuilds
-# and relaunches if they differ (or if .build-sha is absent).
+MENUBAR_SIGNING_ENV="$INSTALL_DIR/menubar-signing.env"
+MENUBAR_INSTALLED_SHA_FILE="$INSTALL_DIR/menubar-installed-sha"
+MENUBAR_RELEASES_DIR="$INSTALL_DIR/releases/menubar"
+MENUBAR_KEEP_DMGS=5
+
+# Build a signed-or-ad-hoc .dmg of vendor/menubar via electron-builder, install
+# the .app to /Applications/Threadbase Menubar.app, archive the .dmg under
+# ~/.threadbase/releases/menubar/, and launch the installed app. Idempotent —
+# compares ~/.threadbase/menubar-installed-sha against the pinned submodule HEAD
+# and skips the whole flow when up-to-date.
+#
+# Sources ~/.threadbase/menubar-signing.env if present (sets APPLE_TEAM_ID +
+# App Store Connect API key vars), which switches electron-builder into the
+# Developer ID + notarisation path. Absent → ad-hoc local build.
 ensure_menubar_deployed() {
   if [[ ! -f "$MENUBAR_DIR/package.json" ]]; then
     log "initializing vendor/menubar submodule"
@@ -46,47 +57,101 @@ ensure_menubar_deployed() {
   local current_sha
   current_sha="$(cd "$MENUBAR_DIR" && git rev-parse HEAD)"
 
-  local built_sha=""
-  [[ -f "$MENUBAR_DIR/dist/.build-sha" ]] && built_sha="$(cat "$MENUBAR_DIR/dist/.build-sha")"
+  local installed_sha=""
+  [[ -f "$MENUBAR_INSTALLED_SHA_FILE" ]] && installed_sha="$(cat "$MENUBAR_INSTALLED_SHA_FILE")"
 
-  if [[ "$current_sha" == "$built_sha" ]]; then
+  local installed_app="/Applications/Threadbase Menubar.app"
+  if [[ "$current_sha" == "$installed_sha" ]] && [[ -d "$installed_app" ]]; then
     log "menubar is up-to-date ($current_sha)"
-  else
-    log "menubar needs rebuild (built: ${built_sha:-none}, current: ${current_sha})"
-    ( cd "$MENUBAR_DIR" && npm install --silent && npm run build )
-    printf '%s' "$current_sha" > "$MENUBAR_DIR/dist/.build-sha"
-    ok "menubar built: $current_sha"
-  fi
-
-  # Relaunch if not running, or if the running process predates the new build.
-  local running_pid=""
-  running_pid="$(pgrep -f "vendor/menubar" 2>/dev/null | head -1 || true)"
-
-  if [[ -n "$running_pid" ]] && [[ "$current_sha" != "$built_sha" ]]; then
-    log "stopping stale menubar (pid $running_pid)"
-    pkill -f "vendor/menubar" 2>/dev/null || true
-    sleep 0.5
-    running_pid=""
-  fi
-
-  if [[ -z "$running_pid" ]]; then
-    log "launching menubar (detached — deploy.sh exits regardless of menubar window state)"
-    # Launch nohup'd in the foreground bash (no subshell wrapper) and disown.
-    # The previous `( … & disown )` subshell was keeping deploy.sh alive in
-    # bash 5.3+ as a zombie process-group leader after the script finished.
-    cd "$MENUBAR_DIR"
-    nohup npx electron . </dev/null >>/tmp/threadbase-menubar.log 2>&1 &
-    disown
-    cd "$REPO_ROOT"
-    sleep 1
-    if pgrep -f "vendor/menubar" >/dev/null 2>&1; then
-      ok "menubar running"
+    if ! pgrep -f "Threadbase Menubar" >/dev/null 2>&1; then
+      log "launching installed menubar"
+      open -a "Threadbase Menubar" 2>/dev/null || open "$installed_app" \
+        || warn "could not launch menubar"
     else
-      warn "menubar exited immediately — check /tmp/threadbase-menubar.log"
+      ok "menubar already running"
     fi
-  else
-    ok "menubar already running (pid $running_pid)"
+    return
   fi
+
+  log "menubar needs rebuild (installed: ${installed_sha:-none}, current: ${current_sha})"
+
+  # Source signing config if present. Absent is fine — electron-builder falls
+  # back to ad-hoc signing and the notarize.cjs hook no-ops.
+  if [[ -f "$MENUBAR_SIGNING_ENV" ]]; then
+    log "sourcing menubar signing config from $MENUBAR_SIGNING_ENV"
+    set -a
+    # shellcheck disable=SC1090
+    source "$MENUBAR_SIGNING_ENV"
+    set +a
+  else
+    warn "no signing config at $MENUBAR_SIGNING_ENV — building ad-hoc (local-only)"
+  fi
+
+  # Stop any running instance before we overwrite /Applications/.
+  if pgrep -f "Threadbase Menubar" >/dev/null 2>&1; then
+    log "stopping running menubar"
+    pkill -f "Threadbase Menubar" 2>/dev/null || true
+    sleep 0.5
+  fi
+
+  log "building menubar .dmg (this takes 1–3 minutes; longer first time)"
+  ( cd "$MENUBAR_DIR" && npm ci --silent && npm run package:mac )
+
+  # Locate the produced .dmg. electron-builder's artifactName template is
+  # "${productName}-${version}-${arch}.${ext}" → "Threadbase Menubar-X.Y.Z-universal.dmg".
+  local dmg
+  dmg="$(ls -t "$MENUBAR_DIR/release/"*.dmg 2>/dev/null | head -1 || true)"
+  if [[ -z "$dmg" ]]; then
+    err "electron-builder produced no .dmg"
+    return 1
+  fi
+  ok "menubar built: $dmg"
+
+  # Install the .app from the .dmg to /Applications/ (or ~/Applications/ as
+  # fallback if the system path is read-only).
+  local install_root="/Applications"
+  if [[ ! -w "$install_root" ]]; then
+    install_root="$HOME/Applications"
+    mkdir -p "$install_root"
+    warn "/Applications not writable — installing to $install_root"
+  fi
+  local target="$install_root/Threadbase Menubar.app"
+
+  log "mounting $dmg"
+  local mount_output mount_point
+  mount_output="$(hdiutil attach -nobrowse -readonly "$dmg" 2>&1)"
+  mount_point="$(printf '%s\n' "$mount_output" | awk -F'\t' '/\/Volumes\//{print $NF; exit}')"
+  if [[ -z "$mount_point" ]] || [[ ! -d "$mount_point/Threadbase Menubar.app" ]]; then
+    err "could not locate Threadbase Menubar.app inside $dmg"
+    printf '%s\n' "$mount_output" >&2
+    return 1
+  fi
+
+  log "installing to $target"
+  rm -rf "$target"
+  cp -R "$mount_point/Threadbase Menubar.app" "$target"
+  hdiutil detach "$mount_point" -quiet || warn "hdiutil detach $mount_point failed"
+
+  # Archive the .dmg under ~/.threadbase/releases/menubar/ for offline reinstall.
+  mkdir -p "$MENUBAR_RELEASES_DIR"
+  local short_sha archived
+  short_sha="${current_sha:0:7}"
+  archived="$MENUBAR_RELEASES_DIR/Threadbase-Menubar-${short_sha}.dmg"
+  cp "$dmg" "$archived"
+  ok "archived $archived"
+
+  printf '%s' "$current_sha" > "$MENUBAR_INSTALLED_SHA_FILE"
+
+  log "launching $target"
+  # Prefer `open -a` (uses LaunchServices), fall back to direct path if the
+  # registry hasn't picked up the new .app yet.
+  open -a "Threadbase Menubar" 2>/dev/null || open "$target" || warn "could not launch menubar"
+
+  # Garbage-collect old archived .dmgs.
+  ls -t "$MENUBAR_RELEASES_DIR"/Threadbase-Menubar-*.dmg 2>/dev/null \
+    | tail -n +$((MENUBAR_KEEP_DMGS + 1)) | xargs -r rm -f || true
+
+  ok "menubar deployed: $current_sha"
 }
 
 # Ensure the scanner submodule is checked out and built. Idempotent — skips
