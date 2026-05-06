@@ -95,7 +95,7 @@ Practical consequence: any service definition (launchd plist, systemd unit, Task
 | Field | Default | Description |
 |-------|---------|-------------|
 | `idleTimeoutMs` | `60000` | How long a `waiting_input` session idles before being put on_hold; `0` disables |
-| `ptyGracePeriodMs` | `45000` | Ms to keep the PTY alive after all WebSocket subscribers disconnect |
+| `ptyGracePeriodMs` | `270000` | Ms to keep the PTY alive after all WebSocket subscribers disconnect (4.5 minutes) |
 | `cacheDir` | `~/.threadbase/cache` | Directory for the SQLite conversation cache |
 | `tailSize` | `10` | Number of tail messages cached per conversation for fast session-list enrichment |
 

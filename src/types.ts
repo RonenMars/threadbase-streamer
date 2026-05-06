@@ -130,7 +130,7 @@ export interface ServerConfig {
     enabled: boolean;
     emoji: string;
   }>;
-  ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 45000)
+  ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes)
   cacheDir?: string;
   tailSize?: number;
 }
