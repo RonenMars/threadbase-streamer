@@ -445,10 +445,20 @@ function Invoke-Deploy {
     Write-Log "stamping release: $relFilename"
     Copy-Item -Path (Join-Path $repoRoot 'dist\cli.cjs') -Destination (Join-Path $releasesDir $relFilename) -Force
     # On Windows, cli.js is a real file at $installDir so __dirname = $installDir.
-    # Copy migrations to the install root (not releases/) so the CJS bundle finds them.
-    $migrationsrc = Join-Path $repoRoot 'dist\migrations'
-    if (Test-Path $migrationsrc) {
-      Copy-Item -Path $migrationsrc -Destination (Join-Path $installDir 'migrations') -Recurse -Force
+    # Copy both migration trees to the install root (not releases/) so the CJS bundle finds them.
+    # - migrations/    — SQLite (ConversationCache.open(); always required)
+    # - pg-migrations/ — Postgres (only loaded when THREADBASE_DATABASE_URL is set, but the
+    #                   migration runner reads the dir at startup and crashes if absent)
+    foreach ($mig in @('migrations', 'pg-migrations')) {
+      $src = Join-Path $repoRoot "dist\$mig"
+      if (Test-Path $src) {
+        $dst = Join-Path $installDir $mig
+        # Remove first: Copy-Item -Recurse into an existing dir creates
+        # a nested $dst\$mig\* AND merges siblings, leaving stale PG files
+        # alongside the new SQLite ones. Wipe to guarantee a clean tree.
+        if (Test-Path $dst) { Remove-Item -Path $dst -Recurse -Force }
+        Copy-Item -Path $src -Destination $dst -Recurse -Force
+      }
     }
     # node-pty is external to the tsup bundle (native addon). Copy it from source
     # node_modules so the deployed cli.js can resolve it without a full node_modules tree.

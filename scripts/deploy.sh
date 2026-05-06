@@ -507,8 +507,12 @@ cmd_deploy() {
   log "stamping release: $rel_filename"
   cp dist/cli.cjs "$RELEASES_DIR/$rel_filename"
   chmod +x "$RELEASES_DIR/$rel_filename"
-  # Copy migrations alongside the CLI so __dirname resolution works at runtime
+  # Copy migrations alongside the CLI so __dirname resolution works at runtime.
+  # - migrations/    — SQLite (ConversationCache.open(); always required)
+  # - pg-migrations/ — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
+  #                   migration runner reads the dir at startup and crashes if absent)
   cp -r dist/migrations "$RELEASES_DIR/migrations"
+  [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$RELEASES_DIR/pg-migrations"
 
   # Native addons are external to the tsup bundle. Copy them and their transitive
   # deps so the deployed cli.js can resolve them without a full node_modules tree.
