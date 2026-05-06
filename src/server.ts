@@ -54,7 +54,7 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
   `You are working within the project boundary: ${browseRoot}. ` +
   `Do not read, write, or execute commands that access files or directories outside this boundary.`;
 
-const DEFAULT_PTY_GRACE_PERIOD_MS = 45_000;
+const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
