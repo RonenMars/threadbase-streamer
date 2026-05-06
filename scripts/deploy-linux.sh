@@ -27,7 +27,8 @@ RELEASES_DIR="$INSTALL_DIR/releases"
 HISTORY_FILE="$RELEASES_DIR/.history"
 ACTIVE_LINK="$INSTALL_DIR/cli.js"
 SYSTEMD_UNIT="${THREADBASE_SYSTEMD_UNIT:-threadbase.service}"
-HEALTH_URL="${THREADBASE_HEALTH_URL:-http://localhost:8766/healthz}"
+PORT="${THREADBASE_PORT:-8766}"
+HEALTH_URL="${THREADBASE_HEALTH_URL:-http://localhost:$PORT/healthz}"
 KEEP_RELEASES=5
 
 log()  { printf '\033[1;34m▶\033[0m %s\n' "$*"; }
@@ -221,7 +222,7 @@ Description=Threadbase Streamer
 After=network.target
 
 [Service]
-ExecStart=$node_bin $ACTIVE_LINK serve
+ExecStart=$node_bin $ACTIVE_LINK serve --port $PORT --verbose
 Restart=on-failure
 StandardOutput=append:$logs_dir/stdout.log
 StandardError=append:$logs_dir/stderr.log
