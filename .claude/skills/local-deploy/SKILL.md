@@ -183,19 +183,38 @@ If the user wants the service to keep running after they log out, mention `login
 
 #### Windows — Task Scheduler "at logon"
 
-**Important:** Task Scheduler doesn't support native stdout/stderr redirection. The action must use `pwsh.exe` as the executor so PowerShell can redirect output to the log files that the deploy script's healthcheck reads (`%TEMP%\threadbase.log` / `%TEMP%\threadbase.err`).
+**Important:** Task Scheduler doesn't support native stdout/stderr redirection, and `pwsh.exe -WindowStyle Hidden` still briefly flashes a console window when the task fires on logon. To avoid the flash, the action launches `wscript.exe` with a `.vbs` shim that invokes a `.cmd` batch file hidden — `wscript` has no console, so its child processes inherit a hidden window. The `.cmd` carries the env vars and the `>>` redirection that captures stdout/stderr to the log files (`%TEMP%\threadbase.log` / `%TEMP%\threadbase.err`).
 
 ```powershell
-$nodePath = (Get-Command node).Source
-$cliPath  = "$env:USERPROFILE\.threadbase\cli.js"
-$logOut   = "$env:TEMP\threadbase.log"
-$logErr   = "$env:TEMP\threadbase.err"
-$psArg    = "-NonInteractive -WindowStyle Hidden -Command `"& '$nodePath' '$cliPath' serve --port {PORT} --verbose >> '$logOut' 2>> '$logErr'`""
+$nodePath   = (Get-Command node).Source
+$installDir = "$env:USERPROFILE\.threadbase"
+$cliPath    = "$installDir\cli.js"
+$logOut     = "$env:TEMP\threadbase.log"
+$logErr     = "$env:TEMP\threadbase.err"
+$cmdPath    = "$installDir\launch.cmd"
+$vbsPath    = "$installDir\launch.vbs"
+
+# Read DB env vars back from the registry (User scope) and inline them into launch.cmd
+$dbUrl  = [Environment]::GetEnvironmentVariable('THREADBASE_DATABASE_URL', 'User')
+$instId = [Environment]::GetEnvironmentVariable('THREADBASE_INSTANCE_ID', 'User')
+
+# Build launch.cmd. Quoted `set "K=V"` form preserves trailing spaces and special chars
+# in the connection string. The final node line uses cmd's >> redirection.
+$cmdLines = @('@echo off', "cd /d `"$installDir`"")
+if ($dbUrl)  { $cmdLines += "set `"THREADBASE_DATABASE_URL=$dbUrl`"" }
+if ($instId) { $cmdLines += "set `"THREADBASE_INSTANCE_ID=$instId`"" }
+$cmdLines += "`"$nodePath`" `"$cliPath`" serve --port {PORT} --verbose >> `"$logOut`" 2>> `"$logErr`""
+Set-Content -Path $cmdPath -Value $cmdLines -Encoding Ascii
+
+# launch.vbs: hidden launcher (window style 0, no wait) for launch.cmd.
+# Triple double-quotes embed literal `"` into the VBS string so paths with spaces work.
+$vbsContent = 'CreateObject("WScript.Shell").Run """' + $cmdPath + '""", 0, False'
+Set-Content -Path $vbsPath -Value $vbsContent -Encoding Ascii
 
 $action = New-ScheduledTaskAction `
-  -Execute "pwsh.exe" `
-  -Argument $psArg `
-  -WorkingDirectory "$env:USERPROFILE\.threadbase"
+  -Execute "wscript.exe" `
+  -Argument "`"$vbsPath`"" `
+  -WorkingDirectory $installDir
 $trigger = New-ScheduledTaskTrigger -AtLogon -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet `
   -RestartCount 3 `
@@ -211,18 +230,12 @@ Register-ScheduledTask -TaskName 'Threadbase' `
 Start-ScheduledTask -TaskName 'Threadbase'
 ```
 
-**Windows DB mode — inline env vars into the task action; do not rely on inheritance.** Persist the connection string at User scope in the registry, then read it back and embed it directly in `$psArg`. On Windows, tasks started via `Start-ScheduledTask` within the same terminal session that called `SetEnvironmentVariable` will NOT pick up the new var — the user session's environment block is frozen at logon and the registry write doesn't update live processes.
+**Windows DB mode — inline env vars into `launch.cmd`; do not rely on inheritance.** Persist the connection string at User scope in the registry, then read it back when generating `launch.cmd`. On Windows, tasks started via `Start-ScheduledTask` within the same terminal session that called `SetEnvironmentVariable` will NOT pick up the new var — the user session's environment block is frozen at logon and the registry write doesn't update live processes. The snippet above already handles this; just ensure the registry values exist before re-registering the task:
 
 ```powershell
 # Persist to registry (survives reboots, future sessions)
 [Environment]::SetEnvironmentVariable('THREADBASE_DATABASE_URL', 'postgresql://…', 'User')
 [Environment]::SetEnvironmentVariable('THREADBASE_INSTANCE_ID', $env:COMPUTERNAME, 'User')
-
-# Read back from registry and inline into the task action
-$dbUrl  = [Environment]::GetEnvironmentVariable('THREADBASE_DATABASE_URL', 'User')
-$instId = [Environment]::GetEnvironmentVariable('THREADBASE_INSTANCE_ID', 'User')
-
-$psArg = "-NonInteractive -WindowStyle Hidden -Command `"`$env:THREADBASE_DATABASE_URL='$dbUrl'; `$env:THREADBASE_INSTANCE_ID='$instId'; & '$nodePath' '$cliPath' serve --port {PORT} --verbose >> '$logOut' 2>> '$logErr'`""
 ```
 
 **Windows DB connectivity diagnosis:** if `%TEMP%\threadbase.err` shows `EACCES` on port 5432 (not `ECONNREFUSED`), the env var is missing from the task action — the server starts but crashes when it can't find the DB URI. Test reachability first with `Test-NetConnection -ComputerName <host> -Port 5432`; if that succeeds, the issue is the missing env var, not a Windows Firewall rule.

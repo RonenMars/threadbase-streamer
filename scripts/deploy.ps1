@@ -212,7 +212,19 @@ function Invoke-Setup {
     if ($response -in @('n', 'N')) { $enableAutostart = $false }
   }
 
-  $action   = New-ScheduledTaskAction -Execute $nodeBin -Argument "`"$activeFile`" serve" -WorkingDirectory $installDir
+  # Generate launch.cmd + launch.vbs so the task fires without flashing a console window.
+  # wscript has no console, so its child (cmd.exe via the vbs shim) inherits a hidden window.
+  $cmdPath = Join-Path $installDir 'launch.cmd'
+  $vbsPath = Join-Path $installDir 'launch.vbs'
+
+  $cmdLines = @('@echo off', "cd /d `"$installDir`"")
+  $cmdLines += "`"$nodeBin`" `"$activeFile`" serve"
+  Set-Content -Path $cmdPath -Value $cmdLines -Encoding Ascii
+
+  $vbsContent = 'CreateObject("WScript.Shell").Run """' + $cmdPath + '""", 0, False'
+  Set-Content -Path $vbsPath -Value $vbsContent -Encoding Ascii
+
+  $action   = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbsPath`"" -WorkingDirectory $installDir
   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)
 
   if ($enableAutostart) {
