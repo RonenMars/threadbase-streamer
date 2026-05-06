@@ -208,22 +208,17 @@ cmd_predeploy_check() {
   fi
 }
 
-cmd_setup() {
-  local plist_path="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+# Shared plist writer. Always emits an EnvironmentVariables block with PATH +
+# HOME — without it, launchd inherits PATH=/usr/bin:/bin:/usr/sbin:/sbin and
+# node-pty's execvp("claude", …) fails with ENOENT. See troubleshooting.md
+# entry "Mobile app shows session as Idle 0s 0 prompts immediately after
+# start/resume" for the symptom.
+write_plist() {
+  local plist_path="$1" node_bin="$2" run_at_load="$3"
   local logs_dir="$INSTALL_DIR/logs"
-  local node_bin
-  node_bin="$(command -v node)" || { err "node not found in PATH"; exit 1; }
+  local node_bin_dir
+  node_bin_dir="$(dirname "$node_bin")"
 
-  mkdir -p "$logs_dir" "$(dirname "$plist_path")"
-
-  local run_at_load="true"
-  if [[ -t 0 ]]; then
-    printf '\n  Launch server automatically at login? [Y/n] '
-    local yn; read -r yn
-    [[ "${yn,,}" == "n" ]] && run_at_load="false"
-  fi
-
-  log "writing launchd plist → $plist_path"
   cat > "$plist_path" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -240,6 +235,13 @@ cmd_setup() {
     <string>$PORT</string>
     <string>--verbose</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>$HOME</string>
+  </dict>
   <key>RunAtLoad</key>
   <$run_at_load/>
   <key>KeepAlive</key>
@@ -251,6 +253,25 @@ cmd_setup() {
 </dict>
 </plist>
 PLIST
+}
+
+cmd_setup() {
+  local plist_path="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+  local logs_dir="$INSTALL_DIR/logs"
+  local node_bin
+  node_bin="$(command -v node)" || { err "node not found in PATH"; exit 1; }
+
+  mkdir -p "$logs_dir" "$(dirname "$plist_path")"
+
+  local run_at_load="true"
+  if [[ -t 0 ]]; then
+    printf '\n  Launch server automatically at login? [Y/n] '
+    local yn; read -r yn
+    [[ "${yn,,}" == "n" ]] && run_at_load="false"
+  fi
+
+  log "writing launchd plist → $plist_path"
+  write_plist "$plist_path" "$node_bin" "$run_at_load"
 
   launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$plist_path"
@@ -260,6 +281,37 @@ PLIST
   else
     ok "auto-startup at login: disabled — run 'launchctl start $LAUNCHD_LABEL' to start manually"
   fi
+}
+
+# Self-heal: existing plists from before the EnvironmentVariables fix are
+# missing PATH, so claude isn't on the launchd-inherited PATH and every
+# session-start dies with ENOENT in milliseconds. Rewrite + re-bootstrap in
+# place when we detect the stale shape.
+ensure_plist_healthy() {
+  local plist_path="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+  [[ -f "$plist_path" ]] || return 0
+  if grep -q "EnvironmentVariables" "$plist_path"; then
+    return 0
+  fi
+
+  warn "plist is missing EnvironmentVariables block — claude won't be on launchd's PATH"
+  warn "rewriting $plist_path and re-bootstrapping"
+
+  local node_bin
+  node_bin="$(command -v node)" || { err "node not found in PATH"; exit 1; }
+
+  # Preserve the existing RunAtLoad value if we can detect it.
+  local run_at_load="true"
+  if grep -q "<key>RunAtLoad</key>" "$plist_path" \
+     && awk '/<key>RunAtLoad<\/key>/{getline; print}' "$plist_path" | grep -q "<false/>"; then
+    run_at_load="false"
+  fi
+
+  cp "$plist_path" "$plist_path.bak.$(date +%s)" 2>/dev/null || true
+  write_plist "$plist_path" "$node_bin" "$run_at_load"
+  launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$plist_path"
+  ok "plist healed (backup at $plist_path.bak.*)"
 }
 
 # Best-effort: warn if launchd's cached plist path differs from the canonical
@@ -473,6 +525,8 @@ cmd_deploy() {
   if ! launchctl list "$LAUNCHD_LABEL" >/dev/null 2>&1; then
     log "service not registered — running first-time setup"
     cmd_setup
+  else
+    ensure_plist_healthy
   fi
 
   log "kickstarting $LAUNCHD_LABEL"

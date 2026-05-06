@@ -196,6 +196,7 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     startedAt: s.startedAt.toISOString(),
     completedAt: s.completedAt?.toISOString() ?? null,
     ptyAttached,
+    ...(s.projectId != null && { projectId: s.projectId }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
     ...(s.model != null && { model: s.model }),
     ...(s.account != null && { account: s.account }),
@@ -208,6 +209,9 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt.toISOString() }),
     ...(s.filePath != null && { filePath: s.filePath }),
     ...(s.failureReason != null && { failureReason: s.failureReason }),
+    ...(s.resumedFromConversationId != null && {
+      resumedFromConversationId: s.resumedFromConversationId,
+    }),
   };
 }
 

@@ -27,13 +27,18 @@ import {
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
 import { ConversationCache } from "./conversation-cache";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
+import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
+import { ConversationsRepository } from "./db/repositories/conversations.repository";
+import { ProjectsRepository } from "./db/repositories/projects.repository";
+import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
-import { FileWatcher } from "./file-watcher";
+import { handleListProjectChats } from "./handlers/handleListProjectChats";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
 import { seal } from "./seal";
+import { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import { SessionStore } from "./session-store";
 import type {
   DiscoveredProcess,
@@ -57,7 +62,7 @@ export class StreamerServer {
   private ptyManager: PTYManager;
   private sessionStore: SessionStore;
   private wsHub: WSHub;
-  private fileWatcher: FileWatcher;
+  private fileWatcher: ConversationWatcher;
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
   private scanner: ConversationScanner | null = null;
   private scannerReady: Promise<unknown> | null = null;
@@ -80,6 +85,10 @@ export class StreamerServer {
   // Map of sessionId → set of subscribed WS clients
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
   private cache: ConversationCache | null = null;
+  private projectsRepo: ProjectsRepository | null = null;
+  private conversationsRepo: ConversationsRepository | null = null;
+  private sessionsRepo: SessionsRepository | null = null;
+  private cacheMetadataRepo: CacheMetadataRepository | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
     fetchedAt: number;
@@ -140,7 +149,7 @@ export class StreamerServer {
     this.sessionStore = new SessionStore();
     this.wsHub = new WSHub();
 
-    this.fileWatcher = new FileWatcher({
+    this.fileWatcher = new ConversationWatcher({
       onNewLine: (filePath, line) => {
         this.cache?.updateFromLine(filePath, line);
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
@@ -300,6 +309,11 @@ export class StreamerServer {
         });
         try {
           this.cache = ConversationCache.open(join(this.cacheDir, "cache.db"), this.tailSize);
+          const db = this.cache.getDatabase();
+          this.projectsRepo = new ProjectsRepository(db);
+          this.conversationsRepo = new ConversationsRepository(this.cache);
+          this.sessionsRepo = new SessionsRepository(this.sessionStore);
+          this.cacheMetadataRepo = new CacheMetadataRepository(db);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.log.warn(`ConversationCache failed to open (running without cache): ${message}`, {
@@ -397,6 +411,8 @@ export class StreamerServer {
       if (method === "GET" && path === "/api/sessions")
         return await this.handleListSessions(url, res);
       if (method === "GET" && path === "/api/sessions/count") return this.handleSessionsCount(res);
+      if (method === "GET" && path === "/project-chats")
+        return this.handleListProjectChats(url, res);
       if (method === "POST" && path === "/api/sessions/resume")
         return await this.handleResume(req, res);
       if (method === "GET" && path === "/api/browse") return await this.handleBrowse(url, res);
@@ -666,6 +682,28 @@ export class StreamerServer {
 
   private handleSessionsCount(res: ServerResponse): void {
     json(res, 200, { total: this.sessionStore.list(this.ptyAttachedIds()).length });
+  }
+
+  private handleListProjectChats(url: URL, res: ServerResponse): void {
+    if (
+      !this.cache ||
+      !this.projectsRepo ||
+      !this.conversationsRepo ||
+      !this.sessionsRepo ||
+      !this.cacheMetadataRepo
+    ) {
+      json(res, 503, { error: "Cache not available" });
+      return;
+    }
+
+    handleListProjectChats(url, res, {
+      cache: this.cache,
+      projectsRepo: this.projectsRepo,
+      conversationsRepo: this.conversationsRepo,
+      sessionsRepo: this.sessionsRepo,
+      cacheMetadataRepo: this.cacheMetadataRepo,
+      getSessionResponses: () => this.sessionStore.list(this.ptyAttachedIds()),
+    });
   }
 
   private async getScanner(): Promise<ConversationScanner> {
@@ -993,6 +1031,28 @@ export class StreamerServer {
       }
     }
 
+    // Resolve projectId from the conversation if available; fall back to
+    // an upsert from the session's projectPath when the conversation has
+    // no project_id yet (self-heals during resume).
+    if (this.cache && this.projectsRepo && this.conversationsRepo) {
+      let resolvedProjectId: string | null = null;
+      const cachedConv = this.cache.getMetaById(sessionId);
+      if (cachedConv?.projectId) {
+        resolvedProjectId = cachedConv.projectId;
+      } else {
+        const project = this.projectsRepo.upsertProjectByPath(projectPath);
+        resolvedProjectId = project.id;
+        this.conversationsRepo.updateConversationProjectId({
+          conversationId: sessionId,
+          projectId: project.id,
+        });
+      }
+      if (resolvedProjectId) {
+        session.projectId = resolvedProjectId;
+        session.resumedFromConversationId = sessionId;
+      }
+    }
+
     this.sessionStore.addManaged(session);
 
     // Watch the conversation's JSONL file for structured events
@@ -1219,6 +1279,44 @@ export class StreamerServer {
     }
   }
 
+  // ─── Project linking ─────────────────────────────────────────────
+
+  private linkSessionToProject(sessionId: string, projectPath: string, filePath: string): void {
+    if (!this.projectsRepo || !this.conversationsRepo || !this.sessionsRepo || !this.cache) {
+      return;
+    }
+    try {
+      const project = this.projectsRepo.upsertProjectByPath(projectPath, {
+        lastConversationId: sessionId,
+        lastConversationCreatedAt: new Date().toISOString(),
+      });
+      // The conversation row may not exist yet (Claude is still writing the
+      // JSONL). Best-effort: only link if the row is present.
+      if (this.cache.hasConversation(sessionId)) {
+        this.conversationsRepo.updateConversationProjectId({
+          conversationId: sessionId,
+          projectId: project.id,
+        });
+      }
+      this.sessionsRepo.updateSessionProjectId({
+        sessionId,
+        projectId: project.id,
+      });
+      if (this.cacheMetadataRepo) {
+        this.cacheMetadataRepo.setCacheMetadata("last_conversation_id", sessionId);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log.warn(`[projects] failed to link session to project: ${message}`, {
+        event: "session.project_link_failed",
+        sessionId,
+        projectPath,
+        filePath,
+        error: message,
+      });
+    }
+  }
+
   // ─── File Watcher Wiring ─────────────────────────────────────────
 
   private async watchConversationFile(sessionId: string): Promise<void> {
@@ -1268,6 +1366,7 @@ export class StreamerServer {
       this.fileWatcher.watch(filePath);
       this.scanner = null;
       this.scannerReady = null;
+      this.linkSessionToProject(sessionId, projectPath, filePath);
       this.log.info(
         `[startFresh] wired JSONL for ${sessionId}`,
         { event: "session.jsonl_wired", sessionId, filePath },

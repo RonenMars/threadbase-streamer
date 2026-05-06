@@ -128,8 +128,8 @@ browse_root: /path/to/your/projects
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/threadbase.log</string>
-  <key>StandardErrorPath</key><string>/tmp/threadbase.err</string>
+  <key>StandardOutPath</key><string>{HOME}/.threadbase/logs/stdout.log</string>
+  <key>StandardErrorPath</key><string>{HOME}/.threadbase/logs/stderr.log</string>
 </dict>
 </plist>
 ```
@@ -139,6 +139,8 @@ browse_root: /path/to/your/projects
 <key>THREADBASE_DATABASE_URL</key><string>postgresql://…</string>
 <key>THREADBASE_INSTANCE_ID</key><string>{HOSTNAME}</string>
 ```
+
+> **The `EnvironmentVariables` block with `PATH` is mandatory, not cosmetic.** launchd inherits only `/usr/bin:/bin:/usr/sbin:/sbin` by default. Without `/opt/homebrew/bin` and `/usr/local/bin` in `PATH`, `node-pty` cannot find `claude`, every session-start/resume returns 201 but exits in ~20 ms, and the mobile app shows a permanent blank `Idle 0s 0 prompts` terminal. See `docs/troubleshooting.md` ("Mobile app shows session as Idle 0s 0 prompts immediately after start/resume"). The deploy script's plist generator and on-update self-heal both write this block; only hand-edited or pre-2026-05-06 plists are at risk.
 
 Bootstrap: `launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.ronen.threadbase.plist`.
 
@@ -271,6 +273,10 @@ npm run deploy:windows:force
 ```
 
 Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/`** → activate → restart the service → healthcheck on `http://localhost:8766/healthz`.
+
+`dist/migrations/` now contains the **SQLite** migrations consumed by `ConversationCache.open()` — projects table, project_id columns, cache_metadata. They are required on every deploy; the streamer will fail to start without them.
+
+The build also produces `dist/pg-migrations/` for the optional Postgres path (`THREADBASE_DATABASE_URL`). The current deploy scripts do **not** copy `dist/pg-migrations/` — Postgres mode is dormant and not part of the SQLite-first runtime path. If you ever re-enable Postgres persistence in production, the deploy scripts must be extended to copy `dist/pg-migrations/` to the same `__dirname`-resolved location as the SQLite migrations.
 
 The migrations destination differs by platform because Node resolves `__dirname` from the *real* file location (not symlink source):
 - **macOS/Linux**: `cli.js` is a symlink → `__dirname` = `releases/` → copy to `~/.threadbase/releases/migrations/`

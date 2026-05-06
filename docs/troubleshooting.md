@@ -44,6 +44,8 @@ rm ~/.threadbase/cache/cache.db*
 
 **Fix:** Confirm the deploy script copies to the correct platform-specific path. On Windows this is `$installDir\migrations\`, not `$releasesDir\migrations\`.
 
+**Note:** As of the projects refactor, `dist/migrations/` contains the **SQLite** migrations consumed by `ConversationCache.open()` (projects table, project_id columns, cache_metadata). The Postgres migrations now live at `src/db/pg-migrations/` → `dist/pg-migrations/` and are not currently shipped by the deploy scripts; see CLAUDE.md "Build notes".
+
 ---
 
 ### `Cannot find module 'pg'` at runtime
@@ -309,6 +311,41 @@ Restart the streamer to pick it up.
 4. Then `launchctl kickstart` will succeed.
 
 **Stale-plist check:** even if the plist file exists, verify the `ProgramArguments` entry references `~/.threadbase/cli.js` and not a hardcoded workspace path. If it doesn't, treat as a fresh install.
+
+---
+
+### Mobile app shows session as `Idle 0s 0 prompts` immediately after start/resume — terminal stays blank
+
+**When:** `POST /api/sessions/start` or `POST /api/sessions/resume` returns `201`/`202`, but the new session reports `status: idle`, `elapsedMs: 17–50`, `ptyAttached: false`, `lastOutput: ""`. The mobile app shows a blank terminal under "Idle 0s 0 prompts". Direct `claude --resume <uuid>` from a regular shell (with the same `cwd`) works fine. Affects every session, not specific UUIDs.
+**Cause:** The launchd plist has no `EnvironmentVariables` block, so the streamer process inherits launchd's default `PATH=/usr/bin:/bin:/usr/sbin:/sbin`. `resolveClaudeExe()` returns the bare string `"claude"`, expecting `PATH` to find it — but `claude` lives in `/opt/homebrew/bin/claude` (Apple Silicon) or `/usr/local/bin/claude` (Intel), neither of which is on the inherited `PATH`. `node-pty` calls `execvp("claude", …)`, which fails with `ENOENT`; the child exits in milliseconds with no output. The streamer's `handleExit` sets `status=idle` (since the early-exit diagnostic only runs for non-zero exits with empty buffers, and `failureReason` is never propagated to the response anyway).
+**Diagnosis:** `launchctl print "gui/$(id -u)/com.ronen.threadbase" | grep -A5 'environment ='` — if there is no `PATH => …` entry pointing at `/opt/homebrew/bin` or `/usr/local/bin`, the plist is the problem. To confirm, simulate the broken environment:
+```sh
+env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=$HOME /usr/local/bin/node -e "
+const pty = require('/Users/$USER/.threadbase/node_modules/node-pty');
+const p = pty.spawn('claude', ['--dangerously-skip-permissions','--version'], { name:'xterm', cols:120, rows:40, cwd:'/tmp', env:process.env });
+let out=''; p.onData(d=>out+=d); p.onExit(({exitCode})=>console.log('exit', exitCode, 'len', out.length));
+setTimeout(()=>p.kill(), 1500);
+"
+```
+This reproduces the instant exit (`exit 1 len 0`) when `PATH` is missing the Homebrew/local prefixes.
+**Fix:** Add the `EnvironmentVariables` block to `~/Library/LaunchAgents/com.ronen.threadbase.plist`:
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+  <key>PATH</key>
+  <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  <key>HOME</key>
+  <string>/Users/<your-user></string>
+</dict>
+```
+Then bootout + re-bootstrap (a kickstart alone does **not** pick up env changes — launchd reads the plist at bootstrap time):
+```sh
+launchctl bootout "gui/$(id -u)/com.ronen.threadbase"
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.ronen.threadbase.plist
+```
+Re-run `npm run deploy` afterwards if you want the deploy-script self-heal (see below) to lock the plist in.
+
+**Defense in depth:** `src/platform.ts` (`resolveClaudeExe`) now also probes `/opt/homebrew/bin/claude` and `/usr/local/bin/claude` on macOS via `which`, so even a degraded `PATH` resolves to an absolute path. This keeps a misconfigured plist from completely breaking the streamer.
 
 ---
 

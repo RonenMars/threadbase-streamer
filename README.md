@@ -81,7 +81,13 @@ When a WebSocket client subscribes to a session (`subscribe_session`), the serve
 
 **Conversation cache**
 
-`ConversationCache` (`src/conversation-cache.ts`) maintains a SQLite database of conversation metadata and message tails. It is updated incrementally: `FileWatcher` tails JSONL conversation files via `fs.watch` and emits new lines, which `ConversationCache` parses and upserts. The cache backs the `GET /api/conversations` and `GET /api/sessions` endpoints, avoiding a full filesystem scan on every request. Metadata TTL is 5 seconds; the discovery process cache is 15 seconds.
+`ConversationCache` (`src/conversation-cache.ts`) maintains a SQLite database of conversation metadata, message tails, projects, and cache metadata. On open, it runs the SQLite migrations under `src/db/migrations/` (tracked in a `schema_migrations` table). It is updated incrementally: `ConversationWatcher` (`src/services/conversations/conversationWatcher.ts`, chokidar-backed) tails JSONL conversation files and emits new lines, which `ConversationCache` parses and upserts. The cache backs the `GET /api/conversations`, `GET /api/sessions`, and `GET /project-chats` endpoints, avoiding a full filesystem scan on every request. Metadata TTL is 5 seconds; the discovery process cache is 15 seconds.
+
+**Projects + cache freshness**
+
+A `projects` row is the canonical identity for a project (UUID + canonical path). Every cached conversation carries a `project_id` foreign key. Project discovery is conversation-driven: as the cache learns about conversations, it upserts one project per unique canonical project path (`src/utils/canonicalizeProjectPath.ts`).
+
+`/project-chats` is the unified active-sessions + historical-conversations list. By default the server short-circuits the rescan when `cache_metadata.last_conversation_id` matches the latest conversation id known to the cache; pass `?refreshConversations=1` (or legacy `?refresh=1`) to force a refresh. The merge step hides any conversation that has been resumed into an active session (matched on `resumedFromConversationId`).
 
 **Idle management & reconciliation**
 
@@ -97,30 +103,71 @@ On startup (or via `tb pair`), the server prints a QR code encoding a `threadbas
 
 ```
 src/
-  server.ts               HTTP + WebSocket server, request routing, auth
-  session-store.ts        In-memory registry of managed + discovered sessions
-  pty-manager.ts          Spawn/resume Claude sessions via node-pty, ring buffer
-  process-discovery.ts    Find running claude processes (pgrep/lsof on Unix, tasklist/wmic on Windows)
-  conversation-cache.ts   SQLite cache of conversation metadata + message tails, file-watch driven
-  file-watcher.ts         Tail JSONL files via fs.watch, emit new lines
-  ws-hub.ts               WebSocket broadcast hub, 30 s ping keepalive
-  idle-sweeper.ts         Periodic sweep putting idle waiting_input sessions on_hold
-  reconcile.ts            Mark in-flight sessions on_hold on server restart
-  auth.ts                 Bearer token generation/validation (constant-time compare)
-  browse.ts               File system browser (list/mkdir)
-  uploads.ts              File upload handling for session file attachments
-  pair-store.ts           Short-lived pairing token registry
-  seal.ts                 X25519 sealed-box encryption for mobile pairing
-  platform.ts             Platform detection and path resolution
-  lan-url.ts              LAN IP resolution for QR code URLs
+  server.ts                                HTTP + WebSocket server, request routing, auth, repo wiring
+  session-store.ts                         In-memory registry of managed + discovered sessions
+  pty-manager.ts                           Spawn/resume Claude sessions via node-pty, ring buffer
+  process-discovery.ts                     Find running claude processes (pgrep/lsof on Unix, tasklist/wmic on Windows)
+  conversation-cache.ts                    SQLite cache (conversation_meta + tail + projects + cache_metadata + session_names); runs SQLite migrations on open
+  ws-hub.ts                                WebSocket broadcast hub, 30 s ping keepalive
+  idle-sweeper.ts                          Periodic sweep putting idle waiting_input sessions on_hold
+  reconcile.ts                             Mark in-flight sessions on_hold on server restart
+  auth.ts                                  Bearer token generation/validation (constant-time compare)
+  browse.ts                                File system browser (list/mkdir)
+  uploads.ts                               File upload handling for session file attachments
+  pair-store.ts                            Short-lived pairing token registry
+  seal.ts                                  X25519 sealed-box encryption for mobile pairing
+  platform.ts                              Platform detection and path resolution
+  lan-url.ts                               LAN IP resolution for QR code URLs
+  utils/
+    canonicalizeProjectPath.ts             Trim + trailing-slash strip; canonical key for project identity
+    dates.ts                               date-fns wrapper: parseIsoDateOrNull, compareIsoDesc
+  schemas/
+    projectChat.schema.ts                  Discriminated-union ProjectChat zod schema
+    queryParams.schema.ts                  /project-chats query params (refresh, refreshConversations)
+    messageCursor.schema.ts                Compound cursor for delta message sync
+    project.schema.ts                      Project row shape
+    conversation.schema.ts                 Scanner output shape
+  handlers/
+    handleListProjectChats.ts              GET /project-chats — zod-validates query, delegates to listProjectChats
+  services/
+    projectChats/
+      listProjectChats.ts                  Compose /project-chats response (refresh check + merge + sort)
+      mergeProjectChats.ts                 Hide resumed-into-active conversations, then sort
+      sortProjectChats.ts                  latestMessageAt → updatedAt → createdAt → title
+      normalizeSessionToProjectChat.ts     SessionResponse → ProjectChat
+      normalizeConversationToProjectChat.ts ConversationListItem → ProjectChat
+    projects/
+      ensureProjectsForConversations.ts    One project per unique canonical project path
+      upsertProjectByPath.ts               Repository adapter
+    conversations/
+      conversationWatcher.ts               Chokidar tail + directory watcher (replaces former file-watcher.ts)
+      refreshConversationCache.ts          Upsert projects, backfill conversation.project_id, update cache_metadata
+      shouldRefreshProjectsFromHdd.ts      Latest-conversation-id freshness check
+      getLatestConversation.ts             Repository adapter
+    sessions/
+      createSessionForProjectPath.ts       Link session+conversation to a project after JSONL exists
+      ensureSessionProjectIdsFromExistingProjects.ts  Backfill projectId on managed sessions
+    cache/
+      cacheMetadata.ts                     Helpers over the cache_metadata key/value table
   db/
-    config.ts             Env var parsing (isDbEnabled, getDbConfig)
-    pool.ts               pg.Pool creation with password masking
-    migrations.ts         SQL migration runner
-    migrations/           Versioned .sql files
-    session-persistence.ts     SessionPersistence interface
-    memory-persistence.ts      No-op implementation (default)
-    pg-session-persistence.ts  Postgres implementation
+    config.ts                              Env var parsing (isDbEnabled, getDbConfig)
+    pool.ts                                pg.Pool creation with password masking
+    sqlite-migrate.ts                      SQLite migration runner (used by ConversationCache.open)
+    migrations/                            SQLite versioned .sql files (projects, project_id columns, cache_metadata)
+    migrations.ts                          Postgres migration runner
+    pg-migrations/                         Postgres versioned .sql files (formerly migrations/)
+    repositories/
+      projects.repository.ts               UUID + canonical-path upsert
+      conversations.repository.ts          Cache wrapper for project_id linking
+      sessions.repository.ts               SessionStore wrapper
+      cacheMetadata.repository.ts          Get/set/delete on cache_metadata
+    session-persistence.ts                 SessionPersistence interface (Postgres optional path)
+    memory-persistence.ts                  No-op implementation (default)
+    pg-session-persistence.ts              Postgres implementation
+scripts/
+  migrate.ts                               Apply SQLite migrations to ~/.threadbase/cache/cache.db
+  migrate-projects.ts                      Backfill projects + conversation.project_id (idempotent)
+  validate-db.ts                           Report conversations missing project_id, duplicate paths, orphans
 ```
 
 ## REST API
@@ -141,6 +188,7 @@ src/
 | GET | `/api/conversations` | Paginated conversation history |
 | GET | `/api/conversations/count` | Count conversations matching optional filters |
 | GET | `/api/conversations/:id` | Full conversation with messages |
+| GET | `/project-chats` | Unified active-sessions + historical-conversations list (discriminated union); accepts `?refreshConversations=1` |
 | GET | `/api/search?q=...` | Full-text search across conversations |
 | GET | `/api/browse` | Browse the file system |
 | POST | `/api/browse/mkdir` | Create a directory |
@@ -210,11 +258,14 @@ tb pair -p 8766  # different port
 ## Development
 
 ```bash
-npm test              # Run all tests
-npm run lint          # Type-check + Biome lint
-npm run format        # Auto-format
-npm run build         # Build ESM/CJS + copy migrations
-npm run dev           # Watch mode
+npm test                  # Run all tests
+npm run lint              # Type-check + Biome lint
+npm run format            # Auto-format
+npm run build             # Build ESM/CJS + copy SQLite + Postgres migrations
+npm run dev               # Watch mode
+npm run migrate           # Apply SQLite migrations to ~/.threadbase/cache/cache.db (override --db <path>)
+npm run migrate:projects  # Backfill projects + conversation.project_id from existing cache (idempotent)
+npm run db:validate       # Report conversations missing project_id, duplicate project paths, orphans
 ```
 
 ### Running with a Local Postgres
@@ -239,5 +290,9 @@ npm test
 - `@threadbase/scanner` — conversation history scanning and search
 - `node-pty` — native PTY management
 - `ws` — WebSocket server
-- `pg` — PostgreSQL client (lazy-loaded, only when DB is configured)
+- `better-sqlite3` — SQLite driver for `ConversationCache` (conversation metadata, message tails, projects, cache_metadata, schema_migrations)
+- `chokidar` — JSONL tail + directory watcher; replaces the previous `fs.watch`-based file-watcher
+- `zod` — runtime validation at HTTP and scanner boundaries
+- `date-fns` — ISO timestamp parsing and comparison helpers
+- `pg` — PostgreSQL client (lazy-loaded, only when `THREADBASE_DATABASE_URL` is configured)
 - `commander` — CLI argument parsing

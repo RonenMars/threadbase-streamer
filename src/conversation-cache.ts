@@ -1,10 +1,12 @@
 import Database from "better-sqlite3";
 import { closeSync, mkdirSync, openSync, readSync, statSync } from "fs";
-import { dirname } from "path";
+import { dirname, join } from "path";
+import { runSqliteMigrations } from "./db/sqlite-migrate";
 
 export interface ConversationListItem {
   id: string;
   filePath: string;
+  projectId: string | null;
   projectPath: string | null;
   projectName: string | null;
   title: string | null;
@@ -51,6 +53,7 @@ export interface ScannerMeta {
 interface MetaRow {
   id: string;
   file_path: string;
+  project_id: string | null;
   project_path: string | null;
   project_name: string | null;
   title: string | null;
@@ -148,12 +151,19 @@ export class ConversationCache {
     upsertSessionName: Database.Statement;
     getSessionName: Database.Statement;
     listSessionNames: Database.Statement;
+    setConversationProjectId: Database.Statement;
+    getLatestConversation: Database.Statement;
+    listConversationsForProjectBackfill: Database.Statement;
   };
 
-  private constructor(db: Database.Database, tailSize: number) {
+  private migrationsDir?: string;
+
+  private constructor(db: Database.Database, tailSize: number, migrationsDir?: string) {
+    this.migrationsDir = migrationsDir;
     this.db = db;
     this.tailSize = tailSize;
     db.exec(SCHEMA);
+    runSqliteMigrations(db, this.migrationsDir);
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
       getFullById: db.prepare("SELECT * FROM conversation_meta WHERE id = ?"),
@@ -221,15 +231,32 @@ export class ConversationCache {
       `),
       getSessionName: db.prepare("SELECT name FROM session_names WHERE session_id = ?"),
       listSessionNames: db.prepare("SELECT session_id, name FROM session_names"),
+      setConversationProjectId: db.prepare(
+        "UPDATE conversation_meta SET project_id = ? WHERE id = ?",
+      ),
+      getLatestConversation: db.prepare(
+        "SELECT id, last_activity FROM conversation_meta WHERE last_activity IS NOT NULL ORDER BY last_activity DESC, id DESC LIMIT 1",
+      ),
+      listConversationsForProjectBackfill: db.prepare(
+        "SELECT id, project_path, project_id, last_activity FROM conversation_meta WHERE project_path IS NOT NULL",
+      ),
     };
   }
 
-  static open(dbPath: string, tailSize = 10): ConversationCache {
+  /**
+   * Expose the underlying handle so projects/cache_metadata repositories can
+   * share the same connection. Internal API; not part of the public surface.
+   */
+  getDatabase(): Database.Database {
+    return this.db;
+  }
+
+  static open(dbPath: string, tailSize = 10, migrationsDir?: string): ConversationCache {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
-    return new ConversationCache(db, tailSize);
+    return new ConversationCache(db, tailSize, migrationsDir);
   }
 
   close(): void {
@@ -411,6 +438,7 @@ export class ConversationCache {
       conversations: rows.map((r) => ({
         id: r.id,
         filePath: r.file_path,
+        projectId: r.project_id,
         projectPath: r.project_path,
         projectName: r.project_name,
         title: r.title,
@@ -434,6 +462,7 @@ export class ConversationCache {
     return {
       id: row.id,
       filePath: row.file_path,
+      projectId: row.project_id,
       projectPath: row.project_path,
       projectName: row.project_name,
       title: row.title,
@@ -448,6 +477,41 @@ export class ConversationCache {
       lastMessage: row.last_message,
       preview: row.preview,
     };
+  }
+
+  setConversationProjectId(conversationId: string, projectId: string): void {
+    this.stmts.setConversationProjectId.run(projectId, conversationId);
+  }
+
+  getLatestConversation(): { id: string; lastActivity: string | null } | null {
+    const row = this.stmts.getLatestConversation.get() as
+      | { id: string; last_activity: number | null }
+      | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      lastActivity: row.last_activity ? new Date(row.last_activity).toISOString() : null,
+    };
+  }
+
+  listConversationsForProjectBackfill(): Array<{
+    id: string;
+    projectPath: string | null;
+    projectId: string | null;
+    lastActivity: string | null;
+  }> {
+    const rows = this.stmts.listConversationsForProjectBackfill.all() as Array<{
+      id: string;
+      project_path: string | null;
+      project_id: string | null;
+      last_activity: number | null;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      projectPath: r.project_path,
+      projectId: r.project_id,
+      lastActivity: r.last_activity ? new Date(r.last_activity).toISOString() : null,
+    }));
   }
 
   getConversationTail(id: string): CachedTail | null {
