@@ -9,6 +9,12 @@ export const isWindows = platform() === "win32";
 // On Windows, Task Scheduler strips PATH to bare system directories, so
 // `claude` alone will not resolve. We try where.exe first, then fall back to
 // well-known install locations before giving up and returning the bare name.
+//
+// On macOS, launchd inherits PATH=/usr/bin:/bin:/usr/sbin:/sbin by default,
+// which excludes both Homebrew prefixes. Without an explicit fallback,
+// node-pty's execvp("claude", …) fails with ENOENT and every session
+// dies in milliseconds — see docs/troubleshooting.md. The plist's
+// EnvironmentVariables block is the primary fix; this is defense in depth.
 
 let _claudeExe: string | undefined;
 
@@ -39,6 +45,32 @@ export function resolveClaudeExe(): string {
         "WindowsApps",
         "claude.exe",
       ),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) {
+        _claudeExe = p;
+        return _claudeExe;
+      }
+    }
+  } else {
+    try {
+      const found = execFileSync("/usr/bin/which", ["claude"], {
+        encoding: "utf-8",
+        timeout: 3000,
+      })
+        .trim()
+        .split("\n")[0]
+        .trim();
+      if (found && existsSync(found)) {
+        _claudeExe = found;
+        return _claudeExe;
+      }
+    } catch {}
+
+    const candidates = [
+      "/opt/homebrew/bin/claude",
+      "/usr/local/bin/claude",
+      join(homedir(), ".local", "bin", "claude"),
     ];
     for (const p of candidates) {
       if (existsSync(p)) {

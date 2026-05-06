@@ -113,6 +113,11 @@ The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running 
 - `~/.cloudflared/config-system.yml` — used by the Windows service (runs under SYSTEM); this is the one that matters for the always-on tunnel
 - Both must be kept in sync. After editing either file, restart the service: `Restart-Service cloudflared`
 
+## macOS-specific notes
+
+- **launchd plist must set `PATH` via `EnvironmentVariables`**: launchd-spawned services inherit only `/usr/bin:/bin:/usr/sbin:/sbin`. Without an `EnvironmentVariables` block in the plist that includes `/opt/homebrew/bin` (Apple Silicon) and `/usr/local/bin` (Intel), `node-pty`'s `execvp("claude", …)` fails with `ENOENT`, and every session-start/resume produces an instant-exit zombie session with `status=idle`, blank terminal, no `failureReason`. The deploy script's plist generator and self-heal both write the block; symptom + diagnosis in [docs/troubleshooting.md](docs/troubleshooting.md).
+- **`resolveClaudeExe()` now falls back to absolute Homebrew/local paths on macOS** (`src/platform.ts`) — defense-in-depth so a stale plist alone can't break the streamer.
+
 ## Windows-specific notes
 
 - **`npm install` before first deploy**: A fresh clone (or a branch that added new packages) will fail lint/build with "Cannot find module" if `node_modules` is missing or stale. Run `npm install` before the first `npm run deploy:windows`. The `postinstall` script also patches `qrcode-terminal` and sets permissions on the `node-pty` prebuild.
