@@ -261,6 +261,10 @@ npm run deploy:windows:force
 
 Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/`** → activate → restart the service → healthcheck on `http://localhost:8766/healthz`.
 
+`dist/migrations/` now contains the **SQLite** migrations consumed by `ConversationCache.open()` — projects table, project_id columns, cache_metadata. They are required on every deploy; the streamer will fail to start without them.
+
+The build also produces `dist/pg-migrations/` for the optional Postgres path (`THREADBASE_DATABASE_URL`). The current deploy scripts do **not** copy `dist/pg-migrations/` — Postgres mode is dormant and not part of the SQLite-first runtime path. If you ever re-enable Postgres persistence in production, the deploy scripts must be extended to copy `dist/pg-migrations/` to the same `__dirname`-resolved location as the SQLite migrations.
+
 The migrations destination differs by platform because Node resolves `__dirname` from the *real* file location (not symlink source):
 - **macOS/Linux**: `cli.js` is a symlink → `__dirname` = `releases/` → copy to `~/.threadbase/releases/migrations/`
 - **Windows**: `cli.js` is a real file copy at install root → `__dirname` = `~/.threadbase/` → copy to `~/.threadbase/migrations/`

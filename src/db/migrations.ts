@@ -26,7 +26,7 @@ export async function runMigrations(pool: pg.Pool, migrationsDir?: string): Prom
   );
   const appliedSet = new Set(applied.map((r) => r.name));
 
-  const dir = migrationsDir ?? join(getMigrationsDir(), "migrations");
+  const dir = migrationsDir ?? join(getMigrationsDir(), "pg-migrations");
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort();

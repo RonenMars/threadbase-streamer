@@ -15,6 +15,9 @@ Known deploy/runtime issues and their fixes: [docs/troubleshooting.md](docs/trou
 - `npm run format` — auto-format all files (`npx biome format --write .`)
 - `npm run check` — lint + format with auto-fix (`npx biome check --write .`)
 - `npm run build` — dual ESM/CJS build via tsup (outputs to `dist/`)
+- `npm run migrate` — apply SQLite schema migrations against `~/.threadbase/cache/cache.db` (override with `--db <path>`). Idempotent.
+- `npm run migrate:projects` — backfill the `projects` table + `conversation_meta.project_id` from existing cached conversations; refresh `cache_metadata.last_conversation_id`. Idempotent.
+- `npm run db:validate` — print conversations missing `project_id`, duplicate project paths, and orphaned `project_id` references. Exits non-zero if any issue is found.
 - Single test: `npx vitest run __tests__/session-store.test.ts`
 
 ## Architecture
@@ -25,18 +28,30 @@ The library and CLI are built as separate tsup entries — `src/index.ts` produc
 
 Key modules and their responsibilities:
 - `pty-manager.ts` — spawn/resume Claude sessions via node-pty, ring buffer output (64KB cap)
-- `session-store.ts` — in-memory registry of managed (PTY) + discovered (process) sessions
+- `session-store.ts` — in-memory registry of managed (PTY) + discovered (process) sessions; sessions also carry `projectId` and `resumedFromConversationId`
 - `process-discovery.ts` — find running claude processes via pgrep/lsof (Unix) or tasklist/wmic (Windows)
-- `conversation-cache.ts` — SQLite cache of conversation metadata + message tails, updated incrementally by FileWatcher; backs `/api/conversations` and `/api/sessions` to avoid full filesystem scans
-- `file-watcher.ts` — tail JSONL files via fs.watch, emit new lines for structured parsing
+- `conversation-cache.ts` — SQLite cache of conversation metadata, message tails, projects, and cache_metadata; updated incrementally by `ConversationWatcher` (chokidar). Backs `/api/conversations`, `/api/sessions`, and `/project-chats` to avoid full filesystem scans. Runs SQLite migrations on open.
+- `services/conversations/conversationWatcher.ts` — chokidar-backed JSONL tail + directory watcher. Replaces the deleted `file-watcher.ts`. Emits per-line events (for cache + WS broadcast) and per-file dirty events (for cache invalidation).
 - `ws-hub.ts` — WebSocket hub broadcasting terminal_output, session_update, session_list events; also unicasts terminal_replay on subscribe and session_ready on PTY spawn
-- `server.ts` — HTTP server wiring REST endpoints + WebSocket upgrade + auth
+- `server.ts` — HTTP server wiring REST endpoints + WebSocket upgrade + auth; constructs the SQLite repositories (projects/conversations/sessions/cache_metadata) once the cache opens.
+- `handlers/handleListProjectChats.ts` — `GET /project-chats` handler. Validates query params with zod and delegates to `services/projectChats/listProjectChats.ts`.
+- `services/projectChats/*` — pure functions: normalize sessions and conversations into a discriminated `ProjectChat` union, merge (hiding conversations resumed into active sessions), and sort by `latestMessageAt → updatedAt → createdAt → title`.
+- `services/projects/*` — `upsertProjectByPath`, `ensureProjectsForConversations` (groups conversations by canonical project path, picks latest, upserts one project per path).
+- `services/conversations/refreshConversationCache.ts` — after a scanner-driven cache rebuild, upsert projects and backfill `conversation_meta.project_id`. Updates `cache_metadata.last_conversation_id`.
+- `services/conversations/shouldRefreshProjectsFromHdd.ts` — compares the latest conversation id known to the cache vs `cache_metadata.last_conversation_id`. Used by `/project-chats` to short-circuit refresh when nothing changed.
+- `services/sessions/createSessionForProjectPath.ts` + `ensureSessionProjectIdsFromExistingProjects.ts` — link a managed session to its project once the JSONL exists; backfill `projectId` for sessions whose path matches an existing project.
+- `services/cache/cacheMetadata.ts` — get/set helpers over the `cache_metadata` key/value table.
 - `auth.ts` — bearer token generation/validation with constant-time comparison
 - `idle-sweeper.ts` — periodic sweep that puts idle `waiting_input` sessions on hold after a configurable timeout
 - `reconcile.ts` — on server restart, marks any in-flight running/waiting_input sessions as on_hold
-- `db/config.ts` — env var parsing (`isDbEnabled`, `getDbConfig`, `getInstanceId`)
+- `utils/canonicalizeProjectPath.ts` — trims whitespace, strips trailing slashes/backslashes; preserves case. The single source of truth for project-path identity — every consumer must canonicalize before dedupe.
+- `utils/dates.ts` — `parseIsoDateOrNull` + `compareIsoDesc` (date-fns wrapper) for ISO-string sorting and freshness checks.
+- `schemas/*.schema.ts` — zod schemas for query params (`ListProjectChatsQuerySchema`), message cursor, ProjectChat, scanned conversation, and Project. Validate at HTTP/scanner boundaries.
+- `db/config.ts` — env var parsing (`isDbEnabled`, `getDbConfig`, `getInstanceId`) for the optional Postgres path.
 - `db/pool.ts` — pg.Pool creation with connection string password masking
-- `db/migrations.ts` — SQL migration runner; migrations live in `db/migrations/*.sql`
+- `db/migrations.ts` + `db/pg-migrations/*.sql` — Postgres migration runner. Postgres is no longer the primary persistence layer; only `session_uploads` + reserved future tables live here.
+- `db/sqlite-migrate.ts` + `db/migrations/*.sql` — SQLite migration runner used by `ConversationCache.open()`. Migrations are tracked in `schema_migrations` and are idempotent. Current files: `001_create_projects.sql`, `002_add_project_id_columns.sql`, `003_create_cache_metadata.sql`.
+- `db/repositories/*.repository.ts` — `ProjectsRepository` (UUID + canonical-path upsert), `ConversationsRepository` (wraps the cache for project_id linking), `SessionsRepository` (wraps SessionStore), `CacheMetadataRepository`.
 - `db/session-persistence.ts` — `SessionPersistence` interface; `memory-persistence.ts` (no-op default) and `pg-session-persistence.ts` (Postgres) implement it
 
 ## Session lifecycle
@@ -89,15 +104,19 @@ Practical consequence: any service definition (launchd plist, systemd unit, Task
 - `@threadbase/scanner` — scan, parse, search, filter conversation history (used for REST endpoints)
 - `node-pty` — native PTY management (external, not bundled by tsup)
 - `ws` — WebSocket server
-- `better-sqlite3` — SQLite driver for `ConversationCache`
+- `better-sqlite3` — SQLite driver for `ConversationCache` (incl. projects + cache_metadata + schema_migrations tables)
+- `chokidar` — JSONL tail + directory watcher; replaces the previous `fs.watch`-based `file-watcher.ts`
+- `zod` — runtime validation at HTTP and scanner boundaries (query params, ProjectChat shape, message cursor, scanned conversations)
+- `date-fns` — ISO timestamp parsing/comparison helpers; used for ProjectChat sort and cache freshness checks
 - `commander` — CLI argument parsing
 
 ## Build notes
 
 - **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and all other deps must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
-- **Migrations at deploy**: deploy scripts copy `dist/migrations/` so the CJS bundle can find them at runtime via `__dirname`.
-  - macOS/Linux: symlink makes `__dirname` = `~/.threadbase/releases/` → copy to `~/.threadbase/releases/migrations/`
-  - Windows: `cli.js` is a real copy at `~/.threadbase/` so `__dirname` = `~/.threadbase/` → copy to `~/.threadbase/migrations/`
+- **Two migration folders at build time**: `npm run build` copies both `src/db/migrations/` (SQLite — used by `ConversationCache`) and `src/db/pg-migrations/` (Postgres — used only when `THREADBASE_DATABASE_URL` is set) into `dist/`. Both runners resolve their folder relative to the compiled module's `__dirname`/`import.meta.url`.
+- **Migrations at deploy**: deploy scripts currently copy only `dist/migrations/` (SQLite). That is sufficient for the SQLite-first runtime. `dist/pg-migrations/` is NOT shipped to `~/.threadbase/`; the Postgres path is dormant. If/when Postgres persistence is re-enabled in production, the deploy scripts must be extended to copy `dist/pg-migrations/` alongside `dist/migrations/`.
+  - macOS/Linux: symlink makes `__dirname` = `~/.threadbase/releases/` → copy SQLite migrations to `~/.threadbase/releases/migrations/`
+  - Windows: `cli.js` is a real copy at `~/.threadbase/` so `__dirname` = `~/.threadbase/` → copy SQLite migrations to `~/.threadbase/migrations/`
 
 ## Cloudflare Tunnel
 
@@ -155,11 +174,15 @@ Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP ser
 - `/api/conversations`, `/api/conversations/count`, `/api/conversations/{id}`
 - `/api/search`, `/api/browse`, `/api/browse/mkdir`
 
+**New endpoint** — purely additive; older mobile builds simply don't call it:
+- `GET /project-chats` — unified active-sessions + historical-conversations list. Accepts `?refreshConversations=1` (or legacy `?refresh=1`) to force a rescan; otherwise the server short-circuits via `cache_metadata.last_conversation_id`. Response shape is `{ projectChats: ProjectChat[] }` where `ProjectChat` is a discriminated union on `type: "session" | "conversation"`. Both variants carry `projectId` (the canonical project identity) and `projectPath` (compatibility metadata).
+
 **Query parameter names** — mobile builds URLs with these exact strings:
 `limit`, `offset`, `sort`, `project`, `refresh`, `msg_limit`, `before_index`, `q`, `path`
 
 **Response field names** — these are deserialized by name in mobile types; casing matters:
 - Session: `id`, `status`, `projectPath`, `projectName`, `branch`, `lastOutput`, `elapsedMs`, `promptCount`, `conversationId`, `source`, `startedAt`, `completedAt`, `lastActivityAt`, `failureReason`, `ptyAttached`
+- Session — new optional fields (added during the projects refactor; never required for older clients): `projectId`, `resumedFromConversationId`
 - Conversation list item: `id`, `title`, `projectPath`, `messageCount`, `lastActivity`, `firstMessage`, `lastMessage`, `preview`, `model`
 - Conversation detail: `meta` object + `messages` array + `message_pagination` object
 - Message: `message_index` (snake_case), `role`, `timestamp`, `text`, `content` (array), `tool_use_id` (snake_case)

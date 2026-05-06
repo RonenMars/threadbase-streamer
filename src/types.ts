@@ -4,6 +4,7 @@ export type SessionStatus = "running" | "waiting_input" | "idle";
 
 export interface ManagedSession {
   id: string; // JSONL UUID — the .jsonl filename under ~/.claude/projects/
+  projectId?: string; // Stable identity into the projects table (added during migration).
   projectPath: string;
   projectName: string;
   branch: string;
@@ -24,6 +25,7 @@ export interface ManagedSession {
   lastMessageAt?: Date;
   lastActivityAt?: Date;
   filePath?: string;
+  resumedFromConversationId?: string;
 }
 
 export interface DiscoveredProcess {
@@ -51,6 +53,7 @@ export type WSMessage =
 export interface SessionResponse {
   id: string; // JSONL UUID
   conversationId: string; // alias for id — mobile uses this to build deep-link URLs
+  projectId?: string; // Stable identity into the projects table (added during migration).
   status: SessionStatus;
   projectPath: string;
   projectName: string;
@@ -74,6 +77,7 @@ export interface SessionResponse {
   lastMessageAt?: string;
   lastActivityAt?: string;
   filePath?: string;
+  resumedFromConversationId?: string;
 }
 
 export interface ConversationListResponse {
@@ -149,11 +153,4 @@ export interface StartFreshSessionOptions {
   projectPath: string;
   projectName?: string;
   systemPrompt?: string;
-}
-
-// ─── File Watcher ──────────────────────────────────────────────────
-
-export interface FileWatcherEvents {
-  onNewLine?: (filePath: string, line: string) => void;
-  onError?: (filePath: string, error: Error) => void;
 }

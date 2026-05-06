@@ -1,10 +1,10 @@
 export { generateApiKey, loadOrCreateApiKey, validateApiKey } from "./auth";
 export type { DbConfig } from "./db";
 export { createPool, getDbConfig, isDbEnabled, maskConnectionString } from "./db";
-export { FileWatcher } from "./file-watcher";
 export { discoverClaudeProcesses } from "./process-discovery";
 export { PTYManager } from "./pty-manager";
 export { StreamerServer } from "./server";
+export { ConversationWatcher } from "./services/conversations/conversationWatcher";
 export { SessionStore } from "./session-store";
 export * from "./types";
 export { WSHub } from "./ws-hub";

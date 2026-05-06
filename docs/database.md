@@ -45,7 +45,9 @@ PostgreSQL 15 or later.
 
 SQL migrations run automatically on startup when the database is configured. They are tracked in a `_migrations` table to avoid re-running.
 
-Migration files: `src/db/migrations/`
+Migration files: `src/db/pg-migrations/` (formerly `src/db/migrations/`; renamed when SQLite became the primary persistence layer for the projects/conversations cache and took over the canonical `migrations/` slot).
+
+The independent SQLite migrations used by `ConversationCache` live at `src/db/migrations/` and run unconditionally on every server start — see [src/db/sqlite-migrate.ts](../src/db/sqlite-migrate.ts).
 
 ## Local Development
 

@@ -44,6 +44,8 @@ rm ~/.threadbase/cache/cache.db*
 
 **Fix:** Confirm the deploy script copies to the correct platform-specific path. On Windows this is `$installDir\migrations\`, not `$releasesDir\migrations\`.
 
+**Note:** As of the projects refactor, `dist/migrations/` contains the **SQLite** migrations consumed by `ConversationCache.open()` (projects table, project_id columns, cache_metadata). The Postgres migrations now live at `src/db/pg-migrations/` → `dist/pg-migrations/` and are not currently shipped by the deploy scripts; see CLAUDE.md "Build notes".
+
 ---
 
 ### `Cannot find module 'pg'` at runtime
