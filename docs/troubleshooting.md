@@ -450,3 +450,61 @@ launchctl kickstart -k "gui/$(id -u)/com.ronen.threadbase"
 sleep 3
 cat ~/.threadbase/logs/stderr.log   # should be empty if the cache loaded successfully
 ```
+
+---
+
+## Menubar packaging
+
+The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applications/Threadbase Menubar.app`. `scripts/deploy.sh` builds via electron-builder, mounts the produced `.dmg`, and copies the app into place. Several gotchas emerged during the initial rollout — collected here.
+
+### `npm run package:mac` aborts with `CSSMERR_TP_CERT_REVOKED`
+
+**When:** Building the menubar on a Mac whose login keychain has any revoked code-signing identity (commonly a stale Apple Development cert from a previous device or EAS-managed build).
+**Cause:** electron-builder auto-discovers signing identities by scanning the keychain. If `mac.identity` is unset and the first match is a revoked cert, `codesign --verify` aborts the build with `CSSMERR_TP_CERT_REVOKED`.
+**Fix:** the menubar's `electron-builder.config.js` sets `mac.identity` conditionally. When `APPLE_TEAM_ID` is unset (work-Mac path), `identity` is explicitly `null` — forcing ad-hoc signing and bypassing keychain discovery. When `APPLE_TEAM_ID` is set (signing-config sourced), `identity` becomes `"(<team>)"` so only certs belonging to that team are considered. Don't remove the conditional even if your keychain happens to be clean today.
+
+### `Application entry file "dist/main.js" … does not exist` despite the file being present
+
+**When:** Running `npm run package:mac:dir` and seeing the build fail with this error, even though `dist/main.js` clearly exists.
+**Cause:** electron-builder isn't loading `electron-builder.config.js`. Auto-discovery only handles `.yml` / `.yaml` / `.json` configs; `.js` configs require explicit `-c <path>`. Without the flag, electron-builder uses only the `package.json` `build` block (or its defaults) — which point at different output dirs, different `productName`, and may not match the rest of the toolchain.
+**Fix:** the `package:mac` and `package:mac:dir` scripts in `vendor/menubar/package.json` already pass `-c electron-builder.config.js`. If invoking `npx electron-builder` by hand, pass it yourself.
+
+### `open -a "Threadbase Menubar"` launches the wrong `.app`
+
+**When:** After `scripts/deploy.sh menubar` reports success, the running process is from `vendor/menubar/release/mac-arm64/...` instead of `/Applications/Threadbase Menubar.app`.
+**Cause:** macOS LaunchServices caches a registry of `.app` bundles by ID, and `open -a "<name>"` resolves through that registry. If the cache was populated by a previous `package:mac:dir` run (which left a `.app` under `release/`), it can win over the freshly-installed copy.
+**Fix:** `ensure_menubar_deployed` in `scripts/deploy.sh` calls `lsregister -f "$target"` after copying the new bundle into place to refresh the registry, then uses direct-path `open "$target"` (not `open -a`). If you debug by hand, do the same: `lsregister -f /Applications/Threadbase\ Menubar.app && open /Applications/Threadbase\ Menubar.app`.
+
+### Tray icon is invisible on a dark menu bar
+
+**When:** Menubar runs (verified via `pgrep -f "Threadbase Menubar"`) but no tray icon appears on the menu bar.
+**Cause:** the tray PNGs are state-coloured rounded squares (dark green / near-black / dark red) on a transparent background. Against macOS Dark-mode menu bars, the dark-green / near-black variants have very low contrast — the icon is rendered but easy to miss.
+**Fix:** confirm the icon is actually there before assuming it's broken. Check the right side of the menu bar carefully, or hide a few icons with Bartender / Hidden Bar to make space. Long-term fix is to switch to template-image style (monochrome glyph that auto-tints to match menu bar appearance) — tracked but not implemented.
+
+### `--publish-menubar` refuses to upload
+
+**When:** Running `scripts/deploy.sh --publish-menubar` errors with one of:
+- `--publish-menubar requires ~/.threadbase/menubar-signing.env`
+- `--publish-menubar requires gh CLI`
+- `--publish-menubar requires gh auth — run 'gh auth login' first`
+- `refusing to publish unsigned build — source ~/.threadbase/menubar-signing.env first`
+
+**Cause:** the publish flow has hard preconditions: signing config + `gh` CLI + `gh auth`. The flag fails fast before doing any work to avoid spending 5 minutes building a `.dmg` only to refuse the upload.
+**Fix:** this is by design. The intended workflow (per the project's two-Mac split) is to run `--publish-menubar` only on the build machine that has the Developer ID cert + App Store Connect API key. On a work Mac without the cert, run plain `scripts/deploy.sh` (or `scripts/deploy.sh menubar`) — that builds and installs locally without publishing.
+
+### `git submodule update --init` resets `vendor/menubar` to an older SHA
+
+**When:** Running parts of `scripts/deploy.sh` in a way that triggers the submodule-init code path *before* the parent's submodule pointer has been bumped.
+**Cause:** `git submodule update --init` is destructive. If the parent repo's pinned SHA is older than the working tree of the submodule, the working tree is reset to the pinned SHA — wiping uncommitted submodule work.
+**Fix:** when iterating on the menubar in tandem with deploy-script changes:
+1. Always commit and push the submodule first
+2. Bump the submodule pointer in the parent (`git add vendor/menubar`) and commit
+3. Only then re-run anything in `scripts/deploy.sh` that might call `git submodule update`
+
+If you've already lost work, it's not gone if you pushed: `git -C vendor/menubar fetch origin main && git -C vendor/menubar reset --hard origin/main`.
+
+### `npm ci` fails inside `ensure_menubar_deployed`
+
+**When:** Deploy fails at `cd vendor/menubar && npm ci`.
+**Cause:** `package-lock.json` is out of sync with `package.json`. Common after manually editing dependencies without re-running `npm install`.
+**Fix:** run `cd vendor/menubar && npm install` to regenerate the lockfile, commit it, push the submodule, bump the parent pointer, then retry deploy. The script intentionally uses `npm ci` (strict) rather than `npm install` (loose) so that locked dependency versions are guaranteed at deploy time.

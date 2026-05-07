@@ -2,13 +2,16 @@
 # Deploy/rollback/status helper for the local launchd-managed threadbase-streamer.
 #
 # Usage:
-#   scripts/deploy.sh                   # build + deploy current HEAD (uses pinned scanner submodule)
-#   scripts/deploy.sh --force           # deploy even if working tree is dirty / not on main
-#   scripts/deploy.sh --update-scanner  # bump vendor/scanner to its remote main, then deploy
-#   scripts/deploy.sh setup             # first-time: write launchd plist + ask about auto-startup
-#   scripts/deploy.sh rollback          # repoint cli.js to the previous release
-#   scripts/deploy.sh status            # show current release, PID, and recent releases
-#   scripts/deploy.sh healthcheck       # probe /healthz on the running server
+#   scripts/deploy.sh                       # build + deploy current HEAD (uses pinned scanner submodule)
+#   scripts/deploy.sh --force               # deploy even if working tree is dirty / not on main
+#   scripts/deploy.sh --update-scanner      # bump vendor/scanner to its remote main, then deploy
+#   scripts/deploy.sh --publish-menubar     # also upload the menubar .dmg to GitHub Releases
+#                                           #   (requires ~/.threadbase/menubar-signing.env + gh auth)
+#   scripts/deploy.sh setup                 # first-time: write launchd plist + ask about auto-startup
+#   scripts/deploy.sh rollback              # repoint cli.js to the previous release
+#   scripts/deploy.sh status                # show current release, PID, and recent releases
+#   scripts/deploy.sh healthcheck           # probe /healthz on the running server
+#   scripts/deploy.sh menubar [--publish]   # build + install the menubar .app only
 #
 # Layout:
 #   ~/.threadbase/cli.js                     -> symlink into releases/
@@ -65,8 +68,7 @@ ensure_menubar_deployed() {
     log "menubar is up-to-date ($current_sha)"
     if ! pgrep -f "Threadbase Menubar" >/dev/null 2>&1; then
       log "launching installed menubar"
-      open -a "Threadbase Menubar" 2>/dev/null || open "$installed_app" \
-        || warn "could not launch menubar"
+      open "$installed_app" || warn "could not launch menubar"
     else
       ok "menubar already running"
     fi
@@ -132,6 +134,13 @@ ensure_menubar_deployed() {
   cp -R "$mount_point/Threadbase Menubar.app" "$target"
   hdiutil detach "$mount_point" -quiet || warn "hdiutil detach $mount_point failed"
 
+  # Force LaunchServices to forget any stale registry entries pointing at old
+  # .app locations (e.g. a developer's release/mac-arm64/) and pick up the
+  # newly-installed bundle. Without this, `open -a "Threadbase Menubar"` may
+  # silently launch the wrong copy.
+  local lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+  [[ -x "$lsregister" ]] && "$lsregister" -f "$target" >/dev/null 2>&1 || true
+
   # Archive the .dmg under ~/.threadbase/releases/menubar/ for offline reinstall.
   mkdir -p "$MENUBAR_RELEASES_DIR"
   local short_sha archived
@@ -143,15 +152,73 @@ ensure_menubar_deployed() {
   printf '%s' "$current_sha" > "$MENUBAR_INSTALLED_SHA_FILE"
 
   log "launching $target"
-  # Prefer `open -a` (uses LaunchServices), fall back to direct path if the
-  # registry hasn't picked up the new .app yet.
-  open -a "Threadbase Menubar" 2>/dev/null || open "$target" || warn "could not launch menubar"
+  # Use direct path so we definitely launch the freshly-installed copy, not
+  # whatever LaunchServices has cached for "Threadbase Menubar".
+  open "$target" || warn "could not launch menubar"
 
   # Garbage-collect old archived .dmgs.
   ls -t "$MENUBAR_RELEASES_DIR"/Threadbase-Menubar-*.dmg 2>/dev/null \
     | tail -n +$((MENUBAR_KEEP_DMGS + 1)) | xargs -r rm -f || true
 
   ok "menubar deployed: $current_sha"
+}
+
+# Upload the most recently archived menubar .dmg to a GitHub Release on the
+# threadbase-menubar repo. Tag format: v<package version>+<short submodule sha>,
+# marked --prerelease to signal "tip-of-main build", not a tagged release.
+#
+# Refuses to upload unsigned builds — detected via APPLE_TEAM_ID env, which is
+# only set when ~/.threadbase/menubar-signing.env was sourced. Idempotent: if
+# the tag already exists with the .dmg asset, skips. If the tag exists without
+# the asset (previous upload failed), uploads it.
+publish_menubar() {
+  if ! command -v gh >/dev/null 2>&1; then
+    err "gh CLI not installed — cannot publish (brew install gh)"
+    return 1
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    err "gh CLI not authenticated — run 'gh auth login' first"
+    return 1
+  fi
+  if [[ -z "${APPLE_TEAM_ID:-}" ]]; then
+    err "refusing to publish unsigned build — source $MENUBAR_SIGNING_ENV first"
+    return 1
+  fi
+
+  local current_sha short_sha pkg_version dmg tag
+  current_sha="$(cd "$MENUBAR_DIR" && git rev-parse HEAD)"
+  short_sha="${current_sha:0:7}"
+  pkg_version="$(cd "$MENUBAR_DIR" && node -p "require('./package.json').version")"
+  dmg="$MENUBAR_RELEASES_DIR/Threadbase-Menubar-${short_sha}.dmg"
+  tag="v${pkg_version}+${short_sha}"
+
+  if [[ ! -f "$dmg" ]]; then
+    err "expected $dmg to exist — run ensure_menubar_deployed first"
+    return 1
+  fi
+
+  log "publishing $tag to threadbase-menubar GitHub Releases"
+
+  # Check whether the release already exists.
+  if gh release view "$tag" --repo RonenMars/threadbase-menubar >/dev/null 2>&1; then
+    # If the .dmg asset is already attached, nothing to do.
+    if gh release view "$tag" --repo RonenMars/threadbase-menubar --json assets \
+         --jq '.assets[].name' 2>/dev/null | grep -qx "$(basename "$dmg")"; then
+      ok "release $tag already has $(basename "$dmg") attached — skipping"
+      return 0
+    fi
+    log "release $tag exists but asset missing — uploading"
+    gh release upload "$tag" "$dmg" --repo RonenMars/threadbase-menubar --clobber
+  else
+    log "creating release $tag"
+    gh release create "$tag" "$dmg" \
+      --repo RonenMars/threadbase-menubar \
+      --prerelease \
+      --title "$tag" \
+      --notes "Auto-published by tb-streamer/scripts/deploy.sh from submodule SHA $current_sha"
+  fi
+
+  ok "published $tag"
 }
 
 # Ensure the scanner submodule is checked out and built. Idempotent — skips
@@ -536,14 +603,33 @@ activate_release() {
 }
 
 cmd_deploy() {
-  local force="" update_scanner=0
+  local force="" update_scanner=0 publish_menubar_flag=0
   for arg in "$@"; do
     case "$arg" in
-      --force)           force="--force" ;;
-      --update-scanner)  update_scanner=1 ;;
+      --force)            force="--force" ;;
+      --update-scanner)   update_scanner=1 ;;
+      --publish-menubar)  publish_menubar_flag=1 ;;
       *) err "unknown deploy flag: $arg"; exit 2 ;;
     esac
   done
+
+  # If publishing was requested, fail fast before any expensive work if the
+  # signing config or gh CLI are missing — otherwise the user spends 5 minutes
+  # building a .dmg only to hit the publish-time refusal.
+  if (( publish_menubar_flag )); then
+    if [[ ! -f "$MENUBAR_SIGNING_ENV" ]]; then
+      err "--publish-menubar requires $MENUBAR_SIGNING_ENV (Developer ID + ASC API key)"
+      exit 1
+    fi
+    if ! command -v gh >/dev/null 2>&1; then
+      err "--publish-menubar requires gh CLI (brew install gh)"
+      exit 1
+    fi
+    if ! gh auth status >/dev/null 2>&1; then
+      err "--publish-menubar requires gh auth — run 'gh auth login' first"
+      exit 1
+    fi
+  fi
 
   cmd_predeploy_check "$force"
   cmd_check_browse_root
@@ -608,6 +694,10 @@ cmd_deploy() {
 
   ensure_menubar_deployed
 
+  if (( publish_menubar_flag )); then
+    publish_menubar
+  fi
+
   ok "deploy complete: $rel_filename"
 }
 
@@ -617,7 +707,7 @@ case "${1:-deploy}" in
     shift
     cmd_deploy "$@"
     ;;
-  --force|--update-scanner)
+  --force|--update-scanner|--publish-menubar)
     cmd_deploy "$@"
     ;;
   "")
@@ -626,9 +716,19 @@ case "${1:-deploy}" in
   rollback)     cmd_rollback ;;
   status)       cmd_status ;;
   healthcheck)  cmd_healthcheck ;;
+  menubar)
+    shift
+    ensure_menubar_deployed
+    for arg in "$@"; do
+      case "$arg" in
+        --publish-menubar|--publish) publish_menubar ;;
+        *) err "unknown menubar flag: $arg"; exit 2 ;;
+      esac
+    done
+    ;;
   *)
     err "unknown command: $1"
-    echo "usage: $0 [deploy [--force] [--update-scanner] | rollback | status | healthcheck]" >&2
+    echo "usage: $0 [deploy [--force] [--update-scanner] [--publish-menubar] | menubar [--publish] | rollback | status | healthcheck]" >&2
     exit 2
     ;;
 esac
