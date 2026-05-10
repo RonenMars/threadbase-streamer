@@ -770,41 +770,63 @@ export class StreamerServer {
       };
     }
 
-    const messagesPayload = slice.map((m: any, localIdx: number) => ({
-      message_index: fromIdx + localIdx,
-      role: m.role,
-      timestamp: m.timestamp,
-      text: m.text,
-      tool_calls: m.metadata?.toolUses ?? [],
-      content: [
-        ...(m.metadata?.toolUseBlocks ?? []).map((b: any) => ({
-          type: "tool_use",
-          id: b.id,
-          name: b.name,
-          input: b.input,
-        })),
-        ...(m.metadata?.toolResults ?? []).map((r: any) => ({
+    const messagesPayload = slice.map((m: any, localIdx: number) => {
+      const content: unknown[] = [];
+      if (m.isThinking) {
+        content.push({
+          type: "thinking",
+          thinking: m.thinkingContent ?? "",
+          signature: m.thinkingSignature,
+        });
+      }
+      for (const b of m.metadata?.toolUseBlocks ?? []) {
+        content.push({ type: "tool_use", id: b.id, name: b.name, input: b.input });
+      }
+      for (const r of m.metadata?.toolResults ?? []) {
+        content.push({
           type: "tool_result",
           tool_use_id: r.toolUseId,
           content: JSON.stringify(r.content),
           is_error: r.isError ?? false,
-        })),
-      ],
-    }));
+        });
+      }
+      return {
+        message_index: fromIdx + localIdx,
+        role: m.role,
+        timestamp: m.timestamp,
+        text: m.text,
+        tool_calls: m.metadata?.toolUses ?? [],
+        has_images: m.hasImages ?? false,
+        parent_uuid: m.parentUuid ?? null,
+        permission_mode: m.permissionMode ?? null,
+        is_sidechain: m.isSidechain ?? false,
+        attachment: m.attachment ?? null,
+        content,
+      };
+    });
 
+    const conv = conversation as any;
     const body: Record<string, unknown> = {
       meta: {
         id,
-        profile_id: (conversation as any).account,
-        project_name: (conversation as any).projectName,
-        project_path: (conversation as any).projectPath,
-        file_path: (conversation as any).filePath,
-        last_updated_at: (conversation as any).timestamp,
-        message_count: (conversation as any).messageCount,
+        profile_id: conv.account,
+        project_name: conv.projectName,
+        project_path: conv.projectPath,
+        file_path: conv.filePath,
+        last_updated_at: conv.timestamp,
+        message_count: conv.messageCount,
+        last_prompt: conv.lastPrompt ?? undefined,
       },
       messages: messagesPayload,
     };
     if (messagePagination) body.message_pagination = messagePagination;
+    if (conv.turnDurations?.length) {
+      body.turn_durations = conv.turnDurations.map((d: any) => ({
+        duration_ms: d.durationMs,
+        message_count: d.messageCount,
+        uuid: d.uuid,
+      }));
+    }
     json(res, 200, body);
   }
 
