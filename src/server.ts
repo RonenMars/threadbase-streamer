@@ -739,10 +739,7 @@ export class StreamerServer {
       return;
     }
 
-    const filtered = conversation.messages.filter((m: any) => {
-      if (m.role === "user" && m.isToolResult) return false;
-      return true;
-    });
+    const filtered = conversation.messages;
     const total = filtered.length;
 
     const usePaging = url.searchParams.has("msg_limit") || url.searchParams.has("before_index");
@@ -791,6 +788,7 @@ export class StreamerServer {
         });
       }
       return {
+        uuid: m.uuid ?? null,
         message_index: fromIdx + localIdx,
         role: m.role,
         timestamp: m.timestamp,
@@ -800,6 +798,7 @@ export class StreamerServer {
         parent_uuid: m.parentUuid ?? null,
         permission_mode: m.permissionMode ?? null,
         is_sidechain: m.isSidechain ?? false,
+        is_tool_result: m.isToolResult ?? false,
         attachment: m.attachment ?? null,
         content,
       };
