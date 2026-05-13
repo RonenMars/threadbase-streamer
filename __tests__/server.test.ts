@@ -265,6 +265,36 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("GET /api/sessions/recents", () => {
+    it("returns 200 with sessions array and total field when authenticated", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions/recents`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toHaveProperty("sessions");
+      expect(Array.isArray(body.sessions)).toBe(true);
+      expect(body).toHaveProperty("total");
+      expect(typeof body.total).toBe("number");
+    });
+
+    it("returns 401 without auth", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions/recents`);
+      expect(res.status).toBe(401);
+    });
+
+    it("respects limit query param", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions/recents?limit=1`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.sessions.length).toBeLessThanOrEqual(1);
+    });
+  });
+
   describe("404 handling", () => {
     it("returns 404 for unknown routes", async () => {
       const res = await fetch(`${baseUrl}/api/nonexistent`, {
