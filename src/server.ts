@@ -421,35 +421,79 @@ export class StreamerServer {
       if (method === "POST" && path === "/api/sessions/start")
         return await this.handleStartSession(req, res);
 
-      const convMatch = path.match(/^\/api\/conversations\/(.+)$/);
-      if (method === "GET" && convMatch)
-        return await this.handleGetConversation(decodeURIComponent(convMatch[1]), url, res);
+      const pathParts = path.split("/");
+
+      if (
+        method === "GET" &&
+        pathParts[1] === "api" &&
+        pathParts[2] === "conversations" &&
+        pathParts[3] &&
+        pathParts.length >= 4
+      )
+        return await this.handleGetConversation(
+          decodeURIComponent(pathParts.slice(3).join("/")),
+          url,
+          res,
+        );
 
       if (method === "GET" && path === "/api/sessions/names") {
         return this.handleGetSessionNames(res);
       }
 
-      const sessionMatch = path.match(/^\/api\/sessions\/([^/]+)$/);
-      if (method === "GET" && sessionMatch) return this.handleGetSession(sessionMatch[1], res);
+      if (
+        method === "GET" &&
+        pathParts[1] === "api" &&
+        pathParts[2] === "sessions" &&
+        pathParts[3] &&
+        pathParts.length === 4
+      )
+        return this.handleGetSession(pathParts[3], res);
 
-      const inputMatch = path.match(/^\/api\/sessions\/([^/]+)\/input$/);
-      if (method === "POST" && inputMatch)
-        return await this.handleSendInput(inputMatch[1], req, res);
+      if (
+        method === "POST" &&
+        pathParts[1] === "api" &&
+        pathParts[2] === "sessions" &&
+        pathParts[4] === "input" &&
+        pathParts.length === 5
+      )
+        return await this.handleSendInput(pathParts[3], req, res);
 
-      const filesMatch = path.match(/^\/api\/sessions\/([^/]+)\/files$/);
-      if (method === "POST" && filesMatch)
-        return await this.handleUploadFile(filesMatch[1], req, res);
+      if (
+        method === "POST" &&
+        pathParts[1] === "api" &&
+        pathParts[2] === "sessions" &&
+        pathParts[4] === "files" &&
+        pathParts.length === 5
+      )
+        return await this.handleUploadFile(pathParts[3], req, res);
 
-      const outputMatch = path.match(/^\/api\/sessions\/([^/]+)\/output$/);
-      if (method === "GET" && outputMatch) return this.handleGetOutput(outputMatch[1], res);
+      if (
+        method === "GET" &&
+        pathParts[1] === "api" &&
+        pathParts[2] === "sessions" &&
+        pathParts[4] === "output" &&
+        pathParts.length === 5
+      )
+        return this.handleGetOutput(pathParts[3], res);
 
-      const cancelMatch = path.match(/^\/api\/sessions\/([^/]+)\/cancel$/);
-      if (method === "POST" && cancelMatch) return this.handleCancel(cancelMatch[1], res);
+      if (
+        method === "POST" &&
+        pathParts[1] === "api" &&
+        pathParts[2] === "sessions" &&
+        pathParts[4] === "cancel" &&
+        pathParts.length === 5
+      )
+        return this.handleCancel(pathParts[3], res);
 
-      const nameMatch = path.match(/^\/api\/sessions\/([^/]+)\/name$/);
-      if (method === "PATCH" && nameMatch) return this.handleSetSessionName(nameMatch[1], req, res);
+      if (
+        method === "PATCH" &&
+        pathParts[1] === "api" &&
+        pathParts[2] === "sessions" &&
+        pathParts[4] === "name" &&
+        pathParts.length === 5
+      )
+        return this.handleSetSessionName(pathParts[3], req, res);
 
-      const pathParts = path.split("/");
       if (
         method === "POST" &&
         pathParts[1] === "api" &&
