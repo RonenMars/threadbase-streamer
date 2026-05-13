@@ -407,6 +407,7 @@ export class StreamerServer {
         return await this.handleListConversations(url, res);
       if (method === "GET" && path === "/api/conversations/count")
         return await this.handleConversationsCount(url, res);
+      if (method === "GET" && path === "/api/projects/popular") return this.handleGetPopularProjects(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
       if (method === "GET" && path === "/api/sessions")
         return await this.handleListSessions(url, res);
@@ -695,6 +696,16 @@ export class StreamerServer {
     });
     const sessions = sorted.slice(0, limit);
     json(res, 200, { sessions, total: sessions.length });
+  }
+
+  private handleGetPopularProjects(url: URL, res: ServerResponse): void {
+    const limit = intParam(url, "limit", 20);
+    if (!this.cache) {
+      json(res, 200, { projects: [], total: 0 });
+      return;
+    }
+    const projects = this.cache.getPopularProjects(limit);
+    json(res, 200, { projects, total: projects.length });
   }
 
   private handleListProjectChats(url: URL, res: ServerResponse): void {
