@@ -44,6 +44,11 @@ export class PTYManager {
   private onReady: PTYManagerOptions["onReady"];
   // Tracks which sessions were started fresh (not resume) and haven't fired onReady yet
   private pendingReady = new Set<string>();
+  // Inputs received via sendInput() while the session was still in pendingReady.
+  // Flushed in arrival order once Claude reaches its first prompt. Without this,
+  // input written into the raw PTY mid-boot is consumed by Claude's startup TUI
+  // (welcome banner / first-run modals) and silently lost.
+  private queuedInputs = new Map<string, string[]>();
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
@@ -152,6 +157,17 @@ export class PTYManager {
     if (session.status === "idle") {
       throw new Error(`Session is idle (no active PTY): ${sessionId}`);
     }
+    // Claude is still booting (TUI not yet at first prompt). Writing into the
+    // raw PTY now would let the startup UI swallow the keystrokes. Queue and
+    // flush in flushQueuedInputs() once the prompt marker fires.
+    if (this.pendingReady.has(sessionId)) {
+      const queue = this.queuedInputs.get(sessionId) ?? [];
+      queue.push(input);
+      this.queuedInputs.set(sessionId, queue);
+      session.lastActivityAt = new Date();
+      session.promptCount++;
+      return session.promptCount;
+    }
     if (session.status === "waiting_input") {
       session.status = "running";
       this.onStatusChange?.(toPublicSession(session));
@@ -160,6 +176,19 @@ export class PTYManager {
     session.lastActivityAt = new Date();
     session.promptCount++;
     return session.promptCount;
+  }
+
+  // Drain any inputs that were sent while the session was still pendingReady,
+  // writing them in arrival order now that Claude is at its prompt.
+  private flushQueuedInputs(sessionId: string): void {
+    const queue = this.queuedInputs.get(sessionId);
+    if (!queue || queue.length === 0) return;
+    this.queuedInputs.delete(sessionId);
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    for (const input of queue) {
+      session.process.write(`${input}\r`);
+    }
   }
 
   cancel(sessionId: string): void {
@@ -181,6 +210,7 @@ export class PTYManager {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.pendingReady.delete(sessionId);
+    this.queuedInputs.delete(sessionId);
     try {
       session.process.kill("SIGINT");
     } catch {
@@ -251,6 +281,7 @@ export class PTYManager {
       this.onStatusChange?.(toPublicSession(session));
       if (this.pendingReady.has(sessionId)) {
         this.pendingReady.delete(sessionId);
+        this.flushQueuedInputs(sessionId);
         this.onReady?.(toPublicSession(session));
       }
     }
@@ -279,6 +310,7 @@ export class PTYManager {
 
     this.onStatusChange?.(toPublicSession(session));
     this.sessions.delete(sessionId);
+    this.queuedInputs.delete(sessionId);
   }
 }
 
