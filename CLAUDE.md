@@ -22,7 +22,7 @@ Known deploy/runtime issues and their fixes: [docs/troubleshooting.md](docs/trou
 
 ## Architecture
 
-Three layers: **core engine** (src/*.ts) → **API layer** (src/index.ts exports) → **CLI wrapper** (cli/).
+Three layers: **core engine** (src/*.ts) → **API layer** (src/api/ + src/index.ts exports) → **CLI wrapper** (cli/).
 
 The library and CLI are built as separate tsup entries — `src/index.ts` produces `dist/index.js` (ESM) + `dist/index.cjs` (CJS) + types, while `cli/index.ts` produces `dist/cli.cjs` with a shebang.
 
@@ -33,7 +33,13 @@ Key modules and their responsibilities:
 - `conversation-cache.ts` — SQLite cache of conversation metadata, message tails, projects, and cache_metadata; updated incrementally by `ConversationWatcher` (chokidar). Backs `/api/conversations`, `/api/sessions`, and `/project-chats` to avoid full filesystem scans. Runs SQLite migrations on open.
 - `services/conversations/conversationWatcher.ts` — chokidar-backed JSONL tail + directory watcher. Replaces the deleted `file-watcher.ts`. Emits per-line events (for cache + WS broadcast) and per-file dirty events (for cache invalidation).
 - `ws-hub.ts` — WebSocket hub broadcasting terminal_output, session_update, session_list events; also unicasts terminal_replay on subscribe and session_ready on PTY spawn
-- `server.ts` — HTTP server wiring REST endpoints + WebSocket upgrade + auth; constructs the SQLite repositories (projects/conversations/sessions/cache_metadata) once the cache opens.
+- `server.ts` — HTTP server lifecycle manager. Wires `@hono/node-server` + `@hono/node-ws`, constructs `ApiDeps`, and delegates all request handling to the Hono app. Constructs SQLite repositories once the cache opens.
+- `api/app.ts` — Hono app factory (`createHonoApp`). Registers CORS + auth middleware, mounts all route modules, and wires the `@hono/node-ws` WebSocket upgrade handler.
+- `api/types/api-deps.ts` — `ApiDeps` dependency-injection interface; passed to every route factory so handlers call back into `StreamerServer` without tight coupling.
+- `api/middleware/auth.middleware.ts` — Bearer + `?key=` auth; skips `/healthz` and `POST /api/pair/exchange`.
+- `api/middleware/cors.middleware.ts` — `Access-Control-Allow-*` headers + OPTIONS 204 preflight.
+- `api/middleware/error.middleware.ts` — Hono `onError` handler returning 500 JSON.
+- `api/routes/` — one file per endpoint group: `health`, `misc`, `sessions`, `conversations`, `projects`, `scanner`, `browse`, `pair`, `ws`. Each factory accepts `ApiDeps` and returns a `Hono` sub-app. Handlers write directly to the Node `ServerResponse` via `c.env.outgoing` and return a sentinel `Response(null, { status: 597 })` (`ALREADY_HANDLED`) to skip Hono response piping.
 - `handlers/handleListProjectChats.ts` — `GET /project-chats` handler. Validates query params with zod and delegates to `services/projectChats/listProjectChats.ts`.
 - `services/projectChats/*` — pure functions: normalize sessions and conversations into a discriminated `ProjectChat` union, merge (hiding conversations resumed into active sessions), and sort by `latestMessageAt → updatedAt → createdAt → title`.
 - `services/projects/*` — `upsertProjectByPath`, `ensureProjectsForConversations` (groups conversations by canonical project path, picks latest, upserts one project per path).
