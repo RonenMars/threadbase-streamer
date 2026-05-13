@@ -154,6 +154,7 @@ export class ConversationCache {
     setConversationProjectId: Database.Statement;
     getLatestConversation: Database.Statement;
     listConversationsForProjectBackfill: Database.Statement;
+    popularProjects: Database.Statement;
   };
 
   private migrationsDir?: string;
@@ -240,6 +241,14 @@ export class ConversationCache {
       listConversationsForProjectBackfill: db.prepare(
         "SELECT id, project_path, project_id, last_activity FROM conversation_meta WHERE project_path IS NOT NULL",
       ),
+      popularProjects: db.prepare(
+        `SELECT project_path, project_name, COUNT(*) as cnt
+         FROM conversation_meta
+         WHERE project_path IS NOT NULL
+         GROUP BY project_path
+         ORDER BY cnt DESC
+         LIMIT ?`,
+      ),
     };
   }
 
@@ -261,6 +270,19 @@ export class ConversationCache {
 
   close(): void {
     this.db.close();
+  }
+
+  getPopularProjects(limit: number): Array<{ path: string; name: string; sessionCount: number }> {
+    const rows = this.stmts.popularProjects.all(limit) as Array<{
+      project_path: string;
+      project_name: string | null;
+      cnt: number;
+    }>;
+    return rows.map((r) => ({
+      path: r.project_path,
+      name: r.project_name ?? r.project_path.split(/[/\\]/).pop() ?? r.project_path,
+      sessionCount: r.cnt,
+    }));
   }
 
   private ensureFileIndex(): void {

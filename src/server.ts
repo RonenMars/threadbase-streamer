@@ -407,10 +407,12 @@ export class StreamerServer {
         return await this.handleListConversations(url, res);
       if (method === "GET" && path === "/api/conversations/count")
         return await this.handleConversationsCount(url, res);
+      if (method === "GET" && path === "/api/projects/popular") return this.handleGetPopularProjects(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
       if (method === "GET" && path === "/api/sessions")
         return await this.handleListSessions(url, res);
       if (method === "GET" && path === "/api/sessions/count") return this.handleSessionsCount(res);
+      if (method === "GET" && path === "/api/sessions/recents") return this.handleGetRecentSessions(url, res);
       if (method === "GET" && path === "/project-chats")
         return this.handleListProjectChats(url, res);
       if (method === "POST" && path === "/api/sessions/resume")
@@ -726,6 +728,28 @@ export class StreamerServer {
 
   private handleSessionsCount(res: ServerResponse): void {
     json(res, 200, { total: this.sessionStore.list(this.ptyAttachedIds()).length });
+  }
+
+  private handleGetRecentSessions(url: URL, res: ServerResponse): void {
+    const limit = intParam(url, "limit", 20);
+    const all = this.sessionStore.list(this.ptyAttachedIds());
+    const sorted = [...all].sort((a, b) => {
+      const aTime = a.lastActivityAt ? new Date(a.lastActivityAt).getTime() : new Date(a.startedAt).getTime();
+      const bTime = b.lastActivityAt ? new Date(b.lastActivityAt).getTime() : new Date(b.startedAt).getTime();
+      return bTime - aTime;
+    });
+    const sessions = sorted.slice(0, limit);
+    json(res, 200, { sessions, total: sessions.length });
+  }
+
+  private handleGetPopularProjects(url: URL, res: ServerResponse): void {
+    const limit = intParam(url, "limit", 20);
+    if (!this.cache) {
+      json(res, 200, { projects: [], total: 0 });
+      return;
+    }
+    const projects = this.cache.getPopularProjects(limit);
+    json(res, 200, { projects, total: projects.length });
   }
 
   private handleListProjectChats(url: URL, res: ServerResponse): void {
