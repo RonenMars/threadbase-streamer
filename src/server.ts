@@ -1,3 +1,4 @@
+import { createNodeWebSocket } from "@hono/node-ws";
 import {
   applyIncludeFilter,
   applyPagination,
@@ -11,17 +12,19 @@ import {
 } from "@threadbase/scanner";
 import { existsSync, watch as fsWatch, readdirSync } from "fs";
 import { realpath } from "fs/promises";
+import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
 import { join } from "path";
-import pinoHttp, { type HttpLogger } from "pino-http";
-import { type WebSocket, WebSocketServer } from "ws";
+import type { WebSocket } from "ws";
+import { type AppEnv, createHonoApp } from "./api/app";
+import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
+import type { ApiDeps } from "./api/types/api-deps";
 import {
   loadBrowseRoot,
   loadCacheDir,
   loadPublicUrl,
   loadTailSize,
-  validateApiKey,
   validatePublicUrl,
 } from "./auth";
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
@@ -56,68 +59,8 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
-// ─── Inline Router ─────────────────────────────────────────────────────────
-
-type RouteParams = Record<string, string>;
-type RouteHandler = (
-  params: RouteParams,
-  req: IncomingMessage,
-  url: URL,
-  res: ServerResponse,
-) => void | Promise<void>;
-
-class InlineRouter {
-  private routes: Array<{
-    method: string;
-    parts: string[];
-    greedy: boolean;
-    handler: RouteHandler;
-  }> = [];
-
-  add(method: string, pattern: string, handler: RouteHandler): void {
-    const parts = pattern.split("/");
-    const greedy = parts[parts.length - 1].startsWith("*");
-    this.routes.push({ method, parts, greedy, handler });
-  }
-
-  async match(
-    method: string,
-    path: string,
-    req: IncomingMessage,
-    url: URL,
-    res: ServerResponse,
-  ): Promise<boolean> {
-    const segments = path.split("/");
-    for (const route of this.routes) {
-      if (route.method !== method) continue;
-      const limit = route.greedy ? route.parts.length - 1 : route.parts.length;
-      if (!route.greedy && segments.length !== route.parts.length) continue;
-      if (route.greedy && segments.length < route.parts.length) continue;
-      const params: RouteParams = {};
-      let matched = true;
-      for (let i = 0; i < limit; i++) {
-        const pat = route.parts[i];
-        if (pat.startsWith(":")) params[pat.slice(1)] = segments[i];
-        else if (pat !== segments[i]) {
-          matched = false;
-          break;
-        }
-      }
-      if (!matched) continue;
-      if (route.greedy) {
-        const key = route.parts[route.parts.length - 1].slice(1); // strip "*"
-        params[key] = decodeURIComponent(segments.slice(limit).join("/"));
-      }
-      await route.handler(params, req, url, res);
-      return true;
-    }
-    return false;
-  }
-}
-
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
-  private wss: WebSocketServer;
   private ptyManager: PTYManager;
   private sessionStore: SessionStore;
   private wsHub: WSHub;
@@ -154,23 +97,8 @@ export class StreamerServer {
   } | null = null;
   private cacheDir: string;
   private tailSize: number;
-  private router = new InlineRouter();
+  private honoApp: Hono<AppEnv> | null = null;
   private log = getLogger("server");
-  private httpLog: HttpLogger = pinoHttp({
-    logger: this.log.pino,
-    customLogLevel: (_req, res, err) => {
-      if (err || (res.statusCode ?? 0) >= 500) return "error";
-      if ((res.statusCode ?? 0) >= 400) return "warn";
-      return "info";
-    },
-    customProps: (req) => {
-      const fwd = req.headers["x-forwarded-for"];
-      const fwdFirst = Array.isArray(fwd)
-        ? fwd[0]
-        : (fwd as string | undefined)?.split(",")[0]?.trim();
-      return { ip: fwdFirst || req.socket?.remoteAddress || "-" };
-    },
-  });
 
   constructor(config: ServerConfig & { apiKey: string }) {
     this.apiKey = config.apiKey;
@@ -250,80 +178,87 @@ export class StreamerServer {
       },
     });
 
-    this.router.add("GET", "/api/conversations/*tail", (p, _q, url, res) =>
-      this.handleGetConversation(p.tail, url, res),
-    );
-    this.router.add("GET", "/api/sessions/:id", (p, _q, _u, res) =>
-      this.handleGetSession(p.id, res),
-    );
-    this.router.add("GET", "/api/sessions/:id/output", (p, _q, _u, res) =>
-      this.handleGetOutput(p.id, res),
-    );
-    this.router.add("POST", "/api/sessions/:id/input", (p, req, _u, res) =>
-      this.handleSendInput(p.id, req, res),
-    );
-    this.router.add("POST", "/api/sessions/:id/files", (p, req, _u, res) =>
-      this.handleUploadFile(p.id, req, res),
-    );
-    this.router.add("POST", "/api/sessions/:id/cancel", (p, _q, _u, res) =>
-      this.handleCancel(p.id, res),
-    );
-    this.router.add("PATCH", "/api/sessions/:id/name", (p, req, _u, res) =>
-      this.handleSetSessionName(p.id, req, res),
-    );
-    this.router.add("POST", "/api/sessions/:id/adopt", (p, _q, _u, res) =>
-      this.handleAdopt(p.id, res),
-    );
-
-    this.httpServer = createServer((req, res) => this.handleRequest(req, res));
-    this.wss = new WebSocketServer({ noServer: true });
-
-    this.httpServer.on("upgrade", (req, socket, head) => {
-      if (!this.authenticate(req)) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-
-      this.wss.handleUpgrade(req, socket, head, (ws) => {
+    const apiDeps: ApiDeps = {
+      apiKey: this.apiKey,
+      localNoAuth: this.localNoAuth,
+      publicUrl: this.publicUrl,
+      browseRoot: this.browseRoot,
+      ptyManager: this.ptyManager,
+      sessionStore: this.sessionStore,
+      wsHub: this.wsHub,
+      cache: () => this.cache,
+      projectsRepo: () => this.projectsRepo,
+      conversationsRepo: () => this.conversationsRepo,
+      sessionsRepo: () => this.sessionsRepo,
+      cacheMetadataRepo: () => this.cacheMetadataRepo,
+      ptyAttachedIds: () => this.ptyAttachedIds(),
+      handleListSessions: (url, res) => this.handleListSessions(url, res),
+      handleSessionsCount: (res) => this.handleSessionsCount(res),
+      handleGetRecentSessions: (url, res) => this.handleGetRecentSessions(url, res),
+      handleGetSessionNames: (res) => this.handleGetSessionNames(res),
+      handleGetSession: (id, res) => this.handleGetSession(id, res),
+      handleGetOutput: (id, res) => this.handleGetOutput(id, res),
+      handleSendInput: (id, req, res) => this.handleSendInput(id, req, res),
+      handleCancel: (id, res) => this.handleCancel(id, res),
+      handleSetSessionName: (id, req, res) => this.handleSetSessionName(id, req, res),
+      handleUploadFile: (id, req, res) => this.handleUploadFile(id, req, res),
+      handleAdopt: (id, res) => this.handleAdopt(id, res),
+      handleResume: (req, res) => this.handleResume(req, res),
+      handleStartSession: (req, res) => this.handleStartSession(req, res),
+      handleListConversations: (url, res) => this.handleListConversations(url, res),
+      handleConversationsCount: (url, res) => this.handleConversationsCount(url, res),
+      handleGetConversation: (id, url, res) => this.handleGetConversation(id, url, res),
+      handleSearch: (url, res) => this.handleSearch(url, res),
+      handleGetPopularProjects: (url, res) => this.handleGetPopularProjects(url, res),
+      handleListProjectChats: (url, res) => this.handleListProjectChats(url, res),
+      handlePairStart: (res) => this.handlePairStart(res),
+      handlePairExchange: (req, res) => this.handlePairExchange(req, res),
+      handleBrowse: (url, res) => this.handleBrowse(url, res),
+      handleMkdir: (req, res) => this.handleMkdir(req, res),
+      handleWsOpen: (ws) => {
         this.wsHub.addClient(ws);
-
         const sessions = this.sessionStore.list(this.ptyAttachedIds());
         ws.send(JSON.stringify({ type: "session_list", sessions }));
-
-        ws.on("message", (raw) => {
-          try {
-            const msg = JSON.parse(String(raw));
-            // Client subscribes to a session's terminal stream
-            if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
-              this.addSessionSubscriber(msg.sessionId, ws);
-              if (this.ptyManager.hasSession(msg.sessionId)) {
-                const lines = this.ptyManager.getOutputLines(msg.sessionId, 200);
-                ws.send(
-                  JSON.stringify({ type: "terminal_replay", sessionId: msg.sessionId, lines }),
-                );
-              }
-            }
-            // Client explicitly releases the session (kill PTY immediately)
-            if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
-              this.startGraceTimer(msg.sessionId, 0);
-            }
-          } catch {
-            // malformed JSON, ignore
-          }
-        });
-
-        ws.on("close", () => {
-          // Start grace timers for all sessions this client was subscribed to
-          for (const [sessionId, subscribers] of this.sessionSubscribers) {
-            subscribers.delete(ws);
-            if (subscribers.size === 0) {
-              this.startGraceTimer(sessionId, this.ptyGracePeriodMs);
+      },
+      handleWsMessage: (ws, raw) => {
+        try {
+          const msg = JSON.parse(String(raw));
+          if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
+            this.addSessionSubscriber(msg.sessionId, ws);
+            if (this.ptyManager.hasSession(msg.sessionId)) {
+              const lines = this.ptyManager.getOutputLines(msg.sessionId, 200);
+              ws.send(JSON.stringify({ type: "terminal_replay", sessionId: msg.sessionId, lines }));
             }
           }
-        });
-      });
+          if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
+            this.startGraceTimer(msg.sessionId, 0);
+          }
+        } catch {
+          // malformed JSON, ignore
+        }
+      },
+      handleWsClose: (ws) => {
+        for (const [sessionId, subscribers] of this.sessionSubscribers) {
+          subscribers.delete(ws);
+          if (subscribers.size === 0) {
+            this.startGraceTimer(sessionId, this.ptyGracePeriodMs);
+          }
+        }
+      },
+    };
+
+    this.httpServer = createServer((req, res) => this.handleRequest(req, res));
+
+    // Build a bare app first so createNodeWebSocket can reference it, then
+    // add all routes (including /ws) via createHonoApp using the returned
+    // upgradeWebSocket. The bare app and the final app share the same
+    // reference via the honoApp field, which injectWebSocket will call
+    // through when handling upgrades.
+    const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({
+      app: { fetch: (req: Request, env: unknown) => this.honoApp!.fetch(req, env as any) } as any,
     });
+    this.honoApp = createHonoApp(apiDeps, upgradeWebSocket);
+    injectWebSocket(this.httpServer);
   }
 
   // ─── PTY Grace Timer ────────────────────────────────────────────
@@ -455,103 +390,18 @@ export class StreamerServer {
   // ─── Request Router ────────────────────────────────────────────
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
+    const host = req.headers.host ?? "localhost";
+    const webReq = new Request(`http://${host}${req.url ?? "/"}`, {
+      method: req.method ?? "GET",
+      headers: req.headers as Record<string, string>,
+    });
+    const honoRes = await this.honoApp!.fetch(webReq, { incoming: req, outgoing: res });
+    if (honoRes.status !== ALREADY_HANDLED) {
+      await writeHonoResponse(honoRes, res);
     }
-
-    this.httpLog(req, res);
-
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-    const path = url.pathname;
-    const method = req.method ?? "GET";
-
-    const isPublicRoute =
-      (method === "POST" && path === "/api/pair/exchange") ||
-      (method === "GET" && path === "/healthz");
-    if (!isPublicRoute && !this.authenticate(req)) {
-      json(res, 401, { error: "Unauthorized" });
-      return;
-    }
-
-    try {
-      if (method === "GET" && path === "/healthz")
-        return json(res, 200, { ok: true, version: __VERSION__ });
-      if (method === "GET" && path === "/api/info") return this.handleInfo(res);
-      if (method === "GET" && path === "/api/profiles") return json(res, 200, []);
-      if (method === "POST" && path === "/api/push/register") return json(res, 200, { ok: true });
-      if (method === "POST" && path === "/api/pair/start") return this.handlePairStart(res);
-      if (method === "POST" && path === "/api/pair/exchange")
-        return await this.handlePairExchange(req, res);
-      if (method === "GET" && path === "/api/conversations")
-        return await this.handleListConversations(url, res);
-      if (method === "GET" && path === "/api/conversations/count")
-        return await this.handleConversationsCount(url, res);
-      if (method === "GET" && path === "/api/projects/popular")
-        return this.handleGetPopularProjects(url, res);
-      if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
-      if (method === "GET" && path === "/api/sessions")
-        return await this.handleListSessions(url, res);
-      if (method === "GET" && path === "/api/sessions/count") return this.handleSessionsCount(res);
-      if (method === "GET" && path === "/api/sessions/recents")
-        return this.handleGetRecentSessions(url, res);
-      if (method === "GET" && path === "/api/sessions/names")
-        return this.handleGetSessionNames(res);
-      if (method === "GET" && path === "/project-chats")
-        return this.handleListProjectChats(url, res);
-      if (method === "POST" && path === "/api/sessions/resume")
-        return await this.handleResume(req, res);
-      if (method === "GET" && path === "/api/browse") return await this.handleBrowse(url, res);
-      if (method === "POST" && path === "/api/browse/mkdir")
-        return await this.handleMkdir(req, res);
-      if (method === "POST" && path === "/api/sessions/start")
-        return await this.handleStartSession(req, res);
-
-      if (!(await this.router.match(method, path, req, url, res))) {
-        json(res, 404, { error: "Not found" });
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Internal server error";
-      json(res, 500, { error: message });
-    }
-  }
-
-  // ─── Auth ──────────────────────────────────────────────────────
-
-  private authenticate(req: IncomingMessage): boolean {
-    if (this.localNoAuth && isLocalRequest(req)) return true;
-
-    const authHeader = req.headers.authorization;
-    if (authHeader?.startsWith("Bearer ")) {
-      return validateApiKey(authHeader.slice(7), this.apiKey);
-    }
-
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-    const key = url.searchParams.get("key");
-    if (key) return validateApiKey(key, this.apiKey);
-
-    return false;
   }
 
   // ─── Handlers ──────────────────────────────────────────────────
-
-  private handleInfo(res: ServerResponse): void {
-    const { hostname } = require("os");
-    const ptyIds = this.ptyAttachedIds();
-    json(res, 200, {
-      version: __VERSION__,
-      machineName: hostname(),
-      platform: process.platform,
-      activeSessions: this.sessionStore.list(ptyIds).filter((s: any) => s.status === "running")
-        .length,
-      publicUrl: this.publicUrl,
-    });
-  }
 
   private handlePairStart(res: ServerResponse): void {
     const minted = this.pairTokens.mint();
@@ -1558,6 +1408,27 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+async function writeHonoResponse(honoRes: Response, res: ServerResponse): Promise<void> {
+  const headers: Record<string, string> = {};
+  honoRes.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  res.writeHead(honoRes.status, headers);
+  if (honoRes.body) {
+    const reader = honoRes.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  res.end();
+}
+
 function intParam(url: URL, name: string, defaultValue: number): number {
   const val = url.searchParams.get(name);
   if (!val) return defaultValue;
@@ -1615,11 +1486,6 @@ function parseSessionListQuery(url: URL): ParsedSessionListQuery {
   const cursor = url.searchParams.get("cursor") ?? undefined;
 
   return { query: { limit, sortBy, order, status, cursor } };
-}
-
-function isLocalRequest(req: IncomingMessage): boolean {
-  const addr = req.socket.remoteAddress ?? "";
-  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
 
 function readBody(req: IncomingMessage): Promise<any> {

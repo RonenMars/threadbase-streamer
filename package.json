@@ -59,12 +59,15 @@
     "deploy:windows:healthcheck": "pwsh scripts/deploy.ps1 healthcheck"
   },
   "dependencies": {
+    "@hono/node-server": "^1.19.14",
+    "@hono/node-ws": "^1.3.1",
     "@threadbase/scanner": "file:./vendor/scanner",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
     "commander": "^12.0.0",
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.2",
+    "hono": "^4.12.18",
     "node-pty": "^1.1.0",
     "pg": "^8.20.0",
     "pino": "^10.3.1",

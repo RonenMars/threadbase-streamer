@@ -301,7 +301,7 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
       expect(res.status).toBe(200);
-      const body = await res.json() as any;
+      const body = (await res.json()) as any;
       expect(Array.isArray(body.projects)).toBe(true);
       expect(typeof body.total).toBe("number");
     });
@@ -316,7 +316,7 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
       expect(res.status).toBe(200);
-      const body = await res.json() as any;
+      const body = (await res.json()) as any;
       expect(body.projects.length).toBeLessThanOrEqual(5);
     });
 
@@ -324,7 +324,7 @@ describe("StreamerServer", () => {
       const res = await fetch(`${baseUrl}/api/projects/popular`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
-      const body = await res.json() as any;
+      const body = (await res.json()) as any;
       for (const p of body.projects) {
         expect(typeof p.path).toBe("string");
         expect(typeof p.name).toBe("string");
