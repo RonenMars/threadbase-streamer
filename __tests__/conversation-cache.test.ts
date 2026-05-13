@@ -320,6 +320,44 @@ describe("hasConversation()", () => {
   });
 });
 
+describe("getPopularProjects()", () => {
+  it("returns projects ranked by conversation count descending", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "p1-a", sessionId: "p1-a", filePath: "/p/p1-a.jsonl", projectPath: "~/my-app", projectName: "My App" },
+      { ...BASE_META, id: "p1-b", sessionId: "p1-b", filePath: "/p/p1-b.jsonl", projectPath: "~/my-app", projectName: "My App" },
+      { ...BASE_META, id: "p1-c", sessionId: "p1-c", filePath: "/p/p1-c.jsonl", projectPath: "~/my-app", projectName: "My App" },
+      { ...BASE_META, id: "p2-a", sessionId: "p2-a", filePath: "/p/p2-a.jsonl", projectPath: "~/work/api", projectName: "API" },
+      { ...BASE_META, id: "p2-b", sessionId: "p2-b", filePath: "/p/p2-b.jsonl", projectPath: "~/work/api", projectName: "API" },
+      { ...BASE_META, id: "p3-a", sessionId: "p3-a", filePath: "/p/p3-a.jsonl", projectPath: null as any, projectName: undefined },
+    ] as any);
+    const result = cache.getPopularProjects(10);
+    expect(result).toHaveLength(2);
+    expect(result[0].path).toBe("~/my-app");
+    expect(result[0].sessionCount).toBe(3);
+    expect(result[1].path).toBe("~/work/api");
+    expect(result[1].sessionCount).toBe(2);
+  });
+
+  it("falls back to last path segment when projectName is null", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "fe-1", sessionId: "fe-1", filePath: "/p/fe-1.jsonl", projectPath: "~/work/frontend", projectName: undefined },
+    ] as any);
+    const result = cache.getPopularProjects(10);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("frontend");
+  });
+
+  it("respects the limit parameter", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "lim-1", sessionId: "lim-1", filePath: "/p/lim-1.jsonl", projectPath: "~/proj-a", projectName: "A" },
+      { ...BASE_META, id: "lim-2", sessionId: "lim-2", filePath: "/p/lim-2.jsonl", projectPath: "~/proj-b", projectName: "B" },
+      { ...BASE_META, id: "lim-3", sessionId: "lim-3", filePath: "/p/lim-3.jsonl", projectPath: "~/proj-c", projectName: "C" },
+    ] as any);
+    const result = cache.getPopularProjects(2);
+    expect(result).toHaveLength(2);
+  });
+});
+
 describe("invalidate()", () => {
   beforeEach(() => {
     cache.upsertFromScannerMeta([
