@@ -56,6 +56,65 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
+// ─── Inline Router ─────────────────────────────────────────────────────────
+
+type RouteParams = Record<string, string>;
+type RouteHandler = (
+  params: RouteParams,
+  req: IncomingMessage,
+  url: URL,
+  res: ServerResponse,
+) => void | Promise<void>;
+
+class InlineRouter {
+  private routes: Array<{
+    method: string;
+    parts: string[];
+    greedy: boolean;
+    handler: RouteHandler;
+  }> = [];
+
+  add(method: string, pattern: string, handler: RouteHandler): void {
+    const parts = pattern.split("/");
+    const greedy = parts[parts.length - 1].startsWith("*");
+    this.routes.push({ method, parts, greedy, handler });
+  }
+
+  async match(
+    method: string,
+    path: string,
+    req: IncomingMessage,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<boolean> {
+    const segments = path.split("/");
+    for (const route of this.routes) {
+      if (route.method !== method) continue;
+      const limit = route.greedy ? route.parts.length - 1 : route.parts.length;
+      if (!route.greedy && segments.length !== route.parts.length) continue;
+      if (route.greedy && segments.length < route.parts.length) continue;
+      const params: RouteParams = {};
+      let matched = true;
+      for (let i = 0; i < limit; i++) {
+        const pat = route.parts[i];
+        if (pat.startsWith(":")) params[pat.slice(1)] = segments[i];
+        else if (pat !== segments[i]) {
+          matched = false;
+          break;
+        }
+      }
+      if (!matched) continue;
+      if (route.greedy) {
+        const key = route.parts[route.parts.length - 1].slice(1); // strip "*"
+        params[key] = decodeURIComponent(segments.slice(limit).join("/"));
+      }
+      await route.handler(params, req, url, res);
+      return true;
+    }
+    return false;
+  }
+}
+
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
   private wss: WebSocketServer;
@@ -95,6 +154,7 @@ export class StreamerServer {
   } | null = null;
   private cacheDir: string;
   private tailSize: number;
+  private router = new InlineRouter();
   private log = getLogger("server");
   private httpLog: HttpLogger = pinoHttp({
     logger: this.log.pino,
@@ -189,6 +249,31 @@ export class StreamerServer {
         }
       },
     });
+
+    this.router.add("GET", "/api/conversations/*tail", (p, _q, url, res) =>
+      this.handleGetConversation(p.tail, url, res),
+    );
+    this.router.add("GET", "/api/sessions/:id", (p, _q, _u, res) =>
+      this.handleGetSession(p.id, res),
+    );
+    this.router.add("GET", "/api/sessions/:id/output", (p, _q, _u, res) =>
+      this.handleGetOutput(p.id, res),
+    );
+    this.router.add("POST", "/api/sessions/:id/input", (p, req, _u, res) =>
+      this.handleSendInput(p.id, req, res),
+    );
+    this.router.add("POST", "/api/sessions/:id/files", (p, req, _u, res) =>
+      this.handleUploadFile(p.id, req, res),
+    );
+    this.router.add("POST", "/api/sessions/:id/cancel", (p, _q, _u, res) =>
+      this.handleCancel(p.id, res),
+    );
+    this.router.add("PATCH", "/api/sessions/:id/name", (p, req, _u, res) =>
+      this.handleSetSessionName(p.id, req, res),
+    );
+    this.router.add("POST", "/api/sessions/:id/adopt", (p, _q, _u, res) =>
+      this.handleAdopt(p.id, res),
+    );
 
     this.httpServer = createServer((req, res) => this.handleRequest(req, res));
     this.wss = new WebSocketServer({ noServer: true });
@@ -407,12 +492,16 @@ export class StreamerServer {
         return await this.handleListConversations(url, res);
       if (method === "GET" && path === "/api/conversations/count")
         return await this.handleConversationsCount(url, res);
-      if (method === "GET" && path === "/api/projects/popular") return this.handleGetPopularProjects(url, res);
+      if (method === "GET" && path === "/api/projects/popular")
+        return this.handleGetPopularProjects(url, res);
       if (method === "GET" && path === "/api/search") return await this.handleSearch(url, res);
       if (method === "GET" && path === "/api/sessions")
         return await this.handleListSessions(url, res);
       if (method === "GET" && path === "/api/sessions/count") return this.handleSessionsCount(res);
-      if (method === "GET" && path === "/api/sessions/recents") return this.handleGetRecentSessions(url, res);
+      if (method === "GET" && path === "/api/sessions/recents")
+        return this.handleGetRecentSessions(url, res);
+      if (method === "GET" && path === "/api/sessions/names")
+        return this.handleGetSessionNames(res);
       if (method === "GET" && path === "/project-chats")
         return this.handleListProjectChats(url, res);
       if (method === "POST" && path === "/api/sessions/resume")
@@ -423,90 +512,9 @@ export class StreamerServer {
       if (method === "POST" && path === "/api/sessions/start")
         return await this.handleStartSession(req, res);
 
-      const pathParts = path.split("/");
-
-      if (
-        method === "GET" &&
-        pathParts[1] === "api" &&
-        pathParts[2] === "conversations" &&
-        pathParts[3] &&
-        pathParts.length >= 4
-      )
-        return await this.handleGetConversation(
-          decodeURIComponent(pathParts.slice(3).join("/")),
-          url,
-          res,
-        );
-
-      if (method === "GET" && path === "/api/sessions/names") {
-        return this.handleGetSessionNames(res);
+      if (!(await this.router.match(method, path, req, url, res))) {
+        json(res, 404, { error: "Not found" });
       }
-
-      if (
-        method === "GET" &&
-        pathParts[1] === "api" &&
-        pathParts[2] === "sessions" &&
-        pathParts[3] &&
-        pathParts.length === 4
-      )
-        return this.handleGetSession(pathParts[3], res);
-
-      if (
-        method === "POST" &&
-        pathParts[1] === "api" &&
-        pathParts[2] === "sessions" &&
-        pathParts[4] === "input" &&
-        pathParts.length === 5
-      )
-        return await this.handleSendInput(pathParts[3], req, res);
-
-      if (
-        method === "POST" &&
-        pathParts[1] === "api" &&
-        pathParts[2] === "sessions" &&
-        pathParts[4] === "files" &&
-        pathParts.length === 5
-      )
-        return await this.handleUploadFile(pathParts[3], req, res);
-
-      if (
-        method === "GET" &&
-        pathParts[1] === "api" &&
-        pathParts[2] === "sessions" &&
-        pathParts[4] === "output" &&
-        pathParts.length === 5
-      )
-        return this.handleGetOutput(pathParts[3], res);
-
-      if (
-        method === "POST" &&
-        pathParts[1] === "api" &&
-        pathParts[2] === "sessions" &&
-        pathParts[4] === "cancel" &&
-        pathParts.length === 5
-      )
-        return this.handleCancel(pathParts[3], res);
-
-      if (
-        method === "PATCH" &&
-        pathParts[1] === "api" &&
-        pathParts[2] === "sessions" &&
-        pathParts[4] === "name" &&
-        pathParts.length === 5
-      )
-        return this.handleSetSessionName(pathParts[3], req, res);
-
-      if (
-        method === "POST" &&
-        pathParts[1] === "api" &&
-        pathParts[2] === "sessions" &&
-        pathParts[4] === "adopt" &&
-        pathParts.length === 5
-      ) {
-        return await this.handleAdopt(pathParts[3], res);
-      }
-
-      json(res, 404, { error: "Not found" });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Internal server error";
       json(res, 500, { error: message });
@@ -734,8 +742,12 @@ export class StreamerServer {
     const limit = intParam(url, "limit", 20);
     const all = this.sessionStore.list(this.ptyAttachedIds());
     const sorted = [...all].sort((a, b) => {
-      const aTime = a.lastActivityAt ? new Date(a.lastActivityAt).getTime() : new Date(a.startedAt).getTime();
-      const bTime = b.lastActivityAt ? new Date(b.lastActivityAt).getTime() : new Date(b.startedAt).getTime();
+      const aTime = a.lastActivityAt
+        ? new Date(a.lastActivityAt).getTime()
+        : new Date(a.startedAt).getTime();
+      const bTime = b.lastActivityAt
+        ? new Date(b.lastActivityAt).getTime()
+        : new Date(b.startedAt).getTime();
       return bTime - aTime;
     });
     const sessions = sorted.slice(0, limit);
