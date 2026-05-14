@@ -19,6 +19,7 @@ import { join } from "path";
 import type { WebSocket } from "ws";
 import { type AppEnv, createHonoApp } from "./api/app";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
+import { createWsRoutes } from "./api/routes/ws.routes";
 import type { ApiDeps } from "./api/types/api-deps";
 import {
   loadBrowseRoot,
@@ -249,15 +250,13 @@ export class StreamerServer {
 
     this.httpServer = createServer((req, res) => this.handleRequest(req, res));
 
-    // Build a bare app first so createNodeWebSocket can reference it, then
-    // add all routes (including /ws) via createHonoApp using the returned
-    // upgradeWebSocket. The bare app and the final app share the same
-    // reference via the honoApp field, which injectWebSocket will call
-    // through when handling upgrades.
-    const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({
-      app: { fetch: (req: Request, env: unknown) => this.honoApp!.fetch(req, env as any) } as any,
-    });
-    this.honoApp = createHonoApp(apiDeps, upgradeWebSocket);
+    // createNodeWebSocket needs the real Hono app (it calls app.request() on
+    // upgrade). Resolve the chicken-and-egg by creating the app without WS
+    // routes first, handing it to createNodeWebSocket, then mounting the WS
+    // route onto the same app instance.
+    this.honoApp = createHonoApp(apiDeps);
+    const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app: this.honoApp });
+    this.honoApp.route("/", createWsRoutes(apiDeps, upgradeWebSocket));
     injectWebSocket(this.httpServer);
   }
 
