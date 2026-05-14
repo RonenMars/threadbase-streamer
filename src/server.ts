@@ -589,17 +589,25 @@ export class StreamerServer {
 
   private handleGetRecentSessions(url: URL, res: ServerResponse): void {
     const limit = intParam(url, "limit", 20);
-    const all = this.sessionStore.list(this.ptyAttachedIds());
-    const sorted = [...all].sort((a, b) => {
-      const aTime = a.lastActivityAt
-        ? new Date(a.lastActivityAt).getTime()
-        : new Date(a.startedAt).getTime();
-      const bTime = b.lastActivityAt
-        ? new Date(b.lastActivityAt).getTime()
-        : new Date(b.startedAt).getTime();
-      return bTime - aTime;
-    });
-    const sessions = sorted.slice(0, limit);
+    if (!this.cache) {
+      json(res, 200, { sessions: [], total: 0 });
+      return;
+    }
+    const { conversations } = this.cache.listConversations({ limit, offset: 0 });
+    const sessions = conversations.map((c) => ({
+      id: c.id,
+      status: "idle" as const,
+      ptyAttached: false,
+      projectId: c.projectId ?? undefined,
+      projectPath: c.projectPath ?? "",
+      projectName: c.projectName ?? "",
+      branch: c.branch ?? undefined,
+      lastOutput: "",
+      elapsedMs: 0,
+      promptCount: c.messageCount,
+      startedAt: c.lastActivity,
+      lastActivityAt: c.lastActivity,
+    }));
     json(res, 200, { sessions, total: sessions.length });
   }
 
