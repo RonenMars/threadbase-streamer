@@ -662,6 +662,9 @@ cmd_deploy() {
   # - migrations/    — SQLite (ConversationCache.open(); always required)
   # - pg-migrations/ — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
   #                   migration runner reads the dir at startup and crashes if absent)
+  # Remove existing dirs first: `cp -r src dst` nests as `dst/src` when dst exists,
+  # which previously fed the SQLite loader a stale set of pg-flavored files.
+  rm -rf "$RELEASES_DIR/migrations" "$RELEASES_DIR/pg-migrations"
   cp -r dist/migrations "$RELEASES_DIR/migrations"
   [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$RELEASES_DIR/pg-migrations"
 
