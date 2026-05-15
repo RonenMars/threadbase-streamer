@@ -2,6 +2,7 @@ import type { HttpBindings } from "@hono/node-server";
 import { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { WebSocket } from "ws";
+import { getLogger } from "../logger";
 import { authMiddleware } from "./middleware/auth.middleware";
 import { corsMiddleware } from "./middleware/cors.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
@@ -27,7 +28,22 @@ export type AppEnv = {
 
 export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket<WebSocket>) => {
   const app = new Hono<AppEnv>();
+  const httpLog = getLogger("http");
 
+  app.use("*", async (c, next) => {
+    const start = Date.now();
+    const ua = c.req.header("user-agent") ?? "";
+    await next();
+    const ms = Date.now() - start;
+    httpLog.info(`[req] ${c.req.method} ${c.req.path} → ${c.res.status} ${ms}ms`, {
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      ms,
+      ua,
+      event: "http.request",
+    });
+  });
   app.use("*", corsMiddleware());
   app.use("*", authMiddleware(deps));
   app.onError(errorMiddleware);
