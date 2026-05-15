@@ -232,6 +232,21 @@ Note: mobile types also include `idle` as an alias — treat `on_hold` and `idle
 
 When making a risky change, either: (a) keep the old shape and add the new one alongside it, or (b) open a coordinated PR in tb-mobile at the same time and document the minimum required app version in the commit message.
 
+## Menubar app (vendor/menubar)
+
+`vendor/menubar` is a git submodule pointing at `RonenMars/threadbase-menubar` — the Electron tray app that shows streamer status. It runs out-of-process and only talks to the streamer over `GET /healthz`.
+
+**Coupling to this repo:**
+- It reads the streamer's listening port from `~/.threadbase/server.yaml` (`port:` line) at launch. Resolution order: `THREADBASE_PORT` env → `port:` in `server.yaml` → fallback `8766`.
+- Polls `http://localhost:<port>/healthz` every 5s and expects the existing `{ ok, version }` response shape.
+
+**Don't break without coordinating a menubar update:**
+- Renaming or moving the `port:` field in `server.yaml`
+- Removing `/healthz` or changing its response shape
+- Changing the default listening port (the menubar fallback `8766` would need to be bumped in lockstep)
+
+Parent-repo commits that bump the submodule pointer should use a `chore: bump vendor/menubar (<reason>)` title.
+
 ## Contributing to docs
 
 If you hit an undocumented issue during setup, deploy, or runtime — ask the user: "This doesn't seem to be covered in `docs/troubleshooting.md`. Would you like me to add it?" Then add a new section following the existing format (symptom → cause → fix) and commit it alongside any code fix.
