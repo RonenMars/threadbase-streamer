@@ -2,9 +2,11 @@ import "dotenv/config";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
 import { loadOrCreateApiKey, loadPublicUrl } from "../src/auth";
+import { loadUpdateConfig, UPDATE_CONFIG_PATH } from "../src/config/update-config";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
+import { checkForUpdate } from "../src/updater/check-update";
 
 const log = getLogger("cli");
 
@@ -103,6 +105,55 @@ program
     const apiKey = loadOrCreateApiKey();
     const publicUrl = loadPublicUrl() ?? null;
     await printPairQR({ port, apiKey, publicUrl });
+  });
+
+program
+  .command("update")
+  .description("Check for streamer updates from GitHub Releases")
+  .option("--check", "Check only; do not install (default for this build)", false)
+  .option("--version <version>", "Pin to a specific release tag")
+  .option("--allow-major", "Allow a major-version bump", false)
+  .action(async (opts) => {
+    const cfg = loadUpdateConfig();
+    if (!cfg) {
+      log.warn(
+        `No update config found at ${UPDATE_CONFIG_PATH}. Create one with at least 'github_repo: owner/name' to enable updates.`,
+        undefined,
+        "console",
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    try {
+      const result = await checkForUpdate({
+        currentVersion: __VERSION__,
+        config: cfg,
+        pinnedVersion: opts.version,
+        allowMajor: opts.allowMajor,
+      });
+
+      log.info(`Current : ${result.current}`, undefined, "console");
+      log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
+      log.info(`Channel : ${cfg.channel}`, undefined, "console");
+      log.info(`Diff    : ${result.diff ?? "(none)"}`, undefined, "console");
+      log.info(`Status  : ${result.reason}`, undefined, "console");
+
+      if (!result.wouldInstall) {
+        process.exitCode = 0;
+        return;
+      }
+
+      log.warn(
+        "Install step is not yet implemented in this build — manual update required.",
+        undefined,
+        "console",
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error(`Update check failed: ${message}`, { error: message }, "console");
+      process.exitCode = 1;
+    }
   });
 
 program.parse();
