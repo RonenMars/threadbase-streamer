@@ -7,6 +7,7 @@ import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
+import { runInstall } from "../src/updater/install";
 
 const log = getLogger("cli");
 
@@ -109,10 +110,13 @@ program
 
 program
   .command("update")
-  .description("Check for streamer updates from GitHub Releases")
-  .option("--check", "Check only; do not install (default for this build)", false)
+  .description("Check for streamer updates from GitHub Releases and install them")
+  .option("--check", "Check only; do not install", false)
   .option("--version <version>", "Pin to a specific release tag")
   .option("--allow-major", "Allow a major-version bump", false)
+  .option("--force", "Skip the active-session defer check", false)
+  .option("--dry-run", "Print what would be installed without writing to disk", false)
+  .option("-p, --port <number>", "Port of the running streamer for active-session check", "3456")
   .action(async (opts) => {
     const cfg = loadUpdateConfig();
     if (!cfg) {
@@ -126,32 +130,65 @@ program
     }
 
     try {
-      const result = await checkForUpdate({
+      if (opts.check) {
+        const result = await checkForUpdate({
+          currentVersion: __VERSION__,
+          config: cfg,
+          pinnedVersion: opts.version,
+          allowMajor: opts.allowMajor,
+        });
+        log.info(`Current : ${result.current}`, undefined, "console");
+        log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
+        log.info(`Channel : ${cfg.channel}`, undefined, "console");
+        log.info(`Diff    : ${result.diff ?? "(none)"}`, undefined, "console");
+        log.info(`Status  : ${result.reason}`, undefined, "console");
+        return;
+      }
+
+      const port = Number.parseInt(opts.port, 10);
+      const apiKey = loadOrCreateApiKey();
+
+      const result = await runInstall({
         currentVersion: __VERSION__,
         config: cfg,
         pinnedVersion: opts.version,
         allowMajor: opts.allowMajor,
+        force: opts.force,
+        dryRun: opts.dryRun,
+        runningServer: { port, apiKey },
       });
 
-      log.info(`Current : ${result.current}`, undefined, "console");
-      log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
-      log.info(`Channel : ${cfg.channel}`, undefined, "console");
-      log.info(`Diff    : ${result.diff ?? "(none)"}`, undefined, "console");
-      log.info(`Status  : ${result.reason}`, undefined, "console");
-
-      if (!result.wouldInstall) {
-        process.exitCode = 0;
-        return;
+      switch (result.kind) {
+        case "no-op":
+          log.info(`Current : ${result.current}`, undefined, "console");
+          log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
+          log.info(`Status  : ${result.reason}`, undefined, "console");
+          break;
+        case "deferred":
+          log.warn(`Deferred: ${result.reason}`, undefined, "console");
+          process.exitCode = 2;
+          break;
+        case "dry-run":
+          log.info(
+            `Would install ${result.latest} from ${result.tarballUrl}`,
+            undefined,
+            "console",
+          );
+          break;
+        case "installed":
+          log.info(
+            `Installed ${result.installed} (was ${result.previous}). Restart: ${result.restart.method}.`,
+            undefined,
+            "console",
+          );
+          if (result.pruned.length > 0) {
+            log.info(`Pruned old releases: ${result.pruned.join(", ")}`, undefined, "console");
+          }
+          break;
       }
-
-      log.warn(
-        "Install step is not yet implemented in this build — manual update required.",
-        undefined,
-        "console",
-      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error(`Update check failed: ${message}`, { error: message }, "console");
+      log.error(`Update failed: ${message}`, { error: message }, "console");
       process.exitCode = 1;
     }
   });

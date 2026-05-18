@@ -1,9 +1,22 @@
+export interface ReleaseAsset {
+  name: string;
+  browserDownloadUrl: string;
+  size: number;
+}
+
 export interface ReleaseInfo {
   version: string;
   tagName: string;
   prerelease: boolean;
   htmlUrl: string;
   publishedAt: string | null;
+  assets: ReleaseAsset[];
+}
+
+interface GitHubReleaseAsset {
+  name: string;
+  browser_download_url: string;
+  size: number;
 }
 
 interface GitHubRelease {
@@ -13,6 +26,7 @@ interface GitHubRelease {
   draft: boolean;
   html_url: string;
   published_at: string | null;
+  assets: GitHubReleaseAsset[];
 }
 
 const GITHUB_API = "https://api.github.com";
@@ -28,6 +42,11 @@ function toReleaseInfo(r: GitHubRelease): ReleaseInfo {
     prerelease: r.prerelease,
     htmlUrl: r.html_url,
     publishedAt: r.published_at,
+    assets: (r.assets ?? []).map((a) => ({
+      name: a.name,
+      browserDownloadUrl: a.browser_download_url,
+      size: a.size,
+    })),
   };
 }
 

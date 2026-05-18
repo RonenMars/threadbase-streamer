@@ -1,11 +1,8 @@
 name: Release
 
 on:
-  # push trigger intentionally disabled until the team is ready to start
-  # publishing semantic-release versions from main. Re-enable by uncommenting
-  # the two lines below.
-  # push:
-  #   branches: [main, next]
+  push:
+    branches: [main, next]
   workflow_dispatch:
     inputs:
       publish:
