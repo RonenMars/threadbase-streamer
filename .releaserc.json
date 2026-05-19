@@ -1,0 +1,49 @@
+{
+  "branches": ["main", { "name": "next", "prerelease": true }],
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          { "type": "chore", "release": false },
+          { "type": "docs", "release": false },
+          { "type": "test", "release": false },
+          { "type": "build", "release": false },
+          { "type": "ci", "release": false }
+        ]
+      }
+    ],
+    ["@semantic-release/release-notes-generator", { "preset": "conventionalcommits" }],
+    ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
+    ["@semantic-release/npm", { "npmPublish": false }],
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "node scripts/build-manifest.mjs --dir release-artifacts --version ${nextRelease.version}"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "release-artifacts/threadbase-streamer-*.tgz",
+            "label": "Streamer tarball"
+          },
+          {
+            "path": "release-artifacts/manifest.json",
+            "label": "Release manifest"
+          }
+        ]
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["package.json", "package-lock.json", "CHANGELOG.md"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ]
+  ]
+}

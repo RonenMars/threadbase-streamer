@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  # push trigger intentionally disabled until the team is ready to start
+  # publishing semantic-release versions from main. Re-enable by uncommenting
+  # the two lines below.
+  # push:
+  #   branches: [main, next]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Run semantic-release (tag + GitHub Release). When false, only the build matrix runs — use for dry-run CI validation on a feature branch."
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+          - os: macos-13
+            target: darwin-x64
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: windows-latest
+            target: win32-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Init scanner submodule
+        shell: bash
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Linux build tools for node-pty
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y python3 make g++
+
+      - name: Build scanner
+        shell: bash
+        run: cd vendor/scanner && npm install && npm run build
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build streamer
+        run: npm run build
+
+      - name: Pack platform tarball
+        run: node scripts/pack-platform.mjs --out release-artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.target }}
+          path: release-artifacts/threadbase-streamer-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Release
+    needs: build
+    # Run on push to main/next, or when workflow_dispatch was invoked with
+    # publish=true. Manual runs default to publish=false so CI can be
+    # exercised on a feature branch without tagging a release.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Init scanner submodule
+        env:
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Linux build tools for node-pty
+        run: sudo apt-get update && sudo apt-get install -y python3 make g++
+
+      - name: Build scanner
+        run: cd vendor/scanner && npm install && npm run build
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download all platform tarballs
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          pattern: tarball-*
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: ls -la release-artifacts/
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
