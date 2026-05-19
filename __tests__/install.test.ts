@@ -26,6 +26,13 @@ const release = {
       browserDownloadUrl: "https://example/tarball.tgz",
       size: 1000,
     },
+    // win32-x64 tarball — used by the Windows-only swap-ordering test below
+    // when process.platform is temporarily flipped to "win32".
+    {
+      name: "threadbase-streamer-1.0.1-win32-x64.tgz",
+      browserDownloadUrl: "https://example/tarball-win.tgz",
+      size: 1000,
+    },
   ],
 };
 
@@ -36,6 +43,11 @@ const manifest: ReleaseManifest = {
     [platformKey()]: {
       filename: `threadbase-streamer-1.0.1-${platformKey()}.tgz`,
       sha256: "a".repeat(64),
+      size: 1000,
+    },
+    "win32-x64": {
+      filename: "threadbase-streamer-1.0.1-win32-x64.tgz",
+      sha256: "b".repeat(64),
       size: 1000,
     },
   },
@@ -63,6 +75,7 @@ vi.mock("../src/updater/swap", () => ({
 
 vi.mock("../src/updater/restart", () => ({
   restartService: vi.fn(async () => ({ method: "launchctl", stdout: "", stderr: "" })),
+  stopService: vi.fn(async () => ({ method: "noop", stdout: "", stderr: "" })),
 }));
 
 vi.mock("../src/updater/active-sessions", () => ({
@@ -72,7 +85,7 @@ vi.mock("../src/updater/active-sessions", () => ({
 import { countActiveSessions } from "../src/updater/active-sessions";
 import { downloadAndVerify, fetchManifest } from "../src/updater/download";
 import { runInstall } from "../src/updater/install";
-import { restartService } from "../src/updater/restart";
+import { restartService, stopService } from "../src/updater/restart";
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "../src/updater/swap";
 import { unpackTarball } from "../src/updater/unpack";
 
@@ -162,5 +175,29 @@ describe("runInstall orchestration", () => {
   it("uses --version pin instead of latest", async () => {
     const r = await runInstall({ currentVersion: "1.0.0", config: cfg, pinnedVersion: "1.0.1" });
     expect(r.kind).toBe("installed");
+  });
+
+  it("on Windows, stops the service before swapCurrent so the file replace can win against open handles", async () => {
+    const originalPlatform = process.platform;
+    const originalArch = process.arch;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    Object.defineProperty(process, "arch", { value: "x64" });
+    try {
+      const r = await runInstall({ currentVersion: "1.0.0", config: cfg });
+      expect(r.kind).toBe("installed");
+      expect(stopService).toHaveBeenCalled();
+      const stopOrder = vi.mocked(stopService).mock.invocationCallOrder[0];
+      const swapOrder = vi.mocked(swapCurrent).mock.invocationCallOrder[0];
+      expect(stopOrder).toBeLessThan(swapOrder);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform });
+      Object.defineProperty(process, "arch", { value: originalArch });
+    }
+  });
+
+  it("on macOS/Linux, does NOT call stopService (atomic symlink swap doesn't need it)", async () => {
+    const r = await runInstall({ currentVersion: "1.0.0", config: cfg });
+    expect(r.kind).toBe("installed");
+    expect(stopService).not.toHaveBeenCalled();
   });
 });

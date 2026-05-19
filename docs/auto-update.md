@@ -78,6 +78,16 @@ script), the installer still returns success — the new release is on disk
 and `current/` is repointed; the next manual restart picks it up. The CLI
 prints `Status: failed: <reason>` so the failure is visible.
 
+**Windows ordering caveat.** On macOS/Linux the swap is an atomic
+`symlink → rename` and the running streamer keeps its old inode open
+across the swap. On Windows there is no usable symlink, so the updater
+replaces the `current/` directory wholesale — and Windows refuses to
+delete a directory whose files are open. The installer therefore calls
+`stopService` (`schtasks /End`) **before** `swapCurrent` on Windows, then
+`restartService` brings the task back on the new version. Cost: a brief
+downtime window during the swap (typically <2s). Not done on macOS/Linux
+because it's unnecessary and would interrupt active sessions for no reason.
+
 ## Failure modes
 
 - **sha256 mismatch.** Download is deleted, error thrown, swap not

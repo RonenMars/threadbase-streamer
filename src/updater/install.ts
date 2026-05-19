@@ -6,7 +6,7 @@ import { downloadAndVerify, fetchManifest } from "./download";
 import { fetchLatestRelease, fetchReleaseByTag } from "./github-releases";
 import { pickArtifact } from "./manifest";
 import { DOWNLOAD_DIR, downloadPath, releaseDir } from "./paths";
-import { restartService } from "./restart";
+import { restartService, stopService } from "./restart";
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "./swap";
 import { unpackTarball } from "./unpack";
 
@@ -111,6 +111,18 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
 
   const destDir = releaseDir(targetVersion);
   await unpackTarball({ tarballPath, destDir });
+
+  // On Windows the streamer process holds open handles inside
+  // ~/.threadbase/current/, which makes the directory replace inside
+  // swapCurrent fail with EBUSY. Stop the service first; restartService
+  // below will bring it back on the new version. macOS/Linux swap via
+  // atomic symlink rename and don't need this — stopService is a no-op
+  // there.
+  if (process.platform === "win32") {
+    await stopService().catch(() => {
+      /* best effort — swap may still succeed if the streamer wasn't running */
+    });
+  }
 
   swapCurrent(targetVersion);
 
