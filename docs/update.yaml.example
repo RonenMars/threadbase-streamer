@@ -1,0 +1,34 @@
+# Auto-update configuration for threadbase-streamer.
+# Copy to ~/.threadbase/update.yaml and edit. Without this file the
+# `threadbase-streamer update` command no-ops with a hint.
+
+# Required: GitHub repo that publishes streamer releases ("owner/name").
+github_repo: RonenMars/threadbase-streamer
+
+# Which release channel to track.
+#   stable — only GitHub Releases marked "Latest" (default)
+#   next   — newest prerelease, used for opt-in beta builds
+channel: stable
+
+# Semver diffs the updater is allowed to install without --allow-major.
+# Defaults to ["patch", "minor"]; add "major" to opt in to major bumps.
+allow:
+  - patch
+  - minor
+
+# Skip the install if the running streamer reports any session in
+# `running` or `waiting_input` state. Override per-invocation with --force.
+defer_if_active_sessions: true
+
+# Background polling cadence (minutes). Currently advisory — the streamer
+# does not yet poll on its own; `threadbase-streamer update` is manual.
+# Reserved for the auto-poll loop that will read this field.
+poll_interval_minutes: 60
+
+# Master switch for the future auto-poll loop. Manual `update` runs ignore
+# this field; it is only consulted by the background poller.
+auto_update: false
+
+# Optional HMAC secret for webhook-triggered updates (unused today; reserved
+# for a future "GitHub release webhook → streamer endpoint" path).
+webhook_secret: null
