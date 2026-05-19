@@ -33,7 +33,12 @@ jobs:
         shell: bash
         env:
           SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+        # actions/checkout creates vendor/scanner as an empty directory for
+        # the tracked submodule path, so a bare `git clone … vendor/scanner`
+        # fails with "destination path … already exists". Remove first.
+        run: |
+          rm -rf vendor/scanner
+          git clone "https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git" vendor/scanner
 
       - uses: actions/setup-node@v4
         with:
@@ -84,7 +89,11 @@ jobs:
       - name: Init scanner submodule
         env:
           SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+        # See note in the build job above — actions/checkout creates the
+        # submodule path empty, so the clone needs a fresh destination.
+        run: |
+          rm -rf vendor/scanner
+          git clone "https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git" vendor/scanner
 
       - uses: actions/setup-node@v4
         with:
