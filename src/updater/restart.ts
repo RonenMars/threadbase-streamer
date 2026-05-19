@@ -14,11 +14,22 @@ export interface RestartOptions {
   serviceLabel?: string;
 }
 
-const DEFAULT_LABELS: Record<NodeJS.Platform, string | undefined> = {
-  darwin: "com.threadbase.streamer",
-  linux: "threadbase-streamer.service",
-  win32: "ThreadbaseStreamer",
-} as Partial<Record<NodeJS.Platform, string>> as Record<NodeJS.Platform, string | undefined>;
+// Defaults match what scripts/deploy.sh, scripts/deploy-linux.sh, and
+// scripts/deploy.ps1 actually create. Env-var overrides honor the same names
+// the deploy scripts read, so a user with a customized label only configures
+// it once.
+function resolveDefaultLabel(): string | undefined {
+  if (process.platform === "darwin") {
+    return process.env.LAUNCHD_LABEL ?? "com.ronen.threadbase";
+  }
+  if (process.platform === "linux") {
+    return process.env.THREADBASE_SYSTEMD_UNIT ?? "threadbase.service";
+  }
+  if (process.platform === "win32") {
+    return process.env.THREADBASE_TASK_NAME ?? "Threadbase";
+  }
+  return undefined;
+}
 
 /**
  * Restarts the platform service that hosts the streamer. Assumes the service
@@ -30,7 +41,7 @@ const DEFAULT_LABELS: Record<NodeJS.Platform, string | undefined> = {
  * until the next boot, which is recoverable.
  */
 export async function restartService(opts: RestartOptions = {}): Promise<RestartResult> {
-  const label = opts.serviceLabel ?? DEFAULT_LABELS[process.platform];
+  const label = opts.serviceLabel ?? resolveDefaultLabel();
   if (!label) {
     return { method: "none", stdout: "", stderr: `Unsupported platform: ${process.platform}` };
   }
