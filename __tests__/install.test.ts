@@ -79,7 +79,7 @@ vi.mock("../src/updater/restart", () => ({
 }));
 
 vi.mock("../src/updater/active-sessions", () => ({
-  countActiveSessions: vi.fn(async () => 0),
+  countActiveSessions: vi.fn(async () => ({ kind: "count", count: 0 })),
 }));
 
 import { countActiveSessions } from "../src/updater/active-sessions";
@@ -113,7 +113,7 @@ describe("runInstall orchestration", () => {
   });
 
   it("defers when active sessions are running", async () => {
-    vi.mocked(countActiveSessions).mockResolvedValueOnce(2);
+    vi.mocked(countActiveSessions).mockResolvedValueOnce({ kind: "count", count: 2 });
     const r = await runInstall({
       currentVersion: "1.0.0",
       config: cfg,
@@ -125,7 +125,7 @@ describe("runInstall orchestration", () => {
   });
 
   it("--force skips the active-session check", async () => {
-    vi.mocked(countActiveSessions).mockResolvedValueOnce(2);
+    vi.mocked(countActiveSessions).mockResolvedValueOnce({ kind: "count", count: 2 });
     const r = await runInstall({
       currentVersion: "1.0.0",
       config: cfg,
@@ -134,6 +134,37 @@ describe("runInstall orchestration", () => {
     });
     expect(r.kind).toBe("installed");
     expect(countActiveSessions).not.toHaveBeenCalled();
+  });
+
+  it("proceeds when active-session check reports the streamer is unreachable", async () => {
+    vi.mocked(countActiveSessions).mockResolvedValueOnce({
+      kind: "unreachable",
+      reason: "ECONNREFUSED",
+    });
+    const r = await runInstall({
+      currentVersion: "1.0.0",
+      config: cfg,
+      runningServer: { port: 3456, apiKey: "tb_x" },
+    });
+    expect(r.kind).toBe("installed");
+  });
+
+  it("defers when active-session check returns an error response (state unknown)", async () => {
+    vi.mocked(countActiveSessions).mockResolvedValueOnce({
+      kind: "error",
+      status: 500,
+      reason: "streamer returned 500 Internal Server Error",
+    });
+    const r = await runInstall({
+      currentVersion: "1.0.0",
+      config: cfg,
+      runningServer: { port: 3456, apiKey: "tb_x" },
+    });
+    expect(r.kind).toBe("deferred");
+    if (r.kind === "deferred") {
+      expect(r.activeSessions).toBe(-1);
+      expect(r.reason).toMatch(/cannot determine/);
+    }
   });
 
   it("end-to-end install runs steps in the correct order", async () => {

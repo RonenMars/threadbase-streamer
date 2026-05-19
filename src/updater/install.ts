@@ -19,8 +19,6 @@ export interface InstallOptions {
   dryRun?: boolean;
   /** Used to talk to the running streamer for the active-session defer check. */
   runningServer?: { port: number; apiKey: string };
-  /** Override the platform restart for tests. */
-  restart?: () => Promise<void>;
 }
 
 export type InstallResult =
@@ -93,14 +91,25 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
 
   if (opts.config.defer_if_active_sessions && !opts.force && opts.runningServer) {
     const active = await countActiveSessions(opts.runningServer);
-    if (active > 0) {
+    if (active.kind === "count" && active.count > 0) {
       return {
         kind: "deferred",
-        reason: `${active} active session(s); use --force to interrupt`,
-        activeSessions: active,
+        reason: `${active.count} active session(s); use --force to interrupt`,
+        activeSessions: active.count,
         latest: targetVersion,
       };
     }
+    if (active.kind === "error") {
+      // Streamer is reachable but its state is unknown — defer rather than
+      // risk killing live sessions we couldn't see.
+      return {
+        kind: "deferred",
+        reason: `cannot determine active sessions (${active.reason}); use --force to override`,
+        activeSessions: -1,
+        latest: targetVersion,
+      };
+    }
+    // active.kind === "unreachable" → streamer is down, nothing to interrupt.
   }
 
   ensureReleasesDir();
@@ -130,13 +139,8 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
 
   let restartMethod = "skipped";
   try {
-    if (opts.restart) {
-      await opts.restart();
-      restartMethod = "custom";
-    } else {
-      const r = await restartService();
-      restartMethod = r.method;
-    }
+    const r = await restartService();
+    restartMethod = r.method;
   } catch (err) {
     // Restart failure is recoverable — log via return value rather than throw.
     // The new release is on disk and `current` is repointed; next service
