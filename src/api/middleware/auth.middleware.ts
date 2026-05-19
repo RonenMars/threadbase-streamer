@@ -9,7 +9,9 @@ function isLocalRequest(remoteAddr: string | undefined): boolean {
 }
 
 const PUBLIC_PATHS = new Set(["/healthz"]);
-const PUBLIC_POST_PATHS = new Set(["/api/pair/exchange"]);
+// /api/__update uses HMAC signature auth instead of Bearer; skip the
+// Bearer-token middleware so the route handler can validate the signature.
+const PUBLIC_POST_PATHS = new Set(["/api/pair/exchange", "/api/__update"]);
 
 export const authMiddleware =
   (deps: Pick<ApiDeps, "apiKey" | "localNoAuth">): MiddlewareHandler<AppEnv> =>
