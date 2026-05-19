@@ -151,6 +151,7 @@ export class StreamerServer {
     });
 
     this.ptyManager = new PTYManager({
+      logger: getLogger("pty"),
       onOutput: (sessionId, data) => {
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
       },

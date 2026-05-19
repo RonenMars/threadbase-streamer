@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
+import { getLogger, type Logger } from "./logger";
 import { resolveClaudeExe } from "./platform";
 import type {
   ManagedSession,
@@ -11,9 +12,18 @@ import type {
 
 const OUTPUT_BUFFER_MAX = 65536;
 
-// Claude's interactive prompt starts with this box-drawing character when it is
-// waiting for user input (the top-left corner of its input box UI).
-const CLAUDE_PROMPT_MARKER = "╭";
+// Markers that indicate Claude has reached an interactive prompt and is ready
+// for user input. The TUI has at least two startup variants:
+//   - "Tips" banner: renders a box with corner ╭ characters
+//   - Connector/MCP-status splash: no box at all; shows ❯ as the prompt arrow
+// We treat either marker in a chunk as "ready". False-positives are harmless —
+// the worst case is flushing queued input slightly early, which Claude buffers.
+const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
+
+// If a fresh session has produced any output but neither prompt marker has
+// fired within this window, flush queued input anyway. Defense against future
+// TUI changes that drop both markers from the boot screen.
+const PROMPT_MARKER_FALLBACK_MS = 10_000;
 
 // node-pty is a native addon — import dynamically to allow graceful failure
 let pty: typeof import("node-pty") | null = null;
@@ -49,11 +59,16 @@ export class PTYManager {
   // input written into the raw PTY mid-boot is consumed by Claude's startup TUI
   // (welcome banner / first-run modals) and silently lost.
   private queuedInputs = new Map<string, string[]>();
+  private log: Logger;
+  // Timestamp of first PTY chunk per session; drives the prompt-marker fallback
+  // when neither ╭ nor ❯ shows up within PROMPT_MARKER_FALLBACK_MS.
+  private firstChunkAt = new Map<string, number>();
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
     this.onStatusChange = options.onStatusChange;
     this.onReady = options.onReady;
+    this.log = options.logger ?? getLogger("pty");
   }
 
   // Resume an existing Claude conversation. sessionId is the JSONL UUID.
@@ -166,6 +181,19 @@ export class PTYManager {
       this.queuedInputs.set(sessionId, queue);
       session.lastActivityAt = new Date();
       session.promptCount++;
+      // Surface that input is being held because Claude hasn't yet emitted a
+      // prompt marker. If you see this without a corresponding pty.ready
+      // follow-up, the marker detection has regressed.
+      this.log.warn(
+        `[pty.input.queued] ${sessionId.slice(0, 8)} promptCount=${session.promptCount} queueLen=${queue.length}`,
+        {
+          event: "pty.input_queued",
+          sessionId,
+          promptCount: session.promptCount,
+          queueLen: queue.length,
+          inputLen: input.length,
+        },
+      );
       return session.promptCount;
     }
     if (session.status === "waiting_input") {
@@ -186,6 +214,11 @@ export class PTYManager {
     this.queuedInputs.delete(sessionId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    this.log.info(`[pty.flush] ${sessionId.slice(0, 8)} flushing ${queue.length} queued input(s)`, {
+      event: "pty.flush_queued",
+      sessionId,
+      queueLen: queue.length,
+    });
     for (const input of queue) {
       session.process.write(`${input}\r`);
     }
@@ -211,6 +244,7 @@ export class PTYManager {
     if (!session) return;
     this.pendingReady.delete(sessionId);
     this.queuedInputs.delete(sessionId);
+    this.firstChunkAt.delete(sessionId);
     try {
       session.process.kill("SIGINT");
     } catch {
@@ -257,6 +291,7 @@ export class PTYManager {
       }
     }
     this.sessions.clear();
+    this.firstChunkAt.clear();
   }
 
   private handleOutput(sessionId: string, data: string): void {
@@ -264,6 +299,11 @@ export class PTYManager {
     if (!session) return;
 
     const chunk = Buffer.from(data, "utf-8");
+    const now = Date.now();
+    if (!this.firstChunkAt.has(sessionId)) {
+      this.firstChunkAt.set(sessionId, now);
+    }
+
     session.outputBuffer = Buffer.concat([session.outputBuffer, chunk]);
 
     if (session.outputBuffer.length > OUTPUT_BUFFER_MAX) {
@@ -274,19 +314,43 @@ export class PTYManager {
 
     const stripped = stripAnsi(data);
     session.lastOutput = stripped;
+    const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => stripped.includes(m));
 
-    if (session.status === "running" && stripped.includes(CLAUDE_PROMPT_MARKER)) {
-      session.lastActivityAt = new Date();
-      session.status = "waiting_input";
-      this.onStatusChange?.(toPublicSession(session));
-      if (this.pendingReady.has(sessionId)) {
-        this.pendingReady.delete(sessionId);
-        this.flushQueuedInputs(sessionId);
-        this.onReady?.(toPublicSession(session));
-      }
+    if (session.status === "running" && matchedMarker) {
+      this.markReady(sessionId, session, `marker:${matchedMarker}`);
+    } else if (
+      session.status === "running" &&
+      this.pendingReady.has(sessionId) &&
+      now - (this.firstChunkAt.get(sessionId) ?? now) >= PROMPT_MARKER_FALLBACK_MS
+    ) {
+      // Fallback: PTY has produced output for >=10s but neither marker fired.
+      // Treat the session as ready so queued input doesn't sit forever.
+      this.markReady(sessionId, session, "fallback:timeout");
     }
 
     this.onOutput?.(sessionId, data);
+  }
+
+  // Transition a session from "running" to "waiting_input", clear pendingReady,
+  // and flush any queued input. Idempotent: callers can invoke at any chunk.
+  private markReady(sessionId: string, session: InternalSession, reason: string): void {
+    session.lastActivityAt = new Date();
+    session.status = "waiting_input";
+    // Log retained on purpose: `reason=fallback:timeout` would be the only
+    // signal that Claude's TUI introduced a new boot variant our markers miss.
+    const elapsedMs = Date.now() - (this.firstChunkAt.get(sessionId) ?? Date.now());
+    this.log.info(`[pty.ready] ${sessionId.slice(0, 8)} ${reason} (elapsed=${elapsedMs}ms)`, {
+      event: "pty.ready",
+      sessionId,
+      reason,
+      elapsedMs,
+    });
+    this.onStatusChange?.(toPublicSession(session));
+    if (this.pendingReady.has(sessionId)) {
+      this.pendingReady.delete(sessionId);
+      this.flushQueuedInputs(sessionId);
+      this.onReady?.(toPublicSession(session));
+    }
   }
 
   private handleExit(sessionId: string, exitCode: number): void {
@@ -311,6 +375,7 @@ export class PTYManager {
     this.onStatusChange?.(toPublicSession(session));
     this.sessions.delete(sessionId);
     this.queuedInputs.delete(sessionId);
+    this.firstChunkAt.delete(sessionId);
   }
 }
 

@@ -141,6 +141,7 @@ export interface PTYManagerOptions {
   onOutput?: (sessionId: string, data: string) => void;
   onStatusChange?: (session: ManagedSession) => void;
   onReady?: (session: ManagedSession) => void;
+  logger?: import("./logger").Logger;
 }
 
 export interface StartSessionOptions {
