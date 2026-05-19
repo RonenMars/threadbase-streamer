@@ -138,6 +138,21 @@ The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running 
 - `~/.cloudflared/config-system.yml` — used by the Windows service (runs under SYSTEM); this is the one that matters for the always-on tunnel
 - Both must be kept in sync. After editing either file, restart the service: `Restart-Service cloudflared`
 
+## Auto-update
+
+Full guide: [docs/auto-update.md](docs/auto-update.md). Sample config: [docs/update.yaml.example](docs/update.yaml.example).
+
+Three independent triggers, all opt-in via `~/.threadbase/update.yaml`:
+- **Manual:** `threadbase-streamer update [--check | --dry-run | --force | --allow-major | --version <tag>]`
+- **Scheduled:** `scripts/install-auto-update.{sh,ps1}` registers a second platform job (launchd / systemd --user / Task Scheduler) — requires `auto_update: true`. Supports `uninstall`.
+- **Webhook:** `POST /api/__update` with HMAC-SHA256 signature header — enabled when `webhook_secret` is set.
+
+Things that will bite if you forget:
+- On Windows, `swapCurrent()` is preceded by `stopService()` because open handles inside `current/dist/cli.cjs` block the file replace. Tests in `__tests__/install.test.ts` lock the order in — keep them green.
+- Service-label resolution in `src/updater/restart.ts` falls through `serviceLabel` option → env var (`LAUNCHD_LABEL` / `THREADBASE_SYSTEMD_UNIT` / `THREADBASE_TASK_NAME`) → default matching `scripts/deploy.{sh,ps1}`. If you customize the label at deploy time, set the matching env var or the updater restarts a different service than was installed.
+- Active-session defer has three outcomes: reachable+count>0 → defer, reachable+error → defer (state unknown is unsafe), unreachable → proceed. Don't simplify back to "any error returns 0".
+- The auth middleware skips both Bearer and `?key=` for `POST /api/__update` (HMAC instead). Don't add other entries to `PUBLIC_POST_PATHS` without an equivalent gate.
+
 ## macOS-specific notes
 
 - **launchd plist must set `PATH` via `EnvironmentVariables`**: launchd-spawned services inherit only `/usr/bin:/bin:/usr/sbin:/sbin`. Without an `EnvironmentVariables` block in the plist that includes `/opt/homebrew/bin` (Apple Silicon) and `/usr/local/bin` (Intel), `node-pty`'s `execvp("claude", …)` fails with `ENOENT`, and every session-start/resume produces an instant-exit zombie session with `status=idle`, blank terminal, no `failureReason`. The deploy script's plist generator and self-heal both write the block; symptom + diagnosis in [docs/troubleshooting.md](docs/troubleshooting.md).
@@ -244,6 +259,8 @@ When making a risky change, either: (a) keep the old shape and add the new one a
 - Renaming or moving the `port:` field in `server.yaml`
 - Removing `/healthz` or changing its response shape
 - Changing the default listening port (the menubar fallback `8766` would need to be bumped in lockstep)
+
+**Auto-update interaction:** during an install, the streamer is briefly down — typically a few seconds between `stopService()` (Windows only) / `swapCurrent()` and `restartService()`. The menubar will flicker to "disconnected" then reconnect on the next 5s poll. This is expected and not a bug. If the gap stretches beyond ~10s, something is wrong with the restart step (`launchctl kickstart` failing on macOS, `systemctl --user` not finding the unit on Linux, scheduled task hung on Windows) — check `~/.threadbase/logs/updater.{log,err}` and the platform service status before assuming the menubar itself is at fault.
 
 Parent-repo commits that bump the submodule pointer should use a `chore: bump vendor/menubar (<reason>)` title.
 

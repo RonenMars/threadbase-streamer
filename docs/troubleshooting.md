@@ -508,3 +508,44 @@ If you've already lost work, it's not gone if you pushed: `git -C vendor/menubar
 **When:** Deploy fails at `cd vendor/menubar && npm ci`.
 **Cause:** `package-lock.json` is out of sync with `package.json`. Common after manually editing dependencies without re-running `npm install`.
 **Fix:** run `cd vendor/menubar && npm install` to regenerate the lockfile, commit it, push the submodule, bump the parent pointer, then retry deploy. The script intentionally uses `npm ci` (strict) rather than `npm install` (loose) so that locked dependency versions are guaranteed at deploy time.
+
+## Auto-update
+
+### `threadbase-streamer update` prints "No update config found"
+
+**When:** First invocation on a fresh install, before `~/.threadbase/update.yaml` exists.
+**Cause:** Auto-update is opt-in. Without the config file the updater refuses to guess a repo.
+**Fix:** copy `update.yaml.example` from the repo root to `~/.threadbase/update.yaml` and edit. The minimum required line is `github_repo: <owner>/<name>`.
+
+### Scheduled updater installed but never fires
+
+**When:** `scripts/install-auto-update.sh` (or `.ps1`) reported success, but `~/.threadbase/logs/updater.log` is empty hours later.
+**Possible causes:**
+1. `auto_update:` was not set to `true` in `update.yaml` at install time. The installer skips registration silently in that case. **Fix:** edit `update.yaml`, then rerun the installer to register the job.
+2. macOS: the launchd plist's `StartInterval` is measured in seconds, not minutes. Confirm via `launchctl list | grep updater`.
+3. Linux: the systemd timer isn't enabled. `systemctl --user list-timers | grep threadbase` should show next-fire time.
+4. Windows: a typo in `poll_interval_minutes` results in a task with no repetition. `Get-ScheduledTask -TaskName Threadbase-Updater | Get-ScheduledTaskTrigger` shows the actual schedule.
+
+### `sha256 mismatch` on every install attempt
+
+**When:** Updater fails right after download with `sha256 mismatch for threadbase-streamer-...`.
+**Cause:** The release's `manifest.json` and the tarball it references were produced on different runs (or different commits) and don't agree on the hash. This typically means the matrix workflow uploaded a partial set before the manifest job ran.
+**Fix:** re-run the failed matrix job(s) on the same release, or delete the GitHub release and re-trigger `release.yml`. The updater's refusal is correct — never bypass the hash check.
+
+### Active-session check defers forever
+
+**When:** `threadbase-streamer update` prints `Deferred: cannot determine active sessions (...)` repeatedly, even when no sessions are running.
+**Cause:** The running streamer is reachable but returning errors to `GET /api/sessions?status=...`. Different from "streamer down" which would `proceed` instead of `defer`.
+**Fix:** check the streamer's stderr log for what's actually breaking the request. As an interrupt-safe one-off, use `threadbase-streamer update --force` to override the defer. Don't make `--force` your scheduled-job flag — it interrupts live sessions.
+
+### POST /api/__update returns 401 even with the correct shared secret
+
+**When:** Webhook caller is signing with the right secret but receives 401.
+**Cause:** the signature is over the *exact raw body bytes*. The most common mistake: signing a pretty-printed JSON string but POSTing minified JSON (or vice versa), or signing with a trailing newline the body doesn't include.
+**Fix:** ensure caller signs and sends byte-identical content. The verifier expects either a bare hex string or `sha256=<hex>` in the `X-Threadbase-Signature` header.
+
+### Update succeeds but `current` still points at the old version on Windows
+
+**When:** Streamer restarts on the old version after a reported-successful update.
+**Cause:** the copy-deploy hit `EBUSY` because the streamer was still holding open handles inside `current/dist/cli.cjs`. `stopService()` should have been called first; if it failed silently, the copy completes on the `.new` directory but `rename` won't overwrite the live tree.
+**Fix:** run `Stop-ScheduledTask -TaskName Threadbase`, then `scripts/install-auto-update.ps1` won't be needed — just rerun `threadbase-streamer update`. If this is repeatable, file a bug — `install.ts` is supposed to handle this on Windows.
