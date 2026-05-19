@@ -1,0 +1,38 @@
+# Auto-update configuration for threadbase-streamer.
+# Copy to ~/.threadbase/update.yaml and edit. Without this file the
+# `threadbase-streamer update` command no-ops with a hint.
+
+# Required: GitHub repo that publishes streamer releases ("owner/name").
+github_repo: RonenMars/threadbase-streamer
+
+# Which release channel to track.
+#   stable — only GitHub Releases marked "Latest" (default)
+#   next   — newest prerelease, used for opt-in beta builds
+channel: stable
+
+# Semver diffs the updater is allowed to install without --allow-major.
+# Defaults to ["patch", "minor"]; add "major" to opt in to major bumps.
+allow:
+  - patch
+  - minor
+
+# Skip the install if the running streamer reports any session in
+# `running` or `waiting_input` state. Override per-invocation with --force.
+defer_if_active_sessions: true
+
+# How often the scheduled updater job runs (minutes). Ignored by manual
+# `threadbase-streamer update`. Only consulted by the installer scripts
+# when registering the launchd/systemd/Task Scheduler job.
+poll_interval_minutes: 60
+
+# Master switch for the scheduled job installed by
+# scripts/install-auto-update.{sh,ps1}. Manual `threadbase-streamer update`
+# always works regardless.
+auto_update: false
+
+# HMAC secret for the POST /api/__update webhook. When set, the streamer
+# accepts signed POSTs and triggers an immediate update. The release CI
+# (or any caller that knows this secret) signs the request body with
+# HMAC-SHA256 and sends it in the X-Threadbase-Signature header. Leave
+# null/unset to disable the endpoint entirely (returns 404).
+webhook_secret: null

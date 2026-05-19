@@ -1,6 +1,9 @@
+import { spawn } from "node:child_process";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { IncomingMessage } from "http";
 import { hostname } from "os";
+import { loadUpdateConfig } from "../../config/update-config";
 import { getLogger } from "../../logger";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
@@ -19,6 +22,25 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
     });
     req.on("error", reject);
   });
+}
+
+function readRawBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
+}
+
+function verifyWebhookSignature(body: string, header: string | undefined, secret: string): boolean {
+  if (!header) return false;
+  const provided = header.startsWith("sha256=") ? header.slice(7) : header;
+  const expected = createHmac("sha256", secret).update(body).digest("hex");
+  const a = Buffer.from(provided, "utf-8");
+  const b = Buffer.from(expected, "utf-8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 const clientLog = getLogger("client");
@@ -50,6 +72,42 @@ export const createMiscRoutes = (
   app.get("/api/profiles", (c) => c.json([]));
 
   app.post("/api/push/register", (c) => c.json({ ok: true }));
+
+  // Webhook for auto-update. Triggered by the release CI (or any caller that
+  // knows webhook_secret) to make this server pull the new release without
+  // waiting for the next poll. Enabled only when webhook_secret is set in
+  // ~/.threadbase/update.yaml. HMAC-SHA256 of the raw body using that secret
+  // must match the X-Threadbase-Signature header.
+  app.post("/api/__update", async (c) => {
+    const cfg = loadUpdateConfig();
+    if (!cfg?.webhook_secret) {
+      return c.json({ error: "webhook disabled" }, 404);
+    }
+
+    let body: string;
+    try {
+      body = await readRawBody(c.env.incoming);
+    } catch {
+      return c.json({ error: "could not read body" }, 400);
+    }
+
+    const sig = c.req.header("x-threadbase-signature");
+    if (!verifyWebhookSignature(body, sig, cfg.webhook_secret)) {
+      return c.json({ error: "invalid signature" }, 401);
+    }
+
+    const cliPath = process.argv[1];
+    if (!cliPath) {
+      return c.json({ error: "cannot resolve updater path" }, 500);
+    }
+    const child = spawn(process.execPath, [cliPath, "update", "--force"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+
+    return c.json({ accepted: true, pid: child.pid }, 202);
+  });
 
   app.post("/api/__client-log", async (c) => {
     const ua = c.req.header("user-agent") ?? "";

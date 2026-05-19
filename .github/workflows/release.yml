@@ -1,11 +1,8 @@
 name: Release
 
 on:
-  # push trigger intentionally disabled until the team is ready to start
-  # publishing semantic-release versions from main. Re-enable by uncommenting
-  # the two lines below.
-  # push:
-  #   branches: [main, next]
+  push:
+    branches: [main, next]
   workflow_dispatch:
     inputs:
       publish:
@@ -22,7 +19,7 @@ jobs:
         include:
           - os: macos-latest
             target: darwin-arm64
-          - os: macos-13
+          - os: macos-15-intel
             target: darwin-x64
           - os: ubuntu-latest
             target: linux-x64
@@ -36,7 +33,12 @@ jobs:
         shell: bash
         env:
           SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+        # actions/checkout creates vendor/scanner as an empty directory for
+        # the tracked submodule path, so a bare `git clone … vendor/scanner`
+        # fails with "destination path … already exists". Remove first.
+        run: |
+          rm -rf vendor/scanner
+          git clone "https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git" vendor/scanner
 
       - uses: actions/setup-node@v4
         with:
@@ -87,7 +89,11 @@ jobs:
       - name: Init scanner submodule
         env:
           SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
+        # See note in the build job above — actions/checkout creates the
+        # submodule path empty, so the clone needs a fresh destination.
+        run: |
+          rm -rf vendor/scanner
+          git clone "https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git" vendor/scanner
 
       - uses: actions/setup-node@v4
         with:

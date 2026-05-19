@@ -838,11 +838,16 @@ export class StreamerServer {
     }
 
     const limit = intParam(url, "limit", 50);
-    const results = await search(q, {
-      limit,
-      include: "conversations",
-      ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
-    });
+    const scanner = await this.getScanner();
+    const results = await search(
+      q,
+      {
+        limit,
+        include: "conversations",
+        ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+      },
+      scanner,
+    );
     const adapted = results.map((r: any) => ({
       id:
         r.meta.sessionId ||

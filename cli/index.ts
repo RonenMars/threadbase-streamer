@@ -2,9 +2,12 @@ import "dotenv/config";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
 import { loadOrCreateApiKey, loadPublicUrl } from "../src/auth";
+import { loadUpdateConfig, UPDATE_CONFIG_PATH } from "../src/config/update-config";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
+import { checkForUpdate } from "../src/updater/check-update";
+import { runInstall } from "../src/updater/install";
 
 const log = getLogger("cli");
 
@@ -103,6 +106,91 @@ program
     const apiKey = loadOrCreateApiKey();
     const publicUrl = loadPublicUrl() ?? null;
     await printPairQR({ port, apiKey, publicUrl });
+  });
+
+program
+  .command("update")
+  .description("Check for streamer updates from GitHub Releases and install them")
+  .option("--check", "Check only; do not install", false)
+  .option("--version <version>", "Pin to a specific release tag")
+  .option("--allow-major", "Allow a major-version bump", false)
+  .option("--force", "Skip the active-session defer check", false)
+  .option("--dry-run", "Print what would be installed without writing to disk", false)
+  .option("-p, --port <number>", "Port of the running streamer for active-session check", "3456")
+  .action(async (opts) => {
+    const cfg = loadUpdateConfig();
+    if (!cfg) {
+      log.warn(
+        `No update config found at ${UPDATE_CONFIG_PATH}. Create one with at least 'github_repo: owner/name' to enable updates.`,
+        undefined,
+        "console",
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    try {
+      if (opts.check) {
+        const result = await checkForUpdate({
+          currentVersion: __VERSION__,
+          config: cfg,
+          pinnedVersion: opts.version,
+          allowMajor: opts.allowMajor,
+        });
+        log.info(`Current : ${result.current}`, undefined, "console");
+        log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
+        log.info(`Channel : ${cfg.channel}`, undefined, "console");
+        log.info(`Diff    : ${result.diff ?? "(none)"}`, undefined, "console");
+        log.info(`Status  : ${result.reason}`, undefined, "console");
+        return;
+      }
+
+      const port = Number.parseInt(opts.port, 10);
+      const apiKey = loadOrCreateApiKey();
+
+      const result = await runInstall({
+        currentVersion: __VERSION__,
+        config: cfg,
+        pinnedVersion: opts.version,
+        allowMajor: opts.allowMajor,
+        force: opts.force,
+        dryRun: opts.dryRun,
+        runningServer: { port, apiKey },
+      });
+
+      switch (result.kind) {
+        case "no-op":
+          log.info(`Current : ${result.current}`, undefined, "console");
+          log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
+          log.info(`Status  : ${result.reason}`, undefined, "console");
+          break;
+        case "deferred":
+          log.warn(`Deferred: ${result.reason}`, undefined, "console");
+          process.exitCode = 2;
+          break;
+        case "dry-run":
+          log.info(
+            `Would install ${result.latest} from ${result.tarballUrl}`,
+            undefined,
+            "console",
+          );
+          break;
+        case "installed":
+          log.info(
+            `Installed ${result.installed} (was ${result.previous}). Restart: ${result.restart.method}.`,
+            undefined,
+            "console",
+          );
+          if (result.pruned.length > 0) {
+            log.info(`Pruned old releases: ${result.pruned.join(", ")}`, undefined, "console");
+          }
+          break;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error(`Update failed: ${message}`, { error: message }, "console");
+      process.exitCode = 1;
+    }
   });
 
 program.parse();
