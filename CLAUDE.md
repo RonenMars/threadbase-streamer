@@ -140,7 +140,7 @@ The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running 
 
 ## Auto-update
 
-Full guide: [docs/auto-update.md](docs/auto-update.md). Sample config: [docs/update.yaml.example](docs/update.yaml.example).
+Full guide: [docs/auto-update.md](docs/auto-update.md). Sample config: [docs/update.yaml.example](docs/update.yaml.example). For walking a user through enabling it on a deployed streamer, use the `setup-auto-updater` skill (`.claude/skills/setup-auto-updater/SKILL.md`).
 
 Three independent triggers, all opt-in via `~/.threadbase/update.yaml`:
 - **Manual:** `threadbase-streamer update [--check | --dry-run | --force | --allow-major | --version <tag>]`
