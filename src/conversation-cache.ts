@@ -594,6 +594,12 @@ export class ConversationCache {
     return row.id;
   }
 
+  /**
+   * Drop rows whose `file_path` no longer exists on disk AND which have no
+   * cached tail to fall back to. Rows with a tail are left alone so
+   * `handleGetConversation` can still serve the cached tail even when the
+   * JSONL has been deleted.
+   */
   pruneGhostFiles(exists: (filePath: string) => boolean = existsSync): string[] {
     const rows = this.stmts.allFilePaths.all() as { id: string; file_path: string }[];
     const ghosts: string[] = [];
@@ -604,7 +610,9 @@ export class ConversationCache {
       }
     });
     for (const row of rows) {
-      if (!exists(row.file_path)) ghosts.push(row.id);
+      if (exists(row.file_path)) continue;
+      if (this.stmts.hasTail.get(row.id)) continue;
+      ghosts.push(row.id);
     }
     if (ghosts.length > 0) {
       prune(ghosts);

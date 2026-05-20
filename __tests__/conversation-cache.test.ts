@@ -499,7 +499,7 @@ describe("pruneGhostFiles()", () => {
     expect(cache.pruneGhostFiles(() => true)).toEqual([]);
   });
 
-  it("clears cached tails for pruned rows", () => {
+  it("preserves rows that have a cached tail even when the JSONL is missing", () => {
     cache.upsertFromScannerMeta([
       { ...BASE_META, id: "ghost-tail", sessionId: "ghost-tail", filePath: "/p/g.jsonl" },
     ] as any);
@@ -512,7 +512,8 @@ describe("pruneGhostFiles()", () => {
       }),
     );
     expect(cache.getConversationTail("ghost-tail")?.messages.length).toBe(1);
-    cache.pruneGhostFiles(() => false);
-    expect(cache.getConversationTail("ghost-tail")).toBeNull();
+    expect(cache.pruneGhostFiles(() => false)).toEqual([]);
+    expect(cache.hasConversation("ghost-tail")).toBe(true);
+    expect(cache.getConversationTail("ghost-tail")?.messages.length).toBe(1);
   });
 });

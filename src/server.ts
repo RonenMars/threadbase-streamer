@@ -373,14 +373,18 @@ export class StreamerServer {
               await new Promise<void>((r) => setImmediate(r));
             }
             const pruned = this.cache.pruneGhostFiles();
-            if (pruned.length > 0) {
-              this.log.info(`Pruned ${pruned.length} cache rows pointing at deleted JSONLs`, {
-                count: pruned.length,
-                event: "cache.prune_ghosts",
-              });
-            }
+            this.log.info(`Startup ghost prune: removed ${pruned.length} stale cache rows`, {
+              count: pruned.length,
+              event: "cache.prune_ghosts",
+            });
           })
-          .catch(() => {})
+          .catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            this.log.warn(`Startup cache warm-up failed: ${message}`, {
+              error: message,
+              event: "cache.warmup_failed",
+            });
+          })
           .finally(() => resolveWarm());
       });
     });

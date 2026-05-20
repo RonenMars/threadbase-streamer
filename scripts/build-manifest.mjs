@@ -8,7 +8,14 @@
 // Usage: node scripts/build-manifest.mjs [--dir <release-artifacts>] [--version <x.y.z>]
 
 import { createHash } from "node:crypto";
-import { createReadStream, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  createReadStream,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -20,9 +27,11 @@ const pinnedVersion = verIdx >= 0 ? args[verIdx + 1] : null;
 const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
 const version = pinnedVersion ?? pkg.version;
 
-const TARBALL_RE = new RegExp(
-  `^threadbase-streamer-${version.replace(/\./g, "\\.")}-([^-]+)-([^.]+)\\.tgz$`,
-);
+// Accept tarballs at any source version. pack-platform.mjs names them after
+// package.json's current version (e.g. 0.1.0), but the version semantic-release
+// computes at prepare-time may differ (e.g. 1.0.0). Match anything and rename
+// in place so the manifest filename and the release asset agree on `version`.
+const TARBALL_RE = /^threadbase-streamer-([^-]+(?:\.[^-]+)*)-([^-]+)-([^.]+)\.tgz$/;
 
 async function sha256(filePath) {
   const hash = createHash("sha256");
@@ -35,17 +44,25 @@ async function sha256(filePath) {
 const artifacts = {};
 const files = readdirSync(dir).filter((f) => f.endsWith(".tgz"));
 
-for (const filename of files) {
-  const match = filename.match(TARBALL_RE);
+for (const sourceFilename of files) {
+  const match = sourceFilename.match(TARBALL_RE);
   if (!match) {
-    console.warn(`skip ${filename} — does not match version ${version}`);
+    console.warn(`skip ${sourceFilename} — not a recognized tarball name`);
     continue;
   }
-  const [, os, arch] = match;
-  const filePath = join(dir, filename);
-  const sum = await sha256(filePath);
-  const { size } = statSync(filePath);
-  artifacts[`${os}-${arch}`] = { filename, sha256: sum, size };
+  const [, sourceVersion, os, arch] = match;
+  const targetFilename = `threadbase-streamer-${version}-${os}-${arch}.tgz`;
+  const sourcePath = join(dir, sourceFilename);
+  const targetPath = join(dir, targetFilename);
+
+  if (sourceVersion !== version) {
+    renameSync(sourcePath, targetPath);
+    console.log(`  renamed ${sourceFilename} → ${targetFilename}`);
+  }
+
+  const sum = await sha256(targetPath);
+  const { size } = statSync(targetPath);
+  artifacts[`${os}-${arch}`] = { filename: targetFilename, sha256: sum, size };
   console.log(`  ${os}-${arch}: ${sum.slice(0, 12)}… (${size} bytes)`);
 }
 
