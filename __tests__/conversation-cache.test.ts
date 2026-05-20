@@ -140,6 +140,21 @@ describe("updateFromLine()", () => {
       );
     }).not.toThrow();
   });
+
+  it("handles a string message.content (legacy Claude JSONL shape)", () => {
+    expect(() => {
+      cache.updateFromLine(
+        BASE_META.filePath,
+        JSON.stringify({
+          role: "user",
+          timestamp: "2024-01-01T10:00:00.000Z",
+          message: { content: "raw string content, not an array" },
+        }),
+      );
+    }).not.toThrow();
+    const tail = cache.getConversationTail("abc-123");
+    expect(tail?.messages[tail.messages.length - 1].text).toContain("raw string");
+  });
 });
 
 describe("listConversations()", () => {

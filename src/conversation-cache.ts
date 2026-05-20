@@ -75,15 +75,25 @@ interface TailRow {
   updated_at: number;
 }
 
+type ContentBlock = { type: string; text?: string; [key: string]: unknown };
+
 interface JsonlLine {
   role?: string;
   type?: string;
   timestamp?: string;
-  content?: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  // Real Claude JSONL emits either an array of blocks or a raw string. Normalize
+  // via `normalizeContent` before consuming.
+  content?: ContentBlock[] | string;
   message?: {
     role?: string;
-    content?: Array<{ type: string; text?: string; [key: string]: unknown }>;
+    content?: ContentBlock[] | string;
   };
+}
+
+function normalizeContent(raw: ContentBlock[] | string | null | undefined): ContentBlock[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") return [{ type: "text", text: raw }];
+  return [];
 }
 
 const SCHEMA = `
@@ -313,7 +323,7 @@ export class ConversationCache {
     const activityMs = new Date(timestamp).getTime();
     if (Number.isNaN(activityMs)) return;
 
-    const contentBlocks = line.message?.content ?? line.content ?? [];
+    const contentBlocks = normalizeContent(line.message?.content ?? line.content);
     const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
     const lastMessage = JSON.stringify({ role, timestamp, text });
     const seq = ++this.tailSeq;
@@ -434,7 +444,7 @@ export class ConversationCache {
       const role = parsed.role ?? parsed.type;
       if (!role) continue;
       const timestamp = parsed.timestamp ?? "";
-      const contentBlocks = parsed.message?.content ?? parsed.content ?? [];
+      const contentBlocks = normalizeContent(parsed.message?.content ?? parsed.content);
       const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
       msgs.unshift({ role, timestamp, text, content: contentBlocks });
     }
