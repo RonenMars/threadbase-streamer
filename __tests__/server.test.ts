@@ -2,6 +2,7 @@ import { mkdtempSync } from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
+import { ConversationCache } from "../src/conversation-cache";
 import { StreamerServer } from "../src/server";
 
 const FIXTURE_PROFILES = [
@@ -32,17 +33,19 @@ describe("StreamerServer", () => {
   let server: StreamerServer;
   let port: number;
   let baseUrl: string;
+  let cacheDir: string;
 
   beforeEach(async () => {
     port = await getRandomPort();
     baseUrl = `http://localhost:${port}`;
+    cacheDir = mkdtempSync(join(tmpdir(), "threadbase-server-test-"));
     server = new StreamerServer({
       port,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
       disableDb: true,
-      cacheDir: mkdtempSync(join(tmpdir(), "threadbase-server-test-")),
+      cacheDir,
       scanProfiles: FIXTURE_PROFILES,
     });
     await server.listen(port);
@@ -339,6 +342,35 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /api/conversations/:id cache tail fallback", () => {
+    it("serves the cached tail with ?msg_limit=80 when the JSONL is gone", async () => {
+      const missingId = "9eb354af-bbd5-4499-9ebe-084e9cc2c2dd";
+      const ghostJsonl = join(cacheDir, `${missingId}.jsonl`); // path that does not exist
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      cache.updateFromLine(
+        ghostJsonl,
+        JSON.stringify({
+          role: "user",
+          timestamp: "2026-05-20T20:00:00.000Z",
+          message: { content: [{ type: "text", text: "hello from the cache" }] },
+        }),
+      );
+      cache.close();
+
+      const res = await fetch(`${baseUrl}/api/conversations/${missingId}?msg_limit=80`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        meta: { id: string };
+        messages: Array<{ role: string; text: string }>;
+      };
+      expect(body.meta.id).toBe(missingId);
+      expect(body.messages.length).toBeGreaterThan(0);
+      expect(body.messages[0].text).toContain("hello from the cache");
     });
   });
 

@@ -697,8 +697,11 @@ export class StreamerServer {
     const conversation = await this.findConversationByUuid(id);
 
     if (!conversation && this.cache) {
-      const isFirstLoad =
-        !url.searchParams.has("msg_limit") && !url.searchParams.has("before_index");
+      // Only `before_index` indicates the client is paginating backward (asking
+      // for messages older than a cursor) — `msg_limit` is just page size and is
+      // sent on the first page too. The tail fallback should serve any first-page
+      // request when the JSONL is missing, regardless of msg_limit.
+      const isFirstLoad = !url.searchParams.has("before_index");
       if (isFirstLoad) {
         const tail = this.cache.getConversationTail(id);
         if (tail && tail.messages.length > 0) {
