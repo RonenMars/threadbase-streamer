@@ -92,7 +92,9 @@ describe("PTYManager — ready detection", () => {
     // Claude's TUI shows the MCP splash with ❯ — should flush "hi" now.
     proc._emit("data", MCP_SPLASH_BOOT);
 
-    expect(proc.write).toHaveBeenCalledWith("hi\r");
+    // Input is wrapped in bracketed-paste markers so the trailing \r submits
+    // even when content would otherwise trigger Claude's mention picker.
+    expect(proc.write).toHaveBeenCalledWith("\x1b[200~hi\x1b[201~\r");
   });
 
   it("flushes queued input via time-fallback when no marker ever fires", async () => {
@@ -116,10 +118,32 @@ describe("PTYManager — ready detection", () => {
       // fallback should fire and flush the queued input.
       proc._emit("data", "still booting...");
 
-      expect(proc.write).toHaveBeenCalledWith("hello\r");
+      expect(proc.write).toHaveBeenCalledWith("\x1b[200~hello\x1b[201~\r");
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("wraps @<path> input in bracketed-paste markers so \\r submits", async () => {
+    // Regression: an input like "@/Users/foo/img.heic describe this" activates
+    // Claude's @-mention autocomplete picker. A plain trailing \r is captured
+    // as "accept completion" rather than "submit", and the prompt sits in the
+    // input buffer unsent — the session looks stuck. Bracketed-paste mode
+    // bypasses the picker: content between \x1b[200~ and \x1b[201~ is a
+    // single insertion, and the \r after \x1b[201~ is processed as Enter.
+    const mgr = new PTYManager();
+    const session = await spawnFresh(mgr);
+    const proc = getMockProc(mgr, session.id);
+
+    // Get the session past pendingReady so direct write (not queue) path runs.
+    proc._emit("data", MCP_SPLASH_BOOT);
+    proc.write.mockClear();
+
+    mgr.sendInput(session.id, "@/Users/foo/img.heic describe this");
+
+    expect(proc.write).toHaveBeenCalledWith(
+      "\x1b[200~@/Users/foo/img.heic describe this\x1b[201~\r",
+    );
   });
 
   it("does not re-fire markReady on subsequent matching chunks", async () => {

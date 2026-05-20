@@ -25,6 +25,35 @@ const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
 // TUI changes that drop both markers from the boot screen.
 const PROMPT_MARKER_FALLBACK_MS = 10_000;
 
+// Wrap the user's input in bracketed-paste markers before submitting.
+// Why: Claude's TUI enables bracketed paste mode (\x1b[?2004h) at startup.
+// In paste mode the content between \x1b[200~ and \x1b[201~ is committed as a
+// single insertion without triggering autocomplete or key bindings. The
+// trailing \r outside the paste block is then processed by the normal keymap
+// as Enter → submit.
+//
+// Without this wrap, an input that contains "@<path>" activates Claude's
+// @-mention autocomplete picker; the \r is then captured as "accept
+// completion" instead of "submit", and the prompt sits unsubmitted in the
+// input buffer (i.e. the session appears stuck). Verified empirically against
+// the live TUI: see docs/2026-05-20-pty-bracketed-paste-fix.md.
+function buildSubmitBytes(input: string): string {
+  return `\x1b[200~${input}\x1b[201~\r`;
+}
+
+function digestBytes(s: string): string {
+  // Replace control chars with their hex form so logs are grep-able.
+  // Building the regex via RegExp() sidesteps a Biome lint rule that flags
+  // literal control characters in regex literals.
+  const escaped = s
+    .replace(new RegExp(String.fromCharCode(0x1b), "g"), "\\x1b")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
+    .replace(/\t/g, "\\t");
+  if (escaped.length <= 200) return escaped;
+  return `${escaped.slice(0, 100)}…[${escaped.length - 200}B omitted]…${escaped.slice(-100)}`;
+}
+
 // node-pty is a native addon — import dynamically to allow graceful failure
 let pty: typeof import("node-pty") | null = null;
 
@@ -63,6 +92,11 @@ export class PTYManager {
   // Timestamp of first PTY chunk per session; drives the prompt-marker fallback
   // when neither ╭ nor ❯ shows up within PROMPT_MARKER_FALLBACK_MS.
   private firstChunkAt = new Map<string, number>();
+  // Per-session chunk counter and last-chunk timestamp. Diagnostic-only,
+  // feeds the [pty.chunk] log lines so we can trace whether Claude responded
+  // to a given input or fell silent. Reset on dispose().
+  private chunkIndex = new Map<string, number>();
+  private lastChunkAt = new Map<string, number>();
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
@@ -200,7 +234,19 @@ export class PTYManager {
       session.status = "running";
       this.onStatusChange?.(toPublicSession(session));
     }
-    session.process.write(`${input}\r`);
+    const bytes = buildSubmitBytes(input);
+    this.log.info(
+      `[pty.input.write] ${sessionId.slice(0, 8)} promptCount=${session.promptCount + 1} bytes=${bytes.length} digest=${digestBytes(bytes)}`,
+      {
+        event: "pty.input_write",
+        sessionId,
+        promptCount: session.promptCount + 1,
+        byteLen: bytes.length,
+        digest: digestBytes(bytes),
+        path: "direct",
+      },
+    );
+    session.process.write(bytes);
     session.lastActivityAt = new Date();
     session.promptCount++;
     return session.promptCount;
@@ -220,7 +266,18 @@ export class PTYManager {
       queueLen: queue.length,
     });
     for (const input of queue) {
-      session.process.write(`${input}\r`);
+      const bytes = buildSubmitBytes(input);
+      this.log.info(
+        `[pty.input.write] ${sessionId.slice(0, 8)} bytes=${bytes.length} digest=${digestBytes(bytes)}`,
+        {
+          event: "pty.input_write",
+          sessionId,
+          byteLen: bytes.length,
+          digest: digestBytes(bytes),
+          path: "flush",
+        },
+      );
+      session.process.write(bytes);
     }
   }
 
@@ -292,6 +349,8 @@ export class PTYManager {
     }
     this.sessions.clear();
     this.firstChunkAt.clear();
+    this.chunkIndex.clear();
+    this.lastChunkAt.clear();
   }
 
   private handleOutput(sessionId: string, data: string): void {
@@ -303,6 +362,26 @@ export class PTYManager {
     if (!this.firstChunkAt.has(sessionId)) {
       this.firstChunkAt.set(sessionId, now);
     }
+
+    // Per-chunk diagnostic log. Keep until the @<path> submit bug is solved.
+    const idx = (this.chunkIndex.get(sessionId) ?? 0) + 1;
+    this.chunkIndex.set(sessionId, idx);
+    const last = this.lastChunkAt.get(sessionId);
+    this.lastChunkAt.set(sessionId, now);
+    const gapMs = last == null ? 0 : now - last;
+    this.log.info(
+      `[pty.chunk] ${sessionId.slice(0, 8)} #${idx} +${chunk.length}B gap=${gapMs}ms status=${session.status} digest=${digestBytes(data)}`,
+      {
+        event: "pty.chunk",
+        sessionId,
+        chunkIndex: idx,
+        chunkBytes: chunk.length,
+        gapMs,
+        status: session.status,
+        pendingReady: this.pendingReady.has(sessionId),
+        digest: digestBytes(data),
+      },
+    );
 
     session.outputBuffer = Buffer.concat([session.outputBuffer, chunk]);
 
