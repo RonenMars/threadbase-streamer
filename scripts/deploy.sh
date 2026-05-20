@@ -327,6 +327,7 @@ cmd_predeploy_check() {
   if [[ "$force" == "--force" ]]; then
     [[ "$branch" != "main" ]] && warn "branch is '$branch', forcing"
     [[ -n "$dirty" ]] && warn "working tree is dirty, forcing"
+    check_active_sessions "$force"
     return 0
   fi
 
@@ -338,6 +339,49 @@ cmd_predeploy_check() {
     err "working tree is dirty. Commit/stash, or re-run with --force."
     exit 1
   fi
+  check_active_sessions "$force"
+}
+
+# Refuse to redeploy while users have live PTY sessions: a restart kills every
+# Claude child mid-turn, leaving JSONLs truncated and mobile clients holding
+# stale cached state. Probes the running streamer's session list and counts
+# entries with `ptyAttached: true` (managed/live PTYs only — ignores discovered
+# processes and idle JSONL stubs). Unreachable server → proceed-OK (no live
+# PTYs to harm).
+check_active_sessions() {
+  local force="${1:-}"
+  local yaml="$INSTALL_DIR/server.yaml"
+  [[ -f "$yaml" ]] || return 0
+
+  local api_key
+  api_key="$(awk '/^api_key:/ {print $2; exit}' "$yaml" 2>/dev/null)"
+  [[ -n "$api_key" ]] || return 0
+
+  local sessions_json count
+  sessions_json="$(curl -fsS --max-time 2 \
+    -H "Authorization: Bearer $api_key" \
+    "http://localhost:$PORT/api/sessions" 2>/dev/null || true)"
+  [[ -n "$sessions_json" ]] || return 0
+
+  # Count occurrences of `"ptyAttached":true`. Whitespace in JSON is variable
+  # but the streamer's serializer emits no spaces around the colon. `|| true`
+  # swallows grep's exit 1 when there are no matches (pipefail would otherwise
+  # propagate it and `set -e` would abort the script).
+  count="$(printf '%s' "$sessions_json" | { grep -o '"ptyAttached":true' || true; } | wc -l | tr -d ' ')"
+  [[ "$count" =~ ^[0-9]+$ ]] || return 0
+  # Plain `(( count == 0 ))` returns exit 1 under set -e when the comparison is
+  # false. The `if` form contains the non-zero exit.
+  if (( count == 0 )); then
+    return 0
+  fi
+
+  if [[ "$force" == "--force" ]]; then
+    warn "$count active PTY session(s) will be killed by restart, forcing"
+    return 0
+  fi
+  err "$count active PTY session(s) in flight — redeploying now will kill them mid-turn."
+  err "Wait for them to finish, ask the client to hold them, or re-run with --force to override."
+  exit 1
 }
 
 # Shared plist writer. Always emits an EnvironmentVariables block with PATH +
