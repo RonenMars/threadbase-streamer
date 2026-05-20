@@ -6,6 +6,8 @@ export interface ConversationWatcherEvents {
   onNewLine?: (filePath: string, line: string) => void;
   /** Fires when chokidar reports an add/change/unlink at the directory level. */
   onConversationChanged?: (filePath: string) => void | Promise<void>;
+  /** Fires when a tailed file is deleted (per-file watcher unlink event). */
+  onFileDeleted?: (filePath: string) => void;
   /** Reported errors per file. */
   onError?: (filePath: string, error: Error) => void;
 }
@@ -31,11 +33,13 @@ export class ConversationWatcher {
   private directories = new Map<string, FSWatcher>();
   private onNewLine: ConversationWatcherEvents["onNewLine"];
   private onConversationChanged: ConversationWatcherEvents["onConversationChanged"];
+  private onFileDeleted: ConversationWatcherEvents["onFileDeleted"];
   private onError: ConversationWatcherEvents["onError"];
 
   constructor(events: ConversationWatcherEvents = {}) {
     this.onNewLine = events.onNewLine;
     this.onConversationChanged = events.onConversationChanged;
+    this.onFileDeleted = events.onFileDeleted;
     this.onError = events.onError;
   }
 
@@ -56,6 +60,7 @@ export class ConversationWatcher {
 
     watcher.on("change", () => this.readNewLines(filePath));
     watcher.on("add", () => this.readNewLines(filePath));
+    watcher.on("unlink", () => this.onFileDeleted?.(filePath));
     watcher.on("error", (err) => {
       const error = err instanceof Error ? err : new Error(String(err));
       this.onError?.(filePath, error);

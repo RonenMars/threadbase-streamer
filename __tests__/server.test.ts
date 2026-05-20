@@ -372,6 +372,42 @@ describe("StreamerServer", () => {
       expect(body.messages.length).toBeGreaterThan(0);
       expect(body.messages[0].text).toContain("hello from the cache");
     });
+
+    it("prunes the ghost cache row when scanner + tail both come up empty", async () => {
+      const ghostId = "deadbeef-1111-2222-3333-444455556666";
+      const ghostJsonl = join(cacheDir, `${ghostId}.jsonl`); // no file, no tail data
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      cache.upsertFromScannerMeta([
+        {
+          id: ghostId,
+          sessionId: ghostId,
+          filePath: ghostJsonl,
+          projectPath: "/no/such/project",
+          projectName: "ghost",
+          title: "ghost",
+          model: null,
+          account: null,
+          gitBranch: null,
+          messageCount: 0,
+          timestamp: "2026-05-20T20:00:00.000Z",
+          firstMessage: null,
+          lastMessage: null,
+          preview: null,
+        },
+      ] as any);
+      expect(cache.hasConversation(ghostId)).toBe(true);
+      cache.close();
+
+      const res = await fetch(`${baseUrl}/api/conversations/${ghostId}?msg_limit=80`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(404);
+
+      // Reopen the cache and verify the row was pruned by the failing request.
+      const reopened = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      expect(reopened.hasConversation(ghostId)).toBe(false);
+      reopened.close();
+    });
   });
 
   describe("localNoAuth mode", () => {

@@ -446,4 +446,73 @@ describe("invalidate()", () => {
     expect(cache.hasConversation("inv-1")).toBe(false);
     expect(cache.hasConversation("inv-2")).toBe(true);
   });
+
+  it("with id also clears the cached tail", () => {
+    cache.updateFromLine(
+      "/p/inv-1.jsonl",
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:00:00.000Z",
+        message: { content: [{ type: "text", text: "leaky" }] },
+      }),
+    );
+    expect(cache.getConversationTail("inv-1")?.messages.length).toBe(1);
+    cache.invalidate("inv-1");
+    expect(cache.getConversationTail("inv-1")).toBeNull();
+  });
+});
+
+describe("invalidateByFilePath()", () => {
+  it("returns null when no row matches", () => {
+    expect(cache.invalidateByFilePath("/does/not/exist.jsonl")).toBeNull();
+  });
+
+  it("removes the matching row and returns its id", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "match-1", sessionId: "match-1", filePath: "/p/match-1.jsonl" },
+    ] as any);
+    const removed = cache.invalidateByFilePath("/p/match-1.jsonl");
+    expect(removed).toBe("match-1");
+    expect(cache.hasConversation("match-1")).toBe(false);
+  });
+});
+
+describe("pruneGhostFiles()", () => {
+  it("deletes only the rows whose file_path no longer exists", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "live", sessionId: "live", filePath: "/p/live.jsonl" },
+      { ...BASE_META, id: "ghost-1", sessionId: "ghost-1", filePath: "/p/ghost-1.jsonl" },
+      { ...BASE_META, id: "ghost-2", sessionId: "ghost-2", filePath: "/p/ghost-2.jsonl" },
+    ] as any);
+
+    const pruned = cache.pruneGhostFiles((fp) => fp === "/p/live.jsonl");
+    expect(pruned.sort()).toEqual(["ghost-1", "ghost-2"]);
+    expect(cache.hasConversation("live")).toBe(true);
+    expect(cache.hasConversation("ghost-1")).toBe(false);
+    expect(cache.hasConversation("ghost-2")).toBe(false);
+  });
+
+  it("returns [] when nothing is stale", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "live-1", sessionId: "live-1", filePath: "/p/live-1.jsonl" },
+    ] as any);
+    expect(cache.pruneGhostFiles(() => true)).toEqual([]);
+  });
+
+  it("clears cached tails for pruned rows", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "ghost-tail", sessionId: "ghost-tail", filePath: "/p/g.jsonl" },
+    ] as any);
+    cache.updateFromLine(
+      "/p/g.jsonl",
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:00:00.000Z",
+        message: { content: [{ type: "text", text: "tail data" }] },
+      }),
+    );
+    expect(cache.getConversationTail("ghost-tail")?.messages.length).toBe(1);
+    cache.pruneGhostFiles(() => false);
+    expect(cache.getConversationTail("ghost-tail")).toBeNull();
+  });
 });

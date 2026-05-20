@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { closeSync, mkdirSync, openSync, readSync, statSync } from "fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
 
@@ -145,8 +145,10 @@ export class ConversationCache {
     listByProject: Database.Statement;
     countByProject: Database.Statement;
     deleteById: Database.Statement;
+    deleteTailById: Database.Statement;
     deleteAll: Database.Statement;
     deleteTailAll: Database.Statement;
+    getIdByFilePath: Database.Statement;
     allFilePaths: Database.Statement;
     upsertSessionName: Database.Statement;
     getSessionName: Database.Statement;
@@ -219,8 +221,10 @@ export class ConversationCache {
         "SELECT COUNT(*) as n FROM conversation_meta WHERE project_path = ?",
       ),
       deleteById: db.prepare("DELETE FROM conversation_meta WHERE id = ?"),
+      deleteTailById: db.prepare("DELETE FROM conversation_tail WHERE conversation_id = ?"),
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
       deleteTailAll: db.prepare("DELETE FROM conversation_tail"),
+      getIdByFilePath: db.prepare("SELECT id FROM conversation_meta WHERE file_path = ?"),
       allFilePaths: db.prepare("SELECT id, file_path FROM conversation_meta"),
       upsertSessionName: db.prepare(`
         INSERT INTO session_names (session_id, name, updated_at)
@@ -566,6 +570,7 @@ export class ConversationCache {
 
   invalidate(id?: string): void {
     if (id) {
+      this.stmts.deleteTailById.run(id);
       this.stmts.deleteById.run(id);
       if (this.fileIndexLoaded) {
         for (const [fp, cid] of this.fileIndex) {
@@ -580,5 +585,40 @@ export class ConversationCache {
       this.stmts.deleteAll.run();
       this.fileIndex.clear();
     }
+  }
+
+  invalidateByFilePath(filePath: string): string | null {
+    const row = this.stmts.getIdByFilePath.get(filePath) as { id: string } | undefined;
+    if (!row) return null;
+    this.invalidate(row.id);
+    return row.id;
+  }
+
+  pruneGhostFiles(exists: (filePath: string) => boolean = existsSync): string[] {
+    const rows = this.stmts.allFilePaths.all() as { id: string; file_path: string }[];
+    const ghosts: string[] = [];
+    const prune = this.db.transaction((ids: string[]) => {
+      for (const id of ids) {
+        this.stmts.deleteTailById.run(id);
+        this.stmts.deleteById.run(id);
+      }
+    });
+    for (const row of rows) {
+      if (!exists(row.file_path)) ghosts.push(row.id);
+    }
+    if (ghosts.length > 0) {
+      prune(ghosts);
+      if (this.fileIndexLoaded) {
+        for (const id of ghosts) {
+          for (const [fp, cid] of this.fileIndex) {
+            if (cid === id) {
+              this.fileIndex.delete(fp);
+              break;
+            }
+          }
+        }
+      }
+    }
+    return ghosts;
   }
 }

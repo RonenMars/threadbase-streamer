@@ -148,6 +148,15 @@ export class StreamerServer {
           }
         }
       },
+      onFileDeleted: (filePath) => {
+        const id = this.cache?.invalidateByFilePath(filePath);
+        if (id)
+          this.log.info(`Cache row invalidated after JSONL delete: ${id}`, {
+            id,
+            filePath,
+            event: "cache.invalidate_on_unlink",
+          });
+      },
     });
 
     this.ptyManager = new PTYManager({
@@ -362,6 +371,13 @@ export class StreamerServer {
                 }
               }
               await new Promise<void>((r) => setImmediate(r));
+            }
+            const pruned = this.cache.pruneGhostFiles();
+            if (pruned.length > 0) {
+              this.log.info(`Pruned ${pruned.length} cache rows pointing at deleted JSONLs`, {
+                count: pruned.length,
+                event: "cache.prune_ghosts",
+              });
             }
           })
           .catch(() => {})
@@ -739,6 +755,9 @@ export class StreamerServer {
     }
 
     if (!conversation) {
+      // Self-heal: the row is a ghost (JSONL gone, no usable tail). Drop it so
+      // the next list refresh doesn't keep offering this id to clients.
+      this.cache?.invalidate(id);
       json(res, 404, { error: "Conversation not found" });
       return;
     }
