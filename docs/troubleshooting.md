@@ -453,6 +453,31 @@ cat ~/.threadbase/logs/stderr.log   # should be empty if the cache loaded succes
 
 ---
 
+### `npm test` (and therefore `npm run deploy`) fails with `NODE_MODULE_VERSION` mismatch on `better-sqlite3`
+
+**When:** Running `npm run deploy` (or `npm test` directly) shortly after a system Node upgrade. The test step prints dozens of failures shaped like:
+```
+The module '.../node_modules/better-sqlite3/build/Release/better_sqlite3.node'
+was compiled against a different Node.js version using
+NODE_MODULE_VERSION 127. This version of Node.js requires
+NODE_MODULE_VERSION 137.
+→ Cannot read properties of undefined (reading 'close')
+```
+The `Cannot read properties of undefined` is a red herring — it's the `afterEach` calling `.close()` on a `cache` variable that was never assigned, because `ConversationCache.open()` threw on the native `require`.
+
+**Cause:** Sibling problem to the "deployed `releases/node_modules` after a Node major upgrade" entry above — but for the *repo's* `node_modules`, not `~/.threadbase/releases/node_modules`. The repo's prebuilt `better-sqlite3` binary is locked to whatever Node ABI was current when `npm install` last ran. Once the system Node moves to a new major (or sometimes minor) the ABI no longer matches and every test that touches the cache fails.
+
+**Fix:** rebuild the native module against the current Node, then re-run the deploy:
+```sh
+npm rebuild better-sqlite3
+npm run deploy
+```
+If you also see `node-pty` complain (it didn't in this incident, but it's the other native dep), rebuild it the same way.
+
+**Diagnosis cue:** the `NODE_MODULE_VERSION 127 / 137` mismatch is the real signal. If you only see "Cannot read properties of undefined (reading 'close')" you're looking at the cascade, not the cause — scroll up in the test output for the `NODE_MODULE_VERSION` line.
+
+---
+
 ## Menubar packaging
 
 The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applications/Threadbase Menubar.app`. `scripts/deploy.sh` builds via electron-builder, mounts the produced `.dmg`, and copies the app into place. Several gotchas emerged during the initial rollout — collected here.
