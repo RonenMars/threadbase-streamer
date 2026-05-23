@@ -25,7 +25,7 @@ export function pruneAgentConversations(cache: ConversationCache): PruneAgentCon
       missing += 1;
       continue;
     }
-    if (isAgentFile(row.file_path)) {
+    if (isAgentFile(row.file_path, cache.getAgentEntrypoints())) {
       cache.deleteByFilePath(row.file_path);
       pruned += 1;
     }

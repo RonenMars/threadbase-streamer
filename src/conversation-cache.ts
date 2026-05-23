@@ -2,12 +2,19 @@ import Database from "better-sqlite3";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
-import { isAgentFile, isAgentLine } from "./services/conversations/isAgentConversation";
+import {
+  DEFAULT_AGENT_ENTRYPOINTS,
+  isAgentFile,
+  isAgentLine,
+} from "./services/conversations/isAgentConversation";
 
 export interface ConversationCacheOptions {
-  // When true, drop conversations whose JSONL came from the Claude Agent SDK
-  // (entrypoint === "sdk-cli"). Default false to preserve legacy behavior.
+  // When true, drop conversations whose JSONL came from an agent entrypoint.
+  // Default false to preserve legacy behavior.
   filterAgentConversations?: boolean;
+  // Set of `entrypoint` values to treat as agent traffic. Defaults to
+  // DEFAULT_AGENT_ENTRYPOINTS ({ sdk-cli, claude-vscode }).
+  agentEntrypoints?: ReadonlySet<string>;
   // Fired the first time an agent JSONL is detected for a given file path
   // (from updateFromLine). Lets the server unwatch the file.
   onAgentFileDetected?: (filePath: string) => void;
@@ -185,9 +192,10 @@ export class ConversationCache {
 
   private migrationsDir?: string;
 
-  // When true, ingestion drops conversations whose JSONL came from the Claude
-  // Agent SDK (entrypoint === "sdk-cli"). See isAgentConversation.ts.
+  // When true, ingestion drops conversations whose JSONL `entrypoint` belongs
+  // to `agentEntrypoints`. See isAgentConversation.ts.
   private filterAgentConversations = false;
+  private agentEntrypoints: ReadonlySet<string> = DEFAULT_AGENT_ENTRYPOINTS;
   private onAgentFileDetected?: (filePath: string) => void;
 
   private constructor(
@@ -200,6 +208,7 @@ export class ConversationCache {
     this.db = db;
     this.tailSize = tailSize;
     this.filterAgentConversations = options?.filterAgentConversations ?? false;
+    this.agentEntrypoints = options?.agentEntrypoints ?? DEFAULT_AGENT_ENTRYPOINTS;
     this.onAgentFileDetected = options?.onAgentFileDetected;
     db.exec(SCHEMA);
     runSqliteMigrations(db, this.migrationsDir);
@@ -303,6 +312,10 @@ export class ConversationCache {
     return this.db;
   }
 
+  getAgentEntrypoints(): ReadonlySet<string> {
+    return this.agentEntrypoints;
+  }
+
   static open(
     dbPath: string,
     tailSize = 10,
@@ -350,7 +363,7 @@ export class ConversationCache {
       return;
     }
 
-    if (this.filterAgentConversations && isAgentLine(line)) {
+    if (this.filterAgentConversations && isAgentLine(line, this.agentEntrypoints)) {
       this.deleteByFilePath(filePath);
       this.onAgentFileDetected?.(filePath);
       return;
@@ -398,9 +411,10 @@ export class ConversationCache {
 
   upsertFromScannerMeta(metas: ScannerMeta[]): void {
     const filter = this.filterAgentConversations;
+    const entrypoints = this.agentEntrypoints;
     const run = this.db.transaction((items: ScannerMeta[]) => {
       for (const m of items) {
-        if (filter && isAgentFile(m.filePath)) continue;
+        if (filter && isAgentFile(m.filePath, entrypoints)) continue;
         const id =
           m.sessionId ||
           m.id

@@ -43,6 +43,7 @@ import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
 import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
+import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { SessionStore } from "./session-store";
 import type {
@@ -108,6 +109,7 @@ export class StreamerServer {
   private cacheDir: string;
   private tailSize: number;
   private filterAgentConversations: boolean;
+  private agentEntrypoints: ReadonlySet<string>;
   private honoApp: Hono<AppEnv> | null = null;
   private log = getLogger("server");
 
@@ -123,6 +125,7 @@ export class StreamerServer {
     this.filterAgentConversations = parseAgentFilterEnv(
       process.env.THREADBASE_FILTER_AGENT_CONVERSATIONS,
     );
+    this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
 
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
     if (rawRoot) {
@@ -356,6 +359,7 @@ export class StreamerServer {
             undefined,
             {
               filterAgentConversations: this.filterAgentConversations,
+              agentEntrypoints: this.agentEntrypoints,
               onAgentFileDetected: (fp) => this.fileWatcher.unwatch(fp),
             },
           );

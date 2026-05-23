@@ -6,8 +6,10 @@ import { ConversationCache } from "../src/conversation-cache";
 import { parseAgentFilterEnv } from "../src/server";
 import {
   clearAgentFileCacheForTests,
+  DEFAULT_AGENT_ENTRYPOINTS,
   isAgentFile,
   isAgentLine,
+  parseAgentEntrypointsEnv,
 } from "../src/services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "../src/services/conversations/pruneAgentConversations";
 
@@ -62,8 +64,12 @@ const HOUSEKEEPING_LINE = {
 };
 
 describe("isAgentLine", () => {
-  it("returns true for sdk-cli entrypoint", () => {
+  it("returns true for sdk-cli entrypoint (default set)", () => {
     expect(isAgentLine({ entrypoint: "sdk-cli" })).toBe(true);
+  });
+
+  it("returns true for claude-vscode entrypoint (default set)", () => {
+    expect(isAgentLine({ entrypoint: "claude-vscode" })).toBe(true);
   });
 
   it("returns false for cli entrypoint", () => {
@@ -73,12 +79,52 @@ describe("isAgentLine", () => {
   it("returns false for missing entrypoint (housekeeping lines)", () => {
     expect(isAgentLine({})).toBe(false);
   });
+
+  it("respects a custom entrypoint set (sdk-cli only)", () => {
+    const set = new Set(["sdk-cli"]);
+    expect(isAgentLine({ entrypoint: "sdk-cli" }, set)).toBe(true);
+    expect(isAgentLine({ entrypoint: "claude-vscode" }, set)).toBe(false);
+  });
+});
+
+describe("parseAgentEntrypointsEnv", () => {
+  it("defaults to sdk-cli + claude-vscode when unset", () => {
+    const result = parseAgentEntrypointsEnv(undefined);
+    expect(result).toEqual(DEFAULT_AGENT_ENTRYPOINTS);
+  });
+
+  it("parses a comma-separated list, trimming whitespace", () => {
+    const result = parseAgentEntrypointsEnv(" sdk-cli , claude-vscode , custom-agent ");
+    expect([...result].sort()).toEqual(["claude-vscode", "custom-agent", "sdk-cli"]);
+  });
+
+  it("returns empty set for empty string (effectively disables filtering)", () => {
+    const result = parseAgentEntrypointsEnv("");
+    expect(result.size).toBe(0);
+  });
+
+  it("can narrow to a single value", () => {
+    const result = parseAgentEntrypointsEnv("sdk-cli");
+    expect([...result]).toEqual(["sdk-cli"]);
+  });
 });
 
 describe("isAgentFile", () => {
   it("returns true when JSONL contains sdk-cli marker", () => {
     const fp = writeJsonl("agent.jsonl", [HOUSEKEEPING_LINE, AGENT_LINE]);
     expect(isAgentFile(fp)).toBe(true);
+  });
+
+  it("returns true when JSONL contains claude-vscode marker", () => {
+    const vscodeLine = { ...AGENT_LINE, entrypoint: "claude-vscode" };
+    const fp = writeJsonl("vscode.jsonl", [HOUSEKEEPING_LINE, vscodeLine]);
+    expect(isAgentFile(fp)).toBe(true);
+  });
+
+  it("returns false when claude-vscode is excluded via custom set", () => {
+    const vscodeLine = { ...AGENT_LINE, entrypoint: "claude-vscode" };
+    const fp = writeJsonl("vscode2.jsonl", [HOUSEKEEPING_LINE, vscodeLine]);
+    expect(isAgentFile(fp, new Set(["sdk-cli"]))).toBe(false);
   });
 
   it("returns false when JSONL contains cli marker", () => {
