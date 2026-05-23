@@ -95,6 +95,31 @@ describe("isAgentFile", () => {
   it("returns false on nonexistent file", () => {
     expect(isAgentFile(join(workDir, "missing.jsonl"))).toBe(false);
   });
+
+  it("finds marker past the 64 KB chunk boundary (real-world agent files)", () => {
+    // Pad with ~150 KB of housekeeping noise so the agent line lands in the
+    // third chunk. Matches the on-disk shape of /private/tmp JSONLs where
+    // queue-operation / permission-mode prefixes can push entrypoint past
+    // 200 KB.
+    const filler = Array.from({ length: 1500 }, (_, i) => ({
+      ...HOUSEKEEPING_LINE,
+      idx: i,
+      junk: "x".repeat(100),
+    }));
+    const fp = writeJsonl("deep-agent.jsonl", [...filler, AGENT_LINE]);
+    expect(isAgentFile(fp)).toBe(true);
+  });
+
+  it("finds marker straddling a chunk boundary", () => {
+    // Write a file where the marker spans the 64 KB boundary. Pad to exactly
+    // CHUNK_BYTES - 10 with one line, then write the marker line. This puts
+    // the marker bytes 10 in / 12 out, requiring the overlap-carry path.
+    const padSize = 64 * 1024 - 10;
+    const padding = "x".repeat(padSize);
+    const fp = join(workDir, "straddle.jsonl");
+    writeFileSync(fp, `${padding}\n${JSON.stringify(AGENT_LINE)}\n`);
+    expect(isAgentFile(fp)).toBe(true);
+  });
 });
 
 describe("parseAgentFilterEnv", () => {
