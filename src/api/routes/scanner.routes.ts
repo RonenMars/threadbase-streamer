@@ -14,9 +14,9 @@ export const createScannerRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
-  app.get("/project-chats", (c) => {
+  app.get("/project-chats", async (c) => {
     const url = new URL(c.req.url);
-    deps.handleListProjectChats(url, c.env.outgoing);
+    await deps.handleListProjectChats(url, c.env.outgoing);
     return alreadyHandled();
   });
 

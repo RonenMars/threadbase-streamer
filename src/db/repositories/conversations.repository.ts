@@ -20,4 +20,8 @@ export class ConversationsRepository {
   getLatestConversation() {
     return this.cache.getLatestConversation();
   }
+
+  hasOrphanRows(): boolean {
+    return this.cache.hasOrphanProjectId();
+  }
 }

@@ -1,3 +1,4 @@
+import type { ConversationScanner } from "@threadbase/scanner";
 import type { ConversationCache } from "../../conversation-cache";
 import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";
@@ -12,6 +13,12 @@ import { mergeProjectChats } from "./mergeProjectChats";
 import { normalizeConversationToProjectChat } from "./normalizeConversationToProjectChat";
 import { normalizeSessionToProjectChat } from "./normalizeSessionToProjectChat";
 
+/**
+ * Subset of ConversationScanner we depend on. Typed structurally so tests
+ * can pass a lightweight fake without instantiating the real scanner.
+ */
+export type ScannerLike = Pick<ConversationScanner, "scan" | "getMetadataCache">;
+
 export interface ListProjectChatsDeps {
   cache: ConversationCache;
   projectsRepo: ProjectsRepository;
@@ -20,6 +27,15 @@ export interface ListProjectChatsDeps {
   cacheMetadataRepo: CacheMetadataRepository;
   /** Snapshot of session responses; the server already builds these. */
   getSessionResponses: () => SessionResponse[];
+  /**
+   * Return a scanner whose metadata cache reflects the current disk state.
+   * Called only when the cache needs a rebuild. Implementations are
+   * responsible for invalidating any prior scanner and running scan()
+   * before returning — listProjectChats reads getMetadataCache() directly.
+   */
+  getFreshScanner: () => Promise<ScannerLike>;
+  /** Override the disk path checked for drift. Defaults to ~/.claude/projects. */
+  projectsDir?: string;
 }
 
 export interface ListProjectChatsArgs {
@@ -29,15 +45,17 @@ export interface ListProjectChatsArgs {
 /**
  * Compose the full /project-chats list:
  *
- *   1. Force-refresh or check latest HDD conversation id
- *   2. Ensure sessions are linked to existing projects
- *   3. Normalize sessions + conversations into ProjectChat shape
- *   4. Merge, dedupe (resumed conversations), sort
+ *   1. Force-refresh or detect drift (orphan rows or projects-dir mtime).
+ *   2. When drift detected, run the scanner + upsert into the cache so new
+ *      JSONLs become visible. Then run project_id backfill.
+ *   3. Ensure managed sessions are linked to existing projects.
+ *   4. Normalize sessions + conversations into ProjectChat shape.
+ *   5. Merge, dedupe (resumed conversations), sort.
  */
-export function listProjectChats(
+export async function listProjectChats(
   deps: ListProjectChatsDeps,
   args: ListProjectChatsArgs,
-): ProjectChat[] {
+): Promise<ProjectChat[]> {
   const {
     cache,
     projectsRepo,
@@ -45,12 +63,20 @@ export function listProjectChats(
     sessionsRepo,
     cacheMetadataRepo,
     getSessionResponses,
+    getFreshScanner,
+    projectsDir,
   } = deps;
 
-  if (
+  const needsRefresh =
     args.refreshConversations ||
-    shouldRefreshProjectsFromHdd(conversationsRepo, cacheMetadataRepo)
-  ) {
+    shouldRefreshProjectsFromHdd(conversationsRepo, cacheMetadataRepo, { projectsDir });
+
+  if (needsRefresh) {
+    const scanner = await getFreshScanner();
+    const metas = [...scanner.getMetadataCache().values()];
+    if (metas.length > 0) {
+      cache.upsertFromScannerMeta(metas as never);
+    }
     refreshConversationCache({ cache, projectsRepo, conversationsRepo, cacheMetadataRepo });
   }
 

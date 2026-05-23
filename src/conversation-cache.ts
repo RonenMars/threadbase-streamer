@@ -166,6 +166,7 @@ export class ConversationCache {
     setConversationProjectId: Database.Statement;
     getLatestConversation: Database.Statement;
     listConversationsForProjectBackfill: Database.Statement;
+    hasOrphanProjectId: Database.Statement;
     popularProjects: Database.Statement;
   };
 
@@ -254,6 +255,9 @@ export class ConversationCache {
       ),
       listConversationsForProjectBackfill: db.prepare(
         "SELECT id, project_path, project_id, last_activity FROM conversation_meta WHERE project_path IS NOT NULL",
+      ),
+      hasOrphanProjectId: db.prepare(
+        "SELECT 1 FROM conversation_meta WHERE project_id IS NULL AND project_path IS NOT NULL LIMIT 1",
       ),
       popularProjects: db.prepare(
         `SELECT project_path, project_name, COUNT(*) as cnt
@@ -528,6 +532,10 @@ export class ConversationCache {
       id: row.id,
       lastActivity: row.last_activity ? new Date(row.last_activity).toISOString() : null,
     };
+  }
+
+  hasOrphanProjectId(): boolean {
+    return this.stmts.hasOrphanProjectId.get() !== undefined;
   }
 
   listConversationsForProjectBackfill(): Array<{

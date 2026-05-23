@@ -642,7 +642,7 @@ export class StreamerServer {
     json(res, 200, { projects, total: projects.length });
   }
 
-  private handleListProjectChats(url: URL, res: ServerResponse): void {
+  private async handleListProjectChats(url: URL, res: ServerResponse): Promise<void> {
     if (
       !this.cache ||
       !this.projectsRepo ||
@@ -654,13 +654,14 @@ export class StreamerServer {
       return;
     }
 
-    handleListProjectChats(url, res, {
+    await handleListProjectChats(url, res, {
       cache: this.cache,
       projectsRepo: this.projectsRepo,
       conversationsRepo: this.conversationsRepo,
       sessionsRepo: this.sessionsRepo,
       cacheMetadataRepo: this.cacheMetadataRepo,
       getSessionResponses: () => this.sessionStore.list(this.ptyAttachedIds()),
+      getFreshScanner: () => this.getFreshScanner(),
     });
   }
 
@@ -673,6 +674,12 @@ export class StreamerServer {
     this.scannerReady = this.scanner.scan(this.scanProfiles ? { profiles: this.scanProfiles } : {});
     await this.scannerReady;
     return this.scanner;
+  }
+
+  private async getFreshScanner(): Promise<ConversationScanner> {
+    this.scanner = null;
+    this.scannerReady = null;
+    return this.getScanner();
   }
 
   private findJsonlPath(uuid: string): string | null {
