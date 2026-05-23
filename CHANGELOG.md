@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.0.0...v1.0.1) (2026-05-23)
+
+### Bug Fixes
+
+* detect cache drift for /project-chats via orphan rows + disk mtime ([71bc383](https://github.com/RonenMars/threadbase-streamer/commit/71bc38387f43d47c62e3055ca1f8357573f8042e))
+
 ## 1.0.0 (2026-05-20)
 
 ### Features
