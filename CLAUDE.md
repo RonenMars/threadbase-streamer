@@ -45,6 +45,7 @@ Key modules and their responsibilities:
 - `services/projects/*` — `upsertProjectByPath`, `ensureProjectsForConversations` (groups conversations by canonical project path, picks latest, upserts one project per path).
 - `services/conversations/refreshConversationCache.ts` — after a scanner-driven cache rebuild, upsert projects and backfill `conversation_meta.project_id`. Updates `cache_metadata.last_conversation_id`.
 - `services/conversations/shouldRefreshProjectsFromHdd.ts` — compares the latest conversation id known to the cache vs `cache_metadata.last_conversation_id`. Used by `/project-chats` to short-circuit refresh when nothing changed.
+- `services/conversations/isAgentConversation.ts` + `pruneAgentConversations.ts` — detect agent-authored JSONLs via the `entrypoint: "sdk-cli"` marker (set by the Claude Agent SDK, claude-mem, and hook-spawned automation). When `THREADBASE_FILTER_AGENT_CONVERSATIONS` is on (default), the cache skips them during scanner + watcher ingestion and runs a one-time prune of existing rows on startup.
 - `services/sessions/createSessionForProjectPath.ts` + `ensureSessionProjectIdsFromExistingProjects.ts` — link a managed session to its project once the JSONL exists; backfill `projectId` for sessions whose path matches an existing project.
 - `services/cache/cacheMetadata.ts` — get/set helpers over the `cache_metadata` key/value table.
 - `auth.ts` — bearer token generation/validation with constant-time comparison
@@ -89,6 +90,7 @@ running / waiting_input ──(server restart)──► on_hold   (reconcile.ts)
 | `THREADBASE_DATABASE_STATEMENT_TIMEOUT_MS` | Query timeout in ms |
 | `THREADBASE_INSTANCE_ID` | Stable identifier for this server instance (defaults to `os.hostname()`); used to scope DB-persisted sessions |
 | `THREADBASE_PUBLIC_URL` | Public HTTPS URL for QR pairing (overrides `public_url:` in server.yaml) |
+| `THREADBASE_FILTER_AGENT_CONVERSATIONS` | Hide Claude Agent SDK / claude-mem / hook-spawned runs from `/api/conversations` + `/project-chats`. Default `on`. Set to `0` / `false` to keep them visible. Toggling triggers a one-time prune-or-rescan on the next restart. |
 
 ## CLI flags vs. `server.yaml`
 

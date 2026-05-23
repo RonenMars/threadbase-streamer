@@ -43,6 +43,7 @@ import { discoverClaudeProcesses } from "./process-discovery";
 import { PTYManager } from "./pty-manager";
 import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
+import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { SessionStore } from "./session-store";
 import type {
   DiscoveredProcess,
@@ -59,6 +60,14 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
   `Do not read, write, or execute commands that access files or directories outside this boundary.`;
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
+
+// Default ON. Set to "0" or "false" to keep Claude Agent SDK / claude-mem
+// runs visible in /api/conversations and /project-chats.
+export function parseAgentFilterEnv(raw: string | undefined): boolean {
+  if (raw === undefined) return true;
+  const v = raw.trim().toLowerCase();
+  return !(v === "0" || v === "false" || v === "no" || v === "off" || v === "");
+}
 
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
@@ -98,6 +107,7 @@ export class StreamerServer {
   } | null = null;
   private cacheDir: string;
   private tailSize: number;
+  private filterAgentConversations: boolean;
   private honoApp: Hono<AppEnv> | null = null;
   private log = getLogger("server");
 
@@ -110,6 +120,9 @@ export class StreamerServer {
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
+    this.filterAgentConversations = parseAgentFilterEnv(
+      process.env.THREADBASE_FILTER_AGENT_CONVERSATIONS,
+    );
 
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
     if (rawRoot) {
@@ -337,7 +350,24 @@ export class StreamerServer {
           event: "server.listening",
         });
         try {
-          this.cache = ConversationCache.open(join(this.cacheDir, "cache.db"), this.tailSize);
+          this.cache = ConversationCache.open(
+            join(this.cacheDir, "cache.db"),
+            this.tailSize,
+            undefined,
+            {
+              filterAgentConversations: this.filterAgentConversations,
+              onAgentFileDetected: (fp) => this.fileWatcher.unwatch(fp),
+            },
+          );
+          if (this.filterAgentConversations) {
+            const result = pruneAgentConversations(this.cache);
+            if (result.pruned > 0 || result.missing > 0) {
+              this.log.info(
+                `Agent conversation prune: scanned=${result.scanned} pruned=${result.pruned} missing=${result.missing}`,
+                { ...result, event: "cache.prune_agents" },
+              );
+            }
+          }
           const db = this.cache.getDatabase();
           this.projectsRepo = new ProjectsRepository(db);
           this.conversationsRepo = new ConversationsRepository(this.cache);
