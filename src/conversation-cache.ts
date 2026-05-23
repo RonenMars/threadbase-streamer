@@ -101,6 +101,11 @@ interface JsonlLine {
   // Set by Claude Code / Agent SDK on every real message line. "cli" = human
   // interactive Claude Code; "sdk-cli" = Claude Agent SDK / claude-mem / hooks.
   entrypoint?: string;
+  // Project context: the scanner sets `cwd` from any line that carries it
+  // (attachment, metadata, user, assistant). The live watcher must do the
+  // same — otherwise skeleton rows persist with NULL project_path.
+  cwd?: string;
+  slug?: string;
   // Real Claude JSONL emits either an array of blocks or a raw string. Normalize
   // via `normalizeContent` before consuming.
   content?: ContentBlock[] | string;
@@ -108,6 +113,13 @@ interface JsonlLine {
     role?: string;
     content?: ContentBlock[] | string;
   };
+}
+
+// Last three path segments — mirrors @threadbase/scanner's
+// `getShortProjectName`. Inlined here because the scanner does not export it.
+function shortProjectName(fullPath: string): string {
+  const parts = fullPath.split(/[/\\]/).filter(Boolean);
+  return parts.slice(-3).join("/");
 }
 
 function normalizeContent(raw: ContentBlock[] | string | null | undefined): ContentBlock[] {
@@ -166,6 +178,7 @@ export class ConversationCache {
     getFullById: Database.Statement;
     updateMeta: Database.Statement;
     insertSkeleton: Database.Statement;
+    backfillSkeletonProject: Database.Statement;
     upsertFull: Database.Statement;
     getTail: Database.Statement;
     hasTail: Database.Statement;
@@ -220,6 +233,17 @@ export class ConversationCache {
       ),
       insertSkeleton: db.prepare(
         "INSERT OR IGNORE INTO conversation_meta (id, file_path, message_count, updated_at) VALUES (?, ?, 1, ?)",
+      ),
+      // Fills project_path / project_name / title on a row whose columns are
+      // still NULL. Never overwrites scanner-populated values — the scanner's
+      // upsertFromScannerMeta remains authoritative for those columns.
+      backfillSkeletonProject: db.prepare(
+        `UPDATE conversation_meta
+         SET project_path = COALESCE(project_path, @project_path),
+             project_name = COALESCE(project_name, @project_name),
+             title        = COALESCE(title,        @title)
+         WHERE id = @id
+           AND (project_path IS NULL OR project_name IS NULL OR title IS NULL)`,
       ),
       upsertFull: db.prepare(`
         INSERT INTO conversation_meta
@@ -370,18 +394,13 @@ export class ConversationCache {
     }
 
     const role = line.role ?? line.type;
-    if (role !== "user" && role !== "assistant") return;
-
-    const timestamp = line.timestamp ?? new Date().toISOString();
-    const activityMs = new Date(timestamp).getTime();
-    if (Number.isNaN(activityMs)) return;
-
-    const contentBlocks = normalizeContent(line.message?.content ?? line.content);
-    const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
-    const lastMessage = JSON.stringify({ role, timestamp, text });
-    const seq = ++this.tailSeq;
+    const isMessage = role === "user" || role === "assistant";
 
     this.ensureFileIndex();
+
+    // Skip lines that carry neither a message nor project context — there's
+    // nothing for us to record.
+    if (!isMessage && !line.cwd && !line.slug) return;
 
     let convId = this.fileIndex.get(filePath);
     if (!convId) {
@@ -394,6 +413,34 @@ export class ConversationCache {
       this.fileIndex.set(filePath, pseudoId);
       convId = pseudoId;
     }
+
+    // Backfill project_path / project_name / title from cwd on any line that
+    // carries it. COALESCE inside the SQL ensures we never overwrite a
+    // scanner-populated value. Without this, the chokidar watcher leaves
+    // skeleton rows with NULL project context, which renders as blank cards
+    // on the mobile Recents tab.
+    if (line.cwd || line.slug) {
+      const projectPath = line.cwd ?? null;
+      const projectName = projectPath ? shortProjectName(projectPath) : null;
+      const title = line.slug ?? projectName ?? null;
+      this.stmts.backfillSkeletonProject.run({
+        id: convId,
+        project_path: projectPath,
+        project_name: projectName,
+        title,
+      });
+    }
+
+    if (!isMessage) return;
+
+    const timestamp = line.timestamp ?? new Date().toISOString();
+    const activityMs = new Date(timestamp).getTime();
+    if (Number.isNaN(activityMs)) return;
+
+    const contentBlocks = normalizeContent(line.message?.content ?? line.content);
+    const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
+    const lastMessage = JSON.stringify({ role, timestamp, text });
+    const seq = ++this.tailSeq;
 
     const result = this.stmts.updateMeta.run(activityMs, lastMessage, seq, convId);
     if (result.changes === 0) return;

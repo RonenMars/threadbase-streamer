@@ -1,5 +1,6 @@
 import type { SessionProjectChat } from "../../schemas/projectChat.schema";
 import type { SessionResponse } from "../../types";
+import { deriveProjectChatTitle } from "./deriveProjectChatTitle";
 
 /**
  * Normalize a SessionResponse into the union ProjectChat shape used by
@@ -21,7 +22,12 @@ export function normalizeSessionToProjectChat(session: SessionResponse): Session
     id: session.id,
     projectId: session.projectId,
     projectPath: session.projectPath ?? null,
-    title: session.sessionName ?? session.projectName ?? session.id,
+    title: deriveProjectChatTitle({
+      title: session.sessionName,
+      projectName: session.projectName,
+      projectPath: session.projectPath,
+      id: session.id,
+    }),
     latestMessageAt: session.lastMessageAt ?? session.lastActivityAt ?? null,
     updatedAt: session.lastActivityAt ?? null,
     createdAt: session.startedAt ?? null,

@@ -157,6 +157,97 @@ describe("updateFromLine()", () => {
   });
 });
 
+describe("updateFromLine() — project backfill from cwd/slug", () => {
+  const PSEUDO_ID = "9f4a-skeleton";
+  const NEW_FILE = `/home/.claude/projects/-proj-new/${PSEUDO_ID}.jsonl`;
+
+  it("backfills project_path / project_name / title from cwd on the first message line", () => {
+    cache.updateFromLine(
+      NEW_FILE,
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:00:00.000Z",
+        cwd: "/Users/me/dev/my-project",
+        content: [{ type: "text", text: "hi" }],
+      }),
+    );
+    const list = cache.listConversations({ limit: 10, offset: 0 });
+    const row = list.conversations.find((c) => c.id === PSEUDO_ID);
+    expect(row).toBeDefined();
+    expect(row?.projectPath).toBe("/Users/me/dev/my-project");
+    expect(row?.projectName).toBe("me/dev/my-project");
+    expect(row?.title).toBe("me/dev/my-project");
+  });
+
+  it("backfills from a non-user/assistant line that carries cwd (e.g. attachment)", () => {
+    cache.updateFromLine(
+      NEW_FILE,
+      JSON.stringify({
+        type: "attachment",
+        timestamp: "2024-01-01T09:59:00.000Z",
+        cwd: "/Users/me/dev/my-project",
+        sessionId: PSEUDO_ID,
+      }),
+    );
+    const list = cache.listConversations({ limit: 10, offset: 0 });
+    const row = list.conversations.find((c) => c.id === PSEUDO_ID);
+    expect(row).toBeDefined();
+    expect(row?.projectPath).toBe("/Users/me/dev/my-project");
+    expect(row?.messageCount).toBe(1); // skeleton insert; not bumped by attachment
+  });
+
+  it("prefers slug over derived projectName for title when slug is present", () => {
+    cache.updateFromLine(
+      NEW_FILE,
+      JSON.stringify({
+        type: "attachment",
+        cwd: "/Users/me/dev/my-project",
+        slug: "fix-the-foo-bug",
+      }),
+    );
+    const list = cache.listConversations({ limit: 10, offset: 0 });
+    const row = list.conversations.find((c) => c.id === PSEUDO_ID);
+    expect(row?.title).toBe("fix-the-foo-bug");
+    expect(row?.projectName).toBe("me/dev/my-project");
+  });
+
+  it("never overwrites a scanner-populated project_path", () => {
+    cache.upsertFromScannerMeta([
+      {
+        ...BASE_META,
+        id: PSEUDO_ID,
+        sessionId: PSEUDO_ID,
+        filePath: NEW_FILE,
+        projectPath: "/scanner/wins",
+        projectName: "scanner/wins",
+        title: "scanner/wins",
+      } as never,
+    ]);
+    cache.updateFromLine(
+      NEW_FILE,
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:00:00.000Z",
+        cwd: "/Users/me/dev/different",
+        content: [{ type: "text", text: "hi" }],
+      }),
+    );
+    const list = cache.listConversations({ limit: 10, offset: 0 });
+    const row = list.conversations.find((c) => c.id === PSEUDO_ID);
+    expect(row?.projectPath).toBe("/scanner/wins");
+    expect(row?.projectName).toBe("scanner/wins");
+  });
+
+  it("ignores lines with neither a message role nor cwd/slug", () => {
+    cache.updateFromLine(
+      NEW_FILE,
+      JSON.stringify({ type: "queue-operation", operation: "enqueue" }),
+    );
+    const list = cache.listConversations({ limit: 10, offset: 0 });
+    expect(list.conversations.find((c) => c.id === PSEUDO_ID)).toBeUndefined();
+  });
+});
+
 describe("listConversations()", () => {
   beforeEach(() => {
     cache.upsertFromScannerMeta([

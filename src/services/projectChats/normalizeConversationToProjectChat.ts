@@ -1,5 +1,6 @@
 import type { ConversationListItem } from "../../conversation-cache";
 import type { ConversationProjectChat } from "../../schemas/projectChat.schema";
+import { deriveProjectChatTitle } from "./deriveProjectChatTitle";
 
 /**
  * Normalize a cached conversation row into the union ProjectChat shape.
@@ -21,7 +22,12 @@ export function normalizeConversationToProjectChat(
     id: conversation.id,
     projectId: conversation.projectId,
     projectPath: conversation.projectPath ?? null,
-    title: conversation.title ?? conversation.projectName ?? conversation.id,
+    title: deriveProjectChatTitle({
+      title: conversation.title,
+      projectName: conversation.projectName,
+      projectPath: conversation.projectPath,
+      id: conversation.id,
+    }),
     latestMessageAt: conversation.lastActivity ?? null,
     updatedAt: conversation.lastActivity ?? null,
     createdAt: null,
