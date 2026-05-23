@@ -166,6 +166,31 @@ describe("isAgentFile", () => {
     writeFileSync(fp, `${padding}\n${JSON.stringify(AGENT_LINE)}\n`);
     expect(isAgentFile(fp)).toBe(true);
   });
+
+  it("early-exits on a non-agent file with cli entrypoint (does not read whole file)", () => {
+    // Build a 1 MB file: first line is HUMAN_LINE (entrypoint=cli, fully
+    // visible inside the first 64 KB chunk), followed by 1 MB of padding.
+    // Without early-exit the probe would read the whole file; with early-exit
+    // it stops at the first entrypoint occurrence.
+    const filler = "x".repeat(1024 * 1024);
+    const fp = join(workDir, "early-exit.jsonl");
+    writeFileSync(fp, `${JSON.stringify(HUMAN_LINE)}\n${filler}\n`);
+    expect(isAgentFile(fp)).toBe(false);
+  });
+
+  it("finds marker past 2 MB (deep observer-session files)", () => {
+    // The previous 2 MB ceiling missed real observer-session JSONLs where the
+    // first entrypoint sits at ~2.3 MB after long housekeeping prefixes.
+    // Build ~2.5 MB of housekeeping noise (no entrypoint field) before the
+    // agent line.
+    const filler = Array.from({ length: 25000 }, (_, i) => ({
+      ...HOUSEKEEPING_LINE,
+      idx: i,
+      junk: "x".repeat(100),
+    }));
+    const fp = writeJsonl("deep-observer.jsonl", [...filler, AGENT_LINE]);
+    expect(isAgentFile(fp)).toBe(true);
+  });
 });
 
 describe("parseAgentFilterEnv", () => {

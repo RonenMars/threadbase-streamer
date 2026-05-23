@@ -10,13 +10,17 @@ import { closeSync, openSync, readSync, statSync } from "fs";
 //                     keep them visible if they want.
 export const DEFAULT_AGENT_ENTRYPOINTS: ReadonlySet<string> = new Set(["sdk-cli", "claude-vscode"]);
 
-// Chunked scan: read 64 KB at a time and early-exit on the first marker hit.
-// The marker can sit deep in the file (observed up to ~217 KB after long
-// housekeeping/queue-operation prefixes), so a one-shot 64 KB read misses
-// many real agent JSONLs. PROBE_MAX_BYTES caps total work for pathological
-// files; 2 MB covers every sample I measured with headroom.
+// Chunked scan: read 64 KB at a time with early-exit. We look for the first
+// `"entrypoint":` occurrence in the file:
+//   - matches an agent marker → return true
+//   - matches some other entrypoint value (e.g. "cli") → return false
+//   - never appears → return false
+// The entrypoint is fixed per-conversation, so the first occurrence is
+// authoritative. This keeps both agent and human files fast (typical first
+// hit is within the first chunk), while still tolerating long housekeeping
+// prefixes (observed agent markers as deep as 2.3 MB in 4.5 MB observer files).
 const CHUNK_BYTES = 64 * 1024;
-const PROBE_MAX_BYTES = 2 * 1024 * 1024;
+const ENTRYPOINT_PROBE = `"entrypoint":`;
 // Overlap consecutive chunks so a marker that straddles the boundary is still
 // found. The longest entrypoint we look for is ~24 chars; 64 bytes overlap is
 // plenty.
@@ -65,22 +69,32 @@ export function isAgentFile(
     }
 
     const markers = markersFor(entrypoints);
-    const ceiling = Math.min(fileSize, PROBE_MAX_BYTES);
     const buf = Buffer.allocUnsafe(CHUNK_BYTES);
     let offset = 0;
     let carry = "";
 
-    while (offset < ceiling) {
-      const toRead = Math.min(CHUNK_BYTES, ceiling - offset);
+    while (offset < fileSize) {
+      const toRead = Math.min(CHUNK_BYTES, fileSize - offset);
       const got = readSync(fd, buf, 0, toRead, offset);
       if (got <= 0) break;
       const chunk = carry + buf.toString("utf8", 0, got);
+
+      // Agent match wins.
       for (const marker of markers) {
         if (chunk.includes(marker)) {
           fileDecisionCache.set(key, true);
           return true;
         }
       }
+
+      // If we see ANY entrypoint field, it's per-conversation and stable —
+      // since none of the agent markers matched, this is a non-agent file.
+      // Stops 11 MB human JSONLs from being read in full.
+      if (chunk.includes(ENTRYPOINT_PROBE)) {
+        fileDecisionCache.set(key, false);
+        return false;
+      }
+
       carry = chunk.slice(-CHUNK_OVERLAP);
       offset += got;
     }
