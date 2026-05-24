@@ -29,17 +29,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Init scanner submodule
-        shell: bash
-        env:
-          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-        # actions/checkout creates vendor/scanner as an empty directory for
-        # the tracked submodule path, so a bare `git clone … vendor/scanner`
-        # fails with "destination path … already exists". Remove first.
-        run: |
-          rm -rf vendor/scanner
-          git clone "https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git" vendor/scanner
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -47,10 +36,6 @@ jobs:
       - name: Install Linux build tools for node-pty
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
-      - name: Build scanner
-        shell: bash
-        run: cd vendor/scanner && npm install && npm run build
 
       - name: Install dependencies
         run: npm ci
@@ -86,24 +71,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Init scanner submodule
-        env:
-          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-        # See note in the build job above — actions/checkout creates the
-        # submodule path empty, so the clone needs a fresh destination.
-        run: |
-          rm -rf vendor/scanner
-          git clone "https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git" vendor/scanner
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
 
       - name: Install Linux build tools for node-pty
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
-      - name: Build scanner
-        run: cd vendor/scanner && npm install && npm run build
 
       - name: Install dependencies
         run: npm ci

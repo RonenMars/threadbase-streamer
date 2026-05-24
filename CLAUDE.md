@@ -45,6 +45,7 @@ Key modules and their responsibilities:
 - `services/projects/*` — `upsertProjectByPath`, `ensureProjectsForConversations` (groups conversations by canonical project path, picks latest, upserts one project per path).
 - `services/conversations/refreshConversationCache.ts` — after a scanner-driven cache rebuild, upsert projects and backfill `conversation_meta.project_id`. Updates `cache_metadata.last_conversation_id`.
 - `services/conversations/shouldRefreshProjectsFromHdd.ts` — compares the latest conversation id known to the cache vs `cache_metadata.last_conversation_id`. Used by `/project-chats` to short-circuit refresh when nothing changed.
+- `services/conversations/isAgentConversation.ts` + `pruneAgentConversations.ts` — detect agent-authored JSONLs by matching the `entrypoint` field against a configurable set (default `sdk-cli`, `claude-vscode`; see `THREADBASE_AGENT_ENTRYPOINTS`). Interactive Claude Code emits `cli` and is never matched. When `THREADBASE_FILTER_AGENT_CONVERSATIONS` is on (default), the cache skips matched files during scanner + watcher ingestion and runs a one-time prune of existing rows on startup. The file probe is a chunked scan with 64 KB chunks, 64-byte overlap, and a 2 MB ceiling — the marker can sit deep in the file after long housekeeping prefixes.
 - `services/sessions/createSessionForProjectPath.ts` + `ensureSessionProjectIdsFromExistingProjects.ts` — link a managed session to its project once the JSONL exists; backfill `projectId` for sessions whose path matches an existing project.
 - `services/cache/cacheMetadata.ts` — get/set helpers over the `cache_metadata` key/value table.
 - `auth.ts` — bearer token generation/validation with constant-time comparison
@@ -89,6 +90,8 @@ running / waiting_input ──(server restart)──► on_hold   (reconcile.ts)
 | `THREADBASE_DATABASE_STATEMENT_TIMEOUT_MS` | Query timeout in ms |
 | `THREADBASE_INSTANCE_ID` | Stable identifier for this server instance (defaults to `os.hostname()`); used to scope DB-persisted sessions |
 | `THREADBASE_PUBLIC_URL` | Public HTTPS URL for QR pairing (overrides `public_url:` in server.yaml) |
+| `THREADBASE_FILTER_AGENT_CONVERSATIONS` | Hide non-interactive Claude runs from `/api/conversations` + `/project-chats`. Default `on`. Set to `0` / `false` to keep them visible. Toggling triggers a one-time prune-or-rescan on the next restart. |
+| `THREADBASE_AGENT_ENTRYPOINTS` | Comma-separated list of JSONL `entrypoint` values to treat as agent traffic. Default `sdk-cli,claude-vscode`. Interactive Claude Code uses `cli` and is never filtered. Set to `sdk-cli` only if you want `claude-vscode` runs visible. |
 
 ## CLI flags vs. `server.yaml`
 
@@ -107,7 +110,7 @@ Practical consequence: any service definition (launchd plist, systemd unit, Task
 
 ## Dependencies
 
-- `@threadbase/scanner` — scan, parse, search, filter conversation history (used for REST endpoints)
+- `@threadbase/scanner` — scan, parse, search, filter conversation history. Consumed from public GitHub repo via npm git URL dep (`github:RonenMars/threadbase-scanner#<tag>`). Used for REST endpoints. See [scanner repo](https://github.com/RonenMars/threadbase-scanner) for source.
 - `node-pty` — native PTY management (external, not bundled by tsup)
 - `ws` — WebSocket server
 - `better-sqlite3` — SQLite driver for `ConversationCache` (incl. projects + cache_metadata + schema_migrations tables)

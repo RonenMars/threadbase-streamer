@@ -9,7 +9,7 @@ const FIXTURE_PROFILES = [
   {
     id: "test",
     label: "Test",
-    configDir: join(__dirname, "../vendor/scanner/__fixtures__/contract-projects"),
+    configDir: join(__dirname, "./fixtures/contract-projects"),
     enabled: true,
     emoji: "🧪",
   },

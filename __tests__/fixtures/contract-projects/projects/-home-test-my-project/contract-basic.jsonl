@@ -1,0 +1,3 @@
+{"type":"user","uuid":"cb-u1","timestamp":"2026-01-20T10:00:00.000Z","sessionId":"sess-contract-basic","slug":"test-session","cwd":"/home/test/my-project","message":{"role":"user","content":[{"type":"text","text":"Hello, can you help me with the project?"}]}}
+{"type":"assistant","uuid":"cb-a1","timestamp":"2026-01-20T10:00:05.000Z","sessionId":"sess-contract-basic","message":{"role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"Of course! I'd be happy to help with your project. What do you need?"}]}}
+{"type":"user","uuid":"cb-u2","timestamp":"2026-01-20T10:01:00.000Z","sessionId":"sess-contract-basic","message":{"role":"user","content":[{"type":"text","text":"Please review the README"}]}}

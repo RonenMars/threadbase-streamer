@@ -190,18 +190,15 @@ There is no automated rollback. Manual options:
 
 ## Known limitations
 
-- The release workflow needs a `SCANNER_TOKEN` repo secret with read access
-  to `RonenMars/threadbase-scanner`. Without it, the build jobs fail at the
-  submodule init step.
 - `@semantic-release/changelog` overwrites `CHANGELOG.md` on first run;
   the stub in this repo is a placeholder.
 
 ## Validating the release pipeline without publishing
 
-To exercise the matrix on a feature branch — confirm `SCANNER_TOKEN`
-exists, scanner clones, `npm ci` succeeds, `npm run build` + pack work on
-all four runners — trigger `.github/workflows/release.yml` via
-`workflow_dispatch` with `publish=false` (the default):
+To exercise the matrix on a feature branch — confirm `npm ci` succeeds and
+`npm run build` + pack work on all four runners — trigger
+`.github/workflows/release.yml` via `workflow_dispatch` with `publish=false`
+(the default):
 
 ```sh
 gh workflow run release.yml --ref feat/updater

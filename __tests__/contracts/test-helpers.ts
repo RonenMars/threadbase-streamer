@@ -9,7 +9,7 @@ import { StreamerServer } from "../../src/server";
 // ─── Fixture Profiles ─────────────────────────────────────────────
 // Point scanner at the contract fixtures instead of ~/.claude.
 
-export const FIXTURES_DIR = join(__dirname, "../../vendor/scanner/__fixtures__");
+export const FIXTURES_DIR = join(__dirname, "../fixtures");
 
 export function createFixtureProfiles(fixtureDir: string) {
   return [

@@ -6,7 +6,6 @@
 # Usage:
 #   scripts/deploy-linux.sh                   # build + deploy current HEAD
 #   scripts/deploy-linux.sh --force           # skip lint/test gates and dirty-tree check
-#   scripts/deploy-linux.sh --update-scanner  # bump vendor/scanner pin first
 #   scripts/deploy-linux.sh setup             # first-time: write systemd unit + ask about auto-startup
 #   scripts/deploy-linux.sh rollback          # repoint cli.js to the previous release
 #   scripts/deploy-linux.sh status            # show current release and unit status
@@ -36,7 +35,6 @@ warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
 ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 
-SCANNER_DIR="$REPO_ROOT/vendor/scanner"
 MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
 
 ensure_menubar_deployed() {
@@ -81,40 +79,6 @@ ensure_menubar_deployed() {
     fi
   else
     ok "menubar already running (pid $running_pid)"
-  fi
-}
-
-ensure_scanner_built() {
-  local update_remote="${1:-}"
-
-  cd "$REPO_ROOT"
-  if [[ ! -f "$SCANNER_DIR/package.json" ]]; then
-    log "initializing vendor/scanner submodule"
-    git submodule update --init --recursive vendor/scanner
-  fi
-
-  if [[ "$update_remote" == "1" ]]; then
-    log "bumping vendor/scanner to remote main"
-    git submodule update --remote vendor/scanner
-    if [[ -n "$(git status --porcelain vendor/scanner)" ]]; then
-      local new_sha
-      new_sha="$(cd "$SCANNER_DIR" && git rev-parse --short HEAD)"
-      warn "scanner pin moved to $new_sha — remember to commit the .gitmodules/vendor/scanner bump"
-    fi
-  fi
-
-  local need_build=0
-  if [[ ! -d "$SCANNER_DIR/dist" ]]; then
-    need_build=1
-  else
-    local newest_src
-    newest_src="$(find "$SCANNER_DIR/src" -type f -newer "$SCANNER_DIR/dist" -print -quit 2>/dev/null || true)"
-    [[ -n "$newest_src" ]] && need_build=1
-  fi
-
-  if (( need_build )); then
-    log "building scanner submodule"
-    ( cd "$SCANNER_DIR" && npm install --silent && npm run build )
   fi
 }
 
@@ -323,19 +287,16 @@ activate_release() {
 }
 
 cmd_deploy() {
-  local force="" update_scanner=0
+  local force=""
   for arg in "$@"; do
     case "$arg" in
       --force)           force="--force" ;;
-      --update-scanner)  update_scanner=1 ;;
       *) err "unknown deploy flag: $arg"; exit 2 ;;
     esac
   done
 
   cmd_predeploy_check "$force"
   cmd_check_browse_root
-
-  ensure_scanner_built "$update_scanner"
 
   cd "$REPO_ROOT"
   if [[ "$force" == "--force" ]]; then
@@ -405,14 +366,14 @@ cmd_deploy() {
 case "${1:-deploy}" in
   setup)        cmd_setup ;;
   deploy)       shift; cmd_deploy "$@" ;;
-  --force|--update-scanner)  cmd_deploy "$@" ;;
+  --force)      cmd_deploy "$@" ;;
   "")           cmd_deploy ;;
   rollback)     cmd_rollback ;;
   status)       cmd_status ;;
   healthcheck)  cmd_healthcheck ;;
   *)
     err "unknown command: $1"
-    echo "usage: $0 [deploy [--force] [--update-scanner] | rollback | status | healthcheck]" >&2
+    echo "usage: $0 [deploy [--force] | rollback | status | healthcheck]" >&2
     exit 2
     ;;
 esac

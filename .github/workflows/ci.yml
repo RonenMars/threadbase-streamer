@@ -13,20 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Init scanner submodule
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
-        env:
-          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install build tools for node-pty
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
-      - name: Build scanner
-        run: cd vendor/scanner && npm install && npm run build
 
       - run: npm install
 
@@ -38,20 +30,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Init scanner submodule
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
-        env:
-          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install build tools for node-pty
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
-      - name: Build scanner
-        run: cd vendor/scanner && npm install && npm run build
 
       - run: npm install
 
@@ -72,20 +56,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Init scanner submodule
-        run: git clone https://x-access-token:${SCANNER_TOKEN}@github.com/RonenMars/threadbase-scanner.git vendor/scanner
-        env:
-          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
-
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
 
       - name: Install build tools for node-pty
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
-      - name: Build scanner
-        run: cd vendor/scanner && npm install && npm run build
 
       - run: npm install
 

@@ -6,7 +6,6 @@
 # Usage:
 #   pwsh scripts/deploy.ps1                    # build + deploy
 #   pwsh scripts/deploy.ps1 -Force             # skip lint/test gates and dirty-tree check
-#   pwsh scripts/deploy.ps1 -UpdateScanner     # bump vendor/scanner pin first
 #   pwsh scripts/deploy.ps1 rollback           # repoint cli.js to the previous release
 #   pwsh scripts/deploy.ps1 status             # show current release and task status
 #   pwsh scripts/deploy.ps1 healthcheck        # probe /healthz
@@ -24,8 +23,7 @@ param(
   [ValidateSet('deploy', 'setup', 'rollback', 'status', 'healthcheck', '')]
   [string]$Command = 'deploy',
 
-  [switch]$Force,
-  [switch]$UpdateScanner
+  [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,7 +37,6 @@ $taskName     = if ($env:THREADBASE_TASK_NAME) { $env:THREADBASE_TASK_NAME } els
 $healthUrl    = if ($env:THREADBASE_HEALTH_URL) { $env:THREADBASE_HEALTH_URL } else { 'http://localhost:8766/healthz' }
 $keepReleases = 5
 
-$scannerDir  = Join-Path $repoRoot 'vendor\scanner'
 $menubarDir  = Join-Path $repoRoot 'vendor\menubar'
 
 function Write-Log  { param($m) Write-Host "▶ $m" -ForegroundColor Blue }
@@ -122,55 +119,6 @@ function Invoke-Native {
   & $Command @ArgList
   if ($LASTEXITCODE -ne 0) {
     throw "$Command exited with code $LASTEXITCODE"
-  }
-}
-
-function Ensure-ScannerBuilt {
-  param([bool]$UpdateRemote)
-
-  Push-Location $repoRoot
-  try {
-    if (-not (Test-Path (Join-Path $scannerDir 'package.json'))) {
-      Write-Log "initializing vendor/scanner submodule"
-      Invoke-Native git @('submodule', 'update', '--init', '--recursive', 'vendor/scanner')
-    }
-
-    if ($UpdateRemote) {
-      Write-Log "bumping vendor/scanner to remote main"
-      Invoke-Native git @('submodule', 'update', '--remote', 'vendor/scanner')
-      $porcelain = & git status --porcelain vendor/scanner
-      if ($porcelain) {
-        Push-Location $scannerDir
-        $newSha = (& git rev-parse --short HEAD).Trim()
-        Pop-Location
-        Write-Warn "scanner pin moved to $newSha — remember to commit the .gitmodules/vendor/scanner bump"
-      }
-    }
-
-    $needBuild = $false
-    $distDir = Join-Path $scannerDir 'dist'
-    if (-not (Test-Path $distDir)) {
-      $needBuild = $true
-    } else {
-      $distMTime = (Get-Item $distDir).LastWriteTime
-      $newest = Get-ChildItem -Recurse -File (Join-Path $scannerDir 'src') |
-                Where-Object { $_.LastWriteTime -gt $distMTime } |
-                Select-Object -First 1
-      if ($newest) { $needBuild = $true }
-    }
-
-    if ($needBuild) {
-      Write-Log "building scanner submodule"
-      Push-Location $scannerDir
-      try {
-        Invoke-Native npm @('install', '--silent')
-        Invoke-Native npm @('run', 'build')
-      } finally {
-        Pop-Location
-      }
-    }
-  } finally {
-    Pop-Location
   }
 }
 
@@ -416,8 +364,6 @@ function Invoke-CheckBrowseRoot {
 function Invoke-Deploy {
   Invoke-PredeployCheck
   Invoke-CheckBrowseRoot
-
-  Ensure-ScannerBuilt -UpdateRemote:$UpdateScanner
 
   Push-Location $repoRoot
   try {

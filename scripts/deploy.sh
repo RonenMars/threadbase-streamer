@@ -2,9 +2,8 @@
 # Deploy/rollback/status helper for the local launchd-managed threadbase-streamer.
 #
 # Usage:
-#   scripts/deploy.sh                       # build + deploy current HEAD (uses pinned scanner submodule)
+#   scripts/deploy.sh                       # build + deploy current HEAD
 #   scripts/deploy.sh --force               # deploy even if working tree is dirty / not on main
-#   scripts/deploy.sh --update-scanner      # bump vendor/scanner to its remote main, then deploy
 #   scripts/deploy.sh --publish-menubar     # also upload the menubar .dmg to GitHub Releases
 #                                           #   (requires ~/.threadbase/menubar-signing.env + gh auth)
 #   scripts/deploy.sh setup                 # first-time: write launchd plist + ask about auto-startup
@@ -34,7 +33,6 @@ warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
 ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 
-SCANNER_DIR="$REPO_ROOT/vendor/scanner"
 MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
 
 MENUBAR_SIGNING_ENV="$INSTALL_DIR/menubar-signing.env"
@@ -219,44 +217,6 @@ publish_menubar() {
   fi
 
   ok "published $tag"
-}
-
-# Ensure the scanner submodule is checked out and built. Idempotent — skips
-# `npm install`/`npm run build` if scanner's dist/ is already up-to-date with
-# its src/.
-ensure_scanner_built() {
-  local update_remote="${1:-}"
-
-  cd "$REPO_ROOT"
-  if [[ ! -f "$SCANNER_DIR/package.json" ]]; then
-    log "initializing vendor/scanner submodule"
-    git submodule update --init --recursive vendor/scanner
-  fi
-
-  if [[ "$update_remote" == "1" ]]; then
-    log "bumping vendor/scanner to remote main"
-    git submodule update --remote vendor/scanner
-    if [[ -n "$(git status --porcelain vendor/scanner)" ]]; then
-      local new_sha
-      new_sha="$(cd "$SCANNER_DIR" && git rev-parse --short HEAD)"
-      warn "scanner pin moved to $new_sha — remember to commit the .gitmodules/vendor/scanner bump"
-    fi
-  fi
-
-  # Build scanner only if dist/ is missing or older than the newest src file.
-  local need_build=0
-  if [[ ! -d "$SCANNER_DIR/dist" ]]; then
-    need_build=1
-  else
-    local newest_src newest_dist
-    newest_src="$(find "$SCANNER_DIR/src" -type f -newer "$SCANNER_DIR/dist" -print -quit 2>/dev/null || true)"
-    [[ -n "$newest_src" ]] && need_build=1
-  fi
-
-  if (( need_build )); then
-    log "building scanner submodule"
-    ( cd "$SCANNER_DIR" && npm install --silent && npm run build )
-  fi
 }
 
 cmd_check_browse_root() {
@@ -647,11 +607,10 @@ activate_release() {
 }
 
 cmd_deploy() {
-  local force="" update_scanner=0 publish_menubar_flag=0
+  local force="" publish_menubar_flag=0
   for arg in "$@"; do
     case "$arg" in
       --force)            force="--force" ;;
-      --update-scanner)   update_scanner=1 ;;
       --publish-menubar)  publish_menubar_flag=1 ;;
       *) err "unknown deploy flag: $arg"; exit 2 ;;
     esac
@@ -677,8 +636,6 @@ cmd_deploy() {
 
   cmd_predeploy_check "$force"
   cmd_check_browse_root
-
-  ensure_scanner_built "$update_scanner"
 
   cd "$REPO_ROOT"
   if [[ "$force" == "--force" ]]; then
@@ -754,7 +711,7 @@ case "${1:-deploy}" in
     shift
     cmd_deploy "$@"
     ;;
-  --force|--update-scanner|--publish-menubar)
+  --force|--publish-menubar)
     cmd_deploy "$@"
     ;;
   "")
@@ -775,7 +732,7 @@ case "${1:-deploy}" in
     ;;
   *)
     err "unknown command: $1"
-    echo "usage: $0 [deploy [--force] [--update-scanner] [--publish-menubar] | menubar [--publish] | rollback | status | healthcheck]" >&2
+    echo "usage: $0 [deploy [--force] [--publish-menubar] | menubar [--publish] | rollback | status | healthcheck]" >&2
     exit 2
     ;;
 esac

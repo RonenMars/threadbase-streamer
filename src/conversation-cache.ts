@@ -2,6 +2,23 @@ import Database from "better-sqlite3";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
+import {
+  DEFAULT_AGENT_ENTRYPOINTS,
+  isAgentFile,
+  isAgentLine,
+} from "./services/conversations/isAgentConversation";
+
+export interface ConversationCacheOptions {
+  // When true, drop conversations whose JSONL came from an agent entrypoint.
+  // Default false to preserve legacy behavior.
+  filterAgentConversations?: boolean;
+  // Set of `entrypoint` values to treat as agent traffic. Defaults to
+  // DEFAULT_AGENT_ENTRYPOINTS ({ sdk-cli, claude-vscode }).
+  agentEntrypoints?: ReadonlySet<string>;
+  // Fired the first time an agent JSONL is detected for a given file path
+  // (from updateFromLine). Lets the server unwatch the file.
+  onAgentFileDetected?: (filePath: string) => void;
+}
 
 export interface ConversationListItem {
   id: string;
@@ -81,6 +98,9 @@ interface JsonlLine {
   role?: string;
   type?: string;
   timestamp?: string;
+  // Set by Claude Code / Agent SDK on every real message line. "cli" = human
+  // interactive Claude Code; "sdk-cli" = Claude Agent SDK / claude-mem / hooks.
+  entrypoint?: string;
   // Real Claude JSONL emits either an array of blocks or a raw string. Normalize
   // via `normalizeContent` before consuming.
   content?: ContentBlock[] | string;
@@ -172,10 +192,24 @@ export class ConversationCache {
 
   private migrationsDir?: string;
 
-  private constructor(db: Database.Database, tailSize: number, migrationsDir?: string) {
+  // When true, ingestion drops conversations whose JSONL `entrypoint` belongs
+  // to `agentEntrypoints`. See isAgentConversation.ts.
+  private filterAgentConversations = false;
+  private agentEntrypoints: ReadonlySet<string> = DEFAULT_AGENT_ENTRYPOINTS;
+  private onAgentFileDetected?: (filePath: string) => void;
+
+  private constructor(
+    db: Database.Database,
+    tailSize: number,
+    migrationsDir?: string,
+    options?: ConversationCacheOptions,
+  ) {
     this.migrationsDir = migrationsDir;
     this.db = db;
     this.tailSize = tailSize;
+    this.filterAgentConversations = options?.filterAgentConversations ?? false;
+    this.agentEntrypoints = options?.agentEntrypoints ?? DEFAULT_AGENT_ENTRYPOINTS;
+    this.onAgentFileDetected = options?.onAgentFileDetected;
     db.exec(SCHEMA);
     runSqliteMigrations(db, this.migrationsDir);
     this.stmts = {
@@ -278,12 +312,21 @@ export class ConversationCache {
     return this.db;
   }
 
-  static open(dbPath: string, tailSize = 10, migrationsDir?: string): ConversationCache {
+  getAgentEntrypoints(): ReadonlySet<string> {
+    return this.agentEntrypoints;
+  }
+
+  static open(
+    dbPath: string,
+    tailSize = 10,
+    migrationsDir?: string,
+    options?: ConversationCacheOptions,
+  ): ConversationCache {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
-    return new ConversationCache(db, tailSize, migrationsDir);
+    return new ConversationCache(db, tailSize, migrationsDir, options);
   }
 
   close(): void {
@@ -317,6 +360,12 @@ export class ConversationCache {
     try {
       line = JSON.parse(rawLine);
     } catch {
+      return;
+    }
+
+    if (this.filterAgentConversations && isAgentLine(line, this.agentEntrypoints)) {
+      this.deleteByFilePath(filePath);
+      this.onAgentFileDetected?.(filePath);
       return;
     }
 
@@ -361,8 +410,11 @@ export class ConversationCache {
   }
 
   upsertFromScannerMeta(metas: ScannerMeta[]): void {
+    const filter = this.filterAgentConversations;
+    const entrypoints = this.agentEntrypoints;
     const run = this.db.transaction((items: ScannerMeta[]) => {
       for (const m of items) {
+        if (filter && isAgentFile(m.filePath, entrypoints)) continue;
         const id =
           m.sessionId ||
           m.id
@@ -391,6 +443,18 @@ export class ConversationCache {
       }
     });
     run(metas);
+  }
+
+  // Returns true if a row was deleted. Used by the prune-on-startup step and
+  // by updateFromLine when a previously-cached file turns out to be an agent
+  // JSONL.
+  deleteByFilePath(filePath: string): boolean {
+    const row = this.stmts.getIdByFilePath.get(filePath) as { id: string } | undefined;
+    if (!row) return false;
+    this.stmts.deleteTailById.run(row.id);
+    const result = this.stmts.deleteById.run(row.id);
+    this.fileIndex.delete(filePath);
+    return result.changes > 0;
   }
 
   // Reads the last `tailSize` qualifying lines from a JSONL file and writes them

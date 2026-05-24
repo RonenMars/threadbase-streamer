@@ -23,6 +23,23 @@ Or manually:
 rm ~/.threadbase/cache/cache.db*
 ```
 
+### `Startup cache warm-up failed: FOREIGN KEY constraint failed`
+
+**When:** Recurring warning in `~/.threadbase/logs/threadbase.{log,err}` (or `/tmp/threadbase.{log,err}` on default deploy) at every server start. Logged at level `40` (warn) with `event: cache.warmup_failed`. Streamer continues to serve `/healthz`, the conversation list, and PTY sessions normally — this is non-blocking.
+
+**Symptom example:**
+```
+{"level":40,"time":"2026-05-24T15:24:12.418Z","service":"tb-streamer","component":"server","error":"FOREIGN KEY constraint failed","event":"cache.warmup_failed","msg":"Startup cache warm-up failed: FOREIGN KEY constraint failed"}
+```
+
+**Cause:** Suspected SQLite FK-ordering bug during startup cache warm-up. The warm-up path tries to write `conversation_meta` rows whose `project_id` references rows in `projects` that haven't been inserted yet — likely an ordering issue in `services/conversations/refreshConversationCache.ts` ⟶ `services/projects/ensureProjectsForConversations.ts`. The error is caught (level 40 not 50), logged, and execution continues without the warm-up succeeding. The cache then rebuilds incrementally on demand via the watcher + `shouldRefreshProjectsFromHdd` gate, so user-visible functionality is unaffected — just slower cold-start performance until the cache catches up.
+
+**Fix:** Not yet root-caused. Open question — possibly: (a) wrap warm-up in an explicit transaction with project upserts ordered before conversation inserts, (b) defer FK enforcement during warm-up with `PRAGMA defer_foreign_keys = ON`, or (c) skip the warm-up entirely and rely solely on the lazy watcher-driven cache rebuild. None of these have been investigated in detail.
+
+**Workaround:** None needed. The streamer functions correctly despite the warning. Worth a focused debug session when the FK enforcement is touched for other reasons, but does not require urgent attention.
+
+**First observed:** 2026-05-23 (multiple occurrences). Not introduced by the scanner-goes-public migration (2026-05-24) — predates it.
+
 ---
 
 ## Deploy failures
