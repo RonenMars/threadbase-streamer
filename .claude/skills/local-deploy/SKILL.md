@@ -261,7 +261,6 @@ Choose the npm script that matches the OS:
 # macOS
 npm run deploy
 npm run deploy:force            # skip lint/tests/dirty-tree
-npm run deploy:update-scanner   # bump submodule first
 
 # Linux
 npm run deploy:linux
@@ -272,7 +271,7 @@ npm run deploy:windows
 npm run deploy:windows:force
 ```
 
-Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → ensure scanner built → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/`** → activate → restart the service → healthcheck on `http://localhost:8766/healthz`.
+Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/`** → activate → restart the service → healthcheck on `http://localhost:8766/healthz`.
 
 `dist/migrations/` now contains the **SQLite** migrations consumed by `ConversationCache.open()` — projects table, project_id columns, cache_metadata. They are required on every deploy; the streamer will fail to start without them.
 
