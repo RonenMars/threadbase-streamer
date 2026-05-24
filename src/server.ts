@@ -45,6 +45,7 @@ import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
+import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
 import { SessionStore } from "./session-store";
 import type {
   DiscoveredProcess,
@@ -558,7 +559,12 @@ export class StreamerServer {
       const { conversations, total } = this.cache.listConversations({ project, limit, offset });
       const adapted = conversations.map((c) => ({
         id: c.id,
-        title: c.projectName,
+        title: deriveProjectChatTitle({
+          title: c.title,
+          projectName: c.projectName,
+          projectPath: c.projectPath,
+          id: c.id,
+        }),
         sessionName: undefined as string | undefined,
         filePath: c.filePath,
         projectPath: c.projectPath,
@@ -583,27 +589,35 @@ export class StreamerServer {
     const total = metas.length;
     const page = applyPagination(metas, limit, offset);
 
-    const adapted = (page.items as ConversationMeta[]).map((c) => ({
-      id:
+    const adapted = (page.items as ConversationMeta[]).map((c) => {
+      const id =
         c.sessionId ||
         c.id
           .split("/")
           .pop()
           ?.replace(/\.jsonl$/, "") ||
-        c.id,
-      title: c.projectName,
-      sessionName: c.sessionName || undefined,
-      filePath: c.filePath,
-      projectPath: c.projectPath,
-      branch: c.gitBranch ?? undefined,
-      account: c.account,
-      preview: c.preview || undefined,
-      messageCount: c.messageCount,
-      lastActivity: c.timestamp,
-      firstMessage: c.firstMessage ?? undefined,
-      lastMessage: c.lastMessage ?? undefined,
-      model: c.model ?? undefined,
-    }));
+        c.id;
+      return {
+        id,
+        title: deriveProjectChatTitle({
+          title: c.sessionName,
+          projectName: c.projectName,
+          projectPath: c.projectPath,
+          id,
+        }),
+        sessionName: c.sessionName || undefined,
+        filePath: c.filePath,
+        projectPath: c.projectPath,
+        branch: c.gitBranch ?? undefined,
+        account: c.account,
+        preview: c.preview || undefined,
+        messageCount: c.messageCount,
+        lastActivity: c.timestamp,
+        firstMessage: c.firstMessage ?? undefined,
+        lastMessage: c.lastMessage ?? undefined,
+        model: c.model ?? undefined,
+      };
+    });
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
 
     if (this.cache && bustCache) {
