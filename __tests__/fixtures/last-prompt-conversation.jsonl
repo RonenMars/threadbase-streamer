@@ -1,0 +1,5 @@
+{"type":"user","uuid":"u1","timestamp":"2026-01-15T10:00:00.000Z","sessionId":"sess-lp","slug":"my-session","cwd":"/home/user/project","message":{"role":"user","content":[{"type":"text","text":"Hello, can you help me?"}]}}
+{"type":"assistant","uuid":"u2","timestamp":"2026-01-15T10:00:05.000Z","sessionId":"sess-lp","message":{"role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"Of course! How can I help you today?"}]}}
+{"type":"user","uuid":"u3","timestamp":"2026-01-15T10:01:00.000Z","sessionId":"sess-lp","message":{"role":"user","content":[{"type":"text","text":"Fix the bug in main.ts"}]}}
+{"type":"assistant","uuid":"u4","timestamp":"2026-01-15T10:01:30.000Z","sessionId":"sess-lp","message":{"role":"assistant","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"I'll fix that for you."}]}}
+{"type":"last-prompt","lastPrompt":"Fix the bug in main.ts","sessionId":"sess-lp"}

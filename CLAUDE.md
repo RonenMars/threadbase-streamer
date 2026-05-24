@@ -110,7 +110,7 @@ Practical consequence: any service definition (launchd plist, systemd unit, Task
 
 ## Dependencies
 
-- `@threadbase/scanner` — scan, parse, search, filter conversation history (used for REST endpoints)
+- `@threadbase/scanner` — scan, parse, search, filter conversation history. Consumed from public GitHub repo via npm git URL dep (`github:RonenMars/threadbase-scanner#<tag>`). Used for REST endpoints. See [scanner repo](https://github.com/RonenMars/threadbase-scanner) for source.
 - `node-pty` — native PTY management (external, not bundled by tsup)
 - `ws` — WebSocket server
 - `better-sqlite3` — SQLite driver for `ConversationCache` (incl. projects + cache_metadata + schema_migrations tables)
