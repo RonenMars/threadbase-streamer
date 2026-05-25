@@ -9,3 +9,7 @@ release-artifacts/
 # Claude Code harness scratch — per-checkout state, never shared.
 .claude/scheduled_tasks.lock
 .claude/*.lock
+
+# Go TUI build artifact (scripts/remote-access/tui/) — source lives in main.go;
+# build locally with `go run .` or `go build .` when you want a binary.
+scripts/remote-access/tui/tui

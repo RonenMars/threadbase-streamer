@@ -1,0 +1,81 @@
+#!/usr/bin/env sh
+# scripts/remote-access/cloudflare
+#
+# Dispatcher — picks cloudflare.sh or cloudflare.ps1 based on OS, so the
+# Go TUI and the Claude Code skill can call one entry point on Unix.
+#
+# Usage:
+#   ./cloudflare                # auto-pick (bash on Unix, pwsh on Windows)
+#   ./cloudflare --shell pwsh   # force the PowerShell variant
+#   ./cloudflare --shell bash   # force the bash variant
+#   ./cloudflare --help
+
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+  cat <<EOF
+Usage: cloudflare [--shell bash|pwsh] [--help]
+
+Dispatcher that runs the Cloudflare quick-tunnel onboarding script for
+@threadbase/streamer. Picks cloudflare.sh on Unix and cloudflare.ps1 on
+Windows by default; --shell overrides that.
+
+Both scripts do the same thing and emit the same line-prefixed protocol
+(STATUS:/URL:/PROMPT:/DONE:).
+EOF
+}
+
+SHELL_CHOICE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --shell)
+      SHELL_CHOICE="${2:-}"
+      shift 2 || { usage; exit 1; }
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "STATUS: ERROR: unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Auto-pick when --shell wasn't given
+if [ -z "$SHELL_CHOICE" ]; then
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*|Windows_NT)
+      SHELL_CHOICE="pwsh"
+      ;;
+    *)
+      SHELL_CHOICE="bash"
+      ;;
+  esac
+fi
+
+case "$SHELL_CHOICE" in
+  bash)
+    if ! command -v bash >/dev/null 2>&1; then
+      echo "STATUS: ERROR: bash not on PATH; pass --shell pwsh or install bash" >&2
+      exit 1
+    fi
+    exec bash "$SCRIPT_DIR/cloudflare.sh"
+    ;;
+  pwsh)
+    if ! command -v pwsh >/dev/null 2>&1; then
+      echo "STATUS: ERROR: pwsh not on PATH" >&2
+      echo "STATUS: install PowerShell 7+ (Windows: winget install Microsoft.PowerShell; macOS: brew install powershell)" >&2
+      exit 1
+    fi
+    exec pwsh -NoProfile -File "$SCRIPT_DIR/cloudflare.ps1"
+    ;;
+  *)
+    echo "STATUS: ERROR: --shell must be 'bash' or 'pwsh' (got: $SHELL_CHOICE)" >&2
+    exit 1
+    ;;
+esac

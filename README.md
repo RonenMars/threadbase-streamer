@@ -197,6 +197,28 @@ scripts/
 | POST | `/api/pair/start` | Mint a short-lived pair token (authenticated) |
 | POST | `/api/pair/exchange` | Trade a pair token + client public key for a sealed API key (unauthenticated) |
 
+## Remote Access (tunnels, funnels, proxies)
+
+By default the streamer binds to `127.0.0.1:8766` and isn't reachable from the network. For the mobile app to pair from outside your LAN you need something forwarding HTTPS traffic to that local port — a Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy on a VPS.
+
+The fastest path is a Cloudflare quick-tunnel — no account, no domain, ~30 seconds:
+
+```sh
+# macOS / Linux / WSL / Git Bash
+bash scripts/remote-access/cloudflare.sh
+
+# Anywhere `pwsh` is installed (Windows native, or macOS/Linux via Homebrew)
+pwsh scripts/remote-access/cloudflare.ps1
+```
+
+The script checks `cloudflared` is installed, brings the tunnel up, and verifies the round-trip with a small success page. When you're ready for a persistent hostname (so the QR doesn't break on the next restart), graduate to a named tunnel — see the full guide.
+
+- **Hub:** [docs/remote-access.md](docs/remote-access.md) — concept overview, provider comparison, security baseline
+- **Cloudflare Tunnel:** [docs/remote-access/cloudflare.md](docs/remote-access/cloudflare.md) — quick-tunnel + named-tunnel + Access
+- **Other providers:** [ngrok](docs/remote-access/ngrok.md), [Tailscale Funnel](docs/remote-access/tailscale-funnel.md), [VPS reverse proxy](docs/remote-access/vps-reverse-proxy.md)
+
+The Claude Code skill `setup-cloudflare-tunnel` runs the same script with prereq checks and named-tunnel guidance.
+
 ## Mobile Pairing (QR)
 
 Mobile clients pair by scanning a QR that encodes a `threadbase://pair?url=…&token=…&exp=…` URL. The token is single-use and expires after 180 seconds; the client then trades it (with its X25519 public key) at `/api/pair/exchange` for a sealed-box-encrypted API key, so the key never appears in the QR.
