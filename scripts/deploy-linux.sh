@@ -6,6 +6,10 @@
 # Usage:
 #   scripts/deploy-linux.sh                   # build + deploy current HEAD
 #   scripts/deploy-linux.sh --force           # skip lint/test gates and dirty-tree check
+#   scripts/deploy-linux.sh --install-shim=<m>  # m = standard|user-local|custom|skip; non-interactive choice
+#                                             #   for the global `threadbase-streamer` shim. Default: prompt.
+#   scripts/deploy-linux.sh --path-update=<m>   # m = print|auto|skip; how to handle PATH not containing the
+#                                             #   install dir. Default: prompt.
 #   scripts/deploy-linux.sh setup             # first-time: write systemd unit + ask about auto-startup
 #   scripts/deploy-linux.sh rollback          # repoint cli.js to the previous release
 #   scripts/deploy-linux.sh status            # show current release and unit status
@@ -34,6 +38,10 @@ log()  { printf '\033[1;34m▶\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
 ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
+
+# Global-shim installer (creates `threadbase-streamer` on PATH).
+# shellcheck source=lib/install-shim.sh
+. "$REPO_ROOT/scripts/lib/install-shim.sh"
 
 MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
 
@@ -290,7 +298,9 @@ cmd_deploy() {
   local force=""
   for arg in "$@"; do
     case "$arg" in
-      --force)           force="--force" ;;
+      --force)              force="--force" ;;
+      --install-shim=*)     export TB_INSTALL_SHIM="${arg#--install-shim=}" ;;
+      --path-update=*)      export TB_PATH_UPDATE="${arg#--path-update=}" ;;
       *) err "unknown deploy flag: $arg"; exit 2 ;;
     esac
   done
@@ -360,13 +370,16 @@ cmd_deploy() {
 
   ensure_menubar_deployed
 
+  # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal.
+  install_global_shim "$ACTIVE_LINK" || warn "global shim install failed (deploy itself is OK)"
+
   ok "deploy complete: $rel_filename"
 }
 
 case "${1:-deploy}" in
   setup)        cmd_setup ;;
   deploy)       shift; cmd_deploy "$@" ;;
-  --force)      cmd_deploy "$@" ;;
+  --force|--install-shim=*|--path-update=*) cmd_deploy "$@" ;;
   "")           cmd_deploy ;;
   rollback)     cmd_rollback ;;
   status)       cmd_status ;;

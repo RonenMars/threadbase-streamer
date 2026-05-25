@@ -127,6 +127,40 @@ Practical consequence: any service definition (launchd plist, systemd unit, Task
   - macOS/Linux: symlink makes `__dirname` = `~/.threadbase/releases/` → copy SQLite migrations to `~/.threadbase/releases/migrations/`
   - Windows: `cli.js` is a real copy at `~/.threadbase/` so `__dirname` = `~/.threadbase/` → copy SQLite migrations to `~/.threadbase/migrations/`
 
+## Global `threadbase-streamer` / `tb-streamer` command
+
+At the end of every deploy, the three deploy scripts (`scripts/deploy.sh`, `scripts/deploy-linux.sh`, `scripts/deploy.ps1`) install **two** global commands that both wrap `~/.threadbase/cli.js`:
+
+- `threadbase-streamer` — the entrenched name, used throughout existing docs (auto-update guide, troubleshooting) and by `scripts/install-auto-update.{sh,ps1}` to invoke the updater from a scheduled job.
+- `tb-streamer` — short alias matching the npm package + repo name. Functionally identical.
+
+Both names work for every subcommand: `pair`, `update`, `serve`, etc.
+
+Shared helpers live in `scripts/lib/install-shim.sh` (sourced by both bash deploy scripts) and `scripts/lib/install-shim.ps1` (dot-sourced by `deploy.ps1`). Each platform's wrapper is different:
+
+- **macOS / Linux**: two symlinks at the install dir → `~/.threadbase/cli.js`.
+- **Windows**: two `.cmd` wrappers at the install dir that run `node "%USERPROFILE%\.threadbase\cli.js" %*`. Symlinks aren't reliable on Windows without Developer Mode or admin.
+
+Adding or removing a name is a one-line edit to `_shim_command_names` (bash) / `Get-ShimCommandNames` (PowerShell).
+
+Default install dir is "standard" per OS — but the deploy will fall back to user-local automatically if the standard dir isn't writable:
+
+| OS | standard | user-local |
+|----|----------|-----------|
+| macOS Apple Silicon | `/opt/homebrew/bin` | `~/.local/bin` |
+| macOS Intel | `/usr/local/bin` | `~/.local/bin` |
+| Linux | `/usr/local/bin` | `~/.local/bin` |
+| Windows 10+ | `%LOCALAPPDATA%\Programs\threadbase-streamer\bin` | `%USERPROFILE%\.threadbase\bin` |
+
+Default behavior is **interactive prompt**. Non-interactive overrides (for CI / `local-deploy` skill / scripted invocations):
+
+- Bash: `--install-shim=<standard|user-local|custom|skip>` flag, `--path-update=<print|auto|skip>` flag, or `TB_INSTALL_SHIM` / `TB_PATH_UPDATE` env vars. Custom dir via `TB_CUSTOM_INSTALL_DIR`.
+- PowerShell: `-InstallShim <…>` / `-PathUpdate <…>` params, or the same env vars.
+
+`path-update=auto` appends an `export PATH=…` line to `~/.zshrc` or `~/.bashrc` (detected from `$SHELL`) with a marker comment so re-runs are idempotent. On Windows, `auto` updates the User PATH via `[Environment]::SetEnvironmentVariable(...)` — the change requires opening a new terminal to take effect.
+
+Shim install failures are **non-fatal**: the deploy logs a warning and continues. The streamer itself is already healthy at that point — only the convenience command is at stake.
+
 ## Cloudflare Tunnel
 
 The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running as a Windows service). The active mapping is `https://tb-pc.rbv1000.win` → `http://127.0.0.1:8766`. Set `public_url: https://tb-pc.rbv1000.win` in `~/.threadbase/server.yaml` so the pairing QR code embeds the correct URL.

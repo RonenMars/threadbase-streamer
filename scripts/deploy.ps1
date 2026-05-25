@@ -4,11 +4,15 @@
 # service restart goes through Task Scheduler instead of launchctl/systemd.
 #
 # Usage:
-#   pwsh scripts/deploy.ps1                    # build + deploy
-#   pwsh scripts/deploy.ps1 -Force             # skip lint/test gates and dirty-tree check
-#   pwsh scripts/deploy.ps1 rollback           # repoint cli.js to the previous release
-#   pwsh scripts/deploy.ps1 status             # show current release and task status
-#   pwsh scripts/deploy.ps1 healthcheck        # probe /healthz
+#   pwsh scripts/deploy.ps1                              # build + deploy
+#   pwsh scripts/deploy.ps1 -Force                       # skip lint/test gates and dirty-tree check
+#   pwsh scripts/deploy.ps1 -InstallShim standard        # non-interactive: install global threadbase-streamer.cmd
+#                                                        #   values: standard | user-local | custom | skip
+#   pwsh scripts/deploy.ps1 -PathUpdate auto             # non-interactive: how to add the shim dir to PATH
+#                                                        #   values: print | auto | skip
+#   pwsh scripts/deploy.ps1 rollback                     # repoint cli.js to the previous release
+#   pwsh scripts/deploy.ps1 status                       # show current release and task status
+#   pwsh scripts/deploy.ps1 healthcheck                  # probe /healthz
 #
 # Layout (Windows uses a real-file replacement instead of a symlink):
 #   %USERPROFILE%\.threadbase\cli.js                  -> active release (real file)
@@ -23,7 +27,17 @@ param(
   [ValidateSet('deploy', 'setup', 'rollback', 'status', 'healthcheck', '')]
   [string]$Command = 'deploy',
 
-  [switch]$Force
+  [switch]$Force,
+
+  # Non-interactive override for the global-shim install step.
+  # Equivalent to the bash $TB_INSTALL_SHIM env var.
+  [ValidateSet('standard', 'user-local', 'custom', 'skip', '')]
+  [string]$InstallShim = '',
+
+  # Non-interactive override for PATH handling when the chosen install dir
+  # isn't on PATH. Equivalent to the bash $TB_PATH_UPDATE env var.
+  [ValidateSet('print', 'auto', 'skip', '')]
+  [string]$PathUpdate = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,6 +57,14 @@ function Write-Log  { param($m) Write-Host "▶ $m" -ForegroundColor Blue }
 function Write-Warn { param($m) Write-Host "! $m" -ForegroundColor Yellow }
 function Write-Err  { param($m) Write-Host "✗ $m" -ForegroundColor Red }
 function Write-Ok   { param($m) Write-Host "✓ $m" -ForegroundColor Green }
+
+# Dot-source the global-shim installer (Install-GlobalShim function).
+. (Join-Path $PSScriptRoot 'lib\install-shim.ps1')
+
+# Forward CLI params into the env vars the helper reads, so the same code path
+# works for both interactive and non-interactive invocations.
+if ($InstallShim) { $env:TB_INSTALL_SHIM = $InstallShim }
+if ($PathUpdate)  { $env:TB_PATH_UPDATE  = $PathUpdate }
 
 function Ensure-MenubarDeployed {
   if (-not (Test-Path (Join-Path $menubarDir 'package.json'))) {
@@ -446,6 +468,14 @@ function Invoke-Deploy {
       Remove-Item -Force
 
     Ensure-MenubarDeployed
+
+    # Install (or refresh) the global `threadbase-streamer.cmd` shim. Non-fatal:
+    # deploy is already healthy at this point.
+    try {
+      Install-GlobalShim -CliPath $activeFile
+    } catch {
+      Write-Warn "global shim install failed (deploy itself is OK): $($_.Exception.Message)"
+    }
 
     Write-Ok "deploy complete: $relFilename"
   } finally {
