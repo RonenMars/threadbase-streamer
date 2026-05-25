@@ -5,3 +5,7 @@ release-artifacts/
 .DS_Store
 .env
 .worktrees/
+
+# Claude Code harness scratch — per-checkout state, never shared.
+.claude/scheduled_tasks.lock
+.claude/*.lock
