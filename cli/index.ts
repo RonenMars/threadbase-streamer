@@ -21,7 +21,7 @@ program
 program
   .command("serve")
   .description("Start the streamer server")
-  .option("-p, --port <number>", "Port to listen on", "3456")
+  .option("-p, --port <number>", "Port to listen on", "8766")
   .option("--api-key <key>", "API key for authentication")
   .option("--local-no-auth", "Skip auth for localhost requests", false)
   .option("-v, --verbose", "Verbose output", false)
@@ -100,7 +100,7 @@ program
 program
   .command("pair")
   .description("Print a pairing QR code (server must already be running)")
-  .option("-p, --port <number>", "Port the server is listening on", "3456")
+  .option("-p, --port <number>", "Port the server is listening on", "8766")
   .action(async (opts) => {
     const port = Number.parseInt(opts.port, 10);
     const apiKey = loadOrCreateApiKey();
@@ -116,7 +116,7 @@ program
   .option("--allow-major", "Allow a major-version bump", false)
   .option("--force", "Skip the active-session defer check", false)
   .option("--dry-run", "Print what would be installed without writing to disk", false)
-  .option("-p, --port <number>", "Port of the running streamer for active-session check", "3456")
+  .option("-p, --port <number>", "Port of the running streamer for active-session check", "8766")
   .action(async (opts) => {
     const cfg = loadUpdateConfig();
     if (!cfg) {
