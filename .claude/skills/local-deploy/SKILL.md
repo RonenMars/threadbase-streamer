@@ -318,7 +318,7 @@ Run the matching `:status` script and summarize:
 
 If the healthcheck failed, the deploy script already prints the last 20 lines of stderr (`/tmp/threadbase.err` on Unix, `%TEMP%\threadbase.err` on Windows). Surface those and stop. Don't claim success.
 
-If the user has the `tb` shim installed (see `scripts/install-tb.sh` / `install-tb.ps1`), remind them they can now run `tb pair`, `tb serve`, etc.
+Remind the user the deploy installs `tb-streamer` and `threadbase-streamer` on PATH automatically — they can run `tb-streamer pair`, `tb-streamer serve`, etc. from any new shell. The older `tb` shim (`scripts/install-tb.sh` / `.ps1`) still works if they have it installed but is deprecated.
 
 ## Out of scope
 

@@ -1,5 +1,14 @@
 #!/bin/sh
 # tb — Threadbase Streamer CLI launcher (macOS / Linux / Git Bash / WSL).
+#
+# DEPRECATED (kept working for existing installs).
+# The deploy now installs `tb-streamer` and `threadbase-streamer` automatically
+# (see CLAUDE.md → "Global `threadbase-streamer` / `tb-streamer` command").
+# New users: just `npm run deploy` and use `tb-streamer pair` from any shell.
+# Existing `~/.local/bin/tb` symlinks keep working — this file stays functional.
+# The one feature the new shim system lacks is the THREADBASE_CLI env-var
+# override below; if you rely on that, keep using `tb`.
+#
 # Requires `node` (>=18) on PATH. Override the bundle location with
 # THREADBASE_CLI if you don't deploy via scripts/deploy.sh.
 set -e

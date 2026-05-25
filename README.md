@@ -244,38 +244,42 @@ If the mobile device can't reach `localhost`, point clients at a reachable addre
 
 `https://` is required (except for `localhost`).
 
-## Installing the `tb` command
+## Global commands (`tb-streamer` / `threadbase-streamer`)
 
-`tb` is a thin shim that runs the deployed CLI bundle (`~/.threadbase/cli.js`, maintained by `scripts/deploy.sh`). It is independent of any Node version manager and only needs `node` (>=18) on `PATH`.
+`npm run deploy` automatically installs two global commands that wrap the deployed CLI at `~/.threadbase/cli.js`:
 
-**macOS / Linux / WSL / Git Bash:**
+- `tb-streamer` — short name, matches the repo + npm package
+- `threadbase-streamer` — long name, used by the auto-update docs and scheduled-job scripts
 
-```bash
-scripts/install-tb.sh
-# Symlinks bin/tb -> ~/.local/bin/tb (override with TB_INSTALL_DIR=/some/dir)
-```
+Both work for every subcommand: `tb-streamer pair`, `tb-streamer serve`, `threadbase-streamer update`, etc.
 
-If `~/.local/bin` isn't on your `PATH`, the installer prints the line to add to your shell rc.
-
-**Windows (PowerShell):**
-
-```powershell
-pwsh scripts/install-tb.ps1
-# Copies bin/tb*, tb.cmd, tb.ps1 to %USERPROFILE%\.threadbase\bin and adds it to user PATH.
-# Open a new terminal to pick up the PATH change.
-```
-
-**Verify:**
+**Verify after a deploy:**
 
 ```bash
-tb --version
-tb pair          # against a running server on default port 3456
-tb pair -p 8766  # different port
+tb-streamer --version
+tb-streamer pair          # default port 8766
+tb-streamer pair -p 9000  # different port
 ```
 
-**Override the bundle location** with the `THREADBASE_CLI` env var (or `%THREADBASE_CLI%` on Windows) — useful for pointing at a dev build without redeploying.
+**Where they get installed:**
 
-> **Lazy-nvm note:** if your shell wraps `node`/`npm` in a lazy nvm function (functions that source `~/.nvm/nvm.sh` on first call), `node` is *not* on `PATH` in fresh shells until you invoke it once. `tb` will fail with "node not found" in that state. Cheapest fix: run `node -v` once per session, or eager-load nvm (`nvm use default --silent` after defining the lazy wrappers).
+| OS | default install dir |
+|----|---------------------|
+| macOS (Apple Silicon) | `/opt/homebrew/bin` |
+| macOS (Intel) / Linux | `/usr/local/bin` |
+| Windows | `%LOCALAPPDATA%\Programs\threadbase-streamer\bin` |
+
+The deploy script prompts you on the first run (or you can pass `--install-shim=user-local` / `-InstallShim user-local` to use `~/.local/bin` instead). Your choice is persisted to `~/.threadbase/shim.conf` so future deploys are silent.
+
+If the install dir isn't already on your `PATH`, the deploy prints the `export PATH=…` line you need. Pass `--path-update=auto` to have it appended to `~/.zshrc` / `~/.bashrc` automatically.
+
+> **Lazy-nvm note:** if your shell wraps `node`/`npm` in a lazy nvm function (functions that source `~/.nvm/nvm.sh` on first call), `node` is *not* on `PATH` in fresh shells until you invoke it once. The shims will fail with "node not found" in that state. Cheapest fix: run `node -v` once per session, or eager-load nvm (`nvm use default --silent` after defining the lazy wrappers).
+
+### Legacy: the `tb` shim
+
+Earlier versions of the repo shipped a separate `tb` command installed via `scripts/install-tb.sh` (macOS/Linux) or `scripts/install-tb.ps1` (Windows). **That installer is deprecated** — the deploy now handles everything automatically. `scripts/install-tb.*` and `bin/tb*` are kept in the tree so existing `~/.local/bin/tb` symlinks keep working, but new installs should use the auto-installed commands above.
+
+The one feature `tb` has that `tb-streamer` doesn't is the `THREADBASE_CLI` env var, which lets you point `tb` at a custom CLI path without redeploying — useful for running a dev build. If you rely on that, keep using `tb`.
 
 ## Development
 

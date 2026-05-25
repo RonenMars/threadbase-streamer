@@ -1,5 +1,13 @@
 #!/usr/bin/env pwsh
 # tb — Threadbase Streamer CLI launcher (PowerShell).
+#
+# DEPRECATED (kept working for existing installs).
+# The deploy now installs `tb-streamer.cmd` and `threadbase-streamer.cmd`
+# automatically (see CLAUDE.md). New users: `pwsh scripts/deploy.ps1` and use
+# `tb-streamer pair` from any shell. Existing `~/.threadbase/bin/tb.ps1`
+# copies keep working — this file stays functional. The one feature the new
+# shim system lacks is the $env:THREADBASE_CLI override below.
+#
 # Requires `node` (>=18) on PATH. Override the bundle location with
 # $env:THREADBASE_CLI if not using the standard ~\.threadbase\cli.js layout.
 $ErrorActionPreference = 'Stop'

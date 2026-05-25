@@ -1,6 +1,15 @@
 #!/usr/bin/env pwsh
 # install-tb.ps1 — copy the `tb` shims into a per-user directory and add it
-# to the user PATH. Idempotent. Default install dir:
+# to the user PATH.
+#
+# DEPRECATED. Prefer the auto-installed global commands.
+# `pwsh scripts/deploy.ps1` now installs `tb-streamer.cmd` and
+# `threadbase-streamer.cmd` on PATH automatically — no separate installer
+# needed. See CLAUDE.md → "Global `threadbase-streamer` / `tb-streamer`
+# command". This script keeps working for users who want `tb` specifically,
+# or who rely on the $env:THREADBASE_CLI override in bin/tb.ps1.
+#
+# Idempotent. Default install dir:
 # %USERPROFILE%\.threadbase\bin (override with $env:TB_INSTALL_DIR).
 $ErrorActionPreference = 'Stop'
 
