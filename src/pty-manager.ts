@@ -25,21 +25,37 @@ const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
 // TUI changes that drop both markers from the boot screen.
 const PROMPT_MARKER_FALLBACK_MS = 10_000;
 
-// Wrap the user's input in bracketed-paste markers before submitting.
-// Why: Claude's TUI enables bracketed paste mode (\x1b[?2004h) at startup.
-// In paste mode the content between \x1b[200~ and \x1b[201~ is committed as a
-// single insertion without triggering autocomplete or key bindings. The
-// trailing \r outside the paste block is then processed by the normal keymap
-// as Enter → submit.
+// Build the two byte sequences for a paste-then-submit. We deliberately split
+// the paste body and the trailing \r into two separate PTY writes (see
+// writeSubmit() below) so Claude's TUI gets one event-loop tick to process the
+// paste (clear input buffer, render `Pasting…`) before Enter arrives.
 //
-// Without this wrap, an input that contains "@<path>" activates Claude's
-// @-mention autocomplete picker; the \r is then captured as "accept
-// completion" instead of "submit", and the prompt sits unsubmitted in the
-// input buffer (i.e. the session appears stuck). Verified empirically against
-// the live TUI: see docs/2026-05-20-pty-bracketed-paste-fix.md.
-function buildSubmitBytes(input: string): string {
-  return `\x1b[200~${input}\x1b[201~\r`;
+// Why bracketed paste at all: Claude's TUI enables bracketed paste mode
+// (\x1b[?2004h) at startup. Content between \x1b[200~ and \x1b[201~ is
+// committed as a single insertion without triggering autocomplete or key
+// bindings. Without this wrap an input like "@<path>" opens the mention
+// picker and the trailing \r gets consumed as "accept completion" rather
+// than "submit" — see docs/2026-05-20-pty-bracketed-paste-fix.md.
+//
+// Why split paste and \r: on 2026-05-27 a follow-up stuck session
+// (39118d3e) showed the bracketed-paste wrap was being written but the
+// trailing \r still didn't submit — Claude's TUI was mid-render of a
+// startup status banner ("Update available", "192 skill descriptions
+// dropped", etc.) when the bytes arrived, and the whole chunk landed in
+// the wrong handler context. Splitting the write lets the TUI ingest the
+// paste in one tick (the data event runs after current render finishes)
+// before the next tick delivers the Enter.
+function buildPasteBytes(input: string): string {
+  return `\x1b[200~${input}\x1b[201~`;
 }
+
+const SUBMIT_BYTES = "\r";
+
+// Delay between the paste write and the submit \r. We need to yield the event
+// loop at least once so Claude's TUI processes the paste before Enter lands;
+// a small real-time delay is more robust against the TUI batching renders
+// across multiple data events. Kept tiny so user-perceived latency is nil.
+const SUBMIT_DELAY_MS = 16;
 
 function digestBytes(s: string): string {
   // Replace control chars with their hex form so logs are grep-able.
@@ -242,22 +258,53 @@ export class PTYManager {
       session.status = "running";
       this.onStatusChange?.(toPublicSession(session));
     }
-    const bytes = buildSubmitBytes(input);
-    this.log.info(
-      `[pty.input.write] ${sessionId.slice(0, 8)} promptCount=${session.promptCount + 1} bytes=${bytes.length} digest=${digestBytes(bytes)}`,
-      {
-        event: "pty.input_write",
-        sessionId,
-        promptCount: session.promptCount + 1,
-        byteLen: bytes.length,
-        digest: digestBytes(bytes),
-        path: "direct",
-      },
-    );
-    session.process.write(bytes);
+    this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
     session.lastActivityAt = new Date();
     session.promptCount++;
     return session.promptCount;
+  }
+
+  // Two-step paste-then-submit. Writes the bracketed-paste body, yields the
+  // event loop for SUBMIT_DELAY_MS, then writes \r. See buildPasteBytes() for
+  // why the split matters.
+  private writeSubmit(
+    sessionId: string,
+    session: InternalSession,
+    input: string,
+    path: "direct" | "flush",
+    promptCount: number,
+  ): void {
+    const pasteBytes = buildPasteBytes(input);
+    this.log.info(
+      `[pty.input.write] ${sessionId.slice(0, 8)} promptCount=${promptCount} bytes=${pasteBytes.length} digest=${digestBytes(pasteBytes)}`,
+      {
+        event: "pty.input_write",
+        sessionId,
+        promptCount,
+        byteLen: pasteBytes.length,
+        digest: digestBytes(pasteBytes),
+        path,
+        phase: "paste",
+      },
+    );
+    session.process.write(pasteBytes);
+    setTimeout(() => {
+      const current = this.sessions.get(sessionId);
+      if (!current || current !== session) return;
+      this.log.info(
+        `[pty.input.submit] ${sessionId.slice(0, 8)} promptCount=${promptCount} digest=\\r`,
+        {
+          event: "pty.input_write",
+          sessionId,
+          promptCount,
+          byteLen: SUBMIT_BYTES.length,
+          digest: "\\r",
+          path,
+          phase: "submit",
+        },
+      );
+      current.process.write(SUBMIT_BYTES);
+    }, SUBMIT_DELAY_MS);
   }
 
   // Drain any inputs that were sent while the session was still pendingReady,
@@ -273,20 +320,23 @@ export class PTYManager {
       sessionId,
       queueLen: queue.length,
     });
-    for (const input of queue) {
-      const bytes = buildSubmitBytes(input);
-      this.log.info(
-        `[pty.input.write] ${sessionId.slice(0, 8)} bytes=${bytes.length} digest=${digestBytes(bytes)}`,
-        {
-          event: "pty.input_write",
-          sessionId,
-          byteLen: bytes.length,
-          digest: digestBytes(bytes),
-          path: "flush",
-        },
-      );
-      session.process.write(bytes);
-    }
+    // Chain queued inputs serially: each writeSubmit() defers its \r by
+    // SUBMIT_DELAY_MS, and we further stagger subsequent inputs by 2x the
+    // delay so paste/submit pairs don't interleave on the wire. Two queued
+    // inputs is rare in practice (user tapped Send twice during the brief
+    // boot window), but ordering must still produce two distinct submits.
+    queue.forEach((input, i) => {
+      const writeAt = i * SUBMIT_DELAY_MS * 2;
+      if (writeAt === 0) {
+        this.writeSubmit(sessionId, session, input, "flush", session.promptCount);
+      } else {
+        setTimeout(() => {
+          const current = this.sessions.get(sessionId);
+          if (!current || current !== session) return;
+          this.writeSubmit(sessionId, session, input, "flush", session.promptCount);
+        }, writeAt);
+      }
+    });
   }
 
   cancel(sessionId: string): void {

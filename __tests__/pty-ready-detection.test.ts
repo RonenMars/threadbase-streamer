@@ -88,21 +88,32 @@ describe("PTYManager — ready detection", () => {
   });
 
   it("flushes queued input once ❯ marker fires", async () => {
-    const mgr = new PTYManager();
-    const session = await spawnFresh(mgr);
-    const proc = getMockProc(mgr, session.id);
+    vi.useFakeTimers();
+    try {
+      const mgr = new PTYManager();
+      const session = await spawnFresh(mgr);
+      const proc = getMockProc(mgr, session.id);
 
-    // User types before Claude is ready — input gets queued.
-    const promptCount = mgr.sendInput(session.id, "hi");
-    expect(promptCount).toBe(1);
-    expect(proc.write).not.toHaveBeenCalled();
+      // User types before Claude is ready — input gets queued.
+      const promptCount = mgr.sendInput(session.id, "hi");
+      expect(promptCount).toBe(1);
+      expect(proc.write).not.toHaveBeenCalled();
 
-    // Claude's TUI shows the MCP splash with ❯ — should flush "hi" now.
-    proc._emit("data", MCP_SPLASH_BOOT);
+      // Claude's TUI shows the MCP splash with ❯ — should flush "hi" now.
+      proc._emit("data", MCP_SPLASH_BOOT);
 
-    // Input is wrapped in bracketed-paste markers so the trailing \r submits
-    // even when content would otherwise trigger Claude's mention picker.
-    expect(proc.write).toHaveBeenCalledWith("\x1b[200~hi\x1b[201~\r");
+      // Paste body lands first. The trailing \r is deferred via setTimeout so
+      // Claude's TUI gets a tick to process the paste before Enter arrives —
+      // see buildPasteBytes() comment for the 2026-05-27 stuck-session
+      // regression that motivated the split.
+      expect(proc.write).toHaveBeenCalledWith("\x1b[200~hi\x1b[201~");
+      expect(proc.write).not.toHaveBeenCalledWith("\r");
+
+      vi.advanceTimersByTime(20);
+      expect(proc.write).toHaveBeenCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("flushes queued input via time-fallback when no marker ever fires", async () => {
@@ -126,32 +137,53 @@ describe("PTYManager — ready detection", () => {
       // fallback should fire and flush the queued input.
       proc._emit("data", "still booting...");
 
-      expect(proc.write).toHaveBeenCalledWith("\x1b[200~hello\x1b[201~\r");
+      // Paste body first, then \r after the submit delay.
+      expect(proc.write).toHaveBeenCalledWith("\x1b[200~hello\x1b[201~");
+      vi.advanceTimersByTime(20);
+      expect(proc.write).toHaveBeenCalledWith("\r");
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("wraps @<path> input in bracketed-paste markers so \\r submits", async () => {
-    // Regression: an input like "@/Users/foo/img.heic describe this" activates
-    // Claude's @-mention autocomplete picker. A plain trailing \r is captured
-    // as "accept completion" rather than "submit", and the prompt sits in the
-    // input buffer unsent — the session looks stuck. Bracketed-paste mode
-    // bypasses the picker: content between \x1b[200~ and \x1b[201~ is a
-    // single insertion, and the \r after \x1b[201~ is processed as Enter.
-    const mgr = new PTYManager();
-    const session = await spawnFresh(mgr);
-    const proc = getMockProc(mgr, session.id);
+  it("wraps @<path> input in bracketed-paste markers and submits via deferred \\r", async () => {
+    // Regression — two-part:
+    // 1. (2026-05-20) Input like "@/Users/foo/img.heic describe this" opens
+    //    Claude's @-mention picker. A plain \r is captured as "accept
+    //    completion" rather than "submit". Bracketed paste bypasses the
+    //    picker — see docs/2026-05-20-pty-bracketed-paste-fix.md.
+    // 2. (2026-05-27, session 39118d3e) The bracketed wrap landed but the
+    //    TUI was mid-render of a startup status banner when the bytes
+    //    arrived, so the inline \r still didn't submit. We now split the
+    //    paste body and the trailing \r across two PTY writes with a tiny
+    //    delay, giving the TUI a tick to process the paste before Enter.
+    vi.useFakeTimers();
+    try {
+      const mgr = new PTYManager();
+      const session = await spawnFresh(mgr);
+      const proc = getMockProc(mgr, session.id);
 
-    // Get the session past pendingReady so direct write (not queue) path runs.
-    proc._emit("data", MCP_SPLASH_BOOT);
-    proc.write.mockClear();
+      // Get the session past pendingReady so direct write (not queue) runs.
+      proc._emit("data", MCP_SPLASH_BOOT);
+      proc.write.mockClear();
 
-    mgr.sendInput(session.id, "@/Users/foo/img.heic describe this");
+      mgr.sendInput(session.id, "@/Users/foo/img.heic describe this");
 
-    expect(proc.write).toHaveBeenCalledWith(
-      "\x1b[200~@/Users/foo/img.heic describe this\x1b[201~\r",
-    );
+      // Immediately after sendInput(), only the paste body has been written.
+      // The trailing \r must NOT have landed yet — that's the whole point of
+      // the split: Claude's TUI needs an event-loop tick first.
+      expect(proc.write).toHaveBeenCalledTimes(1);
+      expect(proc.write).toHaveBeenCalledWith(
+        "\x1b[200~@/Users/foo/img.heic describe this\x1b[201~",
+      );
+
+      // Advance past the submit delay; now \r is written.
+      vi.advanceTimersByTime(20);
+      expect(proc.write).toHaveBeenCalledTimes(2);
+      expect(proc.write).toHaveBeenLastCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not re-fire markReady on subsequent matching chunks", async () => {
@@ -179,42 +211,66 @@ describe("PTYManager — ready detection", () => {
 // marker arrives, then flush.
 describe("PTYManager — resume input queueing", () => {
   it("queues input sent during resume boot and flushes at first prompt", async () => {
-    const ready: ManagedSession[] = [];
-    const mgr = new PTYManager({ onReady: (s) => ready.push(s) });
-    const session = await spawnResume(mgr);
-    const proc = getMockProc(mgr, session.id);
+    vi.useFakeTimers();
+    try {
+      const ready: ManagedSession[] = [];
+      const mgr = new PTYManager({ onReady: (s) => ready.push(s) });
+      const session = await spawnResume(mgr);
+      const proc = getMockProc(mgr, session.id);
 
-    // onReady must NOT have fired synchronously at spawn — the old behavior
-    // broadcast session_ready before Claude was actually ready.
-    expect(ready).toHaveLength(0);
+      // onReady must NOT have fired synchronously at spawn — the old behavior
+      // broadcast session_ready before Claude was actually ready.
+      expect(ready).toHaveLength(0);
 
-    // User taps Send while Claude is still restoring the JSONL.
-    const promptCount = mgr.sendInput(session.id, "what's the plan?");
-    expect(promptCount).toBe(1);
-    expect(proc.write).not.toHaveBeenCalled();
+      // User taps Send while Claude is still restoring the JSONL.
+      const promptCount = mgr.sendInput(session.id, "what's the plan?");
+      expect(promptCount).toBe(1);
+      expect(proc.write).not.toHaveBeenCalled();
 
-    // Claude finishes booting and renders the prompt.
-    proc._emit("data", MCP_SPLASH_BOOT);
+      // Claude finishes booting and renders the prompt.
+      proc._emit("data", MCP_SPLASH_BOOT);
 
-    // Queued input flushes now, wrapped in bracketed-paste markers.
-    expect(proc.write).toHaveBeenCalledWith("\x1b[200~what's the plan?\x1b[201~\r");
-    // onReady fires exactly once, after the marker — not at spawn.
-    expect(ready).toHaveLength(1);
+      // Queued input flushes via the same split-write contract: paste body
+      // first, then \r after the submit delay.
+      expect(proc.write).toHaveBeenCalledWith("\x1b[200~what's the plan?\x1b[201~");
+      vi.advanceTimersByTime(20);
+      expect(proc.write).toHaveBeenCalledWith("\r");
+      // onReady fires exactly once, after the marker — not at spawn.
+      expect(ready).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("flushes multiple queued resume inputs in arrival order", async () => {
-    const mgr = new PTYManager();
-    const session = await spawnResume(mgr, "uuid-resume-multi");
-    const proc = getMockProc(mgr, session.id);
+    vi.useFakeTimers();
+    try {
+      const mgr = new PTYManager();
+      const session = await spawnResume(mgr, "uuid-resume-multi");
+      const proc = getMockProc(mgr, session.id);
 
-    mgr.sendInput(session.id, "first");
-    mgr.sendInput(session.id, "second");
-    expect(proc.write).not.toHaveBeenCalled();
+      mgr.sendInput(session.id, "first");
+      mgr.sendInput(session.id, "second");
+      expect(proc.write).not.toHaveBeenCalled();
 
-    proc._emit("data", TIPS_BANNER_BOOT);
+      proc._emit("data", TIPS_BANNER_BOOT);
 
-    expect(proc.write).toHaveBeenCalledTimes(2);
-    expect(proc.write.mock.calls[0][0]).toBe("\x1b[200~first\x1b[201~\r");
-    expect(proc.write.mock.calls[1][0]).toBe("\x1b[200~second\x1b[201~\r");
+      // First paste lands immediately, its \r is deferred. Second paste is
+      // staggered so it lands *after* the first \r — preventing interleaved
+      // paste/submit pairs that Claude's TUI would treat ambiguously.
+      expect(proc.write).toHaveBeenCalledTimes(1);
+      expect(proc.write.mock.calls[0][0]).toBe("\x1b[200~first\x1b[201~");
+
+      // Timeline: 0=paste1, 16ms=\r1, 32ms=paste2, 48ms=\r2.
+      vi.advanceTimersByTime(60);
+
+      expect(proc.write).toHaveBeenCalledTimes(4);
+      expect(proc.write.mock.calls[0][0]).toBe("\x1b[200~first\x1b[201~");
+      expect(proc.write.mock.calls[1][0]).toBe("\r");
+      expect(proc.write.mock.calls[2][0]).toBe("\x1b[200~second\x1b[201~");
+      expect(proc.write.mock.calls[3][0]).toBe("\r");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
