@@ -81,12 +81,14 @@ export class PTYManager {
   private onOutput: PTYManagerOptions["onOutput"];
   private onStatusChange: PTYManagerOptions["onStatusChange"];
   private onReady: PTYManagerOptions["onReady"];
-  // Tracks which sessions were started fresh (not resume) and haven't fired onReady yet
+  // Tracks sessions (both fresh and resume) whose PTY has spawned but Claude
+  // hasn't yet reached an interactive prompt — i.e. onReady hasn't fired.
   private pendingReady = new Set<string>();
   // Inputs received via sendInput() while the session was still in pendingReady.
   // Flushed in arrival order once Claude reaches its first prompt. Without this,
   // input written into the raw PTY mid-boot is consumed by Claude's startup TUI
-  // (welcome banner / first-run modals) and silently lost.
+  // (welcome banner / first-run modals on fresh, JSONL restore on resume) and
+  // silently lost — the "dot bug".
   private queuedInputs = new Map<string, string[]>();
   private log: Logger;
   // Timestamp of first PTY chunk per session; drives the prompt-marker fallback
@@ -137,16 +139,22 @@ export class PTYManager {
     };
 
     this.sessions.set(sessionId, session);
+    // Resume re-uses the same boot path as a fresh launch: --resume replays the
+    // JSONL into Claude's TUI, which can take several seconds before the prompt
+    // is reachable. Until then, raw pty.write() bytes land in the boot UI and
+    // are swallowed (the "dot bug" — first message vanishes, second message
+    // appears to trigger both). Same pendingReady + flush gating as startFresh.
+    this.pendingReady.add(sessionId);
 
     proc.onData((data: string) => {
       this.handleOutput(sessionId, data);
     });
 
     proc.onExit(({ exitCode }: { exitCode: number }) => {
+      this.pendingReady.delete(sessionId);
       this.handleExit(sessionId, exitCode);
     });
 
-    this.onReady?.(toPublicSession(session));
     return toPublicSession(session);
   }
 

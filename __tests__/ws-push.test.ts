@@ -93,7 +93,11 @@ describe("PTYManager.getOutputLines()", () => {
 // ─── PTYManager.onReady callback ─────────────────────────────────────────────
 
 describe("PTYManager onReady callback", () => {
-  it("fires onReady after start()", async () => {
+  it("does NOT fire onReady synchronously after start() — waits for prompt marker", async () => {
+    // Old behavior fired onReady immediately at spawn, which broadcast
+    // session_ready before Claude had finished restoring the JSONL — the
+    // resume side of the "dot bug". start() and startFresh() now share the
+    // same pendingReady gating: onReady fires only via markReady().
     const onReady = vi.fn();
     const mgr = new PTYManager({ onReady });
 
@@ -103,8 +107,8 @@ describe("PTYManager onReady callback", () => {
       branch: "main",
     });
 
-    expect(onReady).toHaveBeenCalledOnce();
-    expect(onReady.mock.calls[0][0].id).toBe(session.id);
+    expect(onReady).not.toHaveBeenCalled();
+    expect(session.status).toBe("running");
   });
 
   it("does NOT fire onReady after startFresh() — server fires it after rekeySession", async () => {

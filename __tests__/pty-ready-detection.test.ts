@@ -40,6 +40,14 @@ async function spawnFresh(mgr: PTYManager, projectPath = "/tmp/test") {
   return session;
 }
 
+async function spawnResume(mgr: PTYManager, sessionId = "uuid-resume") {
+  return mgr.start(sessionId, {
+    projectPath: "/tmp/test",
+    projectName: "test",
+    branch: "main",
+  });
+}
+
 function getMockProc(mgr: PTYManager, sessionId: string): any {
   // biome-ignore lint/suspicious/noExplicitAny: test reaches into private state
   return (mgr as any).sessions.get(sessionId).process;
@@ -159,5 +167,54 @@ describe("PTYManager — ready detection", () => {
     // onReady should only have fired once — pendingReady was cleared after
     // the first match.
     expect(ready).toHaveLength(1);
+  });
+});
+
+// Regression for the resume side of the "dot bug": before the fix, start()
+// (resume path) did NOT add the session to pendingReady and fired onReady
+// synchronously at spawn time. Input written during the JSONL restore window
+// would be swallowed by Claude's boot UI — the first user message vanished and
+// a second message (often just ".") appeared to trigger both. The contract is
+// now symmetric: start() and startFresh() both queue input until the prompt
+// marker arrives, then flush.
+describe("PTYManager — resume input queueing", () => {
+  it("queues input sent during resume boot and flushes at first prompt", async () => {
+    const ready: ManagedSession[] = [];
+    const mgr = new PTYManager({ onReady: (s) => ready.push(s) });
+    const session = await spawnResume(mgr);
+    const proc = getMockProc(mgr, session.id);
+
+    // onReady must NOT have fired synchronously at spawn — the old behavior
+    // broadcast session_ready before Claude was actually ready.
+    expect(ready).toHaveLength(0);
+
+    // User taps Send while Claude is still restoring the JSONL.
+    const promptCount = mgr.sendInput(session.id, "what's the plan?");
+    expect(promptCount).toBe(1);
+    expect(proc.write).not.toHaveBeenCalled();
+
+    // Claude finishes booting and renders the prompt.
+    proc._emit("data", MCP_SPLASH_BOOT);
+
+    // Queued input flushes now, wrapped in bracketed-paste markers.
+    expect(proc.write).toHaveBeenCalledWith("\x1b[200~what's the plan?\x1b[201~\r");
+    // onReady fires exactly once, after the marker — not at spawn.
+    expect(ready).toHaveLength(1);
+  });
+
+  it("flushes multiple queued resume inputs in arrival order", async () => {
+    const mgr = new PTYManager();
+    const session = await spawnResume(mgr, "uuid-resume-multi");
+    const proc = getMockProc(mgr, session.id);
+
+    mgr.sendInput(session.id, "first");
+    mgr.sendInput(session.id, "second");
+    expect(proc.write).not.toHaveBeenCalled();
+
+    proc._emit("data", TIPS_BANNER_BOOT);
+
+    expect(proc.write).toHaveBeenCalledTimes(2);
+    expect(proc.write.mock.calls[0][0]).toBe("\x1b[200~first\x1b[201~\r");
+    expect(proc.write.mock.calls[1][0]).toBe("\x1b[200~second\x1b[201~\r");
   });
 });
