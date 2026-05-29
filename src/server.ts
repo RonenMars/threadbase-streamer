@@ -248,13 +248,13 @@ export class StreamerServer {
         const sessions = this.sessionStore.list(this.ptyAttachedIds());
         ws.send(JSON.stringify({ type: "session_list", sessions }));
       },
-      handleWsMessage: (ws, raw) => {
+      handleWsMessage: async (ws, raw) => {
         try {
           const msg = JSON.parse(String(raw));
           if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
             this.addSessionSubscriber(msg.sessionId, ws);
             if (this.ptyManager.hasSession(msg.sessionId)) {
-              const lines = this.ptyManager.getOutputLines(msg.sessionId, 200);
+              const lines = await this.ptyManager.getOutputLines(msg.sessionId, 200);
               ws.send(JSON.stringify({ type: "terminal_replay", sessionId: msg.sessionId, lines }));
             }
           }

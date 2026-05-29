@@ -1,3 +1,4 @@
+import { Terminal } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
@@ -11,6 +12,15 @@ import type {
 } from "./types";
 
 const OUTPUT_BUFFER_MAX = 65536;
+
+// PTY geometry. The headless render terminal (session.screen) MUST match these
+// so Claude's absolute cursor moves (ESC[<row>;<col>H) resolve to the same
+// screen coordinates the real TUI is painting against.
+const PTY_COLS = 120;
+const PTY_ROWS = 40;
+// Scrollback depth for the render terminal. Replay reads up to maxLines (200)
+// from the rendered buffer, so keep enough history above the viewport.
+const SCREEN_SCROLLBACK = 1000;
 
 // Markers that indicate Claude has reached an interactive prompt and is ready
 // for user input. The TUI has at least two startup variants:
@@ -90,6 +100,20 @@ async function loadPty(): Promise<typeof import("node-pty")> {
 interface InternalSession extends ManagedSession {
   process: any; // node-pty IPty
   outputBuffer: Buffer;
+  // Headless terminal that renders the raw PTY stream into a real screen grid.
+  // getOutputLines() reads its rendered buffer so replay reflects true screen
+  // order rather than raw byte order (which Claude's absolute-cursor repaints
+  // scramble — see getOutputLines for the desync this fixes).
+  screen: Terminal;
+}
+
+function createScreen(): Terminal {
+  return new Terminal({
+    cols: PTY_COLS,
+    rows: PTY_ROWS,
+    scrollback: SCREEN_SCROLLBACK,
+    allowProposedApi: true,
+  });
 }
 
 export class PTYManager {
@@ -152,6 +176,7 @@ export class PTYManager {
       lastOutput: "",
       process: proc,
       outputBuffer: Buffer.alloc(0),
+      screen: createScreen(),
     };
 
     this.sessions.set(sessionId, session);
@@ -207,6 +232,7 @@ export class PTYManager {
       lastOutput: "",
       process: proc,
       outputBuffer: Buffer.alloc(0),
+      screen: createScreen(),
     };
 
     this.sessions.set(sessionId, session);
@@ -367,6 +393,7 @@ export class PTYManager {
     }
     session.status = "idle";
     session.completedAt = new Date();
+    session.screen.dispose();
     this.sessions.delete(sessionId);
     this.onStatusChange?.(toPublicSession(session));
   }
@@ -377,11 +404,32 @@ export class PTYManager {
     return session.outputBuffer.toString("utf-8");
   }
 
-  getOutputLines(sessionId: string, maxLines: number): string[] {
+  // Render the last `maxLines` rows of the session's screen in true on-screen
+  // order. Reads the headless terminal (fed raw PTY bytes in handleOutput) so
+  // Claude's absolute-cursor repaints resolve to where they actually paint —
+  // unlike the old raw-byte slice, which scrambled order after a TUI repaint
+  // and made replayed conversations appear out of order on resume.
+  //
+  // Async because xterm parses writes on a deferred tick; we flush pending
+  // writes (empty write + callback) before reading so the buffer is current.
+  async getOutputLines(sessionId: string, maxLines: number): Promise<string[]> {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
-    const raw = session.outputBuffer.toString("utf-8");
-    return raw.split("\n").slice(-maxLines);
+    await new Promise<void>((resolve) => session.screen.write("", () => resolve()));
+
+    const buf = session.screen.buffer.active;
+    const lines: string[] = [];
+    // buf.length spans scrollback + viewport; iterate the whole thing top-down
+    // so the rendered output preserves screen order, then keep the last N.
+    for (let y = 0; y < buf.length; y++) {
+      lines.push(buf.getLine(y)?.translateToString(true) ?? "");
+    }
+    // Drop trailing blank rows (the unused bottom of the viewport) before
+    // trimming to maxLines, so replay isn't padded with empty lines.
+    while (lines.length > 0 && lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+    return lines.slice(-maxLines);
   }
 
   getSession(sessionId: string): ManagedSession | null {
@@ -404,6 +452,7 @@ export class PTYManager {
       } catch {
         // Process may already be dead
       }
+      session.screen.dispose();
     }
     this.sessions.clear();
     this.firstChunkAt.clear();
@@ -448,6 +497,12 @@ export class PTYManager {
         session.outputBuffer.length - OUTPUT_BUFFER_MAX,
       );
     }
+
+    // Render into the headless screen so getOutputLines() can reproduce true
+    // on-screen order. write() is async (parsed on a later tick) but we never
+    // read the screen synchronously after a single chunk — replay only happens
+    // on subscribe, long after these writes have drained.
+    session.screen.write(data);
 
     const stripped = stripAnsi(data);
     session.lastOutput = stripped;
@@ -510,6 +565,7 @@ export class PTYManager {
     }
 
     this.onStatusChange?.(toPublicSession(session));
+    session.screen.dispose();
     this.sessions.delete(sessionId);
     this.queuedInputs.delete(sessionId);
     this.firstChunkAt.delete(sessionId);

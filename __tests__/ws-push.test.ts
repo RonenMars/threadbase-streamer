@@ -38,18 +38,13 @@ function mockWs(readyState = 1): any {
 // ─── PTYManager.getOutputLines() ─────────────────────────────────────────────
 
 describe("PTYManager.getOutputLines()", () => {
-  it("throws for unknown session", () => {
+  it("throws for unknown session", async () => {
     const mgr = new PTYManager();
-    expect(() => mgr.getOutputLines("no-such-id", 10)).toThrow("Session not found");
+    await expect(mgr.getOutputLines("no-such-id", 10)).rejects.toThrow("Session not found");
   });
 
-  it("returns last N lines from the ring buffer", async () => {
-    let capturedOutput: ((sessionId: string, data: string) => void) | undefined;
-    const mgr = new PTYManager({
-      onOutput: (sid, data) => {
-        capturedOutput?.(sid, data);
-      },
-    });
+  it("returns last N rendered lines from the screen", async () => {
+    const mgr = new PTYManager();
 
     const session = await mgr.start("uuid-abc", {
       projectPath: "/tmp/test",
@@ -57,18 +52,55 @@ describe("PTYManager.getOutputLines()", () => {
       branch: "main",
     });
 
-    // Simulate PTY output by going through onOutput — the ring buffer is private,
-    // so we use the internal data event instead via the mock's _emit.
-    // Access the mock process via the pty module we control.
+    // Simulate PTY output via the mock process data event.
     const nodePty = await import("node-pty");
     const mockProc = (nodePty.spawn as any).mock.results.at(-1).value;
-    mockProc._emit("data", "line1\nline2\nline3\nline4\nline5\n");
+    mockProc._emit("data", "line1\r\nline2\r\nline3\r\nline4\r\nline5\r\n");
 
-    const lines = mgr.getOutputLines(session.id, 3);
-    // split on \n gives ["line1","line2","line3","line4","line5",""], slice(-3) = ["line5",""]
-    // The last 3 elements after splitting "line1\nline2\nline3\nline4\nline5\n"
+    const lines = await mgr.getOutputLines(session.id, 3);
     expect(lines.length).toBe(3);
-    expect(lines).toContain("line5");
+    expect(lines).toEqual(["line3", "line4", "line5"]);
+  });
+
+  it("renders absolute cursor positioning in screen order, not byte order", async () => {
+    // Regression for the resume desync bug: Claude's TUI repaints with absolute
+    // cursor moves (ESC[<row>;<col>H). The raw byte stream is NOT in visual
+    // order, so a replay built by slicing raw bytes places new output mid-screen.
+    // The rendered screen buffer must resolve positioning to true screen order.
+    const mgr = new PTYManager();
+    const session = await mgr.start("uuid-cursor", {
+      projectPath: "/tmp/test",
+      projectName: "test",
+      branch: "main",
+    });
+
+    const nodePty = await import("node-pty");
+    const mockProc = (nodePty.spawn as any).mock.results.at(-1).value;
+    // Byte order: third row, then first row, then second row.
+    mockProc._emit("data", "\x1b[3;1Hthird\x1b[1;1Hfirst\x1b[2;1Hsecond");
+
+    const lines = await mgr.getOutputLines(session.id, 3);
+    expect(lines).toEqual(["first", "second", "third"]);
+  });
+
+  it("clears the screen on ESC[2J so stale rows do not leak into the replay", async () => {
+    // A full-screen clear (ESC[2J) followed by a repaint must not retain the
+    // pre-clear rows — otherwise the replay shows duplicated/ghosted content.
+    const mgr = new PTYManager();
+    const session = await mgr.start("uuid-clear", {
+      projectPath: "/tmp/test",
+      projectName: "test",
+      branch: "main",
+    });
+
+    const nodePty = await import("node-pty");
+    const mockProc = (nodePty.spawn as any).mock.results.at(-1).value;
+    mockProc._emit("data", "stale-line\r\n");
+    mockProc._emit("data", "\x1b[2J\x1b[1;1Hfresh-line");
+
+    const lines = await mgr.getOutputLines(session.id, 40);
+    expect(lines).toContain("fresh-line");
+    expect(lines).not.toContain("stale-line");
   });
 
   it("caps at maxLines — never returns more than requested", async () => {
@@ -82,10 +114,10 @@ describe("PTYManager.getOutputLines()", () => {
     const nodePty = await import("node-pty");
     const mockProc = (nodePty.spawn as any).mock.results.at(-1).value;
     // Feed 300 lines
-    const bigData = Array.from({ length: 300 }, (_, i) => `line${i}`).join("\n") + "\n";
+    const bigData = `${Array.from({ length: 300 }, (_, i) => `line${i}`).join("\r\n")}\r\n`;
     mockProc._emit("data", bigData);
 
-    const lines = mgr.getOutputLines(session.id, 200);
+    const lines = await mgr.getOutputLines(session.id, 200);
     expect(lines.length).toBeLessThanOrEqual(200);
   });
 });
