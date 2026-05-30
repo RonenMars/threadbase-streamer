@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
 import { getLogger } from "../logger";
 import { bootoutAgent, isAgentLoaded } from "./launchd";
@@ -19,7 +18,7 @@ export type ResolveDevPlanOpts = {
   isProdActive: () => boolean;
   portInUse: (port: number) => boolean;
   prompt: PromptFn;
-  findFreePort: (start: number) => number;
+  findFreePort: (start: number) => Promise<number>;
 };
 
 export async function resolveDevPlan(opts: ResolveDevPlanOpts): Promise<DevPlan> {
@@ -50,7 +49,7 @@ export async function resolveDevPlan(opts: ResolveDevPlanOpts): Promise<DevPlan>
     }
   }
 
-  const suggested = opts.findFreePort(opts.requestedPort + 1);
+  const suggested = await opts.findFreePort(opts.requestedPort + 1);
   const answer = await opts.prompt({ prodPort: opts.requestedPort, suggestedAltPort: suggested });
 
   if (answer.remember && opts.repoToplevel) {
@@ -80,19 +79,21 @@ export function isPortInUse(port: number): Promise<boolean> {
   });
 }
 
-export function findFreePortSync(start: number): number {
-  // Synchronous best-effort: tries up to 50 ports. Returns first one whose
-  // bind succeeds. Falls back to `start` if nothing free (caller will see the
-  // EADDRINUSE later anyway).
-  for (let p = start; p < start + 50; p++) {
-    try {
-      execFileSync("lsof", [`-iTCP:${p}`, "-sTCP:LISTEN", "-P"], { stdio: "ignore" });
-      // exit 0 = something is listening
-    } catch {
-      return p; // lsof exit nonzero = port free
-    }
-  }
-  return start;
+export function findFreePort(start: number): Promise<number> {
+  return tryBind(start, 0);
+}
+
+async function tryBind(start: number, offset: number): Promise<number> {
+  if (offset >= 50) return start;
+  const port = start + offset;
+  const free = await new Promise<boolean>((resolve) => {
+    const srv = createServer();
+    srv.once("error", () => resolve(false));
+    srv.once("listening", () => srv.close(() => resolve(true)));
+    srv.listen(port, "127.0.0.1");
+  });
+  if (free) return port;
+  return tryBind(start, offset + 1);
 }
 
 /**

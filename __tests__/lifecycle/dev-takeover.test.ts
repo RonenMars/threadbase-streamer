@@ -56,7 +56,7 @@ describe("resolveDevPlan", () => {
       isProdActive: () => true,
       portInUse: () => true,
       prompt,
-      findFreePort: () => 9001,
+      findFreePort: async () => 9001,
     });
     expect(prompt).toHaveBeenCalled();
     expect(plan).toEqual({ kind: "use-port", port: 9001 });
@@ -113,7 +113,7 @@ describe("resolveDevPlan", () => {
       isProdActive: () => true,
       portInUse: () => true,
       prompt,
-      findFreePort: () => 9001,
+      findFreePort: async () => 9001,
     });
     const { getPrefForRepo } = await import("../../src/lifecycle/prefs");
     expect(getPrefForRepo("/repo/a")).toMatchObject({ choice: "use-port", port: 9001 });
@@ -130,7 +130,7 @@ describe("resolveDevPlan", () => {
       isProdActive: () => true,
       portInUse: () => true,
       prompt,
-      findFreePort: () => 9001,
+      findFreePort: async () => 9001,
     });
     expect(plan).toEqual({ kind: "use-port", port: 9001 });
     // No repo path → nothing to persist; verify prefs file was not created.

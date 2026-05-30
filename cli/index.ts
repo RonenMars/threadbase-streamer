@@ -52,7 +52,7 @@ program
     let resolvedPort = requestedPort;
 
     if (!isProdInvocation) {
-      const { resolveDevPlan, detectProdActive, isPortInUse, findFreePortSync, takeoverProd } =
+      const { resolveDevPlan, detectProdActive, isPortInUse, findFreePort, takeoverProd } =
         await import("../src/lifecycle/dev-takeover");
       const { interactivePrompt } = await import("../src/lifecycle/prompt");
       const { getGitToplevel } = await import("../src/lifecycle/repo");
@@ -69,7 +69,7 @@ program
         isProdActive: detectProdActive,
         portInUse: () => portTaken,
         prompt: interactivePrompt,
-        findFreePort: findFreePortSync,
+        findFreePort,
       });
 
       resolvedPort = plan.port;
