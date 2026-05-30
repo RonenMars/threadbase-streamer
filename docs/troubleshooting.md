@@ -323,11 +323,11 @@ Restart the streamer to pick it up.
 **Cause:** The plist existed from an old install pointing to a dev-workspace path. It was bootstrapped at some point, then the service was booted out without being re-bootstrapped.
 **Fix:**
 1. Run `launchctl bootout "gui/$(id -u)/com.ronen.threadbase"` (will fail if not loaded — that is fine).
-2. Rewrite the plist so `ProgramArguments` points to `~/.threadbase/cli.js`.
+2. Rewrite the plist so `ProgramArguments` points to `~/.threadbase/launchd-entry.cjs` (the shim, which `exec`s `cli.js`). Re-running `npm run deploy` does this automatically — `ensure_plist_healthy` detects and rewrites the stale layout.
 3. Run `launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.ronen.threadbase.plist`.
 4. Then `launchctl kickstart` will succeed.
 
-**Stale-plist check:** even if the plist file exists, verify the `ProgramArguments` entry references `~/.threadbase/cli.js` and not a hardcoded workspace path. If it doesn't, treat as a fresh install.
+**Stale-plist check:** even if the plist file exists, verify the `ProgramArguments` entry references `~/.threadbase/launchd-entry.cjs` (post-2026-05-30 shim) and not `~/.threadbase/cli.js` directly. If it points at `cli.js`, re-run `npm run deploy` to let the self-heal rewrite it.
 
 ---
 
@@ -376,13 +376,16 @@ Re-run `npm run deploy` afterwards if you want the deploy-script self-heal (see 
 <key>ProgramArguments</key>
 <array>
   <string>/usr/local/bin/node</string>
-  <string>/Users/ronen/.threadbase/cli.js</string>
+  <string>/Users/ronen/.threadbase/launchd-entry.cjs</string>
   <string>serve</string>
   <string>--port</string>
   <string>8766</string>
   <string>--verbose</string>
+  <string>--prod</string>
 </array>
 ```
+
+(The shim at `launchd-entry.cjs` is the post-2026-05-30 layout; it `exec`s `cli.js`. The trailing `--prod` tells the action to skip dev-takeover logic.)
 
 Then bootout + re-bootstrap to apply (launchd reads the plist at bootstrap time, not at every kickstart):
 ```sh
@@ -423,6 +426,59 @@ ps -o pid,lstart,command -p $(pgrep -f 'threadbase.*serve')   # STARTED column s
 ls -la ~/.threadbase/cli.js              # symlink target should be the new release
 ```
 Only re-bootstrap (above section) if you actually need launchd's cached metadata to reflect the canonical plist.
+
+---
+
+## Prod/dev coordination (macOS)
+
+The streamer can be supervised by launchd ("prod") or run ad-hoc from a shell ("dev"). They coordinate via `~/.threadbase/prod-suspended.json`. Background and the marker decision table are in [CLAUDE.md](../CLAUDE.md) under "Prod/dev coordination (macOS)".
+
+### Prod is down but `launchctl list` shows the agent loaded and exiting cleanly
+
+**When:** `tb-streamer prod status` prints `agent: loaded, pid: (none)`. `launchctl print "gui/$(id -u)/com.ronen.threadbase" | grep last\ exit` shows `0`. `~/.threadbase/prod-suspended.json` exists.
+**Cause:** The suspension marker is present, so the shim is exiting 0 on every launchd start attempt. Because the plist has `KeepAlive: SuccessfulExit=false`, launchd does not respawn. Two sub-cases:
+- `userHeld: true` → a dev session previously took the port and exited cleanly (SIGINT / SIGTERM). Prod is intentionally held down.
+- `userHeld: false` and `devPid` is still alive → a dev session is currently using the port; this is expected.
+- `userHeld: false` and `devPid` is dead → stale marker. Should not happen because the shim auto-clears it on the next launchd retry; if you see it, the agent may have been booted out (`launchctl list` would not show it).
+
+**Diagnosis:** `cat ~/.threadbase/prod-suspended.json | jq` and check `userHeld` + whether `devPid` is alive (`ps -p <devPid>`).
+
+**Fix:**
+- If `userHeld: true` and you want prod back: `tb-streamer prod start` (clears marker + kickstarts).
+- If `devPid` is alive: nothing to do; the dev session is using the port. Confirm with `lsof -iTCP:8766 -sTCP:LISTEN`.
+- If marker looks stale: `tb-streamer prod doctor --fix` (clears markers whose `devPid` is dead and `userHeld` is false).
+
+---
+
+### `tb-streamer serve` hangs on a prompt and there is no TTY
+
+**When:** Running `tb-streamer serve` from a non-interactive context (CI, a background job, a launchd-but-not-marked-prod plist) and the process appears to hang.
+**Cause:** Prod is running on the requested port, the action enters the conflict path, and the interactive prompt is reading from a closed stdin.
+**Fix:** Pass `--replace-prod` (always take the port) or `--port <N>` with a different port. For launchd-spawned services, the shim's plist already includes `--prod` which short-circuits the prompt logic entirely; if you wrote a custom plist, add `--prod`.
+
+---
+
+### Dev process crashed but launchd isn't restarting prod
+
+**When:** Dev process was killed (`kill -9`, OOM, panic). Marker file at `~/.threadbase/prod-suspended.json` still exists with `userHeld: false` and the dead PID. Prod still appears down.
+**Cause:** Crash recovery happens inside the shim. The shim only runs when launchd attempts a start; with `KeepAlive: SuccessfulExit=false` launchd waits for a non-zero exit OR an explicit `kickstart`. The previous start exited 0 (from the live-dev branch), so launchd is idle.
+**Fix:** `tb-streamer prod start` (clears the marker and kickstarts). On the next start attempt the shim sees no marker and `exec`s `cli.js`. Or run `tb-streamer prod doctor --fix` if you want the marker cleared without restarting prod.
+
+---
+
+### Plist still references `cli.js` directly after upgrade
+
+**When:** `cat ~/Library/LaunchAgents/com.ronen.threadbase.plist | grep ProgramArguments -A8` shows `<string>$HOME/.threadbase/cli.js</string>` instead of `launchd-entry.cjs`. Symptoms: `--replace-prod` works but a clean dev exit doesn't suppress prod because the shim isn't in the chain.
+**Cause:** Old plist from before the lifecycle work was deployed. The deploy script's `ensure_plist_healthy` self-heals this on the next `npm run deploy`, but if you haven't re-deployed yet the old layout persists.
+**Fix:** `cd <repo> && npm run deploy` — the self-heal rewrites three stale layouts: missing `EnvironmentVariables`, ProgramArguments pointing at `cli.js`, and bare-bool `KeepAlive`. Backup is saved to `*.plist.bak.<epoch>`.
+
+---
+
+### Marker file is malformed (manual edit gone wrong)
+
+**When:** `tb-streamer prod status` logs `marker at /Users/.../prod-suspended.json is malformed; treating as absent`.
+**Cause:** `readMarker` validates via the `MarkerSchema` (zod). Any missing field, wrong type, or invalid `shimVersion` returns null. JSON parse errors do the same.
+**Fix:** The shim already treats malformed markers as absent. Delete the file: `rm ~/.threadbase/prod-suspended.json` and then `tb-streamer prod start` to restore prod.
 
 ---
 

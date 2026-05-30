@@ -195,6 +195,44 @@ Things that will bite if you forget:
 - **launchd plist must set `PATH` via `EnvironmentVariables`**: launchd-spawned services inherit only `/usr/bin:/bin:/usr/sbin:/sbin`. Without an `EnvironmentVariables` block in the plist that includes `/opt/homebrew/bin` (Apple Silicon) and `/usr/local/bin` (Intel), `node-pty`'s `execvp("claude", …)` fails with `ENOENT`, and every session-start/resume produces an instant-exit zombie session with `status=idle`, blank terminal, no `failureReason`. The deploy script's plist generator and self-heal both write the block; symptom + diagnosis in [docs/troubleshooting.md](docs/troubleshooting.md).
 - **`resolveClaudeExe()` now falls back to absolute Homebrew/local paths on macOS** (`src/platform.ts`) — defense-in-depth so a stale plist alone can't break the streamer.
 
+## Prod/dev coordination (macOS)
+
+Only one streamer can bind port 8766 at a time. The launchd-supervised "prod" instance and an ad-hoc "dev" instance (`tb-streamer serve` from a shell) coordinate via a JSON marker file rather than racing.
+
+**Components:**
+- **Shim** at `~/.threadbase/launchd-entry.cjs` (built from `cli/launchd-entry.ts`). The plist points launchd at the shim, not `cli.js` directly. On every start attempt the shim consults the marker and either `exec`s `cli.js` or exits 0.
+- **Marker** at `~/.threadbase/prod-suspended.json`. Written by dev when it takes over the prod port. Shape: `{ devPid, port, repoToplevel, suspendedAt, userHeld, shimVersion }`.
+- **Prefs** at `~/.threadbase/dev-prefs.json`. Per-repo remembered choice (`replace-prod` or `use-port`), keyed by git toplevel path.
+- **Plist** `KeepAlive` is a dict with `SuccessfulExit: false` + `ThrottleInterval: 10`. A clean shim exit (exit 0) does NOT trigger respawn; only crashes do.
+
+**Marker decision table (shim):**
+| Marker state | Shim action |
+|---|---|
+| absent / malformed | `exec` real `cli.js` |
+| `userHeld: true` | exit 0 (intentional stop) |
+| `userHeld: false`, devPid alive | exit 0 (dev is using the port) |
+| `userHeld: false`, devPid dead | clear marker, `exec` cli.js (crash recovery) |
+
+**Dev-side flags on `serve`:**
+- `--replace-prod` — unconditionally bootout prod, take its port, install signal handlers that flip `userHeld=true` on clean exit.
+- `--forget` — clear this repo's remembered choice and re-prompt.
+- `--forget-all` — clear every repo's remembered choice.
+- `--prod` — internal: tells the action to skip dev-takeover logic. Set by the plist; auto-detected when `process.ppid === 1`.
+
+**Prod-side commands (new):**
+- `tb-streamer prod status` — agent loaded?, agent pid, marker state.
+- `tb-streamer prod start` — clear marker + `launchctl kickstart -k`. Use after a `userHeld` suspension to restore prod.
+- `tb-streamer prod stop` — `launchctl bootout`. Will not auto-restart until `prod start` or reboot.
+- `tb-streamer prod restart` — bootout + bootstrap (re-reads plist).
+- `tb-streamer prod doctor [--fix]` — detect stale marker (dead devPid, not userHeld) and missing agent; `--fix` clears stale markers.
+
+**Don't break without coordination:**
+- The marker shape is versioned by `shimVersion: 1`. Bump it if you change the shape; the schema will reject older markers and `readMarker` returns null + logs a warning.
+- The plist's `ProgramArguments` MUST start with `node $INSTALL_DIR/launchd-entry.cjs serve --port $PORT --verbose --prod`. The trailing `--prod` is what tells the action to skip dev-takeover even if PPID detection fails. `ensure_plist_healthy` in `scripts/deploy.sh` rewrites three stale layouts: missing `EnvironmentVariables`, ProgramArguments pointing at `cli.js` directly, or bare-bool `KeepAlive`.
+- `dist/launchd-entry.cjs` is a tsup CLI entry; deploy copies it to `~/.threadbase/launchd-entry.cjs` (no per-release versioning — it always forwards to the active `cli.js` symlink).
+
+Source modules: `src/lifecycle/{constants,marker,marker-schema,process-liveness,repo,prefs,launchd,dev-takeover,prompt}.ts` + `cli/launchd-entry.ts` + `cli/prod.ts`. Marker/prefs paths come from `installDir() ?? $HOME/.threadbase`; override via `THREADBASE_INSTALL_DIR` (used by tests).
+
 ## Windows-specific notes
 
 - **`npm install` before first deploy**: A fresh clone (or a branch that added new packages) will fail lint/build with "Cannot find module" if `node_modules` is missing or stale. Run `npm install` before the first `npm run deploy:windows`. The `postinstall` script also patches `qrcode-terminal` and sets permissions on the `node-pty` prebuild.
