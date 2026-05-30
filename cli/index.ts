@@ -31,13 +31,54 @@ program
     "Public URL clients should use to reach this server (https:// required, except localhost). Falls back to THREADBASE_PUBLIC_URL env or public_url: in ~/.threadbase/server.yaml.",
   )
   .option("--no-pair-qr", "Skip the pairing QR on startup", false)
+  .option("--replace-prod", "Stop the launchd-supervised prod streamer and bind its port", false)
+  .option("--forget", "Clear this repo's remembered dev-vs-prod choice and re-prompt", false)
+  .option("--forget-all", "Clear every repo's remembered dev-vs-prod choice", false)
+  .option(
+    "--prod",
+    "Run as if invoked by launchd: skip the dev-takeover prompt and signal handlers",
+    false,
+  )
   .action(async (opts) => {
-    const port = Number.parseInt(opts.port, 10);
+    const requestedPort = Number.parseInt(opts.port, 10);
     const apiKey = opts.apiKey ?? loadOrCreateApiKey();
     const publicUrl = opts.publicUrl ?? loadPublicUrl() ?? null;
 
+    // Detect whether this invocation is "dev mode" (started by a human shell)
+    // or "prod mode" (started by launchd). PPID 1 = launchd on macOS.
+    const isProdInvocation = opts.prod === true || process.ppid === 1;
+
+    let resolvedPort = requestedPort;
+
+    if (!isProdInvocation) {
+      const { resolveDevPlan, detectProdActive, isPortInUse, findFreePortSync, takeoverProd } =
+        await import("../src/lifecycle/dev-takeover");
+      const { interactivePrompt } = await import("../src/lifecycle/prompt");
+      const { getGitToplevel } = await import("../src/lifecycle/repo");
+
+      const repoToplevel = getGitToplevel(process.cwd());
+      const portTaken = await isPortInUse(requestedPort);
+
+      const plan = await resolveDevPlan({
+        requestedPort,
+        replaceProd: opts.replaceProd === true,
+        forget: opts.forget === true,
+        forgetAll: opts.forgetAll === true,
+        repoToplevel,
+        isProdActive: detectProdActive,
+        portInUse: () => portTaken,
+        prompt: interactivePrompt,
+        findFreePort: findFreePortSync,
+      });
+
+      resolvedPort = plan.port;
+      if (plan.kind === "replace-prod") {
+        takeoverProd({ port: plan.port, repoToplevel });
+      }
+    }
+
     const server = new StreamerServer({
-      port,
+      port: resolvedPort,
       apiKey,
       localNoAuth: opts.localNoAuth,
       verbose: opts.verbose,
@@ -45,16 +86,20 @@ program
       publicUrl: opts.publicUrl,
     });
 
-    await server.listen(port);
+    await server.listen(resolvedPort);
 
-    log.info(`Threadbase Streamer v${__VERSION__}`, { version: __VERSION__, port });
-    log.info(`Listening on http://localhost:${port}`, { url: `http://localhost:${port}` });
-    log.info(`WebSocket at ws://localhost:${port}/ws`, { wsUrl: `ws://localhost:${port}/ws` });
+    log.info(`Threadbase Streamer v${__VERSION__}`, { version: __VERSION__, port: resolvedPort });
+    log.info(`Listening on http://localhost:${resolvedPort}`, {
+      url: `http://localhost:${resolvedPort}`,
+    });
+    log.info(`WebSocket at ws://localhost:${resolvedPort}/ws`, {
+      wsUrl: `ws://localhost:${resolvedPort}/ws`,
+    });
     log.info(`API key: ${apiKey}`, { apiKeyMasked: `${apiKey.slice(0, 6)}…` });
 
     if (opts.pairQr !== false) {
       try {
-        await printPairQR({ port, apiKey, publicUrl });
+        await printPairQR({ port: resolvedPort, apiKey, publicUrl });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log.warn(`(skipped pairing QR: ${message})`, { reason: message });
@@ -67,8 +112,17 @@ program
       process.exit(0);
     };
 
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
+    if (isProdInvocation) {
+      // Prod mode: simple shutdown handlers (no takeover semantics).
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+    }
+    // Dev mode with takeover already installed its handlers in takeoverProd().
+    // Dev mode without takeover (use-port path) — install simple ones too:
+    if (!isProdInvocation) {
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+    }
   });
 
 program
