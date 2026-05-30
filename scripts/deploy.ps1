@@ -48,6 +48,7 @@ $releasesDir  = Join-Path $installDir 'releases'
 $historyFile  = Join-Path $releasesDir '.history'
 $activeFile   = Join-Path $installDir 'cli.js'
 $taskName     = if ($env:THREADBASE_TASK_NAME) { $env:THREADBASE_TASK_NAME } else { 'Threadbase' }
+$port         = if ($env:THREADBASE_PORT) { $env:THREADBASE_PORT } else { '8766' }
 $healthUrl    = if ($env:THREADBASE_HEALTH_URL) { $env:THREADBASE_HEALTH_URL } else { 'http://localhost:8766/healthz' }
 $keepReleases = 5
 
@@ -188,7 +189,7 @@ function Invoke-Setup {
   $vbsPath = Join-Path $installDir 'launch.vbs'
 
   $cmdLines = @('@echo off', "cd /d `"$installDir`"")
-  $cmdLines += "`"$nodeBin`" `"$activeFile`" serve"
+  $cmdLines += "`"$nodeBin`" `"$activeFile`" serve --port $port --verbose --prod"
   Set-Content -Path $cmdPath -Value $cmdLines -Encoding Ascii
 
   $vbsContent = 'CreateObject("WScript.Shell").Run """' + $cmdPath + '""", 0, False'
@@ -205,6 +206,34 @@ function Invoke-Setup {
     Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings -RunLevel Limited -Force | Out-Null
     Write-Ok "auto-startup at login: disabled — run 'Start-ScheduledTask -TaskName $taskName' to start manually"
   }
+}
+
+# Self-heal: existing launch.cmd files from before the lifecycle work omit
+# --port / --verbose / --prod. Detect + rewrite in place.
+function Repair-LaunchCmd {
+  $cmdPath = Join-Path $installDir 'launch.cmd'
+  if (-not (Test-Path $cmdPath)) { return }
+
+  $content = Get-Content -Path $cmdPath -Raw
+  $needsRewrite = $false
+
+  if ($content -notmatch '--prod') {
+    Write-Warn "launch.cmd is missing --prod flag — rewriting"
+    $needsRewrite = $true
+  }
+  if ($content -notmatch '--port') {
+    Write-Warn "launch.cmd is missing --port flag — rewriting"
+    $needsRewrite = $true
+  }
+
+  if (-not $needsRewrite) { return }
+
+  Copy-Item -Path $cmdPath -Destination "$cmdPath.bak.$(Get-Date -Format yyyyMMddHHmmss)" -Force
+  $nodeBin = (Get-Command node).Source
+  $cmdLines = @('@echo off', "cd /d `"$installDir`"")
+  $cmdLines += "`"$nodeBin`" `"$activeFile`" serve --port $port --verbose --prod"
+  Set-Content -Path $cmdPath -Value $cmdLines -Encoding Ascii
+  Write-Ok "launch.cmd healed (backup saved alongside)"
 }
 
 function Invoke-KillStalePort {
@@ -455,6 +484,8 @@ function Invoke-Deploy {
       Write-Log "service not registered — running first-time setup"
       Invoke-Setup
     }
+
+    Repair-LaunchCmd
 
     Write-Log "restarting scheduled task '$taskName'"
     Invoke-Kickstart
