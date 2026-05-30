@@ -12,25 +12,28 @@ export type CommandResult = { ok: boolean; message: string };
 
 export async function runProdStart(): Promise<CommandResult> {
   if (!getSupervisor().isAgentLoaded()) {
-    return {
-      ok: false,
-      message:
-        "launchd agent com.ronen.threadbase is not loaded. " +
-        "Run 'scripts/deploy.sh setup' to install it.",
-    };
+    const message =
+      process.platform === "darwin"
+        ? "launchd agent com.ronen.threadbase is not loaded. Run 'scripts/deploy.sh setup' to install it."
+        : `task '${TASK_NAME}' is not registered. Run 'scripts\\deploy.ps1 setup' to install it.`;
+    return { ok: false, message };
   }
   clearMarker();
   getSupervisor().kickstartAgent();
-  return { ok: true, message: "prod streamer restored — launchd is starting it now." };
+  const restoredMsg =
+    process.platform === "darwin"
+      ? "prod streamer restored — launchd is starting it now."
+      : "prod streamer restored — Task Scheduler is starting it now.";
+  return { ok: true, message: restoredMsg };
 }
 
 export async function runProdStop(): Promise<CommandResult> {
   getSupervisor().bootoutAgent();
+  const what =
+    process.platform === "darwin" ? "launchd agent unloaded" : "Task Scheduler task disabled";
   return {
     ok: true,
-    message:
-      "prod streamer stopped (launchd agent unloaded). " +
-      "It will not auto-restart until 'tb-streamer prod start' or system reboot.",
+    message: `prod streamer stopped (${what}). It will not auto-restart until 'tb-streamer prod start' or system reboot.`,
   };
 }
 

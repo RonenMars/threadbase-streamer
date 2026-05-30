@@ -36,7 +36,7 @@ describe("prod commands", () => {
     mockSup.isAgentLoaded.mockReturnValue(false);
     const result = await runProdStart();
     expect(result.ok).toBe(false);
-    expect(result.message).toMatch(/scripts\/deploy\.sh setup/);
+    expect(result.message).toMatch(/(scripts\/deploy\.sh|scripts\\deploy\.ps1)/);
   });
 
   it("prod start: clears marker and kickstarts when agent loaded", async () => {
