@@ -13,13 +13,17 @@ const log = getLogger("launchd-entry");
 
 export type ShimAction =
   | { kind: "exec"; reason?: "crash-recovery" }
-  | { kind: "exit"; reason: "user-held" | "dev-alive" };
+  | { kind: "exit"; reason: "user-held" | "dev-alive" | "platform-mismatch" };
 
 /**
  * Pure decision (plus marker-clear side effect on crash recovery so the
  * caller doesn't have to). Exported for tests.
  */
 export function decideShimAction(): ShimAction {
+  if (process.platform !== "darwin") {
+    return { kind: "exit", reason: "platform-mismatch" };
+  }
+
   const marker = readMarker();
   if (!marker) return { kind: "exec" };
 
@@ -39,7 +43,14 @@ export function decideShimAction(): ShimAction {
 function main(): void {
   const action = decideShimAction();
   if (action.kind === "exit") {
-    log.info(`shim exiting (${action.reason}); launchd will not respawn (SuccessfulExit=false)`);
+    if (action.reason === "platform-mismatch") {
+      log.warn(
+        `shim should only run on macOS (current platform: ${process.platform}). ` +
+          `On Windows, Task Scheduler runs cli.js directly. Exiting.`,
+      );
+    } else {
+      log.info(`shim exiting (${action.reason}); launchd will not respawn (SuccessfulExit=false)`);
+    }
     process.exit(0);
   }
 

@@ -59,3 +59,16 @@ describe("decideShimAction", () => {
     expect(readMarker()).toBeNull();
   });
 });
+
+describe("decideShimAction on non-darwin", () => {
+  const originalPlatform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  });
+
+  it("returns exit (with platform-mismatch reason) on win32", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const action = decideShimAction();
+    expect(action).toEqual({ kind: "exit", reason: "platform-mismatch" });
+  });
+});
