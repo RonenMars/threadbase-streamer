@@ -1,13 +1,8 @@
 import type { Command } from "commander";
 import { Command as CommanderCommand } from "commander";
-import {
-  bootoutAgent,
-  bootstrapAgent,
-  getAgentPid,
-  isAgentLoaded,
-  kickstartAgent,
-} from "../src/lifecycle/launchd";
+import { TASK_NAME } from "../src/lifecycle/constants";
 import { clearMarker, readMarker } from "../src/lifecycle/marker";
+import { getSupervisor } from "../src/lifecycle/platform";
 import { isPidAlive } from "../src/lifecycle/process-liveness";
 import { getLogger } from "../src/logger";
 
@@ -16,7 +11,7 @@ const log = getLogger("prod");
 export type CommandResult = { ok: boolean; message: string };
 
 export async function runProdStart(): Promise<CommandResult> {
-  if (!isAgentLoaded()) {
+  if (!getSupervisor().isAgentLoaded()) {
     return {
       ok: false,
       message:
@@ -25,12 +20,12 @@ export async function runProdStart(): Promise<CommandResult> {
     };
   }
   clearMarker();
-  kickstartAgent();
+  getSupervisor().kickstartAgent();
   return { ok: true, message: "prod streamer restored — launchd is starting it now." };
 }
 
 export async function runProdStop(): Promise<CommandResult> {
-  bootoutAgent();
+  getSupervisor().bootoutAgent();
   return {
     ok: true,
     message:
@@ -46,9 +41,10 @@ export type ProdStatus = {
 };
 
 export async function runProdStatus(): Promise<ProdStatus> {
+  const sup = getSupervisor();
   return {
-    agentLoaded: isAgentLoaded(),
-    agentPid: getAgentPid(),
+    agentLoaded: sup.isAgentLoaded(),
+    agentPid: sup.getAgentPid(),
     marker: readMarker(),
   };
 }
@@ -68,7 +64,7 @@ export async function runProdDoctor(opts: { fix: boolean }): Promise<DoctorRepor
     }
   }
 
-  if (!isAgentLoaded()) {
+  if (!getSupervisor().isAgentLoaded()) {
     findings.push("launchd agent is not loaded — prod is fully down");
   }
 
@@ -115,12 +111,20 @@ export function registerProdCommands(program: Command): void {
 
   prod
     .command("restart")
-    .description("Bootout + bootstrap the launchd agent (re-read plist)")
+    .description("Stop + restart the supervised streamer (re-reads service definition)")
     .action(async () => {
-      bootoutAgent();
-      const plist = `${process.env.HOME}/Library/LaunchAgents/com.ronen.threadbase.plist`;
-      bootstrapAgent(plist);
-      log.info(`agent restarted from ${plist}`, undefined, "console");
+      const sup = getSupervisor();
+      sup.bootoutAgent();
+      const specPath =
+        process.platform === "darwin"
+          ? `${process.env.HOME}/Library/LaunchAgents/com.ronen.threadbase.plist`
+          : "";
+      sup.bootstrapAgent(specPath);
+      const what =
+        process.platform === "darwin"
+          ? `agent restarted from ${specPath}`
+          : `task '${TASK_NAME}' restarted`;
+      log.info(what, undefined, "console");
     });
 
   prod

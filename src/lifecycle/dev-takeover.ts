@@ -1,7 +1,7 @@
 import { createServer } from "node:net";
 import { getLogger } from "../logger";
-import { bootoutAgent, isAgentLoaded } from "./launchd";
 import { readMarker, writeMarker } from "./marker";
+import { getSupervisor } from "./platform";
 import { forgetAll, forgetRepo, getPrefForRepo, writePrefForRepo } from "./prefs";
 import type { PromptFn } from "./prompt";
 
@@ -67,7 +67,7 @@ export async function resolveDevPlan(opts: ResolveDevPlanOpts): Promise<DevPlan>
 
 // Real I/O helpers used by cli/index.ts; kept here so they're collocated.
 export function detectProdActive(): boolean {
-  return isAgentLoaded();
+  return getSupervisor().isAgentLoaded();
 }
 
 export function isPortInUse(port: number): Promise<boolean> {
@@ -110,7 +110,7 @@ export function takeoverProd(opts: { port: number; repoToplevel: string | null }
     );
   }
 
-  bootoutAgent();
+  getSupervisor().bootoutAgent();
   writeMarker({
     devPid: process.pid,
     port: opts.port,

@@ -5,15 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runProdDoctor, runProdStart, runProdStatus, runProdStop } from "../../cli/prod";
 import { writeMarker } from "../../src/lifecycle/marker";
 
-vi.mock("../../src/lifecycle/launchd", () => ({
+const mockSup = {
   isAgentLoaded: vi.fn(() => true),
   bootoutAgent: vi.fn(),
   bootstrapAgent: vi.fn(),
   kickstartAgent: vi.fn(),
-  getAgentPid: vi.fn(() => 12345),
-}));
+  getAgentPid: vi.fn(() => 12345 as number | null),
+};
 
-import * as launchd from "../../src/lifecycle/launchd";
+vi.mock("../../src/lifecycle/platform", () => ({
+  getSupervisor: () => mockSup,
+}));
 
 describe("prod commands", () => {
   let dir: string;
@@ -21,6 +23,9 @@ describe("prod commands", () => {
     dir = mkdtempSync(join(tmpdir(), "prod-test-"));
     process.env.THREADBASE_INSTALL_DIR = dir;
     vi.clearAllMocks();
+    // Reset defaults that clearAllMocks wipes
+    mockSup.isAgentLoaded.mockReturnValue(true);
+    mockSup.getAgentPid.mockReturnValue(12345);
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
@@ -28,14 +33,14 @@ describe("prod commands", () => {
   });
 
   it("prod start: errors when agent not loaded", async () => {
-    vi.mocked(launchd.isAgentLoaded).mockReturnValue(false);
+    mockSup.isAgentLoaded.mockReturnValue(false);
     const result = await runProdStart();
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/scripts\/deploy\.sh setup/);
   });
 
   it("prod start: clears marker and kickstarts when agent loaded", async () => {
-    vi.mocked(launchd.isAgentLoaded).mockReturnValue(true);
+    mockSup.isAgentLoaded.mockReturnValue(true);
     writeMarker({
       devPid: 1,
       port: 8766,
@@ -46,7 +51,7 @@ describe("prod commands", () => {
     });
     const result = await runProdStart();
     expect(result.ok).toBe(true);
-    expect(launchd.kickstartAgent).toHaveBeenCalled();
+    expect(mockSup.kickstartAgent).toHaveBeenCalled();
     // Marker should be gone.
     const { readMarker } = await import("../../src/lifecycle/marker");
     expect(readMarker()).toBeNull();
@@ -55,7 +60,7 @@ describe("prod commands", () => {
   it("prod stop: bootouts the agent", async () => {
     const result = await runProdStop();
     expect(result.ok).toBe(true);
-    expect(launchd.bootoutAgent).toHaveBeenCalled();
+    expect(mockSup.bootoutAgent).toHaveBeenCalled();
   });
 
   it("prod status: returns running state", async () => {
