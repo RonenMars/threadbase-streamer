@@ -8,6 +8,7 @@ import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
+import { registerProdCommands } from "./prod";
 
 const log = getLogger("cli");
 
@@ -246,6 +247,8 @@ program
       process.exitCode = 1;
     }
   });
+
+registerProdCommands(program);
 
 program.parse();
 
