@@ -161,6 +161,16 @@ Default behavior is **interactive prompt**. Non-interactive overrides (for CI / 
 
 Shim install failures are **non-fatal**: the deploy logs a warning and continues. The streamer itself is already healthy at that point — only the convenience command is at stake.
 
+## Homebrew distribution
+
+`brew install RonenMars/threadbase/tb-streamer` is an alternate install path for end users. The formula lives in `RonenMars/homebrew-threadbase` and is regenerated on every stable release by `scripts/build-formula.mjs` + `scripts/publish-formula.sh`, invoked from `.github/workflows/release.yml` after `semantic-release` finishes.
+
+Homebrew installs the binary into `libexec/`, exposes `tb-streamer` on PATH, and registers `brew services start tb-streamer` to run it under launchd (macOS) or systemd (Linux). The formula's `service` block uses port 8766 and `--prod` is NOT passed — Homebrew installs are not part of the prod/dev lifecycle scheme.
+
+Pre-releases (`next` channel) are NOT published to the tap. Pre-release users continue to use the GitHub release tarball.
+
+A user can have either the Homebrew install OR the `scripts/deploy.sh` install, not both — both bind port 8766 with different launchd labels. Detection is deferred (see `docs/BACKLOG.md` "Homebrew vs `scripts/deploy.sh` plist collision"). Caveats in the formula warn users.
+
 ## Cloudflare Tunnel
 
 The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running as a Windows service). The active mapping is `https://tb-pc.rbv1000.win` → `http://127.0.0.1:8766`. Set `public_url: https://tb-pc.rbv1000.win` in `~/.threadbase/server.yaml` so the pairing QR code embeds the correct URL.

@@ -4,6 +4,26 @@ PTY session management, WebSocket streaming, and REST API server for Claude Code
 
 ## Quick Start
 
+### Install via Homebrew (recommended, macOS + Linux)
+
+```bash
+brew tap RonenMars/threadbase
+brew install tb-streamer
+
+# One-time setup:
+tb-streamer set-key <YOUR_API_KEY>
+
+# Start the service (also starts on login):
+brew services start tb-streamer
+
+# Optional: enable automatic updates
+tb-streamer update --enable-auto-update
+```
+
+To stop or restart: `brew services stop tb-streamer` / `brew services restart tb-streamer`.
+
+> **Note:** the Homebrew install is mutually exclusive with the manual `scripts/deploy.sh` install. If you previously installed via that path, run `launchctl bootout gui/$UID/com.threadbase.streamer` before starting the Homebrew service.
+
 ```bash
 npm install
 npm run build
