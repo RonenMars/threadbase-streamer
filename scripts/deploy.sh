@@ -298,6 +298,35 @@ ensure_scanner_submodule() {
   fi
 }
 
+# Realign better-sqlite3's prebuilt native binary with whatever Node `bash`
+# resolves to at deploy time. Necessary because `bash scripts/deploy.sh` runs
+# in a sub-shell that doesn't load nvm's lazy-init function — `node` falls
+# through PATH to (e.g.) homebrew node, which can be a different major than
+# the Node that last ran `npm install`. The ABI mismatch only surfaces inside
+# vitest worker forks, so the deploy's `npm test` gate fails while standalone
+# `npm test` from an interactive shell passes — confusing the diagnosis.
+#
+# Detection: instantiate a Database under the active Node. `require()` alone
+# only loads JS — the binding (and its NODE_MODULE_VERSION check) doesn't
+# resolve until something actually constructs a Database. If that throws,
+# rebuild.
+# `prebuild-install` will fetch a binary matching the active Node's ABI.
+# `config.gypi`'s `node_module_version` is NOT a reliable signal — it reflects
+# the last from-source `node-gyp rebuild`, not the currently-installed
+# prebuild, so a fresh prebuild leaves it stale.
+# Cheap when already aligned (~0.5s); ~10s when an actual rebuild happens.
+ensure_native_modules_match_node() {
+  [[ ! -d "$REPO_ROOT/node_modules/better-sqlite3" ]] && return 0  # deps not installed; lint/test will surface that
+  if ! node -e "new (require('better-sqlite3'))(':memory:').close()" >/dev/null 2>&1; then
+    log "better-sqlite3 native binary does not load under active Node — rebuilding"
+    npm rebuild better-sqlite3 --silent
+    if ! node -e "new (require('better-sqlite3'))(':memory:').close()" >/dev/null 2>&1; then
+      err "better-sqlite3 still fails to load after rebuild — manual fix needed (try: rm -rf node_modules && npm install)"
+      exit 1
+    fi
+  fi
+}
+
 cmd_predeploy_check() {
   local force="${1:-}"
   cd "$REPO_ROOT"
@@ -685,6 +714,7 @@ cmd_deploy() {
 
   cd "$REPO_ROOT"
   ensure_scanner_submodule
+  ensure_native_modules_match_node
   if [[ "$force" == "--force" ]]; then
     warn "skipping lint + tests (--force)"
   else
