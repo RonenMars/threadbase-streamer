@@ -47,6 +47,14 @@ Option **D + A** together is the cleanest: D fixes the root cause (cache no long
 
 ---
 
+### Homebrew vs `scripts/deploy.sh` plist collision
+
+The Homebrew tap ships its own launchd plist (`homebrew.mxcl.tb-streamer`) via `brew services`. Users who previously installed through `scripts/deploy.sh` already have `com.threadbase.streamer.plist` (or the newer lifecycle-shim variant) bound to port 8766. Running `brew services start tb-streamer` on top will start a second agent that crashes on `EADDRINUSE` until launchd throttles it.
+
+Shipped today: caveats note in the formula tells users Homebrew + manual deploy are mutually exclusive. That bites the unlucky user who upgrades from manual → Homebrew without reading.
+
+**Fix:** add a conflict check inside `tb-streamer serve` (or a dedicated `tb-streamer doctor` step) that, on startup, scans `launchctl list` for `com.threadbase.streamer*` labels other than `homebrew.mxcl.tb-streamer`. If found, exit 0 with a log line directing the user to either `launchctl bootout` the legacy agent or uninstall the Homebrew formula. Reuse the Supervisor / marker plumbing from `src/lifecycle/`. Add a matching check on Windows (Task Scheduler `Threadbase` task vs any Homebrew-equivalent — currently N/A but worth scaffolding).
+
 ## Sequencing
 
 Nothing in this backlog is blocking. Address Scanner visibility before the next end-user-facing release announcement (otherwise `npm install` will fail for users without GitHub credentials).
