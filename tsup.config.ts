@@ -42,7 +42,7 @@ export default defineConfig([
     esbuildOptions: silenceImportMetaWarning,
   },
   {
-    entry: { cli: "cli/index.ts" },
+    entry: { cli: "cli/index.ts", "launchd-entry": "cli/launchd-entry.ts" },
     format: ["cjs"],
     banner: { js: "#!/usr/bin/env node" },
     sourcemap: true,

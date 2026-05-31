@@ -360,6 +360,7 @@ check_active_sessions() {
 write_plist() {
   local plist_path="$1" node_bin="$2" run_at_load="$3"
   local logs_dir="$INSTALL_DIR/logs"
+  local shim_path="$INSTALL_DIR/launchd-entry.cjs"
   local node_bin_dir
   node_bin_dir="$(dirname "$node_bin")"
 
@@ -373,11 +374,12 @@ write_plist() {
   <key>ProgramArguments</key>
   <array>
     <string>$node_bin</string>
-    <string>$ACTIVE_LINK</string>
+    <string>$shim_path</string>
     <string>serve</string>
     <string>--port</string>
     <string>$PORT</string>
     <string>--verbose</string>
+    <string>--prod</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -389,7 +391,12 @@ write_plist() {
   <key>RunAtLoad</key>
   <$run_at_load/>
   <key>KeepAlive</key>
-  <$run_at_load/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
   <key>StandardOutPath</key>
   <string>$logs_dir/stdout.log</string>
   <key>StandardErrorPath</key>
@@ -434,17 +441,32 @@ cmd_setup() {
 ensure_plist_healthy() {
   local plist_path="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
   [[ -f "$plist_path" ]] || return 0
-  if grep -q "EnvironmentVariables" "$plist_path"; then
-    return 0
+
+  local needs_rewrite="false"
+
+  if ! grep -q "EnvironmentVariables" "$plist_path"; then
+    warn "plist is missing EnvironmentVariables block — claude won't be on launchd's PATH"
+    needs_rewrite="true"
   fi
 
-  warn "plist is missing EnvironmentVariables block — claude won't be on launchd's PATH"
-  warn "rewriting $plist_path and re-bootstrapping"
+  # New: detect old layout that points at cli.js directly (no shim).
+  if grep -q "<string>$ACTIVE_LINK</string>" "$plist_path"; then
+    warn "plist still points at cli.js directly (no shim) — rewriting to use launchd-entry.cjs"
+    needs_rewrite="true"
+  fi
 
+  # New: detect bare-bool KeepAlive (pre-shim era).
+  if awk '/<key>KeepAlive<\/key>/{getline; print}' "$plist_path" | grep -q "<true/>\|<false/>"; then
+    warn "plist uses bare-bool KeepAlive — rewriting to dict form (SuccessfulExit=false)"
+    needs_rewrite="true"
+  fi
+
+  [[ "$needs_rewrite" != "true" ]] && return 0
+
+  warn "rewriting $plist_path and re-bootstrapping"
   local node_bin
   node_bin="$(command -v node)" || { err "node not found in PATH"; exit 1; }
 
-  # Preserve the existing RunAtLoad value if we can detect it.
   local run_at_load="true"
   if grep -q "<key>RunAtLoad</key>" "$plist_path" \
      && awk '/<key>RunAtLoad<\/key>/{getline; print}' "$plist_path" | grep -q "<false/>"; then
@@ -669,6 +691,14 @@ cmd_deploy() {
   log "stamping release: $rel_filename"
   cp dist/cli.cjs "$RELEASES_DIR/$rel_filename"
   chmod +x "$RELEASES_DIR/$rel_filename"
+
+  # Copy the launchd shim alongside the active cli.js. The plist always
+  # references $INSTALL_DIR/launchd-entry.cjs (no per-release versioning —
+  # the shim is small and only ever forwards to whatever cli.js the symlink
+  # points at).
+  log "installing launchd shim → $INSTALL_DIR/launchd-entry.cjs"
+  cp "$REPO_ROOT/dist/launchd-entry.cjs" "$INSTALL_DIR/launchd-entry.cjs"
+  chmod +x "$INSTALL_DIR/launchd-entry.cjs"
   # Copy migrations alongside the CLI so __dirname resolution works at runtime.
   # - migrations/    — SQLite (ConversationCache.open(); always required)
   # - pg-migrations/ — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
