@@ -226,9 +226,17 @@ describe("runInstall orchestration", () => {
     }
   });
 
-  it("on macOS/Linux, does NOT call stopService (atomic symlink swap doesn't need it)", async () => {
-    const r = await runInstall({ currentVersion: "1.0.0", config: cfg });
-    expect(r.kind).toBe("installed");
-    expect(stopService).not.toHaveBeenCalled();
-  });
+  // Relies on the host genuinely being non-Windows: it can't fake
+  // process.platform to "darwin" because platformKey() would then desync from
+  // the mocked manifest (which only carries the host key + "win32-x64"). On a
+  // Windows host runInstall correctly calls stopService, so skip there — the
+  // Windows behavior is covered by the swap-ordering test above.
+  it.skipIf(process.platform === "win32")(
+    "on macOS/Linux, does NOT call stopService (atomic symlink swap doesn't need it)",
+    async () => {
+      const r = await runInstall({ currentVersion: "1.0.0", config: cfg });
+      expect(r.kind).toBe("installed");
+      expect(stopService).not.toHaveBeenCalled();
+    },
+  );
 });

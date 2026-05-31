@@ -27,8 +27,15 @@ describe("findFreePort", () => {
     expect(free).toBeLessThan(55051);
   });
 
-  it("returns start if no free port within the 50-port window", async () => {
-    for (let p = 55100; p < 55150; p++) blockers.push(await listen(p));
-    expect(await findFreePort(55100)).toBe(55100);
-  });
+  // Binds 50 consecutive ports; on Windows the 55100–55149 window routinely
+  // overlaps a dynamic/Hyper-V reserved range, so listen() throws EACCES during
+  // setup and the test flakes. The findFreePort logic itself is platform-neutral
+  // and exercised by the two tests above, so skip the 50-port sweep on Windows.
+  it.skipIf(process.platform === "win32")(
+    "returns start if no free port within the 50-port window",
+    async () => {
+      for (let p = 55100; p < 55150; p++) blockers.push(await listen(p));
+      expect(await findFreePort(55100)).toBe(55100);
+    },
+  );
 });
