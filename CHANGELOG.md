@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.1.2...v1.2.0) (2026-05-31)
+
+### Features
+
+* ship tb-streamer via a Homebrew tap ([#7](https://github.com/RonenMars/threadbase-streamer/issues/7)) ([1210f59](https://github.com/RonenMars/threadbase-streamer/commit/1210f59c537b2d46e64c7572a2ba6ba5f1cde27b))
+
 ## [1.1.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.1.1...v1.1.2) (2026-05-31)
 
 ### Bug Fixes
