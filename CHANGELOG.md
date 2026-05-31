@@ -1,3 +1,20 @@
+## [1.1.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.0.1...v1.1.0) (2026-05-31)
+
+### Features
+
+* **deploy:** install threadbase-streamer and tb-streamer global commands ([a605745](https://github.com/RonenMars/threadbase-streamer/commit/a605745749451bcd6e8e621636e0d7421ef32e5e))
+* filter agent conversations from cache via entrypoint marker ([#4](https://github.com/RonenMars/threadbase-streamer/issues/4)) ([fda9e2a](https://github.com/RonenMars/threadbase-streamer/commit/fda9e2ab0deb3eded2cd3c8c44a37fddd8702304))
+* prod/dev lifecycle coordination (macOS launchd + Windows Task Scheduler) ([#5](https://github.com/RonenMars/threadbase-streamer/issues/5)) ([419d5df](https://github.com/RonenMars/threadbase-streamer/commit/419d5df4bd7479d30917f14af73d8b73df322883))
+* **remote-access:** add docs hub + Cloudflare quick-tunnel onboarding ([03c0ab6](https://github.com/RonenMars/threadbase-streamer/commit/03c0ab6d0b96515d908b15b9deca66f6e3928276))
+
+### Bug Fixes
+
+* backfill project context for skeleton conversation cache rows ([#3](https://github.com/RonenMars/threadbase-streamer/issues/3)) ([93e93ff](https://github.com/RonenMars/threadbase-streamer/commit/93e93ff1c4aefbd4b02f50bf4a2bd0df021b5a22))
+* **cli:** align default port to 8766 across serve/pair/update ([b48f97b](https://github.com/RonenMars/threadbase-streamer/commit/b48f97b0cc18690bf9ff46f860986dd10e8cd3bb))
+* **pty:** queue input on resume until prompt marker — closes "dot bug" ([d115084](https://github.com/RonenMars/threadbase-streamer/commit/d115084492a20e1af19676485419e3fab679a0a1))
+* **pty:** render PTY through headless terminal for in-order replay ([882d4df](https://github.com/RonenMars/threadbase-streamer/commit/882d4df54311d47d84b86cb3228027fe005ad655))
+* **pty:** split paste and \r across two writes so TUI mid-render does not swallow submit ([cadf4d2](https://github.com/RonenMars/threadbase-streamer/commit/cadf4d2ba0a10adb25835cae4d6d1d1449cb9e5f))
+
 ## [1.0.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.0.0...v1.0.1) (2026-05-23)
 
 ### Bug Fixes

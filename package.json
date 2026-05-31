@@ -1,6 +1,6 @@
 {
   "name": "@threadbase/streamer",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "PTY session management, WebSocket streaming, and REST API server for Claude Code conversations",
   "type": "module",
   "main": "dist/index.cjs",
