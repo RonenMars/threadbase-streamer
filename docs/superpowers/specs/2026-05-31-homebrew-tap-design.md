@@ -58,7 +58,7 @@ Pre-releases (`next` branch) skip formula publishing. Homebrew users only see st
 
 The release pipeline produces per-platform tarballs (`darwin-arm64`, `darwin-x64`, `linux-x64`, `win32-x64`). The formula uses Homebrew's `on_macos`/`on_linux` + `on_arm`/`on_intel` to pick the matching one — the user gets a tarball already built for their architecture, so there is no ABI rebuild on first run.
 
-`better-sqlite3` and `pg` are NOT bundled in the tarball (only `node-pty` is — see `scripts/pack-platform.mjs`). The formula's `install` block runs `npm ci --omit=dev --no-audit --no-fund` inside `libexec/` to fetch them; this builds `better-sqlite3` against the user's Node 20 once during `brew install`. Expected install time: 30–60s. After install, `brew services start tb-streamer` boots clean and stays fast.
+Native deps the CLI needs at runtime are `node-pty` and `better-sqlite3` (per `tsup.config.ts` — every other prod dep is bundled inline into `dist/cli.cjs`). Both are pre-built per-arch by CI and bundled into the tarball via `scripts/pack-platform.mjs`. The formula's `install` block is just `libexec.install Dir["*"]` plus a `write_env_script` shim — no `npm install` at `brew install` time, so install is near-instant.
 
 ## Formula contents
 
@@ -94,12 +94,9 @@ class TbStreamer < Formula
   def install
     libexec.install Dir["*"]
 
-    # Tarball ships dist/, package.json, package-lock.json, and node_modules/node-pty.
-    # Install the remaining production deps (better-sqlite3, pg, etc.) into libexec.
-    cd libexec do
-      system Formula["node@20"].opt_bin/"npm", "ci", "--omit=dev", "--no-audit", "--no-fund"
-    end
-
+    # All native deps that dist/cli.cjs requires at runtime (node-pty and
+    # better-sqlite3) are pre-bundled in the tarball under node_modules/,
+    # already built for this arch. No npm install needed.
     (bin/"tb-streamer").write_env_script libexec/"dist/cli.cjs",
       PATH: "#{Formula["node@20"].opt_bin}:$PATH"
   end
@@ -236,7 +233,7 @@ After `semantic-release` succeeds and the tarball is uploaded as a release asset
 ### Known limitations at launch
 
 - **Plist collision** with `scripts/deploy.sh` installs is documented in caveats only, not detected at runtime. Tracked in `docs/BACKLOG.md`.
-- **Install-time native build**: `brew install` itself takes 30–60s while `better-sqlite3` builds. After that, `tb-streamer` and `brew services start tb-streamer` are immediate.
+- **Install time**: `brew install` is near-instant since the tarball already contains the per-arch `node-pty` and `better-sqlite3` prebuilds — no `npm install` runs at install time.
 - **Linux Homebrew** should work but is not explicitly tested. Best-effort.
 
 ## Open questions
