@@ -164,6 +164,23 @@ program
   });
 
 program
+  .command("set-key [key]")
+  .description("Set the streamer API key in ~/.threadbase/server.yaml")
+  .action(async (key: string | undefined) => {
+    const { runSetKey } = await import("./setKey");
+    const code = await runSetKey(
+      { key },
+      {
+        log: {
+          info: (msg) => console.log(msg),
+          error: (msg) => console.error(msg),
+        },
+      },
+    );
+    process.exit(code);
+  });
+
+program
   .command("update")
   .description("Check for streamer updates from GitHub Releases and install them")
   .option("--check", "Check only; do not install", false)

@@ -98,3 +98,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx semantic-release
+
+      - name: Build Homebrew formula
+        if: success()
+        run: |
+          # Detect the release version from the git tag semantic-release just
+          # created. semantic-release tags stable releases with vX.Y.Z and
+          # prereleases (from the 'next' channel) with vX.Y.Z-next.N. We only
+          # publish formulas for stable releases — the regex below matches
+          # bare vX.Y.Z only, rejecting any prerelease suffix.
+          TAG=$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
+          if [[ -z "$TAG" ]]; then
+            echo "No release tag at HEAD — semantic-release did not publish. Skipping formula."
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          echo "Building formula for version $VERSION"
+          mkdir -p formula-out
+          node scripts/build-formula.mjs \
+            --version "$VERSION" \
+            --artifacts release-artifacts \
+            --out formula-out/tb-streamer.rb
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "FORMULA_PATH=$PWD/formula-out/tb-streamer.rb" >> "$GITHUB_ENV"
+
+      - name: Publish Homebrew formula
+        if: env.VERSION != ''
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: bash scripts/publish-formula.sh

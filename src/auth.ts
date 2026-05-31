@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -100,4 +100,31 @@ export function validatePublicUrl(raw: string): PublicUrlValidation {
 
 function stripTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+export function setApiKey(key: string): void {
+  mkdirSync(CONFIG_DIR, { recursive: true });
+
+  let content = "";
+  try {
+    content = readFileSync(CONFIG_FILE, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    // file does not exist; we'll create it
+  }
+
+  const apiKeyLine = `api_key: ${key}`;
+  let updated: string;
+  if (/^api_key:\s*.+$/m.test(content)) {
+    updated = content.replace(/^api_key:\s*.+$/m, apiKeyLine);
+  } else if (content.length === 0 || content.endsWith("\n")) {
+    updated = `${content}${apiKeyLine}\n`;
+  } else {
+    updated = `${content}\n${apiKeyLine}\n`;
+  }
+
+  const tmpFile = `${CONFIG_FILE}.tmp`;
+  writeFileSync(tmpFile, updated, { encoding: "utf-8", mode: 0o600 });
+  chmodSync(tmpFile, 0o600);
+  renameSync(tmpFile, CONFIG_FILE);
 }
