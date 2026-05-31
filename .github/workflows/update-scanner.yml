@@ -1,0 +1,90 @@
+name: Update scanner submodule
+
+# Bumps the vendor/scanner submodule to the latest threadbase-scanner release
+# tag and opens a PR against main. Fires when the scanner repo publishes a
+# release (repository_dispatch type "scanner-released"), or run manually.
+#
+# Setup required for the automatic trigger:
+#   1. In the threadbase-scanner repo, after publishing a release, send:
+#        POST /repos/RonenMars/threadbase-streamer/dispatches
+#        { "event_type": "scanner-released" }
+#      using a PAT (repo scope) stored as a secret there — the default
+#      GITHUB_TOKEN cannot dispatch across repos.
+#   2. Optional but recommended: add a PAT secret BUMP_PAT here so the PR this
+#      workflow opens triggers CI. PRs created with the default GITHUB_TOKEN do
+#      NOT trigger further workflow runs (GitHub's recursion guard), so without
+#      BUMP_PAT you must re-run CI on the bump PR manually.
+
+on:
+  repository_dispatch:
+    types: [scanner-released]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Bump vendor/scanner to latest release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Use a PAT if provided so the resulting PR triggers CI; else fall
+          # back to GITHUB_TOKEN (PR opens, but its CI must be re-run manually).
+          token: ${{ secrets.BUMP_PAT || github.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install build tools for node-pty
+        run: sudo apt-get update && sudo apt-get install -y python3 make g++
+
+      - name: Resolve latest scanner release tag
+        id: scanner
+        run: |
+          git -C vendor/scanner fetch --tags --force origin
+          latest=$(git -C vendor/scanner tag -l 'v*' | sort -V | tail -1)
+          if [ -z "$latest" ]; then echo "::error::no v* tags found in scanner"; exit 1; fi
+          current=$(git -C vendor/scanner rev-parse HEAD)
+          target=$(git -C vendor/scanner rev-parse "$latest^{commit}")
+          echo "tag=$latest"        >> "$GITHUB_OUTPUT"
+          echo "current=$current"   >> "$GITHUB_OUTPUT"
+          echo "target=$target"     >> "$GITHUB_OUTPUT"
+          echo "Latest scanner tag: $latest ($target). Current submodule: $current."
+
+      - name: Already up to date
+        if: steps.scanner.outputs.current == steps.scanner.outputs.target
+        run: echo "vendor/scanner already at ${{ steps.scanner.outputs.tag }} — nothing to do."
+
+      - name: Bump submodule and refresh lockfile
+        if: steps.scanner.outputs.current != steps.scanner.outputs.target
+        run: |
+          git -C vendor/scanner checkout --quiet "${{ steps.scanner.outputs.tag }}"
+          # Refresh package-lock.json for the file:vendor/scanner dep and verify
+          # the install/build chain (postinstall builds scanner's dist).
+          npm install --no-audit --no-fund
+
+      - name: Open bump PR
+        if: steps.scanner.outputs.current != steps.scanner.outputs.target
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_PAT || github.token }}
+        run: |
+          tag="${{ steps.scanner.outputs.tag }}"
+          branch="chore/bump-scanner-${tag}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists — a bump PR is already open. Skipping."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add vendor/scanner package-lock.json
+          git commit -m "chore: bump vendor/scanner to ${tag}"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore: bump vendor/scanner to ${tag}" \
+            --body "Automated submodule bump to scanner \`${tag}\`, triggered by a scanner release. The \`file:vendor/scanner\` pin and \`package-lock.json\` were refreshed via \`npm install\`. Merge once CI is green."
