@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { decideShimAction } from "../../cli/launchd-entry";
 import { writeMarker } from "../../src/lifecycle/marker";
 
-describe("decideShimAction", () => {
+// These cases exercise the shim's marker-driven decision tree, which only
+// runs on darwin — on every other platform the shim short-circuits to
+// `platform-mismatch` before reading the marker. The non-darwin behaviour
+// is covered by the second describe block below (which fakes process.platform).
+describe.runIf(process.platform === "darwin")("decideShimAction", () => {
   let dir: string;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "shim-test-"));

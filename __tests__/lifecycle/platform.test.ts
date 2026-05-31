@@ -2,14 +2,20 @@ import { describe, expect, it } from "vitest";
 import { getSupervisor, type Supervisor } from "../../src/lifecycle/platform";
 
 describe("getSupervisor()", () => {
-  it("returns an object that satisfies the Supervisor interface", () => {
-    const sup: Supervisor = getSupervisor();
-    expect(typeof sup.isAgentLoaded).toBe("function");
-    expect(typeof sup.bootoutAgent).toBe("function");
-    expect(typeof sup.bootstrapAgent).toBe("function");
-    expect(typeof sup.kickstartAgent).toBe("function");
-    expect(typeof sup.getAgentPid).toBe("function");
-  });
+  // The shape check only runs on a supported platform; on linux getSupervisor()
+  // throws by design — covered by the explicit "throws on unsupported" case
+  // below.
+  it.runIf(process.platform === "darwin" || process.platform === "win32")(
+    "returns an object that satisfies the Supervisor interface",
+    () => {
+      const sup: Supervisor = getSupervisor();
+      expect(typeof sup.isAgentLoaded).toBe("function");
+      expect(typeof sup.bootoutAgent).toBe("function");
+      expect(typeof sup.bootstrapAgent).toBe("function");
+      expect(typeof sup.kickstartAgent).toBe("function");
+      expect(typeof sup.getAgentPid).toBe("function");
+    },
+  );
 
   it.runIf(process.platform === "darwin")("picks launchd on darwin", async () => {
     const sup = getSupervisor();
