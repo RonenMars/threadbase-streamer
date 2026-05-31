@@ -7,7 +7,12 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 const REPO_ROOT = join(__dirname, "..", "..");
 const SHIM = join(REPO_ROOT, "dist", "launchd-entry.cjs");
 
-describe("launchd shim integration", () => {
+// End-to-end shim exercise: spawns the built launchd-entry.cjs and asserts on
+// its decisions. The shim's marker-driven logic only runs on darwin — every
+// other platform short-circuits to `platform-mismatch` at the top of
+// decideShimAction(). Skip the whole describe outside darwin; unit-level
+// non-darwin coverage already lives in launchd-entry.test.ts.
+describe.runIf(process.platform === "darwin")("launchd shim integration", () => {
   let dir: string;
 
   beforeAll(() => {
