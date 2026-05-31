@@ -13,3 +13,8 @@ release-artifacts/
 # Go TUI build artifact (scripts/remote-access/tui/) — source lives in main.go;
 # build locally with `go run .` or `go build .` when you want a binary.
 scripts/remote-access/tui/tui
+
+# Mobile uploads landing dir — files arrive here per-session via the streamer's
+# /api/sessions/<id>/files endpoint and are referenced by absolute path in the
+# JSONL. Local-only state; never shared.
+.threadbase-uploads/
