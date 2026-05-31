@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.1.0...v1.1.1) (2026-05-31)
+
+### Bug Fixes
+
+* **deploy:** auto-rebuild better-sqlite3 on ABI ([ae7aa06](https://github.com/RonenMars/threadbase-streamer/commit/ae7aa06e433d7292e6753624408e4f9506a9633a))
+
 ## [1.1.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.0.1...v1.1.0) (2026-05-31)
 
 ### Features
