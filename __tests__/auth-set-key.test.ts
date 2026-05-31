@@ -59,6 +59,17 @@ describe("setApiKey", () => {
     expect(content).toMatch(/api_key:\s*tb_c{32}/);
   });
 
+  it("inserts a leading newline when existing content has no trailing newline", () => {
+    mkdirSync(join(homeDir, ".threadbase"), { recursive: true });
+    writeFileSync(configFile, "browse_root: /tmp/x", "utf-8"); // no trailing \n
+
+    setApiKey("tb_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+
+    const content = readFileSync(configFile, "utf-8");
+    // Both lines must be present and separated by exactly one newline.
+    expect(content).toBe("browse_root: /tmp/x\napi_key: tb_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n");
+  });
+
   it("writes the file with 0600 permissions", () => {
     setApiKey("tb_dddddddddddddddddddddddddddddddd");
     const mode = statSync(configFile).mode & 0o777;

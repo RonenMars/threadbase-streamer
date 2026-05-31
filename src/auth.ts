@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -108,18 +108,23 @@ export function setApiKey(key: string): void {
   let content = "";
   try {
     content = readFileSync(CONFIG_FILE, "utf-8");
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     // file does not exist; we'll create it
   }
 
   const apiKeyLine = `api_key: ${key}`;
-  const updated = /^api_key:\s*.+$/m.test(content)
-    ? content.replace(/^api_key:\s*.+$/m, apiKeyLine)
-    : content.length === 0 || content.endsWith("\n")
-      ? `${content}${apiKeyLine}\n`
-      : `${content}\n${apiKeyLine}\n`;
+  let updated: string;
+  if (/^api_key:\s*.+$/m.test(content)) {
+    updated = content.replace(/^api_key:\s*.+$/m, apiKeyLine);
+  } else if (content.length === 0 || content.endsWith("\n")) {
+    updated = `${content}${apiKeyLine}\n`;
+  } else {
+    updated = `${content}\n${apiKeyLine}\n`;
+  }
 
   const tmpFile = `${CONFIG_FILE}.tmp`;
   writeFileSync(tmpFile, updated, { encoding: "utf-8", mode: 0o600 });
+  chmodSync(tmpFile, 0o600);
   renameSync(tmpFile, CONFIG_FILE);
 }
