@@ -55,6 +55,16 @@ Shipped today: caveats note in the formula tells users Homebrew + manual deploy 
 
 **Fix:** add a conflict check inside `tb-streamer serve` (or a dedicated `tb-streamer doctor` step) that, on startup, scans `launchctl list` for `com.threadbase.streamer*` labels other than `homebrew.mxcl.tb-streamer`. If found, exit 0 with a log line directing the user to either `launchctl bootout` the legacy agent or uninstall the Homebrew formula. Reuse the Supervisor / marker plumbing from `src/lifecycle/`. Add a matching check on Windows (Task Scheduler `Threadbase` task vs any Homebrew-equivalent — currently N/A but worth scaffolding).
 
+### Consider keychain storage for the API key
+
+Today the streamer's API key lives at `~/.threadbase/server.yaml` as plaintext `api_key: tb_<32hex>`, protected only by filesystem perms (`chmod 0600`). The new `tb-streamer set-key` command writes through the same path. That matches the existing `loadOrCreateApiKey` posture and the de-facto convention for CLI tools (`~/.ssh/id_rsa`, `~/.aws/credentials`, `~/.npmrc`), but a determined local attacker — or a malicious npm postinstall running as the user — can read the file directly.
+
+**Fix:** move the API key to the OS keychain (macOS Keychain via `keytar` or `node-keytar`, Windows Credential Manager, libsecret on Linux). The daemon under launchd/Task Scheduler runs as the user, so a user-scoped keychain entry is readable at boot without prompting. `loadOrCreateApiKey`, `setApiKey`, and the pairing flow all need a small adapter. `server.yaml` keeps the non-secret fields (`browse_root`, `public_url`, `cache_dir`, `tail_size`) — those stay plaintext.
+
+**Migration:** on first boot after the upgrade, if `api_key:` is still in `server.yaml`, move it to the keychain and rewrite `server.yaml` without the line. Keep a deprecation read-fallback for one minor version so older `tb-streamer pair` flows that wrote to YAML continue to work, then remove.
+
+**Why not now:** introducing a native keychain dep complicates the `pack-platform.mjs` per-arch bundle (currently only `node-pty` + `better-sqlite3` are externalized). Most CLI tools in this category ship plaintext + 0600 for the same reason. Revisit if/when a security review flags it, or when the streamer ships keys/secrets that aren't recoverable via the pair flow.
+
 ## Sequencing
 
 Nothing in this backlog is blocking. Address Scanner visibility before the next end-user-facing release announcement (otherwise `npm install` will fail for users without GitHub credentials).
