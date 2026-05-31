@@ -284,6 +284,20 @@ cmd_check_browse_root() {
   ok "browse_root set to: $input"
 }
 
+# @threadbase/scanner is a git submodule consumed via file:vendor/scanner and
+# bundled inline by tsup. Ensure its source is checked out and dist/ built
+# before lint + build. Mirrors ensure_menubar_deployed.
+ensure_scanner_submodule() {
+  if [[ ! -f "$REPO_ROOT/vendor/scanner/package.json" ]]; then
+    log "initializing vendor/scanner submodule"
+    git submodule update --init --recursive vendor/scanner
+  fi
+  if [[ ! -f "$REPO_ROOT/vendor/scanner/dist/index.cjs" ]]; then
+    log "building vendor/scanner (dist missing)"
+    ( cd "$REPO_ROOT/vendor/scanner" && npm install --no-audit --no-fund )
+  fi
+}
+
 cmd_predeploy_check() {
   local force="${1:-}"
   cd "$REPO_ROOT"
@@ -670,6 +684,7 @@ cmd_deploy() {
   cmd_check_browse_root
 
   cd "$REPO_ROOT"
+  ensure_scanner_submodule
   if [[ "$force" == "--force" ]]; then
     warn "skipping lint + tests (--force)"
   else

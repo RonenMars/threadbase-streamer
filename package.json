@@ -30,7 +30,8 @@
     "lint": "tsc --noEmit && npx biome check .",
     "format": "npx biome format --write .",
     "check": "npx biome check --write .",
-    "postinstall": "patch-package && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty'),'..','..','prebuilds',process.platform+'-'+process.arch,'spawn-helper'),0o755)}catch{}\"",
+    "postinstall": "patch-package && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty'),'..','..','prebuilds',process.platform+'-'+process.arch,'spawn-helper'),0o755)}catch{}\" && npm run build:scanner",
+    "build:scanner": "npm --prefix vendor/scanner install --no-audit --no-fund",
     "prepublishOnly": "npm run build",
     "test:contracts": "vitest run __tests__/contracts/",
     "test:e2e": "vitest run __tests__/e2e/",
@@ -60,7 +61,7 @@
   "dependencies": {
     "@hono/node-server": "^1.19.14",
     "@hono/node-ws": "^1.3.1",
-    "@threadbase/scanner": "git+https://github.com/RonenMars/threadbase-scanner.git#v0.3.0",
+    "@threadbase/scanner": "file:vendor/scanner",
     "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
