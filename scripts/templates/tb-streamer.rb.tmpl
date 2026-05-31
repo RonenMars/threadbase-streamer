@@ -27,12 +27,9 @@ class TbStreamer < Formula
   def install
     libexec.install Dir["*"]
 
-    # Tarball ships dist/, package.json, package-lock.json, and node_modules/node-pty.
-    # Install the remaining production deps (better-sqlite3, pg, etc.) into libexec.
-    cd libexec do
-      system Formula["node@20"].opt_bin/"npm", "ci", "--omit=dev", "--no-audit", "--no-fund"
-    end
-
+    # All native deps that dist/cli.cjs requires at runtime (node-pty and
+    # better-sqlite3) are pre-bundled in the tarball under node_modules/,
+    # already built for this arch. No npm install needed.
     (bin/"tb-streamer").write_env_script libexec/"dist/cli.cjs",
       PATH: "#{Formula["node@20"].opt_bin}:$PATH"
   end

@@ -21,10 +21,18 @@ const outPath = join(outDir, filename);
 mkdirSync(outDir, { recursive: true });
 if (existsSync(outPath)) rmSync(outPath);
 
-// node-pty's prebuilt binary lives under node_modules/node-pty/build or
-// node_modules/node-pty/prebuilds. Both go into the tarball; the postinstall
-// script in package.json fixes the spawn-helper permission bit at deploy time.
-const entries = ["dist", "package.json", "package-lock.json", "node_modules/node-pty"];
+// node-pty and better-sqlite3 are tsup-external in dist/cli.cjs (see
+// tsup.config.ts), so the prebuilt native binaries for the current arch
+// must travel inside the tarball. node-pty's spawn-helper bit is fixed by
+// the package.json postinstall at deploy time; better-sqlite3's prebuild
+// lives under node_modules/better-sqlite3/build/Release.
+const entries = [
+  "dist",
+  "package.json",
+  "package-lock.json",
+  "node_modules/node-pty",
+  "node_modules/better-sqlite3",
+];
 
 for (const entry of entries) {
   if (!existsSync(entry)) {
