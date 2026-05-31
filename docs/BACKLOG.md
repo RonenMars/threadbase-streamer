@@ -22,12 +22,6 @@ Two release-worthy commits are merged but unreleased:
 
 **Fix:** top up the Actions budget (or wait for the monthly reset), then re-run the latest failed workflow on `main`. Both commits will be picked up in one `1.1.0` release.
 
-### `better-sqlite3` native binary lags local Node version
-
-During the `cadf4d2` deploy (2026-05-28), `scripts/deploy.sh`'s built-in `npm test` gate failed in vitest worker forks with `NODE_MODULE_VERSION 137 ... requires NODE_MODULE_VERSION 147` — the bundled `node_modules/better-sqlite3/build/Release/better_sqlite3.node` was compiled against Node 22 (137) while the active runtime was Node 24 (147). Standalone `npm test` from the same shell passed, so the deploy was completed with `--force` (lint + tests already verified green twice). `npm rebuild better-sqlite3` reported success but `prebuild-install` re-fetched the same prebuilt binary without realigning it.
-
-**Fix:** run a clean `rm -rf node_modules && npm install` (or `npm rebuild better-sqlite3 --build-from-source`) under the current Node 24 so the native binary matches, then confirm `scripts/deploy.sh` (no `--force`) passes its own `npm test` step. Low priority — only affects the deploy script's internal test gate, not the running streamer.
-
 ### Stale conversation history vs. fresh resume
 
 **Symptom:** The mobile conversation history list shows old `lastMessage` / `preview` / `messageCount` / `lastActivity` for a conversation, but opening (Resume session) renders the latest messages. Reported 2026-05-31 with three screenshots in `.threadbase-uploads/044a9f81-…/IMG_5407-5409.heic`.
