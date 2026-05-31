@@ -1,3 +1,9 @@
+## [1.1.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.1.1...v1.1.2) (2026-05-31)
+
+### Bug Fixes
+
+* **updater:** resolve download target parent dir with dirname() ([1e4e635](https://github.com/RonenMars/threadbase-streamer/commit/1e4e635978b9fdfe4f2f5ed0da68475bb846f709))
+
 ## [1.1.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.1.0...v1.1.1) (2026-05-31)
 
 ### Bug Fixes
