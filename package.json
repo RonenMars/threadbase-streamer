@@ -2,6 +2,25 @@
   "name": "@threadbase/streamer",
   "version": "1.1.0",
   "description": "PTY session management, WebSocket streaming, and REST API server for Claude Code conversations",
+  "license": "MIT",
+  "author": "Ronen Mars",
+  "homepage": "https://github.com/RonenMars/threadbase-streamer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RonenMars/threadbase-streamer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RonenMars/threadbase-streamer/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "pty",
+    "websocket",
+    "terminal",
+    "streamer",
+    "threadbase"
+  ],
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
