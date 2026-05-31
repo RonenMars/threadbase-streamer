@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream, mkdirSync, rmSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { ReleaseAsset } from "./github-releases";
 import { pickArtifact, type ReleaseManifest, ReleaseManifestSchema } from "./manifest";
@@ -47,7 +48,10 @@ export async function downloadAndVerify(opts: {
     );
   }
 
-  mkdirSync(targetPath.replace(/\/[^/]+$/, ""), { recursive: true });
+  // Use dirname() rather than a "/"-only regex: on Windows targetPath is
+  // backslash-separated, so a forward-slash strip is a no-op and mkdirSync
+  // would create the target file itself as a directory.
+  mkdirSync(dirname(targetPath), { recursive: true });
 
   const res = await fetch(asset.browserDownloadUrl);
   if (!res.ok || !res.body) {
