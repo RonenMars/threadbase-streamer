@@ -1,6 +1,6 @@
 [submodule "vendor/menubar"]
 	path = vendor/menubar
-	url = git@github.com:RonenMars/threadbase-menubar.git
+	url = https://github.com/RonenMars/threadbase-menubar.git
 [submodule "vendor/scanner"]
 	path = vendor/scanner
 	url = https://github.com/RonenMars/threadbase-scanner.git
