@@ -265,8 +265,8 @@ Restart the streamer to pick it up.
 
 ### "Failed to start session — ENOENT: no such file or directory, realpath '/Users/.../dev/Users/.../dev/...'" (Mac)
 
-**When:** The mobile app shows a "Failed to start session" dialog with a doubled path like `realpath '/Users/ronenmars/Desktop/dev/Users/ronenmars/Desktop/dev/ai-tools/threadbase-streamer'`. Happens on Mac after a deploy that included Windows path fixes.
-**Cause:** Commit `0e61299` added `relativePath.replace(/^[/\\]+/, "")` in `src/browse.ts` to fix Windows drive-root-relative paths. On Windows, a client sending `/foo` means "relative to drive root" and stripping the `/` is correct. On Mac, the mobile app sends the full absolute path (e.g. `/Users/ronenmars/Desktop/dev/ai-tools/threadbase-streamer`) — stripping its leading `/` turns it into a relative name, which `path.resolve` then joins onto `browseRoot`, doubling the path.
+**When:** The mobile app shows a "Failed to start session" dialog with a doubled path like `realpath '/Users/<you>/Desktop/dev/Users/<you>/Desktop/dev/ai-tools/threadbase-streamer'`. Happens on Mac after a deploy that included Windows path fixes.
+**Cause:** Commit `0e61299` added `relativePath.replace(/^[/\\]+/, "")` in `src/browse.ts` to fix Windows drive-root-relative paths. On Windows, a client sending `/foo` means "relative to drive root" and stripping the `/` is correct. On Mac, the mobile app sends the full absolute path (e.g. `/Users/<you>/Desktop/dev/ai-tools/threadbase-streamer`) — stripping its leading `/` turns it into a relative name, which `path.resolve` then joins onto `browseRoot`, doubling the path.
 **Fix:** `src/browse.ts` now checks `process.platform !== "win32"` before deciding whether to strip. On Unix, absolute paths that contain a `/` after the first character are used directly; only bare names like `/projectA` get stripped. Windows behavior is unchanged.
 
 ---

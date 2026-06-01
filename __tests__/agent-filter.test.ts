@@ -51,7 +51,7 @@ const HUMAN_LINE = {
   type: "assistant",
   role: "assistant",
   entrypoint: "cli",
-  cwd: "/Users/ronenmars/Desktop/dev/ai-tools/tb-streamer",
+  cwd: "/Users/example/dev/tb-streamer",
   timestamp: "2026-05-20T15:55:00.000Z",
   message: { role: "assistant", content: "human says hi" },
 };
