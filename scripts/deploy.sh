@@ -41,23 +41,38 @@ ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 # shellcheck source=lib/install-shim.sh
 . "$REPO_ROOT/scripts/lib/install-shim.sh"
 
+# Menubar release fetcher (downloads pre-built artifacts from
+# RonenMars/threadbase-menubar by submodule commit SHA).
+# shellcheck source=lib/fetch-menubar.sh
+. "$REPO_ROOT/scripts/lib/fetch-menubar.sh"
+
 MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
 
 MENUBAR_SIGNING_ENV="$INSTALL_DIR/menubar-signing.env"
 MENUBAR_INSTALLED_SHA_FILE="$INSTALL_DIR/menubar-installed-sha"
 MENUBAR_RELEASES_DIR="$INSTALL_DIR/releases/menubar"
+MENUBAR_FETCH_LOG="$INSTALL_DIR/logs/menubar-fetch.log"
 MENUBAR_KEEP_DMGS=5
 
-# Build a signed-or-ad-hoc .dmg of vendor/menubar via electron-builder, install
-# the .app to /Applications/Threadbase Menubar.app, archive the .dmg under
-# ~/.threadbase/releases/menubar/, and launch the installed app. Idempotent —
-# compares ~/.threadbase/menubar-installed-sha against the pinned submodule HEAD
-# and skips the whole flow when up-to-date.
+# Install the pre-built menubar .app to /Applications/Threadbase Menubar.app,
+# archive the .dmg under ~/.threadbase/releases/menubar/, and launch the
+# installed app. Idempotent — compares ~/.threadbase/menubar-installed-sha
+# against the pinned submodule HEAD and skips when up-to-date.
 #
-# Sources ~/.threadbase/menubar-signing.env if present (sets APPLE_TEAM_ID +
-# App Store Connect API key vars), which switches electron-builder into the
-# Developer ID + notarisation path. Absent → ad-hoc local build.
+# Default flow: download the matching artifact from RonenMars/threadbase-menubar
+# GitHub Releases (matched by submodule commit SHA). On miss or fetch error,
+# falls back to a local electron-builder build.
+#
+# Local-build fallback sources ~/.threadbase/menubar-signing.env if present
+# (sets APPLE_TEAM_ID + App Store Connect API key vars), switching
+# electron-builder into the Developer ID + notarisation path. Absent → ad-hoc.
 ensure_menubar_deployed() {
+  # When called with `force_build`, skip the GitHub release download path and
+  # always build locally. Used by --publish-menubar so we produce a fresh
+  # signed artifact to upload (a downloaded .dmg has nothing new to publish).
+  local force_build=0
+  [[ "${1:-}" == "force_build" ]] && force_build=1
+
   if [[ ! -f "$MENUBAR_DIR/package.json" ]]; then
     log "initializing vendor/menubar submodule"
     git submodule update --init --recursive vendor/menubar
@@ -70,6 +85,7 @@ ensure_menubar_deployed() {
   [[ -f "$MENUBAR_INSTALLED_SHA_FILE" ]] && installed_sha="$(cat "$MENUBAR_INSTALLED_SHA_FILE")"
 
   local installed_app="/Applications/Threadbase Menubar.app"
+  [[ ! -d "$installed_app" ]] && installed_app="$HOME/Applications/Threadbase Menubar.app"
   if [[ "$current_sha" == "$installed_sha" ]] && [[ -d "$installed_app" ]]; then
     log "menubar is up-to-date ($current_sha)"
     if ! pgrep -f "Threadbase Menubar" >/dev/null 2>&1; then
@@ -81,19 +97,7 @@ ensure_menubar_deployed() {
     return
   fi
 
-  log "menubar needs rebuild (installed: ${installed_sha:-none}, current: ${current_sha})"
-
-  # Source signing config if present. Absent is fine — electron-builder falls
-  # back to ad-hoc signing and the notarize.cjs hook no-ops.
-  if [[ -f "$MENUBAR_SIGNING_ENV" ]]; then
-    log "sourcing menubar signing config from $MENUBAR_SIGNING_ENV"
-    set -a
-    # shellcheck disable=SC1090
-    source "$MENUBAR_SIGNING_ENV"
-    set +a
-  else
-    warn "no signing config at $MENUBAR_SIGNING_ENV — building ad-hoc (local-only)"
-  fi
+  log "menubar needs install (installed: ${installed_sha:-none}, current: ${current_sha})"
 
   # Stop any running instance before we overwrite /Applications/.
   if pgrep -f "Threadbase Menubar" >/dev/null 2>&1; then
@@ -102,18 +106,61 @@ ensure_menubar_deployed() {
     sleep 0.5
   fi
 
-  log "building menubar .dmg (this takes 1–3 minutes; longer first time)"
-  ( cd "$MENUBAR_DIR" && npm ci --silent && npm run package:mac )
+  # Try fetching a pre-built signed .dmg from GitHub Releases first, unless
+  # the caller explicitly asked for a local build (e.g. --publish-menubar).
+  mkdir -p "$(dirname "$MENUBAR_FETCH_LOG")"
+  : > "$MENUBAR_FETCH_LOG"
 
-  # Locate the produced .dmg. electron-builder's artifactName template is
-  # "${productName}-${version}-${arch}.${ext}" → "Threadbase Menubar-X.Y.Z-universal.dmg".
-  local dmg
-  dmg="$(ls -t "$MENUBAR_DIR/release/"*.dmg 2>/dev/null | head -1 || true)"
-  if [[ -z "$dmg" ]]; then
-    err "electron-builder produced no .dmg"
-    return 1
+  local dmg=""
+  local rc=99
+  if (( ! force_build )); then
+    log "fetching menubar release for $current_sha from GitHub"
+    local fetched
+    fetched="$(fetch_menubar_asset "$current_sha" "*-universal.dmg" \
+      "$MENUBAR_DIR/release" "$MENUBAR_FETCH_LOG")" && rc=0 || rc=$?
+
+    if [[ $rc -eq 0 ]] && [[ -n "$fetched" ]]; then
+      dmg="$fetched"
+      ok "menubar release downloaded: $dmg"
+    fi
+  else
+    log "force_build requested — skipping release download"
   fi
-  ok "menubar built: $dmg"
+
+  if [[ -z "$dmg" ]]; then
+    if (( force_build )); then
+      :  # caller requested local build; no fallback messaging needed
+    elif [[ $rc -eq 2 ]]; then
+      log "no matching menubar release for $current_sha — building locally"
+    else
+      warn "menubar release fetch failed — see $MENUBAR_FETCH_LOG"
+      menubar_print_fetch_error "$MENUBAR_FETCH_LOG"
+      warn "falling back to local build…"
+    fi
+
+    # Source signing config if present. Absent is fine — electron-builder falls
+    # back to ad-hoc signing and the notarize.cjs hook no-ops.
+    if [[ -f "$MENUBAR_SIGNING_ENV" ]]; then
+      log "sourcing menubar signing config from $MENUBAR_SIGNING_ENV"
+      set -a
+      # shellcheck disable=SC1090
+      source "$MENUBAR_SIGNING_ENV"
+      set +a
+    else
+      warn "no signing config at $MENUBAR_SIGNING_ENV — building ad-hoc (local-only)"
+    fi
+
+    log "building menubar .dmg (this takes 1–3 minutes; longer first time)"
+    ( cd "$MENUBAR_DIR" && npm ci --silent && npm run package:mac )
+
+    # Locate the produced .dmg.
+    dmg="$(ls -t "$MENUBAR_DIR/release/"*.dmg 2>/dev/null | head -1 || true)"
+    if [[ -z "$dmg" ]]; then
+      err "electron-builder produced no .dmg"
+      return 1
+    fi
+    ok "menubar built: $dmg"
+  fi
 
   # Install the .app from the .dmg to /Applications/ (or ~/Applications/ as
   # fallback if the system path is read-only).
@@ -781,10 +828,11 @@ cmd_deploy() {
   log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
 
-  ensure_menubar_deployed
-
   if (( publish_menubar_flag )); then
+    ensure_menubar_deployed force_build
     publish_menubar
+  else
+    ensure_menubar_deployed
   fi
 
   # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal:
@@ -811,13 +859,19 @@ case "${1:-deploy}" in
   healthcheck)  cmd_healthcheck ;;
   menubar)
     shift
-    ensure_menubar_deployed
+    mb_publish=0
     for arg in "$@"; do
       case "$arg" in
-        --publish-menubar|--publish) publish_menubar ;;
+        --publish-menubar|--publish) mb_publish=1 ;;
         *) err "unknown menubar flag: $arg"; exit 2 ;;
       esac
     done
+    if (( mb_publish )); then
+      ensure_menubar_deployed force_build
+      publish_menubar
+    else
+      ensure_menubar_deployed
+    fi
     ;;
   *)
     err "unknown command: $1"

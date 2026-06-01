@@ -371,6 +371,24 @@ When making a risky change, either: (a) keep the old shape and add the new one a
 - Removing `/healthz` or changing its response shape
 - Changing the default listening port (the menubar fallback `8766` would need to be bumped in lockstep)
 
+**Deploy flow — download first, build only as fallback:**
+
+The deploy scripts no longer build the menubar locally by default. Each deploy:
+1. Resolves the submodule HEAD commit SHA.
+2. Calls `scripts/lib/fetch-menubar.{sh,ps1}` to look up a GitHub Release on `RonenMars/threadbase-menubar` whose underlying commit SHA matches the submodule. The matching strategy handles both rolling pre-releases (where `target_commitish` is the commit SHA, e.g. `latest-main`) and tagged releases (where the tag ref is resolved and annotated tags are peeled). First match wins.
+3. On match: downloads the OS-specific artifact via plain HTTPS (no `gh` CLI dependency — only `curl` + `node` on Unix, native `Invoke-WebRequest` on Windows). Installs it:
+   - macOS: mount `.dmg`, `cp` `.app` to `/Applications/Threadbase Menubar.app`, `lsregister -f`.
+   - Linux: write `.AppImage` to `~/.local/bin/threadbase-menubar.AppImage`, `chmod +x`, launch via `nohup`.
+   - Windows: run NSIS installer with `/S` (silent), which installs to `%LOCALAPPDATA%\Programs\Threadbase Menubar\`.
+4. On miss (no release for this SHA, or release exists but lacks the OS-specific artifact): falls back to the per-OS local build/run flow — electron-builder `.dmg` on macOS, in-tree `npx electron .` on Linux/Windows.
+5. On fetch error (network, GH API rate limit, parse failure): prints the issues URL (`https://github.com/RonenMars/threadbase-menubar/issues`) + the path to the error log (`~/.threadbase/logs/menubar-fetch.log`) and then falls back to local build/run.
+
+The unified install sentinel is `~/.threadbase/menubar-installed-sha` (all three OSes). The previous per-platform sentinels (`vendor/menubar/dist/.build-sha` on Linux/Windows) were unreliable because `npm install` clobbers the `dist/` directory; the streamer-side `~/.threadbase/` location survives rebuilds.
+
+**`--publish-menubar` forces a local build** (it would make no sense to upload a downloaded artifact). `scripts/deploy.sh` and `scripts/deploy.sh menubar --publish` both pass `force_build` into `ensure_menubar_deployed`, bypassing the download path.
+
+**`gh` CLI is NOT a dependency** of the fetch path — only `--publish-menubar` still requires it. Plain `curl` + `node` (already required by the streamer) hit `https://api.github.com/repos/RonenMars/threadbase-menubar/releases` anonymously. The repo is public, so no token is needed for reads.
+
 **Auto-update interaction:** during an install, the streamer is briefly down — typically a few seconds between `stopService()` (Windows only) / `swapCurrent()` and `restartService()`. The menubar will flicker to "disconnected" then reconnect on the next 5s poll. This is expected and not a bug. If the gap stretches beyond ~10s, something is wrong with the restart step (`launchctl kickstart` failing on macOS, `systemctl --user` not finding the unit on Linux, scheduled task hung on Windows) — check `~/.threadbase/logs/updater.{log,err}` and the platform service status before assuming the menubar itself is at fault.
 
 Parent-repo commits that bump the submodule pointer should use a `chore: bump vendor/menubar (<reason>)` title.
