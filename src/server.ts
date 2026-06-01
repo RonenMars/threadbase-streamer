@@ -426,21 +426,29 @@ export class StreamerServer {
           .then(async (scanner) => {
             if (!this.cache) return;
             const metas = [...scanner.getMetadataCache().values()] as any[];
-            this.cache.upsertFromScannerMeta(metas);
+            // upsertFromScannerMeta returns IDs of rows actually upserted
+            // (excluding agent JSONLs filtered out by filterAgentConversations).
+            // Warming tails for filtered-out IDs would hit the
+            // conversation_tail.conversation_id → conversation_meta(id) FK
+            // and abort the whole warm-up before pruneGhostFiles can run.
+            const upsertedIds = new Set(this.cache.upsertFromScannerMeta(metas));
+            const tailTargets: Array<{ id: string; filePath: string }> = [];
+            for (const m of metas) {
+              if (!m.filePath) continue;
+              const id =
+                m.sessionId ||
+                m.id
+                  ?.split("/")
+                  .pop()
+                  ?.replace(/\.jsonl$/, "") ||
+                m.id;
+              if (upsertedIds.has(id)) tailTargets.push({ id, filePath: m.filePath });
+            }
             const BATCH = 50;
-            for (let i = 0; i < metas.length; i += BATCH) {
-              const batch = metas.slice(i, i + BATCH);
-              for (const m of batch) {
-                if (m.filePath) {
-                  const id =
-                    m.sessionId ||
-                    m.id
-                      ?.split("/")
-                      .pop()
-                      ?.replace(/\.jsonl$/, "") ||
-                    m.id;
-                  this.cache.populateTailFromFile(id, m.filePath);
-                }
+            for (let i = 0; i < tailTargets.length; i += BATCH) {
+              const batch = tailTargets.slice(i, i + BATCH);
+              for (const t of batch) {
+                this.cache.populateTailFromFile(t.id, t.filePath);
               }
               await new Promise<void>((r) => setImmediate(r));
             }

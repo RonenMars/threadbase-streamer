@@ -456,9 +456,15 @@ export class ConversationCache {
     this.stmts.upsertTail.run(convId, JSON.stringify(msgs), msgs.length, seq);
   }
 
-  upsertFromScannerMeta(metas: ScannerMeta[]): void {
+  // Returns the IDs of rows actually upserted (i.e. excluding any agent JSONLs
+  // skipped by the filter). The server's warm-up loop uses this to populate
+  // tails only for IDs that have a parent conversation_meta row — otherwise
+  // the conversation_tail FK fires and aborts the warm-up (regression covered
+  // in conversation-cache.test.ts).
+  upsertFromScannerMeta(metas: ScannerMeta[]): string[] {
     const filter = this.filterAgentConversations;
     const entrypoints = this.agentEntrypoints;
+    const upsertedIds: string[] = [];
     const run = this.db.transaction((items: ScannerMeta[]) => {
       for (const m of items) {
         if (filter && isAgentFile(m.filePath, entrypoints)) continue;
@@ -487,9 +493,11 @@ export class ConversationCache {
           updated_at: 0,
         });
         if (this.fileIndexLoaded) this.fileIndex.set(m.filePath, id);
+        upsertedIds.push(id);
       }
     });
     run(metas);
+    return upsertedIds;
   }
 
   // Returns true if a row was deleted. Used by the prune-on-startup step and
