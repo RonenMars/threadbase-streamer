@@ -6,13 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let homeDir: string;
 let configFile: string;
 let originalHome: string | undefined;
+let originalUserProfile: string | undefined;
 let setApiKey: (key: string) => void;
 
 beforeEach(async () => {
   homeDir = mkdtempSync(join(tmpdir(), "tb-auth-"));
   configFile = join(homeDir, ".threadbase", "server.yaml");
   originalHome = process.env.HOME;
+  originalUserProfile = process.env.USERPROFILE;
   process.env.HOME = homeDir;
+  // os.homedir() reads USERPROFILE on Windows (HOME is ignored). Without this
+  // the sandbox leaks and setApiKey writes to the REAL ~/.threadbase/server.yaml.
+  process.env.USERPROFILE = homeDir;
   vi.resetModules();
   ({ setApiKey } = await import("../src/auth"));
 });
@@ -22,6 +27,11 @@ afterEach(() => {
     process.env.HOME = originalHome;
   } else {
     delete process.env.HOME;
+  }
+  if (originalUserProfile !== undefined) {
+    process.env.USERPROFILE = originalUserProfile;
+  } else {
+    delete process.env.USERPROFILE;
   }
 });
 
@@ -70,7 +80,10 @@ describe("setApiKey", () => {
     expect(content).toBe("browse_root: /tmp/x\napi_key: tb_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n");
   });
 
-  it("writes the file with 0600 permissions", () => {
+  // Windows has no POSIX permission bits — chmod(0o600) is a no-op there and
+  // statSync reports 0o666 regardless. The chmod call is real and enforced on
+  // Unix (where CI runs); only the assertion is meaningless on Windows.
+  it.skipIf(process.platform === "win32")("writes the file with 0600 permissions", () => {
     setApiKey("tb_dddddddddddddddddddddddddddddddd");
     const mode = statSync(configFile).mode & 0o777;
     expect(mode).toBe(0o600);
