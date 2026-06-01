@@ -1,3 +1,9 @@
+## [1.2.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.2.0...v1.2.1) (2026-06-01)
+
+### Bug Fixes
+
+* **test:** stop setApiKey tests clobbering real config on Windows; gate win32-incompatible assertions ([a89601f](https://github.com/RonenMars/threadbase-streamer/commit/a89601f39c858fb1b6981b9067de5bb754c33b5e))
+
 ## [1.2.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.1.2...v1.2.0) (2026-05-31)
 
 ### Features
