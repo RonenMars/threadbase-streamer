@@ -76,7 +76,12 @@ export async function runProdDoctor(opts: { fix: boolean }): Promise<DoctorRepor
   return { findings, repairs };
 }
 
-export type LogsOptions = { lines: number; follow: boolean; errorsOnly: boolean };
+export type LogsOptions = {
+  lines: number;
+  follow: boolean;
+  errorsOnly: boolean;
+  clear?: boolean;
+};
 export type SpawnTailArgs = { files: string[]; lines: number; follow: boolean };
 export type SpawnTailResult = { ok: boolean; message?: string };
 export type SpawnTail = (args: SpawnTailArgs) => Promise<SpawnTailResult>;
@@ -106,7 +111,7 @@ const defaultSpawnTail: SpawnTail = ({ files, lines, follow }) => {
 
 export async function runProdLogs(
   opts: LogsOptions,
-  deps: { spawnTail?: SpawnTail } = {},
+  deps: { spawnTail?: SpawnTail; truncate?: (file: string) => void } = {},
 ): Promise<CommandResult> {
   const spawnTail = deps.spawnTail ?? defaultSpawnTail;
   let paths: { stdout: string; stderr: string };
@@ -114,6 +119,29 @@ export async function runProdLogs(
     paths = getSupervisor().getLogPaths();
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+  if (opts.clear) {
+    // Truncate in place (don't unlink): the running streamer holds open file
+    // descriptors via launchd's StandardOut/ErrorPath. Removing the inode
+    // would leave the daemon writing to a ghost file. `: > file` semantics.
+    const truncate =
+      deps.truncate ??
+      ((file: string) => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const fs = require("node:fs") as typeof import("node:fs");
+        fs.writeFileSync(file, "");
+      });
+    for (const f of [paths.stdout, paths.stderr]) {
+      try {
+        truncate(f);
+      } catch (err) {
+        return {
+          ok: false,
+          message: `failed to truncate ${f}: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+    return { ok: true, message: `cleared:\n  ${paths.stdout}\n  ${paths.stderr}` };
   }
   const files = opts.errorsOnly ? [paths.stderr] : [paths.stdout, paths.stderr];
   const result = await spawnTail({ files, lines: opts.lines, follow: opts.follow });
@@ -201,17 +229,17 @@ export function registerProdCommands(program: Command): void {
     .option("-n, --lines <count>", "Seed with the last N lines (default 50)", "50")
     .option("--no-follow", "Print last N lines and exit (do not follow)")
     .option("--errors-only", "Tail only stderr", false)
+    .option("--clear", "Truncate stdout + stderr logs in place, then exit", false)
     .action(async (opts) => {
       const lines = Number.parseInt(opts.lines, 10);
       const r = await runProdLogs({
         lines: Number.isFinite(lines) && lines > 0 ? lines : 50,
         follow: opts.follow !== false,
         errorsOnly: opts.errorsOnly === true,
+        clear: opts.clear === true,
       });
-      if (!r.ok) {
-        log.info(r.message, undefined, "console");
-        process.exitCode = 1;
-      }
+      if (r.message) log.info(r.message, undefined, "console");
+      if (!r.ok) process.exitCode = 1;
     });
 
   program.addCommand(prod);

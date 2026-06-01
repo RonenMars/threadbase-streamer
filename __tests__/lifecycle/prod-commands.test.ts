@@ -146,6 +146,35 @@ describe("prod commands", () => {
       expect(result.ok).toBe(false);
       expect(result.message).toMatch(/no log files/);
     });
+
+    it("--clear truncates both log files in place and skips tail", async () => {
+      const spawnTail = vi.fn();
+      const truncated: string[] = [];
+      const truncate = (file: string) => {
+        truncated.push(file);
+      };
+      const result = await runProdLogs(
+        { lines: 50, follow: false, errorsOnly: false, clear: true },
+        { spawnTail, truncate },
+      );
+      expect(result.ok).toBe(true);
+      expect(spawnTail).not.toHaveBeenCalled();
+      expect(truncated).toEqual(["/fake/stdout.log", "/fake/stderr.log"]);
+      expect(result.message).toMatch(/cleared:/);
+    });
+
+    it("--clear returns ok=false if truncate throws", async () => {
+      const spawnTail = vi.fn();
+      const truncate = () => {
+        throw new Error("EACCES");
+      };
+      const result = await runProdLogs(
+        { lines: 50, follow: false, errorsOnly: false, clear: true },
+        { spawnTail, truncate },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/failed to truncate.*EACCES/);
+    });
   });
 
   it("prod doctor: reports without fixing when fix=false", async () => {

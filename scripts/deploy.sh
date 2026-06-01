@@ -820,6 +820,16 @@ cmd_deploy() {
     ensure_plist_healthy
   fi
 
+  # Truncate logs in place so the next kickstart writes from a clean baseline.
+  # Without this, `tb-streamer prod logs` would keep surfacing stderr from
+  # crashes under the previous build long after the underlying bug was fixed,
+  # making it impossible to tell stale errors from current ones. Truncating
+  # (not unlinking) preserves the inode launchd already has open via the
+  # plist's StandardOut/ErrorPath.
+  log "truncating logs for fresh baseline"
+  : > "$INSTALL_DIR/logs/stdout.log" 2>/dev/null || true
+  : > "$INSTALL_DIR/logs/stderr.log" 2>/dev/null || true
+
   log "kickstarting $LAUNCHD_LABEL"
   cmd_kickstart
 
