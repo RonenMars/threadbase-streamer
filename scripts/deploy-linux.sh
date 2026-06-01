@@ -43,8 +43,19 @@ ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 # shellcheck source=lib/install-shim.sh
 . "$REPO_ROOT/scripts/lib/install-shim.sh"
 
-MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
+# Menubar release fetcher (downloads pre-built artifacts by submodule SHA).
+# shellcheck source=lib/fetch-menubar.sh
+. "$REPO_ROOT/scripts/lib/fetch-menubar.sh"
 
+MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
+MENUBAR_INSTALLED_SHA_FILE="$INSTALL_DIR/menubar-installed-sha"
+MENUBAR_APPIMAGE="$HOME/.local/bin/threadbase-menubar.AppImage"
+MENUBAR_FETCH_LOG="$INSTALL_DIR/logs/menubar-fetch.log"
+MENUBAR_LAUNCH_LOG="$INSTALL_DIR/logs/menubar.log"
+
+# Install the menubar AppImage by downloading the matching pre-built release
+# from RonenMars/threadbase-menubar. Falls back to launching electron in-place
+# from vendor/menubar/ if the download fails or no matching release exists.
 ensure_menubar_deployed() {
   if [[ ! -f "$MENUBAR_DIR/package.json" ]]; then
     log "initializing vendor/menubar submodule"
@@ -54,39 +65,81 @@ ensure_menubar_deployed() {
   local current_sha
   current_sha="$(cd "$MENUBAR_DIR" && git rev-parse HEAD)"
 
-  local built_sha=""
-  [[ -f "$MENUBAR_DIR/dist/.build-sha" ]] && built_sha="$(cat "$MENUBAR_DIR/dist/.build-sha")"
+  local installed_sha=""
+  [[ -f "$MENUBAR_INSTALLED_SHA_FILE" ]] && installed_sha="$(cat "$MENUBAR_INSTALLED_SHA_FILE")"
 
-  if [[ "$current_sha" == "$built_sha" ]]; then
+  # Idempotent skip: same SHA + installed AppImage still present.
+  if [[ "$current_sha" == "$installed_sha" ]] && [[ -x "$MENUBAR_APPIMAGE" ]]; then
     log "menubar is up-to-date ($current_sha)"
-  else
-    log "menubar needs rebuild (built: ${built_sha:-none}, current: ${current_sha})"
-    ( cd "$MENUBAR_DIR" && npm install --silent && npm run build )
-    printf '%s' "$current_sha" > "$MENUBAR_DIR/dist/.build-sha"
-    ok "menubar built: $current_sha"
+    if ! pgrep -f "threadbase-menubar.AppImage" >/dev/null 2>&1; then
+      _menubar_launch_appimage
+    else
+      ok "menubar already running"
+    fi
+    return
   fi
 
-  local running_pid=""
-  running_pid="$(pgrep -f "vendor/menubar" 2>/dev/null | head -1 || true)"
+  log "menubar needs install (installed: ${installed_sha:-none}, current: ${current_sha})"
 
-  if [[ -n "$running_pid" ]] && [[ "$current_sha" != "$built_sha" ]]; then
-    log "stopping stale menubar (pid $running_pid)"
+  # Stop any running instance — either AppImage or in-tree electron.
+  if pgrep -f "threadbase-menubar.AppImage\|vendor/menubar" >/dev/null 2>&1; then
+    log "stopping running menubar"
+    pkill -f "threadbase-menubar.AppImage" 2>/dev/null || true
     pkill -f "vendor/menubar" 2>/dev/null || true
     sleep 0.5
-    running_pid=""
   fi
 
-  if [[ -z "$running_pid" ]]; then
-    log "launching menubar"
-    ( cd "$MENUBAR_DIR" && nohup npx electron . </dev/null >>/tmp/threadbase-menubar.log 2>&1 & disown )
-    sleep 1
-    if pgrep -f "vendor/menubar" >/dev/null 2>&1; then
-      ok "menubar running"
-    else
-      warn "menubar exited immediately — check /tmp/threadbase-menubar.log"
-    fi
+  mkdir -p "$(dirname "$MENUBAR_FETCH_LOG")" "$(dirname "$MENUBAR_LAUNCH_LOG")"
+  : > "$MENUBAR_FETCH_LOG"
+
+  log "fetching menubar release for $current_sha from GitHub"
+  local fetched rc=99 tmp_dir="$INSTALL_DIR/.menubar-download"
+  rm -rf "$tmp_dir"
+  fetched="$(fetch_menubar_asset "$current_sha" "*-x86_64.AppImage" \
+    "$tmp_dir" "$MENUBAR_FETCH_LOG")" && rc=0 || rc=$?
+
+  if [[ $rc -eq 0 ]] && [[ -n "$fetched" ]]; then
+    mkdir -p "$(dirname "$MENUBAR_APPIMAGE")"
+    mv -f "$fetched" "$MENUBAR_APPIMAGE"
+    chmod +x "$MENUBAR_APPIMAGE"
+    rm -rf "$tmp_dir"
+    printf '%s' "$current_sha" > "$MENUBAR_INSTALLED_SHA_FILE"
+    ok "menubar installed: $MENUBAR_APPIMAGE"
+    _menubar_launch_appimage
+    return
+  fi
+
+  rm -rf "$tmp_dir"
+
+  if [[ $rc -eq 2 ]]; then
+    log "no matching menubar release for $current_sha — running in-tree electron"
   else
-    ok "menubar already running (pid $running_pid)"
+    warn "menubar release fetch failed — see $MENUBAR_FETCH_LOG"
+    menubar_print_fetch_error "$MENUBAR_FETCH_LOG"
+    warn "falling back to in-tree electron run…"
+  fi
+
+  log "building menubar (npm install + tsc)"
+  ( cd "$MENUBAR_DIR" && npm install --silent && npm run build )
+
+  log "launching menubar via npx electron"
+  ( cd "$MENUBAR_DIR" && nohup npx electron . </dev/null >>"$MENUBAR_LAUNCH_LOG" 2>&1 & disown )
+  sleep 1
+  if pgrep -f "vendor/menubar" >/dev/null 2>&1; then
+    ok "menubar running (in-tree)"
+  else
+    warn "menubar exited immediately — check $MENUBAR_LAUNCH_LOG"
+  fi
+}
+
+_menubar_launch_appimage() {
+  log "launching $MENUBAR_APPIMAGE"
+  nohup "$MENUBAR_APPIMAGE" </dev/null >>"$MENUBAR_LAUNCH_LOG" 2>&1 & disown
+  sleep 1
+  if pgrep -f "threadbase-menubar.AppImage" >/dev/null 2>&1; then
+    ok "menubar running"
+  else
+    warn "menubar exited immediately — check $MENUBAR_LAUNCH_LOG"
   fi
 }
 

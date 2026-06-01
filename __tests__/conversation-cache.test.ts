@@ -72,6 +72,40 @@ describe("upsertFromScannerMeta()", () => {
     const result = cache.listConversations({ limit: 10, offset: 0 });
     expect(result.conversations[0].messageCount).toBe(3);
   });
+
+  // Regression: warm-up in server.ts iterates the SAME metas it just passed
+  // to upsertFromScannerMeta and calls populateTailFromFile(id, filePath) on
+  // every one. When an agent JSONL is in the input, the upsert silently
+  // skipped it but the tail insert still ran, hitting the FK
+  // conversation_tail.conversation_id → conversation_meta(id) and crashing
+  // the warm-up. The fix is to return the set of IDs that were actually
+  // upserted, so callers can warm tails only for those.
+  it("returns IDs of upserted rows (excluding agent-filtered files)", () => {
+    const agentDir = join(dbDir, "agent-fixtures");
+    mkdirSync(agentDir, { recursive: true });
+    const agentFile = join(agentDir, "agent-1.jsonl");
+    const normalFile = join(agentDir, "normal-1.jsonl");
+    // Agent file has the `entrypoint: "sdk-cli"` marker that isAgentFile detects.
+    writeFileSync(agentFile, `${JSON.stringify({ entrypoint: "sdk-cli", type: "summary" })}\n`);
+    writeFileSync(normalFile, `${JSON.stringify({ type: "summary" })}\n`);
+
+    const agentCache = ConversationCache.open(join(dbDir, "filtered.db"), 3, undefined, {
+      filterAgentConversations: true,
+    });
+    try {
+      const ids = agentCache.upsertFromScannerMeta([
+        { ...BASE_META, id: "normal-1", sessionId: "normal-1", filePath: normalFile },
+        { ...BASE_META, id: "agent-1", sessionId: "agent-1", filePath: agentFile },
+      ] as any);
+      expect(ids).toEqual(["normal-1"]);
+      // And confirm the agent row genuinely is not in conversation_meta —
+      // so a follow-up populateTailFromFile("agent-1", ...) would hit FK.
+      expect(agentCache.hasConversation("normal-1")).toBe(true);
+      expect(agentCache.hasConversation("agent-1")).toBe(false);
+    } finally {
+      agentCache.close();
+    }
+  });
 });
 
 describe("updateFromLine()", () => {

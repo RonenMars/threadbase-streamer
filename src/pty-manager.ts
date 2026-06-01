@@ -45,7 +45,7 @@ const PROMPT_MARKER_FALLBACK_MS = 10_000;
 // committed as a single insertion without triggering autocomplete or key
 // bindings. Without this wrap an input like "@<path>" opens the mention
 // picker and the trailing \r gets consumed as "accept completion" rather
-// than "submit" — see docs/2026-05-20-pty-bracketed-paste-fix.md.
+// than "submit" — see docs/postmortems/2026-05-20-pty-bracketed-paste-fix.md.
 //
 // Why split paste and \r: on 2026-05-27 a follow-up stuck session
 // (39118d3e) showed the bracketed-paste wrap was being written but the

@@ -277,6 +277,43 @@ export class StreamerServer {
 
     this.httpServer = createServer((req, res) => this.handleRequest(req, res));
 
+    // Defense-in-depth against unhandled socket errors that would otherwise
+    // crash the process with "Unhandled 'error' event":
+    //
+    // 1. 'clientError' fires when the http parser rejects a request (bad
+    //    headers, etc.). Default behavior destroys the socket, but a stale
+    //    handler could leak. We respond 400 (or destroy on any I/O error)
+    //    and never throw.
+    this.httpServer.on("clientError", (_err, socket) => {
+      try {
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      } catch {
+        socket.destroy();
+      }
+    });
+    // 2. Listener-level 'error' (port in use, etc.) — log instead of crashing.
+    this.httpServer.on("error", (err) => {
+      this.log.warn(`httpServer error: ${err.message}`, {
+        error: err.message,
+        event: "http.server_error",
+      });
+    });
+    // 3. The WebSocket upgrade race that caused real prod crashes:
+    //    @hono/node-ws registers an 'upgrade' listener that does `await
+    //    app.request(...)` before promoting the socket. If the peer RSTs
+    //    during the await, the raw net.Socket emits 'error' with no listener,
+    //    crashing the process. Registering our own 'upgrade' listener FIRST
+    //    attaches a noop 'error' handler to the raw socket so the upgrade
+    //    abort becomes a harmless event. Node fires upgrade listeners in
+    //    registration order, so this must be wired before injectWebSocket().
+    this.httpServer.on("upgrade", (_req, socket) => {
+      socket.on("error", () => {
+        // Intentional: a RST during the WS handshake is normal client
+        // behavior (network blip, peer kill). The socket is already torn
+        // down; we just need to absorb the event so Node doesn't crash.
+      });
+    });
+
     // createNodeWebSocket needs the real Hono app (it calls app.request() on
     // upgrade). Resolve the chicken-and-egg by creating the app without WS
     // routes first, handing it to createNodeWebSocket, then mounting the WS
@@ -389,23 +426,56 @@ export class StreamerServer {
           .then(async (scanner) => {
             if (!this.cache) return;
             const metas = [...scanner.getMetadataCache().values()] as any[];
-            this.cache.upsertFromScannerMeta(metas);
+            // upsertFromScannerMeta returns IDs of rows actually upserted
+            // (excluding agent JSONLs filtered out by filterAgentConversations).
+            // Warming tails for filtered-out IDs would hit the
+            // conversation_tail.conversation_id → conversation_meta(id) FK
+            // and abort the whole warm-up before pruneGhostFiles can run.
+            const upsertedIds = new Set(this.cache.upsertFromScannerMeta(metas));
+            const tailTargets: Array<{ id: string; filePath: string }> = [];
+            for (const m of metas) {
+              if (!m.filePath) continue;
+              const id =
+                m.sessionId ||
+                m.id
+                  ?.split("/")
+                  .pop()
+                  ?.replace(/\.jsonl$/, "") ||
+                m.id;
+              if (upsertedIds.has(id)) tailTargets.push({ id, filePath: m.filePath });
+            }
             const BATCH = 50;
-            for (let i = 0; i < metas.length; i += BATCH) {
-              const batch = metas.slice(i, i + BATCH);
-              for (const m of batch) {
-                if (m.filePath) {
-                  const id =
-                    m.sessionId ||
-                    m.id
-                      ?.split("/")
-                      .pop()
-                      ?.replace(/\.jsonl$/, "") ||
-                    m.id;
-                  this.cache.populateTailFromFile(id, m.filePath);
+            let tailFailures = 0;
+            for (let i = 0; i < tailTargets.length; i += BATCH) {
+              const batch = tailTargets.slice(i, i + BATCH);
+              for (const t of batch) {
+                try {
+                  this.cache.populateTailFromFile(t.id, t.filePath);
+                } catch (err) {
+                  // One bad row (e.g. an FK violation from a race with
+                  // pruneAgentConversations or a stale id from a partial
+                  // upsert) must not abort the whole warm-up — pruneGhostFiles
+                  // can't run to reconcile state if we throw here.
+                  tailFailures += 1;
+                  this.log.debug?.(
+                    `populateTailFromFile failed for ${t.id}: ${
+                      err instanceof Error ? err.message : String(err)
+                    }`,
+                    { id: t.id, event: "cache.warmup_tail_failed" },
+                  );
                 }
               }
               await new Promise<void>((r) => setImmediate(r));
+            }
+            if (tailFailures > 0) {
+              this.log.warn(
+                `Warm-up: ${tailFailures}/${tailTargets.length} tail populates skipped (see debug logs)`,
+                {
+                  failures: tailFailures,
+                  total: tailTargets.length,
+                  event: "cache.warmup_tail_failures",
+                },
+              );
             }
             const pruned = this.cache.pruneGhostFiles();
             this.log.info(`Startup ghost prune: removed ${pruned.length} stale cache rows`, {

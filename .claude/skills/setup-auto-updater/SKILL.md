@@ -1,13 +1,13 @@
 ---
 name: setup-auto-updater
-description: Set up the in-place auto-updater on a deployed threadbase-streamer. Walks the user through creating ~/.threadbase/update.yaml, running `threadbase-streamer update --check`, doing a manual update, and optionally registering the scheduled job. Use when the user says "set up auto-update", "enable auto-update", "configure the updater", "make the streamer self-update", or asks how to keep their deployed streamer current. The full reference (commands, failure modes, restart labels, Windows ordering caveat, release pipeline) lives in docs/auto-update.md — read that first before answering anything beyond the happy-path setup.
+description: Set up the in-place auto-updater on a deployed threadbase-streamer. Walks the user through creating ~/.threadbase/update.yaml, running `threadbase-streamer update --check`, doing a manual update, and optionally registering the scheduled job. Use when the user says "set up auto-update", "enable auto-update", "configure the updater", "make the streamer self-update", or asks how to keep their deployed streamer current. The full reference (commands, failure modes, restart labels, Windows ordering caveat, release pipeline) lives in docs/guides/auto-update.md — read that first before answering anything beyond the happy-path setup.
 ---
 
 # Set up the streamer auto-updater
 
 The streamer can update itself from GitHub Releases via three independent triggers (manual / scheduled / webhook). This skill handles the common case: an operator who already has the streamer deployed and wants it to stay current without manual `npm run deploy` runs.
 
-**Authoritative reference**: [`docs/auto-update.md`](../../../docs/auto-update.md). Read it before going beyond the steps below — it has the full command list, env-var overrides, failure modes, the Windows pre-swap stop ordering, and the release/branching model. Don't paraphrase from memory; quote or link.
+**Authoritative reference**: [`docs/guides/auto-update.md`](../../../docs/guides/auto-update.md). Read it before going beyond the steps below — it has the full command list, env-var overrides, failure modes, the Windows pre-swap stop ordering, and the release/branching model. Don't paraphrase from memory; quote or link.
 
 ## Step 1 — Create the config
 
@@ -33,7 +33,7 @@ If the streamer can't reach GitHub, `--check` is where it surfaces.
 threadbase-streamer update
 ```
 
-Runs the full pipeline: download → sha256 verify → unpack → atomic swap → service restart. On macOS/Linux the swap is a symlink rename; on Windows the updater stops the service before swap (see the Windows ordering caveat in `docs/auto-update.md`). The active-session defer check refuses to interrupt mid-conversation sessions unless you pass `--force`.
+Runs the full pipeline: download → sha256 verify → unpack → atomic swap → service restart. On macOS/Linux the swap is a symlink rename; on Windows the updater stops the service before swap (see the Windows ordering caveat in `docs/guides/auto-update.md`). The active-session defer check refuses to interrupt mid-conversation sessions unless you pass `--force`.
 
 Confirm the result: `~/.threadbase/current` should resolve to the new release dir, and the streamer process (launchd / systemd / Task Scheduler) should be running the new version.
 
@@ -55,11 +55,11 @@ Logs land in `~/.threadbase/logs/updater.{log,err}`. Refer the user there if som
 
 ## Step 5 (optional) — Webhook trigger
 
-Only for users running CI that fans out to known servers. Set `webhook_secret` in `update.yaml`, then `POST /api/__update` with an HMAC-SHA256 signature header. Full payload format and signature gotchas: `docs/auto-update.md` § Webhook.
+Only for users running CI that fans out to known servers. Set `webhook_secret` in `update.yaml`, then `POST /api/__update` with an HMAC-SHA256 signature header. Full payload format and signature gotchas: `docs/guides/auto-update.md` § Webhook.
 
 ## When to send the user to the docs
 
-- **Channel / allow rules** (stable vs next, opting into major bumps) — `docs/auto-update.md` § Commands + Setup
+- **Channel / allow rules** (stable vs next, opting into major bumps) — `docs/guides/auto-update.md` § Commands + Setup
 - **Restart label mismatches** — § Service-manager restart (env-var overrides per platform)
 - **Rollback** — § Releases and branching → Rollback (three options: pin older version, yank release, forward-fix)
 - **First-release semver question** — § First-release situation (without prior tag, a `feat:` produces `0.2.0` not `1.0.0`)

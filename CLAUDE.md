@@ -169,7 +169,7 @@ Homebrew installs the binary into `libexec/`, exposes `tb-streamer` on PATH, and
 
 Pre-releases (`next` channel) are NOT published to the tap. Pre-release users continue to use the GitHub release tarball.
 
-A user can have either the Homebrew install OR the `scripts/deploy.sh` install, not both — both bind port 8766 with different launchd labels. Detection is deferred (see `docs/BACKLOG.md` "Homebrew vs `scripts/deploy.sh` plist collision"). Caveats in the formula warn users.
+A user can have either the Homebrew install OR the `scripts/deploy.sh` install, not both — both bind port 8766 with different launchd labels. Detection is deferred (see `docs/ROADMAP.md` "Homebrew vs `scripts/deploy.sh` plist conflict-check at startup"). Caveats in the formula warn users.
 
 ## Cloudflare Tunnel
 
@@ -187,7 +187,7 @@ The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running 
 
 ## Auto-update
 
-Full guide: [docs/auto-update.md](docs/auto-update.md). Sample config: [docs/update.yaml.example](docs/update.yaml.example). For walking a user through enabling it on a deployed streamer, use the `setup-auto-updater` skill (`.claude/skills/setup-auto-updater/SKILL.md`).
+Full guide: [docs/guides/auto-update.md](docs/guides/auto-update.md). Sample config: [docs/update.yaml.example](docs/update.yaml.example). For walking a user through enabling it on a deployed streamer, use the `setup-auto-updater` skill (`.claude/skills/setup-auto-updater/SKILL.md`).
 
 Three independent triggers, all opt-in via `~/.threadbase/update.yaml`:
 - **Manual:** `threadbase-streamer update [--check | --dry-run | --force | --allow-major | --version <tag>]`
@@ -237,6 +237,7 @@ Only one streamer can bind port 8766 at a time. The launchd-supervised "prod" in
 - `tb-streamer prod stop` — `launchctl bootout`. Will not auto-restart until `prod start` or reboot.
 - `tb-streamer prod restart` — bootout + bootstrap (re-reads plist).
 - `tb-streamer prod doctor [--fix]` — detect stale marker (dead devPid, not userHeld) and missing agent; `--fix` clears stale markers.
+- `tb-streamer prod logs [-n <N>] [--no-follow] [--errors-only]` — tail the supervised streamer's stdout + stderr. Default follows both files live, seeded with the last 50 lines. Resolves paths via `Supervisor.getLogPaths()` (macOS: `~/.threadbase/logs/{stdout,stderr}.log`). Not yet wired on Windows — see `src/lifecycle/task-scheduler.ts` `getLogPaths`.
 
 **Don't break without coordination:**
 - The marker shape is versioned by `shimVersion: 1`. Bump it if you change the shape; the schema will reject older markers and `readMarker` returns null + logs a warning.
@@ -370,6 +371,24 @@ When making a risky change, either: (a) keep the old shape and add the new one a
 - Renaming or moving the `port:` field in `server.yaml`
 - Removing `/healthz` or changing its response shape
 - Changing the default listening port (the menubar fallback `8766` would need to be bumped in lockstep)
+
+**Deploy flow — download first, build only as fallback:**
+
+The deploy scripts no longer build the menubar locally by default. Each deploy:
+1. Resolves the submodule HEAD commit SHA.
+2. Calls `scripts/lib/fetch-menubar.{sh,ps1}` to look up a GitHub Release on `RonenMars/threadbase-menubar` whose underlying commit SHA matches the submodule. The matching strategy handles both rolling pre-releases (where `target_commitish` is the commit SHA, e.g. `latest-main`) and tagged releases (where the tag ref is resolved and annotated tags are peeled). First match wins.
+3. On match: downloads the OS-specific artifact via plain HTTPS (no `gh` CLI dependency — only `curl` + `node` on Unix, native `Invoke-WebRequest` on Windows). Installs it:
+   - macOS: mount `.dmg`, `cp` `.app` to `/Applications/Threadbase Menubar.app`, `lsregister -f`.
+   - Linux: write `.AppImage` to `~/.local/bin/threadbase-menubar.AppImage`, `chmod +x`, launch via `nohup`.
+   - Windows: run NSIS installer with `/S` (silent), which installs to `%LOCALAPPDATA%\Programs\Threadbase Menubar\`.
+4. On miss (no release for this SHA, or release exists but lacks the OS-specific artifact): falls back to the per-OS local build/run flow — electron-builder `.dmg` on macOS, in-tree `npx electron .` on Linux/Windows.
+5. On fetch error (network, GH API rate limit, parse failure): prints the issues URL (`https://github.com/RonenMars/threadbase-menubar/issues`) + the path to the error log (`~/.threadbase/logs/menubar-fetch.log`) and then falls back to local build/run.
+
+The unified install sentinel is `~/.threadbase/menubar-installed-sha` (all three OSes). The previous per-platform sentinels (`vendor/menubar/dist/.build-sha` on Linux/Windows) were unreliable because `npm install` clobbers the `dist/` directory; the streamer-side `~/.threadbase/` location survives rebuilds.
+
+**`--publish-menubar` forces a local build** (it would make no sense to upload a downloaded artifact). `scripts/deploy.sh` and `scripts/deploy.sh menubar --publish` both pass `force_build` into `ensure_menubar_deployed`, bypassing the download path.
+
+**`gh` CLI is NOT a dependency** of the fetch path — only `--publish-menubar` still requires it. Plain `curl` + `node` (already required by the streamer) hit `https://api.github.com/repos/RonenMars/threadbase-menubar/releases` anonymously. The repo is public, so no token is needed for reads.
 
 **Auto-update interaction:** during an install, the streamer is briefly down — typically a few seconds between `stopService()` (Windows only) / `swapCurrent()` and `restartService()`. The menubar will flicker to "disconnected" then reconnect on the next 5s poll. This is expected and not a bug. If the gap stretches beyond ~10s, something is wrong with the restart step (`launchctl kickstart` failing on macOS, `systemctl --user` not finding the unit on Linux, scheduled task hung on Windows) — check `~/.threadbase/logs/updater.{log,err}` and the platform service status before assuming the menubar itself is at fault.
 

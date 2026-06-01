@@ -1,6 +1,6 @@
 ---
 name: setup-cloudflare-tunnel
-description: Walk the user through bringing up a Cloudflare quick-tunnel to expose their local @threadbase/streamer to tb-mobile. Drives scripts/remote-access/cloudflare.sh (or .ps1 on Windows / when pwsh is preferred), explains the quick-tunnel-vs-named-tunnel tradeoff, and — if asked — guides the upgrade to a persistent named tunnel with optional Cloudflare Access. Use when the user says "expose my streamer", "set up a tunnel", "let my phone reach my streamer from outside the LAN", "set up cloudflared", "set up Cloudflare Tunnel", "I want a public URL for the streamer", or asks how to onboard tb-mobile remote pairing. The full reference lives in docs/remote-access.md and docs/remote-access/cloudflare.md — read those first before going beyond the happy-path setup.
+description: Walk the user through bringing up a Cloudflare quick-tunnel to expose their local @threadbase/streamer to tb-mobile. Drives scripts/remote-access/cloudflare.sh (or .ps1 on Windows / when pwsh is preferred), explains the quick-tunnel-vs-named-tunnel tradeoff, and — if asked — guides the upgrade to a persistent named tunnel with optional Cloudflare Access. Use when the user says "expose my streamer", "set up a tunnel", "let my phone reach my streamer from outside the LAN", "set up cloudflared", "set up Cloudflare Tunnel", "I want a public URL for the streamer", or asks how to onboard tb-mobile remote pairing. The full reference lives in docs/guides/remote-access/README.md and docs/guides/remote-access/cloudflare.md — read those first before going beyond the happy-path setup.
 ---
 
 # Set up a Cloudflare quick-tunnel for the streamer
@@ -8,8 +8,8 @@ description: Walk the user through bringing up a Cloudflare quick-tunnel to expo
 The streamer binds to `127.0.0.1:8766` and isn't reachable from the network. To pair the mobile app from outside your LAN, you need a tunnel forwarding HTTPS traffic to that local port. A Cloudflare quick-tunnel is the fastest start — no account, no domain, ~30 seconds — and that's what this skill handles. Graduating to a persistent named tunnel (with optional Cloudflare Access) is a separate step the user can opt into at the end.
 
 **Authoritative references** — read these before going beyond the happy path:
-- [`docs/remote-access.md`](../../../docs/remote-access.md) — concept hub, provider comparison, security baseline.
-- [`docs/remote-access/cloudflare.md`](../../../docs/remote-access/cloudflare.md) — full Cloudflare guide (quick-tunnel + named tunnel + Access). Don't paraphrase from memory; quote or link.
+- [`docs/guides/remote-access/README.md`](../../../docs/guides/remote-access/README.md) — concept hub, provider comparison, security baseline.
+- [`docs/guides/remote-access/cloudflare.md`](../../../docs/guides/remote-access/cloudflare.md) — full Cloudflare guide (quick-tunnel + named tunnel + Access). Don't paraphrase from memory; quote or link.
 
 ## Step 1 — Make sure the streamer is actually running
 
@@ -70,7 +70,7 @@ If `DONE: aborted` or `DONE: error`, the script already tore everything down. Ch
 
 **Only do this if the user explicitly asks.** Quick-tunnel is the right answer for "does the mobile pairing work?" — named tunnel is the right answer for "I want this URL to keep working tomorrow."
 
-Walk through the checklist in [`docs/remote-access/cloudflare.md`](../../../docs/remote-access/cloudflare.md) → **Phase 2 — Named tunnel**:
+Walk through the checklist in [`docs/guides/remote-access/cloudflare.md`](../../../docs/guides/remote-access/cloudflare.md) → **Phase 2 — Named tunnel**:
 
 ```sh
 cloudflared tunnel login                                       # browser auth, picks zone
@@ -102,7 +102,7 @@ public_url: https://tb-pc.example.com
 
 Once the named tunnel is up, the user can put Cloudflare Access in front of it for identity-based protection (Google SSO, GitHub, email-OTP, service tokens). This is what `tb-pc.rbv1000.win` in this repo uses.
 
-This is **out of scope** for the quick-tunnel onboarding flow. Point at [`docs/remote-access/cloudflare.md`](../../../docs/remote-access/cloudflare.md) → **Phase 3 — Cloudflare Access** and leave the policy authoring to the dashboard. Important caveat the user needs to know: the mobile app sends a Bearer token, not interactive login — so Access policies will need a Service Token rule (or the Access app needs to be off for the mobile-facing endpoint) for `tb-mobile` to pair through it.
+This is **out of scope** for the quick-tunnel onboarding flow. Point at [`docs/guides/remote-access/cloudflare.md`](../../../docs/guides/remote-access/cloudflare.md) → **Phase 3 — Cloudflare Access** and leave the policy authoring to the dashboard. Important caveat the user needs to know: the mobile app sends a Bearer token, not interactive login — so Access policies will need a Service Token rule (or the Access app needs to be off for the mobile-facing endpoint) for `tb-mobile` to pair through it.
 
 ## What this skill won't do
 

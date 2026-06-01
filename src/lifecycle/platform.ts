@@ -16,6 +16,11 @@ export interface Supervisor {
   kickstartAgent(): void;
   /** PID of the running supervised service, or null. */
   getAgentPid(): number | null;
+  /**
+   * Absolute paths to the stdout/stderr log files for the supervised service.
+   * Throws on platforms where log redirection is not yet wired (Windows today).
+   */
+  getLogPaths(): { stdout: string; stderr: string };
 }
 
 export function getSupervisor(): Supervisor {

@@ -109,14 +109,18 @@ _shim_command_names() {
   printf 'tb-streamer\n'
 }
 
-# Idempotency check — true when at least one of the installed names already
-# exists on PATH and resolves to $1. Used as a fallback when no config file
-# is present so older installs / manual setups stay quiet across redeploys.
+# Idempotency check — true only when EVERY installed name already exists on
+# PATH and resolves to $1. Used as a fallback when no config file is present
+# so older installs / manual setups stay quiet across redeploys. Requiring
+# all names ensures that adding a new shim name to _shim_command_names later
+# causes the next redeploy to install the missing siblings, instead of
+# silently keeping only the entrenched name (the bug fixed in install-shim.test.ts).
+# On success, prints the path of the first matched shim on stdout for logging.
 _shim_existing_symlink_matches() {
-  local cli_path="$1" name existing resolved
+  local cli_path="$1" name existing resolved first_match=""
   for name in $(_shim_command_names); do
-    existing="$(command -v "$name" 2>/dev/null)" || continue
-    [[ -n "$existing" ]] || continue
+    existing="$(command -v "$name" 2>/dev/null)" || return 1
+    [[ -n "$existing" ]] || return 1
     if [[ -L "$existing" ]]; then
       resolved="$(readlink "$existing")"
       case "$resolved" in
@@ -126,11 +130,13 @@ _shim_existing_symlink_matches() {
     else
       resolved="$existing"
     fi
-    if [[ "$resolved" == "$cli_path" ]]; then
-      printf '%s\n' "$existing"
-      return 0
-    fi
+    [[ "$resolved" == "$cli_path" ]] || return 1
+    [[ -z "$first_match" ]] && first_match="$existing"
   done
+  if [[ -n "$first_match" ]]; then
+    printf '%s\n' "$first_match"
+    return 0
+  fi
   return 1
 }
 

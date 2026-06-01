@@ -52,7 +52,10 @@ $port         = if ($env:THREADBASE_PORT) { $env:THREADBASE_PORT } else { '8766'
 $healthUrl    = if ($env:THREADBASE_HEALTH_URL) { $env:THREADBASE_HEALTH_URL } else { 'http://localhost:8766/healthz' }
 $keepReleases = 5
 
-$menubarDir  = Join-Path $repoRoot 'vendor\menubar'
+$menubarDir          = Join-Path $repoRoot 'vendor\menubar'
+$menubarInstalledSha = Join-Path $installDir 'menubar-installed-sha'
+$menubarFetchLog     = Join-Path $installDir 'logs\menubar-fetch.log'
+$menubarLaunchLog    = Join-Path $env:TEMP    'threadbase-menubar.log'
 
 function Write-Log  { param($m) Write-Host "▶ $m" -ForegroundColor Blue }
 function Write-Warn { param($m) Write-Host "! $m" -ForegroundColor Yellow }
@@ -61,6 +64,9 @@ function Write-Ok   { param($m) Write-Host "✓ $m" -ForegroundColor Green }
 
 # Dot-source the global-shim installer (Install-GlobalShim function).
 . (Join-Path $PSScriptRoot 'lib\install-shim.ps1')
+
+# Dot-source the menubar release fetcher.
+. (Join-Path $PSScriptRoot 'lib\fetch-menubar.ps1')
 
 # Forward CLI params into the env vars the helper reads, so the same code path
 # works for both interactive and non-interactive invocations.
@@ -75,36 +81,73 @@ function Ensure-MenubarDeployed {
 
   $currentSha = (& git -C $menubarDir rev-parse HEAD).Trim()
 
-  $builtShaFile = Join-Path $menubarDir 'dist\.build-sha'
-  $builtSha = if (Test-Path $builtShaFile) { (Get-Content $builtShaFile).Trim() } else { '' }
+  $installedSha = if (Test-Path $menubarInstalledSha) { (Get-Content $menubarInstalledSha -Raw).Trim() } else { '' }
+  $installedExe = Join-Path $env:LOCALAPPDATA 'Programs\Threadbase Menubar\Threadbase Menubar.exe'
 
-  if ($currentSha -eq $builtSha) {
+  # Idempotent skip: same SHA + installed binary still present.
+  if (($currentSha -eq $installedSha) -and (Test-Path $installedExe)) {
     Write-Log "menubar is up-to-date ($currentSha)"
-  } else {
-    Write-Log "menubar needs rebuild (built: $(if ($builtSha) { $builtSha } else { 'none' }), current: $currentSha)"
-    Push-Location $menubarDir
-    try {
-      if (-not (Test-Path node_modules)) { Invoke-Native npm @('install', '--silent') }
-      Invoke-Native npm @('run', 'build')
-    } finally {
-      Pop-Location
+    $running = Get-Process 'Threadbase Menubar' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $running) {
+      Start-MenubarInstalled -ExePath $installedExe
+    } else {
+      Write-Ok "menubar already running (PID $($running.Id))"
     }
-    Set-Content -Path $builtShaFile -Value $currentSha -NoNewline -Encoding Ascii
-    Write-Ok "menubar built: $currentSha"
-  }
-
-  # Kill stale electron processes before checking if we need to relaunch.
-  # Electron spawns ~10 child processes; kill all before any state check.
-  if ($currentSha -ne $builtSha) {
-    Write-Log "stopping stale menubar processes"
-    Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
-  }
-
-  $running = Get-Process electron -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($running) {
-    Write-Ok "menubar already running (PID $($running.Id))"
     return
+  }
+
+  Write-Log "menubar needs install (installed: $(if ($installedSha) { $installedSha } else { 'none' }), current: $currentSha)"
+
+  # Stop any running instance (installed or in-tree electron) before swapping.
+  Write-Log "stopping running menubar"
+  Get-Process 'Threadbase Menubar' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 1
+
+  # Try to fetch the matching pre-built NSIS installer from GitHub Releases.
+  if (-not (Test-Path (Split-Path $menubarFetchLog -Parent))) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $menubarFetchLog -Parent) | Out-Null
+  }
+  Set-Content -Path $menubarFetchLog -Value '' -NoNewline -Encoding Ascii
+
+  Write-Log "fetching menubar release for $currentSha from GitHub"
+  $tmpDir = Join-Path $installDir '.menubar-download'
+  if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
+  $result = Get-MenubarAsset -Sha $currentSha -AssetPattern '*-x64.exe' -OutDir $tmpDir -LogPath $menubarFetchLog
+
+  if ($result.Status -eq 'ok') {
+    Write-Ok "menubar release downloaded: $($result.Path)"
+    Write-Log "installing menubar (silent NSIS, /S)"
+    # /S: silent. NSIS installs to %LOCALAPPDATA%\Programs\Threadbase Menubar\ by default.
+    $proc = Start-Process -FilePath $result.Path -ArgumentList '/S' -Wait -PassThru -NoNewWindow
+    if ($proc.ExitCode -ne 0) {
+      Write-Warn "menubar installer exited with code $($proc.ExitCode) — falling back to in-tree electron"
+    } elseif (-not (Test-Path $installedExe)) {
+      Write-Warn "installer ran but $installedExe not found — falling back to in-tree electron"
+    } else {
+      Set-Content -Path $menubarInstalledSha -Value $currentSha -NoNewline -Encoding Ascii
+      Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
+      Start-MenubarInstalled -ExePath $installedExe
+      return
+    }
+  } elseif ($result.Status -eq 'miss') {
+    Write-Log "no matching menubar release for $currentSha — running in-tree electron"
+  } else {
+    Write-Warn "menubar release fetch failed — see $menubarFetchLog"
+    Write-MenubarFetchError -LogPath $menubarFetchLog
+    Write-Warn "falling back to in-tree electron run…"
+  }
+
+  if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue }
+
+  # In-tree fallback: build dist/ and launch electron.exe against vendor/menubar.
+  Write-Log "building menubar (npm install + tsc)"
+  Push-Location $menubarDir
+  try {
+    if (-not (Test-Path node_modules)) { Invoke-Native npm @('install', '--silent') }
+    Invoke-Native npm @('run', 'build')
+  } finally {
+    Pop-Location
   }
 
   $electronExe = Join-Path $menubarDir 'node_modules\electron\dist\electron.exe'
@@ -113,8 +156,7 @@ function Ensure-MenubarDeployed {
     return
   }
 
-  Write-Log "launching menubar"
-  $logFile = Join-Path $env:TEMP 'threadbase-menubar.log'
+  Write-Log "launching menubar via in-tree electron"
   $proc = Start-Process -FilePath $electronExe `
     -ArgumentList "." `
     -WorkingDirectory $menubarDir `
@@ -126,14 +168,27 @@ function Ensure-MenubarDeployed {
       SystemRoot      = $env:SystemRoot
       PATH            = $env:PATH
     } `
-    -RedirectStandardOutput $logFile `
+    -RedirectStandardOutput $menubarLaunchLog `
     -PassThru
+  Start-Sleep -Seconds 3
+  $alive = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+  if ($alive) {
+    Write-Ok "menubar running (in-tree, PID $($proc.Id))"
+  } else {
+    Write-Warn "menubar exited immediately — check $menubarLaunchLog"
+  }
+}
+
+function Start-MenubarInstalled {
+  param([Parameter(Mandatory)] [string] $ExePath)
+  Write-Log "launching $ExePath"
+  $proc = Start-Process -FilePath $ExePath -PassThru
   Start-Sleep -Seconds 3
   $alive = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
   if ($alive) {
     Write-Ok "menubar running (PID $($proc.Id))"
   } else {
-    Write-Warn "menubar exited immediately — check $logFile"
+    Write-Warn "menubar exited immediately"
   }
 }
 

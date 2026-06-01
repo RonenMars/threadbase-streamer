@@ -151,7 +151,7 @@ describe("PTYManager — ready detection", () => {
     // 1. (2026-05-20) Input like "@/Users/foo/img.heic describe this" opens
     //    Claude's @-mention picker. A plain \r is captured as "accept
     //    completion" rather than "submit". Bracketed paste bypasses the
-    //    picker — see docs/2026-05-20-pty-bracketed-paste-fix.md.
+    //    picker — see docs/postmortems/2026-05-20-pty-bracketed-paste-fix.md.
     // 2. (2026-05-27, session 39118d3e) The bracketed wrap landed but the
     //    TUI was mid-render of a startup status banner when the bytes
     //    arrived, so the inline \r still didn't submit. We now split the

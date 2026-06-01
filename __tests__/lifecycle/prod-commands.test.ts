@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runProdDoctor, runProdStart, runProdStatus, runProdStop } from "../../cli/prod";
+import {
+  runProdDoctor,
+  runProdLogs,
+  runProdStart,
+  runProdStatus,
+  runProdStop,
+} from "../../cli/prod";
 import { writeMarker } from "../../src/lifecycle/marker";
 
 const mockSup = {
@@ -11,6 +17,7 @@ const mockSup = {
   bootstrapAgent: vi.fn(),
   kickstartAgent: vi.fn(),
   getAgentPid: vi.fn(() => 12345 as number | null),
+  getLogPaths: vi.fn(() => ({ stdout: "/fake/stdout.log", stderr: "/fake/stderr.log" })),
 };
 
 vi.mock("../../src/lifecycle/platform", () => ({
@@ -96,6 +103,78 @@ describe("prod commands", () => {
     expect(report.repairs).toContain("cleared stale marker (dev pid 999999 was dead)");
     const { readMarker } = await import("../../src/lifecycle/marker");
     expect(readMarker()).toBeNull();
+  });
+
+  describe("prod logs", () => {
+    it("follows both stdout and stderr by default with seed lines", async () => {
+      const spawnTail = vi.fn().mockResolvedValue({ ok: true });
+      const result = await runProdLogs(
+        { lines: 50, follow: true, errorsOnly: false },
+        { spawnTail },
+      );
+      expect(result.ok).toBe(true);
+      expect(spawnTail).toHaveBeenCalledOnce();
+      const [callArgs] = spawnTail.mock.calls[0];
+      expect(callArgs.files).toEqual(["/fake/stdout.log", "/fake/stderr.log"]);
+      expect(callArgs.follow).toBe(true);
+      expect(callArgs.lines).toBe(50);
+    });
+
+    it("--errors-only tails only stderr", async () => {
+      const spawnTail = vi.fn().mockResolvedValue({ ok: true });
+      await runProdLogs({ lines: 50, follow: true, errorsOnly: true }, { spawnTail });
+      const [callArgs] = spawnTail.mock.calls[0];
+      expect(callArgs.files).toEqual(["/fake/stderr.log"]);
+    });
+
+    it("--no-follow passes follow=false to the spawner", async () => {
+      const spawnTail = vi.fn().mockResolvedValue({ ok: true });
+      await runProdLogs({ lines: 20, follow: false, errorsOnly: false }, { spawnTail });
+      const [callArgs] = spawnTail.mock.calls[0];
+      expect(callArgs.follow).toBe(false);
+      expect(callArgs.lines).toBe(20);
+    });
+
+    it("returns ok=false with a clear message when neither log file exists", async () => {
+      // When both paths point at non-existent files, the spawner should refuse
+      // and runProdLogs should turn that into a CommandResult, not a crash.
+      const spawnTail = vi.fn().mockResolvedValue({ ok: false, message: "no log files found" });
+      const result = await runProdLogs(
+        { lines: 50, follow: true, errorsOnly: false },
+        { spawnTail },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/no log files/);
+    });
+
+    it("--clear truncates both log files in place and skips tail", async () => {
+      const spawnTail = vi.fn();
+      const truncated: string[] = [];
+      const truncate = (file: string) => {
+        truncated.push(file);
+      };
+      const result = await runProdLogs(
+        { lines: 50, follow: false, errorsOnly: false, clear: true },
+        { spawnTail, truncate },
+      );
+      expect(result.ok).toBe(true);
+      expect(spawnTail).not.toHaveBeenCalled();
+      expect(truncated).toEqual(["/fake/stdout.log", "/fake/stderr.log"]);
+      expect(result.message).toMatch(/cleared:/);
+    });
+
+    it("--clear returns ok=false if truncate throws", async () => {
+      const spawnTail = vi.fn();
+      const truncate = () => {
+        throw new Error("EACCES");
+      };
+      const result = await runProdLogs(
+        { lines: 50, follow: false, errorsOnly: false, clear: true },
+        { spawnTail, truncate },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/failed to truncate.*EACCES/);
+    });
   });
 
   it("prod doctor: reports without fixing when fix=false", async () => {

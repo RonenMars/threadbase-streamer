@@ -2,7 +2,7 @@
 
 Manual verification of the prod/dev coordination feature on Windows. Covers the Task Scheduler backend, the `prod` subcommand tree, the dev-takeover prompt, and `Repair-LaunchCmd` self-heal.
 
-This is the Windows counterpart of Task 14 in the macOS plan and Task 10 in the Windows-port plan — it cannot be automated in CI because it exercises real Task Scheduler state.
+This guide cannot be automated in CI because it exercises real Task Scheduler state — run it manually after any change to `src/lifecycle/` (Supervisor / Task Scheduler backend) or `scripts/deploy.ps1` (`Repair-LaunchCmd` self-heal).
 
 See [`CLAUDE.md` → Prod/dev coordination → Windows (Task Scheduler)](../CLAUDE.md) for the architecture and [`docs/troubleshooting.md` → Prod/dev coordination](troubleshooting.md) for symptom-to-fix entries this guide may surface.
 

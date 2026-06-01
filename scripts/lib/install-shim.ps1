@@ -122,26 +122,30 @@ function Get-ShimCommandNames {
   @('threadbase-streamer', 'tb-streamer')
 }
 
-# Idempotency check — return the resolved path when at least one of the
-# installed names has a .cmd on PATH that already wraps the given CliPath.
-# Returns $null when no existing shim matches.
+# Idempotency check — returns the resolved path of the first matched shim
+# only when EVERY installed name has a .cmd on PATH that already wraps the
+# given CliPath. Returns $null when any configured name is missing or wraps
+# something else. Requiring all names ensures that adding a new shim name to
+# Get-ShimCommandNames later causes the next redeploy to install the missing
+# siblings, instead of silently keeping only the entrenched name. Mirror of
+# _shim_existing_symlink_matches in install-shim.sh.
 function Get-MatchingShimPath {
   param([Parameter(Mandatory = $true)] [string] $CliPath)
+  $firstMatch = $null
   foreach ($name in (Get-ShimCommandNames)) {
     $existing = (Get-Command $name -ErrorAction SilentlyContinue |
                  Select-Object -First 1 -ExpandProperty Source)
-    if (-not $existing) { continue }
-    if (-not (Test-Path -LiteralPath $existing)) { continue }
+    if (-not $existing) { return $null }
+    if (-not (Test-Path -LiteralPath $existing)) { return $null }
     try {
       $body = Get-Content -LiteralPath $existing -Raw -ErrorAction Stop
     } catch {
-      continue
+      return $null
     }
-    if ($body.Contains($CliPath)) {
-      return $existing
-    }
+    if (-not $body.Contains($CliPath)) { return $null }
+    if (-not $firstMatch) { $firstMatch = $existing }
   }
-  return $null
+  return $firstMatch
 }
 
 function Get-StandardShimDir {
