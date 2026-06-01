@@ -445,12 +445,37 @@ export class StreamerServer {
               if (upsertedIds.has(id)) tailTargets.push({ id, filePath: m.filePath });
             }
             const BATCH = 50;
+            let tailFailures = 0;
             for (let i = 0; i < tailTargets.length; i += BATCH) {
               const batch = tailTargets.slice(i, i + BATCH);
               for (const t of batch) {
-                this.cache.populateTailFromFile(t.id, t.filePath);
+                try {
+                  this.cache.populateTailFromFile(t.id, t.filePath);
+                } catch (err) {
+                  // One bad row (e.g. an FK violation from a race with
+                  // pruneAgentConversations or a stale id from a partial
+                  // upsert) must not abort the whole warm-up — pruneGhostFiles
+                  // can't run to reconcile state if we throw here.
+                  tailFailures += 1;
+                  this.log.debug?.(
+                    `populateTailFromFile failed for ${t.id}: ${
+                      err instanceof Error ? err.message : String(err)
+                    }`,
+                    { id: t.id, event: "cache.warmup_tail_failed" },
+                  );
+                }
               }
               await new Promise<void>((r) => setImmediate(r));
+            }
+            if (tailFailures > 0) {
+              this.log.warn(
+                `Warm-up: ${tailFailures}/${tailTargets.length} tail populates skipped (see debug logs)`,
+                {
+                  failures: tailFailures,
+                  total: tailTargets.length,
+                  event: "cache.warmup_tail_failures",
+                },
+              );
             }
             const pruned = this.cache.pruneGhostFiles();
             this.log.info(`Startup ghost prune: removed ${pruned.length} stale cache rows`, {
