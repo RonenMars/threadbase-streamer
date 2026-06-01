@@ -277,6 +277,43 @@ export class StreamerServer {
 
     this.httpServer = createServer((req, res) => this.handleRequest(req, res));
 
+    // Defense-in-depth against unhandled socket errors that would otherwise
+    // crash the process with "Unhandled 'error' event":
+    //
+    // 1. 'clientError' fires when the http parser rejects a request (bad
+    //    headers, etc.). Default behavior destroys the socket, but a stale
+    //    handler could leak. We respond 400 (or destroy on any I/O error)
+    //    and never throw.
+    this.httpServer.on("clientError", (_err, socket) => {
+      try {
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      } catch {
+        socket.destroy();
+      }
+    });
+    // 2. Listener-level 'error' (port in use, etc.) — log instead of crashing.
+    this.httpServer.on("error", (err) => {
+      this.log.warn(`httpServer error: ${err.message}`, {
+        error: err.message,
+        event: "http.server_error",
+      });
+    });
+    // 3. The WebSocket upgrade race that caused real prod crashes:
+    //    @hono/node-ws registers an 'upgrade' listener that does `await
+    //    app.request(...)` before promoting the socket. If the peer RSTs
+    //    during the await, the raw net.Socket emits 'error' with no listener,
+    //    crashing the process. Registering our own 'upgrade' listener FIRST
+    //    attaches a noop 'error' handler to the raw socket so the upgrade
+    //    abort becomes a harmless event. Node fires upgrade listeners in
+    //    registration order, so this must be wired before injectWebSocket().
+    this.httpServer.on("upgrade", (_req, socket) => {
+      socket.on("error", () => {
+        // Intentional: a RST during the WS handshake is normal client
+        // behavior (network blip, peer kill). The socket is already torn
+        // down; we just need to absorb the event so Node doesn't crash.
+      });
+    });
+
     // createNodeWebSocket needs the real Hono app (it calls app.request() on
     // upgrade). Resolve the chicken-and-egg by creating the app without WS
     // routes first, handing it to createNodeWebSocket, then mounting the WS

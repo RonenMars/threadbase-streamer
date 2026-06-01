@@ -435,4 +435,64 @@ describe("StreamerServer", () => {
       expect(res.status).toBe(200);
     });
   });
+
+  // Regression tests for "Unhandled 'error' event" crashes (ECONNRESET from
+  // peers RST'ing the TCP connection mid-handshake). The server must NOT
+  // emit an unhandled 'error' that would crash the host process.
+  describe("socket resilience", () => {
+    it("survives a malformed HTTP request (clientError)", async () => {
+      const net = await import("node:net");
+      // Send obviously-broken raw bytes; the Node http parser emits
+      // 'clientError'. We then verify the server is still serving.
+      await new Promise<void>((resolve) => {
+        const sock = net.createConnection({ port, host: "127.0.0.1" }, () => {
+          sock.write("\x00\x01\x02 not http at all\r\n\r\n");
+        });
+        sock.on("close", () => resolve());
+        sock.on("error", () => resolve());
+        // Don't reject on timeout — the assertion below is what matters.
+        // The clientError handler may keep the socket open until our 400
+        // response fully flushes; that's fine, we just need the server
+        // not to crash.
+        setTimeout(() => {
+          sock.destroy();
+          resolve();
+        }, 500);
+      });
+      const res = await fetch(`${baseUrl}/api/info`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("survives an aborted WebSocket upgrade handshake", async () => {
+      const net = await import("node:net");
+      await new Promise<void>((resolve, reject) => {
+        const sock = net.createConnection({ port, host: "127.0.0.1" }, () => {
+          // Start a WS upgrade then immediately destroy() with RST. This
+          // is the exact race condition that caused the production crash:
+          // the @hono/node-ws upgrade handler awaits app.request() while
+          // the underlying socket dies under it.
+          sock.write(
+            "GET /ws?key=does_not_matter HTTP/1.1\r\n" +
+              "Host: localhost\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+              "Sec-WebSocket-Version: 13\r\n\r\n",
+          );
+          sock.destroy();
+        });
+        sock.on("close", () => resolve());
+        sock.on("error", () => resolve());
+        setTimeout(() => reject(new Error("client socket never closed")), 2000);
+      });
+      // Give the server a tick to process the upgrade attempt.
+      await new Promise((r) => setTimeout(r, 200));
+      const res = await fetch(`${baseUrl}/api/info`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+    });
+  });
 });

@@ -117,6 +117,29 @@ program
       // Prod mode: simple shutdown handlers (no takeover semantics).
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
+      // Belt-and-suspenders for unhandled socket errors that slip past the
+      // specific guards in StreamerServer (clientError, server-error, upgrade
+      // race). Without this handler, an unhandled 'error' event from any TCP
+      // socket terminates the process with a stack trace to stderr; launchd
+      // respawns it but the next startup repeats the same warm-up. Logging
+      // the error with the cause + exiting 1 ensures launchd respawns
+      // cleanly AND we can grep the log for what slipped through.
+      process.on("uncaughtException", (err) => {
+        log.error(`uncaught: ${err.message}`, {
+          error: err.message,
+          stack: err.stack,
+          event: "process.uncaught",
+        });
+        process.exit(1);
+      });
+      process.on("unhandledRejection", (reason) => {
+        const msg = reason instanceof Error ? reason.message : String(reason);
+        log.error(`unhandled rejection: ${msg}`, {
+          error: msg,
+          event: "process.unhandled_rejection",
+        });
+        process.exit(1);
+      });
     }
     // Dev mode with takeover already installed its handlers in takeoverProd().
     // Dev mode without takeover (use-port path) — install simple ones too:
