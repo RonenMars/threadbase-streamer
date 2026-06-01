@@ -10,7 +10,7 @@
 User starts a session, uploads an image, sends a prompt like:
 
 ```
-@/Users/ronenmars/Desktop/dev/<project>/.threadbase-uploads/<id>/IMG_5192.heic What is in this image?
+@~/Desktop/dev/<project>/.threadbase-uploads/<id>/IMG_5192.heic What is in this image?
 ```
 
 Mobile shows status `Running` and the prompt rendered in the terminal pane. No response from Claude ever arrives. The session sits this way indefinitely. Sending any second message (even a single dot) unsticks it: Claude then processes the **combined text of both messages** as a single user turn.
@@ -27,7 +27,7 @@ Streamer-side: the session is `running`, `lastActivityAt` was set when `pty.read
 The instrumented logs were decisive. The bytes written looked correct:
 
 ```
-[pty.input.write] da49f1e0 promptCount=1 bytes=148 digest=@/Users/.../IMG_5192.heic Hi\r
+[pty.input.write] da49f1e0 promptCount=1 bytes=148 digest=@~/.../IMG_5192.heic Hi\r
 ```
 
 But Claude's response chunks after the write showed:

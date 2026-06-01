@@ -1,8 +1,10 @@
 # JSONL Fields Propagation Plan
 
-> Propagating new `@threadbase/scanner` fields through tb-streamer → REST API → tb-mobile.
+> **Cross-repo plan.** Referenced repos:
+> - [`threadbase-scanner`](https://github.com/RonenMars/threadbase-scanner) — source of the new JSONL fields. Scanner-side work was already merged on `feat/align-with-jsonl-format-spec` when this plan was written.
+> - [`threadbase-mobile`](https://github.com/RonenMars/threadbase-mobile) — Layer 2 consumer. Out-of-scope for this repo; included here for context only.
 >
-> Scanner changes are already merged on `feat/align-with-jsonl-format-spec`.
+> Propagating new scanner fields through tb-streamer → REST API → tb-mobile.
 > This document covers the two remaining layers.
 
 ---

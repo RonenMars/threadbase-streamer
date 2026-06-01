@@ -81,7 +81,7 @@ node dist/cli.cjs serve
 | `THREADBASE_DATABASE_POOL_MAX` | No | `10` | Maximum pool connections |
 | `THREADBASE_DATABASE_STATEMENT_TIMEOUT_MS` | No | — | Query timeout in ms |
 
-See [docs/database.md](docs/database.md) for full details on the database configuration.
+See [docs/archive/design-docs/2026-04-24-database-config.md](docs/archive/design-docs/2026-04-24-database-config.md) for the original Postgres configuration reference (now in archive — SQLite is the primary persistence layer; Postgres is dormant).
 
 ## Architecture
 
@@ -233,9 +233,9 @@ pwsh scripts/remote-access/cloudflare.ps1
 
 The script checks `cloudflared` is installed, brings the tunnel up, and verifies the round-trip with a small success page. When you're ready for a persistent hostname (so the QR doesn't break on the next restart), graduate to a named tunnel — see the full guide.
 
-- **Hub:** [docs/remote-access.md](docs/remote-access.md) — concept overview, provider comparison, security baseline
-- **Cloudflare Tunnel:** [docs/remote-access/cloudflare.md](docs/remote-access/cloudflare.md) — quick-tunnel + named-tunnel + Access
-- **Other providers:** [ngrok](docs/remote-access/ngrok.md), [Tailscale Funnel](docs/remote-access/tailscale-funnel.md), [VPS reverse proxy](docs/remote-access/vps-reverse-proxy.md)
+- **Hub:** [docs/guides/remote-access/](docs/guides/remote-access/) — concept overview, provider comparison, security baseline
+- **Cloudflare Tunnel:** [docs/guides/remote-access/cloudflare.md](docs/guides/remote-access/cloudflare.md) — quick-tunnel + named-tunnel + Access
+- **Other providers:** [ngrok](docs/guides/remote-access/ngrok.md), [Tailscale Funnel](docs/guides/remote-access/tailscale-funnel.md), [VPS reverse proxy](docs/guides/remote-access/vps-reverse-proxy.md)
 
 The Claude Code skill `setup-cloudflare-tunnel` runs the same script with prereq checks and named-tunnel guidance.
 

@@ -169,7 +169,7 @@ Homebrew installs the binary into `libexec/`, exposes `tb-streamer` on PATH, and
 
 Pre-releases (`next` channel) are NOT published to the tap. Pre-release users continue to use the GitHub release tarball.
 
-A user can have either the Homebrew install OR the `scripts/deploy.sh` install, not both — both bind port 8766 with different launchd labels. Detection is deferred (see `docs/BACKLOG.md` "Homebrew vs `scripts/deploy.sh` plist collision"). Caveats in the formula warn users.
+A user can have either the Homebrew install OR the `scripts/deploy.sh` install, not both — both bind port 8766 with different launchd labels. Detection is deferred (see `docs/ROADMAP.md` "Homebrew vs `scripts/deploy.sh` plist conflict-check at startup"). Caveats in the formula warn users.
 
 ## Cloudflare Tunnel
 
@@ -187,7 +187,7 @@ The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running 
 
 ## Auto-update
 
-Full guide: [docs/auto-update.md](docs/auto-update.md). Sample config: [docs/update.yaml.example](docs/update.yaml.example). For walking a user through enabling it on a deployed streamer, use the `setup-auto-updater` skill (`.claude/skills/setup-auto-updater/SKILL.md`).
+Full guide: [docs/guides/auto-update.md](docs/guides/auto-update.md). Sample config: [docs/update.yaml.example](docs/update.yaml.example). For walking a user through enabling it on a deployed streamer, use the `setup-auto-updater` skill (`.claude/skills/setup-auto-updater/SKILL.md`).
 
 Three independent triggers, all opt-in via `~/.threadbase/update.yaml`:
 - **Manual:** `threadbase-streamer update [--check | --dry-run | --force | --allow-major | --version <tag>]`
