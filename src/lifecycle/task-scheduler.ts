@@ -54,6 +54,22 @@ export function kickstartAgent(): void {
   ps(`Start-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction Stop`);
 }
 
+/**
+ * Returns the absolute paths to the streamer's stdout/stderr log files.
+ *
+ * NOT YET IMPLEMENTED on Windows. The current scripts/deploy.ps1 generates a
+ * launch.cmd that runs node without redirecting stdout/stderr to any file, so
+ * there is nothing to tail. Wiring this up requires changing launch.cmd to
+ * append to $installDir\logs\{stdout,stderr}.log (matching the macOS layout),
+ * then returning those paths here.
+ */
+export function getLogPaths(): { stdout: string; stderr: string } {
+  throw new Error(
+    "prod logs is not yet wired on Windows — launch.cmd does not currently redirect stdout/stderr to a file. " +
+      "Track the fix in docs/troubleshooting.md.",
+  );
+}
+
 export function getAgentPid(): number | null {
   // Task Scheduler does not expose the running PID directly. WMI is the
   // best-available probe: find node.exe processes whose command line

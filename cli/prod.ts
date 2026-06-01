@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import type { Command } from "commander";
 import { Command as CommanderCommand } from "commander";
 import { TASK_NAME } from "../src/lifecycle/constants";
@@ -74,6 +76,53 @@ export async function runProdDoctor(opts: { fix: boolean }): Promise<DoctorRepor
   return { findings, repairs };
 }
 
+export type LogsOptions = { lines: number; follow: boolean; errorsOnly: boolean };
+export type SpawnTailArgs = { files: string[]; lines: number; follow: boolean };
+export type SpawnTailResult = { ok: boolean; message?: string };
+export type SpawnTail = (args: SpawnTailArgs) => Promise<SpawnTailResult>;
+
+/**
+ * Default tail implementation — spawns `tail` (-F follows files across rotation;
+ * macOS BSD tail and GNU tail both support -F and -n). Streams to the parent's
+ * stdout/stderr and resolves when the child exits.
+ */
+const defaultSpawnTail: SpawnTail = ({ files, lines, follow }) => {
+  const existing = files.filter((f) => existsSync(f));
+  if (existing.length === 0) {
+    return Promise.resolve({
+      ok: false,
+      message: `no log files found at: ${files.join(", ")}. The streamer may not have started yet, or the deploy uses a different log layout.`,
+    });
+  }
+  const args = ["-n", String(lines)];
+  if (follow) args.push("-F");
+  args.push(...existing);
+  return new Promise<SpawnTailResult>((resolve) => {
+    const child = spawn("tail", args, { stdio: ["ignore", "inherit", "inherit"] });
+    child.on("error", (err) => resolve({ ok: false, message: `tail failed: ${err.message}` }));
+    child.on("exit", (code) => resolve({ ok: code === 0 }));
+  });
+};
+
+export async function runProdLogs(
+  opts: LogsOptions,
+  deps: { spawnTail?: SpawnTail } = {},
+): Promise<CommandResult> {
+  const spawnTail = deps.spawnTail ?? defaultSpawnTail;
+  let paths: { stdout: string; stderr: string };
+  try {
+    paths = getSupervisor().getLogPaths();
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
+  const files = opts.errorsOnly ? [paths.stderr] : [paths.stdout, paths.stderr];
+  const result = await spawnTail({ files, lines: opts.lines, follow: opts.follow });
+  if (!result.ok) {
+    return { ok: false, message: result.message ?? "tail exited with non-zero status" };
+  }
+  return { ok: true, message: "" };
+}
+
 export function registerProdCommands(program: Command): void {
   const prod = new CommanderCommand("prod").description(
     "Manage the launchd-supervised prod streamer",
@@ -143,6 +192,25 @@ export function registerProdCommands(program: Command): void {
         for (const fix of r.repairs) log.info(`  - ${fix}`, undefined, "console");
       } else if (!opts.fix && r.findings.length > 0) {
         log.info(`(re-run with --fix to apply repairs)`, undefined, "console");
+      }
+    });
+
+  prod
+    .command("logs")
+    .description("Tail the supervised streamer's stdout + stderr log files")
+    .option("-n, --lines <count>", "Seed with the last N lines (default 50)", "50")
+    .option("--no-follow", "Print last N lines and exit (do not follow)")
+    .option("--errors-only", "Tail only stderr", false)
+    .action(async (opts) => {
+      const lines = Number.parseInt(opts.lines, 10);
+      const r = await runProdLogs({
+        lines: Number.isFinite(lines) && lines > 0 ? lines : 50,
+        follow: opts.follow !== false,
+        errorsOnly: opts.errorsOnly === true,
+      });
+      if (!r.ok) {
+        log.info(r.message, undefined, "console");
+        process.exitCode = 1;
       }
     });
 

@@ -25,7 +25,7 @@ rm ~/.threadbase/cache/cache.db*
 
 ### `Startup cache warm-up failed: FOREIGN KEY constraint failed`
 
-**When:** Recurring warning in `~/.threadbase/logs/threadbase.{log,err}` (or `/tmp/threadbase.{log,err}` on default deploy) at every server start. Logged at level `40` (warn) with `event: cache.warmup_failed`. Streamer continues to serve `/healthz`, the conversation list, and PTY sessions normally — this is non-blocking.
+**When:** Recurring warning in `~/.threadbase/logs/{stdout,stderr}.log` (tail with `tb-streamer prod logs`) at every server start. Logged at level `40` (warn) with `event: cache.warmup_failed`. Streamer continues to serve `/healthz`, the conversation list, and PTY sessions normally — this is non-blocking.
 
 **Symptom example:**
 ```
@@ -518,7 +518,7 @@ The streamer can be supervised by launchd ("prod") or run ad-hoc from a shell ("
 
 ### `better-sqlite3` `ERR_DLOPEN_FAILED` after a Node major upgrade
 
-**When:** Server starts and accepts requests, but `~/.threadbase/logs/stderr.log` (or `/tmp/threadbase.err`) repeats:
+**When:** Server starts and accepts requests, but `~/.threadbase/logs/stderr.log` repeats:
 ```
 ConversationCache failed to open (running without cache):
 The module '…/better-sqlite3/build/Release/better_sqlite3.node' was compiled

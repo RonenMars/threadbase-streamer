@@ -5,9 +5,12 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   bootoutAgent,
   bootstrapAgent,
+  getLogPaths,
   isAgentLoaded,
   kickstartAgent,
 } from "../../src/lifecycle/launchd";
@@ -59,5 +62,22 @@ describe("launchd wrappers", () => {
       ["kickstart", "-k", expect.stringMatching(/^gui\/\d+\/com\.ronen\.threadbase$/)],
       expect.any(Object),
     );
+  });
+
+  describe("getLogPaths", () => {
+    it("defaults to <homedir>/.threadbase/logs/{stdout,stderr}.log", () => {
+      delete process.env.THREADBASE_INSTALL_DIR;
+      const paths = getLogPaths();
+      expect(paths.stdout).toBe(join(homedir(), ".threadbase", "logs", "stdout.log"));
+      expect(paths.stderr).toBe(join(homedir(), ".threadbase", "logs", "stderr.log"));
+    });
+
+    it("honors THREADBASE_INSTALL_DIR override", () => {
+      process.env.THREADBASE_INSTALL_DIR = "/tmp/tb-override";
+      const paths = getLogPaths();
+      expect(paths.stdout).toBe("/tmp/tb-override/logs/stdout.log");
+      expect(paths.stderr).toBe("/tmp/tb-override/logs/stderr.log");
+      delete process.env.THREADBASE_INSTALL_DIR;
+    });
   });
 });

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { LAUNCHD_LABEL } from "./constants";
+import { join } from "node:path";
+import { installDir, LAUNCHD_LABEL } from "./constants";
 
 function uidScope(): string {
   return `gui/${process.getuid?.() ?? 501}`;
@@ -32,6 +33,16 @@ export function bootstrapAgent(plistPath: string): void {
 
 export function kickstartAgent(): void {
   execFileSync("launchctl", ["kickstart", "-k", fullTarget()], { stdio: "ignore" });
+}
+
+/**
+ * Returns the absolute paths to the streamer's stdout/stderr log files. These
+ * match the StandardOutPath / StandardErrorPath written by `scripts/deploy.sh`
+ * into the launchd plist: `$INSTALL_DIR/logs/{stdout,stderr}.log`.
+ */
+export function getLogPaths(): { stdout: string; stderr: string } {
+  const dir = join(installDir(), "logs");
+  return { stdout: join(dir, "stdout.log"), stderr: join(dir, "stderr.log") };
 }
 
 /** Returns the current PID of the supervised agent, or null. */
