@@ -1,0 +1,34 @@
+# fly.toml for the public threadbase-demo deployment.
+#
+# Build context: repo root (one level up from this file). Run:
+#     cd <repo-root> && fly deploy --remote-only -c docker/fly.toml
+# The build = { dockerfile = ... } entry below is relative to the repo root.
+#
+# Secrets and runtime knobs that should not live in source:
+#   - DEMO_API_KEY        (set via `fly secrets set DEMO_API_KEY=…`)
+#   - THREADBASE_PUBLIC_URL (defaults to the assigned hostname; override
+#     only if pointing at a custom domain)
+#
+# Resource notes: 1GB memory for sqlite + PTY + node_modules; auto-stop so
+# the machine sleeps when idle.
+
+app = 'threadbase-demo'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'docker/Dockerfile'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[mounts]]
+  source = 'demo_data'
+  destination = '/data'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
