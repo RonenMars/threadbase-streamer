@@ -28,14 +28,18 @@ cp "$FORMULA_PATH" "$WORK/tap/Formula/tb-streamer.rb"
 
 cd "$WORK/tap"
 
-if git diff --quiet Formula/tb-streamer.rb; then
-  echo "Formula unchanged — nothing to publish for v${VERSION}."
-  exit 0
-fi
-
+# Stage first, then check the staged diff. `git diff --quiet <path>` ignores
+# untracked files (returns 0), so on a fresh tap with no Formula/ directory
+# the script would silently skip the very first publish. Staging promotes
+# the new file into the index so `git diff --cached --quiet` sees it.
 git -c user.name="threadbase-release-bot" \
     -c user.email="release-bot@threadbase.local" \
     add Formula/tb-streamer.rb
+
+if git diff --cached --quiet Formula/tb-streamer.rb; then
+  echo "Formula unchanged — nothing to publish for v${VERSION}."
+  exit 0
+fi
 
 git -c user.name="threadbase-release-bot" \
     -c user.email="release-bot@threadbase.local" \
