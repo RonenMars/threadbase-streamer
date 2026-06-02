@@ -49,3 +49,29 @@ These are internal Claude Code housekeeping records. The streamer extracts `turn
 ## Feature: per-image metadata (`ImageBlock` type)
 
 The streamer currently forwards a `hasImages` boolean per message, which is sufficient for the badge UI in the mobile client. Forward per-image metadata (media type, size, dimensions) when a feature needs more than a yes/no.
+
+---
+
+## Feature: SHA256 integrity check on downloaded menubar artifacts
+
+The deploy downloads `*-universal.dmg` / `*-x86_64.AppImage` / `*-x64.exe` from GitHub Releases and executes them (NSIS `/S`, mount-and-copy, `chmod +x`) with TLS-only assurance. GitHub allows re-uploading release assets — a compromised release would propagate to every deploy. The streamer's own auto-update path (`src/updater`) already verifies SHA256 against a manifest; the menubar fetch does not.
+
+**Approach:** publish a `checksums.txt` (or `<artifact>.sha256`) alongside the menubar release assets in `RonenMars/threadbase-menubar`'s release workflow. Update `scripts/lib/fetch-menubar.{sh,ps1}` to download the checksum file before the artifact and verify before executing. Mirror the manifest-driven verification used by the streamer updater so both flows share a single integrity story.
+
+**Why not now:** threat model today is low — single-maintainer repo, releases are CI-signed, no external contributors. Revisit when the menubar repo accepts outside PRs that touch the release workflow, or when a security review flags it.
+
+---
+
+## Feature: Windows `prod logs` (Task Scheduler redirection)
+
+`tb-streamer prod logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. On Windows, `src/lifecycle/task-scheduler.ts:65-69`'s `getLogPaths()` throws a clear message because `launch.cmd` does not currently redirect stdout/stderr to a file — Task Scheduler has no native redirection.
+
+**Approach:** rewrite `launch.cmd` (or the scheduled task action) to invoke `pwsh.exe -Command "node cli.js serve ... *>> $logDir\stdout.log 2>> $logDir\stderr.log"` so the runtime captures output. Then map `getLogPaths()` on the Task Scheduler backend to those paths. Until that's wired, gate the `prod logs` Commander registration on `process.platform === "darwin"` so `tb-streamer prod --help` on Windows doesn't advertise a feature that always fails.
+
+---
+
+## Improvement: normalize Commander boolean option parsing in `prod logs`
+
+`cli/prod.ts:233-240` uses `opts.follow !== false` / `opts.errorsOnly === true` / `opts.clear === true` to coerce Commander's option output to booleans. The pattern works today because the defaults are typed (`--no-follow` → `false`; `--errors-only` default `false`; `--clear` default `false`), but it is brittle: any future refactor that changes the default to `undefined` silently flips the inverted comparison.
+
+**Approach:** introduce a small normaliser at the action callback boundary — `Boolean(opts.follow ?? true)`, `Boolean(opts.errorsOnly)`, `Boolean(opts.clear)` — or rely on Commander's typed defaults and drop the `!== false` / `=== true` idioms. Picked up on next touch of `registerProdCommands`.

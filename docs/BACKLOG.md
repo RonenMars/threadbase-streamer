@@ -28,3 +28,57 @@ Resume *appears* fresh because `findConversationByUuid` → `scanner.getConversa
 Option **D + A** together is the cleanest: D fixes the root cause (cache no longer drifts) and A makes `/api/conversations` consult the same freshness gate so older mobile clients also benefit. Tests in `__tests__/should-refresh-projects.test.ts` exercise the mtime path with `utimesSync` on the parent dir — they pass but do not catch the real-world child-dir gap, so any fix should add a test that creates a JSONL inside an existing project subdirectory and asserts the next list call surfaces it without `?refresh=1`.
 
 **Workaround for users today:** the mobile client can pass `?refresh=1` (legacy) or `?refreshConversations=1` (project-chats) to force a rescan. Not a fix — just a knob.
+
+---
+
+## Log truncation races with the still-running streamer fd
+
+**Symptom:** After `npm run deploy` or `tb-streamer prod logs --clear`, `~/.threadbase/logs/stdout.log` / `stderr.log` can appear to contain NUL bytes from offset 0..N when `tail`ed, instead of being empty. Subsequent log lines are appended far past the visible end of the file.
+
+**Root cause:** Both code paths truncate the log files via `: > file` (`scripts/deploy.sh:823-831`) / `fs.writeFileSync(file, "")` (`cli/prod.ts:123-144`) while the supervised streamer — and launchd itself, holding `StandardOutPath` / `StandardErrorPath` open — still have file descriptors at offset N. POSIX `truncate(2)` sets the inode size to 0 but does **not** reset any open writer's seek offset. The next `write(2)` from the old streamer (final shutdown line before `kickstart -k` swaps it out, or any line if `--clear` runs against a healthy daemon) lands at offset N and the kernel extends the file as sparse — leaving NUL bytes 0..N that `tail` reads as garbage.
+
+The comment in `runProdLogs` (*"Removing the inode would leave the daemon writing to a ghost file. `: > file` semantics"*) is correct about unlink but wrong about truncate — the kernel-level write offset is per-fd, not per-inode.
+
+**Suggested fix:** Either (a) reorder so the supervised process restarts *first* — `launchctl kickstart -k` opens fresh fds at offset 0 in the new process, so a separate truncate is unnecessary in `cmd_deploy`; for `runProdLogs --clear`, do `kickstart -k` *after* the truncate so the daemon reopens — or (b) send SIGUSR1/SIGHUP to the supervised process and have it reopen its log fds in-process. Tests should reproduce by writing N bytes, opening a tail fd, truncating, then writing one more byte and asserting the visible file size matches the expected post-truncate state.
+
+---
+
+## Busy-wait CPU spin in `bootoutAgent`
+
+**Symptom:** `tb-streamer prod restart` (and the dev-takeover path) pegs a full CPU core for up to 2 seconds while launchd tears down the agent.
+
+**Root cause:** `src/lifecycle/launchd.ts:33-43` polls `isAgentLoaded()` (which spawns `launchctl print`) on a 50 ms cadence — but the inter-poll wait is a tight `while (Date.now() < wake) { /* spin */ }` loop, not a sleep. With the default 2 s deadline that's up to 40 iterations of 50 ms hot-spinning. The justification comment (*"Atomics.wait would need a SharedArrayBuffer; spawnSync('sleep') is expensive"*) is misleading — `execFileSync("sleep", ["0.05"])` is ~1 ms of fork/exec overhead, dramatically cheaper than 50 ms of pegged CPU.
+
+**Suggested fix:** Replace the inner `while` with `execFileSync("sleep", ["0.05"], { stdio: "ignore" })`, or use `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50)` to stay in-process. Either is orders of magnitude cheaper than the spin.
+
+---
+
+## `bootstrapAgent` false-positive on exit-5 + empty stderr
+
+**Symptom:** Rare — `tb-streamer prod restart` reports success even though the new build is not actually loaded (the old / stale agent is). Hard to spot without `prod doctor`.
+
+**Root cause:** `src/lifecycle/launchd.ts:67-68` accepts `exit 5 + empty stderr` as success whenever `isAgentLoaded()` returns true. But `isAgentLoaded()` only confirms *something* with label `LAUNCHD_LABEL` is loaded — it does not check that the plist on disk matches what's running. If a stale incarnation is loaded and `launchctl bootstrap` fails with exit 5 / empty stderr for an unrelated reason (e.g. malformed new plist on a newer launchctl), this branch swallows the failure.
+
+In practice `prod restart` calls `bootoutAgent` first (which now polls), so the loaded state is empty by the time `bootstrapAgent` runs and this branch is unreachable on the happy path. The regression risk exists for any standalone caller.
+
+**Suggested fix:** Tighten the empty-stderr fallback to require that bootout was *just* run (caller-provided flag), or fall through to throw in the standalone case. At minimum, downgrade the comment from "most often the same case" to acknowledge the false-positive risk and recommend `prod doctor` for verification.
+
+---
+
+## `--clear` truncate failure leaves stdout cleared but stderr not
+
+**Symptom:** `tb-streamer prod logs --clear` reports `failed to truncate <stderr>: EACCES` (or similar) but `stdout.log` has already been wiped. Recovery requires re-running after fixing perms with stdout already empty.
+
+**Root cause:** `cli/prod.ts:134-143` loops `for (const f of [paths.stdout, paths.stderr])` and returns the first error, with no rollback. POSIX has no atomic two-file truncate.
+
+**Suggested fix:** Best-effort both files and report a combined success/failure message — e.g. *"cleared stdout; failed to truncate stderr: EACCES"* — so the user knows the partial state instead of assuming nothing happened.
+
+---
+
+## `_menubar_resolve_asset_url` swallows GitHub API errors as a "no match"
+
+**Symptom:** `npm run deploy` logs *"no matching menubar release for $sha — building locally"* even when a release exists, because a transient GitHub API failure (rate-limited tag-ref resolution, intermittent 5xx) silently dropped the match. User can't tell network from genuinely-missing-release without re-running.
+
+**Root cause:** `scripts/lib/fetch-menubar.sh:67-79` runs an inline node script whose `releaseSha()` catches all errors and returns `""`, which the bash layer treats as "no match" (`return 2` → local-build fallback). The PowerShell equivalent appends per-tag errors to the log file; the bash side does not.
+
+**Suggested fix:** Mirror the PowerShell behaviour — accept a `LOG_PATH` env var in the bash helper and append individual tag-ref failures so the local-build fallback is diagnosable after the fact.
