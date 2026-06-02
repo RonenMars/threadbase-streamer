@@ -27,6 +27,12 @@ class TbStreamer < Formula
   def install
     libexec.install Dir["*"]
 
+    # Stamp the runtime version next to dist/cli.cjs so getVersion() reports
+    # the formula's version (not whatever package.json says inside the tarball,
+    # which is frozen at the previous release because semantic-release bumps
+    # the version after the matrix has already packed the artifacts).
+    (libexec/"dist/version.txt").write("#{version}+brew\n")
+
     # All native deps that dist/cli.cjs requires at runtime (node-pty and
     # better-sqlite3) are pre-bundled in the tarball under node_modules/,
     # already built for this arch. No npm install needed.

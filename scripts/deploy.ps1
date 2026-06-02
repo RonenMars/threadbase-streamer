@@ -380,6 +380,17 @@ function Invoke-Activate {
   Copy-Item -Path $src -Destination $tmp -Force
   Move-Item -Path $tmp -Destination $activeFile -Force
 
+  # Install the matching version.txt next to cli.js so getVersion() picks up
+  # the activated build (not whichever was activated previously).
+  $sidecar = Join-Path $releasesDir "$RelFilename.version"
+  $versionFile = Join-Path $installDir 'version.txt'
+  if (Test-Path $sidecar) {
+    Copy-Item -Path $sidecar -Destination $versionFile -Force
+  } else {
+    # Rolling back to a release that pre-dates version.txt stamping.
+    Set-Content -Path $versionFile -Value "unknown+$RelFilename" -Encoding ASCII
+  }
+
   $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   Add-Content -Path $historyFile -Value "$stamp $relPath"
 }
@@ -512,6 +523,12 @@ function Invoke-Deploy {
 
     Write-Log "stamping release: $relFilename"
     Copy-Item -Path (Join-Path $repoRoot 'dist\cli.cjs') -Destination (Join-Path $releasesDir $relFilename) -Force
+
+    # version.txt sidecar; Invoke-Activate copies it to $installDir\version.txt.
+    $pkgVersion = (& node -p 'require("./package.json").version').Trim()
+    $versionLine = "$pkgVersion+$sha"
+    Set-Content -Path (Join-Path $releasesDir "$relFilename.version") -Value $versionLine -NoNewline:$false -Encoding ASCII
+
     # On Windows, cli.js is a real file at $installDir so __dirname = $installDir.
     # Copy both migration trees to the install root (not releases/) so the CJS bundle finds them.
     # - migrations/    — SQLite (ConversationCache.open(); always required)

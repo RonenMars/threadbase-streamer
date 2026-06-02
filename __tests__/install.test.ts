@@ -67,6 +67,10 @@ vi.mock("../src/updater/unpack", () => ({
   unpackTarball: vi.fn(async () => undefined),
 }));
 
+vi.mock("../src/updater/stamp-version", () => ({
+  stampVersionTxt: vi.fn(),
+}));
+
 vi.mock("../src/updater/swap", () => ({
   ensureReleasesDir: vi.fn(),
   swapCurrent: vi.fn(),

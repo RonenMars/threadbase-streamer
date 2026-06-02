@@ -34,6 +34,10 @@ describe("build-formula.mjs", () => {
     expect(rendered).toContain("threadbase-streamer-9.9.9-darwin-arm64.tgz");
     expect(rendered).toContain("threadbase-streamer-9.9.9-darwin-x64.tgz");
     expect(rendered).toContain("threadbase-streamer-9.9.9-linux-x64.tgz");
+    // The install block stamps runtime version.txt — formula assumes "version"
+    // resolves to "9.9.9" at install time.
+    expect(rendered).toContain('(libexec/"dist/version.txt").write');
+    expect(rendered).toContain("#{version}+brew");
     expect(rendered).not.toContain("{{");
 
     const armSha = createHash("sha256").update("ARM_BODY").digest("hex");

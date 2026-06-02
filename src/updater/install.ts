@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { stampVersionTxt } from "./stamp-version";
 import type { UpdateConfig } from "../schemas/updateConfig.schema";
 import { countActiveSessions } from "./active-sessions";
 import { checkForUpdate } from "./check-update";
@@ -120,6 +121,7 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
 
   const destDir = releaseDir(targetVersion);
   await unpackTarball({ tarballPath, destDir });
+  stampVersionTxt(destDir, targetVersion);
 
   // On Windows the streamer process holds open handles inside
   // ~/.threadbase/current/, which makes the directory replace inside

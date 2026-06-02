@@ -5,6 +5,7 @@ import type { IncomingMessage } from "http";
 import { hostname } from "os";
 import { loadUpdateConfig } from "../../config/update-config";
 import { getLogger } from "../../logger";
+import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
 
@@ -61,7 +62,7 @@ export const createMiscRoutes = (
   app.get("/api/info", (c) => {
     const ptyIds = deps.ptyAttachedIds();
     return c.json({
-      version: __VERSION__,
+      version: getVersion(),
       machineName: hostname(),
       platform: process.platform,
       activeSessions: deps.sessionStore.list(ptyIds).filter((s) => s.status === "running").length,

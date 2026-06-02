@@ -358,6 +358,13 @@ cmd_rollback() {
 activate_release() {
   local rel_path="$1"
   ( cd "$INSTALL_DIR" && ln -sf "$rel_path" cli.js.new && mv -f cli.js.new cli.js )
+  local sidecar="$INSTALL_DIR/${rel_path}.version"
+  if [[ -f "$sidecar" ]]; then
+    cp "$sidecar" "$INSTALL_DIR/version.txt"
+  else
+    # Rolling back to a pre-stamping release. See deploy.sh for context.
+    printf 'unknown+%s\n' "${rel_path##*/}" > "$INSTALL_DIR/version.txt"
+  fi
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rel_path" >> "$HISTORY_FILE"
 }
 
@@ -398,6 +405,12 @@ cmd_deploy() {
   log "stamping release: $rel_filename"
   cp dist/cli.cjs "$RELEASES_DIR/$rel_filename"
   chmod +x "$RELEASES_DIR/$rel_filename"
+
+  # version.txt sidecar; activate_release copies it to $INSTALL_DIR/version.txt.
+  local pkg_version
+  pkg_version="$(node -p 'require("./package.json").version')"
+  printf '%s+%s\n' "$pkg_version" "$sha" > "$RELEASES_DIR/${rel_filename}.version"
+
   # Copy migrations alongside CLI so __dirname resolution works at runtime.
   # - migrations/    — SQLite (ConversationCache.open(); always required)
   # - pg-migrations/ — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the

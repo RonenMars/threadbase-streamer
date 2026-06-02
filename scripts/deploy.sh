@@ -720,9 +720,21 @@ cmd_rollback() {
 }
 
 # Atomically replace $ACTIVE_LINK with a symlink to $1 (relative to $INSTALL_DIR).
+# Also installs the matching version.txt next to the symlink so the running
+# CLI's getVersion() reports the activated build (not the previously activated
+# one). The sidecar is written per-release by cmd_deploy below.
 activate_release() {
   local rel_path="$1"
   ( cd "$INSTALL_DIR" && ln -sf "$rel_path" cli.js.new && mv -f cli.js.new cli.js )
+  local sidecar="$INSTALL_DIR/${rel_path}.version"
+  if [[ -f "$sidecar" ]]; then
+    cp "$sidecar" "$INSTALL_DIR/version.txt"
+  else
+    # Rolling back to a release that pre-dates version.txt stamping. Drop a
+    # placeholder so the CLI doesn't fall back to package.json (which may now
+    # report a newer version after a subsequent deploy bumped it).
+    printf 'unknown+%s\n' "${rel_path##*/}" > "$INSTALL_DIR/version.txt"
+  fi
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rel_path" >> "$HISTORY_FILE"
 }
 
@@ -783,6 +795,14 @@ cmd_deploy() {
   log "stamping release: $rel_filename"
   cp dist/cli.cjs "$RELEASES_DIR/$rel_filename"
   chmod +x "$RELEASES_DIR/$rel_filename"
+
+  # Sidecar that activate_release will copy to $INSTALL_DIR/version.txt. We write
+  # it now (alongside the per-release cli.<sha>.cjs) rather than in
+  # activate_release so rollbacks can use the historical version string instead
+  # of the current package.json + sha.
+  local pkg_version
+  pkg_version="$(node -p 'require("./package.json").version')"
+  printf '%s+%s\n' "$pkg_version" "$sha" > "$RELEASES_DIR/${rel_filename}.version"
 
   # Copy the launchd shim alongside the active cli.js. The plist always
   # references $INSTALL_DIR/launchd-entry.cjs (no per-release versioning —
