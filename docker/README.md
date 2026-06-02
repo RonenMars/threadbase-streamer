@@ -44,7 +44,7 @@ From the **repo root** (not `docker/`):
 
 ```bash
 git submodule update --init --recursive  # vendor/scanner must be present
-fly deploy --remote-only -c docker/fly.toml
+fly deploy --remote-only
 ```
 
 The Dockerfile builds `tb-streamer` from the current branch's source via `npm ci && npm run build`, so the deployed streamer always reflects the working tree.
@@ -53,7 +53,7 @@ The Dockerfile builds `tb-streamer` from the current branch's source via `npm ci
 
 ```bash
 fly volumes create demo_data --region iad --size 1
-fly deploy --remote-only -c docker/fly.toml
+fly deploy --remote-only
 ```
 
 ### Reset reviewer state back to baked seed
@@ -63,7 +63,7 @@ The Fly volume persists state across deploys, so reviewer pokes (renames, starte
 ```bash
 fly volumes destroy demo_data
 fly volumes create demo_data --region iad --size 1
-fly deploy --remote-only -c docker/fly.toml
+fly deploy --remote-only
 ```
 
 ## Pair an iOS / web client against it
@@ -74,6 +74,27 @@ fly deploy --remote-only -c docker/fly.toml
 | API key | `tb_public_demo_reviewer_key` |
 
 The `tb-mobile` repo's `e2e/setup-demo.yaml` Maestro flow already uses these values.
+
+## Auth model
+
+`tb_public_demo_reviewer_key` is **not a secret**. It is the public Bearer credential for the public demo container, the same way `username: guest, password: guest` is the public credential for a kiosk login. Anything it unlocks is also public by design:
+
+- The three hand-written fixture conversations under `demo-data/`
+- The `claude-code-stub` script's canned terminal output
+- The list/rename/resume affordances of a streamer with no real model behind it
+
+The container holds **no Anthropic API key**, no real conversation history, and no user data. There is nothing to leak because there is nothing of value behind the auth wall.
+
+The key lives directly in `docker/entrypoint.sh` (and in `e2e/setup-demo.yaml` in the tb-mobile repo) so the deploy is reproducible from a fresh clone with no out-of-band setup. If you want to rotate it for any reason:
+
+```bash
+fly secrets set DEMO_API_KEY=<new-value> -a threadbase-demo
+fly deploy --remote-only
+```
+
+The entrypoint already reads `DEMO_API_KEY` from the environment first and falls back to the in-source default only when unset.
+
+**This is the only credential in source. Real production tb-streamer installs on a user's machine generate a random `api_key` on first launch (see `src/auth.ts:loadOrCreateApiKey`) and never check it in.**
 
 ## Capabilities (and known boundaries)
 

@@ -1,8 +1,10 @@
 # fly.toml for the public threadbase-demo deployment.
 #
-# Build context: repo root (one level up from this file). Run:
-#     cd <repo-root> && fly deploy --remote-only -c docker/fly.toml
-# The build = { dockerfile = ... } entry below is relative to the repo root.
+# Lives at the repo root because Fly resolves [build].dockerfile relative to
+# this file's directory. Build context = repo root, so docker/Dockerfile can
+# COPY src/, package.json, vendor/, etc.
+#
+# Deploy from the repo root: `fly deploy --remote-only`.
 #
 # Secrets and runtime knobs that should not live in source:
 #   - DEMO_API_KEY        (set via `fly secrets set DEMO_API_KEY=…`)
