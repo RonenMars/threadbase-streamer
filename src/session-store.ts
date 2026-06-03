@@ -1,3 +1,4 @@
+import { createProgressDedupeLRU } from "./agent/dedupe";
 import type {
   DiscoveredProcess,
   ManagedSession,
@@ -15,6 +16,17 @@ export class SessionStore {
 
   addManaged(session: ManagedSession): void {
     this.managed.set(session.id, session);
+  }
+
+  /**
+   * Multi-agent mode only. Attach a dedupe LRU to a session record. Idempotent —
+   * calling twice keeps the existing LRU (and its contents).
+   */
+  initAgentSession(sessionId: string, dedupeCapacity: number): void {
+    const session = this.managed.get(sessionId);
+    if (!session) return;
+    if (session.progressDedupeIds) return;
+    session.progressDedupeIds = createProgressDedupeLRU(dedupeCapacity);
   }
 
   updateManaged(sessionId: string, updates: Partial<ManagedSession>): ManagedSession | null {
