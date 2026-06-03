@@ -25,7 +25,14 @@ jobs:
     name: Precheck
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # semantic-release --dry-run probes push access via verifyConditions
+      # (git push --dry-run). With contents:read that probe fails with
+      # EGITNOPERMISSION before commit-analyzer runs, so the "next release
+      # version" line is never printed and the precheck false-negatives
+      # as "no release-worthy commits". contents:write makes the probe
+      # pass; nothing is actually pushed because @semantic-release/git
+      # is no longer in the plugin list.
+      contents: write
     outputs:
       should_release: ${{ steps.precheck.outputs.should_release }}
       next_version: ${{ steps.precheck.outputs.next_version }}
