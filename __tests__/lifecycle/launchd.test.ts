@@ -75,8 +75,10 @@ describe("launchd wrappers", () => {
     it("honors THREADBASE_INSTALL_DIR override", () => {
       process.env.THREADBASE_INSTALL_DIR = "/tmp/tb-override";
       const paths = getLogPaths();
-      expect(paths.stdout).toBe("/tmp/tb-override/logs/stdout.log");
-      expect(paths.stderr).toBe("/tmp/tb-override/logs/stderr.log");
+      // join() so the expectation matches the platform separator (getLogPaths
+      // builds the path with path.join), consistent with the sibling test above.
+      expect(paths.stdout).toBe(join("/tmp/tb-override", "logs", "stdout.log"));
+      expect(paths.stderr).toBe(join("/tmp/tb-override", "logs", "stderr.log"));
       delete process.env.THREADBASE_INSTALL_DIR;
     });
   });

@@ -35,7 +35,10 @@ ${args.helper} '${args.cliPath}'
   }
 }
 
-describe("install-shim.sh idempotency check", () => {
+// Unix-only: sources install-shim.sh under bash and creates symlinks. On
+// Windows symlinkSync needs admin/Developer Mode (EPERM) and the shim mechanism
+// is .cmd wrappers, not symlinks — so this bash-script behavior doesn't apply.
+describe.skipIf(process.platform === "win32")("install-shim.sh idempotency check", () => {
   let workDir: string;
   let cliPath: string;
   let binDir: string;

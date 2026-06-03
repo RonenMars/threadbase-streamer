@@ -18,3 +18,19 @@ scripts/remote-access/tui/tui
 # /api/sessions/<id>/files endpoint and are referenced by absolute path in the
 # JSONL. Local-only state; never shared.
 .threadbase-uploads/
+
+# Belt-and-suspenders for the public flip — nothing tracked today matches any
+# of these, but listing them prevents accidental `git add .` of:
+#
+# - menubar-signing.env: Apple Developer ID + App Store Connect API key vars
+#   sourced by scripts/deploy.sh during a signed menubar build. Lives at
+#   ~/.threadbase/menubar-signing.env in normal use; only here in case a
+#   developer copies it into the repo root for testing.
+# - *.p12 / *.pem: signing certs and private keys (Apple Developer ID,
+#   Cloudflare client certs, anything else). Never belongs in version control.
+# - releases/: matches ~/.threadbase/releases/ if the install dir is ever
+#   symlinked into the repo root for inspection.
+menubar-signing.env
+*.p12
+*.pem
+releases/

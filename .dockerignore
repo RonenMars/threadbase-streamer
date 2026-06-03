@@ -1,0 +1,42 @@
+# Trim the build context uploaded to the Docker / Fly remote builder.
+# The Dockerfile selectively COPYs only what it needs from the build context;
+# this file makes sure we don't waste bandwidth uploading caches, build
+# artifacts, and editor state.
+
+.git
+.github
+.husky
+.vscode
+.idea
+.claude
+.worktrees
+.remember
+.threadbase-uploads
+
+# Build outputs (the Dockerfile rebuilds them inside the builder stage)
+dist
+node_modules
+**/node_modules
+coverage
+.tsbuildinfo
+
+# Tests + fixtures (the streamer's own tests, not the docker image's runtime)
+__tests__
+__fixtures__
+
+# Editor / OS noise
+*.swp
+.DS_Store
+*.log
+
+# Workflow + docs files that don't affect the runtime
+.github
+docs
+*.md
+!docker/README.md
+
+# But keep:
+# - src/, cli/, scripts/, patches/, vendor/, package.json, package-lock.json,
+#   tsup.config.ts, tsconfig.json, biome.json (the Dockerfile COPYs these)
+# - demo-data/ (Dockerfile COPYs into /seed)
+# - docker/ itself (Dockerfile + entrypoint + claude-code-stub + fly.toml)

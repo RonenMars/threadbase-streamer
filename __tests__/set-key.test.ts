@@ -6,13 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let homeDir: string;
 let configFile: string;
 let originalHome: string | undefined;
+let originalUserProfile: string | undefined;
 let runSetKey: typeof import("../cli/setKey").runSetKey;
 
 beforeEach(async () => {
   homeDir = mkdtempSync(join(tmpdir(), "tb-setkey-"));
   configFile = join(homeDir, ".threadbase", "server.yaml");
   originalHome = process.env.HOME;
+  originalUserProfile = process.env.USERPROFILE;
   process.env.HOME = homeDir;
+  // os.homedir() reads USERPROFILE on Windows (HOME is ignored). Without this
+  // the sandbox leaks and setApiKey writes to the REAL ~/.threadbase/server.yaml.
+  process.env.USERPROFILE = homeDir;
   vi.resetModules();
   ({ runSetKey } = await import("../cli/setKey"));
 });
@@ -20,6 +25,8 @@ beforeEach(async () => {
 afterEach(() => {
   if (originalHome !== undefined) process.env.HOME = originalHome;
   else delete process.env.HOME;
+  if (originalUserProfile !== undefined) process.env.USERPROFILE = originalUserProfile;
+  else delete process.env.USERPROFILE;
 });
 
 describe("runSetKey", () => {
