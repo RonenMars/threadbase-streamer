@@ -9,34 +9,34 @@
 // deferred — see tb-multi-agent docs/plans/postgres-dedupe.md.
 
 export interface ProgressDedupeLRU {
-	hasSeen(eventId: string): boolean;
-	readonly size: number;
+  hasSeen(eventId: string): boolean;
+  readonly size: number;
 }
 
 export function createProgressDedupeLRU(capacity: number): ProgressDedupeLRU {
-	if (!Number.isFinite(capacity) || capacity < 1) {
-		throw new Error(`dedupe LRU capacity must be >= 1, got ${capacity}`);
-	}
-	const map = new Map<string, true>();
+  if (!Number.isFinite(capacity) || capacity < 1) {
+    throw new Error(`dedupe LRU capacity must be >= 1, got ${capacity}`);
+  }
+  const map = new Map<string, true>();
 
-	return {
-		hasSeen(eventId: string): boolean {
-			if (map.has(eventId)) {
-				// Refresh recency: remove + reinsert moves to most-recent position.
-				map.delete(eventId);
-				map.set(eventId, true);
-				return true;
-			}
-			map.set(eventId, true);
-			if (map.size > capacity) {
-				// Evict the oldest entry (the first key in insertion order).
-				const oldest = map.keys().next().value;
-				if (oldest !== undefined) map.delete(oldest);
-			}
-			return false;
-		},
-		get size(): number {
-			return map.size;
-		},
-	};
+  return {
+    hasSeen(eventId: string): boolean {
+      if (map.has(eventId)) {
+        // Refresh recency: remove + reinsert moves to most-recent position.
+        map.delete(eventId);
+        map.set(eventId, true);
+        return true;
+      }
+      map.set(eventId, true);
+      if (map.size > capacity) {
+        // Evict the oldest entry (the first key in insertion order).
+        const oldest = map.keys().next().value;
+        if (oldest !== undefined) map.delete(oldest);
+      }
+      return false;
+    },
+    get size(): number {
+      return map.size;
+    },
+  };
 }

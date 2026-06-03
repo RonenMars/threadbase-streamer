@@ -17,64 +17,53 @@ import type { UserInputSignal } from "@threadbase/agent-types";
 //
 // Same identifiers as tb-multi-agent's src/workflows/signals.ts.
 const userInputSignal = { type: "signal", name: "userInput" } as unknown as {
-	type: "signal";
-	name: "userInput";
+  type: "signal";
+  name: "userInput";
 };
 const stageQuery = { type: "query", name: "stage" } as unknown as {
-	type: "query";
-	name: "stage";
+  type: "query";
+  name: "stage";
 };
 
 const ORCHESTRATOR_WORKFLOW_TYPE = "orchestratorWorkflow";
 
 export interface AgentClient {
-	startSession(sessionId: string): Promise<string>;
-	sendUserInput(sessionId: string, payload: UserInputSignal): Promise<void>;
-	endSession(sessionId: string): Promise<void>;
-	getSessionStage(sessionId: string): Promise<string>;
+  startSession(sessionId: string): Promise<string>;
+  sendUserInput(sessionId: string, payload: UserInputSignal): Promise<void>;
+  endSession(sessionId: string): Promise<void>;
+  getSessionStage(sessionId: string): Promise<string>;
 }
 
 export interface AgentClientOpts {
-	temporalClient: Client;
-	taskQueue: string;
+  temporalClient: Client;
+  taskQueue: string;
 }
 
 const sessionWorkflowId = (sessionId: string): string => `session-${sessionId}`;
 
-export function createAgentClient({
-	temporalClient,
-	taskQueue,
-}: AgentClientOpts): AgentClient {
-	return {
-		async startSession(sessionId: string): Promise<string> {
-			const handle = await temporalClient.workflow.start(
-				ORCHESTRATOR_WORKFLOW_TYPE,
-				{
-					taskQueue,
-					workflowId: sessionWorkflowId(sessionId),
-					args: [sessionId],
-					workflowIdReusePolicy: "REJECT_DUPLICATE",
-				} as any,
-			);
-			return handle.workflowId;
-		},
-		async sendUserInput(
-			sessionId: string,
-			payload: UserInputSignal,
-		): Promise<void> {
-			await temporalClient.workflow
-				.getHandle(sessionWorkflowId(sessionId))
-				.signal(userInputSignal as any, payload);
-		},
-		async endSession(sessionId: string): Promise<void> {
-			await temporalClient.workflow
-				.getHandle(sessionWorkflowId(sessionId))
-				.cancel();
-		},
-		async getSessionStage(sessionId: string): Promise<string> {
-			return temporalClient.workflow
-				.getHandle(sessionWorkflowId(sessionId))
-				.query(stageQuery as any);
-		},
-	};
+export function createAgentClient({ temporalClient, taskQueue }: AgentClientOpts): AgentClient {
+  return {
+    async startSession(sessionId: string): Promise<string> {
+      const handle = await temporalClient.workflow.start(ORCHESTRATOR_WORKFLOW_TYPE, {
+        taskQueue,
+        workflowId: sessionWorkflowId(sessionId),
+        args: [sessionId],
+        workflowIdReusePolicy: "REJECT_DUPLICATE",
+      } as any);
+      return handle.workflowId;
+    },
+    async sendUserInput(sessionId: string, payload: UserInputSignal): Promise<void> {
+      await temporalClient.workflow
+        .getHandle(sessionWorkflowId(sessionId))
+        .signal(userInputSignal as any, payload);
+    },
+    async endSession(sessionId: string): Promise<void> {
+      await temporalClient.workflow.getHandle(sessionWorkflowId(sessionId)).cancel();
+    },
+    async getSessionStage(sessionId: string): Promise<string> {
+      return temporalClient.workflow
+        .getHandle(sessionWorkflowId(sessionId))
+        .query(stageQuery as any);
+    },
+  };
 }

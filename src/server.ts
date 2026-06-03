@@ -1,5 +1,5 @@
 import { createNodeWebSocket } from "@hono/node-ws";
-import { Client as TemporalClient, Connection } from "@temporalio/client";
+import { Connection, Client as TemporalClient } from "@temporalio/client";
 import {
   applyIncludeFilter,
   applyPagination,
@@ -20,10 +20,7 @@ import { dirname, join } from "path";
 import type { WebSocket } from "ws";
 import { type AgentClient, createAgentClient } from "./agent/agent-client";
 import { type AgentConfig, readAgentConfig } from "./agent/agent-config";
-import {
-  type ConversationWriter,
-  createConversationWriter,
-} from "./agent/conversation-writer";
+import { type ConversationWriter, createConversationWriter } from "./agent/conversation-writer";
 import { type AppEnv, createHonoApp } from "./api/app";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { createWsRoutes } from "./api/routes/ws.routes";
@@ -235,8 +232,7 @@ export class StreamerServer {
       // JSONL goes next to (not inside) the SQLite cacheDir, mirroring the
       // existing convention: ~/.threadbase/conversations/.
       const conversationsBaseDir =
-        agentConfig.conversationsDir ||
-        join(dirname(this.cacheDir), "conversations");
+        agentConfig.conversationsDir || join(dirname(this.cacheDir), "conversations");
       conversationWriter = createConversationWriter({
         baseDir: conversationsBaseDir,
       });

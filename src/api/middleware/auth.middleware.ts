@@ -23,8 +23,7 @@ export const authMiddleware =
     const method = c.req.method;
     const isPublicPostPath =
       method === "POST" &&
-      (PUBLIC_POST_PATHS.has(path) ||
-        PUBLIC_POST_PREFIXES.some((p) => path.startsWith(p)));
+      (PUBLIC_POST_PATHS.has(path) || PUBLIC_POST_PREFIXES.some((p) => path.startsWith(p)));
     if (PUBLIC_PATHS.has(path) || isPublicPostPath) {
       await next();
       return;
