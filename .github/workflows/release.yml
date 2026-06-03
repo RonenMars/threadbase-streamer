@@ -6,13 +6,71 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Run semantic-release (tag + GitHub Release). When false, only the build matrix runs — use for dry-run CI validation on a feature branch."
+        description: "Run semantic-release (tag + GitHub Release). When false, only the precheck runs — use for dry-run CI validation on a feature branch."
         type: boolean
         default: false
 
 jobs:
+  # Quick (~30s) sanity check before we burn the matrix. Runs semantic-release
+  # in dry-run mode to decide whether a release would happen at all. If not,
+  # we short-circuit and don't pay for the four-arch native build.
+  #
+  # The build matrix and the real release both gate on `should_release`. On
+  # push, this means a commit with no `feat:`/`fix:` etc. lands with zero CI
+  # cost beyond this job. On workflow_dispatch with publish=false, the precheck
+  # runs (useful for validating workflow changes) but neither build nor publish
+  # follows — same shape as the old `if: github.event_name == 'push' || ...`
+  # gate, just expressed at job granularity instead of step granularity.
+  release-precheck:
+    name: Precheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should_release: ${{ steps.precheck.outputs.should_release }}
+      next_version: ${{ steps.precheck.outputs.next_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Dry-run semantic-release
+        id: precheck
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # We only need commit-analyzer's verdict; semantic-release prints
+        # "The next release version is X" before the prepare phase runs.
+        # The prepare plugin (`@semantic-release/exec` invoking
+        # build-manifest.mjs) WILL fail in dry-run because release-artifacts/
+        # is empty — but the line we care about has already been emitted by
+        # then, so we deliberately swallow the exit code and grep stdout.
+        run: |
+          set -uo pipefail
+          npx semantic-release --dry-run 2>&1 | tee /tmp/sr.log || true
+          if grep -qE 'The next release version is ' /tmp/sr.log; then
+            VERSION=$(grep -E 'The next release version is ' /tmp/sr.log | tail -n1 | sed -E 's/.*The next release version is ([0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?).*/\1/')
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "next_version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "✅ Would release v$VERSION"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "next_version=" >> "$GITHUB_OUTPUT"
+            echo "ℹ️  No release-worthy commits — skipping build + publish."
+          fi
+
   build:
     name: Build ${{ matrix.target }}
+    needs: release-precheck
+    if: needs.release-precheck.outputs.should_release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +103,18 @@ jobs:
       - name: Build streamer
         run: npm run build
 
+      - name: Verify dist contains cli.cjs
+        # Defense against a recurrence of the v1.2.0 silent-failure mode where
+        # the published artifacts were missing/wrong. If tsup ever ships a
+        # broken cli.cjs (zero-byte, missing entry, etc.) we want this job to
+        # turn red here rather than ship a broken tarball.
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/cli.cjs
+          # cli.cjs must be self-executable (has a shebang).
+          head -c 16 dist/cli.cjs | grep -q '^#!'
+
       - name: Pack platform tarball
         run: node scripts/pack-platform.mjs --out release-artifacts
 
@@ -57,11 +127,16 @@ jobs:
 
   release:
     name: Release
-    needs: build
-    # Run on push to main/next, or when workflow_dispatch was invoked with
-    # publish=true. Manual runs default to publish=false so CI can be
-    # exercised on a feature branch without tagging a release.
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)
+    needs: [release-precheck, build]
+    # Only publish on push events with a release-worthy commit, or on a
+    # workflow_dispatch that explicitly asked to publish. The precheck already
+    # gates the build matrix; this second check protects against someone
+    # running workflow_dispatch with publish=false and a release-worthy commit
+    # on the branch (which would still skip the publish step but allow the
+    # build to run for sanity).
+    if: |
+      needs.release-precheck.outputs.should_release == 'true' &&
+      (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-latest
     permissions:
       contents: write

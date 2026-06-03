@@ -8,6 +8,7 @@ import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
+import { getVersion } from "../src/version";
 import { registerProdCommands } from "./prod";
 
 const log = getLogger("cli");
@@ -17,7 +18,7 @@ const program = new Command();
 program
   .name("threadbase-streamer")
   .description("PTY session management, WebSocket streaming, and REST API server for Claude Code")
-  .version(__VERSION__);
+  .version(getVersion());
 
 program
   .command("serve")
@@ -89,7 +90,10 @@ program
 
     await server.listen(resolvedPort);
 
-    log.info(`Threadbase Streamer v${__VERSION__}`, { version: __VERSION__, port: resolvedPort });
+    {
+      const v = getVersion();
+      log.info(`Threadbase Streamer v${v}`, { version: v, port: resolvedPort });
+    }
     log.info(`Listening on http://localhost:${resolvedPort}`, {
       url: `http://localhost:${resolvedPort}`,
     });
@@ -227,7 +231,7 @@ program
     try {
       if (opts.check) {
         const result = await checkForUpdate({
-          currentVersion: __VERSION__,
+          currentVersion: getVersion(),
           config: cfg,
           pinnedVersion: opts.version,
           allowMajor: opts.allowMajor,
@@ -244,7 +248,7 @@ program
       const apiKey = loadOrCreateApiKey();
 
       const result = await runInstall({
-        currentVersion: __VERSION__,
+        currentVersion: getVersion(),
         config: cfg,
         pinnedVersion: opts.version,
         allowMajor: opts.allowMajor,

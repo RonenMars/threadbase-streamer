@@ -7,6 +7,7 @@ import { fetchLatestRelease, fetchReleaseByTag } from "./github-releases";
 import { pickArtifact } from "./manifest";
 import { DOWNLOAD_DIR, downloadPath, releaseDir } from "./paths";
 import { restartService, stopService } from "./restart";
+import { stampVersionTxt } from "./stamp-version";
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "./swap";
 import { unpackTarball } from "./unpack";
 
@@ -120,6 +121,7 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
 
   const destDir = releaseDir(targetVersion);
   await unpackTarball({ tarballPath, destDir });
+  stampVersionTxt(destDir, targetVersion);
 
   // On Windows the streamer process holds open handles inside
   // ~/.threadbase/current/, which makes the directory replace inside
