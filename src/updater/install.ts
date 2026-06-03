@@ -1,5 +1,4 @@
 import { mkdirSync } from "node:fs";
-import { stampVersionTxt } from "./stamp-version";
 import type { UpdateConfig } from "../schemas/updateConfig.schema";
 import { countActiveSessions } from "./active-sessions";
 import { checkForUpdate } from "./check-update";
@@ -8,6 +7,7 @@ import { fetchLatestRelease, fetchReleaseByTag } from "./github-releases";
 import { pickArtifact } from "./manifest";
 import { DOWNLOAD_DIR, downloadPath, releaseDir } from "./paths";
 import { restartService, stopService } from "./restart";
+import { stampVersionTxt } from "./stamp-version";
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "./swap";
 import { unpackTarball } from "./unpack";
 
