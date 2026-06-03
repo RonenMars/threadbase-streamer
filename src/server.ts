@@ -1,4 +1,5 @@
 import { createNodeWebSocket } from "@hono/node-ws";
+import { Client as TemporalClient, Connection } from "@temporalio/client";
 import {
   applyIncludeFilter,
   applyPagination,
@@ -15,8 +16,14 @@ import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import type { WebSocket } from "ws";
+import { type AgentClient, createAgentClient } from "./agent/agent-client";
+import { type AgentConfig, readAgentConfig } from "./agent/agent-config";
+import {
+  type ConversationWriter,
+  createConversationWriter,
+} from "./agent/conversation-writer";
 import { type AppEnv, createHonoApp } from "./api/app";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { createWsRoutes } from "./api/routes/ws.routes";
@@ -206,6 +213,35 @@ export class StreamerServer {
       },
     });
 
+    // ─── Multi-agent mode bootstrap ──────────────────────────────────
+    // When MULTI_AGENT_FLOW is on, construct the Temporal client + JSONL
+    // writer. We use Connection.lazy() so the constructor stays sync —
+    // the actual gRPC connection happens on first RPC.
+    const agentConfig: AgentConfig = readAgentConfig();
+    let agentClient: AgentClient | null = null;
+    let conversationWriter: ConversationWriter | null = null;
+    if (agentConfig.enabled) {
+      const connection = Connection.lazy({
+        address: agentConfig.temporal.address,
+      });
+      const temporalClient = new TemporalClient({
+        connection,
+        namespace: agentConfig.temporal.namespace,
+      });
+      agentClient = createAgentClient({
+        temporalClient,
+        taskQueue: agentConfig.temporal.taskQueue,
+      });
+      // JSONL goes next to (not inside) the SQLite cacheDir, mirroring the
+      // existing convention: ~/.threadbase/conversations/.
+      const conversationsBaseDir =
+        agentConfig.conversationsDir ||
+        join(dirname(this.cacheDir), "conversations");
+      conversationWriter = createConversationWriter({
+        baseDir: conversationsBaseDir,
+      });
+    }
+
     const apiDeps: ApiDeps = {
       apiKey: this.apiKey,
       localNoAuth: this.localNoAuth,
@@ -273,6 +309,9 @@ export class StreamerServer {
           }
         }
       },
+      agentClient,
+      conversationWriter,
+      agentConfig,
     };
 
     this.httpServer = createServer((req, res) => this.handleRequest(req, res));
