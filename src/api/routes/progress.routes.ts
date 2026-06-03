@@ -113,6 +113,10 @@ export const createProgressRoutes = (deps: ApiDeps & AgentDeps) => {
       const msg: WSMessage = {
         type: "session_update",
         sessionId: event.sessionId,
+        // turnId disambiguates which turn this stage applies to. Critical
+        // for `queued` (identifies the waiting turn) and `rework` (with
+        // reworkAttempt). Existing single-turn consumers can ignore it.
+        turnId: event.turnId,
         // Existing session_update consumers expect status; we leave it
         // undefined here (stage is the new-only field).
         stage: event.stage,

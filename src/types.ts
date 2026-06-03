@@ -65,6 +65,7 @@ export type WSMessage =
       session?: SessionResponse;
       sessionId?: string;
       // Multi-agent additive fields. Existing clients ignore these.
+      turnId?: string;
       stage?: Stage | string;
       stalledSinceMs?: number;
       reworkAttempt?: number;
