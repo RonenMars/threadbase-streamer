@@ -12,13 +12,20 @@ const PUBLIC_PATHS = new Set(["/healthz"]);
 // /api/__update uses HMAC signature auth instead of Bearer; skip the
 // Bearer-token middleware so the route handler can validate the signature.
 const PUBLIC_POST_PATHS = new Set(["/api/pair/exchange", "/api/__update"]);
+// /internal/sessions/:sessionId/progress also uses HMAC (Progress webhook),
+// and the sessionId is dynamic so we match by prefix.
+const PUBLIC_POST_PREFIXES = ["/internal/sessions/"];
 
 export const authMiddleware =
   (deps: Pick<ApiDeps, "apiKey" | "localNoAuth">): MiddlewareHandler<AppEnv> =>
   async (c, next) => {
     const path = new URL(c.req.url).pathname;
     const method = c.req.method;
-    if (PUBLIC_PATHS.has(path) || (method === "POST" && PUBLIC_POST_PATHS.has(path))) {
+    const isPublicPostPath =
+      method === "POST" &&
+      (PUBLIC_POST_PATHS.has(path) ||
+        PUBLIC_POST_PREFIXES.some((p) => path.startsWith(p)));
+    if (PUBLIC_PATHS.has(path) || isPublicPostPath) {
       await next();
       return;
     }
