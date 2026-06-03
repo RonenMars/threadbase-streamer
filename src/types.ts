@@ -1,3 +1,6 @@
+import type { Stage } from "@threadbase/agent-types";
+import type { ProgressDedupeLRU } from "./agent/dedupe";
+
 // ─── Session Lifecycle ─────────────────────────────────────────────
 
 export type SessionStatus = "running" | "waiting_input" | "idle";
@@ -26,6 +29,22 @@ export interface ManagedSession {
   lastActivityAt?: Date;
   filePath?: string;
   resumedFromConversationId?: string;
+
+  /**
+   * Multi-agent mode only. Per-session in-memory LRU of progress event ids
+   * seen by the webhook receiver. Used to drop Temporal-replay duplicates
+   * before they reach the WebSocket. See spec §7.1.
+   */
+  progressDedupeIds?: ProgressDedupeLRU;
+
+  /** Multi-agent: current stage of the active turn (advisory; advisory wire field). */
+  stage?: Stage | string;
+
+  /** Multi-agent: ms since the session last emitted a stage transition. */
+  stalledSinceMs?: number;
+
+  /** Multi-agent: 1 or 2 when stage === "rework". */
+  reworkAttempt?: number;
 }
 
 export interface DiscoveredProcess {
@@ -41,12 +60,38 @@ export interface DiscoveredProcess {
 
 export type WSMessage =
   | { type: "terminal_output"; sessionId: string; data: string }
-  | { type: "session_update"; session: SessionResponse }
+  | {
+      type: "session_update";
+      session?: SessionResponse;
+      sessionId?: string;
+      // Multi-agent additive fields. Existing clients ignore these.
+      stage?: Stage | string;
+      stalledSinceMs?: number;
+      reworkAttempt?: number;
+    }
   | { type: "session_list"; sessions: SessionResponse[] }
   | { type: "conversation_event"; sessionId: string; line: string }
   | { type: "ping"; ts: number }
   | { type: "terminal_replay"; sessionId: string; lines: string[] }
-  | { type: "session_ready"; session: SessionResponse };
+  | { type: "session_ready"; session: SessionResponse }
+  // Multi-agent additive variants. Old clients ignore unknown types.
+  | {
+      type: "agent_output";
+      sessionId: string;
+      turnId: string;
+      role: "worker" | "reviewer" | "signoff";
+      content: string;
+      partial?: boolean;
+      reviewerOverruled?: boolean;
+      stage?: Stage | string;
+      reworkAttempt?: number;
+    }
+  | {
+      type: "turn_failure";
+      sessionId: string;
+      turnId: string;
+      reason: string;
+    };
 
 // ─── REST Response Shapes ──────────────────────────────────────────
 
