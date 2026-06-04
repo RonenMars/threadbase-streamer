@@ -45,6 +45,20 @@ export interface ManagedSession {
 
   /** Multi-agent: 1 or 2 when stage === "rework". */
   reworkAttempt?: number;
+
+  /**
+   * Multi-agent: id of the in-flight turn, or null when idle. Set when
+   * `POST /api/sessions/:id/input` accepts a request; cleared by the webhook
+   * receiver on stage=done or terminal_failure. Undefined in PTY mode.
+   */
+  currentTurnId?: string | null;
+
+  /**
+   * Multi-agent resume: stable identity of the underlying conversation
+   * (the JSONL filename), distinct from `id` which is per-orchestrator-instance.
+   * Undefined in PTY mode (PTY uses `resumedFromConversationId` instead).
+   */
+  conversationId?: string;
 }
 
 export interface DiscoveredProcess {
