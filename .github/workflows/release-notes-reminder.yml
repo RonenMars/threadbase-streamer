@@ -30,10 +30,10 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          # gh pr diff --name-only prints "<status>\t<path>" via the GitHub
-          # API; we want files added (A) under docs/release-notes/.
+          # Only ADDED files count — a typo fix on an existing notes file
+          # does not mean this PR ships its own milestone notes.
           ADDED=$(gh pr view "$PR_NUMBER" --json files --jq \
-            '.files[] | select(.additions > 0) | .path' \
+            '.files[] | select(.changeType == "ADDED") | .path' \
             | grep -E '^docs/release-notes/[^/]+\.md$' \
             | grep -vE '^docs/release-notes/(_template|README)\.md$' \
             || true)
