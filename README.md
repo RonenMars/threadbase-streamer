@@ -189,6 +189,21 @@ scripts/
   validate-db.ts                           Report conversations missing project_id, duplicate paths, orphans
 ```
 
+## Relationship to Claude Code dynamic workflows
+
+[Claude Code dynamic workflows](https://claude.com/blog/introducing-dynamic-workflows-in-claude-code) live *inside* a Claude Code session — the kind of session **PTY mode** hosts. They don't replace PTY mode; they happen inside one of its sessions.
+
+The meaningful comparison is with **`--multi-agent-flow` mode**, where the streamer hands each turn off to a Temporal pipeline in `tb-multi-agent` instead of a `node-pty` Claude session.
+
+| Dimension | Claude Code dynamic workflows | Streamer multi-agent mode |
+|---|---|---|
+| **Trigger** | Developer in a Claude Code session | HTTP turn from a streamer client |
+| **Orchestrator** | Claude-written scripts, one session | Temporal workflows, durable across crashes |
+| **Result delivery** | In-session output | Signed webhook → WebSocket fan-out |
+| **Best for** | One-off deep analysis in a dev session | Reliably processing every user turn |
+
+Streamer-specific notes (request path, dedupe, what changes at the boundary): [docs/comparisons/claude-code-dynamic-workflows.md](docs/comparisons/claude-code-dynamic-workflows.md). Full pipeline comparison lives in [`tb-multi-agent/docs/comparisons/claude-code-dynamic-workflows.md`](../tb-multi-agent/docs/comparisons/claude-code-dynamic-workflows.md).
+
 ## REST API
 
 | Method | Endpoint | Description |
