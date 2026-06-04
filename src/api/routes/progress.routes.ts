@@ -96,9 +96,7 @@ export const createProgressRoutes = (deps: ApiDeps & AgentDeps) => {
     let rawBuf: Buffer;
     try {
       const incoming = c.env?.incoming;
-      rawBuf = incoming
-        ? await readRawBody(incoming)
-        : Buffer.from(await c.req.arrayBuffer());
+      rawBuf = incoming ? await readRawBody(incoming) : Buffer.from(await c.req.arrayBuffer());
     } catch {
       return c.json({ error: "could not read body" }, 400);
     }
