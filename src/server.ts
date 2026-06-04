@@ -11,12 +11,13 @@ import {
   type SortOrder,
   search,
 } from "@threadbase/scanner";
-import { existsSync, watch as fsWatch, readdirSync } from "fs";
+import { createReadStream, existsSync, watch as fsWatch, readdirSync } from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
 import { dirname, join } from "path";
+import { createInterface } from "readline";
 import type { WebSocket } from "ws";
 import { type AgentClient, createAgentClient } from "./agent/agent-client";
 import { type AgentConfig, readAgentConfig } from "./agent/agent-config";
@@ -860,6 +861,30 @@ export class StreamerServer {
     return null;
   }
 
+  private async readCwdFromJsonl(filePath: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
+      let found = false;
+      rl.on("line", (line) => {
+        if (found) return;
+        try {
+          const entry = JSON.parse(line);
+          if (entry.cwd) {
+            found = true;
+            rl.close();
+            resolve(entry.cwd as string);
+          }
+        } catch {
+          // skip malformed lines
+        }
+      });
+      rl.on("close", () => {
+        if (!found) resolve(null);
+      });
+      rl.on("error", () => resolve(null));
+    });
+  }
+
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
     const scanner = await this.getScanner();
     const fromIndex = await scanner.getConversation(uuid);
@@ -1130,7 +1155,6 @@ export class StreamerServer {
     const body = await readBody(req);
     // Accept both sessionId (new) and conversationId (legacy alias)
     const sessionId: string | undefined = body.sessionId ?? body.conversationId;
-    const explicitPath: string | undefined = body.projectPath;
 
     if (!sessionId) {
       json(res, 400, { error: "Missing sessionId" });
@@ -1146,10 +1170,17 @@ export class StreamerServer {
       }
     }
 
+    // Authoritative cwd comes from the JSONL itself — the file Claude looks
+    // up by filename when processing --resume. The scanner index can return a
+    // stale or wrong path (e.g. …/tb-mobile/android vs …/tb-mobile), so we
+    // read the first cwd field directly, mirroring tb-scanner/src/parser.ts.
+    const jsonlPath = this.findJsonlPath(sessionId);
+    const jsonlCwd = jsonlPath ? await this.readCwdFromJsonl(jsonlPath) : null;
+
     const conv = await this.findConversationByUuid(sessionId);
-    const projectPath: string = explicitPath ?? (conv as any)?.projectPath;
+    const projectPath: string = jsonlCwd ?? (conv as any)?.projectPath;
     if (!projectPath) {
-      if (!conv) {
+      if (!conv && !jsonlPath) {
         json(res, 404, { error: "Conversation not found" });
         return;
       }
