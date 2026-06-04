@@ -7,7 +7,8 @@ PTY session management, WebSocket streaming, and REST API server for Claude Code
 ### Install via Homebrew (recommended, macOS + Linux)
 
 ```bash
-brew install RonenMars/threadbase/tb-streamer
+brew tap RonenMars/threadbase
+brew install tb-streamer
 
 # One-time setup:
 tb-streamer set-key <YOUR_API_KEY>
