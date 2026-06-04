@@ -417,3 +417,9 @@ Parent-repo commits that bump the submodule pointer should use a `chore: bump ve
 ## Contributing to docs
 
 If you hit an undocumented issue during setup, deploy, or runtime — ask the user: "This doesn't seem to be covered in `docs/troubleshooting.md`. Would you like me to add it?" Then add a new section following the existing format (symptom → cause → fix) and commit it alongside any code fix.
+
+## Release notes
+
+Milestone-level release notes live in `docs/release-notes/YYYY-MM-DD-<milestone>.md`. They are separate from `CHANGELOG.md` (which semantic-release auto-generates one line per commit) and capture the human story of what shipped, why it matters, and what's deferred. Do not edit `CHANGELOG.md` by hand — semantic-release regenerates it on release.
+
+When a milestone is ready to merge, invoke the project-local `write-release-notes` skill (at `.claude/skills/write-release-notes/`) to draft them. Add the `milestone` label to the merge PR — a GitHub Action will post a reminder if release notes are not present.
