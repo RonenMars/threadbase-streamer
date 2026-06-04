@@ -10,11 +10,21 @@
 // return 200 with deduped:true and do not broadcast.
 
 import crypto from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import type { AgentOutputPayload, ProgressEvent, Stage } from "@threadbase/agent-types";
 import { Hono } from "hono";
 import type { WSMessage } from "../../types";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
+
+function readRawBody(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
 
 interface AgentDeps {
   sessionStore: {
@@ -78,7 +88,20 @@ export const createProgressRoutes = (deps: ApiDeps & AgentDeps) => {
       return c.json({ error: "unknown session" }, 404);
     }
 
-    const rawBuf = Buffer.from(await c.req.arrayBuffer());
+    // Read raw body from the underlying Node IncomingMessage stream — mirrors
+    // /api/__update. Hono's c.req.arrayBuffer() returns empty when the request
+    // arrives via @hono/node-server's bindings, leaving HMAC verification with
+    // the wrong byte buffer. In tests (app.request), c.env.incoming is absent
+    // and arrayBuffer() works fine — fall back to it.
+    let rawBuf: Buffer;
+    try {
+      const incoming = c.env?.incoming;
+      rawBuf = incoming
+        ? await readRawBody(incoming)
+        : Buffer.from(await c.req.arrayBuffer());
+    } catch {
+      return c.json({ error: "could not read body" }, 400);
+    }
     const sigHeader = c.req.header("x-progress-signature") ?? "";
     if (!verifySignature(rawBuf, sigHeader, deps.agentConfig.webhook.hmacSecret)) {
       return c.json({ error: "unauthorized" }, 401);
