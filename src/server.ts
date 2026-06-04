@@ -1,4 +1,5 @@
 import { createNodeWebSocket } from "@hono/node-ws";
+import { Connection, Client as TemporalClient } from "@temporalio/client";
 import {
   applyIncludeFilter,
   applyPagination,
@@ -15,8 +16,13 @@ import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import type { WebSocket } from "ws";
+import { type AgentClient, createAgentClient } from "./agent/agent-client";
+import { type AgentConfig, readAgentConfig } from "./agent/agent-config";
+import { type ConversationWriter, createConversationWriter } from "./agent/conversation-writer";
+import { handleSendAgentInput } from "./agent/handle-send-agent-input";
+import { handleStartAgentSession } from "./agent/handle-start-agent-session";
 import { type AppEnv, createHonoApp } from "./api/app";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { createWsRoutes } from "./api/routes/ws.routes";
@@ -113,6 +119,8 @@ export class StreamerServer {
   private agentEntrypoints: ReadonlySet<string>;
   private honoApp: Hono<AppEnv> | null = null;
   private log = getLogger("server");
+  private agentConfig: AgentConfig;
+  private agentClient: AgentClient | null = null;
 
   constructor(config: ServerConfig & { apiKey: string }) {
     this.apiKey = config.apiKey;
@@ -206,6 +214,35 @@ export class StreamerServer {
       },
     });
 
+    // ─── Multi-agent mode bootstrap ──────────────────────────────────
+    // When MULTI_AGENT_FLOW is on, construct the Temporal client + JSONL
+    // writer. We use Connection.lazy() so the constructor stays sync —
+    // the actual gRPC connection happens on first RPC.
+    this.agentConfig = readAgentConfig();
+    const agentConfig = this.agentConfig;
+    let conversationWriter: ConversationWriter | null = null;
+    if (agentConfig.enabled) {
+      const connection = Connection.lazy({
+        address: agentConfig.temporal.address,
+      });
+      const temporalClient = new TemporalClient({
+        connection,
+        namespace: agentConfig.temporal.namespace,
+      });
+      this.agentClient = createAgentClient({
+        temporalClient,
+        taskQueue: agentConfig.temporal.taskQueue,
+      });
+      // JSONL goes next to (not inside) the SQLite cacheDir, mirroring the
+      // existing convention: ~/.threadbase/conversations/.
+      const conversationsBaseDir =
+        agentConfig.conversationsDir || join(dirname(this.cacheDir), "conversations");
+      conversationWriter = createConversationWriter({
+        baseDir: conversationsBaseDir,
+      });
+    }
+    const agentClient = this.agentClient;
+
     const apiDeps: ApiDeps = {
       apiKey: this.apiKey,
       localNoAuth: this.localNoAuth,
@@ -273,6 +310,9 @@ export class StreamerServer {
           }
         }
       },
+      agentClient,
+      conversationWriter,
+      agentConfig,
     };
 
     this.httpServer = createServer((req, res) => this.handleRequest(req, res));
@@ -1187,6 +1227,26 @@ export class StreamerServer {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    if (this.agentConfig.enabled) {
+      const body = await readBody(req);
+      const cache = this.cache;
+      if (!cache) {
+        json(res, 503, {
+          error: "Conversation cache is not available",
+          code: "INTERNAL_ERROR",
+        });
+        return;
+      }
+      const result = await handleSendAgentInput(sessionId, body, {
+        sessionStore: this.sessionStore,
+        cache,
+        // biome-ignore lint/style/noNonNullAssertion: agentClient is set when agentConfig.enabled is true
+        agentClient: this.agentClient!,
+        agentConfig: this.agentConfig,
+      });
+      json(res, result.status, result.body);
+      return;
+    }
     const body = await readBody(req);
     const { input } = body;
 
@@ -1339,6 +1399,24 @@ export class StreamerServer {
   }
 
   private async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (this.agentConfig.enabled) {
+      const body = await readBody(req);
+      const result = await handleStartAgentSession(body, {
+        sessionStore: this.sessionStore,
+        // biome-ignore lint/style/noNonNullAssertion: agentClient is set when agentConfig.enabled is true
+        agentClient: this.agentClient!,
+        conversationsDir: this.cacheDir ? join(dirname(this.cacheDir), "conversations") : "",
+        agentConfig: this.agentConfig,
+      });
+      json(res, result.status, result.body);
+      if (result.status === 200) {
+        this.wsHub.broadcast({
+          type: "session_list",
+          sessions: this.sessionStore.list(this.ptyAttachedIds()),
+        });
+      }
+      return;
+    }
     if (!this.browseRoot) {
       json(res, 403, {
         error: "File browsing not configured. Set browseRoot on the server.",

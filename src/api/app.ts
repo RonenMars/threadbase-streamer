@@ -11,6 +11,7 @@ import { createConversationRoutes } from "./routes/conversations.routes";
 import { createHealthRoutes } from "./routes/health.routes";
 import { createMiscRoutes } from "./routes/misc.routes";
 import { createPairRoutes } from "./routes/pair.routes";
+import { createProgressRoutes } from "./routes/progress.routes";
 import { createProjectRoutes } from "./routes/projects.routes";
 import { createScannerRoutes } from "./routes/scanner.routes";
 import { createSessionRoutes } from "./routes/sessions.routes";
@@ -56,6 +57,7 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
   app.route("/api/pair", createPairRoutes(deps));
   app.route("/api", createBrowseRoutes(deps));
   app.route("/", createScannerRoutes(deps));
+  app.route("/internal", createProgressRoutes(deps));
 
   if (upgradeWebSocket) {
     app.route("/", createWsRoutes(deps, upgradeWebSocket));

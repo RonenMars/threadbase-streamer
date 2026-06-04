@@ -41,7 +41,15 @@ program
     "Run as if invoked by launchd: skip the dev-takeover prompt and signal handlers",
     false,
   )
+  .option(
+    "--multi-agent-flow",
+    "Run in multi-agent mode (PTY mode unreachable in this process)",
+    false,
+  )
   .action(async (opts) => {
+    if (opts.multiAgentFlow) {
+      process.env.MULTI_AGENT_FLOW = "true";
+    }
     const requestedPort = Number.parseInt(opts.port, 10);
     const apiKey = opts.apiKey ?? loadOrCreateApiKey();
     const publicUrl = opts.publicUrl ?? loadPublicUrl() ?? null;

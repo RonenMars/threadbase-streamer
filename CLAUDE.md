@@ -92,6 +92,25 @@ running / waiting_input ──(server restart)──► on_hold   (reconcile.ts)
 | `THREADBASE_PUBLIC_URL` | Public HTTPS URL for QR pairing (overrides `public_url:` in server.yaml) |
 | `THREADBASE_FILTER_AGENT_CONVERSATIONS` | Hide non-interactive Claude runs from `/api/conversations` + `/project-chats`. Default `on`. Set to `0` / `false` to keep them visible. Toggling triggers a one-time prune-or-rescan on the next restart. |
 | `THREADBASE_AGENT_ENTRYPOINTS` | Comma-separated list of JSONL `entrypoint` values to treat as agent traffic. Default `sdk-cli,claude-vscode`. Interactive Claude Code uses `cli` and is never filtered. Set to `sdk-cli` only if you want `claude-vscode` runs visible. |
+| `MULTI_AGENT_FLOW` | Enables multi-agent mode. Set to `true` (or pass `--multi-agent-flow`) to route `POST /api/sessions/start` and `POST /api/sessions/:id/input` to the agent path instead of PTY. PTY mode is unreachable when this is on. |
+| `AGENT_PAYLOAD_LIMIT_BYTES` | Multi-agent: threshold for the `SESSION_HISTORY_FULL` guard. Default `1572864` (1.5 MB, 75% of Temporal's 2 MB ceiling). Returns HTTP 413 with `code: SESSION_HISTORY_FULL` when exceeded. |
+| `AGENT_TRAJECTORY_LOG_BYTES` | Multi-agent: byte threshold that triggers a WARN log trajectory entry independently of turn count. Default `512000` (500 KB). |
+| `AGENT_TRAJECTORY_LOG_TURNS` | Multi-agent: first turn count at which to emit trajectory WARN logs, then every 5 turns. Default `20`. |
+| `AGENT_SESSION_BUSY_RETRY_MS` | Multi-agent: `retryAfterMs` value returned in 429 `SESSION_BUSY` responses. Default `1000`. |
+
+## Multi-agent mode runtime (Plan 3.5)
+
+When `MULTI_AGENT_FLOW=true`, the PTY-oriented endpoints route to the multi-agent path:
+
+- `POST /api/sessions/start` accepts `{}` (new conversation) or `{conversationId: string}` (resume). Returns 200 with `{sessionId, conversationId, status: "running"}`. For a new conversation, `conversationId` equals `sessionId`; on resume, `conversationId` is the supplied existing one while `sessionId` is freshly generated.
+- `POST /api/sessions/:id/input` accepts `{text: string}`. Returns 202 with `{turnId, status: "queued"}` on success.
+- Both endpoints emit structured error responses `{error, code}` where `code` is one of the values defined in `src/agent/errors.ts`: `SESSION_NOT_FOUND`, `SESSION_HISTORY_FULL`, `SESSION_BUSY`, `INVALID_SESSION_STATE`, `CONVERSATION_NOT_FOUND`, `INPUT_REQUIRED`, `INVALID_BODY`, `TEMPORAL_UNAVAILABLE`, `NOT_APPLICABLE_IN_MULTI_AGENT_MODE`, `INTERNAL_ERROR`. Existing PTY endpoints continue to return unstructured `{error}` only (retrofit deferred — see `tb-multi-agent/docs/plans/structured-error-codes-retrofit.md`).
+- **429 `SESSION_BUSY`** is returned when a turn is already in flight for that session; the response body carries `retryAfterMs` (default 1000). Mobile clients should retry after the hint.
+- **413 `SESSION_HISTORY_FULL`** is returned when the composed `UserInputSignal` exceeds the configured payload limit (default 1.5 MB, 75% of Temporal's 2 MB ceiling). The mobile app should branch on this code to prompt "start a new conversation."
+
+Internal: `session.currentTurnId` (on `ManagedSession`) is set when an input POST acquires the lock and cleared by the webhook receiver when `stage=done` or `terminal_failure` fires for the matching turn. Two-layer race defense: the HTTP-level 429 check plus the orchestrator's signal-queue serialization (milestone B spec §7.2).
+
+Full design and decision rationale: `tb-multi-agent/docs/superpowers/specs/2026-06-04-plan-3.5-multi-agent-ws-wiring.md`.
 
 ## CLI flags vs. `server.yaml`
 
@@ -111,6 +130,7 @@ Practical consequence: any service definition (launchd plist, systemd unit, Task
 ## Dependencies
 
 - `@threadbase/scanner` — scan, parse, search, filter conversation history. Used for REST endpoints. Consumed as a **git submodule** at `vendor/scanner` (pinned by submodule commit, e.g. tag `v0.3.2`) wired into `package.json` as `"@threadbase/scanner": "file:vendor/scanner"`. It is **not** published to npm and not a registry package — it builds from source. `npm install`'s `postinstall` runs `build:scanner` (`npm --prefix vendor/scanner install`, which triggers scanner's own `prepare`/tsup) so `vendor/scanner/dist/` exists before the streamer's lint (`tsc`) and build (`tsup` bundles scanner inline into `dist/`). Consequences: (1) **first checkout must init the submodule** — `git submodule update --init` (use the HTTPS URL; SSH fails on Windows without keys) before `npm install`, or the `file:` dep can't resolve; (2) **CI checkouts need `submodules: recursive`** (already set in `ci.yml` + `release.yml`); (3) bump scanner with a `chore: bump vendor/scanner (<reason>)` commit that moves the submodule pointer, same discipline as `vendor/menubar`. The deployed/bundled artifact carries scanner inline in `dist/`, so the runtime does not need `vendor/scanner`. See [scanner repo](https://github.com/RonenMars/threadbase-scanner) for source.
+- `@threadbase/agent-types` — wire types for the multi-agent pipeline (Stage enum, ProgressEvent, UserInputSignal, AgentOutputPayload, SessionStageAddendum). Consumed by both this repo and `tb-multi-agent` so the wire contract stays in sync. Wired identically to scanner: **git submodule** at `vendor/agent-types` (no version tags yet — pinned by raw SHA), wired into `package.json` as `"@threadbase/agent-types": "file:vendor/agent-types"`. Postinstall runs `build:agent-types` (`npm --prefix vendor/agent-types install && npm --prefix vendor/agent-types run build` — agent-types has no `prepare` script, so we run `tsc` explicitly) so `vendor/agent-types/dist/` exists for tsup to bundle. Same three consequences as scanner: init the submodule on first checkout, `submodules: recursive` in CI (already set), and bump with a deliberate SHA-update commit. See [agent-types repo](https://github.com/RonenMars/threadbase-agent-types) for source. Promoted from `tb-multi-agent/packages/agent-types/` on 2026-06-04 (see `tb-multi-agent/docs/superpowers/plans/2026-06-03-stage-2-agent-types-extraction.md`).
 - `node-pty` — native PTY management (external, not bundled by tsup)
 - `ws` — WebSocket server
 - `better-sqlite3` — SQLite driver for `ConversationCache` (incl. projects + cache_metadata + schema_migrations tables)
