@@ -21,6 +21,7 @@ interface AgentDeps {
     getManaged: (sessionId: string) => {
       id: string;
       progressDedupeIds?: { hasSeen: (id: string) => boolean };
+      currentTurnId?: string | null;
     } | null;
   };
   wsHub: { broadcast: (m: WSMessage) => void };
@@ -148,6 +149,11 @@ export const createProgressRoutes = (deps: ApiDeps & AgentDeps) => {
           reviewerOverruled: payload.reviewerOverruled,
         });
       }
+
+      // Release the session lock when the turn completes (spec §6).
+      if (event.stage === "done" && session.currentTurnId === event.turnId) {
+        (session as { currentTurnId: string | null }).currentTurnId = null;
+      }
     } else if (event.type === "terminal_failure") {
       const reason = (event.payload as { reason?: string } | undefined)?.reason ?? "unknown";
       const msg: WSMessage = {
@@ -157,6 +163,11 @@ export const createProgressRoutes = (deps: ApiDeps & AgentDeps) => {
         reason,
       } as WSMessage;
       deps.wsHub.broadcast(msg);
+
+      // Release the session lock on failure (spec §6).
+      if (session.currentTurnId === event.turnId) {
+        (session as { currentTurnId: string | null }).currentTurnId = null;
+      }
     }
 
     return c.json({ ok: true }, 200);
