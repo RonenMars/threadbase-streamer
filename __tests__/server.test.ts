@@ -179,6 +179,26 @@ describe("StreamerServer", () => {
       });
       expect(res.status).toBe(404);
     });
+
+    it("falls back to conversation cache and returns a resumable shape for known conversation ids", async () => {
+      // Older mobile builds tap recents rows via /sessions/:id even though
+      // those are conversation UUIDs. The fallback prevents a 404.
+      // Warm the cache by hitting /api/conversations (it runs the scanner).
+      const conversationsRes = await fetch(`${baseUrl}/api/conversations?refresh=1`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      }).then((r) => r.json());
+      expect(conversationsRes.conversations.length).toBeGreaterThan(0);
+      const conversationId = conversationsRes.conversations[0].id;
+
+      const res = await fetch(`${baseUrl}/api/sessions/${conversationId}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.id).toBe(conversationId);
+      expect(body.type).toBe("conversation");
+      expect(body.status).toBe("on_hold");
+    });
   });
 
   describe("POST /api/sessions/:id/input", () => {
@@ -295,6 +315,23 @@ describe("StreamerServer", () => {
 
       expect(res.status).toBe(200);
       expect(body.sessions.length).toBeLessThanOrEqual(1);
+    });
+
+    it("tags items with type=conversation so mobile can route taps correctly", async () => {
+      // Warm the cache via /api/conversations so recents has data to return.
+      await fetch(`${baseUrl}/api/conversations?refresh=1`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const res = await fetch(`${baseUrl}/api/sessions/recents`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.sessions.length).toBeGreaterThan(0);
+      // Items come from ConversationCache, not SessionStore — must be flagged.
+      for (const item of body.sessions) {
+        expect(item.type).toBe("conversation");
+      }
     });
   });
 

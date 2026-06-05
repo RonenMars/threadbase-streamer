@@ -36,7 +36,7 @@ import {
   validatePublicUrl,
 } from "./auth";
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
-import { ConversationCache } from "./conversation-cache";
+import { ConversationCache, type ConversationListItem } from "./conversation-cache";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
@@ -774,7 +774,11 @@ export class StreamerServer {
       return;
     }
     const { conversations } = this.cache.listConversations({ limit, offset: 0 });
+    // Items here are conversation cache rows, not live sessions in SessionStore.
+    // The `type` discriminator lets mobile route taps through /api/sessions/resume
+    // (which spawns a fresh PTY) instead of GET /api/sessions/:id (which 404s).
     const sessions = conversations.map((c) => ({
+      type: "conversation" as const,
       id: c.id,
       status: "idle" as const,
       ptyAttached: false,
@@ -1140,14 +1144,23 @@ export class StreamerServer {
 
   private handleGetSession(sessionId: string, res: ServerResponse): void {
     const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-    if (!session) {
-      json(res, 404, { error: "Session not found" });
+    if (session) {
+      if (!existsSync(session.projectPath)) {
+        session.failureReason = `Project directory not found: ${session.projectPath}`;
+      }
+      json(res, 200, session);
       return;
     }
-    if (!existsSync(session.projectPath)) {
-      session.failureReason = `Project directory not found: ${session.projectPath}`;
+    // Fall back to the conversation cache: older mobile builds tap recents
+    // entries via GET /api/sessions/:id even though those IDs are conversation
+    // UUIDs, not live sessions. Returning a resumable shape (status=on_hold)
+    // lets the mobile open flow proceed to /api/sessions/resume.
+    const conversation = this.cache?.getMetaById(sessionId);
+    if (conversation) {
+      json(res, 200, conversationToResumableSession(conversation));
+      return;
     }
-    json(res, 200, session);
+    json(res, 404, { error: "Session not found" });
   }
 
   private async handleResume(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1696,6 +1709,34 @@ export class StreamerServer {
 }
 
 // ─── Utilities ─────────────────────────────────────────────────────
+
+function conversationToResumableSession(c: ConversationListItem) {
+  return {
+    type: "conversation" as const,
+    id: c.id,
+    conversationId: c.id,
+    status: "on_hold" as const,
+    ptyAttached: false,
+    projectId: c.projectId ?? undefined,
+    projectPath: c.projectPath ?? "",
+    projectName: c.projectName ?? "",
+    branch: c.branch ?? undefined,
+    lastOutput: "",
+    elapsedMs: 0,
+    promptCount: c.messageCount,
+    startedAt: c.lastActivity,
+    completedAt: null,
+    lastActivityAt: c.lastActivity,
+    ...(c.title != null && { sessionName: c.title }),
+    ...(c.model != null && { model: c.model }),
+    ...(c.account != null && { account: c.account }),
+    messageCount: c.messageCount,
+    ...(c.preview != null && { preview: c.preview }),
+    ...(c.firstMessage != null && { firstMessageText: c.firstMessage }),
+    ...(c.lastMessage != null && { lastMessageText: c.lastMessage }),
+    filePath: c.filePath,
+  };
+}
 
 function json(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
