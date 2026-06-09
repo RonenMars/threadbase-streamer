@@ -102,8 +102,12 @@ RUN if [ "$DEMO_MODE" != "true" ]; then \
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Default Claude model for spawned sessions. entrypoint.sh exports this as
+# ANTHROPIC_MODEL, which the Claude CLI honors. Override at runtime with
+# `fly secrets set CLAUDE_CODE_MODEL=…` or `-e CLAUDE_CODE_MODEL=…`.
 ENV HOME=/data \
-    PORT=8080
+    PORT=8080 \
+    CLAUDE_CODE_MODEL=claude-haiku-4-5-20251001
 EXPOSE 8080
 
 ENTRYPOINT ["/entrypoint.sh"]

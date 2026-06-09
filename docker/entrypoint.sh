@@ -58,6 +58,14 @@ if [ -n "${CLAUDE_API_KEY:-}" ]; then
     export ANTHROPIC_API_KEY="${CLAUDE_API_KEY}"
 fi
 
+# Default Claude model for spawned sessions. The Dockerfile sets
+# CLAUDE_CODE_MODEL=claude-haiku-4-5-20251001; export it as ANTHROPIC_MODEL so
+# the spawned Claude CLI picks it up. Override at runtime by setting
+# CLAUDE_CODE_MODEL (e.g. via `fly secrets set CLAUDE_CODE_MODEL=…`).
+if [ -n "${CLAUDE_CODE_MODEL:-}" ]; then
+    export ANTHROPIC_MODEL="${CLAUDE_CODE_MODEL}"
+fi
+
 # The container runs as root (no USER directive in the Dockerfile). The real
 # Claude CLI refuses `--dangerously-skip-permissions` under root/sudo unless
 # IS_SANDBOX is set — and tb-streamer always spawns claude with that flag
