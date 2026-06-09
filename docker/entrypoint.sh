@@ -35,9 +35,18 @@ fi
 # API key resolution: PROD_API_KEY takes precedence over DEMO_API_KEY.
 # Production deployment sets PROD_API_KEY via Fly secrets; demo keeps the
 # fixed public key.
+#
+# Fail closed in production. The public demo key (tb_public_demo_reviewer_key)
+# is intentionally well-known; falling back to it in a prod image would leave
+# the deployment open to anyone. /seed exists only in DEMO_MODE builds (prod
+# builds rm -rf it), so its absence marks a prod image — and a prod image with
+# no PROD_API_KEY must refuse to boot rather than silently go public.
 if [ -n "${PROD_API_KEY:-}" ]; then
     API_KEY="${PROD_API_KEY}"
     DEFAULT_PUBLIC_URL="https://threadbase.fly.dev"
+elif [ ! -d "/seed" ]; then
+    echo "FATAL: production image (no /seed) requires PROD_API_KEY; refusing to fall back to the public demo key." >&2
+    exit 1
 else
     API_KEY="${DEMO_API_KEY:-tb_public_demo_reviewer_key}"
     DEFAULT_PUBLIC_URL="https://threadbase-demo.fly.dev"
@@ -52,11 +61,10 @@ browse_root: /data/.claude/projects
 EOF
 chmod 600 "${HOME}/.threadbase/server.yaml"
 
-# If CLAUDE_API_KEY is set, export it for the streamer to use when spawning
-# Claude sessions. This enables production mode with real Claude API calls.
-if [ -n "${CLAUDE_API_KEY:-}" ]; then
-    export ANTHROPIC_API_KEY="${CLAUDE_API_KEY}"
-fi
+# CLAUDE_API_KEY (a Fly secret) is inherited by the streamer process. We do NOT
+# export it as ANTHROPIC_API_KEY globally — that would leak the key into every
+# child process. Instead PTYManager.buildSpawnEnv() injects it as
+# ANTHROPIC_API_KEY only into the spawned `claude` env (src/pty-manager.ts).
 
 # Default Claude model for spawned sessions. The Dockerfile sets
 # CLAUDE_CODE_MODEL=claude-haiku-4-5-20251001; export it as ANTHROPIC_MODEL so

@@ -116,6 +116,20 @@ function createScreen(): Terminal {
   });
 }
 
+// Build the environment for a spawned `claude` process. The Anthropic API key
+// is injected only here — never exported into the streamer's global process
+// env — so it does not leak into unrelated child processes. CLAUDE_API_KEY
+// (the Fly secret) is mapped to ANTHROPIC_MODEL's sibling, ANTHROPIC_API_KEY,
+// which the CLI reads. If CLAUDE_API_KEY is unset, nothing is added and the CLI
+// falls back to its own auth (e.g. an interactive login).
+function buildSpawnEnv(): Record<string, string> {
+  const env = { ...process.env } as Record<string, string>;
+  if (env.CLAUDE_API_KEY) {
+    env.ANTHROPIC_API_KEY = env.CLAUDE_API_KEY;
+  }
+  return env;
+}
+
 export class PTYManager {
   private sessions = new Map<string, InternalSession>();
   private onOutput: PTYManagerOptions["onOutput"];
@@ -160,7 +174,7 @@ export class PTYManager {
         cols: 120,
         rows: 40,
         cwd: options.projectPath,
-        env: process.env as Record<string, string>,
+        env: buildSpawnEnv(),
       },
     );
 
@@ -217,7 +231,7 @@ export class PTYManager {
       cols: 120,
       rows: 40,
       cwd: options.projectPath,
-      env: process.env as Record<string, string>,
+      env: buildSpawnEnv(),
     });
 
     const session: InternalSession = {
