@@ -82,3 +82,67 @@ In practice `prod restart` calls `bootoutAgent` first (which now polls), so the 
 **Root cause:** `scripts/lib/fetch-menubar.sh:67-79` runs an inline node script whose `releaseSha()` catches all errors and returns `""`, which the bash layer treats as "no match" (`return 2` → local-build fallback). The PowerShell equivalent appends per-tag errors to the log file; the bash side does not.
 
 **Suggested fix:** Mirror the PowerShell behaviour — accept a `LOG_PATH` env var in the bash helper and append individual tag-ref failures so the local-build fallback is diagnosable after the fact.
+
+---
+
+## Quick Access Recents tapping historical conversations shows "No terminal output"
+
+**Symptom:** In tb-mobile, tapping a recent conversation from the Quick Access chips at the top of the home screen briefly shows a "No terminal output" screen before redirecting to the conversation detail view. Reported 2026-06-09 with screenshots in `.threadbase-uploads/05509314-a6f6-40c2-b509-19664a2b38e4/IMG_5645.heic` and `IMG_5642.heic`.
+
+**Root cause:** The Quick Access Recents feature (`components/quick-access/QuickAccessStrip.tsx`) was implemented in May 2026 before the ProjectChat unified model existed. It still calls the legacy `/api/sessions/recents` endpoint, which returns historical conversations disguised as sessions with `status: "idle"` and `ptyAttached: false`. When the user taps a chip, the mobile app routes to `/session/[id]` (the PTY session detail screen), which then detects the mismatch and redirects to `/conversation/[id]` — but the initial render shows the "No terminal output" empty state.
+
+The `/api/sessions/recents` endpoint (`src/server.ts` line 637) maps cached conversations to session objects:
+
+```typescript
+const sessions = conversations.map((c) => ({
+  id: c.id,
+  status: "idle" as const,  // ← historical conversation pretending to be a session
+  ptyAttached: false,
+  // ...
+}));
+```
+
+This was acceptable before ProjectChat, but now breaks the discriminated-union contract: mobile types expect `ProjectChat` with `type: "session" | "conversation"`, but Recents returns undifferentiated session-shaped objects.
+
+**Timeline:**
+- **May 2, 2026:** `/api/sessions/recents` added (see `docs/archive/implementation-plans/2026-05-02-quick-access-endpoints.md`)
+- **May 6, 2026:** ProjectChat unified model designed (see `docs/archive/implementation-plans/2026-05-06-projects-cache-migration-prompt.md` Phase 12)
+- **Result:** Quick Access was never migrated to the new endpoint
+
+**Suggested fix (tb-mobile):**
+
+1. **Replace `/api/sessions/recents` with `/project-chats`** in `hooks/useQuickAccess.ts`:
+   ```typescript
+   // Current (broken):
+   const r = await createApiForServer(serverId).get<RecentsResponse>(
+     `/api/sessions/recents?limit=${limit}`,
+   )
+   
+   // Fixed:
+   const r = await createApiForServer(serverId).get<{ items: ProjectChat[] }>(
+     `/project-chats?limit=${limit}`,
+   )
+   ```
+
+2. **Update `QuickAccessStrip.tsx`** to route based on `ProjectChat.type`:
+   ```typescript
+   const handleOpenSession = () => {
+     if (!activeItem?.serverId) return
+     const [, id] = activeItem.id.split('::')
+     
+     // Check type if the item carries it (future-proof for when recents uses /project-chats)
+     const chat = recentsData?.items?.find(c => c.id === id)
+     if (chat?.type === 'conversation') {
+       router.push(`/conversation/${id}?server=${activeItem.serverId}`)
+     } else {
+       router.push(`/session/${id}?server=${activeItem.serverId}`)
+     }
+     setActiveItem(null)
+   }
+   ```
+
+3. **Update `allItems` mapping** in `QuickAccessStrip.tsx` to preserve the `type` field from the response so the tap handler can branch correctly.
+
+**Alternative (streamer-side, breaking change):** Deprecate `/api/sessions/recents` entirely and have mobile migrate to `/project-chats`. This is the long-term direction but risks breaking older mobile builds. Safer to fix mobile first, then deprecate the legacy endpoint in a future release.
+
+**Workaround for users today:** Pull-to-refresh the conversation list, then open the conversation from the "history" section instead of the Recents chips.
