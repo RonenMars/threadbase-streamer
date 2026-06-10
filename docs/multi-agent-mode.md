@@ -36,6 +36,24 @@ MULTI_AGENT_FLOW=true PROGRESS_HMAC_SECRET=shared-dev-secret \
 | `TEMPORAL_TASK_QUEUE` | `agent-tasks` | Task queue both processes use. |
 | `PROGRESS_DEDUPE_CAPACITY` | `1024` | Per-session LRU size for event dedupe. |
 | `PROGRESS_WEBHOOK_TIMESTAMP_SKEW_SECONDS` | `300` | Reject events with timestamps outside this skew. |
+| `AGENT_PAYLOAD_LIMIT_BYTES` | `1572864` | Threshold for the `SESSION_HISTORY_FULL` guard (1.5 MB, 75% of Temporal's 2 MB ceiling). Returns HTTP 413 with `code: SESSION_HISTORY_FULL` when exceeded. |
+| `AGENT_TRAJECTORY_LOG_BYTES` | `512000` | Byte threshold that triggers a WARN log trajectory entry independently of turn count. |
+| `AGENT_TRAJECTORY_LOG_TURNS` | `20` | First turn count at which to emit trajectory WARN logs, then every 5 turns. |
+| `AGENT_SESSION_BUSY_RETRY_MS` | `1000` | `retryAfterMs` value returned in 429 `SESSION_BUSY` responses. |
+
+## Runtime API (Plan 3.5)
+
+When `MULTI_AGENT_FLOW=true`, the PTY-oriented endpoints route to the multi-agent path:
+
+- `POST /api/sessions/start` accepts `{}` (new conversation) or `{conversationId: string}` (resume). Returns 200 with `{sessionId, conversationId, status: "running"}`. For a new conversation, `conversationId` equals `sessionId`; on resume, `conversationId` is the supplied existing one while `sessionId` is freshly generated.
+- `POST /api/sessions/:id/input` accepts `{text: string}`. Returns 202 with `{turnId, status: "queued"}` on success.
+- Both endpoints emit structured error responses `{error, code}` where `code` is one of the values defined in `src/agent/errors.ts`: `SESSION_NOT_FOUND`, `SESSION_HISTORY_FULL`, `SESSION_BUSY`, `INVALID_SESSION_STATE`, `CONVERSATION_NOT_FOUND`, `INPUT_REQUIRED`, `INVALID_BODY`, `TEMPORAL_UNAVAILABLE`, `NOT_APPLICABLE_IN_MULTI_AGENT_MODE`, `INTERNAL_ERROR`. Existing PTY endpoints continue to return unstructured `{error}` only (retrofit deferred — see `tb-multi-agent/docs/plans/structured-error-codes-retrofit.md`).
+- **429 `SESSION_BUSY`** is returned when a turn is already in flight for that session; the response body carries `retryAfterMs` (default 1000). Mobile clients should retry after the hint.
+- **413 `SESSION_HISTORY_FULL`** is returned when the composed `UserInputSignal` exceeds the configured payload limit (default 1.5 MB, 75% of Temporal's 2 MB ceiling). The mobile app should branch on this code to prompt "start a new conversation."
+
+Internal: `session.currentTurnId` (on `ManagedSession`) is set when an input POST acquires the lock and cleared by the webhook receiver when `stage=done` or `terminal_failure` fires for the matching turn. Two-layer race defense: the HTTP-level 429 check plus the orchestrator's signal-queue serialization (milestone B spec §7.2).
+
+Full design and decision rationale: `tb-multi-agent/docs/superpowers/specs/2026-06-04-plan-3.5-multi-agent-ws-wiring.md`.
 
 ## Wire endpoints
 
