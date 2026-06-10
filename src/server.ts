@@ -11,7 +11,7 @@ import {
   type SortOrder,
   search,
 } from "@threadbase/scanner";
-import { createReadStream, existsSync, watch as fsWatch, readdirSync } from "fs";
+import { createReadStream, existsSync, watch as fsWatch, readdirSync, statSync } from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -62,6 +62,7 @@ import type {
   SessionStatus,
 } from "./types";
 import { saveUploadFile } from "./uploads";
+import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
 import { WSHub } from "./ws-hub";
 
 const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
@@ -892,7 +893,27 @@ export class StreamerServer {
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
     const scanner = await this.getScanner();
     const fromIndex = await scanner.getConversation(uuid);
-    if (fromIndex) return fromIndex;
+    if (fromIndex) {
+      // The scanner memoizes both its metadata index and parsed conversations
+      // for the server's lifetime. A conversation that grows after the initial
+      // scan (the chokidar watcher keeps the SQLite cache fresh, but never the
+      // scanner) keeps serving the startup snapshot here — so the detail/info
+      // view shows a stale message count + last activity that disagrees with
+      // the list view and with what --resume actually replays. If the JSONL on
+      // disk is newer than the snapshot, refresh just that one file's indexes
+      // (refreshFile evicts the stale parse and re-parses on the next read)
+      // rather than dropping and rebuilding the entire scanner.
+      if (fromIndex.filePath && this.isConversationSnapshotStale(fromIndex)) {
+        const refreshedMeta = await scanner.refreshFile(fromIndex.filePath);
+        // refreshFile returns null and drops the entry when the file no longer
+        // parses (deleted/emptied). In that case return null so the caller's
+        // ghost-prune + cache-tail fallback runs instead of serving the stale
+        // snapshot we already know is wrong.
+        if (!refreshedMeta) return null;
+        return (await scanner.getConversation(uuid)) ?? fromIndex;
+      }
+      return fromIndex;
+    }
 
     if (this.scanProfiles) return null;
 
@@ -902,6 +923,20 @@ export class StreamerServer {
     this.scannerReady = null;
     const freshScanner = await this.getScanner();
     return freshScanner.getConversation(uuid);
+  }
+
+  // True when the JSONL on disk is meaningfully newer than the scanned
+  // snapshot's last-activity timestamp — i.e. the file grew after the scan.
+  private isConversationSnapshotStale(conv: Conversation): boolean {
+    if (!conv.filePath) return false;
+    let mtimeMs: number | null = null;
+    try {
+      mtimeMs = statSync(conv.filePath).mtimeMs;
+    } catch {
+      // Stat failed (file moved/deleted mid-flight) — don't force a re-scan.
+      return false;
+    }
+    return isScannedSnapshotStale(conv.timestamp, mtimeMs);
   }
 
   private async handleGetConversation(id: string, url: URL, res: ServerResponse): Promise<void> {
