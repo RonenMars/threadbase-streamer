@@ -28,6 +28,7 @@ RELEASES_DIR="$INSTALL_DIR/releases"
 HISTORY_FILE="$RELEASES_DIR/.history"
 ACTIVE_LINK="$INSTALL_DIR/cli.js"
 LAUNCHD_LABEL="com.ronen.threadbase"
+NIGHTLY_RESTART_LABEL="com.ronen.threadbase-nightly-restart"
 PORT="${THREADBASE_PORT:-8766}"
 HEALTH_URL="${THREADBASE_HEALTH_URL:-http://localhost:$PORT/healthz}"
 KEEP_RELEASES=5
@@ -442,6 +443,69 @@ check_active_sessions() {
   exit 1
 }
 
+# Write the nightly restart job plist. Runs `launchctl kickstart -k` at 4 AM
+# daily to reclaim V8 heap (Node never voluntarily shrinks — after days of
+# running sessions, Threadbase can grow from ~150 MB to ~900 MB+).
+write_nightly_restart_plist() {
+  local plist_path="$1"
+  local logs_dir="$INSTALL_DIR/logs"
+  local user_id
+  user_id="$(id -u)"
+
+  cat > "$plist_path" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$NIGHTLY_RESTART_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/launchctl</string>
+    <string>kickstart</string>
+    <string>-k</string>
+    <string>gui/$user_id/$LAUNCHD_LABEL</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>$logs_dir/nightly-restart-stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>$logs_dir/nightly-restart-stderr.log</string>
+</dict>
+</plist>
+PLIST
+}
+
+install_nightly_restart_job() {
+  local plist_path="$HOME/Library/LaunchAgents/$NIGHTLY_RESTART_LABEL.plist"
+  local logs_dir="$INSTALL_DIR/logs"
+  mkdir -p "$logs_dir" "$(dirname "$plist_path")"
+
+  log "writing nightly restart plist → $plist_path"
+  write_nightly_restart_plist "$plist_path"
+
+  launchctl bootout "gui/$(id -u)/$NIGHTLY_RESTART_LABEL" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$plist_path"
+
+  ok "nightly restart job installed (runs daily at 4 AM)"
+}
+
+uninstall_nightly_restart_job() {
+  local plist_path="$HOME/Library/LaunchAgents/$NIGHTLY_RESTART_LABEL.plist"
+  if [[ -f "$plist_path" ]]; then
+    log "removing nightly restart job"
+    launchctl bootout "gui/$(id -u)/$NIGHTLY_RESTART_LABEL" 2>/dev/null || true
+    rm -f "$plist_path"
+    ok "nightly restart job removed"
+  fi
+}
+
 # Shared plist writer. Always emits an EnvironmentVariables block with PATH +
 # HOME — without it, launchd inherits PATH=/usr/bin:/bin:/usr/sbin:/sbin and
 # node-pty's execvp("claude", …) fails with ENOENT. See troubleshooting.md
@@ -514,6 +578,7 @@ cmd_setup() {
   log "writing launchd plist → $plist_path"
   write_plist "$plist_path" "$node_bin" "$run_at_load"
 
+  uninstall_nightly_restart_job
   launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$plist_path"
 
@@ -855,6 +920,15 @@ cmd_deploy() {
 
   cmd_healthcheck
 
+  # Prompt to install the nightly restart job on first deploy only, and only
+  # in interactive shells. Re-deploys skip silently.
+  local nightly_plist="$HOME/Library/LaunchAgents/$NIGHTLY_RESTART_LABEL.plist"
+  if [[ ! -f "$nightly_plist" ]] && [[ -t 0 ]]; then
+    printf '\n  Add a nightly restart job? Restarts Threadbase at 4 AM daily to reclaim memory (keeps it at ~150 MB instead of ~900 MB after days of use). [y/N] '
+    read -r yn
+    [[ "${yn,,}" == "y" ]] && install_nightly_restart_job
+  fi
+
   log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
 
@@ -887,6 +961,8 @@ case "${1:-deploy}" in
   rollback)     cmd_rollback ;;
   status)       cmd_status ;;
   healthcheck)  cmd_healthcheck ;;
+  nightly-install)   install_nightly_restart_job ;;
+  nightly-uninstall) uninstall_nightly_restart_job ;;
   menubar)
     shift
     mb_publish=0
@@ -905,7 +981,7 @@ case "${1:-deploy}" in
     ;;
   *)
     err "unknown command: $1"
-    echo "usage: $0 [deploy [--force] [--publish-menubar] | menubar [--publish] | rollback | status | healthcheck]" >&2
+    echo "usage: $0 [deploy [--force] [--publish-menubar] | menubar [--publish] | rollback | status | healthcheck | nightly-install | nightly-uninstall]" >&2
     exit 2
     ;;
 esac
