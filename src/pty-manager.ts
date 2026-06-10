@@ -116,6 +116,20 @@ function createScreen(): Terminal {
   });
 }
 
+// Build the environment for a spawned `claude` process. The Anthropic API key
+// is injected only here — never exported into the streamer's global process
+// env — so it does not leak into unrelated child processes. CLAUDE_API_KEY
+// (the Fly secret) is mapped to ANTHROPIC_MODEL's sibling, ANTHROPIC_API_KEY,
+// which the CLI reads. If CLAUDE_API_KEY is unset, nothing is added and the CLI
+// falls back to its own auth (e.g. an interactive login).
+function buildSpawnEnv(): Record<string, string> {
+  const env = { ...process.env } as Record<string, string>;
+  if (env.CLAUDE_API_KEY) {
+    env.ANTHROPIC_API_KEY = env.CLAUDE_API_KEY;
+  }
+  return env;
+}
+
 export class PTYManager {
   private sessions = new Map<string, InternalSession>();
   private onOutput: PTYManagerOptions["onOutput"];
@@ -148,19 +162,29 @@ export class PTYManager {
   }
 
   // Resume an existing Claude conversation. sessionId is the JSONL UUID.
+  //
+  // We use `--permission-mode dontAsk` rather than `--dangerously-skip-permissions`.
+  // Both suppress tool-approval prompts, but in an interactive (TUI) launch the
+  // skip-permissions flag renders a blocking "Bypass Permissions mode" warning
+  // menu on every boot that no known ~/.claude.json flag suppressed (as of
+  // Claude CLI v2.1.x) — the session never reaches a usable prompt, so the
+  // mobile app shows an empty/stuck screen. `dontAsk` skips approvals without
+  // that warning gate. (The other first-run gates — onboarding/theme, workspace
+  // trust, custom-API-key — are cleared by the seeded ~/.claude.json in
+  // docker/entrypoint.sh.) startFresh() uses the same flag for the same reason.
   async start(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
     const projectName = options.projectName ?? basename(options.projectPath);
 
     const proc = nodePty.spawn(
       resolveClaudeExe(),
-      ["--dangerously-skip-permissions", "--resume", sessionId],
+      ["--permission-mode", "dontAsk", "--resume", sessionId],
       {
         name: "xterm-256color",
         cols: 120,
         rows: 40,
         cwd: options.projectPath,
-        env: process.env as Record<string, string>,
+        env: buildSpawnEnv(),
       },
     );
 
@@ -207,7 +231,10 @@ export class PTYManager {
     const sessionId = randomUUID();
     const projectName = options.projectName ?? basename(options.projectPath);
 
-    const args = ["--dangerously-skip-permissions", "--session-id", sessionId];
+    // `--permission-mode dontAsk` for the same reason as start() above — do not
+    // swap back to --dangerously-skip-permissions (TUI warning gate). Guarded by
+    // __tests__/pty-ready-detection.test.ts.
+    const args = ["--permission-mode", "dontAsk", "--session-id", sessionId];
     if (options.systemPrompt) {
       args.push("--system-prompt", options.systemPrompt);
     }
@@ -217,7 +244,7 @@ export class PTYManager {
       cols: 120,
       rows: 40,
       cwd: options.projectPath,
-      env: process.env as Record<string, string>,
+      env: buildSpawnEnv(),
     });
 
     const session: InternalSession = {
