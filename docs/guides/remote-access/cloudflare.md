@@ -167,6 +167,24 @@ The pragmatic answer for now: leave Access turned on for browser/laptop access, 
 
 ---
 
+## This repo's deployment (`tb-pc.rbv1000.win`)
+
+The active mapping is `https://tb-pc.rbv1000.win` → `http://127.0.0.1:8766`, served by `cloudflared` running as a **Windows service** and protected by Cloudflare Access. `public_url: https://tb-pc.rbv1000.win` is set in `~/.threadbase/server.yaml` so the pairing QR code embeds the correct URL.
+
+**Access behaviour on this hostname:** requests without an `Authorization` header receive `401 Unauthorized` from the CF edge — including unauthenticated probes of `/healthz`. Requests carrying `Authorization: Bearer <api_key>` pass through to the origin. Consequences:
+
+- Deploy-script healthchecks (which hit `http://localhost:8766/healthz` directly) are unaffected.
+- External clients must always include the Bearer token — there is no anonymous access through the public URL, even for `/healthz`.
+- `Test-NetConnection` and browser probes will be blocked by CF Access; use `Invoke-RestMethod` with the Bearer header to test the public URL.
+
+**cloudflared config files on the Windows box:**
+
+- `~/.cloudflared/config.yml` — user-level config (read when running `cloudflared` manually)
+- `~/.cloudflared/config-system.yml` — used by the Windows service (runs under SYSTEM); this is the one that matters for the always-on tunnel
+- Both must be kept in sync. After editing either file, restart the service: `Restart-Service cloudflared`
+
+---
+
 ## When to use what
 
 | Situation | Use |
