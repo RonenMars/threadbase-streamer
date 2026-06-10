@@ -43,6 +43,12 @@ Default behavior is **interactive prompt**. Non-interactive overrides (for CI / 
 
 Shim install failures are **non-fatal**: the deploy logs a warning and continues. The streamer itself is already healthy at that point — only the convenience command is at stake.
 
+### Legacy: the `tb` shim
+
+Earlier versions of the repo shipped a separate `tb` command installed via `scripts/install-tb.sh` (macOS/Linux) or `scripts/install-tb.ps1` (Windows). **That installer is deprecated** — the deploy now handles everything automatically. `scripts/install-tb.*` and `bin/tb*` are kept in the tree so existing `~/.local/bin/tb` symlinks keep working, but new installs should use the auto-installed commands above.
+
+The one feature `tb` has that `tb-streamer` doesn't is the `THREADBASE_CLI` env var, which lets you point `tb` at a custom CLI path without redeploying — useful for running a dev build. If you rely on that, keep using `tb`.
+
 ## Homebrew distribution
 
 `brew install RonenMars/threadbase/tb-streamer` is an alternate install path for end users. The formula lives in `RonenMars/homebrew-threadbase` and is regenerated on every stable release by `scripts/build-formula.mjs` + `scripts/publish-formula.sh`, invoked from `.github/workflows/release.yml` after `semantic-release` finishes.
