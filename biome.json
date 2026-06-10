@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.13/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -18,7 +18,16 @@
     }
   },
   "files": {
-    "experimentalScannerIgnores": [".worktrees", ".claude"],
-    "includes": ["src/**", "cli/**", "__tests__/**", "*.ts", "*.json", "!vendor", "!.worktrees"]
+    "includes": [
+      "src/**",
+      "cli/**",
+      "__tests__/**",
+      "*.ts",
+      "*.json",
+      "!vendor",
+      "!.worktrees",
+      "!!**/.worktrees",
+      "!!**/.claude"
+    ]
   }
 }

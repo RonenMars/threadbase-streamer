@@ -9,7 +9,7 @@ export const createWsRoutes = (deps: ApiDeps, upgradeWebSocket: UpgradeWebSocket
 
   app.get(
     "/ws",
-    upgradeWebSocket((c) => {
+    upgradeWebSocket(() => {
       let openWs: WebSocket | null = null;
       return {
         onOpen(_evt, ws) {
