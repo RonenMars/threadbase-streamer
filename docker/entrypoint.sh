@@ -61,6 +61,20 @@ browse_root: /data/.claude/projects
 EOF
 chmod 600 "${HOME}/.threadbase/server.yaml"
 
+# Pre-clear the Claude CLI first-run gates so spawned interactive sessions reach
+# a usable prompt instead of a blocking dialog (the mobile app shows an empty
+# screen otherwise). dist/seed-claude-config.cjs (compiled from
+# src/docker/seed-claude-config.ts) seeds $HOME/.claude.json with the flags that
+# clear the onboarding/theme, workspace-trust, and custom-API-key dialogs; the
+# fourth gate (Bypass Permissions warning) is avoided by launching with
+# `--permission-mode dontAsk` (see src/pty-manager.ts). The merge is idempotent
+# and refuses to clobber an existing-but-unreadable config — full rationale and
+# unit tests live with the source. A failure here exits non-zero, so `set -e`
+# aborts boot rather than starting with unseeded config.
+export CLAUDE_CONFIG="${HOME}/.claude.json"
+node /opt/tb-streamer/dist/seed-claude-config.cjs
+chmod 600 "${CLAUDE_CONFIG}"
+
 # CLAUDE_API_KEY (a Fly secret) is inherited by the streamer process. We do NOT
 # export it as ANTHROPIC_API_KEY globally — that would leak the key into every
 # child process. Instead PTYManager.buildSpawnEnv() injects it as
@@ -74,13 +88,13 @@ if [ -n "${CLAUDE_CODE_MODEL:-}" ]; then
     export ANTHROPIC_MODEL="${CLAUDE_CODE_MODEL}"
 fi
 
-# The container runs as root (no USER directive in the Dockerfile). The real
-# Claude CLI refuses `--dangerously-skip-permissions` under root/sudo unless
-# IS_SANDBOX is set — and tb-streamer always spawns claude with that flag
-# (see src/pty-manager.ts). Without this, every session start exits instantly
-# with "--dangerously-skip-permissions cannot be used with root/sudo
-# privileges" and the mobile app bounces back to the session list. The Fly
-# machine is an isolated single-tenant VM, so the sandbox assertion holds.
+# The container runs as root (no USER directive in the Dockerfile). IS_SANDBOX
+# tells the Claude CLI it is in an isolated sandbox, which relaxes root/sudo
+# safety checks on permission-bypassing launches. The Fly machine is an isolated
+# single-tenant VM, so the sandbox assertion holds. Kept as defense-in-depth:
+# spawned sessions use `--permission-mode dontAsk` (see src/pty-manager.ts),
+# which does not trip the root check, but IS_SANDBOX guards against a future
+# revert to a danger flag re-introducing the instant-exit failure.
 export IS_SANDBOX=1
 
 cd /opt/tb-streamer

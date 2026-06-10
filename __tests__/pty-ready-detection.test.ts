@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import { spawn as mockSpawn } from "node-pty";
 import { PTYManager } from "../src/pty-manager";
 import type { ManagedSession } from "../src/types";
 
@@ -272,5 +273,47 @@ describe("PTYManager — resume input queueing", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("PTYManager — spawn permission flags", () => {
+  // Regression guard for the prod "Start Session Here" fix: launching with
+  // --dangerously-skip-permissions renders a blocking "Bypass Permissions mode"
+  // warning in the interactive TUI that no config flag suppresses, so the
+  // session never reaches a usable prompt. --permission-mode dontAsk skips
+  // tool-approval prompts without that warning gate. See src/pty-manager.ts.
+  function spawnArgs(): string[] {
+    // biome-ignore lint/suspicious/noExplicitAny: test reads the mock call args
+    const calls = (mockSpawn as any).mock.calls;
+    return calls[calls.length - 1][1] as string[];
+  }
+
+  beforeEach(() => {
+    // biome-ignore lint/suspicious/noExplicitAny: reset shared spawn mock
+    (mockSpawn as any).mockClear();
+  });
+
+  it("startFresh spawns with --permission-mode dontAsk, not --dangerously-skip-permissions", async () => {
+    const mgr = new PTYManager();
+    await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const args = spawnArgs();
+
+    expect(args).toContain("--permission-mode");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("resume (start) spawns with --permission-mode dontAsk, not --dangerously-skip-permissions", async () => {
+    const mgr = new PTYManager();
+    await mgr.start("uuid-resume", {
+      projectPath: "/tmp/test",
+      projectName: "test",
+      branch: "main",
+    });
+    const args = spawnArgs();
+
+    expect(args).toContain("--permission-mode");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    expect(args).not.toContain("--dangerously-skip-permissions");
   });
 });
