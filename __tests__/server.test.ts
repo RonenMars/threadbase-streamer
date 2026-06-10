@@ -1,4 +1,4 @@
-import { mkdtempSync } from "fs";
+import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -530,6 +530,101 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
       expect(res.status).toBe(200);
+    });
+  });
+
+  // Regression for the "resume shows a different last message" report: the
+  // scanner memoizes its index + parsed conversations for the server's
+  // lifetime, so a conversation that grew after the initial scan kept serving
+  // a stale message_count / last_updated_at from GET /api/conversations/:id —
+  // disagreeing with the list view and with what --resume actually replays.
+  // findConversationByUuid now re-scans when the JSONL on disk is newer.
+  describe("GET /api/conversations/:id stale-snapshot re-scan", () => {
+    let growServer: StreamerServer;
+    let growPort: number;
+    let profileDir: string;
+    let jsonlPath: string;
+    const convId = "grow-session-1111";
+
+    beforeEach(async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-grow-profile-"));
+      const projDir = join(profileDir, "projects", "-tmp-grow-project");
+      mkdirSync(projDir, { recursive: true });
+      jsonlPath = join(projDir, `${convId}.jsonl`);
+      const line = (uuid: string, role: string, ts: string, text: string) =>
+        `${JSON.stringify({
+          type: role,
+          uuid,
+          timestamp: ts,
+          sessionId: convId,
+          slug: "grow-session",
+          cwd: "/tmp/grow-project",
+          message: { role, model: "claude-sonnet-4-6", content: [{ type: "text", text }] },
+        })}\n`;
+      writeFileSync(
+        jsonlPath,
+        line("g-u1", "user", "2026-06-05T08:00:00.000Z", "first message") +
+          line("g-a1", "assistant", "2026-06-05T08:00:05.000Z", "first reply"),
+      );
+
+      growPort = await getRandomPort();
+      growServer = new StreamerServer({
+        port: growPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-grow-cache-")),
+        scanProfiles: [
+          { id: "grow", label: "Grow", configDir: profileDir, enabled: true, emoji: "🌱" },
+        ],
+      });
+      await growServer.listen(growPort);
+    });
+
+    afterEach(async () => {
+      await growServer.close();
+    });
+
+    it("reflects messages appended after the initial scan", async () => {
+      const url = `http://localhost:${growPort}/api/conversations/${convId}?msg_limit=80`;
+      const headers = { Authorization: `Bearer ${API_KEY}` };
+
+      // Warm the scanner snapshot at 2 messages.
+      const first = await fetch(url, { headers });
+      expect(first.status).toBe(200);
+      const firstBody = (await first.json()) as {
+        meta: { message_count: number; last_updated_at: string };
+        messages: Array<{ text: string }>;
+      };
+      expect(firstBody.messages.length).toBe(2);
+
+      // Grow the conversation and push the mtime past the snapshot timestamp.
+      const newLine = `${JSON.stringify({
+        type: "assistant",
+        uuid: "g-a2",
+        timestamp: "2026-06-07T10:04:11.912Z",
+        sessionId: convId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "the real latest message" }],
+        },
+      })}\n`;
+      appendFileSync(jsonlPath, newLine);
+      const future = new Date("2026-06-07T10:04:12.000Z");
+      utimesSync(jsonlPath, future, future);
+
+      // The re-fetch must re-scan and surface the appended message.
+      const second = await fetch(url, { headers });
+      expect(second.status).toBe(200);
+      const secondBody = (await second.json()) as {
+        meta: { message_count: number; last_updated_at: string };
+        messages: Array<{ text: string }>;
+      };
+      expect(secondBody.messages.length).toBe(3);
+      expect(secondBody.messages.at(-1)?.text).toContain("the real latest message");
+      expect(secondBody.meta.last_updated_at).toBe("2026-06-07T10:04:11.912Z");
     });
   });
 });
