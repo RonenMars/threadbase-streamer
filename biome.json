@@ -18,6 +18,7 @@
     }
   },
   "files": {
+    "experimentalScannerIgnores": [".worktrees", ".claude"],
     "includes": ["src/**", "cli/**", "__tests__/**", "*.ts", "*.json", "!vendor", "!.worktrees"]
   }
 }
