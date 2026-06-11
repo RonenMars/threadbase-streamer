@@ -19,3 +19,5 @@ Architecture documents for **@threadbase/streamer** — problem framing, alterna
 - Each file starts with **Date**, **Status**, and a **Problem** section.
 - Alternatives considered are recorded, not erased after the decision.
 - Files are immutable once their feature ships — corrections go in a new document that supersedes the old one. The historical record stays intact.
+
+<!-- skip-ci verification test (throwaway) -->
