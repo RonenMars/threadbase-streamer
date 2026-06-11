@@ -1,0 +1,30 @@
+name: "Run CI"
+description: "Sets up Node + node-pty build tools, installs deps, and runs one CI command (lint, build, or test)."
+
+inputs:
+  node-version:
+    description: "Node.js version to set up"
+    required: true
+  command:
+    description: "Which CI command to run: lint | build | test"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Node ${{ inputs.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install build tools for node-pty
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y python3 make g++
+
+    - name: Install dependencies
+      shell: bash
+      run: npm install
+
+    - name: Run ${{ inputs.command }}
+      shell: bash
+      run: npm run ${{ inputs.command }}

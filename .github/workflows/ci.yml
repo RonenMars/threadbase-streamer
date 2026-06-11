@@ -11,10 +11,11 @@ jobs:
   # (Lint, Test (Node 20), Test (Node 22)) are enforced by branch protection,
   # so the jobs below must ALWAYS run and report success — a job skipped via a
   # job-level `if:` reports "skipped", which does NOT satisfy a required check
-  # and would leave the PR un-mergeable forever. Instead each job always runs
-  # but guards its single heavy step on this gate, so the check context still
-  # goes green (in seconds) when `--skip-ci` is present in the latest commit
-  # message, the PR title, or the PR body.
+  # and would leave the PR un-mergeable forever. Instead each job checks out
+  # (cheap, and required so the local composite action exists) and then runs a
+  # single guarded `run-ci` step. When `--skip-ci` is present in the latest
+  # commit message, the PR title, or the PR body, that one step is skipped, the
+  # job still succeeds, and the check context goes green in seconds.
   gate:
     name: Gate
     runs-on: ubuntu-latest
@@ -35,7 +36,7 @@ jobs:
           ${PR_BODY}"
           if printf '%s' "$haystack" | grep -qF -- '--skip-ci'; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=CI skipped::'--skip-ci' found in commit message / PR title / PR body — heavy step skipped, check reported green."
+            echo "::notice title=CI skipped::'--skip-ci' found in commit message / PR title / PR body — run-ci step skipped, check reported green."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -45,20 +46,18 @@ jobs:
     runs-on: ubuntu-latest
     needs: gate
     steps:
+      # Checkout is unguarded and first: the local composite action below only
+      # exists on disk after the repo is checked out.
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Lint
         if: needs.gate.outputs.skip != 'true'
-        run: |
-          sudo apt-get update && sudo apt-get install -y python3 make g++
-          npm install
-          npm run lint
+        uses: ./.github/actions/run-ci
+        with:
+          node-version: 20
+          command: lint
 
   build:
     name: Build
@@ -69,16 +68,12 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Build
         if: needs.gate.outputs.skip != 'true'
-        run: |
-          sudo apt-get update && sudo apt-get install -y python3 make g++
-          npm install
-          npm run build
+        uses: ./.github/actions/run-ci
+        with:
+          node-version: 20
+          command: build
 
       - if: needs.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
@@ -98,13 +93,9 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-
       - name: Test
         if: needs.gate.outputs.skip != 'true'
-        run: |
-          sudo apt-get update && sudo apt-get install -y python3 make g++
-          npm install
-          npm test
+        uses: ./.github/actions/run-ci
+        with:
+          node-version: ${{ matrix.node-version }}
+          command: test
