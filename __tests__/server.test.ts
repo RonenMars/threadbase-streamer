@@ -627,4 +627,130 @@ describe("StreamerServer", () => {
       expect(secondBody.meta.last_updated_at).toBe("2026-06-07T10:04:11.912Z");
     });
   });
+
+  describe("GET /api/conversations/:id ETag / If-None-Match", () => {
+    let etagServer: StreamerServer;
+    let etagPort: number;
+    let profileDir: string;
+    let jsonlPath: string;
+    const convId = "etag-session-2222";
+
+    beforeEach(async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-etag-profile-"));
+      const projDir = join(profileDir, "projects", "-tmp-etag-project");
+      mkdirSync(projDir, { recursive: true });
+      jsonlPath = join(projDir, `${convId}.jsonl`);
+      const line = (uuid: string, role: string, ts: string, text: string) =>
+        `${JSON.stringify({
+          type: role,
+          uuid,
+          timestamp: ts,
+          sessionId: convId,
+          slug: "etag-session",
+          cwd: "/tmp/etag-project",
+          message: { role, model: "claude-sonnet-4-6", content: [{ type: "text", text }] },
+        })}\n`;
+      writeFileSync(
+        jsonlPath,
+        line("e-u1", "user", "2026-06-05T08:00:00.000Z", "first message") +
+          line("e-a1", "assistant", "2026-06-05T08:00:05.000Z", "first reply"),
+      );
+
+      etagPort = await getRandomPort();
+      etagServer = new StreamerServer({
+        port: etagPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-etag-cache-")),
+        scanProfiles: [
+          { id: "etag", label: "ETag", configDir: profileDir, enabled: true, emoji: "🏷️" },
+        ],
+      });
+      await etagServer.listen(etagPort);
+    });
+
+    afterEach(async () => {
+      await etagServer.close();
+    });
+
+    const url = () => `http://localhost:${etagPort}/api/conversations/${convId}`;
+    const auth = { Authorization: `Bearer ${API_KEY}` };
+
+    it("returns an ETag header with the body on first fetch", async () => {
+      const res = await fetch(url(), { headers: auth });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("etag")).toMatch(/^"[0-9a-f]{16}"$/);
+      // ETag must be readable cross-origin so the mobile fetch can store it.
+      expect(res.headers.get("access-control-expose-headers")).toContain("ETag");
+      const body = (await res.json()) as { messages: unknown[] };
+      expect(body.messages.length).toBe(2);
+    });
+
+    it("returns 304 with empty body when If-None-Match matches", async () => {
+      const first = await fetch(url(), { headers: auth });
+      const etag = first.headers.get("etag");
+      expect(etag).toBeTruthy();
+
+      const second = await fetch(url(), {
+        headers: { ...auth, "If-None-Match": etag as string },
+      });
+      expect(second.status).toBe(304);
+      expect(second.headers.get("etag")).toBe(etag);
+      expect(await second.text()).toBe("");
+    });
+
+    it("returns 200 with a new ETag after a message is appended", async () => {
+      const first = await fetch(url(), { headers: auth });
+      const etag = first.headers.get("etag") as string;
+
+      const newLine = `${JSON.stringify({
+        type: "assistant",
+        uuid: "e-a2",
+        timestamp: "2026-06-07T10:04:11.912Z",
+        sessionId: convId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "a brand new message" }],
+        },
+      })}\n`;
+      appendFileSync(jsonlPath, newLine);
+      const future = new Date("2026-06-07T10:04:12.000Z");
+      utimesSync(jsonlPath, future, future);
+
+      const second = await fetch(url(), {
+        headers: { ...auth, "If-None-Match": etag },
+      });
+      expect(second.status).toBe(200);
+      expect(second.headers.get("etag")).not.toBe(etag);
+      const body = (await second.json()) as { messages: Array<{ text: string }> };
+      expect(body.messages.length).toBe(3);
+      expect(body.messages.at(-1)?.text).toContain("a brand new message");
+    });
+
+    it("returns 200 (never 304) for a back-page request even with a matching If-None-Match", async () => {
+      const first = await fetch(url(), { headers: auth });
+      const etag = first.headers.get("etag") as string;
+
+      const backPage = await fetch(`${url()}?msg_limit=1&before_index=1`, {
+        headers: { ...auth, "If-None-Match": etag },
+      });
+      expect(backPage.status).toBe(200);
+      const body = (await backPage.json()) as {
+        messages: unknown[];
+        message_pagination: { before_index: number; from_index: number };
+      };
+      expect(body.message_pagination.before_index).toBe(1);
+      expect(body.messages.length).toBe(1);
+    });
+
+    it("returns 200 for a request without If-None-Match (old-client path)", async () => {
+      const res = await fetch(url(), { headers: auth });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { messages: unknown[] };
+      expect(body.messages.length).toBe(2);
+    });
+  });
 });

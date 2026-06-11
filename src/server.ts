@@ -62,6 +62,7 @@ import type {
   SessionStatus,
 } from "./types";
 import { saveUploadFile } from "./uploads";
+import { computeConversationEtag } from "./utils/conversationEtag";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
 import { WSHub } from "./ws-hub";
 
@@ -274,7 +275,8 @@ export class StreamerServer {
       handleStartSession: (req, res) => this.handleStartSession(req, res),
       handleListConversations: (url, res) => this.handleListConversations(url, res),
       handleConversationsCount: (url, res) => this.handleConversationsCount(url, res),
-      handleGetConversation: (id, url, res) => this.handleGetConversation(id, url, res),
+      handleGetConversation: (id, url, res, ifNoneMatch) =>
+        this.handleGetConversation(id, url, res, ifNoneMatch),
       handleSearch: (url, res) => this.handleSearch(url, res),
       handleGetPopularProjects: (url, res) => this.handleGetPopularProjects(url, res),
       handleListProjectChats: (url, res) => this.handleListProjectChats(url, res),
@@ -939,7 +941,12 @@ export class StreamerServer {
     return isScannedSnapshotStale(conv.timestamp, mtimeMs);
   }
 
-  private async handleGetConversation(id: string, url: URL, res: ServerResponse): Promise<void> {
+  private async handleGetConversation(
+    id: string,
+    url: URL,
+    res: ServerResponse,
+    ifNoneMatch?: string,
+  ): Promise<void> {
     // Try the scanner first (has full content including tool_use blocks).
     // Fall back to the cache tail only when the scanner can't find the file —
     // e.g. a conversation that existed in a previous run but whose JSONL was deleted.
@@ -992,6 +999,35 @@ export class StreamerServer {
       // the next list refresh doesn't keep offering this id to clients.
       this.cache?.invalidate(id);
       json(res, 404, { error: "Conversation not found" });
+      return;
+    }
+
+    // Compute the conditional-fetch validator from the RESOLVED conversation —
+    // findConversationByUuid has already done its staleness refresh above, so
+    // these fields reflect the same state the body would. Computing it from a
+    // pre-refresh snapshot would let us hand out a 304 against stale data.
+    const etagSource = conversation as unknown as {
+      filePath: string;
+      messageCount: number;
+      timestamp: string;
+    };
+    const etag = computeConversationEtag({
+      filePath: etagSource.filePath,
+      messageCount: etagSource.messageCount,
+      timestamp: etagSource.timestamp,
+    });
+
+    // Only the first page ("is the conversation as a whole still current?")
+    // participates in the freshness check. Older pages are immutable history —
+    // a back-page request (before_index set) always returns its 200 body, never
+    // a 304, even when the client echoes a matching If-None-Match.
+    const isFirstPage = !url.searchParams.has("before_index");
+    if (isFirstPage && ifNoneMatch && ifNoneMatch === etag) {
+      // This is a direct-`ServerResponse` write, so the Hono CORS middleware's
+      // headers don't reach it — set the expose header here so a cross-origin
+      // client can read the validator off the 304 too.
+      res.writeHead(304, { ETag: etag, "Access-Control-Expose-Headers": "ETag" });
+      res.end();
       return;
     }
 
@@ -1082,7 +1118,17 @@ export class StreamerServer {
         uuid: d.uuid,
       }));
     }
-    json(res, 200, body);
+    // Always expose the ETag on the 200 so the client can store it and send it
+    // back as If-None-Match next time. Old clients ignore the header. This is a
+    // direct-`ServerResponse` write that bypasses the Hono CORS middleware, so
+    // the expose header is set here too — without it a cross-origin client
+    // can't read ETag.
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      ETag: etag,
+      "Access-Control-Expose-Headers": "ETag",
+    });
+    res.end(JSON.stringify(body));
   }
 
   private async handleSearch(url: URL, res: ServerResponse): Promise<void> {
