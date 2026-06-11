@@ -1,0 +1,45 @@
+name: "Run CI"
+description: "Sets up Node + node-pty build tools, installs deps, and runs one CI command (lint, build, or test)."
+
+inputs:
+  node-version:
+    description: "Node.js version to set up"
+    required: true
+  command:
+    # GitHub composite-action inputs have no native enum/allowed-values schema,
+    # so the allowed set is enforced by the "Validate command" step below.
+    description: "Which CI command to run. One of: lint | build | test"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate command
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+      run: |
+        case "$COMMAND" in
+          lint|build|test) ;;
+          *)
+            echo "::error title=Invalid run-ci command::'$COMMAND' is not allowed. Expected one of: lint, build, test."
+            exit 1
+            ;;
+        esac
+
+    - name: Set up Node ${{ inputs.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install build tools for node-pty
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y python3 make g++
+
+    - name: Install dependencies
+      shell: bash
+      run: npm install
+
+    - name: Run ${{ inputs.command }}
+      shell: bash
+      run: npm run ${{ inputs.command }}
