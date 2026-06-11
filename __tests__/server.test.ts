@@ -1,3 +1,4 @@
+import { ConversationScanner } from "@threadbase/scanner";
 import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";
@@ -625,6 +626,95 @@ describe("StreamerServer", () => {
       expect(secondBody.messages.length).toBe(3);
       expect(secondBody.messages.at(-1)?.text).toContain("the real latest message");
       expect(secondBody.meta.last_updated_at).toBe("2026-06-07T10:04:11.912Z");
+    });
+  });
+
+  describe("GET /api/conversations/:id paged scanner reads", () => {
+    let profileDir: string;
+    const convId = "large-page-session-3333";
+
+    beforeEach(() => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-large-page-profile-"));
+      const projDir = join(profileDir, "projects", "-tmp-large-page-project");
+      mkdirSync(projDir, { recursive: true });
+      const jsonlPath = join(projDir, `${convId}.jsonl`);
+      const lines: string[] = [];
+      for (let i = 0; i < 300; i++) {
+        const role = i % 2 === 0 ? "user" : "assistant";
+        lines.push(
+          `${JSON.stringify({
+            type: role,
+            uuid: `lp-${i}`,
+            timestamp: `2026-06-05T08:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(
+              i % 60,
+            ).padStart(2, "0")}.000Z`,
+            sessionId: convId,
+            slug: "large-page-session",
+            cwd: "/tmp/large-page-project",
+            message: {
+              role,
+              model: "claude-sonnet-4-6",
+              content: [{ type: "text", text: `large page message ${i}` }],
+            },
+          })}\n`,
+        );
+      }
+      writeFileSync(jsonlPath, lines.join(""));
+    });
+
+    async function fetchPageWithScannerPrototype(
+      getConversationPage: unknown,
+    ): Promise<{ text: string; body: any }> {
+      const port = await getRandomPort();
+      const pageServer = new StreamerServer({
+        port,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-large-page-cache-")),
+        scanProfiles: [
+          {
+            id: "large-page",
+            label: "Large Page",
+            configDir: profileDir,
+            enabled: true,
+            emoji: "P",
+          },
+        ],
+      });
+      const proto = ConversationScanner.prototype as unknown as {
+        getConversationPage?: unknown;
+      };
+      const original = proto.getConversationPage;
+      proto.getConversationPage = getConversationPage;
+      try {
+        await pageServer.listen(port);
+        const res = await fetch(
+          `http://localhost:${port}/api/conversations/${convId}?msg_limit=37&before_index=211`,
+          { headers: { Authorization: `Bearer ${API_KEY}` } },
+        );
+        expect(res.status).toBe(200);
+        const text = await res.text();
+        return { text, body: JSON.parse(text) };
+      } finally {
+        proto.getConversationPage = original;
+        await pageServer.close();
+      }
+    }
+
+    it("returns the same pagination and page bytes as the full-parse fallback", async () => {
+      const proto = ConversationScanner.prototype as unknown as {
+        getConversationPage?: unknown;
+      };
+      const paged = await fetchPageWithScannerPrototype(proto.getConversationPage);
+      const fallback = await fetchPageWithScannerPrototype(undefined);
+
+      expect(paged.body.message_pagination).toEqual(fallback.body.message_pagination);
+      expect(Buffer.from(JSON.stringify(paged.body.messages))).toEqual(
+        Buffer.from(JSON.stringify(fallback.body.messages)),
+      );
+      expect(paged.text).toBe(fallback.text);
     });
   });
 
