@@ -6,12 +6,27 @@ inputs:
     description: "Node.js version to set up"
     required: true
   command:
-    description: "Which CI command to run: lint | build | test"
+    # GitHub composite-action inputs have no native enum/allowed-values schema,
+    # so the allowed set is enforced by the "Validate command" step below.
+    description: "Which CI command to run. One of: lint | build | test"
     required: true
 
 runs:
   using: "composite"
   steps:
+    - name: Validate command
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+      run: |
+        case "$COMMAND" in
+          lint|build|test) ;;
+          *)
+            echo "::error title=Invalid run-ci command::'$COMMAND' is not allowed. Expected one of: lint, build, test."
+            exit 1
+            ;;
+        esac
+
     - name: Set up Node ${{ inputs.node-version }}
       uses: actions/setup-node@v4
       with:
