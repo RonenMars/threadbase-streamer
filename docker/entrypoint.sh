@@ -7,6 +7,12 @@ set -euo pipefail
 
 mkdir -p "${HOME}/.claude/projects" "${HOME}/.threadbase"
 
+# Browse root: prod browses the JSONL store; demo must browse the directory
+# tree the seed sessions actually live in (/home/demo/projects), otherwise the
+# mobile tree-view prefill sends paths the server rejects with
+# "Path outside browse root" and Start Session Here always fails.
+BROWSE_ROOT="/data/.claude/projects"
+
 # Demo mode setup: copy seed data and create stub project directories
 # Only runs if /seed exists (DEMO_MODE=true build)
 if [ -d "/seed" ]; then
@@ -28,6 +34,8 @@ if [ -d "/seed" ]; then
         /home/demo/projects/threadbase-mobile \
         /home/demo/projects/experiments \
         /home/demo/projects/personal-website
+
+    BROWSE_ROOT="/home/demo/projects"
 else
     echo "Production mode detected - skipping seed data"
 fi
@@ -57,7 +65,7 @@ THREADBASE_PUBLIC_URL="${THREADBASE_PUBLIC_URL:-$DEFAULT_PUBLIC_URL}"
 cat > "${HOME}/.threadbase/server.yaml" <<EOF
 api_key: ${API_KEY}
 public_url: ${THREADBASE_PUBLIC_URL}
-browse_root: /data/.claude/projects
+browse_root: ${BROWSE_ROOT}
 EOF
 chmod 600 "${HOME}/.threadbase/server.yaml"
 
@@ -102,4 +110,4 @@ exec node dist/cli.cjs serve \
     --port "${PORT}" \
     --prod \
     --no-pair-qr \
-    --browse-root "/data/.claude/projects"
+    --browse-root "${BROWSE_ROOT}"
