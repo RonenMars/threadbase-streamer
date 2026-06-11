@@ -12,8 +12,13 @@
 #   - THREADBASE_PUBLIC_URL (defaults to the assigned hostname; override
 #     only if pointing at a custom domain)
 #
-# Resource notes: 1GB memory for sqlite + PTY + node_modules; auto-stop so
-# the machine sleeps when idle.
+# Resource notes: 1GB memory for sqlite + PTY + node_modules.
+#
+# TEMPORARY (App Store review): the machine is pinned always-on
+# (auto_stop_machines = 'off', min_machines_running = 1) so an Apple reviewer
+# never hits a cold start. This incurs ~$5-6/mo of idle cost. REVERT after the
+# app is approved: set auto_stop_machines = 'stop' and min_machines_running = 0,
+# then redeploy.
 
 app = 'threadbase'
 primary_region = 'iad'
@@ -24,9 +29,9 @@ primary_region = 'iad'
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = 'off'
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
 [[mounts]]
   source = 'prod_data'
