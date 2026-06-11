@@ -1047,11 +1047,22 @@ export class StreamerServer {
         beforeIndex = intParam(url, "before_index", total);
         beforeIndex = Math.min(Math.max(beforeIndex, 0), total);
       }
-      const start = Math.max(0, beforeIndex - limit);
-      slice = filtered.slice(start, beforeIndex);
+      const scanner = await this.getScanner();
+      const pagedScanner = scanner as unknown as {
+        getConversationPage?: (
+          id: string,
+          options: { beforeIndex: number; limit: number },
+        ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
+      };
+      const page =
+        typeof pagedScanner.getConversationPage === "function"
+          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit })
+          : null;
+      const start = page?.fromIndex ?? Math.max(0, beforeIndex - limit);
+      slice = page?.messages ?? filtered.slice(start, beforeIndex);
       fromIdx = start;
       messagePagination = {
-        total,
+        total: page?.total ?? total,
         before_index: beforeIndex,
         from_index: start,
         has_more_older: start > 0,
