@@ -13,9 +13,12 @@ jobs:
   # job-level `if:` reports "skipped", which does NOT satisfy a required check
   # and would leave the PR un-mergeable forever. Instead each job checks out
   # (cheap, and required so the local composite action exists) and then runs a
-  # single guarded `run-ci` step. When `--skip-ci` is present in the latest
-  # commit message, the PR title, or the PR body, that one step is skipped, the
-  # job still succeeds, and the check context goes green in seconds.
+  # single guarded `run-ci` step. When the bracketed tag `[skip-ci]` is present
+  # in the latest commit message, the PR title, or the PR body, that one step
+  # is skipped, the job still succeeds, and the check context goes green in
+  # seconds. The tag is bracketed (not a bare `--skip-ci`) so prose that merely
+  # mentions it — like this comment, or a PR describing the feature — does not
+  # accidentally trip the skip.
   gate:
     name: Gate
     runs-on: ubuntu-latest
@@ -34,9 +37,9 @@ jobs:
           haystack="${HEAD_COMMIT_MSG}
           ${PR_TITLE}
           ${PR_BODY}"
-          if printf '%s' "$haystack" | grep -qF -- '--skip-ci'; then
+          if printf '%s' "$haystack" | grep -qF -- '[skip-ci]'; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=CI skipped::'--skip-ci' found in commit message / PR title / PR body — run-ci step skipped, check reported green."
+            echo "::notice title=CI skipped::'[skip-ci]' found in commit message / PR title / PR body — run-ci step skipped, check reported green."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
