@@ -178,7 +178,14 @@ export class PTYManager {
 
     const proc = nodePty.spawn(
       resolveClaudeExe(),
-      ["--permission-mode", "dontAsk", "--resume", sessionId],
+      [
+        "--permission-mode",
+        "dontAsk",
+        "--settings",
+        '{"spinnerTipsEnabled":false}',
+        "--resume",
+        sessionId,
+      ],
       {
         name: "xterm-256color",
         cols: 120,
@@ -234,7 +241,14 @@ export class PTYManager {
     // `--permission-mode dontAsk` for the same reason as start() above — do not
     // swap back to --dangerously-skip-permissions (TUI warning gate). Guarded by
     // __tests__/pty-ready-detection.test.ts.
-    const args = ["--permission-mode", "dontAsk", "--session-id", sessionId];
+    const args = [
+      "--permission-mode",
+      "dontAsk",
+      "--settings",
+      '{"spinnerTipsEnabled":false}',
+      "--session-id",
+      sessionId,
+    ];
     if (options.systemPrompt) {
       args.push("--system-prompt", options.systemPrompt);
     }
