@@ -137,7 +137,7 @@ describe("Pair endpoints", () => {
         recipient.secretKey,
       );
       expect(plain).not.toBeNull();
-      expect(naclUtil.encodeUTF8(plain!)).toBe(API_KEY);
+      expect(naclUtil.encodeUTF8(plain as Uint8Array)).toBe(API_KEY);
       expect(body.publicUrl).toBe("https://example.test");
     });
 

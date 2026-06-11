@@ -119,7 +119,7 @@ export class StreamerServer {
   private tailSize: number;
   private filterAgentConversations: boolean;
   private agentEntrypoints: ReadonlySet<string>;
-  private honoApp: Hono<AppEnv> | null = null;
+  private honoApp: Hono<AppEnv>;
   private log = getLogger("server");
   private agentConfig: AgentConfig;
   private agentClient: AgentClient | null = null;
@@ -562,7 +562,7 @@ export class StreamerServer {
       method: req.method ?? "GET",
       headers: req.headers as Record<string, string>,
     });
-    const honoRes = await this.honoApp!.fetch(webReq, { incoming: req, outgoing: res });
+    const honoRes = await this.honoApp.fetch(webReq, { incoming: req, outgoing: res });
     if (honoRes.status !== ALREADY_HANDLED) {
       await writeHonoResponse(honoRes, res);
     }

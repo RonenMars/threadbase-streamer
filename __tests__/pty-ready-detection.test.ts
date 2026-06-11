@@ -50,7 +50,6 @@ async function spawnResume(mgr: PTYManager, sessionId = "uuid-resume") {
 }
 
 function getMockProc(mgr: PTYManager, sessionId: string): any {
-  // biome-ignore lint/suspicious/noExplicitAny: test reaches into private state
   return (mgr as any).sessions.get(sessionId).process;
 }
 
@@ -283,13 +282,11 @@ describe("PTYManager — spawn permission flags", () => {
   // session never reaches a usable prompt. --permission-mode dontAsk skips
   // tool-approval prompts without that warning gate. See src/pty-manager.ts.
   function spawnArgs(): string[] {
-    // biome-ignore lint/suspicious/noExplicitAny: test reads the mock call args
     const calls = (mockSpawn as any).mock.calls;
     return calls[calls.length - 1][1] as string[];
   }
 
   beforeEach(() => {
-    // biome-ignore lint/suspicious/noExplicitAny: reset shared spawn mock
     (mockSpawn as any).mockClear();
   });
 

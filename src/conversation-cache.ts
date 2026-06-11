@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "fs";
-import { dirname, join } from "path";
+import { dirname } from "path";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
 import {
   DEFAULT_AGENT_ENTRYPOINTS,

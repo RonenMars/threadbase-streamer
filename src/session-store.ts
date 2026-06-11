@@ -70,7 +70,7 @@ export class SessionStore {
     for (const d of this.discovered.values()) {
       if (!d.conversationId) continue;
       if (seenIds.has(d.conversationId)) continue;
-      results.push(discoveredToResponse(d));
+      results.push(discoveredToResponse(d, d.conversationId));
       seenIds.add(d.conversationId);
     }
 
@@ -82,7 +82,7 @@ export class SessionStore {
     if (managed) return managedToResponse(managed, ptyAttachedIds.has(sessionId));
 
     for (const d of this.discovered.values()) {
-      if (d.conversationId === sessionId) return discoveredToResponse(d);
+      if (d.conversationId === sessionId) return discoveredToResponse(d, sessionId);
     }
 
     return null;
@@ -227,10 +227,10 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
   };
 }
 
-function discoveredToResponse(d: DiscoveredProcess): SessionResponse {
+function discoveredToResponse(d: DiscoveredProcess, conversationId: string): SessionResponse {
   return {
-    id: d.conversationId!,
-    conversationId: d.conversationId!,
+    id: conversationId,
+    conversationId,
     status: "idle",
     projectPath: d.projectPath,
     projectName: d.projectName,
