@@ -7,45 +7,97 @@ on:
     branches: [main]
 
 jobs:
+  # Decide whether to skip the heavy CI work. The required status checks
+  # (Lint, Test (Node 20), Test (Node 22)) are enforced by branch protection,
+  # so the jobs below must ALWAYS run and report success — a truly-skipped job
+  # never reports a status and would leave the PR un-mergeable forever. Instead
+  # we short-circuit each job's expensive steps when `--skip-ci` is present in
+  # the latest commit message, the PR title, or the PR body. The check contexts
+  # still go green (in seconds), so protection stays intact while a docs-only
+  # change merges without waiting for the full matrix.
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+    steps:
+      - id: decide
+        env:
+          # On pull_request, github.event.head_commit is null, so fall back to
+          # the PR title/body. On push to main, the PR fields are empty and we
+          # use the head commit message.
+          HEAD_COMMIT_MSG: ${{ github.event.head_commit.message }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          haystack="${HEAD_COMMIT_MSG}
+          ${PR_TITLE}
+          ${PR_BODY}"
+          if printf '%s' "$haystack" | grep -qF -- '--skip-ci'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=CI skipped::'--skip-ci' found in commit message / PR title / PR body — heavy steps skipped, checks reported green."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    needs: gate
     steps:
-      - uses: actions/checkout@v4
+      - if: needs.gate.outputs.skip == 'true'
+        run: echo "Skipping lint — '--skip-ci' detected."
+
+      - if: needs.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - if: needs.gate.outputs.skip != 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install build tools for node-pty
+        if: needs.gate.outputs.skip != 'true'
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
 
-      - run: npm install
+      - if: needs.gate.outputs.skip != 'true'
+        run: npm install
 
-      - run: npm run lint
+      - if: needs.gate.outputs.skip != 'true'
+        run: npm run lint
 
   build:
     name: Build
     runs-on: ubuntu-latest
+    needs: gate
     steps:
-      - uses: actions/checkout@v4
+      - if: needs.gate.outputs.skip == 'true'
+        run: echo "Skipping build — '--skip-ci' detected."
+
+      - if: needs.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - if: needs.gate.outputs.skip != 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Install build tools for node-pty
+        if: needs.gate.outputs.skip != 'true'
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
 
-      - run: npm install
+      - if: needs.gate.outputs.skip != 'true'
+        run: npm install
 
-      - run: npm run build
+      - if: needs.gate.outputs.skip != 'true'
+        run: npm run build
 
-      - uses: actions/upload-artifact@v4
+      - if: needs.gate.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
@@ -53,22 +105,30 @@ jobs:
   test:
     name: Test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [gate, lint]
     strategy:
       matrix:
         node-version: [18, 20, 22]
     steps:
-      - uses: actions/checkout@v4
+      - if: needs.gate.outputs.skip == 'true'
+        run: echo "Skipping tests — '--skip-ci' detected."
+
+      - if: needs.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - if: needs.gate.outputs.skip != 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
 
       - name: Install build tools for node-pty
+        if: needs.gate.outputs.skip != 'true'
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
 
-      - run: npm install
+      - if: needs.gate.outputs.skip != 'true'
+        run: npm install
 
-      - run: npm test
+      - if: needs.gate.outputs.skip != 'true'
+        run: npm test
