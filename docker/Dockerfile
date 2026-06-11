@@ -1,16 +1,17 @@
-# Public deploy container for tb-streamer.
+# Production deploy container for tb-streamer.
 #
 # Builds the streamer from local source on linux-x86_64, rebuilds the native
 # modules (node-pty + better-sqlite3) against the target Linux runtime, and
-# runs the real serve command against a curated demo-data/ corpus. The
-# `claude` binary on PATH inside the container is a scripted stub
-# (claude-code-stub/) — no Anthropic API calls happen, no credentials are
-# baked into the image.
+# installs the real Claude CLI for production use.
+#
+# By default, this is a PRODUCTION image with real Claude CLI.
+# For DEMO mode (scripted stub responses), pass --build-arg DEMO_MODE=true
 #
 # Build context must be the repo root, not docker/, so the Dockerfile can
 # COPY the source tree. Run from the repo root:
 #
-#   docker build -f docker/Dockerfile .
+#   Production: docker build -f docker/Dockerfile .
+#   Demo:       docker build -f docker/Dockerfile --build-arg DEMO_MODE=true .
 #
 # fly.toml's [build] dockerfile = 'docker/Dockerfile' takes care of this for
 # `fly deploy`.
@@ -60,8 +61,11 @@ RUN npm run build
 # ─── runtime ────────────────────────────────────────────────────────────────
 FROM node:24-bookworm-slim
 
+# Build argument to control demo vs production mode
+ARG DEMO_MODE=false
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only what the runtime actually needs: bundled dist/ + the (rebuilt)
@@ -71,20 +75,39 @@ COPY --from=builder /build/dist ./dist
 COPY --from=builder /build/node_modules ./node_modules
 COPY --from=builder /build/package.json ./package.json
 
-# Scripted `claude` stand-in. tb-streamer's PTYManager spawns the binary named
-# `claude` on PATH, so we install the stub there.
-COPY docker/claude-code-stub /opt/claude-code-stub
-RUN chmod +x /opt/claude-code-stub/claude.js \
-    && ln -s /opt/claude-code-stub/claude.js /usr/local/bin/claude
+# Install Claude CLI based on mode:
+# - Production (default): Install real Claude CLI from npm
+# - Demo: Install scripted stub that returns canned responses
+RUN if [ "$DEMO_MODE" = "true" ]; then \
+        echo "Building DEMO mode - installing claude-code-stub"; \
+        mkdir -p /opt/claude-code-stub; \
+    else \
+        echo "Building PRODUCTION mode - installing real Claude CLI"; \
+        npm install -g @anthropic-ai/claude-code; \
+    fi
 
-# Demo conversation corpus baked into the image. entrypoint.sh copies it into
-# HOME at boot (idempotently — Fly volumes persist state across deploys).
+# Copy demo stub (only used when DEMO_MODE=true)
+COPY docker/claude-code-stub /opt/claude-code-stub
+RUN if [ "$DEMO_MODE" = "true" ]; then \
+        chmod +x /opt/claude-code-stub/claude.js && \
+        ln -sf /opt/claude-code-stub/claude.js /usr/local/bin/claude; \
+    fi
+
+# Demo conversation corpus (only copied when DEMO_MODE=true)
 COPY demo-data /seed
+RUN if [ "$DEMO_MODE" != "true" ]; then \
+        rm -rf /seed; \
+    fi
+
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Default Claude model for spawned sessions. entrypoint.sh exports this as
+# ANTHROPIC_MODEL, which the Claude CLI honors. Override at runtime with
+# `fly secrets set CLAUDE_CODE_MODEL=…` or `-e CLAUDE_CODE_MODEL=…`.
 ENV HOME=/data \
-    PORT=8080
+    PORT=8080 \
+    CLAUDE_CODE_MODEL=claude-haiku-4-5-20251001
 EXPOSE 8080
 
 ENTRYPOINT ["/entrypoint.sh"]

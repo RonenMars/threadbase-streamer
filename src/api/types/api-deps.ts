@@ -47,7 +47,12 @@ export type ApiDeps = {
   // Conversations / search / projects / browse / pair / project-chats delegates
   handleListConversations: (url: URL, res: ServerResponse) => Promise<void>;
   handleConversationsCount: (url: URL, res: ServerResponse) => Promise<void>;
-  handleGetConversation: (id: string, url: URL, res: ServerResponse) => Promise<void>;
+  handleGetConversation: (
+    id: string,
+    url: URL,
+    res: ServerResponse,
+    ifNoneMatch?: string,
+  ) => Promise<void>;
   handleSearch: (url: URL, res: ServerResponse) => Promise<void>;
   handleGetPopularProjects: (url: URL, res: ServerResponse) => void;
   handleListProjectChats: (url: URL, res: ServerResponse) => Promise<void>;

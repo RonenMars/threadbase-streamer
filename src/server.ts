@@ -11,7 +11,7 @@ import {
   type SortOrder,
   search,
 } from "@threadbase/scanner";
-import { createReadStream, existsSync, watch as fsWatch, readdirSync } from "fs";
+import { createReadStream, existsSync, watch as fsWatch, readdirSync, statSync } from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -36,7 +36,7 @@ import {
   validatePublicUrl,
 } from "./auth";
 import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
-import { ConversationCache } from "./conversation-cache";
+import { ConversationCache, type ConversationListItem } from "./conversation-cache";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
@@ -62,6 +62,8 @@ import type {
   SessionStatus,
 } from "./types";
 import { saveUploadFile } from "./uploads";
+import { computeConversationEtag } from "./utils/conversationEtag";
+import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
 import { WSHub } from "./ws-hub";
 
 const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
@@ -118,7 +120,7 @@ export class StreamerServer {
   private tailSize: number;
   private filterAgentConversations: boolean;
   private agentEntrypoints: ReadonlySet<string>;
-  private honoApp: Hono<AppEnv> | null = null;
+  private honoApp: Hono<AppEnv>;
   private log = getLogger("server");
   private agentConfig: AgentConfig;
   private agentClient: AgentClient | null = null;
@@ -273,7 +275,8 @@ export class StreamerServer {
       handleStartSession: (req, res) => this.handleStartSession(req, res),
       handleListConversations: (url, res) => this.handleListConversations(url, res),
       handleConversationsCount: (url, res) => this.handleConversationsCount(url, res),
-      handleGetConversation: (id, url, res) => this.handleGetConversation(id, url, res),
+      handleGetConversation: (id, url, res, ifNoneMatch) =>
+        this.handleGetConversation(id, url, res, ifNoneMatch),
       handleSearch: (url, res) => this.handleSearch(url, res),
       handleGetPopularProjects: (url, res) => this.handleGetPopularProjects(url, res),
       handleListProjectChats: (url, res) => this.handleListProjectChats(url, res),
@@ -561,7 +564,7 @@ export class StreamerServer {
       method: req.method ?? "GET",
       headers: req.headers as Record<string, string>,
     });
-    const honoRes = await this.honoApp!.fetch(webReq, { incoming: req, outgoing: res });
+    const honoRes = await this.honoApp.fetch(webReq, { incoming: req, outgoing: res });
     if (honoRes.status !== ALREADY_HANDLED) {
       await writeHonoResponse(honoRes, res);
     }
@@ -774,7 +777,11 @@ export class StreamerServer {
       return;
     }
     const { conversations } = this.cache.listConversations({ limit, offset: 0 });
+    // Items here are conversation cache rows, not live sessions in SessionStore.
+    // The `type` discriminator lets mobile route taps through /api/sessions/resume
+    // (which spawns a fresh PTY) instead of GET /api/sessions/:id (which 404s).
     const sessions = conversations.map((c) => ({
+      type: "conversation" as const,
       id: c.id,
       status: "idle" as const,
       ptyAttached: false,
@@ -888,7 +895,27 @@ export class StreamerServer {
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
     const scanner = await this.getScanner();
     const fromIndex = await scanner.getConversation(uuid);
-    if (fromIndex) return fromIndex;
+    if (fromIndex) {
+      // The scanner memoizes both its metadata index and parsed conversations
+      // for the server's lifetime. A conversation that grows after the initial
+      // scan (the chokidar watcher keeps the SQLite cache fresh, but never the
+      // scanner) keeps serving the startup snapshot here — so the detail/info
+      // view shows a stale message count + last activity that disagrees with
+      // the list view and with what --resume actually replays. If the JSONL on
+      // disk is newer than the snapshot, refresh just that one file's indexes
+      // (refreshFile evicts the stale parse and re-parses on the next read)
+      // rather than dropping and rebuilding the entire scanner.
+      if (fromIndex.filePath && this.isConversationSnapshotStale(fromIndex)) {
+        const refreshedMeta = await scanner.refreshFile(fromIndex.filePath);
+        // refreshFile returns null and drops the entry when the file no longer
+        // parses (deleted/emptied). In that case return null so the caller's
+        // ghost-prune + cache-tail fallback runs instead of serving the stale
+        // snapshot we already know is wrong.
+        if (!refreshedMeta) return null;
+        return (await scanner.getConversation(uuid)) ?? fromIndex;
+      }
+      return fromIndex;
+    }
 
     if (this.scanProfiles) return null;
 
@@ -900,7 +927,26 @@ export class StreamerServer {
     return freshScanner.getConversation(uuid);
   }
 
-  private async handleGetConversation(id: string, url: URL, res: ServerResponse): Promise<void> {
+  // True when the JSONL on disk is meaningfully newer than the scanned
+  // snapshot's last-activity timestamp — i.e. the file grew after the scan.
+  private isConversationSnapshotStale(conv: Conversation): boolean {
+    if (!conv.filePath) return false;
+    let mtimeMs: number | null = null;
+    try {
+      mtimeMs = statSync(conv.filePath).mtimeMs;
+    } catch {
+      // Stat failed (file moved/deleted mid-flight) — don't force a re-scan.
+      return false;
+    }
+    return isScannedSnapshotStale(conv.timestamp, mtimeMs);
+  }
+
+  private async handleGetConversation(
+    id: string,
+    url: URL,
+    res: ServerResponse,
+    ifNoneMatch?: string,
+  ): Promise<void> {
     // Try the scanner first (has full content including tool_use blocks).
     // Fall back to the cache tail only when the scanner can't find the file —
     // e.g. a conversation that existed in a previous run but whose JSONL was deleted.
@@ -953,6 +999,35 @@ export class StreamerServer {
       // the next list refresh doesn't keep offering this id to clients.
       this.cache?.invalidate(id);
       json(res, 404, { error: "Conversation not found" });
+      return;
+    }
+
+    // Compute the conditional-fetch validator from the RESOLVED conversation —
+    // findConversationByUuid has already done its staleness refresh above, so
+    // these fields reflect the same state the body would. Computing it from a
+    // pre-refresh snapshot would let us hand out a 304 against stale data.
+    const etagSource = conversation as unknown as {
+      filePath: string;
+      messageCount: number;
+      timestamp: string;
+    };
+    const etag = computeConversationEtag({
+      filePath: etagSource.filePath,
+      messageCount: etagSource.messageCount,
+      timestamp: etagSource.timestamp,
+    });
+
+    // Only the first page ("is the conversation as a whole still current?")
+    // participates in the freshness check. Older pages are immutable history —
+    // a back-page request (before_index set) always returns its 200 body, never
+    // a 304, even when the client echoes a matching If-None-Match.
+    const isFirstPage = !url.searchParams.has("before_index");
+    if (isFirstPage && ifNoneMatch && ifNoneMatch === etag) {
+      // This is a direct-`ServerResponse` write, so the Hono CORS middleware's
+      // headers don't reach it — set the expose header here so a cross-origin
+      // client can read the validator off the 304 too.
+      res.writeHead(304, { ETag: etag, "Access-Control-Expose-Headers": "ETag" });
+      res.end();
       return;
     }
 
@@ -1043,7 +1118,17 @@ export class StreamerServer {
         uuid: d.uuid,
       }));
     }
-    json(res, 200, body);
+    // Always expose the ETag on the 200 so the client can store it and send it
+    // back as If-None-Match next time. Old clients ignore the header. This is a
+    // direct-`ServerResponse` write that bypasses the Hono CORS middleware, so
+    // the expose header is set here too — without it a cross-origin client
+    // can't read ETag.
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      ETag: etag,
+      "Access-Control-Expose-Headers": "ETag",
+    });
+    res.end(JSON.stringify(body));
   }
 
   private async handleSearch(url: URL, res: ServerResponse): Promise<void> {
@@ -1140,14 +1225,23 @@ export class StreamerServer {
 
   private handleGetSession(sessionId: string, res: ServerResponse): void {
     const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-    if (!session) {
-      json(res, 404, { error: "Session not found" });
+    if (session) {
+      if (!existsSync(session.projectPath)) {
+        session.failureReason = `Project directory not found: ${session.projectPath}`;
+      }
+      json(res, 200, session);
       return;
     }
-    if (!existsSync(session.projectPath)) {
-      session.failureReason = `Project directory not found: ${session.projectPath}`;
+    // Fall back to the conversation cache: older mobile builds tap recents
+    // entries via GET /api/sessions/:id even though those IDs are conversation
+    // UUIDs, not live sessions. Returning a resumable shape (status=on_hold)
+    // lets the mobile open flow proceed to /api/sessions/resume.
+    const conversation = this.cache?.getMetaById(sessionId);
+    if (conversation) {
+      json(res, 200, conversationToResumableSession(conversation));
+      return;
     }
-    json(res, 200, session);
+    json(res, 404, { error: "Session not found" });
   }
 
   private async handleResume(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1696,6 +1790,34 @@ export class StreamerServer {
 }
 
 // ─── Utilities ─────────────────────────────────────────────────────
+
+function conversationToResumableSession(c: ConversationListItem) {
+  return {
+    type: "conversation" as const,
+    id: c.id,
+    conversationId: c.id,
+    status: "on_hold" as const,
+    ptyAttached: false,
+    projectId: c.projectId ?? undefined,
+    projectPath: c.projectPath ?? "",
+    projectName: c.projectName ?? "",
+    branch: c.branch ?? undefined,
+    lastOutput: "",
+    elapsedMs: 0,
+    promptCount: c.messageCount,
+    startedAt: c.lastActivity,
+    completedAt: null,
+    lastActivityAt: c.lastActivity,
+    ...(c.title != null && { sessionName: c.title }),
+    ...(c.model != null && { model: c.model }),
+    ...(c.account != null && { account: c.account }),
+    messageCount: c.messageCount,
+    ...(c.preview != null && { preview: c.preview }),
+    ...(c.firstMessage != null && { firstMessageText: c.firstMessage }),
+    ...(c.lastMessage != null && { lastMessageText: c.lastMessage }),
+    filePath: c.filePath,
+  };
+}
 
 function json(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });

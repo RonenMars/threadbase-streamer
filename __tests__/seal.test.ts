@@ -16,7 +16,7 @@ describe("seal", () => {
 
     const plain = nacl.box.open(ciphertext, nonce, ephemeralPk, recipient.secretKey);
     expect(plain).not.toBeNull();
-    expect(naclUtil.encodeUTF8(plain!)).toBe(apiKey);
+    expect(naclUtil.encodeUTF8(plain as Uint8Array)).toBe(apiKey);
   });
 
   it("uses a fresh ephemeral keypair every call", () => {

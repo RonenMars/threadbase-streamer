@@ -48,7 +48,7 @@ export class ProjectsRepository {
   private insert: Database.Statement;
   private update: Database.Statement;
 
-  constructor(private db: Database.Database) {
+  constructor(db: Database.Database) {
     this.getByPath = db.prepare("SELECT * FROM projects WHERE path = ?");
     this.getById = db.prepare("SELECT * FROM projects WHERE id = ?");
     this.listAll = db.prepare("SELECT * FROM projects ORDER BY updated_at DESC");

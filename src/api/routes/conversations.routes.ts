@@ -17,7 +17,8 @@ export const createConversationRoutes = (deps: ApiDeps) => {
   app.get("/:id{.+}", async (c) => {
     const id = c.req.param("id");
     const url = new URL(c.req.url);
-    await deps.handleGetConversation(id, url, c.env.outgoing);
+    const ifNoneMatch = c.req.header("if-none-match");
+    await deps.handleGetConversation(id, url, c.env.outgoing, ifNoneMatch);
     return alreadyHandled();
   });
 

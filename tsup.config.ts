@@ -23,7 +23,11 @@ export default defineConfig([
     esbuildOptions: silenceImportMetaWarning,
   },
   {
-    entry: { cli: "cli/index.ts", "launchd-entry": "cli/launchd-entry.ts" },
+    entry: {
+      cli: "cli/index.ts",
+      "launchd-entry": "cli/launchd-entry.ts",
+      "seed-claude-config": "src/docker/seed-claude-config.ts",
+    },
     format: ["cjs"],
     banner: { js: "#!/usr/bin/env node" },
     sourcemap: true,

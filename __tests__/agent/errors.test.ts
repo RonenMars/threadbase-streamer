@@ -43,12 +43,10 @@ describe("agentErrorResponse", () => {
 
   it("does not let extra fields override `error` or `code`", () => {
     // Defensive: callers should not be able to override the canonical fields.
-    const result = agentErrorResponse(
-      AgentErrorCode.INPUT_REQUIRED,
-      "input missing",
-      // biome-ignore lint/suspicious/noExplicitAny: defensive test
-      { error: "tampered", code: "WRONG" } as any,
-    );
+    const result = agentErrorResponse(AgentErrorCode.INPUT_REQUIRED, "input missing", {
+      error: "tampered",
+      code: "WRONG",
+    } as any);
     expect(result.error).toBe("input missing");
     expect(result.code).toBe("INPUT_REQUIRED");
   });

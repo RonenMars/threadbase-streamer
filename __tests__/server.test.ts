@@ -1,4 +1,4 @@
-import { mkdtempSync } from "fs";
+import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -179,6 +179,26 @@ describe("StreamerServer", () => {
       });
       expect(res.status).toBe(404);
     });
+
+    it("falls back to conversation cache and returns a resumable shape for known conversation ids", async () => {
+      // Older mobile builds tap recents rows via /sessions/:id even though
+      // those are conversation UUIDs. The fallback prevents a 404.
+      // Warm the cache by hitting /api/conversations (it runs the scanner).
+      const conversationsRes = await fetch(`${baseUrl}/api/conversations?refresh=1`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      }).then((r) => r.json());
+      expect(conversationsRes.conversations.length).toBeGreaterThan(0);
+      const conversationId = conversationsRes.conversations[0].id;
+
+      const res = await fetch(`${baseUrl}/api/sessions/${conversationId}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.id).toBe(conversationId);
+      expect(body.type).toBe("conversation");
+      expect(body.status).toBe("on_hold");
+    });
   });
 
   describe("POST /api/sessions/:id/input", () => {
@@ -295,6 +315,23 @@ describe("StreamerServer", () => {
 
       expect(res.status).toBe(200);
       expect(body.sessions.length).toBeLessThanOrEqual(1);
+    });
+
+    it("tags items with type=conversation so mobile can route taps correctly", async () => {
+      // Warm the cache via /api/conversations so recents has data to return.
+      await fetch(`${baseUrl}/api/conversations?refresh=1`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const res = await fetch(`${baseUrl}/api/sessions/recents`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.sessions.length).toBeGreaterThan(0);
+      // Items come from ConversationCache, not SessionStore — must be flagged.
+      for (const item of body.sessions) {
+        expect(item.type).toBe("conversation");
+      }
     });
   });
 
@@ -493,6 +530,227 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
       expect(res.status).toBe(200);
+    });
+  });
+
+  // Regression for the "resume shows a different last message" report: the
+  // scanner memoizes its index + parsed conversations for the server's
+  // lifetime, so a conversation that grew after the initial scan kept serving
+  // a stale message_count / last_updated_at from GET /api/conversations/:id —
+  // disagreeing with the list view and with what --resume actually replays.
+  // findConversationByUuid now re-scans when the JSONL on disk is newer.
+  describe("GET /api/conversations/:id stale-snapshot re-scan", () => {
+    let growServer: StreamerServer;
+    let growPort: number;
+    let profileDir: string;
+    let jsonlPath: string;
+    const convId = "grow-session-1111";
+
+    beforeEach(async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-grow-profile-"));
+      const projDir = join(profileDir, "projects", "-tmp-grow-project");
+      mkdirSync(projDir, { recursive: true });
+      jsonlPath = join(projDir, `${convId}.jsonl`);
+      const line = (uuid: string, role: string, ts: string, text: string) =>
+        `${JSON.stringify({
+          type: role,
+          uuid,
+          timestamp: ts,
+          sessionId: convId,
+          slug: "grow-session",
+          cwd: "/tmp/grow-project",
+          message: { role, model: "claude-sonnet-4-6", content: [{ type: "text", text }] },
+        })}\n`;
+      writeFileSync(
+        jsonlPath,
+        line("g-u1", "user", "2026-06-05T08:00:00.000Z", "first message") +
+          line("g-a1", "assistant", "2026-06-05T08:00:05.000Z", "first reply"),
+      );
+
+      growPort = await getRandomPort();
+      growServer = new StreamerServer({
+        port: growPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-grow-cache-")),
+        scanProfiles: [
+          { id: "grow", label: "Grow", configDir: profileDir, enabled: true, emoji: "🌱" },
+        ],
+      });
+      await growServer.listen(growPort);
+    });
+
+    afterEach(async () => {
+      await growServer.close();
+    });
+
+    it("reflects messages appended after the initial scan", async () => {
+      const url = `http://localhost:${growPort}/api/conversations/${convId}?msg_limit=80`;
+      const headers = { Authorization: `Bearer ${API_KEY}` };
+
+      // Warm the scanner snapshot at 2 messages.
+      const first = await fetch(url, { headers });
+      expect(first.status).toBe(200);
+      const firstBody = (await first.json()) as {
+        meta: { message_count: number; last_updated_at: string };
+        messages: Array<{ text: string }>;
+      };
+      expect(firstBody.messages.length).toBe(2);
+
+      // Grow the conversation and push the mtime past the snapshot timestamp.
+      const newLine = `${JSON.stringify({
+        type: "assistant",
+        uuid: "g-a2",
+        timestamp: "2026-06-07T10:04:11.912Z",
+        sessionId: convId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "the real latest message" }],
+        },
+      })}\n`;
+      appendFileSync(jsonlPath, newLine);
+      const future = new Date("2026-06-07T10:04:12.000Z");
+      utimesSync(jsonlPath, future, future);
+
+      // The re-fetch must re-scan and surface the appended message.
+      const second = await fetch(url, { headers });
+      expect(second.status).toBe(200);
+      const secondBody = (await second.json()) as {
+        meta: { message_count: number; last_updated_at: string };
+        messages: Array<{ text: string }>;
+      };
+      expect(secondBody.messages.length).toBe(3);
+      expect(secondBody.messages.at(-1)?.text).toContain("the real latest message");
+      expect(secondBody.meta.last_updated_at).toBe("2026-06-07T10:04:11.912Z");
+    });
+  });
+
+  describe("GET /api/conversations/:id ETag / If-None-Match", () => {
+    let etagServer: StreamerServer;
+    let etagPort: number;
+    let profileDir: string;
+    let jsonlPath: string;
+    const convId = "etag-session-2222";
+
+    beforeEach(async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-etag-profile-"));
+      const projDir = join(profileDir, "projects", "-tmp-etag-project");
+      mkdirSync(projDir, { recursive: true });
+      jsonlPath = join(projDir, `${convId}.jsonl`);
+      const line = (uuid: string, role: string, ts: string, text: string) =>
+        `${JSON.stringify({
+          type: role,
+          uuid,
+          timestamp: ts,
+          sessionId: convId,
+          slug: "etag-session",
+          cwd: "/tmp/etag-project",
+          message: { role, model: "claude-sonnet-4-6", content: [{ type: "text", text }] },
+        })}\n`;
+      writeFileSync(
+        jsonlPath,
+        line("e-u1", "user", "2026-06-05T08:00:00.000Z", "first message") +
+          line("e-a1", "assistant", "2026-06-05T08:00:05.000Z", "first reply"),
+      );
+
+      etagPort = await getRandomPort();
+      etagServer = new StreamerServer({
+        port: etagPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-etag-cache-")),
+        scanProfiles: [
+          { id: "etag", label: "ETag", configDir: profileDir, enabled: true, emoji: "🏷️" },
+        ],
+      });
+      await etagServer.listen(etagPort);
+    });
+
+    afterEach(async () => {
+      await etagServer.close();
+    });
+
+    const url = () => `http://localhost:${etagPort}/api/conversations/${convId}`;
+    const auth = { Authorization: `Bearer ${API_KEY}` };
+
+    it("returns an ETag header with the body on first fetch", async () => {
+      const res = await fetch(url(), { headers: auth });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("etag")).toMatch(/^"[0-9a-f]{16}"$/);
+      // ETag must be readable cross-origin so the mobile fetch can store it.
+      expect(res.headers.get("access-control-expose-headers")).toContain("ETag");
+      const body = (await res.json()) as { messages: unknown[] };
+      expect(body.messages.length).toBe(2);
+    });
+
+    it("returns 304 with empty body when If-None-Match matches", async () => {
+      const first = await fetch(url(), { headers: auth });
+      const etag = first.headers.get("etag");
+      expect(etag).toBeTruthy();
+
+      const second = await fetch(url(), {
+        headers: { ...auth, "If-None-Match": etag as string },
+      });
+      expect(second.status).toBe(304);
+      expect(second.headers.get("etag")).toBe(etag);
+      expect(await second.text()).toBe("");
+    });
+
+    it("returns 200 with a new ETag after a message is appended", async () => {
+      const first = await fetch(url(), { headers: auth });
+      const etag = first.headers.get("etag") as string;
+
+      const newLine = `${JSON.stringify({
+        type: "assistant",
+        uuid: "e-a2",
+        timestamp: "2026-06-07T10:04:11.912Z",
+        sessionId: convId,
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "a brand new message" }],
+        },
+      })}\n`;
+      appendFileSync(jsonlPath, newLine);
+      const future = new Date("2026-06-07T10:04:12.000Z");
+      utimesSync(jsonlPath, future, future);
+
+      const second = await fetch(url(), {
+        headers: { ...auth, "If-None-Match": etag },
+      });
+      expect(second.status).toBe(200);
+      expect(second.headers.get("etag")).not.toBe(etag);
+      const body = (await second.json()) as { messages: Array<{ text: string }> };
+      expect(body.messages.length).toBe(3);
+      expect(body.messages.at(-1)?.text).toContain("a brand new message");
+    });
+
+    it("returns 200 (never 304) for a back-page request even with a matching If-None-Match", async () => {
+      const first = await fetch(url(), { headers: auth });
+      const etag = first.headers.get("etag") as string;
+
+      const backPage = await fetch(`${url()}?msg_limit=1&before_index=1`, {
+        headers: { ...auth, "If-None-Match": etag },
+      });
+      expect(backPage.status).toBe(200);
+      const body = (await backPage.json()) as {
+        messages: unknown[];
+        message_pagination: { before_index: number; from_index: number };
+      };
+      expect(body.message_pagination.before_index).toBe(1);
+      expect(body.messages.length).toBe(1);
+    });
+
+    it("returns 200 for a request without If-None-Match (old-client path)", async () => {
+      const res = await fetch(url(), { headers: auth });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { messages: unknown[] };
+      expect(body.messages.length).toBe(2);
     });
   });
 });

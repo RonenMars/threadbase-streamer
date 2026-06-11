@@ -12,6 +12,7 @@ Architecture documents for **@threadbase/streamer** — problem framing, alterna
 | 2026-04-30 | [cache-layer](2026-04-30-cache-layer.md) | SQLite-backed cache for conversation metadata and message tails to remove cold-load latency on `/api/conversations` and `/api/conversations/{id}`. |
 | 2026-05-02 | [quick-access-endpoints](2026-05-02-quick-access-endpoints.md) | Server-side recents + popular endpoints for the mobile Quick Access strip. |
 | 2026-05-02 | [sessions-ws-push](2026-05-02-sessions-ws-push.md) | Replace HTTP polling for `/api/sessions/{id}/output` with WebSocket push to remove the blank-terminal flash. |
+| 2026-06-11 | [scanner-conversation-memory](2026-06-11-scanner-conversation-memory.md) | Analysis of the scanner conversation-LRU resident-memory cost; decision to ship as-is (non-issue under current usage) and instrument before optimizing. |
 
 ## Conventions
 
