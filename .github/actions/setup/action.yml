@@ -13,8 +13,13 @@ runs:
       id: cache
       uses: actions/cache/restore@v4
       with:
-        path: node_modules
-        key: node-modules-${{ hashFiles('package-lock.json') }}
+        path: |
+          node_modules
+          vendor/agent-types/node_modules
+          vendor/agent-types/dist
+          vendor/scanner/node_modules
+          vendor/scanner/dist
+        key: node-modules-v4-node20-${{ hashFiles('package-lock.json') }}
 
     - name: Install build tools for node-pty
       if: steps.cache.outputs.cache-hit != 'true'
@@ -30,5 +35,10 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
-        path: node_modules
-        key: node-modules-${{ hashFiles('package-lock.json') }}
+        path: |
+          node_modules
+          vendor/agent-types/node_modules
+          vendor/agent-types/dist
+          vendor/scanner/node_modules
+          vendor/scanner/dist
+        key: node-modules-v4-node20-${{ hashFiles('package-lock.json') }}

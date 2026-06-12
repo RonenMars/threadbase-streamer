@@ -36,8 +36,13 @@ runs:
       id: cache
       uses: actions/cache/restore@v4
       with:
-        path: node_modules
-        key: node-modules-${{ hashFiles('package-lock.json') }}
+        path: |
+          node_modules
+          vendor/agent-types/node_modules
+          vendor/agent-types/dist
+          vendor/scanner/node_modules
+          vendor/scanner/dist
+        key: node-modules-v4-node${{ inputs.node-version }}-${{ hashFiles('package-lock.json') }}
 
     - name: Install build tools for node-pty
       if: steps.cache.outputs.cache-hit != 'true'
@@ -48,6 +53,11 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: npm ci
+
+    - name: "Relink file: deps (symlinks not preserved by cache)"
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: npm install --prefer-offline --ignore-scripts
 
     - name: Run ${{ inputs.command }}
       shell: bash
