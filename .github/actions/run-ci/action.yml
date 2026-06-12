@@ -42,7 +42,7 @@ runs:
           vendor/agent-types/dist
           vendor/scanner/node_modules
           vendor/scanner/dist
-        key: node-modules-v4-${{ hashFiles('package-lock.json') }}
+        key: node-modules-v4-node${{ inputs.node-version }}-${{ hashFiles('package-lock.json') }}
 
     - name: Install build tools for node-pty
       if: steps.cache.outputs.cache-hit != 'true'
