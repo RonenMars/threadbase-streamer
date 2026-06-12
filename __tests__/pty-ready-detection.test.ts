@@ -279,8 +279,8 @@ describe("PTYManager — spawn permission flags", () => {
   // Regression guard for the prod "Start Session Here" fix: launching with
   // --dangerously-skip-permissions renders a blocking "Bypass Permissions mode"
   // warning in the interactive TUI that no config flag suppresses, so the
-  // session never reaches a usable prompt. --permission-mode dontAsk skips
-  // tool-approval prompts without that warning gate. See src/pty-manager.ts.
+  // session never reaches a usable prompt. --permission-mode acceptEdits auto-
+  // approves file edits without that warning gate. See src/pty-manager.ts.
   function spawnArgs(): string[] {
     const calls = (mockSpawn as any).mock.calls;
     return calls[calls.length - 1][1] as string[];
@@ -290,17 +290,17 @@ describe("PTYManager — spawn permission flags", () => {
     (mockSpawn as any).mockClear();
   });
 
-  it("startFresh spawns with --permission-mode dontAsk, not --dangerously-skip-permissions", async () => {
+  it("startFresh spawns with --permission-mode acceptEdits, not --dangerously-skip-permissions", async () => {
     const mgr = new PTYManager();
     await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
     const args = spawnArgs();
 
     expect(args).toContain("--permission-mode");
-    expect(args[args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 
-  it("resume (start) spawns with --permission-mode dontAsk, not --dangerously-skip-permissions", async () => {
+  it("resume (start) spawns with --permission-mode acceptEdits, not --dangerously-skip-permissions", async () => {
     const mgr = new PTYManager();
     await mgr.start("uuid-resume", {
       projectPath: "/tmp/test",
@@ -310,7 +310,7 @@ describe("PTYManager — spawn permission flags", () => {
     const args = spawnArgs();
 
     expect(args).toContain("--permission-mode");
-    expect(args[args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 });
