@@ -18,7 +18,7 @@ runs:
           vendor/agent-types/node_modules
           vendor/agent-types/dist
           vendor/scanner/node_modules
-        key: node-modules-${{ hashFiles('package-lock.json') }}
+        key: node-modules-v2-${{ hashFiles('package-lock.json') }}
 
     - name: Install build tools for node-pty
       if: steps.cache.outputs.cache-hit != 'true'
@@ -39,4 +39,4 @@ runs:
           vendor/agent-types/node_modules
           vendor/agent-types/dist
           vendor/scanner/node_modules
-        key: node-modules-${{ hashFiles('package-lock.json') }}
+        key: node-modules-v2-${{ hashFiles('package-lock.json') }}
