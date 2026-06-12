@@ -76,7 +76,10 @@
     "deploy:windows:force": "pwsh scripts/deploy.ps1 deploy -Force",
     "deploy:windows:rollback": "pwsh scripts/deploy.ps1 rollback",
     "deploy:windows:status": "pwsh scripts/deploy.ps1 status",
-    "deploy:windows:healthcheck": "pwsh scripts/deploy.ps1 healthcheck"
+    "deploy:windows:healthcheck": "pwsh scripts/deploy.ps1 healthcheck",
+    "deploy:fly": "scripts/deploy-fly.sh",
+    "fly:secrets": "scripts/fly-secrets.sh",
+    "fly:secrets:list": "scripts/fly-secrets.sh --list && scripts/fly-secrets.sh --prod --list"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.14",
