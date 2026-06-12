@@ -1384,7 +1384,25 @@ export class StreamerServer {
       return;
     }
     const body = await readBody(req);
-    const { input } = body;
+    const { input, keys } = body;
+
+    if (typeof keys === "string") {
+      // Raw key bytes (e.g. arrow navigation for interactive prompts).
+      // These bypass bracketed-paste wrapping — caller is responsible for
+      // sending well-formed escape sequences.
+      try {
+        this.ptyManager.sendKeys(sessionId, keys);
+        const updated = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+        if (updated) {
+          this.wsHub.broadcast({ type: "session_update", session: updated });
+        }
+        json(res, 200, { ok: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to send keys";
+        json(res, 400, { error: message });
+      }
+      return;
+    }
 
     if (typeof input !== "string") {
       json(res, 400, { error: "Missing input field" });

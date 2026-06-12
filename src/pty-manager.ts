@@ -292,6 +292,26 @@ export class PTYManager {
     return toPublicSession(session);
   }
 
+  // Write raw key bytes directly to the PTY without bracketed-paste wrapping.
+  // Use for control sequences (arrow keys, Enter) that must not be quoted.
+  sendKeys(sessionId: string, keys: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    if (session.status === "idle") {
+      throw new Error(`Session is idle (no active PTY): ${sessionId}`);
+    }
+    if (session.status === "waiting_input") {
+      session.status = "running";
+      this.onStatusChange?.(toPublicSession(session));
+    }
+    this.log.info(
+      `[pty.keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length} digest=${digestBytes(keys)}`,
+      { event: "pty.keys_write", sessionId, byteLen: keys.length },
+    );
+    session.process.write(keys);
+    session.lastActivityAt = new Date();
+  }
+
   sendInput(sessionId: string, input: string): number {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
