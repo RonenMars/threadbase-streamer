@@ -41,7 +41,8 @@ runs:
           vendor/agent-types/node_modules
           vendor/agent-types/dist
           vendor/scanner/node_modules
-        key: node-modules-v2-${{ hashFiles('package-lock.json') }}
+          vendor/scanner/dist
+        key: node-modules-v4-${{ hashFiles('package-lock.json') }}
 
     - name: Install build tools for node-pty
       if: steps.cache.outputs.cache-hit != 'true'
@@ -52,6 +53,11 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: npm ci
+
+    - name: Relink file: deps (symlinks not preserved by cache)
+      if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: npm install --prefer-offline --ignore-scripts
 
     - name: Run ${{ inputs.command }}
       shell: bash
