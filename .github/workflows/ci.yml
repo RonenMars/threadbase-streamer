@@ -44,10 +44,23 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    needs: gate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup
+        if: needs.gate.outputs.skip != 'true'
+        uses: ./.github/actions/setup
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    needs: gate
+    needs: [gate, setup]
     steps:
       # Checkout is unguarded and first: the local composite action below only
       # exists on disk after the repo is checked out.
@@ -65,7 +78,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: gate
+    needs: [gate, setup]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,7 +100,7 @@ jobs:
   test:
     name: Test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
-    needs: [gate, lint]
+    needs: [gate, lint, setup]
     strategy:
       matrix:
         node-version: [18, 20, 22]
