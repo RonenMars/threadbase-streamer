@@ -1,12 +1,12 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to Codex (and other coding agents) when working with code in this repository.
 
 Known deploy/runtime issues and their fixes: [docs/troubleshooting.md](docs/troubleshooting.md)
 
 ## Project
 
-`@threadbase/streamer` — PTY session management, WebSocket streaming, and REST API server for Codex conversations. TypeScript library + CLI that manages live Codex sessions via `node-pty`, broadcasts terminal output over WebSocket, and serves a REST API. Replaces the Go CLI's `cch serve` command.
+`@threadbase/streamer` — PTY session management, WebSocket streaming, and REST API server for Claude Code conversations. TypeScript library + CLI that manages live Claude sessions via `node-pty`, broadcasts terminal output over WebSocket, and serves a REST API.
 
 ## Commands
 
@@ -16,384 +16,162 @@ Known deploy/runtime issues and their fixes: [docs/troubleshooting.md](docs/trou
 - `npm run check` — lint + format with auto-fix (`npx biome check --write .`)
 - `npm run build` — dual ESM/CJS build via tsup (outputs to `dist/`)
 - `npm run migrate` — apply SQLite schema migrations against `~/.threadbase/cache/cache.db` (override with `--db <path>`). Idempotent.
-- `npm run migrate:projects` — backfill the `projects` table + `conversation_meta.project_id` from existing cached conversations; refresh `cache_metadata.last_conversation_id`. Idempotent.
-- `npm run db:validate` — print conversations missing `project_id`, duplicate project paths, and orphaned `project_id` references. Exits non-zero if any issue is found.
+- `npm run migrate:projects` — backfill the `projects` table + `conversation_meta.project_id` from cached conversations. Idempotent.
+- `npm run db:validate` — report missing/duplicate/orphaned `project_id` data; exits non-zero on any issue.
 - Single test: `npx vitest run __tests__/session-store.test.ts`
 
 ## Architecture
 
-Three layers: **core engine** (src/*.ts) → **API layer** (src/api/ + src/index.ts exports) → **CLI wrapper** (cli/).
+Three layers: **core engine** (src/*.ts) → **API layer** (src/api/ + src/index.ts exports) → **CLI wrapper** (cli/). Built as separate tsup entries: `src/index.ts` → `dist/index.js` (ESM) + `dist/index.cjs` (CJS) + types; `cli/index.ts` → `dist/cli.cjs` with a shebang.
 
-The library and CLI are built as separate tsup entries — `src/index.ts` produces `dist/index.js` (ESM) + `dist/index.cjs` (CJS) + types, while `cli/index.ts` produces `dist/cli.cjs` with a shebang.
+Modules with non-obvious behavior:
 
-Key modules and their responsibilities:
-- `pty-manager.ts` — spawn/resume Codex sessions via node-pty, ring buffer output (64KB cap)
-- `session-store.ts` — in-memory registry of managed (PTY) + discovered (process) sessions; sessions also carry `projectId` and `resumedFromConversationId`
-- `process-discovery.ts` — find running Codex processes via pgrep/lsof (Unix) or tasklist/wmic (Windows)
-- `conversation-cache.ts` — SQLite cache of conversation metadata, message tails, projects, and cache_metadata; updated incrementally by `ConversationWatcher` (chokidar). Backs `/api/conversations`, `/api/sessions`, and `/project-chats` to avoid full filesystem scans. Runs SQLite migrations on open.
-- `services/conversations/conversationWatcher.ts` — chokidar-backed JSONL tail + directory watcher. Replaces the deleted `file-watcher.ts`. Emits per-line events (for cache + WS broadcast) and per-file dirty events (for cache invalidation).
-- `ws-hub.ts` — WebSocket hub broadcasting terminal_output, session_update, session_list events; also unicasts terminal_replay on subscribe and session_ready on PTY spawn
-- `server.ts` — HTTP server lifecycle manager. Wires `@hono/node-server` + `@hono/node-ws`, constructs `ApiDeps`, and delegates all request handling to the Hono app. Constructs SQLite repositories once the cache opens.
-- `api/app.ts` — Hono app factory (`createHonoApp`). Registers CORS + auth middleware, mounts all route modules, and wires the `@hono/node-ws` WebSocket upgrade handler.
-- `api/types/api-deps.ts` — `ApiDeps` dependency-injection interface; passed to every route factory so handlers call back into `StreamerServer` without tight coupling.
-- `api/middleware/auth.middleware.ts` — Bearer + `?key=` auth; skips `/healthz` and `POST /api/pair/exchange`.
-- `api/middleware/cors.middleware.ts` — `Access-Control-Allow-*` headers + OPTIONS 204 preflight.
-- `api/middleware/error.middleware.ts` — Hono `onError` handler returning 500 JSON.
-- `api/routes/` — one file per endpoint group: `health`, `misc`, `sessions`, `conversations`, `projects`, `scanner`, `browse`, `pair`, `ws`. Each factory accepts `ApiDeps` and returns a `Hono` sub-app. Handlers write directly to the Node `ServerResponse` via `c.env.outgoing` and return a sentinel `Response(null, { status: 597 })` (`ALREADY_HANDLED`) to skip Hono response piping.
-- `handlers/handleListProjectChats.ts` — `GET /project-chats` handler. Validates query params with zod and delegates to `services/projectChats/listProjectChats.ts`.
-- `services/projectChats/*` — pure functions: normalize sessions and conversations into a discriminated `ProjectChat` union, merge (hiding conversations resumed into active sessions), and sort by `latestMessageAt → updatedAt → createdAt → title`.
-- `services/projects/*` — `upsertProjectByPath`, `ensureProjectsForConversations` (groups conversations by canonical project path, picks latest, upserts one project per path).
-- `services/conversations/refreshConversationCache.ts` — after a scanner-driven cache rebuild, upsert projects and backfill `conversation_meta.project_id`. Updates `cache_metadata.last_conversation_id`.
-- `services/conversations/shouldRefreshProjectsFromHdd.ts` — compares the latest conversation id known to the cache vs `cache_metadata.last_conversation_id`. Used by `/project-chats` to short-circuit refresh when nothing changed.
-- `services/conversations/isAgentConversation.ts` + `pruneAgentConversations.ts` — detect agent-authored JSONLs by matching the `entrypoint` field against a configurable set (default `sdk-cli`, `Codex-vscode`; see `THREADBASE_AGENT_ENTRYPOINTS`). Interactive Codex emits `cli` and is never matched. When `THREADBASE_FILTER_AGENT_CONVERSATIONS` is on (default), the cache skips matched files during scanner + watcher ingestion and runs a one-time prune of existing rows on startup. The file probe is a chunked scan with 64 KB chunks, 64-byte overlap, and a 2 MB ceiling — the marker can sit deep in the file after long housekeeping prefixes.
-- `services/sessions/createSessionForProjectPath.ts` + `ensureSessionProjectIdsFromExistingProjects.ts` — link a managed session to its project once the JSONL exists; backfill `projectId` for sessions whose path matches an existing project.
-- `services/cache/cacheMetadata.ts` — get/set helpers over the `cache_metadata` key/value table.
-- `auth.ts` — bearer token generation/validation with constant-time comparison
-- `idle-sweeper.ts` — periodic sweep that puts idle `waiting_input` sessions on hold after a configurable timeout
-- `reconcile.ts` — on server restart, marks any in-flight running/waiting_input sessions as on_hold
-- `utils/canonicalizeProjectPath.ts` — trims whitespace, strips trailing slashes/backslashes; preserves case. The single source of truth for project-path identity — every consumer must canonicalize before dedupe.
-- `utils/dates.ts` — `parseIsoDateOrNull` + `compareIsoDesc` (date-fns wrapper) for ISO-string sorting and freshness checks.
-- `schemas/*.schema.ts` — zod schemas for query params (`ListProjectChatsQuerySchema`), message cursor, ProjectChat, scanned conversation, and Project. Validate at HTTP/scanner boundaries.
-- `db/config.ts` — env var parsing (`isDbEnabled`, `getDbConfig`, `getInstanceId`) for the optional Postgres path.
-- `db/pool.ts` — pg.Pool creation with connection string password masking
-- `db/migrations.ts` + `db/pg-migrations/*.sql` — Postgres migration runner. Postgres is no longer the primary persistence layer; only `session_uploads` + reserved future tables live here.
-- `db/sqlite-migrate.ts` + `db/migrations/*.sql` — SQLite migration runner used by `ConversationCache.open()`. Migrations are tracked in `schema_migrations` and are idempotent. Current files: `001_create_projects.sql`, `002_add_project_id_columns.sql`, `003_create_cache_metadata.sql`.
-- `db/repositories/*.repository.ts` — `ProjectsRepository` (UUID + canonical-path upsert), `ConversationsRepository` (wraps the cache for project_id linking), `SessionsRepository` (wraps SessionStore), `CacheMetadataRepository`.
-- `db/session-persistence.ts` — `SessionPersistence` interface; `memory-persistence.ts` (no-op default) and `pg-session-persistence.ts` (Postgres) implement it
+- `pty-manager.ts` — spawn/resume Claude sessions via node-pty, ring buffer output (64KB cap)
+- `session-store.ts` — in-memory registry of managed (PTY) + discovered (process) sessions. All session state mutations go through it.
+- `conversation-cache.ts` — SQLite cache of conversation metadata, message tails, projects, and cache_metadata; updated incrementally by `ConversationWatcher` (chokidar). Backs `/api/conversations`, `/api/sessions`, and `/project-chats`. Runs SQLite migrations on open (`db/sqlite-migrate.ts` + `db/migrations/*.sql`, tracked in `schema_migrations`).
+- `services/conversations/conversationWatcher.ts` — chokidar-backed JSONL tail + directory watcher. Emits per-line events (cache + WS broadcast) and per-file dirty events (cache invalidation).
+- `ws-hub.ts` — WebSocket hub broadcasting terminal_output, session_update, session_list; unicasts terminal_replay on subscribe and session_ready on PTY spawn
+- `server.ts` — HTTP server lifecycle; wires `@hono/node-server` + `@hono/node-ws`, constructs `ApiDeps`, delegates request handling to the Hono app (`api/app.ts`)
+- `api/routes/` — one file per endpoint group; each factory takes `ApiDeps` and returns a Hono sub-app. Handlers write directly to the Node `ServerResponse` via `c.env.outgoing` and return a sentinel `Response(null, { status: 597 })` (`ALREADY_HANDLED`) to skip Hono response piping.
+- `services/conversations/isAgentConversation.ts` — detects agent-authored JSONLs by `entrypoint` field (default `sdk-cli`, `claude-vscode`; interactive Claude Code emits `cli` and is never matched). The file probe is a chunked scan (64 KB chunks, 64-byte overlap) that early-exits at the first `"entrypoint":` occurrence — the value is per-conversation and authoritative, so large human JSONLs aren't read in full.
+- `utils/canonicalizeProjectPath.ts` — the single source of truth for project-path identity; every consumer must canonicalize before dedupe.
+- `db/migrations.ts` + `db/pg-migrations/*.sql` — Postgres migration runner. Postgres is dormant (only `session_uploads` + reserved tables); SQLite is the primary persistence layer.
+- `schemas/*.schema.ts` — zod validation at HTTP/scanner boundaries
 
 ## Session lifecycle
 
-Sessions move through these statuses:
+Live statuses (`SessionStatus` in `src/types.ts`): `running`, `waiting_input`, `idle`.
 
 ```
-running ──(╭ prompt marker)──► waiting_input ──(idle 60s / hold_session WS msg)──► on_hold
-   │                                 │
-   └──(user sends input)─────────────┘ (back to running)
-   
-running / waiting_input ──(exit 0)──► completed
-running / waiting_input ──(exit ≠ 0)──► failed
-running / waiting_input ──(server restart)──► on_hold   (reconcile.ts)
+running ──(prompt marker ╭ / ❯, or fallback timer)──► waiting_input
+   │                                                       │
+   └───────────────(user sends input)◄─────────────────────┘
+
+running / waiting_input ──(PTY exit, any code)──────────────► idle
+running / waiting_input ──(grace timer / hold_session msg)──► idle  (PTY killed, history intact)
 ```
 
-- **`waiting_input`**: Codex printed its `╭` prompt marker — it's idling, waiting for user input. The idle clock starts here (`lastActivityAt` is set).
-- **`on_hold`**: PTY process was killed (SIGINT) after 60 s of inactivity, or explicitly by the client sending `{ type: "hold_session", sessionId }` over WebSocket. Conversation history is intact; resume via `POST /api/sessions/resume` with the same `conversationId`.
-- `IdleSweeper` runs every 30 s, checks `lastActivityAt` against the threshold, and calls `PTYManager.putOnHold()` which sets a `holdAt` tombstone before killing to prevent the exit handler from overwriting the `on_hold` status with `failed`.
-- Idle timeout is configurable via `ServerConfig.idleTimeoutMs` (default 60 000 ms). Set to `0` to disable.
+- **`waiting_input`**: Claude printed a prompt marker (`CLAUDE_PROMPT_MARKERS = ["╭", "❯"]` in `pty-manager.ts`, plus a fallback timeout) — idling for user input.
+- **`idle`**: no live PTY. Reached on process exit or via `PTYManager.putOnHold()` (SIGINT + screen disposal). History intact; resume via `POST /api/sessions/resume` with the same `conversationId`.
+- **Grace/hold**: when the last WebSocket subscriber disconnects, `server.ts` starts a grace timer (`ptyGracePeriodMs`, default 270 000 ms) that calls `putOnHold()`. A client can hold immediately with `{ type: "hold_session", sessionId }` (same path, zero delay).
+- An instant non-zero exit (<2 s, no output) gets a diagnosed `failureReason` (missing project dir, or Claude binary not found).
+- **Mobile mapping**: historical conversations are returned as resumable shapes with `status: "on_hold"` (`conversationToResumableSession` in `server.ts`); mobile treats `idle` and `on_hold` as the same.
 
 ## Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `THREADBASE_DATABASE_URL` | PostgreSQL connection URI — enables DB persistence when set |
-| `THREADBASE_DATABASE_SSL` | `require` or `disable` |
-| `THREADBASE_DATABASE_POOL_MAX` | Max pool connections (default `10`) |
-| `THREADBASE_DATABASE_STATEMENT_TIMEOUT_MS` | Query timeout in ms |
-| `THREADBASE_INSTANCE_ID` | Stable identifier for this server instance (defaults to `os.hostname()`); used to scope DB-persisted sessions |
+| `THREADBASE_DATABASE_URL` | PostgreSQL connection URI — enables DB persistence when set (also: `THREADBASE_DATABASE_SSL`, `THREADBASE_DATABASE_POOL_MAX`, `THREADBASE_DATABASE_STATEMENT_TIMEOUT_MS`) |
+| `THREADBASE_INSTANCE_ID` | Stable identifier for this server instance (defaults to `os.hostname()`); scopes DB-persisted sessions |
 | `THREADBASE_PUBLIC_URL` | Public HTTPS URL for QR pairing (overrides `public_url:` in server.yaml) |
-| `THREADBASE_FILTER_AGENT_CONVERSATIONS` | Hide non-interactive Codex runs from `/api/conversations` + `/project-chats`. Default `on`. Set to `0` / `false` to keep them visible. Toggling triggers a one-time prune-or-rescan on the next restart. |
-| `THREADBASE_AGENT_ENTRYPOINTS` | Comma-separated list of JSONL `entrypoint` values to treat as agent traffic. Default `sdk-cli,Codex-vscode`. Interactive Codex uses `cli` and is never filtered. Set to `sdk-cli` only if you want `Codex-vscode` runs visible. |
+| `THREADBASE_FILTER_AGENT_CONVERSATIONS` | Hide non-interactive Claude runs from `/api/conversations` + `/project-chats`. Default on. Toggling triggers a one-time prune-or-rescan on next restart. |
+| `THREADBASE_AGENT_ENTRYPOINTS` | JSONL `entrypoint` values treated as agent traffic. Default `sdk-cli,claude-vscode`. |
+| `MULTI_AGENT_FLOW` | Routes `POST /api/sessions/start` + `/input` to the multi-agent path instead of PTY. `AGENT_*` tuning vars: see [docs/multi-agent-mode.md](docs/multi-agent-mode.md). |
+
+## Multi-agent mode
+
+When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orchestrated pipeline; PTY mode is unreachable. Endpoints return structured errors `{error, code}` (codes in `src/agent/errors.ts`); mobile-relevant: **429 `SESSION_BUSY`** (carries `retryAfterMs`) and **413 `SESSION_HISTORY_FULL`** (prompt "start a new conversation"). Full endpoint contract, env vars, and dev setup: [docs/multi-agent-mode.md](docs/multi-agent-mode.md); design rationale: `tb-multi-agent/docs/superpowers/specs/2026-06-04-plan-3.5-multi-agent-ws-wiring.md`.
 
 ## CLI flags vs. `server.yaml`
 
-`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`) from it, but most runtime knobs come exclusively from CLI flags — `--port` is the canonical example. Setting `port: 8766` in `server.yaml` does nothing; the server falls back to the CLI default `3456` if `--port` is missing.
-
-Practical consequence: any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly, even if `server.yaml` has a `port:` line. The deploy scripts already do this; only hand-written or stale plists are at risk.
+`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`) from it, but most runtime knobs come exclusively from CLI flags. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
 
 ## ServerConfig options (beyond CLI flags)
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `idleTimeoutMs` | `60000` | How long a `waiting_input` session idles before being put on_hold; `0` disables |
 | `ptyGracePeriodMs` | `270000` | Ms to keep the PTY alive after all WebSocket subscribers disconnect (4.5 minutes) |
 | `cacheDir` | `~/.threadbase/cache` | Directory for the SQLite conversation cache |
-| `tailSize` | `10` | Number of tail messages cached per conversation for fast session-list enrichment |
+| `tailSize` | `10` | Tail messages cached per conversation for fast session-list enrichment |
 
 ## Dependencies
 
-- `@threadbase/scanner` — scan, parse, search, filter conversation history. Used for REST endpoints. Consumed as a **git submodule** at `vendor/scanner` (pinned by submodule commit, e.g. tag `v0.3.2`) wired into `package.json` as `"@threadbase/scanner": "file:vendor/scanner"`. It is **not** published to npm and not a registry package — it builds from source. `npm install`'s `postinstall` runs `build:scanner` (`npm --prefix vendor/scanner install`, which triggers scanner's own `prepare`/tsup) so `vendor/scanner/dist/` exists before the streamer's lint (`tsc`) and build (`tsup` bundles scanner inline into `dist/`). Consequences: (1) **first checkout must init the submodule** — `git submodule update --init` (use the HTTPS URL; SSH fails on Windows without keys) before `npm install`, or the `file:` dep can't resolve; (2) **CI checkouts need `submodules: recursive`** (already set in `ci.yml` + `release.yml`); (3) bump scanner with a `chore: bump vendor/scanner (<reason>)` commit that moves the submodule pointer, same discipline as `vendor/menubar`. The deployed/bundled artifact carries scanner inline in `dist/`, so the runtime does not need `vendor/scanner`. See [scanner repo](https://github.com/RonenMars/threadbase-scanner) for source.
-- `node-pty` — native PTY management (external, not bundled by tsup)
-- `ws` — WebSocket server
-- `better-sqlite3` — SQLite driver for `ConversationCache` (incl. projects + cache_metadata + schema_migrations tables)
-- `chokidar` — JSONL tail + directory watcher; replaces the previous `fs.watch`-based `file-watcher.ts`
-- `zod` — runtime validation at HTTP and scanner boundaries (query params, ProjectChat shape, message cursor, scanned conversations)
-- `date-fns` — ISO timestamp parsing/comparison helpers; used for ProjectChat sort and cache freshness checks
-- `commander` — CLI argument parsing
+- `@threadbase/scanner` + `@threadbase/agent-types` — **git submodules** at `vendor/scanner` / `vendor/agent-types`, wired as `file:` deps. Not on npm; built from source by `postinstall`, then bundled inline into `dist/` by tsup (runtime doesn't need `vendor/`). Consequences:
+  - First checkout must run `git submodule update --init` **before** `npm install` (use HTTPS; SSH fails on Windows without keys).
+  - CI checkouts need `submodules: recursive` (already set in `ci.yml` + `release.yml`).
+  - Bump with a `chore: bump vendor/<name> (<reason>)` commit that moves the submodule pointer.
+- `node-pty` — native PTY management (external, not bundled by tsup; dynamically imported for graceful failure)
+- `ws`, `better-sqlite3`, `chokidar`, `zod`, `date-fns`, `commander`
 
 ## Build notes
 
-- **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and all other deps must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
-- **Two migration folders at build time**: `npm run build` copies both `src/db/migrations/` (SQLite — used by `ConversationCache`) and `src/db/pg-migrations/` (Postgres — used only when `THREADBASE_DATABASE_URL` is set) into `dist/`. Both runners resolve their folder relative to the compiled module's `__dirname`/`import.meta.url`.
-- **Migrations at deploy**: deploy scripts currently copy only `dist/migrations/` (SQLite). That is sufficient for the SQLite-first runtime. `dist/pg-migrations/` is NOT shipped to `~/.threadbase/`; the Postgres path is dormant. If/when Postgres persistence is re-enabled in production, the deploy scripts must be extended to copy `dist/pg-migrations/` alongside `dist/migrations/`.
-  - macOS/Linux: symlink makes `__dirname` = `~/.threadbase/releases/` → copy SQLite migrations to `~/.threadbase/releases/migrations/`
-  - Windows: `cli.js` is a real copy at `~/.threadbase/` so `__dirname` = `~/.threadbase/` → copy SQLite migrations to `~/.threadbase/migrations/`
+- **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and everything else must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
+- `npm run build` copies both `src/db/migrations/` (SQLite) and `src/db/pg-migrations/` (Postgres) into `dist/`; deploy ships only the SQLite folder. Details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
 
-## Global `threadbase-streamer` / `tb-streamer` command
+## Deploy & distribution
 
-At the end of every deploy, the three deploy scripts (`scripts/deploy.sh`, `scripts/deploy-linux.sh`, `scripts/deploy.ps1`) install **two** global commands that both wrap `~/.threadbase/cli.js`:
-
-- `threadbase-streamer` — the entrenched name, used throughout existing docs (auto-update guide, troubleshooting) and by `scripts/install-auto-update.{sh,ps1}` to invoke the updater from a scheduled job.
-- `tb-streamer` — short alias matching the npm package + repo name. Functionally identical.
-
-Both names work for every subcommand: `pair`, `update`, `serve`, etc.
-
-Shared helpers live in `scripts/lib/install-shim.sh` (sourced by both bash deploy scripts) and `scripts/lib/install-shim.ps1` (dot-sourced by `deploy.ps1`). Each platform's wrapper is different:
-
-- **macOS / Linux**: two symlinks at the install dir → `~/.threadbase/cli.js`.
-- **Windows**: two `.cmd` wrappers at the install dir that run `node "%USERPROFILE%\.threadbase\cli.js" %*`. Symlinks aren't reliable on Windows without Developer Mode or admin.
-
-Adding or removing a name is a one-line edit to `_shim_command_names` (bash) / `Get-ShimCommandNames` (PowerShell).
-
-Default install dir is "standard" per OS — but the deploy will fall back to user-local automatically if the standard dir isn't writable:
-
-| OS | standard | user-local |
-|----|----------|-----------|
-| macOS Apple Silicon | `/opt/homebrew/bin` | `~/.local/bin` |
-| macOS Intel | `/usr/local/bin` | `~/.local/bin` |
-| Linux | `/usr/local/bin` | `~/.local/bin` |
-| Windows 10+ | `%LOCALAPPDATA%\Programs\threadbase-streamer\bin` | `%USERPROFILE%\.threadbase\bin` |
-
-Default behavior is **interactive prompt**. Non-interactive overrides (for CI / `local-deploy` skill / scripted invocations):
-
-- Bash: `--install-shim=<standard|user-local|custom|skip>` flag, `--path-update=<print|auto|skip>` flag, or `TB_INSTALL_SHIM` / `TB_PATH_UPDATE` env vars. Custom dir via `TB_CUSTOM_INSTALL_DIR`.
-- PowerShell: `-InstallShim <…>` / `-PathUpdate <…>` params, or the same env vars.
-
-`path-update=auto` appends an `export PATH=…` line to `~/.zshrc` or `~/.bashrc` (detected from `$SHELL`) with a marker comment so re-runs are idempotent. On Windows, `auto` updates the User PATH via `[Environment]::SetEnvironmentVariable(...)` — the change requires opening a new terminal to take effect.
-
-Shim install failures are **non-fatal**: the deploy logs a warning and continues. The streamer itself is already healthy at that point — only the convenience command is at stake.
-
-## Homebrew distribution
-
-`brew install RonenMars/threadbase/tb-streamer` is an alternate install path for end users. The formula lives in `RonenMars/homebrew-threadbase` and is regenerated on every stable release by `scripts/build-formula.mjs` + `scripts/publish-formula.sh`, invoked from `.github/workflows/release.yml` after `semantic-release` finishes.
-
-Homebrew installs the binary into `libexec/`, exposes `tb-streamer` on PATH, and registers `brew services start tb-streamer` to run it under launchd (macOS) or systemd (Linux). The formula's `service` block uses port 8766 and `--prod` is NOT passed — Homebrew installs are not part of the prod/dev lifecycle scheme.
-
-Pre-releases (`next` channel) are NOT published to the tap. Pre-release users continue to use the GitHub release tarball.
-
-A user can have either the Homebrew install OR the `scripts/deploy.sh` install, not both — both bind port 8766 with different launchd labels. Detection is deferred (see `docs/ROADMAP.md` "Homebrew vs `scripts/deploy.sh` plist conflict-check at startup"). Caveats in the formula warn users.
+- Every deploy installs two global commands wrapping `~/.threadbase/cli.js`: `threadbase-streamer` (entrenched name) and `tb-streamer` (short alias). Shim install is interactive by default; non-interactive via `--install-shim=` / `--path-update=` flags or `TB_INSTALL_SHIM` / `TB_PATH_UPDATE` env vars. Failures are non-fatal.
+- **Homebrew**: `brew install RonenMars/threadbase/tb-streamer` is an alternate end-user install (formula auto-published on stable releases). Mutually exclusive with the `scripts/deploy.sh` install — both bind port 8766. Homebrew services don't pass `--prod`.
+- Full shim/Homebrew/menubar install detail: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
+- **Fly.io** (demo + prod cloud): `npm run deploy:fly` (demo, default), `npm run deploy:fly -- --prod` (prod), `npm run deploy:fly -- --prod --demo` (both). Secrets managed via `npm run fly:secrets`. Full guide: [docs/guides/fly.md](docs/guides/fly.md).
 
 ## Cloudflare Tunnel
 
-The streamer is exposed publicly via a Cloudflare Tunnel (`cloudflared` running as a Windows service). The active mapping is `https://tb-pc.rbv1000.win` → `http://127.0.0.1:8766`. Set `public_url: https://tb-pc.rbv1000.win` in `~/.threadbase/server.yaml` so the pairing QR code embeds the correct URL.
-
-**Cloudflare Access behaviour:** the tunnel hostname is protected by Cloudflare Access. Requests without an `Authorization` header receive `401 Unauthorized` from the CF edge — including unauthenticated probes of `/healthz`. Requests that carry `Authorization: Bearer <api_key>` pass through to the origin. This means:
-- Deploy-script healthchecks (which hit `http://localhost:8766/healthz` directly) are unaffected.
-- External clients must always include the Bearer token — there is no anonymous access through the public URL, even for `/healthz`.
-- `Test-NetConnection` and browser probes will be blocked by CF Access; use `Invoke-RestMethod` with the Bearer header to test the public URL.
-
-**cloudflared config files:**
-- `~/.cloudflared/config.yml` — user-level config (read when running `cloudflared` manually)
-- `~/.cloudflared/config-system.yml` — used by the Windows service (runs under SYSTEM); this is the one that matters for the always-on tunnel
-- Both must be kept in sync. After editing either file, restart the service: `Restart-Service cloudflared`
+The streamer is exposed publicly at `https://tb-pc.rbv1000.win` → `http://127.0.0.1:8766`, behind Cloudflare Access: **every external request needs `Authorization: Bearer <api_key>`, even `/healthz`** (localhost healthchecks are unaffected). Deployment-specific config (`config-system.yml`, service restart) and general tunnel setup: [docs/guides/remote-access/cloudflare.md](docs/guides/remote-access/cloudflare.md).
 
 ## Auto-update
 
-Full guide: [docs/guides/auto-update.md](docs/guides/auto-update.md). Sample config: [docs/update.yaml.example](docs/update.yaml.example). For walking a user through enabling it on a deployed streamer, use the `setup-auto-updater` skill (`.Codex/skills/setup-auto-updater/SKILL.md`).
-
-Three independent triggers, all opt-in via `~/.threadbase/update.yaml`:
-- **Manual:** `threadbase-streamer update [--check | --dry-run | --force | --allow-major | --version <tag>]`
-- **Scheduled:** `scripts/install-auto-update.{sh,ps1}` registers a second platform job (launchd / systemd --user / Task Scheduler) — requires `auto_update: true`. Supports `uninstall`.
-- **Webhook:** `POST /api/__update` with HMAC-SHA256 signature header — enabled when `webhook_secret` is set.
+Full guide: [docs/guides/auto-update.md](docs/guides/auto-update.md) (triggers: manual `update` command, scheduled job, HMAC webhook — all opt-in via `~/.threadbase/update.yaml`). Sample config: [docs/update.yaml.example](docs/update.yaml.example). To walk a user through enabling it, use the `setup-auto-updater` skill.
 
 Things that will bite if you forget:
+
 - On Windows, `swapCurrent()` is preceded by `stopService()` because open handles inside `current/dist/cli.cjs` block the file replace. Tests in `__tests__/install.test.ts` lock the order in — keep them green.
-- Service-label resolution in `src/updater/restart.ts` falls through `serviceLabel` option → env var (`LAUNCHD_LABEL` / `THREADBASE_SYSTEMD_UNIT` / `THREADBASE_TASK_NAME`) → default matching `scripts/deploy.{sh,ps1}`. If you customize the label at deploy time, set the matching env var or the updater restarts a different service than was installed.
+- Service-label resolution in `src/updater/restart.ts` falls through `serviceLabel` option → env var (`LAUNCHD_LABEL` / `THREADBASE_SYSTEMD_UNIT` / `THREADBASE_TASK_NAME`) → default matching `scripts/deploy.{sh,ps1}`. Custom labels need the matching env var or the updater restarts the wrong service.
 - Active-session defer has three outcomes: reachable+count>0 → defer, reachable+error → defer (state unknown is unsafe), unreachable → proceed. Don't simplify back to "any error returns 0".
 - The auth middleware skips both Bearer and `?key=` for `POST /api/__update` (HMAC instead). Don't add other entries to `PUBLIC_POST_PATHS` without an equivalent gate.
 
 ## macOS-specific notes
 
-- **launchd plist must set `PATH` via `EnvironmentVariables`**: launchd-spawned services inherit only `/usr/bin:/bin:/usr/sbin:/sbin`. Without an `EnvironmentVariables` block in the plist that includes `/opt/homebrew/bin` (Apple Silicon) and `/usr/local/bin` (Intel), `node-pty`'s `execvp("Codex", …)` fails with `ENOENT`, and every session-start/resume produces an instant-exit zombie session with `status=idle`, blank terminal, no `failureReason`. The deploy script's plist generator and self-heal both write the block; symptom + diagnosis in [docs/troubleshooting.md](docs/troubleshooting.md).
-- **`resolveClaudeExe()` now falls back to absolute Homebrew/local paths on macOS** (`src/platform.ts`) — defense-in-depth so a stale plist alone can't break the streamer.
+- **launchd plist must set `PATH` via `EnvironmentVariables`**: launchd services inherit only `/usr/bin:/bin:/usr/sbin:/sbin`. Without `/opt/homebrew/bin` (Apple Silicon) / `/usr/local/bin` (Intel) in the plist, `node-pty`'s `execvp("claude", …)` fails with `ENOENT` — every session start becomes an instant-exit zombie with `status=idle`, blank terminal, no `failureReason`. The deploy script's plist generator and self-heal both write the block; see [docs/troubleshooting.md](docs/troubleshooting.md).
+- **`resolveClaudeExe()` falls back to absolute Homebrew/local paths on macOS** (`src/platform.ts`) — defense-in-depth so a stale plist alone can't break the streamer.
 
 ## Prod/dev coordination
 
-### macOS (launchd)
+Only one streamer can bind port 8766. The supervised "prod" instance (launchd on macOS, Task Scheduler on Windows) and an ad-hoc "dev" instance coordinate via a marker file at `~/.threadbase/prod-suspended.json` (dev writes it when taking over the port; `--replace-prod` / `--forget` flags on `serve`). Manage prod with `tb-streamer prod start|stop|status|restart|doctor [--fix]|logs`.
 
-Only one streamer can bind port 8766 at a time. The launchd-supervised "prod" instance and an ad-hoc "dev" instance (`tb-streamer serve` from a shell) coordinate via a JSON marker file rather than racing.
-
-**Components:**
-- **Shim** at `~/.threadbase/launchd-entry.cjs` (built from `cli/launchd-entry.ts`). The plist points launchd at the shim, not `cli.js` directly. On every start attempt the shim consults the marker and either `exec`s `cli.js` or exits 0.
-- **Marker** at `~/.threadbase/prod-suspended.json`. Written by dev when it takes over the prod port. Shape: `{ devPid, port, repoToplevel, suspendedAt, userHeld, shimVersion }`.
-- **Prefs** at `~/.threadbase/dev-prefs.json`. Per-repo remembered choice (`replace-prod` or `use-port`), keyed by git toplevel path.
-- **Plist** `KeepAlive` is a dict with `SuccessfulExit: false` + `ThrottleInterval: 10`. A clean shim exit (exit 0) does NOT trigger respawn; only crashes do.
-
-**Marker decision table (shim):**
-| Marker state | Shim action |
-|---|---|
-| absent / malformed | `exec` real `cli.js` |
-| `userHeld: true` | exit 0 (intentional stop) |
-| `userHeld: false`, devPid alive | exit 0 (dev is using the port) |
-| `userHeld: false`, devPid dead | clear marker, `exec` cli.js (crash recovery) |
-
-**Dev-side flags on `serve`:**
-- `--replace-prod` — unconditionally bootout prod, take its port, install signal handlers that flip `userHeld=true` on clean exit.
-- `--forget` — clear this repo's remembered choice and re-prompt.
-- `--forget-all` — clear every repo's remembered choice.
-- `--prod` — internal: tells the action to skip dev-takeover logic. Set by the plist; auto-detected when `process.ppid === 1`.
-
-**Prod-side commands (new):**
-- `tb-streamer prod status` — agent loaded?, agent pid, marker state.
-- `tb-streamer prod start` — clear marker + `launchctl kickstart -k`. Use after a `userHeld` suspension to restore prod.
-- `tb-streamer prod stop` — `launchctl bootout`. Will not auto-restart until `prod start` or reboot.
-- `tb-streamer prod restart` — bootout + bootstrap (re-reads plist).
-- `tb-streamer prod doctor [--fix]` — detect stale marker (dead devPid, not userHeld) and missing agent; `--fix` clears stale markers.
-- `tb-streamer prod logs [-n <N>] [--no-follow] [--errors-only]` — tail the supervised streamer's stdout + stderr. Default follows both files live, seeded with the last 50 lines. Resolves paths via `Supervisor.getLogPaths()` (macOS: `~/.threadbase/logs/{stdout,stderr}.log`). Not yet wired on Windows — see `src/lifecycle/task-scheduler.ts` `getLogPaths`.
-
-**Don't break without coordination:**
-- The marker shape is versioned by `shimVersion: 1`. Bump it if you change the shape; the schema will reject older markers and `readMarker` returns null + logs a warning.
-- The plist's `ProgramArguments` MUST start with `node $INSTALL_DIR/launchd-entry.cjs serve --port $PORT --verbose --prod`. The trailing `--prod` is what tells the action to skip dev-takeover even if PPID detection fails. `ensure_plist_healthy` in `scripts/deploy.sh` rewrites three stale layouts: missing `EnvironmentVariables`, ProgramArguments pointing at `cli.js` directly, or bare-bool `KeepAlive`.
-- `dist/launchd-entry.cjs` is a tsup CLI entry; deploy copies it to `~/.threadbase/launchd-entry.cjs` (no per-release versioning — it always forwards to the active `cli.js` symlink).
-
-Source modules: `src/lifecycle/{constants,marker,marker-schema,process-liveness,repo,prefs,launchd,dev-takeover,prompt}.ts` + `cli/launchd-entry.ts` + `cli/prod.ts`. Marker/prefs paths come from `installDir() ?? $HOME/.threadbase`; override via `THREADBASE_INSTALL_DIR` (used by tests).
-
-### Windows (Task Scheduler)
-
-The same lifecycle module is implemented for Windows via `src/lifecycle/task-scheduler.ts`. `getSupervisor()` in `src/lifecycle/platform.ts` picks the right backend at runtime based on `process.platform`.
-
-**Components on Windows:**
-- **No shim.** Task Scheduler does not auto-respawn on `KeepAlive`-style triggers — it runs the registered action once per trigger. The marker-suppression mechanism (the central reason for the shim on macOS) is unnecessary; a clean dev exit simply leaves the prod task stopped until the user runs `tb-streamer prod start` (or until the next at-logon trigger, if configured).
-- **Marker + prefs files** at `%USERPROFILE%\.threadbase\prod-suspended.json` and `dev-prefs.json` — same shape as macOS. Used by `tb-streamer prod doctor` for diagnostics and by `--replace-prod` to track which dev session took the port.
-- **Task** named `Threadbase` (overridable via `THREADBASE_TASK_NAME` env var). Registered by `scripts\deploy.ps1 setup`. Action: `wscript.exe launch.vbs` → `launch.cmd` → `node cli.js serve --port 8766 --verbose --prod`. The trailing `--prod` flag tells the action to skip dev-takeover logic.
-
-**Marker decision (Windows):**
-| Marker state | Effect |
-|---|---|
-| absent / malformed | Task runs normally on next trigger |
-| `userHeld: true` | Task stays stopped until `tb-streamer prod start` |
-| `userHeld: false`, devPid alive | Dev is using the port; user must stop dev or run `prod start` to force takeover back to prod |
-| `userHeld: false`, devPid dead | Stale; `tb-streamer prod doctor --fix` clears it |
-
-**Prod-side commands behave identically.** `tb-streamer prod start|stop|status|restart|doctor` all work on Windows; under the hood they call `Get-ScheduledTask`, `Stop-ScheduledTask`, `Start-ScheduledTask`, `Enable-ScheduledTask`, `Disable-ScheduledTask` via `powershell.exe`.
-
-**Don't break without coordination:**
-- `launch.cmd` must include `--port`, `--verbose`, and `--prod`. `Repair-LaunchCmd` in `scripts\deploy.ps1` self-heals stale layouts (mirrors `ensure_plist_healthy` on macOS).
-- The `TASK_NAME` constant in `src/lifecycle/constants.ts` must match the task name registered by `deploy.ps1`. Both default to `"Threadbase"` and both honour the `THREADBASE_TASK_NAME` env var. If you change one, change the other.
-- `task-scheduler.getAgentPid()` greps `Get-CimInstance Win32_Process` for `node.exe` whose command line matches `*cli.js*serve*`. If you change `launch.cmd` to invoke node with a different command line, update the WMI filter in `task-scheduler.ts` to match.
+Don't break without coordination: the marker shape is versioned (`shimVersion` — bump on change); the plist `ProgramArguments` must run `launchd-entry.cjs … --prod`; the Windows `TASK_NAME` constant in `src/lifecycle/constants.ts` must match `deploy.ps1`. Full component/flag/decision-table reference: [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
 
 ## Windows-specific notes
 
-- **`npm install` before first deploy**: A fresh clone (or a branch that added new packages) will fail lint/build with "Cannot find module" if `node_modules` is missing or stale. Run `npm install` before the first `npm run deploy:windows`. The `postinstall` script also patches `qrcode-terminal` and sets permissions on the `node-pty` prebuild.
-- **Path separators**: `path.resolve()` returns backslash-separated paths on Windows. Always use `path.sep` (not `"/"`) for path prefix guards. Same applies to any `startsWith` checks on resolved paths.
-- **File timestamps**: `fs.stat().birthtimeMs` reflects the real Windows creation time and is unaffected by `fs.utimes()`. Use `mtimeMs` for any timestamp matching that needs to survive cross-platform test assertions.
-- **Task Scheduler log redirection**: Task Scheduler has no native stdout/stderr redirection. The scheduled task action must use `pwsh.exe` as the executor and redirect inside the PowerShell command string (`>> logfile 2>> errfile`). Without this, `%TEMP%\threadbase.err` is never written and healthcheck failures are undiagnosable.
-- **Task Scheduler env var inheritance**: `[Environment]::SetEnvironmentVariable(..., 'User')` writes to the registry but does NOT update the live session environment. Tasks started via `Start-ScheduledTask` in the same terminal session that set the var will not pick it up. Always read back from registry with `[Environment]::GetEnvironmentVariable(..., 'User')` and inline the value directly in the `$psArg` command string. This applies to `THREADBASE_DATABASE_URL` and `THREADBASE_INSTANCE_ID`.
-- **Stale port 8766**: Before starting the task after a deploy, check for and kill any node process already bound to port 8766 (old streamer version, leftover dev process). The new task will fail silently if the port is taken.
-- **Submodule SSH → HTTPS**: Windows machines without SSH keys configured will fail `git submodule update --init` with "Permission denied (publickey)". Fix once: `git config --global url."https://github.com/".insteadOf "git@github.com:"`.
+- **`npm install` before first deploy** — fresh clones fail lint/build with "Cannot find module" otherwise; `postinstall` also patches `qrcode-terminal` and node-pty prebuild permissions.
+- **Path separators**: use `path.sep` (not `"/"`) for prefix guards on `path.resolve()` output.
+- **File timestamps**: `birthtimeMs` is unaffected by `fs.utimes()`; use `mtimeMs` for cross-platform test assertions.
+- **Task Scheduler log redirection**: no native stdout/stderr redirection — the task action must use `pwsh.exe` and redirect inside the command string (`>> logfile 2>> errfile`).
+- **Task Scheduler env vars**: `[Environment]::SetEnvironmentVariable(..., 'User')` doesn't update the live session; read back from registry and inline the value in the task command string (applies to `THREADBASE_DATABASE_URL`, `THREADBASE_INSTANCE_ID`).
+- **Stale port 8766**: kill any node process already bound to 8766 before starting the task — the new task fails silently if the port is taken.
+- **Submodule SSH → HTTPS**: machines without SSH keys fail `git submodule update --init`. Fix once: `git config --global url."https://github.com/".insteadOf "git@github.com:"`.
 
 ## Code Conventions
 
 - Conventional commits (`feat:`, `fix:`, `chore:`, etc.) and branch names (`feat/`, `fix/`, `chore/`)
 - Every new feature must have tests in `__tests__/`
 - Vitest globals are enabled — no need to import `describe`, `it`, `expect`
-- `node-pty` is dynamically imported to allow graceful failure when not installed
-- All session state mutations go through SessionStore for consistency
 
 ## Testing
 
 Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP server on random ports. Run the full verification before committing: `npm run lint && npm test`
 
-## Backward Compatibility with tb-mobile
+## Backward compatibility with tb-mobile
 
-`tb-mobile` is a released iOS/Android app — users on older app versions connect to whatever streamer version is deployed. The streamer must therefore remain backward-compatible with older mobile clients. The mobile client cannot be force-updated; a breaking server change will silently break functionality for any user who hasn't updated the app.
+`tb-mobile` is a released iOS/Android app that cannot be force-updated — a breaking server change silently breaks any user who hasn't updated. The streamer must stay backward-compatible with older mobile clients.
 
-### What tb-mobile depends on (do not break without a migration plan)
+**Before changing any API response shape, endpoint path, query parameter, status value, or WebSocket event, read [docs/compatibility/tb-mobile.md](docs/compatibility/tb-mobile.md)** — it enumerates every path, field name, and event string mobile depends on.
 
-**REST endpoint paths** — mobile hard-codes every path. Never rename or remove:
-- `/healthz`, `/api/info`, `/api/pair/exchange`
-- `/api/sessions`, `/api/sessions/count`, `/api/sessions/{id}`
-- `/api/sessions/resume`, `/api/sessions/start`
-- `/api/sessions/{id}/input`, `/api/sessions/{id}/cancel`
-- `/api/sessions/{id}/output`, `/api/sessions/{id}/files`
-- `/api/conversations`, `/api/conversations/count`, `/api/conversations/{id}`
-- `/api/search`, `/api/browse`, `/api/browse/mkdir`
+The hard rules:
 
-**New endpoint** — purely additive; older mobile builds simply don't call it:
-- `GET /project-chats` — unified active-sessions + historical-conversations list. Accepts `?refreshConversations=1` (or legacy `?refresh=1`) to force a rescan; otherwise the server short-circuits via `cache_metadata.last_conversation_id`. Response shape is `{ projectChats: ProjectChat[] }` where `ProjectChat` is a discriminated union on `type: "session" | "conversation"`. Both variants carry `projectId` (the canonical project identity) and `projectPath` (compatibility metadata).
-
-**Query parameter names** — mobile builds URLs with these exact strings:
-`limit`, `offset`, `sort`, `project`, `refresh`, `msg_limit`, `before_index`, `q`, `path`
-
-**Response field names** — these are deserialized by name in mobile types; casing matters:
-- Session: `id`, `status`, `projectPath`, `projectName`, `branch`, `lastOutput`, `elapsedMs`, `promptCount`, `conversationId`, `source`, `startedAt`, `completedAt`, `lastActivityAt`, `failureReason`, `ptyAttached`
-- Session — new optional fields (added during the projects refactor; never required for older clients): `projectId`, `resumedFromConversationId`
-- Conversation list item: `id`, `title`, `projectPath`, `messageCount`, `lastActivity`, `firstMessage`, `lastMessage`, `preview`, `model`
-- Conversation detail: `meta` object + `messages` array + `message_pagination` object
-- Message: `message_index` (snake_case), `role`, `timestamp`, `text`, `content` (array), `tool_use_id` (snake_case)
-- Pagination: `hasMore`, `offset`, `total`
-
-**Session status values** — mobile switches on these exact strings; adding a new value is fine, renaming or removing one breaks UI:
-`running`, `waiting_input`, `completed`, `failed`, `on_hold`
-Note: mobile types also include `idle` as an alias — treat `on_hold` and `idle` as the same status from the mobile perspective.
-
-**WebSocket event types** — mobile registers listeners keyed on these strings:
-- Server → client: `session_list`, `session_update`, `terminal_output`, `conversation_event`, `ping`
-- Client → server: `{ type: "hold_session", sessionId }`
-
-**HTTP status codes** — mobile maps these to typed errors:
-- `401` → `AuthError` (triggers re-auth UI)
-- `404` → `NotFoundError` (suppressed for `/output` endpoint — treated as empty)
-- `429` → shown to user during pair exchange
-
-**Auth format** — mobile sends `Authorization: Bearer <token>` and constructs WebSocket URLs as `/ws?key=<token>`. Both forms must continue to work.
-
-**API key format** — mobile uses `tb_` prefix detection in pairing logic. Key format `tb_<32-hex-chars>` must be preserved.
-
-### Safe changes
-
-- Adding optional fields to any response object
-- Adding new endpoints
-- Adding new optional query parameters with sensible defaults
-- Adding new WebSocket event types (mobile ignores unknown types)
-- Adding new session status values (mobile will display them as-is)
-
-### Risky changes (coordinate with tb-mobile)
-
-- Renaming any field (including camelCase ↔ snake_case)
-- Removing any field from a response
-- Changing a field's type (e.g., `number` → `string`)
-- Renaming or removing an endpoint
-- Changing query parameter semantics (not just adding new ones)
-- Changing WebSocket event type strings
-- Changing pagination cursor behavior in `/api/conversations/{id}`
-- Changing the NaCl box format or key exchange protocol in `/api/pair/exchange`
-
-When making a risky change, either: (a) keep the old shape and add the new one alongside it, or (b) open a coordinated PR in tb-mobile at the same time and document the minimum required app version in the commit message.
+- Never rename or remove endpoints, response fields (casing matters), query params, session status strings, or WS event types. Additive changes only (new optional fields, new endpoints, new event types — mobile ignores unknowns).
+- Session statuses mobile switches on: `running`, `waiting_input`, `completed`, `failed`, `on_hold`, `idle` (alias of `on_hold`). The server currently emits `running`/`waiting_input`/`idle` for live sessions and `on_hold` for resumable conversations; `completed`/`failed` are legacy values older streamers emitted — don't reuse them with new semantics.
+- Auth: `Authorization: Bearer <token>` AND `/ws?key=<token>` must both keep working; API key format `tb_<32-hex-chars>` is load-bearing in pairing.
+- For a risky change: keep the old shape alongside the new one, or open a coordinated tb-mobile PR and document the minimum required app version in the commit message.
 
 ## Menubar app (vendor/menubar)
 
-`vendor/menubar` is a git submodule pointing at `RonenMars/threadbase-menubar` — the Electron tray app that shows streamer status. It runs out-of-process and only talks to the streamer over `GET /healthz`.
-
-**Coupling to this repo:**
-- It reads the streamer's listening port from `~/.threadbase/server.yaml` (`port:` line) at launch. Resolution order: `THREADBASE_PORT` env → `port:` in `server.yaml` → fallback `8766`.
-- Polls `http://localhost:<port>/healthz` every 5s and expects the existing `{ ok, version }` response shape.
-
-**Don't break without coordinating a menubar update:**
-- Renaming or moving the `port:` field in `server.yaml`
-- Removing `/healthz` or changing its response shape
-- Changing the default listening port (the menubar fallback `8766` would need to be bumped in lockstep)
-
-**Deploy flow — download first, build only as fallback:**
-
-The deploy scripts no longer build the menubar locally by default. Each deploy:
-1. Resolves the submodule HEAD commit SHA.
-2. Calls `scripts/lib/fetch-menubar.{sh,ps1}` to look up a GitHub Release on `RonenMars/threadbase-menubar` whose underlying commit SHA matches the submodule. The matching strategy handles both rolling pre-releases (where `target_commitish` is the commit SHA, e.g. `latest-main`) and tagged releases (where the tag ref is resolved and annotated tags are peeled). First match wins.
-3. On match: downloads the OS-specific artifact via plain HTTPS (no `gh` CLI dependency — only `curl` + `node` on Unix, native `Invoke-WebRequest` on Windows). Installs it:
-   - macOS: mount `.dmg`, `cp` `.app` to `/Applications/Threadbase Menubar.app`, `lsregister -f`.
-   - Linux: write `.AppImage` to `~/.local/bin/threadbase-menubar.AppImage`, `chmod +x`, launch via `nohup`.
-   - Windows: run NSIS installer with `/S` (silent), which installs to `%LOCALAPPDATA%\Programs\Threadbase Menubar\`.
-4. On miss (no release for this SHA, or release exists but lacks the OS-specific artifact): falls back to the per-OS local build/run flow — electron-builder `.dmg` on macOS, in-tree `npx electron .` on Linux/Windows.
-5. On fetch error (network, GH API rate limit, parse failure): prints the issues URL (`https://github.com/RonenMars/threadbase-menubar/issues`) + the path to the error log (`~/.threadbase/logs/menubar-fetch.log`) and then falls back to local build/run.
-
-The unified install sentinel is `~/.threadbase/menubar-installed-sha` (all three OSes). The previous per-platform sentinels (`vendor/menubar/dist/.build-sha` on Linux/Windows) were unreliable because `npm install` clobbers the `dist/` directory; the streamer-side `~/.threadbase/` location survives rebuilds.
-
-**`--publish-menubar` forces a local build** (it would make no sense to upload a downloaded artifact). `scripts/deploy.sh` and `scripts/deploy.sh menubar --publish` both pass `force_build` into `ensure_menubar_deployed`, bypassing the download path.
-
-**`gh` CLI is NOT a dependency** of the fetch path — only `--publish-menubar` still requires it. Plain `curl` + `node` (already required by the streamer) hit `https://api.github.com/repos/RonenMars/threadbase-menubar/releases` anonymously. The repo is public, so no token is needed for reads.
-
-**Auto-update interaction:** during an install, the streamer is briefly down — typically a few seconds between `stopService()` (Windows only) / `swapCurrent()` and `restartService()`. The menubar will flicker to "disconnected" then reconnect on the next 5s poll. This is expected and not a bug. If the gap stretches beyond ~10s, something is wrong with the restart step (`launchctl kickstart` failing on macOS, `systemctl --user` not finding the unit on Linux, scheduled task hung on Windows) — check `~/.threadbase/logs/updater.{log,err}` and the platform service status before assuming the menubar itself is at fault.
-
-Parent-repo commits that bump the submodule pointer should use a `chore: bump vendor/menubar (<reason>)` title.
+`vendor/menubar` is a git submodule (`RonenMars/threadbase-menubar`) — an Electron tray app that polls `GET /healthz` every 5s. Don't break without coordinating a menubar update: the `port:` field in `server.yaml` (its port resolution: `THREADBASE_PORT` env → `port:` → fallback `8766`), the `/healthz` `{ ok, version }` shape, or the default port. Submodule bumps use a `chore: bump vendor/menubar (<reason>)` commit. Deploy fetches a prebuilt release matching the submodule SHA and only builds locally as fallback — flow details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
 
 ## Contributing to docs
 
-If you hit an undocumented issue during setup, deploy, or runtime — ask the user: "This doesn't seem to be covered in `docs/troubleshooting.md`. Would you like me to add it?" Then add a new section following the existing format (symptom → cause → fix) and commit it alongside any code fix.
+If you hit an undocumented issue during setup, deploy, or runtime — ask the user: "This doesn't seem to be covered in `docs/troubleshooting.md`. Would you like me to add it?" Then add a section following the existing format (symptom → cause → fix) and commit it alongside any code fix.
+
+## Release notes
+
+Milestone-level release notes live in `docs/release-notes/YYYY-MM-DD-<milestone>.md` — the human story of what shipped; separate from `CHANGELOG.md`, which semantic-release auto-generates (never edit it by hand). When a milestone is ready to merge, invoke the project-local `write-release-notes` skill and add the `milestone` label to the merge PR.
