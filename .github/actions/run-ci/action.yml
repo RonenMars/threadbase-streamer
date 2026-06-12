@@ -54,7 +54,7 @@ runs:
       shell: bash
       run: npm ci
 
-    - name: Relink file: deps (symlinks not preserved by cache)
+    - name: "Relink file: deps (symlinks not preserved by cache)"
       if: steps.cache.outputs.cache-hit == 'true'
       shell: bash
       run: npm install --prefer-offline --ignore-scripts
