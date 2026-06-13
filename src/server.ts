@@ -220,7 +220,24 @@ export class StreamerServer {
           if (filePath) {
             this.getScanner()
               .then((scanner) => scanner.refreshFile(filePath))
-              .catch(() => {});
+              .then((meta) => {
+                this.log.info("scanner.refreshFile: ok", {
+                  event: "scanner.refresh",
+                  sessionId: session.id,
+                  filePath,
+                  trigger: session.status,
+                  messageCount: meta?.messageCount,
+                });
+              })
+              .catch((err) => {
+                this.log.warn("scanner.refreshFile: failed", {
+                  event: "scanner.refresh_failed",
+                  sessionId: session.id,
+                  filePath,
+                  trigger: session.status,
+                  err,
+                });
+              });
           }
         }
         // Stop watching JSONL when PTY exits (session goes idle)
@@ -1446,7 +1463,24 @@ export class StreamerServer {
       if (filePath) {
         this.getScanner()
           .then((scanner) => scanner.refreshFile(filePath))
-          .catch(() => {});
+          .then((meta) => {
+            this.log.info("scanner.refreshFile: ok", {
+              event: "scanner.refresh",
+              sessionId,
+              filePath,
+              trigger: "sendInput",
+              messageCount: meta?.messageCount,
+            });
+          })
+          .catch((err) => {
+            this.log.warn("scanner.refreshFile: failed", {
+              event: "scanner.refresh_failed",
+              sessionId,
+              filePath,
+              trigger: "sendInput",
+              err,
+            });
+          });
       }
       json(res, 200, { ok: true });
     } catch (err) {
