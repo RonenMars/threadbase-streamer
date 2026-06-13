@@ -271,6 +271,20 @@ Restart the streamer to pick it up.
 
 ---
 
+## Discovered sessions / PTY not attached
+
+### Session shows `Idle · 0 prompts` with blank terminal and `PTY_ATTACHED: false`
+
+**When:** The mobile app shows a session as "Idle · X prompts" but with `0 prompts` in the detail view, the terminal is blank, and Session Info shows `PTY ATTACHED: false`. The session has a non-zero elapsed time.
+
+**Cause:** This is a *discovered* session — tb-streamer found an externally-running `claude` process via `pgrep -x claude` that it did not start itself. `discoveredToResponse()` in `session-store.ts` always hard-codes `status: "idle"`, `promptCount: 0`, `ptyAttached: false` for every externally-discovered session, regardless of what that process is actually doing. The elapsed time reflects how long that process has been running.
+
+**Is this a bug?** No — it is expected behavior. tb-streamer surfaces discovered processes so you know they exist, but it cannot inspect their state or attach a PTY to them retroactively.
+
+**Fix:** None needed. The session entry closes when the external process exits. If you want to interact with the session in the app, stop Claude Code in the other terminal (Ctrl+C), then open the session from the app — once the process is no longer running, tb-streamer can resume it as a fully-managed session with PTY and terminal output.
+
+---
+
 ## Session idle / on_hold
 
 ### Session transitions to `on_hold` unexpectedly
