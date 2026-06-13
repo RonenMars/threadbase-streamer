@@ -213,6 +213,16 @@ export class StreamerServer {
           completedAt: session.completedAt,
           ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
         });
+        // Refresh the scanner index at the end of each Claude turn so the
+        // conversation is searchable with up-to-date content immediately.
+        if (session.status === "waiting_input" || session.status === "idle") {
+          const filePath = this.sessionFileMap.get(session.id);
+          if (filePath) {
+            this.getScanner()
+              .then((scanner) => scanner.refreshFile(filePath))
+              .catch(() => {});
+          }
+        }
         // Stop watching JSONL when PTY exits (session goes idle)
         if (session.status === "idle") {
           const filePath = this.sessionFileMap.get(session.id);
@@ -1430,6 +1440,13 @@ export class StreamerServer {
       const updated = this.sessionStore.get(sessionId, this.ptyAttachedIds());
       if (updated) {
         this.wsHub.broadcast({ type: "session_update", session: updated });
+      }
+      // Index the user's new message immediately so it's searchable right away.
+      const filePath = this.sessionFileMap.get(sessionId);
+      if (filePath) {
+        this.getScanner()
+          .then((scanner) => scanner.refreshFile(filePath))
+          .catch(() => {});
       }
       json(res, 200, { ok: true });
     } catch (err) {
