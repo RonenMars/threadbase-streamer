@@ -194,8 +194,8 @@ describe("isAgentFile", () => {
 });
 
 describe("parseAgentFilterEnv", () => {
-  it("defaults to on when unset", () => {
-    expect(parseAgentFilterEnv(undefined)).toBe(true);
+  it("defaults to off when unset", () => {
+    expect(parseAgentFilterEnv(undefined)).toBe(false);
   });
 
   it("treats 0/false/no/off/empty as off", () => {

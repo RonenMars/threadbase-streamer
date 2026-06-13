@@ -72,10 +72,10 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
-// Default ON. Set to "0" or "false" to keep Claude Agent SDK / claude-mem
-// runs visible in /api/conversations and /project-chats.
+// Default OFF. Set to "1" or "true" to hide Claude Agent SDK / claude-mem
+// runs from /api/conversations and /project-chats.
 export function parseAgentFilterEnv(raw: string | undefined): boolean {
-  if (raw === undefined) return true;
+  if (raw === undefined) return false;
   const v = raw.trim().toLowerCase();
   return !(v === "0" || v === "false" || v === "no" || v === "off" || v === "");
 }
@@ -1179,12 +1179,10 @@ export class StreamerServer {
     );
     const adapted = results.map((r: any) => ({
       id:
-        r.meta.sessionId ||
         r.meta.id
           .split("/")
           .pop()
-          ?.replace(/\.jsonl$/, "") ||
-        r.meta.id,
+          ?.replace(/\.jsonl$/, "") || r.meta.id,
       title: r.meta.projectName,
       sessionName: r.meta.sessionName || undefined,
       filePath: r.meta.filePath,
