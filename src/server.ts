@@ -181,7 +181,10 @@ export class StreamerServer {
         // Invalidate the scanner so the next search rescans the filesystem.
         this.scanner = null;
         this.scannerReady = null;
-        this.cache?.invalidate();
+        // Invalidate only the affected file's cache row, not the entire cache.
+        // Wiping the whole cache on every file event would prevent the warm-up
+        // from ever persisting data (active sessions write constantly).
+        this.cache?.invalidateByFilePath(filePath);
         this.log.debug?.(`Scanner invalidated by directory event: ${filePath}`, {
           filePath,
           event: "cache.directory_change",
@@ -510,10 +513,15 @@ export class StreamerServer {
             event: "cache.open_failed",
           });
         }
-        this.getScanner()
-          .then(async (scanner) => {
+        // Use a dedicated scanner for warm-up, independent of this.scanner, so
+        // that onConversationChanged invalidations during the scan cannot cause
+        // getScanner() to restart indefinitely and leave the warm-up stuck.
+        const warmupScanner = new ConversationScanner();
+        warmupScanner
+          .scan(this.scanProfiles ? { profiles: this.scanProfiles } : {})
+          .then(async () => {
             if (!this.cache) return;
-            const metas = [...scanner.getMetadataCache().values()] as any[];
+            const metas = [...warmupScanner.getMetadataCache().values()] as any[];
             // upsertFromScannerMeta returns IDs of rows actually upserted
             // (excluding agent JSONLs filtered out by filterAgentConversations).
             // Warming tails for filtered-out IDs would hit the
@@ -878,12 +886,18 @@ export class StreamerServer {
   private async getScanner(): Promise<ConversationScanner> {
     if (this.scannerReady) {
       await this.scannerReady;
-      return this.scanner as ConversationScanner;
+      // onConversationChanged may have nulled this.scanner while we awaited —
+      // if so, fall through and create a fresh one.
+      if (this.scanner) return this.scanner;
     }
     this.scanner = new ConversationScanner();
     this.scannerReady = this.scanner.scan(this.scanProfiles ? { profiles: this.scanProfiles } : {});
     await this.scannerReady;
-    return this.scanner;
+    // Capture before returning — onConversationChanged could null this.scanner
+    // in the microtask between the await and the return.
+    const scanner = this.scanner;
+    if (!scanner) return this.getScanner();
+    return scanner;
   }
 
   private async getFreshScanner(): Promise<ConversationScanner> {
