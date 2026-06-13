@@ -176,6 +176,17 @@ export class StreamerServer {
           }
         }
       },
+      onConversationChanged: (filePath) => {
+        // A new JSONL appeared (or changed) in a watched project directory.
+        // Invalidate the scanner so the next search rescans the filesystem.
+        this.scanner = null;
+        this.scannerReady = null;
+        this.cache?.invalidate();
+        this.log.debug?.(`Scanner invalidated by directory event: ${filePath}`, {
+          filePath,
+          event: "cache.directory_change",
+        });
+      },
       onFileDeleted: (filePath) => {
         const id = this.cache?.invalidateByFilePath(filePath);
         if (id)
@@ -459,6 +470,12 @@ export class StreamerServer {
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
+          // Watch ~/.claude/projects so new JSONL files created after startup
+          // (e.g. resumed sessions, new conversations from other devices) are
+          // discovered: onConversationChanged will invalidate the scanner and
+          // cache so the next search/list picks them up without a restart.
+          const projectsDir = join(homedir(), ".claude", "projects");
+          this.fileWatcher.watchDirectory(projectsDir);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.log.warn(`ConversationCache failed to open (running without cache): ${message}`, {
