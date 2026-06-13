@@ -72,10 +72,10 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
-// Default ON. Set to "0" or "false" to keep Claude Agent SDK / claude-mem
-// runs visible in /api/conversations and /project-chats.
+// Default OFF. Set to "1" or "true" to hide Claude Agent SDK / claude-mem
+// runs from /api/conversations and /project-chats.
 export function parseAgentFilterEnv(raw: string | undefined): boolean {
-  if (raw === undefined) return true;
+  if (raw === undefined) return false;
   const v = raw.trim().toLowerCase();
   return !(v === "0" || v === "false" || v === "no" || v === "off" || v === "");
 }
@@ -213,6 +213,33 @@ export class StreamerServer {
           completedAt: session.completedAt,
           ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
         });
+        // Refresh the scanner index at the end of each Claude turn so the
+        // conversation is searchable with up-to-date content immediately.
+        if (session.status === "waiting_input" || session.status === "idle") {
+          const filePath = this.sessionFileMap.get(session.id);
+          if (filePath) {
+            this.getScanner()
+              .then((scanner) => scanner.refreshFile(filePath))
+              .then((meta) => {
+                this.log.info("scanner.refreshFile: ok", {
+                  event: "scanner.refresh",
+                  sessionId: session.id,
+                  filePath,
+                  trigger: session.status,
+                  messageCount: meta?.messageCount,
+                });
+              })
+              .catch((err) => {
+                this.log.warn("scanner.refreshFile: failed", {
+                  event: "scanner.refresh_failed",
+                  sessionId: session.id,
+                  filePath,
+                  trigger: session.status,
+                  err,
+                });
+              });
+          }
+        }
         // Stop watching JSONL when PTY exits (session goes idle)
         if (session.status === "idle") {
           const filePath = this.sessionFileMap.get(session.id);
@@ -1179,12 +1206,10 @@ export class StreamerServer {
     );
     const adapted = results.map((r: any) => ({
       id:
-        r.meta.sessionId ||
         r.meta.id
           .split("/")
           .pop()
-          ?.replace(/\.jsonl$/, "") ||
-        r.meta.id,
+          ?.replace(/\.jsonl$/, "") || r.meta.id,
       title: r.meta.projectName,
       sessionName: r.meta.sessionName || undefined,
       filePath: r.meta.filePath,
@@ -1432,6 +1457,30 @@ export class StreamerServer {
       const updated = this.sessionStore.get(sessionId, this.ptyAttachedIds());
       if (updated) {
         this.wsHub.broadcast({ type: "session_update", session: updated });
+      }
+      // Index the user's new message immediately so it's searchable right away.
+      const filePath = this.sessionFileMap.get(sessionId);
+      if (filePath) {
+        this.getScanner()
+          .then((scanner) => scanner.refreshFile(filePath))
+          .then((meta) => {
+            this.log.info("scanner.refreshFile: ok", {
+              event: "scanner.refresh",
+              sessionId,
+              filePath,
+              trigger: "sendInput",
+              messageCount: meta?.messageCount,
+            });
+          })
+          .catch((err) => {
+            this.log.warn("scanner.refreshFile: failed", {
+              event: "scanner.refresh_failed",
+              sessionId,
+              filePath,
+              trigger: "sendInput",
+              err,
+            });
+          });
       }
       json(res, 200, { ok: true });
     } catch (err) {
