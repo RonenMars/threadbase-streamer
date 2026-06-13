@@ -72,9 +72,9 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
-// Default OFF. Set to "1" or "true" to hide Claude Agent SDK / claude-mem
-// runs from /api/conversations and /project-chats.
-export function parseAgentFilterEnv(raw: string | undefined): boolean {
+// Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
+// runs in /api/conversations and /project-chats.
+export function parseIncludeAgentsEnv(raw: string | undefined): boolean {
   if (raw === undefined) return false;
   const v = raw.trim().toLowerCase();
   return !(v === "0" || v === "false" || v === "no" || v === "off" || v === "");
@@ -119,7 +119,7 @@ export class StreamerServer {
   } | null = null;
   private cacheDir: string;
   private tailSize: number;
-  private filterAgentConversations: boolean;
+  private includeAgents: boolean;
   private agentEntrypoints: ReadonlySet<string>;
   private honoApp: Hono<AppEnv>;
   private log = getLogger("server");
@@ -135,9 +135,7 @@ export class StreamerServer {
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
-    this.filterAgentConversations = parseAgentFilterEnv(
-      process.env.THREADBASE_FILTER_AGENT_CONVERSATIONS,
-    );
+    this.includeAgents = parseIncludeAgentsEnv(process.env.THREADBASE_INCLUDE_AGENTS);
     this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
 
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
@@ -485,12 +483,12 @@ export class StreamerServer {
             this.tailSize,
             undefined,
             {
-              filterAgentConversations: this.filterAgentConversations,
+              filterAgentConversations: !this.includeAgents,
               agentEntrypoints: this.agentEntrypoints,
               onAgentFileDetected: (fp) => this.fileWatcher.unwatch(fp),
             },
           );
-          if (this.filterAgentConversations) {
+          if (!this.includeAgents) {
             const result = pruneAgentConversations(this.cache);
             if (result.pruned > 0 || result.missing > 0) {
               this.log.info(
@@ -527,7 +525,7 @@ export class StreamerServer {
             if (!this.cache) return;
             const metas = [...warmupScanner.getMetadataCache().values()] as any[];
             // upsertFromScannerMeta returns IDs of rows actually upserted
-            // (excluding agent JSONLs filtered out by filterAgentConversations).
+            // (excluding agent JSONLs skipped when includeAgents=false).
             // Warming tails for filtered-out IDs would hit the
             // conversation_tail.conversation_id → conversation_meta(id) FK
             // and abort the whole warm-up before pruneGhostFiles can run.

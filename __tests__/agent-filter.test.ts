@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
-import { parseAgentFilterEnv } from "../src/server";
+import { parseIncludeAgentsEnv } from "../src/server";
 import {
   clearAgentFileCacheForTests,
   DEFAULT_AGENT_ENTRYPOINTS,
@@ -193,20 +193,20 @@ describe("isAgentFile", () => {
   });
 });
 
-describe("parseAgentFilterEnv", () => {
+describe("parseIncludeAgentsEnv", () => {
   it("defaults to off when unset", () => {
-    expect(parseAgentFilterEnv(undefined)).toBe(false);
+    expect(parseIncludeAgentsEnv(undefined)).toBe(false);
   });
 
   it("treats 0/false/no/off/empty as off", () => {
     for (const v of ["0", "false", "FALSE", "no", "off", " "]) {
-      expect(parseAgentFilterEnv(v)).toBe(false);
+      expect(parseIncludeAgentsEnv(v)).toBe(false);
     }
   });
 
   it("treats 1/true/yes/on as on", () => {
     for (const v of ["1", "true", "yes", "on", "anything-else"]) {
-      expect(parseAgentFilterEnv(v)).toBe(true);
+      expect(parseIncludeAgentsEnv(v)).toBe(true);
     }
   });
 });
