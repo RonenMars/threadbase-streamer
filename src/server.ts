@@ -89,6 +89,7 @@ export class StreamerServer {
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
   private scanner: ConversationScanner | null = null;
   private scannerReady: Promise<unknown> | null = null;
+  private cacheReady = false;
   private apiKey: string;
   private localNoAuth: boolean;
   private verbose: boolean;
@@ -329,6 +330,9 @@ export class StreamerServer {
         this.wsHub.addClient(ws);
         const sessions = this.sessionStore.list(this.ptyAttachedIds());
         ws.send(JSON.stringify({ type: "session_list", sessions }));
+        if (this.cacheReady) {
+          ws.send(JSON.stringify({ type: "cache_ready" }));
+        }
       },
       handleWsMessage: async (ws, raw) => {
         try {
@@ -586,7 +590,11 @@ export class StreamerServer {
               event: "cache.warmup_failed",
             });
           })
-          .finally(() => resolveWarm());
+          .finally(() => {
+            this.cacheReady = true;
+            this.wsHub.broadcast({ type: "cache_ready" });
+            resolveWarm();
+          });
       });
     });
     if (opts?.awaitReady) await warmUp;
