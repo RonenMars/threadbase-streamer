@@ -72,9 +72,9 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
-// Default OFF. Set to "1" or "true" to hide Claude Agent SDK / claude-mem
-// runs from /api/conversations and /project-chats.
-export function parseAgentFilterEnv(raw: string | undefined): boolean {
+// Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
+// runs in /api/conversations and /project-chats.
+export function parseIncludeAgentsEnv(raw: string | undefined): boolean {
   if (raw === undefined) return false;
   const v = raw.trim().toLowerCase();
   return !(v === "0" || v === "false" || v === "no" || v === "off" || v === "");
@@ -89,6 +89,7 @@ export class StreamerServer {
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
   private scanner: ConversationScanner | null = null;
   private scannerReady: Promise<unknown> | null = null;
+  private cacheReady = false;
   private apiKey: string;
   private localNoAuth: boolean;
   private verbose: boolean;
@@ -118,7 +119,7 @@ export class StreamerServer {
   } | null = null;
   private cacheDir: string;
   private tailSize: number;
-  private filterAgentConversations: boolean;
+  private includeAgents: boolean;
   private agentEntrypoints: ReadonlySet<string>;
   private honoApp: Hono<AppEnv>;
   private log = getLogger("server");
@@ -134,9 +135,7 @@ export class StreamerServer {
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
-    this.filterAgentConversations = parseAgentFilterEnv(
-      process.env.THREADBASE_FILTER_AGENT_CONVERSATIONS,
-    );
+    this.includeAgents = parseIncludeAgentsEnv(process.env.THREADBASE_INCLUDE_AGENTS);
     this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
 
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
@@ -181,7 +180,10 @@ export class StreamerServer {
         // Invalidate the scanner so the next search rescans the filesystem.
         this.scanner = null;
         this.scannerReady = null;
-        this.cache?.invalidate();
+        // Invalidate only the affected file's cache row, not the entire cache.
+        // Wiping the whole cache on every file event would prevent the warm-up
+        // from ever persisting data (active sessions write constantly).
+        this.cache?.invalidateByFilePath(filePath);
         this.log.debug?.(`Scanner invalidated by directory event: ${filePath}`, {
           filePath,
           event: "cache.directory_change",
@@ -326,6 +328,9 @@ export class StreamerServer {
         this.wsHub.addClient(ws);
         const sessions = this.sessionStore.list(this.ptyAttachedIds());
         ws.send(JSON.stringify({ type: "session_list", sessions }));
+        if (this.cacheReady) {
+          ws.send(JSON.stringify({ type: "cache_ready" }));
+        }
       },
       handleWsMessage: async (ws, raw) => {
         try {
@@ -478,12 +483,12 @@ export class StreamerServer {
             this.tailSize,
             undefined,
             {
-              filterAgentConversations: this.filterAgentConversations,
+              filterAgentConversations: !this.includeAgents,
               agentEntrypoints: this.agentEntrypoints,
               onAgentFileDetected: (fp) => this.fileWatcher.unwatch(fp),
             },
           );
-          if (this.filterAgentConversations) {
+          if (!this.includeAgents) {
             const result = pruneAgentConversations(this.cache);
             if (result.pruned > 0 || result.missing > 0) {
               this.log.info(
@@ -510,12 +515,17 @@ export class StreamerServer {
             event: "cache.open_failed",
           });
         }
-        this.getScanner()
-          .then(async (scanner) => {
+        // Use a dedicated scanner for warm-up, independent of this.scanner, so
+        // that onConversationChanged invalidations during the scan cannot cause
+        // getScanner() to restart indefinitely and leave the warm-up stuck.
+        const warmupScanner = new ConversationScanner();
+        warmupScanner
+          .scan(this.scanProfiles ? { profiles: this.scanProfiles } : {})
+          .then(async () => {
             if (!this.cache) return;
-            const metas = [...scanner.getMetadataCache().values()] as any[];
+            const metas = [...warmupScanner.getMetadataCache().values()] as any[];
             // upsertFromScannerMeta returns IDs of rows actually upserted
-            // (excluding agent JSONLs filtered out by filterAgentConversations).
+            // (excluding agent JSONLs skipped when includeAgents=false).
             // Warming tails for filtered-out IDs would hit the
             // conversation_tail.conversation_id → conversation_meta(id) FK
             // and abort the whole warm-up before pruneGhostFiles can run.
@@ -578,7 +588,11 @@ export class StreamerServer {
               event: "cache.warmup_failed",
             });
           })
-          .finally(() => resolveWarm());
+          .finally(() => {
+            this.cacheReady = true;
+            this.wsHub.broadcast({ type: "cache_ready" });
+            resolveWarm();
+          });
       });
     });
     if (opts?.awaitReady) await warmUp;
@@ -878,12 +892,18 @@ export class StreamerServer {
   private async getScanner(): Promise<ConversationScanner> {
     if (this.scannerReady) {
       await this.scannerReady;
-      return this.scanner as ConversationScanner;
+      // onConversationChanged may have nulled this.scanner while we awaited —
+      // if so, fall through and create a fresh one.
+      if (this.scanner) return this.scanner;
     }
     this.scanner = new ConversationScanner();
     this.scannerReady = this.scanner.scan(this.scanProfiles ? { profiles: this.scanProfiles } : {});
     await this.scannerReady;
-    return this.scanner;
+    // Capture before returning — onConversationChanged could null this.scanner
+    // in the microtask between the await and the return.
+    const scanner = this.scanner;
+    if (!scanner) return this.getScanner();
+    return scanner;
   }
 
   private async getFreshScanner(): Promise<ConversationScanner> {
