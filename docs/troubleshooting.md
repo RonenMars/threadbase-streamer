@@ -693,3 +693,57 @@ If you've already lost work, it's not gone if you pushed: `git -C vendor/menubar
 **When:** Streamer restarts on the old version after a reported-successful update.
 **Cause:** the copy-deploy hit `EBUSY` because the streamer was still holding open handles inside `current/dist/cli.cjs`. `stopService()` should have been called first; if it failed silently, the copy completes on the `.new` directory but `rename` won't overwrite the live tree.
 **Fix:** run `Stop-ScheduledTask -TaskName Threadbase`, then `scripts/install-auto-update.ps1` won't be needed — just rerun `threadbase-streamer update`. If this is repeatable, file a bug — `install.ts` is supposed to handle this on Windows.
+
+---
+
+## PTY / terminal output
+
+### SSH passphrase prompt leaks into streamed terminal output *(macOS)*
+
+**When:** A session is started on a Mac where the SSH agent is not running or the key is not loaded into it. The PTY output contains `Enter passphrase for key '/Users/<you>/.ssh/id_ed25519':` which is streamed verbatim to WebSocket clients — visible in the tb-mobile terminal view mid-conversation.
+
+**What it looks like:** The mobile app shows the session as `Running` with a normal prompt count, but the terminal output contains:
+
+```
+Enter passphrase for key '/Users/ronenmars/.ssh/id_ed25519':
+  Sonnet 4.6 | ~/Desktop/dev/ai-tools/tb-mobile  fix/ship-branch-sync-check ...
+```
+
+**Cause:** tb-streamer streams raw PTY bytes to all WebSocket subscribers without filtering for interactive prompts. When `SSH_AUTH_SOCK` is absent or points to a dead socket, SSH falls back to prompting the PTY directly. The PTY captures the prompt and it becomes part of the output stream.
+
+Common root causes:
+- `~/.ssh/config` has `IdentityAgent` pointing at a 1Password socket (`~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock`) that no longer exists.
+- The macOS SSH agent (`com.openssh.ssh-agent`) is running but `SSH_AUTH_SOCK` is not exported into the PTY's environment (set in the launchd plist or shell but not inherited by the PTY subprocess).
+- The key has never been added to the Keychain, so the agent starts empty after every reboot.
+
+**Fix:**
+
+1. Replace the 1Password `IdentityAgent` in `~/.ssh/config` with native macOS keychain settings:
+
+```
+Host *
+  UseKeychain yes
+  AddKeysToAgent yes
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+2. Add the key to Keychain (one-time, prompts for passphrase once):
+
+```sh
+eval "$(ssh-agent -s)"
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+```
+
+3. Ensure the agent starts in every new shell (add to `~/.zshrc` or equivalent):
+
+```sh
+if ! ssh-add -l &>/dev/null; then
+  eval "$(ssh-agent -s)" &>/dev/null
+fi
+```
+
+After this, `SSH_AUTH_SOCK` resolves correctly in PTY subprocesses and the passphrase prompt never appears.
+
+**Note:** tb-streamer does not filter PTY output for interactive prompts by design — the terminal view is meant to be a faithful mirror of what would appear in a local terminal. The fix is always on the SSH agent side, not in the streaming layer.
+
+**Related entry in tb-mobile:** see "SSH passphrase prompt appears mid-conversation in the terminal view" in `docs/troubleshooting.md`.
