@@ -106,7 +106,8 @@ export type WSMessage =
       sessionId: string;
       turnId: string;
       reason: string;
-    };
+    }
+  | { type: "cache_ready" };
 
 // ─── REST Response Shapes ──────────────────────────────────────────
 

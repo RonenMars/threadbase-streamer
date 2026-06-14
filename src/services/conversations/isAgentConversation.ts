@@ -108,8 +108,8 @@ export function isAgentFile(
   }
 }
 
-// Comma-separated parser. Empty string → empty set (filtering off in practice
-// even when filterAgentConversations=true, since no entrypoint qualifies).
+// Comma-separated parser. Empty string → empty set (agents shown in practice
+// even when includeAgents=false, since no entrypoint qualifies).
 export function parseAgentEntrypointsEnv(raw: string | undefined): ReadonlySet<string> {
   if (raw === undefined) return DEFAULT_AGENT_ENTRYPOINTS;
   const parts = raw
