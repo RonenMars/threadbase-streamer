@@ -55,7 +55,13 @@ export class WSHub {
     }
     for (const client of this.clients) {
       try {
-        client.close();
+        // terminate() (not close()) so the underlying TCP socket dies
+        // immediately. A graceful close() only sends a close frame and waits
+        // for the peer's reply — a slow/backgrounded client would keep the
+        // connection (and thus the HTTP listener's port) alive until the peer
+        // ACKs, which is what stalled shutdown and caused EADDRINUSE on the
+        // next deploy.
+        client.terminate();
       } catch {
         // Already closed
       }

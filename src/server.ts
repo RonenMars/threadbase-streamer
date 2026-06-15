@@ -621,8 +621,21 @@ export class StreamerServer {
     if (this.dbPool) {
       await this.dbPool.end();
     }
+    // Force any sockets that survived wsHub.dispose() (e.g. a half-open
+    // connection mid-upgrade) to close, so httpServer.close()'s callback —
+    // which only fires once every connection drains — can't hang. Without
+    // this the old process keeps :PORT bound until launchd's SIGKILL, and the
+    // freshly-started instance hits EADDRINUSE. Guarded for Node < 18.2.
+    this.httpServer.closeAllConnections?.();
     return new Promise((resolve) => {
-      this.httpServer.close(() => resolve());
+      // Belt-and-suspenders: never let process exit block forever on the
+      // listener close. The port is released the moment closeAllConnections()
+      // runs; the timeout only guards against an unforeseen lingering socket.
+      const timer = setTimeout(resolve, 2000);
+      this.httpServer.close(() => {
+        clearTimeout(timer);
+        resolve();
+      });
     });
   }
 
