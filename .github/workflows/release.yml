@@ -178,8 +178,16 @@ jobs:
         run: ls -la release-artifacts/
 
       - name: Run semantic-release
+        # @semantic-release/git pushes the release commit (CHANGELOG +
+        # package.json bump) directly to main. main is protected by a ruleset
+        # that forbids direct pushes and the GitHub Actions bot cannot be a
+        # bypass actor on a user-owned repo. RELEASE_PAT is a fine-grained PAT
+        # owned by the repo admin (who IS a ruleset bypass actor), so the push
+        # authenticates as an exempt identity. Falls back to GITHUB_TOKEN when
+        # the secret is absent (e.g. forks) — the commit-back step will then
+        # fail as before, but tag/release still publish.
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
         run: npx semantic-release
 
       - name: Build Homebrew formula
