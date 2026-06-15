@@ -45,7 +45,11 @@ class TbStreamer < Formula
     keep_alive true
     log_path       var/"log/tb-streamer.log"
     error_log_path var/"log/tb-streamer.err"
-    environment_variables PATH: std_service_path_env
+    # Prepend Homebrew's bin so node-pty's execvp("claude", …) resolves
+    # /opt/homebrew/bin/claude (Apple Silicon) — std_service_path_env omits it.
+    # resolveClaudeExe() in src/platform.ts has an absolute fallback too, so
+    # this is defense-in-depth.
+    environment_variables PATH: "#{HOMEBREW_PREFIX}/bin:#{std_service_path_env}"
   end
 
   def caveats

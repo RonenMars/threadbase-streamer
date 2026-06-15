@@ -20,7 +20,18 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-REPO_URL="https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/RonenMars/homebrew-threadbase.git"
+# Feed the token to git via GIT_ASKPASS instead of embedding it in the remote
+# URL — a tokenless URL can't leak the secret into command echoes or git's
+# error output (which can include the full URL on a failed clone/push). The
+# askpass script prints the token (read from the env) only when git prompts
+# for credentials over HTTPS basic auth, where GitHub accepts a PAT as the
+# password.
+REPO_URL="https://github.com/RonenMars/homebrew-threadbase.git"
+ASKPASS="$WORK/askpass.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s" "$HOMEBREW_TAP_TOKEN"\n' > "$ASKPASS"
+chmod +x "$ASKPASS"
+export GIT_ASKPASS="$ASKPASS"
+export GIT_TERMINAL_PROMPT=0
 
 git clone --depth 1 "$REPO_URL" "$WORK/tap"
 mkdir -p "$WORK/tap/Formula"
@@ -45,6 +56,24 @@ git -c user.name="threadbase-release-bot" \
     -c user.email="release-bot@threadbase.local" \
     commit -m "chore: tb-streamer v${VERSION}"
 
-git push origin HEAD:main
+if ! git push origin HEAD:main; then
+  # A concurrent tap commit moved main under us. Re-sync onto the new tip,
+  # re-apply the formula, and push once more.
+  echo "Push rejected — re-syncing tap and retrying once."
+  git fetch origin main
+  git reset --hard origin/main
+  cp "$FORMULA_PATH" Formula/tb-streamer.rb
+  git -c user.name="threadbase-release-bot" \
+      -c user.email="release-bot@threadbase.local" \
+      add Formula/tb-streamer.rb
+  if git diff --cached --quiet Formula/tb-streamer.rb; then
+    echo "Formula already current on tap after re-sync — nothing to push."
+    exit 0
+  fi
+  git -c user.name="threadbase-release-bot" \
+      -c user.email="release-bot@threadbase.local" \
+      commit -m "chore: tb-streamer v${VERSION}"
+  git push origin HEAD:main
+fi
 
 echo "Published Formula/tb-streamer.rb v${VERSION} to homebrew-threadbase."
