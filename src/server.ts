@@ -589,6 +589,18 @@ export class StreamerServer {
             });
           })
           .finally(() => {
+            // Adopt the warm-up scan as the live scanner so the first real
+            // request reuses it instead of paying for a second full scan.
+            // Guard: only adopt if nothing else already owns the slot — a
+            // request-path getScanner() that built its own scanner during
+            // warm-up, or an onConversationChanged that nulled both fields.
+            // If invalidation fires after we adopt, the next request rescans
+            // (pre-existing fallback); the per-request refreshFile path
+            // reconciles single-file drift.
+            if (!this.scannerReady && !this.scanner) {
+              this.scanner = warmupScanner;
+              this.scannerReady = Promise.resolve();
+            }
             this.cacheReady = true;
             this.wsHub.broadcast({ type: "cache_ready" });
             resolveWarm();
@@ -970,6 +982,29 @@ export class StreamerServer {
   }
 
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
+    // Cold-start fast path: until the warm-up scan has populated this.scanner
+    // (this.scannerReady is null), do NOT trigger a full scan to answer a
+    // single-conversation request — that scan walks every JSONL on disk and is
+    // the 20s+ stall that makes mobile abort. Resolve the file directly
+    // (findJsonlPath is an O(project-dirs) walk) and parse just that one file.
+    // The warm-up scan keeps running in the background; once it adopts the
+    // scanner, subsequent requests use the indexed hot path below.
+    if (!this.scannerReady && !this.scanProfiles) {
+      const filePath = this.findJsonlPath(uuid);
+      if (filePath) {
+        const account = this.cache?.getMetaById(uuid)?.account ?? undefined;
+        const coldScanner = this.scanner ?? new ConversationScanner();
+        const page = await coldScanner.parseSingleFilePage(filePath, account, {
+          limit: Number.MAX_SAFE_INTEGER,
+        });
+        if (page) return page.conversation;
+      }
+      // No JSONL on disk (or unparseable). Return null WITHOUT triggering a
+      // full scan — confirming not-found is not worth the 20s stall. The
+      // caller's cache-tail fallback / 404 self-heal handles it.
+      return null;
+    }
+
     const scanner = await this.getScanner();
     const fromIndex = await scanner.getConversation(uuid);
     if (fromIndex) {
@@ -1039,6 +1074,7 @@ export class StreamerServer {
         const tail = this.cache.getConversationTail(id);
         if (tail && tail.messages.length > 0) {
           const cachedMeta = this.cache.getMetaById(id);
+          const availability = classifyResumability(cachedMeta?.projectPath);
           const messagesPayload = tail.messages.map((m, idx) => ({
             message_index: idx,
             role: m.role,
@@ -1056,6 +1092,10 @@ export class StreamerServer {
               file_path: cachedMeta?.filePath ?? undefined,
               last_updated_at: cachedMeta?.lastActivity ?? undefined,
               message_count: cachedMeta?.messageCount ?? undefined,
+              resumable: availability.resumable,
+              ...(availability.unavailable_reason && {
+                unavailable_reason: availability.unavailable_reason,
+              }),
             },
             messages: messagesPayload,
             message_pagination: {
@@ -1075,7 +1115,7 @@ export class StreamerServer {
       // Self-heal: the row is a ghost (JSONL gone, no usable tail). Drop it so
       // the next list refresh doesn't keep offering this id to clients.
       this.cache?.invalidate(id);
-      json(res, 404, { error: "Conversation not found" });
+      json(res, 404, { error: "Conversation not found", code: "not_found" });
       return;
     }
 
@@ -1124,15 +1164,20 @@ export class StreamerServer {
         beforeIndex = intParam(url, "before_index", total);
         beforeIndex = Math.min(Math.max(beforeIndex, 0), total);
       }
-      const scanner = await this.getScanner();
-      const pagedScanner = scanner as unknown as {
-        getConversationPage?: (
-          id: string,
-          options: { beforeIndex: number; limit: number },
-        ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
-      };
+      // Only consult the scanner's paged reader when it's already warm. On the
+      // cold path `conversation` came from the single-file fast path and holds
+      // every message in memory, so slice it locally — calling getScanner()
+      // here would trigger the full scan the fast path exists to avoid.
+      const pagedScanner = this.scannerReady
+        ? ((await this.getScanner()) as unknown as {
+            getConversationPage?: (
+              id: string,
+              options: { beforeIndex: number; limit: number },
+            ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
+          })
+        : null;
       const page =
-        typeof pagedScanner.getConversationPage === "function"
+        pagedScanner && typeof pagedScanner.getConversationPage === "function"
           ? await pagedScanner.getConversationPage(id, { beforeIndex, limit })
           : null;
       const start = page?.fromIndex ?? Math.max(0, beforeIndex - limit);
@@ -1185,6 +1230,7 @@ export class StreamerServer {
     });
 
     const conv = conversation as any;
+    const availability = classifyResumability(conv.projectPath);
     const body: Record<string, unknown> = {
       meta: {
         id,
@@ -1195,6 +1241,10 @@ export class StreamerServer {
         last_updated_at: conv.timestamp,
         message_count: conv.messageCount,
         last_prompt: conv.lastPrompt ?? undefined,
+        resumable: availability.resumable,
+        ...(availability.unavailable_reason && {
+          unavailable_reason: availability.unavailable_reason,
+        }),
       },
       messages: messagesPayload,
     };
@@ -1919,7 +1969,28 @@ export class StreamerServer {
 
 // ─── Utilities ─────────────────────────────────────────────────────
 
+// Classify whether a conversation can be resumed from the project directory
+// (cwd) the session ran in. Shared by the detail handler and the
+// resumable-session shape. A conversation's JSONL parses fine even when its
+// cwd is gone, so callers still serve the full history — this only flags that
+// resume would fail and why. Returns optional meta fields older clients
+// ignore: cwd exists → resumable; gone → not resumable, with a
+// worktree-specific reason when the path was a git worktree (now removed).
+function classifyResumability(cwd: string | null | undefined): {
+  resumable: boolean;
+  unavailable_reason?: "path_missing" | "worktree_removed";
+} {
+  if (!cwd) return { resumable: true };
+  if (existsSync(cwd)) return { resumable: true };
+  const ranInWorktree = /\/\.worktrees\//.test(cwd) || /\/\.claude\/worktrees\//.test(cwd);
+  return {
+    resumable: false,
+    unavailable_reason: ranInWorktree ? "worktree_removed" : "path_missing",
+  };
+}
+
 function conversationToResumableSession(c: ConversationListItem) {
+  const availability = classifyResumability(c.projectPath);
   return {
     type: "conversation" as const,
     id: c.id,
@@ -1944,6 +2015,10 @@ function conversationToResumableSession(c: ConversationListItem) {
     ...(c.firstMessage != null && { firstMessageText: c.firstMessage }),
     ...(c.lastMessage != null && { lastMessageText: c.lastMessage }),
     filePath: c.filePath,
+    resumable: availability.resumable,
+    ...(availability.unavailable_reason && {
+      unavailable_reason: availability.unavailable_reason,
+    }),
   };
 }
 

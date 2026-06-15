@@ -1,3 +1,9 @@
+## [1.10.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.10.0...v1.10.1) (2026-06-15)
+
+### Bug Fixes
+
+* **conversations:** serve single-conversation reads without a cold full scan ([#74](https://github.com/RonenMars/threadbase-streamer/issues/74)) ([8aec961](https://github.com/RonenMars/threadbase-streamer/commit/8aec9611fe3d5012e8605150b3f701a0dd2a20f8)), closes [RonenMars/threadbase-scanner#16](https://github.com/RonenMars/threadbase-scanner/issues/16)
+
 ## [1.10.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.9.3...v1.10.0) (2026-06-15)
 
 ### Features
