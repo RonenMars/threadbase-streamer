@@ -7,10 +7,13 @@
 //
 // Resolution order:
 //   1. Read `<dirname(process.argv[1])>/version.txt` — set by the installer.
-//   2. Fall back to `<dirname(process.argv[1])>/../package.json` — covers
-//      source-tree runs (vitest, ts-node, `npm run dev`) where no installer
-//      has stamped a version.
-//   3. If both fail, return "0.0.0+unknown" so callers never crash on a
+//   2. Read `<dirname(process.argv[1])>/../version.txt` — the built CLI is a
+//      symlink whose realpath resolves one level into $INSTALL_DIR/releases/,
+//      so the installer's version.txt sits in the parent dir.
+//   3. Fall back to `<dirname(process.argv[1])>/../package.json` with a
+//      `+source` suffix — covers source-tree runs (vitest, ts-node,
+//      `npm run dev`) where no installer has stamped a version.
+//   4. If all fail, return "0.0.0+unknown" so callers never crash on a
 //      missing version.
 
 import { readFileSync } from "node:fs";
@@ -32,10 +35,16 @@ export function resetVersionCache(): void {
 function resolveVersion(): string {
   const scriptPath = process.argv[1] ?? "";
   const here = scriptPath ? dirname(scriptPath) : process.cwd();
-  try {
-    const v = readFileSync(join(here, "version.txt"), "utf8").trim();
-    if (v) return v;
-  } catch {}
+  // Check both the script directory and its parent — the installer places
+  // version.txt in $INSTALL_DIR (~/.threadbase/) but the built CLI is a
+  // symlink whose realpath resolves into $INSTALL_DIR/releases/, so `here`
+  // ends up one level too deep.
+  for (const dir of [here, join(here, "..")]) {
+    try {
+      const v = readFileSync(join(dir, "version.txt"), "utf8").trim();
+      if (v) return v;
+    } catch {}
+  }
   try {
     const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as {
       version?: string;
