@@ -471,8 +471,19 @@ export class StreamerServer {
       this.log.info("Database migrations applied", { event: "db.migrations_applied" });
     }
 
+    // Bind with bounded retry. `launchctl kickstart -k` kills the old prod
+    // instance and relaunches immediately; even after the old process has
+    // exited cleanly, the kernel can hold :PORT in a transient teardown state
+    // for a beat, so the fresh instance's first bind can race into EADDRINUSE.
+    // Retrying with a short backoff absorbs that window instead of leaving the
+    // process listener-less (the old behavior: the listener-level 'error'
+    // handler logged EADDRINUSE once and gave up, failing the deploy
+    // healthcheck). On the final attempt we let the error propagate so a
+    // genuinely occupied port still surfaces loudly.
+    await this.bindWithRetry(port);
+
     const warmUp = new Promise<void>((resolveWarm) => {
-      this.httpServer.listen(port, () => {
+      {
         this.log.info(`Streamer server listening on port ${port}`, {
           port,
           event: "server.listening",
@@ -605,9 +616,41 @@ export class StreamerServer {
             this.wsHub.broadcast({ type: "cache_ready" });
             resolveWarm();
           });
-      });
+      }
     });
     if (opts?.awaitReady) await warmUp;
+  }
+
+  // Bind the HTTP listener, retrying on a transient EADDRINUSE. See the call
+  // site in listen() for why the race exists (kickstart -k relaunch). Total
+  // worst case ≈ 6 × 500 ms = 3 s before the final attempt rethrows.
+  private async bindWithRetry(port: number, attempts = 6, delayMs = 500): Promise<void> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const onError = (err: NodeJS.ErrnoException) => {
+            this.httpServer.removeListener("listening", onListening);
+            reject(err);
+          };
+          const onListening = () => {
+            this.httpServer.removeListener("error", onError);
+            resolve();
+          };
+          this.httpServer.once("error", onError);
+          this.httpServer.once("listening", onListening);
+          this.httpServer.listen(port);
+        });
+        return;
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException;
+        if (e.code !== "EADDRINUSE" || attempt === attempts) throw err;
+        this.log.warn(
+          `port ${port} busy (EADDRINUSE), retry ${attempt}/${attempts - 1} in ${delayMs}ms`,
+          { port, attempt, event: "server.bind_retry" },
+        );
+        await new Promise<void>((r) => setTimeout(r, delayMs));
+      }
+    }
   }
 
   async close(): Promise<void> {
