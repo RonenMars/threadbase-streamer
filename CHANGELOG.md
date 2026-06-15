@@ -1,3 +1,14 @@
+## [1.10.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.9.3...v1.10.0) (2026-06-15)
+
+### Features
+
+* **lifecycle:** support homebrew --prod via runtime label resolution ([#71](https://github.com/RonenMars/threadbase-streamer/issues/71)) ([2eac9a4](https://github.com/RonenMars/threadbase-streamer/commit/2eac9a4d77f3973248f79778553400773490396b)), closes [#70](https://github.com/RonenMars/threadbase-streamer/issues/70) [69/#70](https://github.com/69/threadbase-streamer/issues/70)
+
+### Bug Fixes
+
+* **release:** push release commit with admin PAT to satisfy main ruleset ([#72](https://github.com/RonenMars/threadbase-streamer/issues/72)) ([f67a27b](https://github.com/RonenMars/threadbase-streamer/commit/f67a27b728b1b028909772c20582541130f97a2d)), closes [#69](https://github.com/RonenMars/threadbase-streamer/issues/69) [#69](https://github.com/RonenMars/threadbase-streamer/issues/69) [pre-#69](https://github.com/RonenMars/pre-/issues/69)
+* **updater:** detect homebrew install for service restart and update ([#70](https://github.com/RonenMars/threadbase-streamer/issues/70)) ([08bad50](https://github.com/RonenMars/threadbase-streamer/commit/08bad50d9644bb75408958445fea1c461887daf4)), closes [#69](https://github.com/RonenMars/threadbase-streamer/issues/69) [#69](https://github.com/RonenMars/threadbase-streamer/issues/69)
+
 ## [1.2.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.2.0...v1.2.1) (2026-06-01)
 
 ### Bug Fixes
