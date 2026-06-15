@@ -41,7 +41,7 @@ class TbStreamer < Formula
   end
 
   service do
-    run [opt_bin/"tb-streamer", "serve", "--port", "8766"]
+    run [opt_bin/"tb-streamer", "serve", "--port", "8766", "--prod"]
     keep_alive true
     log_path       var/"log/tb-streamer.log"
     error_log_path var/"log/tb-streamer.err"

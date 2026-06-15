@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import type { Command } from "commander";
 import { Command as CommanderCommand } from "commander";
 import { TASK_NAME } from "../src/lifecycle/constants";
+import { darwinPlistPath } from "../src/lifecycle/launchd";
 import { clearMarker, readMarker } from "../src/lifecycle/marker";
 import { getSupervisor } from "../src/lifecycle/platform";
 import { isPidAlive } from "../src/lifecycle/process-liveness";
@@ -194,11 +195,10 @@ export function registerProdCommands(program: Command): void {
     .description("Stop + restart the supervised streamer (re-reads service definition)")
     .action(async () => {
       const sup = getSupervisor();
+      // Resolve the plist path while the service is still loaded — the label
+      // probe can't detect a brew service after bootout.
+      const specPath = process.platform === "darwin" ? darwinPlistPath() : "";
       sup.bootoutAgent();
-      const specPath =
-        process.platform === "darwin"
-          ? `${process.env.HOME}/Library/LaunchAgents/com.ronen.threadbase.plist`
-          : "";
       sup.bootstrapAgent(specPath);
       const what =
         process.platform === "darwin"

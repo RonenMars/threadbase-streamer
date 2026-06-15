@@ -2,17 +2,40 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { installDir, LAUNCHD_LABEL } from "./constants";
 
+// launchd label Homebrew registers for `brew services start tb-streamer`,
+// distinct from the deploy.sh LAUNCHD_LABEL. A brew prod install must be
+// detected at runtime so the prod/dev coordination targets the live service.
+const BREW_LAUNCHD_LABEL = "homebrew.mxcl.tb-streamer";
+
 function uidScope(): string {
   return `gui/${process.getuid?.() ?? 501}`;
 }
 
+// Resolves which launchd label the prod/dev machinery should operate on:
+// LAUNCHD_LABEL env override → the brew label if its service is loaded →
+// the deploy.sh default. The brew probe runs only when no env override pins a
+// label, so a deploy.sh install never pays for it. Mirrors the async
+// resolveDarwinLabel in src/updater/restart.ts (this side is sync because the
+// lifecycle wrappers use execFileSync).
+function resolveLoadedLabel(): string {
+  if (process.env.LAUNCHD_LABEL) return process.env.LAUNCHD_LABEL;
+  try {
+    execFileSync("launchctl", ["print", `${uidScope()}/${BREW_LAUNCHD_LABEL}`], {
+      stdio: "ignore",
+    });
+    return BREW_LAUNCHD_LABEL;
+  } catch {
+    return LAUNCHD_LABEL;
+  }
+}
+
 function fullTarget(): string {
-  return `${uidScope()}/${LAUNCHD_LABEL}`;
+  return `${uidScope()}/${resolveLoadedLabel()}`;
 }
 
 export function isAgentLoaded(): boolean {
   try {
-    execFileSync("launchctl", ["list", LAUNCHD_LABEL], { stdio: "ignore" });
+    execFileSync("launchctl", ["list", resolveLoadedLabel()], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -76,6 +99,16 @@ export function kickstartAgent(): void {
 }
 
 /**
+ * Absolute path to the LaunchAgents plist for the currently-loaded service
+ * (brew or deploy.sh). `prod restart` re-bootstraps from this path, so it must
+ * resolve the label BEFORE booting the agent out — once unloaded, the probe
+ * would no longer detect a brew service.
+ */
+export function darwinPlistPath(): string {
+  return `${process.env.HOME}/Library/LaunchAgents/${resolveLoadedLabel()}.plist`;
+}
+
+/**
  * Returns the absolute paths to the streamer's stdout/stderr log files. These
  * match the StandardOutPath / StandardErrorPath written by `scripts/deploy.sh`
  * into the launchd plist: `$INSTALL_DIR/logs/{stdout,stderr}.log`.
@@ -91,9 +124,10 @@ export function getAgentPid(): number | null {
     const out = execFileSync("launchctl", ["list"], {
       stdio: ["ignore", "pipe", "ignore"],
     }).toString();
+    const label = resolveLoadedLabel();
     for (const line of out.split("\n")) {
       const parts = line.trim().split(/\s+/);
-      if (parts[2] === LAUNCHD_LABEL) {
+      if (parts[2] === label) {
         const pid = Number.parseInt(parts[0] ?? "", 10);
         return Number.isFinite(pid) && pid > 0 ? pid : null;
       }
