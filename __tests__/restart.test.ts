@@ -39,11 +39,15 @@ describe("restartService", () => {
   it("on macOS calls launchctl kickstart -k gui/<uid>/<label>", async () => {
     const restore = spoofPlatform("darwin");
     try {
-      execFileMock.mockResolvedValue({ stdout: "ok", stderr: "" });
+      // No brew service loaded (probe rejects) and no env override → the
+      // kickstart targets the deploy.sh default label.
+      execFileMock
+        .mockRejectedValueOnce(new Error("Could not find service"))
+        .mockResolvedValueOnce({ stdout: "ok", stderr: "" });
       const uid = process.getuid?.() ?? 0;
       const r = await restartService();
       expect(r.method).toBe("launchctl");
-      expect(execFileMock).toHaveBeenCalledWith("launchctl", [
+      expect(execFileMock).toHaveBeenLastCalledWith("launchctl", [
         "kickstart",
         "-k",
         `gui/${uid}/com.ronen.threadbase`,
@@ -92,16 +96,80 @@ describe("restartService", () => {
     }
   });
 
-  it("honors LAUNCHD_LABEL env var on macOS", async () => {
+  it("honors LAUNCHD_LABEL env var on macOS without probing for the brew label", async () => {
     const restore = spoofPlatform("darwin");
     try {
       process.env.LAUNCHD_LABEL = "com.acme.custom";
       execFileMock.mockResolvedValue({ stdout: "", stderr: "" });
       await restartService();
+      // Env override wins outright — no `launchctl print` probe is issued.
+      expect(execFileMock).toHaveBeenCalledTimes(1);
       expect(execFileMock).toHaveBeenCalledWith("launchctl", [
         "kickstart",
         "-k",
         expect.stringMatching(/gui\/\d+\/com\.acme\.custom$/),
+      ]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("on macOS restarts the brew label when the brew service is loaded", async () => {
+    const restore = spoofPlatform("darwin");
+    try {
+      const uid = process.getuid?.() ?? 0;
+      // First call is the brew-label probe (succeeds → loaded); second is the
+      // kickstart against the resolved brew label.
+      execFileMock
+        .mockResolvedValueOnce({ stdout: "{ ... }", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "ok", stderr: "" });
+      const r = await restartService();
+      expect(r.method).toBe("launchctl");
+      expect(execFileMock).toHaveBeenNthCalledWith(1, "launchctl", [
+        "print",
+        `gui/${uid}/homebrew.mxcl.tb-streamer`,
+      ]);
+      expect(execFileMock).toHaveBeenNthCalledWith(2, "launchctl", [
+        "kickstart",
+        "-k",
+        `gui/${uid}/homebrew.mxcl.tb-streamer`,
+      ]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("on macOS falls back to the deploy.sh label when the brew service is not loaded", async () => {
+    const restore = spoofPlatform("darwin");
+    try {
+      const uid = process.getuid?.() ?? 0;
+      // Probe rejects (not loaded) → fall through to the deploy.sh default.
+      execFileMock
+        .mockRejectedValueOnce(new Error("Could not find service"))
+        .mockResolvedValueOnce({ stdout: "ok", stderr: "" });
+      const r = await restartService();
+      expect(r.method).toBe("launchctl");
+      expect(execFileMock).toHaveBeenNthCalledWith(2, "launchctl", [
+        "kickstart",
+        "-k",
+        `gui/${uid}/com.ronen.threadbase`,
+      ]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("on macOS lets an explicit serviceLabel skip the brew probe", async () => {
+    const restore = spoofPlatform("darwin");
+    try {
+      const uid = process.getuid?.() ?? 0;
+      execFileMock.mockResolvedValue({ stdout: "ok", stderr: "" });
+      await restartService({ serviceLabel: "com.explicit.label" });
+      expect(execFileMock).toHaveBeenCalledTimes(1);
+      expect(execFileMock).toHaveBeenCalledWith("launchctl", [
+        "kickstart",
+        "-k",
+        `gui/${uid}/com.explicit.label`,
       ]);
     } finally {
       restore();
