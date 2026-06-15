@@ -1,3 +1,9 @@
+## [1.10.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.10.1...v1.10.2) (2026-06-15)
+
+### Bug Fixes
+
+* **server:** force-close sockets on shutdown to release port for redeploy ([#75](https://github.com/RonenMars/threadbase-streamer/issues/75)) ([8d03847](https://github.com/RonenMars/threadbase-streamer/commit/8d03847077b0de2e5ffa1039d7cec6d23c802ffb))
+
 ## [1.10.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.10.0...v1.10.1) (2026-06-15)
 
 ### Bug Fixes
