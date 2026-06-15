@@ -843,4 +843,169 @@ describe("StreamerServer", () => {
       expect(body.messages.length).toBe(2);
     });
   });
+
+  describe("GET /api/conversations/:id resumability classification", () => {
+    let availPort: number;
+    let availServer: StreamerServer;
+    let profileDir: string;
+    let liveCwd: string;
+    const auth = { Authorization: `Bearer ${API_KEY}` };
+
+    const AVAILABLE = "avail-resumable-0001";
+    const MISSING = "avail-pathmissing-0002";
+    const WORKTREE = "avail-worktree-0003";
+
+    const writeConv = (id: string, cwd: string) => {
+      const projDir = join(profileDir, "projects", `-proj-${id}`);
+      mkdirSync(projDir, { recursive: true });
+      const line = (uuid: string, role: string, ts: string, text: string) =>
+        `${JSON.stringify({
+          type: role,
+          uuid,
+          timestamp: ts,
+          sessionId: id,
+          cwd,
+          message: { role, model: "claude-sonnet-4-6", content: [{ type: "text", text }] },
+        })}\n`;
+      writeFileSync(
+        join(projDir, `${id}.jsonl`),
+        line(`${id}-u1`, "user", "2026-06-10T08:00:00.000Z", "hi") +
+          line(`${id}-a1`, "assistant", "2026-06-10T08:00:05.000Z", "hello"),
+      );
+    };
+
+    beforeEach(async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-avail-profile-"));
+      // A cwd that exists on disk (the temp dir itself) → resumable.
+      liveCwd = mkdtempSync(join(tmpdir(), "threadbase-avail-live-cwd-"));
+      writeConv(AVAILABLE, liveCwd);
+      // A cwd that does not exist, and is not a worktree path → path_missing.
+      writeConv(MISSING, "/tmp/threadbase-avail-gone-9e8d7c");
+      // A cwd that does not exist and looks like a removed git worktree.
+      writeConv(WORKTREE, "/tmp/some-repo/.worktrees/feature-x-gone");
+
+      availPort = await getRandomPort();
+      availServer = new StreamerServer({
+        port: availPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-avail-cache-")),
+        scanProfiles: [
+          { id: "avail", label: "Avail", configDir: profileDir, enabled: true, emoji: "🔎" },
+        ],
+      });
+      await availServer.listen(availPort);
+    });
+
+    afterEach(async () => {
+      await availServer.close();
+    });
+
+    const fetchMeta = async (id: string) => {
+      const res = await fetch(
+        `http://localhost:${availPort}/api/conversations/${id}?msg_limit=80`,
+        { headers: auth },
+      );
+      return { res, body: (await res.json()) as any };
+    };
+
+    it("marks a conversation resumable when its project dir exists", async () => {
+      const { res, body } = await fetchMeta(AVAILABLE);
+      expect(res.status).toBe(200);
+      expect(body.messages.length).toBe(2);
+      expect(body.meta.resumable).toBe(true);
+      expect(body.meta.unavailable_reason).toBeUndefined();
+    });
+
+    it("serves history but flags path_missing when the project dir is gone", async () => {
+      const { res, body } = await fetchMeta(MISSING);
+      expect(res.status).toBe(200);
+      expect(body.messages.length).toBe(2); // full history still served
+      expect(body.meta.resumable).toBe(false);
+      expect(body.meta.unavailable_reason).toBe("path_missing");
+    });
+
+    it("flags worktree_removed when the missing cwd is a worktree path", async () => {
+      const { res, body } = await fetchMeta(WORKTREE);
+      expect(res.status).toBe(200);
+      expect(body.messages.length).toBe(2);
+      expect(body.meta.resumable).toBe(false);
+      expect(body.meta.unavailable_reason).toBe("worktree_removed");
+    });
+
+    it("returns 404 with code=not_found for an unknown id", async () => {
+      const res = await fetch(
+        `http://localhost:${availPort}/api/conversations/does-not-exist-9999?msg_limit=80`,
+        { headers: auth },
+      );
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { error: string; code: string };
+      expect(body.code).toBe("not_found");
+    });
+  });
+
+  describe("warm-up scanner reuse (Layer A)", () => {
+    let reusePort: number;
+    let reuseServer: StreamerServer;
+    let profileDir: string;
+    const convId = "reuse-session-4444";
+    const auth = { Authorization: `Bearer ${API_KEY}` };
+
+    afterEach(async () => {
+      await reuseServer?.close();
+      vi.restoreAllMocks();
+    });
+
+    it("does not re-scan on the first request after warm-up completes", async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-reuse-profile-"));
+      const projDir = join(profileDir, "projects", "-proj-reuse");
+      mkdirSync(projDir, { recursive: true });
+      const line = (uuid: string, role: string, ts: string, text: string) =>
+        `${JSON.stringify({
+          type: role,
+          uuid,
+          timestamp: ts,
+          sessionId: convId,
+          cwd: profileDir, // exists → resumable, irrelevant here
+          message: { role, content: [{ type: "text", text }] },
+        })}\n`;
+      writeFileSync(
+        join(projDir, `${convId}.jsonl`),
+        line("r-u1", "user", "2026-06-10T08:00:00.000Z", "hi") +
+          line("r-a1", "assistant", "2026-06-10T08:00:05.000Z", "hello"),
+      );
+
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-reuse-cache-")),
+        scanProfiles: [
+          { id: "reuse", label: "Reuse", configDir: profileDir, enabled: true, emoji: "♻️" },
+        ],
+      });
+      // awaitReady → warm-up scan finishes (and is adopted) before we continue.
+      await reuseServer.listen(reusePort, { awaitReady: true });
+
+      // Spy AFTER warm-up so the count is scoped to post-warm-up scans only.
+      // (The prototype spy is process-global, so baselining here avoids
+      // counting the warm-up scan and any concurrent server's scans.)
+      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan");
+
+      // A detail request after warm-up must reuse the adopted scanner — the
+      // whole point of Layer A. If the warm-up scanner weren't adopted, this
+      // request would trigger a fresh full scan here.
+      const res = await fetch(
+        `http://localhost:${reusePort}/api/conversations/${convId}?msg_limit=80`,
+        { headers: auth },
+      );
+      expect(res.status).toBe(200);
+      expect(scanSpy.mock.calls.length).toBe(0); // no scan triggered by the request
+    });
+  });
 });

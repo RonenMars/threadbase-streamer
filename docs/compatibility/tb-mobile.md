@@ -29,6 +29,7 @@
 - Session — new optional fields (added during the projects refactor; never required for older clients): `projectId`, `resumedFromConversationId`
 - Conversation list item: `id`, `title`, `projectPath`, `messageCount`, `lastActivity`, `firstMessage`, `lastMessage`, `preview`, `model`
 - Conversation detail: `meta` object + `messages` array + `message_pagination` object
+- Conversation detail `meta` — new optional fields (additive; older clients ignore them): `resumable` (boolean — false when the conversation's project dir no longer exists, so resume would fail; history is still served), `unavailable_reason` (`"path_missing"` | `"worktree_removed"`, present only when `resumable` is false). The same two fields are also added to the resumable session shape (`status: "on_hold"`) returned by `GET /api/sessions/{id}` for conversation ids.
 - Message: `message_index` (snake_case), `role`, `timestamp`, `text`, `content` (array), `tool_use_id` (snake_case)
 - Pagination: `hasMore`, `offset`, `total`
 
@@ -44,7 +45,7 @@ Note: mobile treats `on_hold` and `idle` as the same status. The server currentl
 **HTTP status codes** — mobile maps these to typed errors:
 
 - `401` → `AuthError` (triggers re-auth UI)
-- `404` → `NotFoundError` (suppressed for `/output` endpoint — treated as empty)
+- `404` → `NotFoundError` (suppressed for `/output` endpoint — treated as empty). The `GET /api/conversations/{id}` 404 body now carries an additive `code: "not_found"` alongside `error`; older clients ignore it.
 - `429` → shown to user during pair exchange
 
 **Auth format** — mobile sends `Authorization: Bearer <token>` and constructs WebSocket URLs as `/ws?key=<token>`. Both forms must continue to work.
