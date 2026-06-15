@@ -99,6 +99,28 @@ describe("StreamerServer.close() port release", () => {
     }
   });
 
+  it("retries the bind when the port is briefly still held (kickstart -k race)", async () => {
+    // First instance holds the port. The second instance should NOT give up on
+    // the first EADDRINUSE — it retries with backoff and binds once the first
+    // releases mid-window, mirroring launchd relaunching before the kernel has
+    // fully torn down the old socket.
+    const port = await getRandomPort();
+    const first = makeServer(port);
+    await first.listen(port);
+
+    const second = makeServer(port);
+    const bindPromise = second.listen(port); // will EADDRINUSE, then retry
+
+    // Release the port ~600ms in — after the first retry attempt, before the
+    // 6-attempt budget is exhausted.
+    setTimeout(() => {
+      void first.close();
+    }, 600);
+
+    await expect(bindPromise).resolves.toBeUndefined();
+    await second.close();
+  });
+
   it("frees the port for an immediate rebind (the EADDRINUSE scenario)", async () => {
     const port = await getRandomPort();
     const server = makeServer(port);
