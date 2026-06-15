@@ -271,6 +271,10 @@ program
           log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
           log.info(`Status  : ${result.reason}`, undefined, "console");
           break;
+        case "unsupported-install":
+          log.warn(result.reason, undefined, "console");
+          process.exitCode = 2;
+          break;
         case "deferred":
           log.warn(`Deferred: ${result.reason}`, undefined, "console");
           process.exitCode = 2;

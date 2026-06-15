@@ -86,7 +86,12 @@ vi.mock("../src/updater/active-sessions", () => ({
   countActiveSessions: vi.fn(async () => ({ kind: "count", count: 0 })),
 }));
 
+vi.mock("../src/updater/brew-detect", () => ({
+  isBrewInstall: vi.fn(() => false),
+}));
+
 import { countActiveSessions } from "../src/updater/active-sessions";
+import { isBrewInstall } from "../src/updater/brew-detect";
 import { downloadAndVerify, fetchManifest } from "../src/updater/download";
 import { runInstall } from "../src/updater/install";
 import { restartService, stopService } from "../src/updater/restart";
@@ -104,6 +109,19 @@ describe("runInstall orchestration", () => {
   it("returns no-op when current is already latest", async () => {
     const r = await runInstall({ currentVersion: "1.0.1", config: cfg });
     expect(r.kind).toBe("no-op");
+    expect(downloadAndVerify).not.toHaveBeenCalled();
+    expect(swapCurrent).not.toHaveBeenCalled();
+  });
+
+  it("refuses on a Homebrew install before any network call", async () => {
+    vi.mocked(isBrewInstall).mockReturnValueOnce(true);
+    const r = await runInstall({ currentVersion: "1.0.0", config: cfg });
+    expect(r.kind).toBe("unsupported-install");
+    if (r.kind === "unsupported-install") {
+      expect(r.reason).toMatch(/brew upgrade/);
+      expect(r.current).toBe("1.0.0");
+    }
+    expect(fetchManifest).not.toHaveBeenCalled();
     expect(downloadAndVerify).not.toHaveBeenCalled();
     expect(swapCurrent).not.toHaveBeenCalled();
   });

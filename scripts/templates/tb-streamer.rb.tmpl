@@ -62,13 +62,13 @@ class TbStreamer < Formula
         2. Start the service (also starts on login):
            brew services start tb-streamer
 
-        3. (Optional) Enable automatic updates:
-           tb-streamer update --enable-auto-update
+        3. To update later:
+           brew upgrade tb-streamer
 
       Note: Homebrew install is mutually exclusive with the
       manual scripts/deploy.sh install. If you previously
       installed via that path, run:
-        launchctl bootout gui/$UID/com.threadbase.streamer
+        launchctl bootout gui/$UID/com.ronen.threadbase
       before starting the Homebrew service.
     EOS
   end

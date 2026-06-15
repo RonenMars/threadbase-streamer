@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import type { UpdateConfig } from "../schemas/updateConfig.schema";
 import { countActiveSessions } from "./active-sessions";
+import { isBrewInstall } from "./brew-detect";
 import { checkForUpdate } from "./check-update";
 import { downloadAndVerify, fetchManifest } from "./download";
 import { fetchLatestRelease, fetchReleaseByTag } from "./github-releases";
@@ -24,6 +25,7 @@ export interface InstallOptions {
 
 export type InstallResult =
   | { kind: "no-op"; reason: string; current: string; latest: string | null }
+  | { kind: "unsupported-install"; reason: string; current: string }
   | {
       kind: "deferred";
       reason: string;
@@ -44,6 +46,17 @@ export type InstallResult =
     };
 
 export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
+  // A Homebrew install runs from the Cellar (libexec/), which this updater's
+  // file-swap never touches — downloading would orphan the new release without
+  // applying it. Refuse early and point at the supported path.
+  if (isBrewInstall()) {
+    return {
+      kind: "unsupported-install",
+      reason: "Installed via Homebrew — run `brew upgrade tb-streamer` to update.",
+      current: opts.currentVersion,
+    };
+  }
+
   const check = await checkForUpdate({
     currentVersion: opts.currentVersion,
     config: opts.config,
