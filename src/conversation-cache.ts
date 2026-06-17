@@ -303,7 +303,9 @@ export class ConversationCache {
       deleteTailAll: db.prepare("DELETE FROM conversation_tail"),
       getIdByFilePath: db.prepare("SELECT id FROM conversation_meta WHERE file_path = ?"),
       allFilePaths: db.prepare("SELECT id, file_path FROM conversation_meta"),
-      allFileStats: db.prepare("SELECT file_path, mtime_ms, file_size FROM conversation_meta WHERE mtime_ms IS NOT NULL AND file_size IS NOT NULL"),
+      allFileStats: db.prepare(
+        "SELECT file_path, mtime_ms, file_size FROM conversation_meta WHERE mtime_ms IS NOT NULL AND file_size IS NOT NULL",
+      ),
       upsertSessionName: db.prepare(`
         INSERT INTO session_names (session_id, name, updated_at)
         VALUES (?, ?, ?)
