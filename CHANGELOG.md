@@ -1,3 +1,9 @@
+## [1.13.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.1...v1.13.2) (2026-06-17)
+
+### Bug Fixes
+
+* **discovery:** fall back to now() when ps lstart= is unparseable ([#87](https://github.com/RonenMars/threadbase-streamer/issues/87)) ([3c75f76](https://github.com/RonenMars/threadbase-streamer/commit/3c75f76cebe6ece707460a356b868b17067ee265))
+
 ## [1.13.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.0...v1.13.1) (2026-06-17)
 
 ### Bug Fixes
