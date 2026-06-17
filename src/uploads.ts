@@ -1,17 +1,20 @@
 import { randomBytes } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import { extname, join } from "path";
+import heicConvert from "heic-convert";
 
 const UPLOAD_DIR_NAME = ".threadbase-uploads";
 const MAX_BYTES = 25 * 1024 * 1024; // 25MB
+
+const HEIC_MIMES = new Set(["image/heic", "image/heif"]);
 
 const MIME_TO_EXT: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
   "image/gif": ".gif",
   "image/webp": ".webp",
-  "image/heic": ".heic",
-  "image/heif": ".heif",
+  "image/heic": ".jpg",
+  "image/heif": ".jpg",
   "application/pdf": ".pdf",
   "application/msword": ".doc",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
@@ -39,13 +42,21 @@ export interface SavedUpload {
 }
 
 export async function saveUploadFile(input: SaveUploadInput): Promise<SavedUpload> {
-  const buffer = Buffer.from(input.dataBase64, "base64");
+  let buffer = Buffer.from(input.dataBase64, "base64");
   if (buffer.length === 0) throw new Error("Empty file");
   if (buffer.length > MAX_BYTES) throw new Error(`File exceeds ${MAX_BYTES} bytes`);
 
+  let { mimeType } = input;
+  let originalName = input.originalName;
+
+  if (HEIC_MIMES.has(mimeType)) {
+    buffer = Buffer.from(await heicConvert({ buffer, format: "JPEG", quality: 0.85 }));
+    mimeType = "image/jpeg";
+    originalName = originalName.replace(/\.(heic|heif)$/i, ".jpg");
+  }
+
   const id = `up_${randomBytes(8).toString("hex")}`;
-  const safeName =
-    sanitizeFilename(input.originalName) || `file${MIME_TO_EXT[input.mimeType] ?? ""}`;
+  const safeName = sanitizeFilename(originalName) || `file${MIME_TO_EXT[mimeType] ?? ""}`;
   const dir = join(input.projectPath, UPLOAD_DIR_NAME, input.sessionId);
   await mkdir(dir, { recursive: true });
 
@@ -56,16 +67,15 @@ export async function saveUploadFile(input: SaveUploadInput): Promise<SavedUploa
     id,
     filePath,
     originalName: safeName,
-    mimeType: input.mimeType,
+    mimeType,
     sizeBytes: buffer.length,
   };
 }
 
 function sanitizeFilename(name: string): string {
+  // Take only the basename (block path traversal)
   const base = name.split(/[\\/]/).pop() ?? "";
-  const cleaned = base.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^\.+/, "");
-  if (!cleaned) return "";
-  // Preserve extension only if it looks safe
-  const ext = extname(cleaned).toLowerCase();
-  return ext ? cleaned : cleaned;
+  // Strip null bytes and control characters; allow all printable Unicode
+  const cleaned = base.replace(/[\x00-\x1f\x7f]/g, "").replace(/^\.+/, "");
+  return cleaned;
 }
