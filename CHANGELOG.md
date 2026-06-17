@@ -1,3 +1,9 @@
+## [1.12.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.11.1...v1.12.0) (2026-06-17)
+
+### Features
+
+* **cache:** skip unchanged files in scanner using stat-based cache ([#78](https://github.com/RonenMars/threadbase-streamer/issues/78)) ([e95b06c](https://github.com/RonenMars/threadbase-streamer/commit/e95b06cdc184bc1a9481e4200e47b4ec457941a4))
+
 ## [1.11.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.11.0...v1.11.1) (2026-06-17)
 
 ### Bug Fixes
