@@ -5,15 +5,6 @@ import { extname, join } from "path";
 const UPLOAD_DIR_NAME = ".threadbase-uploads";
 const MAX_BYTES = 25 * 1024 * 1024; // 25MB
 
-const ALLOWED_MIME = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-]);
-
 const MIME_TO_EXT: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
@@ -21,6 +12,14 @@ const MIME_TO_EXT: Record<string, string> = {
   "image/webp": ".webp",
   "image/heic": ".heic",
   "image/heif": ".heif",
+  "application/pdf": ".pdf",
+  "application/msword": ".doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "text/plain": ".txt",
+  "text/javascript": ".js",
+  "application/typescript": ".ts",
+  "application/json": ".json",
+  "text/csv": ".csv",
 };
 
 export interface SaveUploadInput {
@@ -40,17 +39,13 @@ export interface SavedUpload {
 }
 
 export async function saveUploadFile(input: SaveUploadInput): Promise<SavedUpload> {
-  if (!ALLOWED_MIME.has(input.mimeType)) {
-    throw new Error(`Unsupported mime type: ${input.mimeType}`);
-  }
-
   const buffer = Buffer.from(input.dataBase64, "base64");
   if (buffer.length === 0) throw new Error("Empty file");
   if (buffer.length > MAX_BYTES) throw new Error(`File exceeds ${MAX_BYTES} bytes`);
 
   const id = `up_${randomBytes(8).toString("hex")}`;
   const safeName =
-    sanitizeFilename(input.originalName) || `image${MIME_TO_EXT[input.mimeType] ?? ""}`;
+    sanitizeFilename(input.originalName) || `file${MIME_TO_EXT[input.mimeType] ?? ""}`;
   const dir = join(input.projectPath, UPLOAD_DIR_NAME, input.sessionId);
   await mkdir(dir, { recursive: true });
 
