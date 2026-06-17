@@ -1906,6 +1906,7 @@ export class StreamerServer {
       this.scanner = null;
       this.scannerReady = null;
       this.linkSessionToProject(sessionId, projectPath, filePath);
+      this.cache?.markAsStreamer(sessionId);
       this.log.info(
         `[startFresh] wired JSONL for ${sessionId}`,
         { event: "session.jsonl_wired", sessionId, filePath },
