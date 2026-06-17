@@ -88,3 +88,4 @@ jobs:
           gh pr create --base main --head "$branch" \
             --title "chore: bump vendor/scanner to ${tag}" \
             --body "Automated submodule bump to scanner \`${tag}\`, triggered by a scanner release. The \`file:vendor/scanner\` pin and \`package-lock.json\` were refreshed via \`npm install\`. Merge once CI is green."
+          gh pr merge --auto --squash "$branch"
