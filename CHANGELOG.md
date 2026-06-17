@@ -1,3 +1,9 @@
+## [1.11.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.11.0...v1.11.1) (2026-06-17)
+
+### Bug Fixes
+
+* **ws:** replace JSON ping with WS protocol ping/pong heartbeat ([#83](https://github.com/RonenMars/threadbase-streamer/issues/83)) ([1255abb](https://github.com/RonenMars/threadbase-streamer/commit/1255abb389491c8677058534c7b7a53dc7e65ece))
+
 ## [1.11.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.10.3...v1.11.0) (2026-06-17)
 
 ### Features
