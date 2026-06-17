@@ -110,7 +110,8 @@ async function getProcessArgsUnix(pid: number): Promise<string> {
 
 async function getProcessStartTimeUnix(pid: number): Promise<Date> {
   const raw = (await run("ps", ["-p", String(pid), "-o", "lstart="])).trim();
-  return new Date(raw);
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? new Date() : d;
 }
 
 // ─── Windows Helpers ───────────────────────────────────────────────
