@@ -710,9 +710,9 @@ describe("getFileStats()", () => {
 
     const stats = cache.getFileStats();
     expect(stats.has(filePath)).toBe(true);
-    const entry = stats.get(filePath)!;
-    expect(entry.mtimeMs).toBe(s.mtimeMs);
-    expect(entry.size).toBe(s.size);
+    const entry = stats.get(filePath);
+    expect(entry?.mtimeMs).toBe(s.mtimeMs);
+    expect(entry?.size).toBe(s.size);
   });
 
   it("returns only rows with both stat columns populated", () => {
