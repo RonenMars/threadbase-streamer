@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -688,5 +688,45 @@ describe("markAsStreamer()", () => {
     ] as any);
     const item = cache.getMetaById("xyz-456");
     expect(item?.source).toBeNull();
+  });
+});
+
+describe("getFileStats()", () => {
+  it("returns empty map when no rows have stat data", () => {
+    cache.upsertFromScannerMeta([{ ...BASE_META }] as any);
+    // BASE_META.filePath doesn't exist on disk, so stat is skipped
+    const stats = cache.getFileStats();
+    expect(stats.size).toBe(0);
+  });
+
+  it("stores and returns mtime_ms and file_size for real files", () => {
+    const filePath = join(dbDir, "conv.jsonl");
+    writeFileSync(filePath, '{"role":"user"}\n');
+    const s = statSync(filePath);
+
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "stat-test", sessionId: "stat-test", filePath },
+    ] as any);
+
+    const stats = cache.getFileStats();
+    expect(stats.has(filePath)).toBe(true);
+    const entry = stats.get(filePath)!;
+    expect(entry.mtimeMs).toBe(s.mtimeMs);
+    expect(entry.size).toBe(s.size);
+  });
+
+  it("returns only rows with both stat columns populated", () => {
+    const filePath = join(dbDir, "real.jsonl");
+    writeFileSync(filePath, '{"role":"user"}\n');
+
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "has-stat", sessionId: "has-stat", filePath },
+      { ...BASE_META, id: "no-stat", sessionId: "no-stat", filePath: "/nonexistent/path.jsonl" },
+    ] as any);
+
+    const stats = cache.getFileStats();
+    expect(stats.has(filePath)).toBe(true);
+    expect(stats.has("/nonexistent/path.jsonl")).toBe(false);
+    expect(stats.size).toBe(1);
   });
 });

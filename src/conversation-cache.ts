@@ -195,6 +195,7 @@ export class ConversationCache {
     deleteTailAll: Database.Statement;
     getIdByFilePath: Database.Statement;
     allFilePaths: Database.Statement;
+    allFileStats: Database.Statement;
     upsertSessionName: Database.Statement;
     getSessionName: Database.Statement;
     listSessionNames: Database.Statement;
@@ -251,10 +252,12 @@ export class ConversationCache {
       upsertFull: db.prepare(`
         INSERT INTO conversation_meta
           (id, file_path, project_path, project_name, title, model, account, branch,
-           message_count, last_activity, first_message, last_message, preview, updated_at)
+           message_count, last_activity, first_message, last_message, preview, updated_at,
+           mtime_ms, file_size)
         VALUES
           (@id, @file_path, @project_path, @project_name, @title, @model, @account, @branch,
-           @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at)
+           @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at,
+           @mtime_ms, @file_size)
         ON CONFLICT(id) DO UPDATE SET
           file_path     = excluded.file_path,
           project_path  = excluded.project_path,
@@ -268,7 +271,9 @@ export class ConversationCache {
           first_message = excluded.first_message,
           last_message  = excluded.last_message,
           preview       = excluded.preview,
-          updated_at    = excluded.updated_at
+          updated_at    = excluded.updated_at,
+          mtime_ms      = excluded.mtime_ms,
+          file_size     = excluded.file_size
         WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
@@ -298,6 +303,9 @@ export class ConversationCache {
       deleteTailAll: db.prepare("DELETE FROM conversation_tail"),
       getIdByFilePath: db.prepare("SELECT id FROM conversation_meta WHERE file_path = ?"),
       allFilePaths: db.prepare("SELECT id, file_path FROM conversation_meta"),
+      allFileStats: db.prepare(
+        "SELECT file_path, mtime_ms, file_size FROM conversation_meta WHERE mtime_ms IS NOT NULL AND file_size IS NOT NULL",
+      ),
       upsertSessionName: db.prepare(`
         INSERT INTO session_names (session_id, name, updated_at)
         VALUES (?, ?, ?)
@@ -480,6 +488,15 @@ export class ConversationCache {
             ?.replace(/\.jsonl$/, "") ||
           m.id;
         const lastActivityMs = m.timestamp ? new Date(m.timestamp).getTime() : null;
+        let mtimeMs: number | null = null;
+        let fileSize: number | null = null;
+        try {
+          const s = statSync(m.filePath);
+          mtimeMs = s.mtimeMs;
+          fileSize = s.size;
+        } catch {
+          // file disappeared between scan and upsert — store without stat
+        }
         this.stmts.upsertFull.run({
           id,
           file_path: m.filePath,
@@ -495,6 +512,8 @@ export class ConversationCache {
           last_message: m.lastMessage ? JSON.stringify(m.lastMessage) : null,
           preview: m.preview ?? null,
           updated_at: 0,
+          mtime_ms: mtimeMs,
+          file_size: fileSize,
         });
         if (this.fileIndexLoaded) this.fileIndex.set(m.filePath, id);
         upsertedIds.push(id);
@@ -618,6 +637,22 @@ export class ConversationCache {
         source: r.source,
       })),
     };
+  }
+
+  /** Returns a map of filePath → { mtimeMs, size } for all rows that have
+   *  stat data stored. Used by the server to build the statCache passed to
+   *  ConversationScanner.scan() so unchanged files are skipped. */
+  getFileStats(): Map<string, { mtimeMs: number; size: number }> {
+    const rows = this.stmts.allFileStats.all() as Array<{
+      file_path: string;
+      mtime_ms: number;
+      file_size: number;
+    }>;
+    const map = new Map<string, { mtimeMs: number; size: number }>();
+    for (const r of rows) {
+      map.set(r.file_path, { mtimeMs: r.mtime_ms, size: r.file_size });
+    }
+    return map;
   }
 
   getMetaById(id: string): ConversationListItem | null {
