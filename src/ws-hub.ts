@@ -67,6 +67,16 @@ export class WSHub {
     }
   }
 
+  unicast(ws: WebSocket, message: WSMessage): void {
+    try {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify(message));
+      }
+    } catch {
+      this.clients.delete(ws);
+    }
+  }
+
   get connectionCount(): number {
     return this.clients.size;
   }

@@ -112,6 +112,10 @@ export class StreamerServer {
   private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Map of sessionId → set of subscribed WS clients
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
+  // Map of clientId → WS socket (populated by the "register" WS handshake)
+  private clientIdToWs = new Map<string, WebSocket>();
+  // Reverse map for cleanup on close
+  private wsToClientId = new Map<WebSocket, string>();
   private cache: ConversationCache | null = null;
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
@@ -345,6 +349,12 @@ export class StreamerServer {
       handleWsMessage: async (ws, raw) => {
         try {
           const msg = JSON.parse(String(raw));
+          if (msg.type === "register" && typeof msg.clientId === "string") {
+            const oldClientId = this.wsToClientId.get(ws);
+            if (oldClientId) this.clientIdToWs.delete(oldClientId);
+            this.clientIdToWs.set(msg.clientId, ws);
+            this.wsToClientId.set(ws, msg.clientId);
+          }
           if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
             this.addSessionSubscriber(msg.sessionId, ws);
             if (this.ptyManager.hasSession(msg.sessionId)) {
@@ -360,6 +370,11 @@ export class StreamerServer {
         }
       },
       handleWsClose: (ws) => {
+        const clientId = this.wsToClientId.get(ws);
+        if (clientId) {
+          this.clientIdToWs.delete(clientId);
+          this.wsToClientId.delete(ws);
+        }
         for (const [sessionId, subscribers] of this.sessionSubscribers) {
           subscribers.delete(ws);
           if (subscribers.size === 0) {
@@ -425,6 +440,25 @@ export class StreamerServer {
 
   private ptyAttachedIds(): Set<string> {
     return new Set(this.ptyManager.listSessions().map((s) => s.id));
+  }
+
+  /**
+   * Send a session_list to only the client that triggered this HTTP request
+   * (identified by X-Client-Id header → registered WS socket). Falls back to
+   * a full broadcast if no match exists (old clients, or no WS registered yet).
+   */
+  private broadcastOrUnicastSessionList(req: IncomingMessage): void {
+    const clientId = req.headers["x-client-id"];
+    const ws = typeof clientId === "string" ? this.clientIdToWs.get(clientId) : undefined;
+    const payload = {
+      type: "session_list" as const,
+      sessions: this.sessionStore.list(this.ptyAttachedIds()),
+    };
+    if (ws) {
+      this.wsHub.unicast(ws, payload);
+    } else {
+      this.wsHub.broadcast(payload);
+    }
   }
 
   private addSessionSubscriber(sessionId: string, ws: WebSocket): void {
@@ -1568,10 +1602,7 @@ export class StreamerServer {
     void this.watchConversationFile(sessionId);
 
     const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
-    this.wsHub.broadcast({
-      type: "session_list",
-      sessions: this.sessionStore.list(this.ptyAttachedIds()),
-    });
+    this.broadcastOrUnicastSessionList(req);
 
     json(res, 201, resp ?? session);
   }
@@ -1806,10 +1837,7 @@ export class StreamerServer {
       });
       json(res, result.status, result.body);
       if (result.status === 200) {
-        this.wsHub.broadcast({
-          type: "session_list",
-          sessions: this.sessionStore.list(this.ptyAttachedIds()),
-        });
+        this.broadcastOrUnicastSessionList(req);
       }
       return;
     }
@@ -1854,10 +1882,7 @@ export class StreamerServer {
       // Wire up JSONL watching once Claude creates the conversation file.
       this.watchForJsonl(session.id, resolvedPath);
 
-      this.wsHub.broadcast({
-        type: "session_list",
-        sessions: this.sessionStore.list(this.ptyAttachedIds()),
-      });
+      this.broadcastOrUnicastSessionList(req);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
       this.log.error(`[start] failed to start session: ${message}`, {
