@@ -589,6 +589,9 @@ export class StreamerServer {
           .scan({
             ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
             ...(warmupStatCache ? { statCache: warmupStatCache } : {}),
+            onProgress: (scanned, total) => {
+              this.wsHub.broadcast({ type: "scan_progress", scanned, total });
+            },
           })
           .then(async () => {
             if (!this.cache) return;

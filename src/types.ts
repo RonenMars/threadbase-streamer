@@ -107,7 +107,8 @@ export type WSMessage =
       turnId: string;
       reason: string;
     }
-  | { type: "cache_ready" };
+  | { type: "cache_ready" }
+  | { type: "scan_progress"; scanned: number; total: number };
 
 // ─── REST Response Shapes ──────────────────────────────────────────
 
