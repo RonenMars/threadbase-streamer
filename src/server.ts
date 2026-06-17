@@ -498,6 +498,11 @@ export class StreamerServer {
     this.ptyGraceTimers.set(sessionId, timer);
   }
 
+  get port(): number {
+    const addr = this.httpServer.address();
+    return typeof addr === "object" && addr ? addr.port : 0;
+  }
+
   async listen(port: number, opts?: { awaitReady?: boolean }): Promise<void> {
     // DB is still used for upload records and other non-session purposes.
     // Session state is no longer persisted to DB.

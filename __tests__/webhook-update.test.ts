@@ -1,5 +1,4 @@
 import { createHmac } from "node:crypto";
-import { createServer } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnMock = vi.fn(() => ({ pid: 99999, unref: () => undefined }));
@@ -14,17 +13,6 @@ vi.mock("../src/config/update-config", () => ({
 }));
 
 import { StreamerServer } from "../src/server";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const SECRET = "supersecret123";
 const API_KEY = "tb_test_webhook";
@@ -41,15 +29,15 @@ describe("POST /api/__update", () => {
   beforeEach(async () => {
     spawnMock.mockClear();
     loadUpdateConfigMock.mockReset();
-    port = await getRandomPort();
-    baseUrl = `http://127.0.0.1:${port}`;
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
     });
-    await server.listen(port);
+    await server.listen(0);
+    port = server.port;
+    baseUrl = `http://127.0.0.1:${port}`;
   });
 
   afterEach(async () => {
