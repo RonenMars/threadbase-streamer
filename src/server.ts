@@ -8,6 +8,7 @@ import {
   type Conversation,
   type ConversationMeta,
   ConversationScanner,
+  type FileStatEntry,
   type SortOrder,
   search,
 } from "@threadbase/scanner";
@@ -530,8 +531,12 @@ export class StreamerServer {
         // that onConversationChanged invalidations during the scan cannot cause
         // getScanner() to restart indefinitely and leave the warm-up stuck.
         const warmupScanner = new ConversationScanner();
+        const warmupStatCache = this.buildStatCache(null);
         warmupScanner
-          .scan(this.scanProfiles ? { profiles: this.scanProfiles } : {})
+          .scan({
+            ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+            ...(warmupStatCache ? { statCache: warmupStatCache } : {}),
+          })
           .then(async () => {
             if (!this.cache) return;
             const metas = [...warmupScanner.getMetadataCache().values()] as any[];
@@ -957,6 +962,26 @@ export class StreamerServer {
     });
   }
 
+  private buildStatCache(
+    previousScanner: ConversationScanner | null,
+  ): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> | undefined {
+    if (!this.cache) return undefined;
+    const dbStats = this.cache.getFileStats();
+    if (dbStats.size === 0) return undefined;
+    const metaByPath = new Map<string, ConversationMeta>();
+    if (previousScanner) {
+      for (const meta of previousScanner.getMetadataCache().values()) {
+        if (meta.filePath) metaByPath.set(meta.filePath, meta);
+      }
+    }
+    const statCache = new Map<string, { stat: FileStatEntry; meta: ConversationMeta }>();
+    for (const [filePath, stat] of dbStats) {
+      const meta = metaByPath.get(filePath);
+      if (meta) statCache.set(filePath, { stat, meta });
+    }
+    return statCache.size > 0 ? statCache : undefined;
+  }
+
   private async getScanner(): Promise<ConversationScanner> {
     if (this.scannerReady) {
       await this.scannerReady;
@@ -964,8 +989,12 @@ export class StreamerServer {
       // if so, fall through and create a fresh one.
       if (this.scanner) return this.scanner;
     }
+    const statCache = this.buildStatCache(this.scanner);
     this.scanner = new ConversationScanner();
-    this.scannerReady = this.scanner.scan(this.scanProfiles ? { profiles: this.scanProfiles } : {});
+    this.scannerReady = this.scanner.scan({
+      ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+      ...(statCache ? { statCache } : {}),
+    });
     await this.scannerReady;
     // Capture before returning — onConversationChanged could null this.scanner
     // in the microtask between the await and the return.
