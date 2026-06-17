@@ -1,3 +1,9 @@
+## [1.13.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.3...v1.13.4) (2026-06-17)
+
+### Bug Fixes
+
+* **test:** eliminate TOCTOU port race in webhook-update tests ([#88](https://github.com/RonenMars/threadbase-streamer/issues/88)) ([749e6b5](https://github.com/RonenMars/threadbase-streamer/commit/749e6b5490af0994c888ebfd81faee7dc596e178))
+
 ## [1.13.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.2...v1.13.3) (2026-06-17)
 
 ### Bug Fixes
