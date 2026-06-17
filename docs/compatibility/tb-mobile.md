@@ -42,6 +42,8 @@ Note: mobile treats `on_hold` and `idle` as the same status. The server currentl
 - Server → client: `session_list`, `session_update`, `terminal_output`, `conversation_event`, `ping`
 - Client → server: `{ type: "hold_session", sessionId }`
 
+`conversation_events` (`{ type, sessionId, lines: string[] }`) is an **additive** server→client event that batches all lines from one watcher read into a single message. The server still emits per-line `conversation_event` alongside it, so older clients that only know `conversation_event` are unaffected. Never stop emitting `conversation_event`.
+
 **HTTP status codes** — mobile maps these to typed errors:
 
 - `401` → `AuthError` (triggers re-auth UI)
