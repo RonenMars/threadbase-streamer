@@ -1,3 +1,9 @@
+## [1.13.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.12.1...v1.13.0) (2026-06-17)
+
+### Features
+
+* **ws:** unicast session_list to the initiating client via X-Client-Id ([#84](https://github.com/RonenMars/threadbase-streamer/issues/84)) ([b26a3b0](https://github.com/RonenMars/threadbase-streamer/commit/b26a3b0ebfaf7648c03095bfbfdc92e3f6c5622e))
+
 ## [1.12.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.12.0...v1.12.1) (2026-06-17)
 
 ### Bug Fixes
