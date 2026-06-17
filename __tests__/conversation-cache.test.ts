@@ -657,3 +657,36 @@ describe("pruneGhostFiles()", () => {
     expect(cache.getConversationTail("ghost-tail")?.messages.length).toBe(1);
   });
 });
+
+describe("markAsStreamer()", () => {
+  it("sets source to 'streamer' on an existing row", () => {
+    cache.upsertFromScannerMeta([
+      {
+        id: "abc-123",
+        filePath: "/tmp/abc-123.jsonl",
+        messageCount: 1,
+        timestamp: new Date().toISOString(),
+      },
+    ] as any);
+    cache.markAsStreamer("abc-123");
+    const item = cache.getMetaById("abc-123");
+    expect(item?.source).toBe("streamer");
+  });
+
+  it("is a no-op (does not throw) when the row does not exist yet", () => {
+    expect(() => cache.markAsStreamer("non-existent-id")).not.toThrow();
+  });
+
+  it("getMetaById returns null source for un-tagged rows", () => {
+    cache.upsertFromScannerMeta([
+      {
+        id: "xyz-456",
+        filePath: "/tmp/xyz-456.jsonl",
+        messageCount: 1,
+        timestamp: new Date().toISOString(),
+      },
+    ] as any);
+    const item = cache.getMetaById("xyz-456");
+    expect(item?.source).toBeNull();
+  });
+});

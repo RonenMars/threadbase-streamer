@@ -35,6 +35,7 @@ export interface ConversationListItem {
   firstMessage: string | null;
   lastMessage: string | null;
   preview: string | null;
+  source: string | null;
 }
 
 export interface CachedTailMessage {
@@ -82,6 +83,7 @@ interface MetaRow {
   first_message: string | null;
   last_message: string | null;
   preview: string | null;
+  source: string | null;
   updated_at: number;
 }
 
@@ -197,6 +199,7 @@ export class ConversationCache {
     getSessionName: Database.Statement;
     listSessionNames: Database.Statement;
     setConversationProjectId: Database.Statement;
+    markAsStreamer: Database.Statement;
     getLatestConversation: Database.Statement;
     listConversationsForProjectBackfill: Database.Statement;
     hasOrphanProjectId: Database.Statement;
@@ -308,6 +311,7 @@ export class ConversationCache {
       setConversationProjectId: db.prepare(
         "UPDATE conversation_meta SET project_id = ? WHERE id = ?",
       ),
+      markAsStreamer: db.prepare("UPDATE conversation_meta SET source = 'streamer' WHERE id = ?"),
       getLatestConversation: db.prepare(
         "SELECT id, last_activity FROM conversation_meta WHERE last_activity IS NOT NULL ORDER BY last_activity DESC, id DESC LIMIT 1",
       ),
@@ -611,6 +615,7 @@ export class ConversationCache {
         firstMessage: r.first_message,
         lastMessage: r.last_message,
         preview: r.preview,
+        source: r.source,
       })),
     };
   }
@@ -635,11 +640,16 @@ export class ConversationCache {
       firstMessage: row.first_message,
       lastMessage: row.last_message,
       preview: row.preview,
+      source: row.source,
     };
   }
 
   setConversationProjectId(conversationId: string, projectId: string): void {
     this.stmts.setConversationProjectId.run(projectId, conversationId);
+  }
+
+  markAsStreamer(id: string): void {
+    this.stmts.markAsStreamer.run(id);
   }
 
   getLatestConversation(): { id: string; lastActivity: string | null } | null {
