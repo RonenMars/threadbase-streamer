@@ -36,7 +36,12 @@ import {
   loadTailSize,
   validatePublicUrl,
 } from "./auth";
-import { createDirectory, listDirectories, resolveBrowsePath } from "./browse";
+import {
+  BrowsePathNotFoundError,
+  createDirectory,
+  listDirectories,
+  resolveBrowsePath,
+} from "./browse";
 import { ConversationCache, type ConversationListItem } from "./conversation-cache";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
@@ -2024,6 +2029,10 @@ export class StreamerServer {
       json(res, 200, { path: relativePath, directories });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Browse failed";
+      if (err instanceof BrowsePathNotFoundError) {
+        json(res, 404, { error: message, code: "PATH_NOT_FOUND" });
+        return;
+      }
       json(res, 400, { error: message });
     }
   }
