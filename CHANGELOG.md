@@ -1,3 +1,9 @@
+## [1.13.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.2...v1.13.3) (2026-06-17)
+
+### Bug Fixes
+
+* **uploads:** convert HEIC to JPEG and preserve Unicode filenames ([#86](https://github.com/RonenMars/threadbase-streamer/issues/86)) ([82057a1](https://github.com/RonenMars/threadbase-streamer/commit/82057a1eceb543be14096742c811c94f8a5aea58))
+
 ## [1.13.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.1...v1.13.2) (2026-06-17)
 
 ### Bug Fixes
