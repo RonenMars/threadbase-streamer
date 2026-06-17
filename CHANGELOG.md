@@ -1,3 +1,9 @@
+## [1.13.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.0...v1.13.1) (2026-06-17)
+
+### Bug Fixes
+
+* accept any mime type for uploads ([#85](https://github.com/RonenMars/threadbase-streamer/issues/85)) ([c6ead86](https://github.com/RonenMars/threadbase-streamer/commit/c6ead86a178c7efe6f1aeb64ebe3980f10d68ce9))
+
 ## [1.13.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.12.1...v1.13.0) (2026-06-17)
 
 ### Features
