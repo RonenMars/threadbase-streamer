@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
-import { extname, join } from "path";
 import heicConvert from "heic-convert";
+import { join } from "path";
 
 const UPLOAD_DIR_NAME = ".threadbase-uploads";
 const MAX_BYTES = 25 * 1024 * 1024; // 25MB
@@ -75,7 +75,11 @@ export async function saveUploadFile(input: SaveUploadInput): Promise<SavedUploa
 function sanitizeFilename(name: string): string {
   // Take only the basename (block path traversal)
   const base = name.split(/[\\/]/).pop() ?? "";
-  // Strip null bytes and control characters; allow all printable Unicode
-  const cleaned = base.replace(/[\x00-\x1f\x7f]/g, "").replace(/^\.+/, "");
+  // Strip leading dots; keep all printable Unicode (charCode >= 32, != 127)
+  const cleaned = base
+    .replace(/^\.+/, "")
+    .split("")
+    .filter((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127)
+    .join("");
   return cleaned;
 }
