@@ -1,3 +1,9 @@
+## [1.12.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.12.0...v1.12.1) (2026-06-17)
+
+### Bug Fixes
+
+* **test:** replace non-null assertion with optional chaining in getFileStats test ([8d9ee5f](https://github.com/RonenMars/threadbase-streamer/commit/8d9ee5fbb44287f43fdd4f517eb7c8449db748ec))
+
 ## [1.12.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.11.1...v1.12.0) (2026-06-17)
 
 ### Features
