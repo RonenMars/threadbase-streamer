@@ -90,6 +90,9 @@ export class StreamerServer {
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
   private scanner: ConversationScanner | null = null;
   private scannerReady: Promise<unknown> | null = null;
+  // Set by onConversationChanged while a scan is in-flight; getScanner() does
+  // a single rescan after the current one completes instead of restarting it.
+  private scannerStale = false;
   private cacheReady = false;
   private apiKey: string;
   private localNoAuth: boolean;
@@ -178,9 +181,15 @@ export class StreamerServer {
       },
       onConversationChanged: (filePath) => {
         // A new JSONL appeared (or changed) in a watched project directory.
-        // Invalidate the scanner so the next search rescans the filesystem.
-        this.scanner = null;
-        this.scannerReady = null;
+        // If a scan is already in-flight, mark it stale so getScanner() does a
+        // single rescan after it completes — nulling scannerReady mid-scan causes
+        // the next getScanner() call to restart the scan from scratch, which then
+        // gets invalidated again by the next file event, creating an infinite loop.
+        if (this.scannerReady) {
+          this.scannerStale = true;
+        } else {
+          this.scanner = null;
+        }
         // Invalidate only the affected file's cache row, not the entire cache.
         // Wiping the whole cache on every file event would prevent the warm-up
         // from ever persisting data (active sessions write constantly).
@@ -987,8 +996,20 @@ export class StreamerServer {
       await this.scannerReady;
       // onConversationChanged may have nulled this.scanner while we awaited —
       // if so, fall through and create a fresh one.
-      if (this.scanner) return this.scanner;
+      if (this.scanner) {
+        // If file events arrived while the scan was running, do one rescan now
+        // rather than serving a stale result. The stale flag is cleared first so
+        // any events during the rescan trigger another pass on the next call.
+        if (this.scannerStale) {
+          this.scannerStale = false;
+          this.scanner = null;
+          this.scannerReady = null;
+          return this.getScanner();
+        }
+        return this.scanner;
+      }
     }
+    this.scannerStale = false;
     const statCache = this.buildStatCache(this.scanner);
     this.scanner = new ConversationScanner();
     this.scannerReady = this.scanner.scan({
@@ -1932,8 +1953,11 @@ export class StreamerServer {
       cleanup();
       this.sessionFileMap.set(sessionId, filePath);
       this.fileWatcher.watch(filePath);
-      this.scanner = null;
-      this.scannerReady = null;
+      if (this.scannerReady) {
+        this.scannerStale = true;
+      } else {
+        this.scanner = null;
+      }
       this.linkSessionToProject(sessionId, projectPath, filePath);
       this.cache?.markAsStreamer(sessionId);
       this.log.info(
