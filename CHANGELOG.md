@@ -1,3 +1,9 @@
+## [1.11.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.10.3...v1.11.0) (2026-06-17)
+
+### Features
+
+* **ci:** auto-merge scanner bump PR once CI is green ([#80](https://github.com/RonenMars/threadbase-streamer/issues/80)) ([06625d2](https://github.com/RonenMars/threadbase-streamer/commit/06625d2ecfa68e1f88ec0bc750ce6b049c6acabb))
+
 ## [1.10.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.10.2...v1.10.3) (2026-06-15)
 
 ### Bug Fixes
