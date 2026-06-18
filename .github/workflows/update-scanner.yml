@@ -10,10 +10,11 @@ name: Update scanner submodule
 #        { "event_type": "scanner-released" }
 #      using a PAT (repo scope) stored as a secret there — the default
 #      GITHUB_TOKEN cannot dispatch across repos.
-#   2. Optional but recommended: add a PAT secret BUMP_PAT here so the PR this
-#      workflow opens triggers CI. PRs created with the default GITHUB_TOKEN do
-#      NOT trigger further workflow runs (GitHub's recursion guard), so without
-#      BUMP_PAT you must re-run CI on the bump PR manually.
+#   2. Optional but recommended: add a PAT secret SCANNER_VER_BUMP_PAT here so
+#      the PR this workflow opens triggers CI. PRs created with the default
+#      GITHUB_TOKEN do NOT trigger further workflow runs (GitHub's recursion
+#      guard), so without SCANNER_VER_BUMP_PAT you must re-run CI on the bump PR
+#      manually.
 
 on:
   repository_dispatch:
@@ -34,7 +35,7 @@ jobs:
           submodules: recursive
           # Use a PAT if provided so the resulting PR triggers CI; else fall
           # back to GITHUB_TOKEN (PR opens, but its CI must be re-run manually).
-          token: ${{ secrets.BUMP_PAT || github.token }}
+          token: ${{ secrets.SCANNER_VER_BUMP_PAT || github.token }}
 
       - uses: actions/setup-node@v4
         with:
@@ -71,7 +72,7 @@ jobs:
       - name: Open bump PR
         if: steps.scanner.outputs.current != steps.scanner.outputs.target
         env:
-          GH_TOKEN: ${{ secrets.BUMP_PAT || github.token }}
+          GH_TOKEN: ${{ secrets.SCANNER_VER_BUMP_PAT || github.token }}
         run: |
           tag="${{ steps.scanner.outputs.tag }}"
           branch="chore/bump-scanner-${tag}"
