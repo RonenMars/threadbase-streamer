@@ -42,7 +42,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          submodules: recursive
+          submodules: false
 
       - uses: actions/setup-node@v4
         with:
@@ -95,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - uses: actions/setup-node@v4
         with:
@@ -155,7 +155,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          submodules: recursive
+          submodules: false
 
       - uses: actions/setup-node@v4
         with:

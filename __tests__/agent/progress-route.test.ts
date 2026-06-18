@@ -1,6 +1,6 @@
 // __tests__/agent/progress-route.test.ts
 import crypto from "node:crypto";
-import type { ProgressEvent } from "@threadbase/agent-types";
+import type { ProgressEvent } from "@threadbase-sh/agent-types";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { createProgressDedupeLRU } from "../../src/agent/dedupe";

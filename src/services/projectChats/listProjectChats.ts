@@ -1,4 +1,4 @@
-import type { ConversationScanner } from "@threadbase/scanner";
+import type { ConversationScanner } from "@threadbase-sh/scanner";
 import type { ConversationCache } from "../../conversation-cache";
 import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";

@@ -5,7 +5,7 @@ This guide covers migrating a Threadbase Streamer instance from in-memory or loc
 ## Prerequisites
 
 - Node.js 18+
-- `@threadbase/streamer` built with database support (`npm run build`)
+- `@threadbase-sh/streamer` built with database support (`npm run build`)
 - [Neon CLI](https://neon.tech/docs/reference/cli-install) (`neonctl`) installed and authenticated
 - `psql` and `pg_dump` available locally (included with PostgreSQL or Homebrew `libpq`)
 

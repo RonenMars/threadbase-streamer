@@ -1,11 +1,11 @@
-# Claude Code Source of Truth: Backend ProjectChat + Projects Migration for `@threadbase/streamer`
+# Claude Code Source of Truth: Backend ProjectChat + Projects Migration for `@threadbase-sh/streamer`
 
 ## Purpose
 
 You are working on the Node.js backend package:
 
 ```txt
-@threadbase/streamer
+@threadbase-sh/streamer
 ```
 
 This document is the consolidated backend implementation prompt for Claude Code.

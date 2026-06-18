@@ -1,4 +1,4 @@
-import type { UserInputSignal } from "@threadbase/agent-types";
+import type { UserInputSignal } from "@threadbase-sh/agent-types";
 import { describe, expect, it } from "vitest";
 import { measureSignalPayload, shouldLogTrajectory } from "../../src/agent/payload-guard";
 

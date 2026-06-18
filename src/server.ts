@@ -11,7 +11,7 @@ import {
   type FileStatEntry,
   type SortOrder,
   search,
-} from "@threadbase/scanner";
+} from "@threadbase-sh/scanner";
 import { createReadStream, existsSync, watch as fsWatch, readdirSync, statSync } from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";

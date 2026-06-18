@@ -1,4 +1,4 @@
-# @threadbase/streamer multi-agent mode vs. Claude Code dynamic workflows
+# @threadbase-sh/streamer multi-agent mode vs. Claude Code dynamic workflows
 
 A reference for anyone wondering how [Claude Code dynamic workflows](https://claude.com/blog/introducing-dynamic-workflows-in-claude-code) relate to this server's `--multi-agent-flow` mode.
 

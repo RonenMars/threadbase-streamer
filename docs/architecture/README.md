@@ -1,6 +1,6 @@
 # Architecture
 
-Architecture documents for **@threadbase/streamer** — problem framing, alternatives, and the chosen approach for each substantial change, written before code. Dated chronologically. Past designs are kept rather than deleted: together they explain how the system got to its current shape.
+Architecture documents for **@threadbase-sh/streamer** — problem framing, alternatives, and the chosen approach for each substantial change, written before code. Dated chronologically. Past designs are kept rather than deleted: together they explain how the system got to its current shape.
 
 ## Index
 

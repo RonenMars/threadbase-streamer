@@ -11,7 +11,7 @@
 
 import crypto from "node:crypto";
 import type { IncomingMessage } from "node:http";
-import type { AgentOutputPayload, ProgressEvent, Stage } from "@threadbase/agent-types";
+import type { AgentOutputPayload, ProgressEvent, Stage } from "@threadbase-sh/agent-types";
 import { Hono } from "hono";
 import type { WSMessage } from "../../types";
 import type { AppEnv } from "../app";

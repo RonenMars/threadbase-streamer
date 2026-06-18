@@ -3,10 +3,10 @@
 // Thin Temporal client wrapper used by tb-streamer in multi-agent mode.
 // Does NOT import workflow code from tb-multi-agent — we identify the
 // workflow and its signals/queries by name. The workflow's wire contract
-// lives in @threadbase/agent-types.
+// lives in @threadbase-sh/agent-types.
 
 import type { Client } from "@temporalio/client";
-import type { UserInputSignal } from "@threadbase/agent-types";
+import type { UserInputSignal } from "@threadbase-sh/agent-types";
 
 // `defineSignal` / `defineQuery` only ship in `@temporalio/workflow` (a worker-
 // side package we deliberately do NOT pull into the streamer). The handle

@@ -1,5 +1,5 @@
 // __tests__/agent/agent-client.test.ts
-import type { UserInputSignal } from "@threadbase/agent-types";
+import type { UserInputSignal } from "@threadbase-sh/agent-types";
 import { describe, expect, it, vi } from "vitest";
 import { createAgentClient } from "../../src/agent/agent-client";
 

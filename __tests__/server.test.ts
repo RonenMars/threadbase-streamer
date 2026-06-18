@@ -1,4 +1,4 @@
-import { ConversationScanner } from "@threadbase/scanner";
+import { ConversationScanner } from "@threadbase-sh/scanner";
 import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";

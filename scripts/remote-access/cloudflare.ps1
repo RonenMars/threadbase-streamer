@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-  Cloudflare quick-tunnel onboarding for @threadbase/streamer.
+  Cloudflare quick-tunnel onboarding for @threadbase-sh/streamer.
 
 .DESCRIPTION
   Cross-platform peer of cloudflare.sh. Runs on Windows native (Windows

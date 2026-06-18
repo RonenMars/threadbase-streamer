@@ -1,4 +1,4 @@
-# @threadbase/streamer
+# @threadbase-sh/streamer
 
 PTY session management, WebSocket streaming, and REST API server for Claude Code conversations. Manages live Claude sessions via `node-pty`, broadcasts terminal output over WebSocket, and serves a REST API for conversation history, search, and session control.
 
@@ -143,7 +143,7 @@ npm run db:validate       # Report conversations missing project_id, duplicate p
 
 ## Dependencies
 
-- `@threadbase/scanner` + `@threadbase/agent-types` — git submodules at `vendor/` (run `git submodule update --init` before `npm install`)
+- `@threadbase-sh/scanner` + `@threadbase-sh/agent-types` — public npm packages (installed by `npm install`)
 - `node-pty` — native PTY management
 - `ws` — WebSocket server
 - `better-sqlite3` — SQLite driver for the conversation cache

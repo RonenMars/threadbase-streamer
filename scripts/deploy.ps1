@@ -478,28 +478,12 @@ function Invoke-CheckBrowseRoot {
   Write-Ok "browse_root set to: $input"
 }
 
-function Ensure-ScannerSubmodule {
-  # @threadbase/scanner is a git submodule consumed via file:vendor/scanner and
-  # bundled inline by tsup. Its source must be checked out and its dist/ built
-  # before lint (tsc) and build (tsup) run. Mirrors Ensure-MenubarDeployed.
-  if (-not (Test-Path 'vendor/scanner/package.json')) {
-    Write-Log "initializing vendor/scanner submodule"
-    Invoke-Native git @('submodule', 'update', '--init', '--recursive', 'vendor/scanner')
-  }
-  if (-not (Test-Path 'vendor/scanner/dist/index.cjs')) {
-    Write-Log "building vendor/scanner (dist missing)"
-    Invoke-Native npm @('--prefix', 'vendor/scanner', 'install', '--no-audit', '--no-fund')
-  }
-}
-
 function Invoke-Deploy {
   Invoke-PredeployCheck
   Invoke-CheckBrowseRoot
 
   Push-Location $repoRoot
   try {
-    Ensure-ScannerSubmodule
-
     if ($Force) {
       Write-Warn "skipping lint + tests (-Force)"
     } else {
