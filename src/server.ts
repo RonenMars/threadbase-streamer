@@ -664,13 +664,19 @@ export class StreamerServer {
                 try {
                   this.cache.populateTailFromFile(t.id, t.filePath);
                 } catch (err) {
-                  // One bad row (e.g. an FK violation from a race with
-                  // pruneAgentConversations or a stale id from a partial
-                  // upsert) must not abort the whole warm-up — pruneGhostFiles
-                  // can't run to reconcile state if we throw here.
+                  // Benign race: the live ConversationWatcher runs during
+                  // warm-up, so an active session writing/deleting its JSONL
+                  // fires invalidateByFilePath() → invalidate(id), which deletes
+                  // the conversation_meta row we just upserted. The follow-up
+                  // tail insert then trips the conversation_tail → conversation_meta
+                  // FK. Skipping is correct — the row was invalidated and gets
+                  // re-upserted on the next scan, and pruneGhostFiles (below)
+                  // reconciles any file that was genuinely deleted. We must not
+                  // throw here or pruneGhostFiles never runs. Logged at info (not
+                  // debug) so the failing id+reason is visible by default.
                   tailFailures += 1;
-                  this.log.debug?.(
-                    `populateTailFromFile failed for ${t.id}: ${
+                  this.log.info(
+                    `populateTailFromFile skipped for ${t.id}: ${
                       err instanceof Error ? err.message : String(err)
                     }`,
                     { id: t.id, event: "cache.warmup_tail_failed" },
@@ -681,7 +687,7 @@ export class StreamerServer {
             }
             if (tailFailures > 0) {
               this.log.warn(
-                `Warm-up: ${tailFailures}/${tailTargets.length} tail populates skipped (see debug logs)`,
+                `Warm-up: ${tailFailures}/${tailTargets.length} tail populates skipped (see info logs for ids)`,
                 {
                   failures: tailFailures,
                   total: tailTargets.length,

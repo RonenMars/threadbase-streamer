@@ -106,6 +106,74 @@ describe("upsertFromScannerMeta()", () => {
       agentCache.close();
     }
   });
+
+  // Regression for the "Warm-up: N/M tail populates skipped" boot log.
+  //
+  // Diagnosis: it is a BENIGN race, not an id-mismatch. The id the warm-up
+  // loop derives is identical to the one upsertFromScannerMeta inserts, so the
+  // parent conversation_meta row genuinely exists right after the upsert. But
+  // the live ConversationWatcher runs concurrently during warm-up, and an
+  // active session writing/deleting its JSONL fires invalidate(id), which
+  // deletes that conversation_meta row mid-loop. The follow-up
+  // populateTailFromFile() then trips the conversation_tail → conversation_meta
+  // FK. The warm-up swallows it (so pruneGhostFiles can still run), which is
+  // correct: the row is re-upserted on the next scan and prune reconciles any
+  // genuinely-deleted file. This test pins that contract down.
+  it("populateTailFromFile after the meta row is invalidated mid-warmup is skipped without orphaning the tail", () => {
+    const dir = join(dbDir, "warmup-race");
+    mkdirSync(dir, { recursive: true });
+    const racedFile = join(dir, "raced.jsonl");
+    const healthyFile = join(dir, "healthy.jsonl");
+    const line = JSON.stringify({
+      role: "user",
+      timestamp: "2024-01-01T10:00:00.000Z",
+      message: { content: [{ type: "text", text: "hi" }] },
+    });
+    writeFileSync(racedFile, `${line}\n`);
+    writeFileSync(healthyFile, `${line}\n`);
+
+    // Both rows are upserted, exactly as warm-up's upsertFromScannerMeta does.
+    const ids = cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "raced", sessionId: "raced", filePath: racedFile },
+      { ...BASE_META, id: "healthy", sessionId: "healthy", filePath: healthyFile },
+    ] as any);
+    expect(ids).toEqual(["raced", "healthy"]);
+
+    // The concurrent ConversationWatcher deletes the parent row for "raced"
+    // (invalidate(id) is exactly what onConversationChanged/onFileDeleted call).
+    cache.invalidate("raced");
+
+    // Reproduce the exact throw: the file is still readable, but the FK has no
+    // parent, so the tail insert raises SQLITE_CONSTRAINT_FOREIGNKEY.
+    expect(() => cache.populateTailFromFile("raced", racedFile)).toThrow(/FOREIGN KEY/);
+
+    // Warm-up's swallow-and-continue: one bad row must not abort the loop, and
+    // the healthy row must still get its tail.
+    const targets = [
+      { id: "raced", filePath: racedFile },
+      { id: "healthy", filePath: healthyFile },
+    ];
+    let tailFailures = 0;
+    for (const t of targets) {
+      try {
+        cache.populateTailFromFile(t.id, t.filePath);
+      } catch {
+        tailFailures += 1;
+      }
+    }
+    expect(tailFailures).toBe(1);
+    expect(cache.getConversationTail("healthy")?.messages.length).toBe(1);
+
+    // The raced row left no orphan: no parent meta, no tail.
+    expect(cache.hasConversation("raced")).toBe(false);
+    expect(cache.getConversationTail("raced")).toBeNull();
+
+    // pruneGhostFiles runs right after warm-up and reconciles cleanly — the
+    // healthy row survives, and nothing is left dangling for the raced one.
+    const pruned = cache.pruneGhostFiles();
+    expect(pruned).not.toContain("raced");
+    expect(cache.hasConversation("healthy")).toBe(true);
+  });
 });
 
 describe("updateFromLine()", () => {
