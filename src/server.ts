@@ -1647,38 +1647,56 @@ export class StreamerServer {
       branch: body.branch,
     });
 
-    // Enrich session with conversation metadata
-    if (conv) {
-      session.sessionName = (conv as any).sessionName ?? undefined;
-      session.messageCount = (conv as any).messageCount ?? 0;
-      session.account = (conv as any).account ?? undefined;
-      session.filePath = (conv as any).filePath ?? undefined;
+    this.sessionStore.addManaged(session);
 
-      const scanner = await this.getScanner();
-      const meta = conv.filePath ? scanner.getMetadataCache().get(conv.filePath) : undefined;
-      if (meta) {
-        session.model = meta.model ?? undefined;
-        session.preview = meta.preview ?? undefined;
-        session.firstMessageText = meta.firstMessage?.text ?? undefined;
-        session.firstMessageAt = meta.firstMessage?.timestamp
-          ? new Date(meta.firstMessage.timestamp)
+    // Watch the conversation's JSONL file for structured events
+    void this.watchConversationFile(sessionId);
+
+    const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
+    this.broadcastOrUnicastSessionList(req);
+
+    json(res, 201, resp ?? session);
+
+    // Enrich session metadata and update DB in background (fire-and-forget).
+    // The conversation history is already in the JSONL; DB writes are
+    // bookkeeping that can happen asynchronously without blocking the response.
+    this.enrichResumedSessionAsync(sessionId, projectPath, conv);
+  }
+
+  private enrichResumedSessionAsync(sessionId: string, projectPath: string, conv: any): void {
+    try {
+      const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+      if (!session) return;
+
+      if (conv) {
+        session.sessionName = conv.sessionName ?? undefined;
+        session.messageCount = conv.messageCount ?? 0;
+        session.account = conv.account ?? undefined;
+        session.filePath = conv.filePath ?? undefined;
+      }
+
+      if (!this.cache || !this.projectsRepo || !this.conversationsRepo) return;
+
+      // Single SQLite read covers model, preview, timestamps, and projectId —
+      // no scanner round-trip needed; these fields are already cached.
+      const cached = this.cache.getMetaById(sessionId);
+      if (cached) {
+        session.model = cached.model ?? undefined;
+        session.preview = cached.preview ?? undefined;
+        const first = cached.firstMessage ? JSON.parse(cached.firstMessage as string) : null;
+        const last = cached.lastMessage ? JSON.parse(cached.lastMessage as string) : null;
+        session.firstMessageText = first?.text ?? undefined;
+        session.firstMessageAt = first?.timestamp
+          ? new Date(first.timestamp).toISOString()
           : undefined;
-        session.lastMessageText = meta.lastMessage?.text ?? undefined;
-        session.lastMessageAt = meta.lastMessage?.timestamp
-          ? new Date(meta.lastMessage.timestamp)
+        session.lastMessageText = last?.text ?? undefined;
+        session.lastMessageAt = last?.timestamp
+          ? new Date(last.timestamp).toISOString()
           : undefined;
       }
-    }
 
-    // Resolve projectId from the conversation if available; fall back to
-    // an upsert from the session's projectPath when the conversation has
-    // no project_id yet (self-heals during resume).
-    if (this.cache && this.projectsRepo && this.conversationsRepo) {
-      let resolvedProjectId: string | null = null;
-      const cachedConv = this.cache.getMetaById(sessionId);
-      if (cachedConv?.projectId) {
-        resolvedProjectId = cachedConv.projectId;
-      } else {
+      let resolvedProjectId: string | null = cached?.projectId ?? null;
+      if (!resolvedProjectId) {
         const project = this.projectsRepo.upsertProjectByPath(projectPath);
         resolvedProjectId = project.id;
         this.conversationsRepo.updateConversationProjectId({
@@ -1690,17 +1708,10 @@ export class StreamerServer {
         session.projectId = resolvedProjectId;
         session.resumedFromConversationId = sessionId;
       }
+    } catch (err) {
+      // ponytail: log but don't crash; session is already live and usable
+      console.error(`[enrichResumedSessionAsync] ${sessionId}:`, err);
     }
-
-    this.sessionStore.addManaged(session);
-
-    // Watch the conversation's JSONL file for structured events
-    void this.watchConversationFile(sessionId);
-
-    const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
-    this.broadcastOrUnicastSessionList(req);
-
-    json(res, 201, resp ?? session);
   }
 
   private async handleSendInput(
