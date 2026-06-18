@@ -46,8 +46,15 @@ function npm(args) {
   // npm.cmd on Windows; npm everywhere else. Resolve the binary name directly
   // instead of using shell:true (which Node flags as a security risk and which
   // would require escaping the args).
-  const bin = process.platform === "win32" ? "npm.cmd" : "npm";
-  execFileSync(bin, args, { cwd: dir, stdio: "inherit" });
+  const nodeBin = process.env.npm_node_execpath ?? process.execPath;
+  const bin = process.env.npm_execpath;
+  if (bin) {
+    execFileSync(nodeBin, [bin, ...args], { cwd: dir, stdio: "inherit" });
+    return;
+  }
+
+  const fallback = process.platform === "win32" ? "npm.cmd" : "npm";
+  execFileSync(fallback, args, { cwd: dir, stdio: "inherit" });
 }
 
 function currentSha() {
