@@ -25,6 +25,7 @@ Three things are always true regardless of which provider you pick:
 | **Cloudflare Tunnel — quick** | First-time onboarding, "does this even work?", demos | Free | None | ❌ Random `*.trycloudflare.com` per run | ❌ Anonymous (Bearer is your only gate) |
 | **Cloudflare Tunnel — named** | Always-on personal deployment, the setup this repo uses | Free | Cloudflare account + domain on Cloudflare DNS | ✅ Your own hostname | ✅ Cloudflare Access (recommended) |
 | **ngrok** | Same niche as quick-tunnel but with optional named domains on paid plans | Free tier with random URLs; paid for reserved | ngrok account | Paid tier only | ✅ ngrok OAuth/keys |
+| **Tailscale Serve** | Reaching the streamer from **your own** devices over any network (incl. cellular), **tailnet-private** — not public | Free for personal use | Tailscale account | ✅ Tied to your tailnet | ✅ Tailnet membership (devices only) |
 | **Tailscale Funnel** | Private-by-default networks where you also want a public endpoint | Free for personal use | Tailscale account | ✅ Tied to your tailnet | ✅ Tailscale ACLs |
 | **VPS reverse proxy** | Full control, self-hosted, want one box doing many things | VPS rental | Anywhere you can rent a Linux box | ✅ Whatever DNS you point at it | ✅ Whatever you configure (nginx auth, Caddy, etc.) |
 
@@ -58,6 +59,7 @@ Full Cloudflare guide (quick-tunnel walkthrough + how to graduate to a persisten
 
 - **Cloudflare Tunnel** — [remote-access/cloudflare.md](./remote-access/cloudflare.md) (full guide; this is the path this repo's `tb-pc.rbv1000.win` deployment uses)
 - **ngrok** — [remote-access/ngrok.md](./remote-access/ngrok.md) (stub; scripted onboarding coming)
+- **Tailscale Serve (tailnet-private HTTPS)** — [tailscale-serve.md](./tailscale-serve.md) (the path for reaching your own machine from your own phone over cellular; covers the iOS ATS plaintext-`http`-to-`100.x` gotcha)
 - **Tailscale Funnel** — [remote-access/tailscale-funnel.md](./remote-access/tailscale-funnel.md) (stub; scripted onboarding coming)
 - **VPS reverse proxy (nginx / Caddy)** — [remote-access/vps-reverse-proxy.md](./remote-access/vps-reverse-proxy.md) (stub; scripted onboarding coming)
 
