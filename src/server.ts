@@ -100,6 +100,10 @@ export class StreamerServer {
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
   // a single rescan after the current one completes instead of restarting it.
   private scannerStale = false;
+  // True only while bindWithRetry is actively retrying. The persistent
+  // listener-level 'error' handler demotes EADDRINUSE to debug during this
+  // window so the self-healing kickstart-relaunch race doesn't spam warn.
+  private binding = false;
   private cacheReady = false;
   private apiKey: string;
   private localNoAuth: boolean;
@@ -430,6 +434,18 @@ export class StreamerServer {
     });
     // 2. Listener-level 'error' (port in use, etc.) — log instead of crashing.
     this.httpServer.on("error", (err) => {
+      const e = err as NodeJS.ErrnoException;
+      // While bindWithRetry is retrying, each failed listen() attempt also
+      // reaches this persistent handler. That EADDRINUSE is the expected,
+      // self-healing kickstart race — log it at debug, not warn, so boots stay
+      // quiet. Genuine runtime errors (and the final give-up) still warn.
+      if (this.binding && e.code === "EADDRINUSE") {
+        this.log.debug?.(`httpServer error during bind: ${err.message}`, {
+          error: err.message,
+          event: "http.server_error",
+        });
+        return;
+      }
       this.log.warn(`httpServer error: ${err.message}`, {
         error: err.message,
         event: "http.server_error",
@@ -712,6 +728,15 @@ export class StreamerServer {
   // site in listen() for why the race exists (kickstart -k relaunch). Total
   // worst case ≈ 6 × 500 ms = 3 s before the final attempt rethrows.
   private async bindWithRetry(port: number, attempts = 6, delayMs = 500): Promise<void> {
+    this.binding = true;
+    try {
+      await this.bindWithRetryLoop(port, attempts, delayMs);
+    } finally {
+      this.binding = false;
+    }
+  }
+
+  private async bindWithRetryLoop(port: number, attempts: number, delayMs: number): Promise<void> {
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         await new Promise<void>((resolve, reject) => {
@@ -730,8 +755,19 @@ export class StreamerServer {
         return;
       } catch (err) {
         const e = err as NodeJS.ErrnoException;
+        if (e.code === "EADDRINUSE" && attempt === attempts) {
+          // Final attempt exhausted on a still-busy port: this is a genuine
+          // failure (not the self-healing kickstart race), so surface it once
+          // before rethrowing.
+          this.log.error(
+            `port ${port} still busy (EADDRINUSE) after ${attempts} attempts; giving up`,
+            { port, attempts, event: "server.bind_failed" },
+          );
+        }
         if (e.code !== "EADDRINUSE" || attempt === attempts) throw err;
-        this.log.warn(
+        // Routine kickstart-relaunch race: log at debug (invisible by default)
+        // since bindWithRetry recovers on its own within the attempt budget.
+        this.log.debug?.(
           `port ${port} busy (EADDRINUSE), retry ${attempt}/${attempts - 1} in ${delayMs}ms`,
           { port, attempt, event: "server.bind_retry" },
         );
