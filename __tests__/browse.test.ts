@@ -1,7 +1,12 @@
 import { mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createDirectory, listDirectories, resolveBrowsePath } from "../src/browse";
+import {
+  BrowsePathNotFoundError,
+  createDirectory,
+  listDirectories,
+  resolveBrowsePath,
+} from "../src/browse";
 
 const TEST_ROOT = join(tmpdir(), "threadbase-browse-test");
 
@@ -60,6 +65,18 @@ describe("resolveBrowsePath", () => {
 
   it("rejects nonexistent path", async () => {
     await expect(resolveBrowsePath(TEST_ROOT, "nonexistent")).rejects.toThrow();
+  });
+
+  it("throws BrowsePathNotFoundError for a missing in-root path", async () => {
+    await expect(resolveBrowsePath(TEST_ROOT, "projectA/gone/deeper")).rejects.toBeInstanceOf(
+      BrowsePathNotFoundError,
+    );
+  });
+
+  it("does not throw BrowsePathNotFoundError for an out-of-root path", async () => {
+    await expect(resolveBrowsePath(TEST_ROOT, "../")).rejects.not.toBeInstanceOf(
+      BrowsePathNotFoundError,
+    );
   });
 });
 

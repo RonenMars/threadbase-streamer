@@ -45,7 +45,7 @@ Note: mobile treats `on_hold` and `idle` as the same status. The server currentl
 **HTTP status codes** — mobile maps these to typed errors:
 
 - `401` → `AuthError` (triggers re-auth UI)
-- `404` → `NotFoundError` (suppressed for `/output` endpoint — treated as empty). The `GET /api/conversations/{id}` 404 body now carries an additive `code: "not_found"` alongside `error`; older clients ignore it.
+- `404` → `NotFoundError` (suppressed for `/output` endpoint — treated as empty). The `GET /api/conversations/{id}` 404 body now carries an additive `code: "not_found"` alongside `error`; older clients ignore it. `GET /api/browse` now answers `404` with `code: "PATH_NOT_FOUND"` when the requested `path` is inside the browse root but no longer exists on disk (e.g. a mobile-cached path whose folder was moved/deleted) — previously this case returned `400`. Out-of-root paths still return `400`. Older clients that only read the `error` string are unaffected; clients keying on the status can fall back to the nearest existing ancestor instead of dead-ending on "Unable to load directories".
 - `429` → shown to user during pair exchange
 
 **Auth format** — mobile sends `Authorization: Bearer <token>` and constructs WebSocket URLs as `/ws?key=<token>`. Both forms must continue to work.

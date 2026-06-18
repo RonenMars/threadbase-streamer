@@ -1,6 +1,18 @@
 import { mkdir, readdir, realpath, stat } from "fs/promises";
 import { join, resolve, sep } from "path";
 
+/**
+ * Thrown when a browse target is inside the root but does not exist on disk
+ * (e.g. a mobile-cached path whose folder was since moved or deleted). Lets the
+ * browse handler answer 404 instead of conflating it with an out-of-root 400.
+ */
+export class BrowsePathNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrowsePathNotFoundError";
+  }
+}
+
 export async function resolveBrowsePath(browseRoot: string, relativePath: string): Promise<string> {
   const normalizedRoot = resolve(browseRoot);
   // On Unix, if relativePath is already an absolute path under browseRoot, use it directly.
@@ -25,8 +37,16 @@ export async function resolveBrowsePath(browseRoot: string, relativePath: string
   if (!target.startsWith(rootPrefix) && target !== normalizedRoot) {
     throw new Error("Path outside browse root");
   }
-  // Verify the path exists (throws if not)
-  await realpath(target);
+  // Verify the path exists; surface a not-found as a typed error so the handler
+  // can answer 404 (folder gone) rather than the out-of-root 400 above.
+  try {
+    await realpath(target);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      throw new BrowsePathNotFoundError(`Path not found: ${target}`);
+    }
+    throw err;
+  }
   return target;
 }
 
