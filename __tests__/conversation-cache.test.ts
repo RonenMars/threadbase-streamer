@@ -866,4 +866,42 @@ describe("updateFromLines() — batched write", () => {
       b.close();
     }
   });
+
+  it("parity: multiple interleaved cwd/slug context lines resolve first-wins like per-line replay", () => {
+    // backfillSkeletonProject COALESCEs each column, so per-line replay keeps the
+    // FIRST non-null value seen for a column; later context lines can't override
+    // it. The batch path applies project context once at the end, so it must also
+    // accumulate first-wins. This exercises >1 context line + slug — the spot most
+    // likely to diverge — and asserts both paths land on identical project metadata.
+    const file = "/home/.claude/projects/-proj-ctx/ctx-skel.jsonl";
+    const lines = [
+      JSON.stringify({ cwd: "/Users/me/dev/first" }),
+      msgLine(0, "2024-08-01T00:00:00.000Z"),
+      JSON.stringify({ slug: "renamed-thread", cwd: "/Users/me/dev/second" }),
+      msgLine(1, "2024-08-02T00:00:00.000Z"),
+    ];
+
+    const a = ConversationCache.open(join(dbDir, "ctx-a.db"), 3);
+    const b = ConversationCache.open(join(dbDir, "ctx-b.db"), 3);
+    try {
+      for (const l of lines) a.updateFromLine(file, l);
+      b.updateFromLines(file, lines);
+      const rowA = a
+        .listConversations({ limit: 10, offset: 0 })
+        .conversations.find((c) => c.id === "ctx-skel");
+      const rowB = b
+        .listConversations({ limit: 10, offset: 0 })
+        .conversations.find((c) => c.id === "ctx-skel");
+      expect(rowB?.projectPath).toBe(rowA?.projectPath);
+      expect(rowB?.projectName).toBe(rowA?.projectName);
+      expect(rowB?.title).toBe(rowA?.title);
+      expect(rowB?.messageCount).toBe(rowA?.messageCount);
+      expect(b.getConversationTail("ctx-skel")?.messages.map((m) => m.text)).toEqual(
+        a.getConversationTail("ctx-skel")?.messages.map((m) => m.text),
+      );
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
 });
