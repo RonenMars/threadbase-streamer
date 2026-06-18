@@ -1,3 +1,9 @@
+## [1.15.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.0...v1.15.1) (2026-06-18)
+
+### Performance Improvements
+
+* **resume:** respond immediately, enrich session from SQLite in background ([#112](https://github.com/RonenMars/threadbase-streamer/issues/112)) ([14e674c](https://github.com/RonenMars/threadbase-streamer/commit/14e674cbc0edb262e150e3bc99ad89a1bc5de5f7))
+
 ## [1.15.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.14.0...v1.15.0) (2026-06-18)
 
 ### Features
