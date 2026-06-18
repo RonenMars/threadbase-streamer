@@ -25,15 +25,9 @@ jobs:
     name: Precheck
     runs-on: ubuntu-latest
     permissions:
-      # semantic-release --dry-run probes push access via verifyConditions
-      # (git push --dry-run). With contents:read that probe fails with
-      # EGITNOPERMISSION before commit-analyzer runs, so the "next release
-      # version" line is never printed and the precheck false-negatives
-      # as "no release-worthy commits". contents:write makes the probe
-      # pass; nothing is actually pushed here because this is a --dry-run
-      # (semantic-release skips the prepare/publish phases, so the
-      # @semantic-release/git commit + push never run during precheck).
-      contents: write
+      # Read-only: the precheck only inspects git history to decide whether a
+      # release is warranted. It does not push, publish, or contact npm.
+      contents: read
     outputs:
       should_release: ${{ steps.precheck.outputs.should_release }}
       next_version: ${{ steps.precheck.outputs.next_version }}
@@ -47,48 +41,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Dry-run semantic-release
+      - name: Decide whether a release is needed
         id: precheck
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # @semantic-release/npm runs in verifyConditions — BEFORE
-          # commit-analyzer — and throws "No npm token specified." if no
-          # token is present, aborting the dry-run before the "next release
-          # version" line is ever printed. Without this, every push
-          # false-negatives as "no release-worthy commits". Same token as the
-          # real release job; nothing is published here (this is --dry-run).
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        # We only need commit-analyzer's verdict; semantic-release prints
-        # "The next release version is X" before the prepare phase runs.
-        # The prepare plugin (`@semantic-release/exec` invoking
-        # build-manifest.mjs) WILL fail in dry-run because release-artifacts/
-        # is empty — but the line we care about has already been emitted by
-        # then, so we deliberately swallow the exit code and grep stdout.
-        run: |
-          set -uo pipefail
-          npx semantic-release --dry-run 2>&1 | tee /tmp/sr.log || true
-          if grep -qE 'The next release version is ' /tmp/sr.log; then
-            VERSION=$(grep -E 'The next release version is ' /tmp/sr.log | tail -n1 | sed -E 's/.*The next release version is ([0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?).*/\1/')
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "next_version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "✅ Would release v$VERSION"
-          elif grep -qE 'There are no relevant changes, so no new version is released' /tmp/sr.log; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "next_version=" >> "$GITHUB_OUTPUT"
-            echo "ℹ️  No release-worthy commits — skipping build + publish."
-          else
-            # Neither the release line nor the explicit "no relevant changes"
-            # line appeared — semantic-release crashed before commit analysis
-            # (e.g. a missing/expired NPM_TOKEN failing verifyConditions). Fail
-            # loudly instead of silently reporting "no release-worthy commits".
-            echo "::error::semantic-release dry-run did not reach commit analysis — see log above (likely a verifyConditions failure such as a missing NPM_TOKEN)."
-            exit 1
-          fi
+        # Deliberately NOT `semantic-release --dry-run`: that loads every plugin
+        # and runs their verifyConditions first, and @semantic-release/npm's
+        # verifyConditions requires an npm auth token even though the precheck
+        # publishes nothing. That coupled this read-only decision to npm publish
+        # credentials and caused every push to false-negative as "no
+        # release-worthy commits" whenever the token was missing/expired.
+        #
+        # release-precheck.mjs calls ONLY @semantic-release/commit-analyzer with
+        # the same rules from .releaserc.json — no publishing plugins, no npm or
+        # OIDC auth, no git remote access. It writes should_release/next_version
+        # to $GITHUB_OUTPUT and exits non-zero only on real errors.
+        run: node scripts/release-precheck.mjs
 
   build:
     name: Build ${{ matrix.target }}
@@ -165,6 +135,12 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      # OIDC token used by @semantic-release/npm for npm Trusted Publishing.
+      # With a trusted publisher configured on npmjs.com (repo +
+      # release.yml workflow), npm mints a short-lived token from this OIDC
+      # identity at publish time — no long-lived NPM_TOKEN secret needed.
+      # Also enables automatic provenance attestation on the published package.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -194,17 +170,22 @@ jobs:
         run: ls -la release-artifacts/
 
       - name: Run semantic-release
-        # @semantic-release/git pushes the release commit (CHANGELOG +
-        # package.json bump) directly to main. main is protected by a ruleset
-        # that forbids direct pushes and the GitHub Actions bot cannot be a
-        # bypass actor on a user-owned repo. RELEASE_PAT is a fine-grained PAT
-        # owned by the repo admin (who IS a ruleset bypass actor), so the push
-        # authenticates as an exempt identity. Falls back to GITHUB_TOKEN when
-        # the secret is absent (e.g. forks) — the commit-back step will then
-        # fail as before, but tag/release still publish.
+        # GITHUB_TOKEN here is for @semantic-release/git pushing the release
+        # commit (CHANGELOG + package.json bump) directly to main. main is
+        # protected by a ruleset that forbids direct pushes and the GitHub
+        # Actions bot cannot be a bypass actor on a user-owned repo.
+        # RELEASE_PAT is a fine-grained PAT owned by the repo admin (who IS a
+        # ruleset bypass actor), so the push authenticates as an exempt
+        # identity. Falls back to GITHUB_TOKEN when the secret is absent
+        # (e.g. forks) — the commit-back step will then fail as before, but
+        # tag/release still publish.
+        #
+        # npm authentication is handled by Trusted Publishing (OIDC): with the
+        # job's `id-token: write` permission and a trusted publisher configured
+        # on npmjs.com, @semantic-release/npm obtains a short-lived token at
+        # publish time. No NODE_AUTH_TOKEN / NPM_TOKEN secret is required.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npx semantic-release
 
       - name: Build Homebrew formula
