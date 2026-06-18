@@ -271,6 +271,16 @@ Restart the streamer to pick it up.
 
 ---
 
+### Server "Unreachable" on Wi-Fi vs. "Fetch failed" on cellular (iOS, over Tailscale)
+
+**When:** A LAN server entry (`http://192.168.x.x:8766`) works on the same Wi-Fi but goes **"Unreachable"** off Wi-Fi (cellular/5G). Switching the entry to the machine's **Tailscale IP** (`http://100.x.x.x:8766`) changes the error to **"Fetch failed"** — and the streamer log shows **no request from the phone at all**. Fly/`https://` servers connect fine throughout.
+**Cause:** Two stacked issues, both client-side:
+- The LAN IP is unroutable when the phone leaves Wi-Fi → "Unreachable."
+- iOS **App Transport Security (ATS)** exempts private RFC-1918 ranges (`192.168.x`, `10.x`, `172.16–31.x`) and `.local`, so plaintext `http://` works on Wi-Fi. But Tailscale's `100.64.0.0/10` (CGNAT) range is treated as **public**, so ATS **requires HTTPS** and blocks the plaintext `http://100.x` request *before it leaves the phone*. Hence "Fetch failed" with nothing in the server log. (You can `tailscale ping` the phone and `curl` the `100.x` IP from the host successfully and still see this — the block is in iOS, not on the wire.)
+**Fix:** Put valid HTTPS in front of `:8766` with **Tailscale Serve** and point the app at the `https://<host>.<tailnet>.ts.net` hostname (no port — `https` defaults to 443; Serve proxies to 8766 internally). Use the hostname, not the IP (the cert won't match the IP). Full walkthrough incl. the one-time "Enable HTTPS" admin step and reboot persistence: **[remote-access/tailscale-serve.md](guides/remote-access/tailscale-serve.md)**.
+
+---
+
 ## Discovered sessions / PTY not attached
 
 ### Session shows `Idle · 0 prompts` with blank terminal and `PTY_ATTACHED: false`
