@@ -39,10 +39,6 @@ The date is the merge-to-main date. The kebab slug derives from the milestone na
 
 `_template.md` is the starting skeleton — every release-notes file should mirror its section layout (What shipped, Why it matters, User-visible changes, Operator-facing additions, Breaking changes, Migration notes, Architecture, Deferred, Notable fixes, How to verify, Testing).
 
-## Drafting with the skill
-
-The project-local skill at `.claude/skills/write-release-notes/` drafts notes automatically from the template, given a milestone name. It auto-detects scope by walking commits and PRs since the last release-notes file. Invoke it in a Claude Code session with "write release notes for Milestone X" or `/write-release-notes`.
-
 ## PR label and reminder Action
 
 Add the `milestone` label to a merge PR when the PR ships a named milestone. The `.github/workflows/release-notes-reminder.yml` Action watches for that label and posts a sticky reminder comment if no file under `docs/release-notes/` was added in the PR. The reminder is informational only — merge is never blocked.

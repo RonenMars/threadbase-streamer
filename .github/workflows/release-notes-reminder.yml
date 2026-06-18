@@ -54,7 +54,7 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body: |
             <!-- release-notes-reminder -->
-            :yellow_circle: **Milestone PR** — no new release notes detected in `docs/release-notes/`. Run `/write-release-notes` locally before merging, or remove the `milestone` label if this isn't a milestone after all.
+            :yellow_circle: **Milestone PR** — no new release notes detected in `docs/release-notes/`. Add a release notes file under `docs/release-notes/` before merging (use `docs/release-notes/_template.md` as the skeleton), or remove the `milestone` label if this isn't a milestone after all.
 
             This is a reminder only — merge is not blocked.
           edit-mode: replace
