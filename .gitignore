@@ -34,3 +34,7 @@ menubar-signing.env
 *.p12
 *.pem
 releases/
+
+# SHA stamps written by scripts/build-vendor.mjs to skip re-installing vendored
+# submodules when their pointer hasn't moved.
+.vendor-stamps/
