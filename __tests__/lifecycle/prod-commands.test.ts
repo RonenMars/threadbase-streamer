@@ -1,8 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { Command } from "commander";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearSupervisorLogs,
+  registerProdCommands,
   runProdDoctor,
   runProdLogs,
   runProdStart,
@@ -26,17 +29,53 @@ vi.mock("../../src/lifecycle/platform", () => ({
 
 describe("prod commands", () => {
   let dir: string;
+  let stdoutLog: string;
+  let stderrLog: string;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "prod-test-"));
+    stdoutLog = join(dir, "stdout.log");
+    stderrLog = join(dir, "stderr.log");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(stdoutLog, "stdout");
+    writeFileSync(stderrLog, "stderr");
     process.env.THREADBASE_INSTALL_DIR = dir;
     vi.clearAllMocks();
     // Reset defaults that clearAllMocks wipes
     mockSup.isAgentLoaded.mockReturnValue(true);
     mockSup.getAgentPid.mockReturnValue(12345);
+    mockSup.getLogPaths.mockReturnValue({ stdout: stdoutLog, stderr: stderrLog });
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
     delete process.env.THREADBASE_INSTALL_DIR;
+  });
+
+  it("clears logs by default when asked", () => {
+    clearSupervisorLogs();
+    expect(readFileSync(stdoutLog, "utf8")).toBe("");
+    expect(readFileSync(stderrLog, "utf8")).toBe("");
+  });
+
+  it("preserve-logs keeps the existing files intact for start and restart", async () => {
+    const program = new Command();
+    registerProdCommands(program);
+
+    await program.parseAsync(["prod", "start", "--preserve-logs"], { from: "user" });
+    await program.parseAsync(["prod", "restart", "--preserve-logs"], { from: "user" });
+
+    expect(readFileSync(stdoutLog, "utf8")).toBe("stdout");
+    expect(readFileSync(stderrLog, "utf8")).toBe("stderr");
+  });
+
+  it("start and restart clear logs by default", async () => {
+    const program = new Command();
+    registerProdCommands(program);
+
+    await program.parseAsync(["prod", "start"], { from: "user" });
+    await program.parseAsync(["prod", "restart"], { from: "user" });
+
+    expect(readFileSync(stdoutLog, "utf8")).toBe("");
+    expect(readFileSync(stderrLog, "utf8")).toBe("");
   });
 
   it("prod start: errors when agent not loaded", async () => {
@@ -115,7 +154,7 @@ describe("prod commands", () => {
       expect(result.ok).toBe(true);
       expect(spawnTail).toHaveBeenCalledOnce();
       const [callArgs] = spawnTail.mock.calls[0];
-      expect(callArgs.files).toEqual(["/fake/stdout.log", "/fake/stderr.log"]);
+      expect(callArgs.files).toEqual([stdoutLog, stderrLog]);
       expect(callArgs.follow).toBe(true);
       expect(callArgs.lines).toBe(50);
     });
@@ -124,7 +163,7 @@ describe("prod commands", () => {
       const spawnTail = vi.fn().mockResolvedValue({ ok: true });
       await runProdLogs({ lines: 50, follow: true, errorsOnly: true }, { spawnTail });
       const [callArgs] = spawnTail.mock.calls[0];
-      expect(callArgs.files).toEqual(["/fake/stderr.log"]);
+      expect(callArgs.files).toEqual([stderrLog]);
     });
 
     it("--no-follow passes follow=false to the spawner", async () => {
@@ -159,7 +198,7 @@ describe("prod commands", () => {
       );
       expect(result.ok).toBe(true);
       expect(spawnTail).not.toHaveBeenCalled();
-      expect(truncated).toEqual(["/fake/stdout.log", "/fake/stderr.log"]);
+      expect(truncated).toEqual([stdoutLog, stderrLog]);
       expect(result.message).toMatch(/cleared:/);
     });
 
