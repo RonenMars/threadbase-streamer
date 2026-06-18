@@ -1,20 +1,3 @@
-## [1.15.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.14.0...v1.15.0) (2026-06-18)
-
-### Features
-
-* **release:** publish @threadbase-sh/streamer to public npm ([bc3a7ba](https://github.com/RonenMars/threadbase-streamer/commit/bc3a7ba7d7f783c5082ab7bb6a287208cf656da0))
-* **watcher:** debounce and batch the conversation file-watching pipeline ([#91](https://github.com/RonenMars/threadbase-streamer/issues/91)) ([61f6478](https://github.com/RonenMars/threadbase-streamer/commit/61f64789f54ebeda2b5f959800eed39d6f53662d)), closes [RonenMars/threadbase-scanner#21](https://github.com/RonenMars/threadbase-scanner/issues/21)
-* **ws:** broadcast scan_progress events during startup scan ([#90](https://github.com/RonenMars/threadbase-streamer/issues/90)) ([bc5376e](https://github.com/RonenMars/threadbase-streamer/commit/bc5376e3dd3175f822da5e157ae7cb4e9c7ea3e9))
-
-### Bug Fixes
-
-* **browse:** return 404 PATH_NOT_FOUND for missing in-root browse paths ([#89](https://github.com/RonenMars/threadbase-streamer/issues/89)) ([bb8453b](https://github.com/RonenMars/threadbase-streamer/commit/bb8453b8d9ad2b6f800827f072dbf48d0d8f7903))
-* **cache:** surface warm-up tail-skip ids at info level ([#97](https://github.com/RonenMars/threadbase-streamer/issues/97)) ([d17ae71](https://github.com/RonenMars/threadbase-streamer/commit/d17ae713ec928c805fe887a0b47fff6758385546))
-* **lifecycle:** clear prod logs by default on start and restart ([#105](https://github.com/RonenMars/threadbase-streamer/issues/105)) ([7449305](https://github.com/RonenMars/threadbase-streamer/commit/7449305f9933a54ff27cef4440b497f72538aa7e)), closes [#103](https://github.com/RonenMars/threadbase-streamer/issues/103)
-* **lifecycle:** make `prod start` recover an agent unloaded by `prod stop` ([#93](https://github.com/RonenMars/threadbase-streamer/issues/93)) ([c99fecd](https://github.com/RonenMars/threadbase-streamer/commit/c99fecdd4c6a09f161f6a58a95152ff3d23de7a6))
-* **server:** downgrade EADDRINUSE bind noise to debug ([#96](https://github.com/RonenMars/threadbase-streamer/issues/96)) ([09bacc2](https://github.com/RonenMars/threadbase-streamer/commit/09bacc245a0bd09ce281686a37ee50336fd36919))
-* **server:** skip full-tree rescan on the conversation-detail path ([#104](https://github.com/RonenMars/threadbase-streamer/issues/104)) ([ec29407](https://github.com/RonenMars/threadbase-streamer/commit/ec29407bc642242fa277126ce5b2f47cf071f81a)), closes [#98](https://github.com/RonenMars/threadbase-streamer/issues/98)
-
 ## [1.14.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.4...v1.14.0) (2026-06-18)
 
 ### Features
