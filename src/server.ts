@@ -70,6 +70,7 @@ import type {
 import { saveUploadFile } from "./uploads";
 import { computeConversationEtag } from "./utils/conversationEtag";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
+import { createScanProgressThrottle } from "./utils/scanProgressThrottle";
 import { WSHub } from "./ws-hub";
 
 const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
@@ -585,10 +586,19 @@ export class StreamerServer {
         // getScanner() to restart indefinitely and leave the warm-up stuck.
         const warmupScanner = new ConversationScanner();
         const warmupStatCache = this.buildStatCache(null);
+        // Throttle the per-file onProgress firings to ~one frame per whole
+        // percent (plus the final tick) so a large scan doesn't flood every
+        // WebSocket client with thousands of scan_progress messages.
+        const shouldEmitProgress = createScanProgressThrottle();
         warmupScanner
           .scan({
             ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
             ...(warmupStatCache ? { statCache: warmupStatCache } : {}),
+            onProgress: (scanned, total) => {
+              if (shouldEmitProgress(scanned, total)) {
+                this.wsHub.broadcast({ type: "scan_progress", scanned, total });
+              }
+            },
           })
           .then(async () => {
             if (!this.cache) return;
