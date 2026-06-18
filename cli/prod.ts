@@ -13,6 +13,24 @@ const log = getLogger("prod");
 
 export type CommandResult = { ok: boolean; message: string };
 
+export function clearSupervisorLogs(): void {
+  let paths: { stdout: string; stderr: string };
+  try {
+    paths = getSupervisor().getLogPaths();
+  } catch {
+    return;
+  }
+  for (const file of [paths.stdout, paths.stderr]) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require("node:fs") as typeof import("node:fs");
+      fs.writeFileSync(file, "");
+    } catch {
+      // Best effort: keep start/restart working even if logs cannot be cleared.
+    }
+  }
+}
+
 export async function runProdStart(): Promise<CommandResult> {
   if (!getSupervisor().isAgentLoaded()) {
     const message =
@@ -160,7 +178,9 @@ export function registerProdCommands(program: Command): void {
   prod
     .command("start")
     .description("Restore prod after a user-held suspension")
-    .action(async () => {
+    .option("--preserve-logs", "Keep existing stdout + stderr logs", false)
+    .action(async (opts) => {
+      if (opts.preserveLogs !== true) clearSupervisorLogs();
       const r = await runProdStart();
       log.info(r.message, undefined, "console");
       if (!r.ok) process.exitCode = 1;
@@ -193,11 +213,13 @@ export function registerProdCommands(program: Command): void {
   prod
     .command("restart")
     .description("Stop + restart the supervised streamer (re-reads service definition)")
-    .action(async () => {
+    .option("--preserve-logs", "Keep existing stdout + stderr logs", false)
+    .action(async (opts) => {
       const sup = getSupervisor();
       // Resolve the plist path while the service is still loaded — the label
       // probe can't detect a brew service after bootout.
       const specPath = process.platform === "darwin" ? darwinPlistPath() : "";
+      if (opts.preserveLogs !== true) clearSupervisorLogs();
       sup.bootoutAgent();
       sup.bootstrapAgent(specPath);
       const what =
