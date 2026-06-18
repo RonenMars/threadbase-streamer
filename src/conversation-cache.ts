@@ -520,9 +520,17 @@ export class ConversationCache {
 
       if (line.cwd || line.slug) {
         sawProjectContext = true;
-        backfillProjectPath = line.cwd ?? null;
-        backfillProjectName = backfillProjectPath ? shortProjectName(backfillProjectPath) : null;
-        backfillTitle = line.slug ?? backfillProjectName ?? null;
+        // First-wins per column, mirroring updateFromLine's per-line replay:
+        // backfillSkeletonProject COALESCEs each column independently, so the
+        // first non-null value seen for a column sticks and later lines can't
+        // override it. Accumulating last-wins here would diverge from per-line
+        // replay when a conversation's cwd/slug changes mid-batch.
+        const lineProjectPath = line.cwd ?? null;
+        const lineProjectName = lineProjectPath ? shortProjectName(lineProjectPath) : null;
+        const lineTitle = line.slug ?? lineProjectName ?? null;
+        backfillProjectPath ??= lineProjectPath;
+        backfillProjectName ??= lineProjectName;
+        backfillTitle ??= lineTitle;
       }
 
       if (!isMessage) continue;
