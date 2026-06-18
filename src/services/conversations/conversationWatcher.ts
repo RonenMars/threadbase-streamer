@@ -188,6 +188,14 @@ export class ConversationWatcher {
       this.onError?.(filePath, err instanceof Error ? err : new Error(String(err)));
     } finally {
       entry.reading = false;
+      // If a change arrived while this read was in flight but the loop exited
+      // before consuming it (e.g. an error broke out of the loop), the pending
+      // bytes would otherwise sit unread until the next write. Re-arm once so
+      // they're picked up — guarded by files.has so a disposed watcher stays put.
+      if (entry.pending && this.files.has(filePath)) {
+        entry.pending = false;
+        void this.readNewLines(filePath);
+      }
     }
   }
 }
