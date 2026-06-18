@@ -1065,12 +1065,19 @@ export class StreamerServer {
     return statCache.size > 0 ? statCache : undefined;
   }
 
-  private async getScanner(): Promise<ConversationScanner> {
+  // skipStaleRescan: when an indexed scanner already exists, return it directly
+  // even if scannerStale is set, leaving the flag untouched so the next
+  // list-level call still rescans. The single-conversation detail path passes
+  // this — its per-file refreshFile (in findConversationByUuid) already
+  // reconciles the one conversation being requested, so paying a full-tree
+  // rescan just because some OTHER file changed is the stall this avoids.
+  private async getScanner(skipStaleRescan = false): Promise<ConversationScanner> {
     if (this.scannerReady) {
       await this.scannerReady;
       // onConversationChanged may have nulled this.scanner while we awaited —
       // if so, fall through and create a fresh one.
       if (this.scanner) {
+        if (skipStaleRescan) return this.scanner;
         // If file events arrived while the scan was running, do one rescan now
         // rather than serving a stale result. The stale flag is cleared first so
         // any events during the rescan trigger another pass on the next call.
@@ -1172,7 +1179,11 @@ export class StreamerServer {
       return null;
     }
 
-    const scanner = await this.getScanner();
+    // Use the existing indexed scanner without honoring the global scannerStale
+    // full-rescan: the per-file refreshFile below reconciles the one
+    // conversation we care about, so a sibling file changing must not stall this
+    // single-conversation request behind a full-tree rescan.
+    const scanner = await this.getScanner(true);
     const fromIndex = await scanner.getConversation(uuid);
     if (fromIndex) {
       // The scanner memoizes both its metadata index and parsed conversations
@@ -1334,9 +1345,12 @@ export class StreamerServer {
       // Only consult the scanner's paged reader when it's already warm. On the
       // cold path `conversation` came from the single-file fast path and holds
       // every message in memory, so slice it locally — calling getScanner()
-      // here would trigger the full scan the fast path exists to avoid.
+      // here would trigger the full scan the fast path exists to avoid. Pass
+      // skipStaleRescan: this is the same single-conversation detail path, whose
+      // refreshFile already reconciled the one file we page here, so a sibling
+      // file's stale flag must not stall this read behind a full-tree rescan.
       const pagedScanner = this.scannerReady
-        ? ((await this.getScanner()) as unknown as {
+        ? ((await this.getScanner(true)) as unknown as {
             getConversationPage?: (
               id: string,
               options: { beforeIndex: number; limit: number },
