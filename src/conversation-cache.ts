@@ -117,7 +117,7 @@ interface JsonlLine {
   };
 }
 
-// Last three path segments — mirrors @threadbase/scanner's
+// Last three path segments — mirrors @threadbase-sh/scanner's
 // `getShortProjectName`. Inlined here because the scanner does not export it.
 function shortProjectName(fullPath: string): string {
   const parts = fullPath.split(/[/\\]/).filter(Boolean);

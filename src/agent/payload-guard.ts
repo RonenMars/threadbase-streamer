@@ -4,7 +4,7 @@
 // Temporal's 2 MB hard limit) and emit trajectory WARN logs as a session
 // approaches the wall.
 
-import type { UserInputSignal } from "@threadbase/agent-types";
+import type { UserInputSignal } from "@threadbase-sh/agent-types";
 
 export interface PayloadMeasurement {
   bytes: number;

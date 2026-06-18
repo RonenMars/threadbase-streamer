@@ -2,7 +2,7 @@
 
 Date: 2026-05-24
 Author: research-only pass (no design, no code changes)
-Scope: facts and decision space for converting `@threadbase/streamer` from its current "build → tarball → release dir + symlink → launchd/systemd/Task Scheduler" install model to an `npm install -g threadbase-streamer` + `threadbase-streamer setup` model.
+Scope: facts and decision space for converting `@threadbase-sh/streamer` from its current "build → tarball → release dir + symlink → launchd/systemd/Task Scheduler" install model to an `npm install -g threadbase-streamer` + `threadbase-streamer setup` model.
 
 This is a research document. It does not pick an approach. Where uncertainty exists, it is called out explicitly. File paths are absolute; line numbers reference `main` at HEAD.
 

@@ -1,4 +1,4 @@
-import type { Stage } from "@threadbase/agent-types";
+import type { Stage } from "@threadbase-sh/agent-types";
 import type { ProgressDedupeLRU } from "./agent/dedupe";
 
 // ─── Session Lifecycle ─────────────────────────────────────────────

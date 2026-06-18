@@ -3,7 +3,7 @@
 // Pure function for multi-agent user-input. Server.ts wraps this in HTTP
 // plumbing. Implements spec §3.2 + §5 (payload guard) + §6 (lock check).
 
-import type { UserInputSignal } from "@threadbase/agent-types";
+import type { UserInputSignal } from "@threadbase-sh/agent-types";
 import { nanoid } from "nanoid";
 import type { ConversationCache } from "../conversation-cache";
 import { getLogger } from "../logger";

@@ -6,7 +6,7 @@ Known deploy/runtime issues and their fixes: [docs/troubleshooting.md](docs/trou
 
 ## Project
 
-`@threadbase/streamer` — PTY session management, WebSocket streaming, and REST API server for Claude Code conversations. TypeScript library + CLI that manages live Claude sessions via `node-pty`, broadcasts terminal output over WebSocket, and serves a REST API.
+`@threadbase-sh/streamer` — PTY session management, WebSocket streaming, and REST API server for Claude Code conversations. TypeScript library + CLI that manages live Claude sessions via `node-pty`, broadcasts terminal output over WebSocket, and serves a REST API.
 
 ## Commands
 
@@ -86,10 +86,10 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 
 ## Dependencies
 
-- `@threadbase/scanner` + `@threadbase/agent-types` — **git submodules** at `vendor/scanner` / `vendor/agent-types`, wired as `file:` deps. Not on npm; built from source by `postinstall`, then bundled inline into `dist/` by tsup (runtime doesn't need `vendor/`). Consequences:
-  - First checkout must run `git submodule update --init` **before** `npm install` (use HTTPS; SSH fails on Windows without keys).
-  - CI checkouts need `submodules: recursive` (already set in `ci.yml` + `release.yml`).
-  - Bump with a `chore: bump vendor/<name> (<reason>)` commit that moves the submodule pointer.
+- `@threadbase-sh/scanner` + `@threadbase-sh/agent-types` — published **public npm packages**, wired as normal semver deps. tsup bundles them inline into `dist/` (runtime doesn't need them at install time). Consequences:
+  - A fresh checkout just runs `npm install` — no `git submodule update` needed.
+  - CI checkouts use `submodules: false` (scanner/agent-types come from npm; only menubar remains a submodule and isn't needed in build/test).
+  - Bump by raising the version range here and publishing a new version from `tb-scanner` / `threadbase-agent-types` (each repo publishes via its own semantic-release release workflow).
 - `node-pty` — native PTY management (external, not bundled by tsup; dynamically imported for graceful failure)
 - `ws`, `better-sqlite3`, `chokidar`, `zod`, `date-fns`, `commander`
 

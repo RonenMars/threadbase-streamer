@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/remote-access/cloudflare.sh
 #
-# Cloudflare quick-tunnel onboarding for @threadbase/streamer.
+# Cloudflare quick-tunnel onboarding for @threadbase-sh/streamer.
 #
 # 1. Verify cloudflared is installed; if not, print platform-correct install
 #    hint and exit non-zero.

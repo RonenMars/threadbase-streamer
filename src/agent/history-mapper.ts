@@ -9,7 +9,7 @@
 // - Messages with empty content after stripping: drop.
 // - Unknown roles: drop with WARN.
 
-import type { ConversationTurn } from "@threadbase/agent-types";
+import type { ConversationTurn } from "@threadbase-sh/agent-types";
 import type { CachedTail } from "../conversation-cache";
 import { getLogger } from "../logger";
 
