@@ -79,6 +79,12 @@ Temp git repo per case, run the script as a child process with a clean env:
 
 ## Outcome
 
-`NPM_TOKEN` no longer referenced anywhere in `release.yml`. Once OIDC trusted
-publishing (PR #109) is configured on npmjs.com, the secret can be deleted and the
-rotation reminders dropped.
+`NPM_TOKEN` is no longer referenced anywhere in `release.yml`:
+
+- **Precheck** uses `scripts/release-precheck.mjs` — no npm auth.
+- **Release** publishes via OIDC Trusted Publishing (`id-token: write`, no
+  `NODE_AUTH_TOKEN`) — folded in from the same PR (#109).
+
+Once the trusted publisher is configured on npmjs.com, the `NPM_TOKEN` secret can
+be deleted and the rotation reminders dropped — there is no token anywhere in the
+release pipeline.
