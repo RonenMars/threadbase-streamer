@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { Command } from "commander";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearSupervisorLogs,
