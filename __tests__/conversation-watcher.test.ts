@@ -37,12 +37,19 @@ vi.mock("fs", () => ({
 
 // `readGate` lets a test hold a read open to exercise the concurrency guard.
 let readGate: Promise<void> | null = null;
+// `failNextRead` makes the next fh.read() throw once, to exercise the
+// error-path recovery (a change that arrived mid-read must still be picked up).
+let failNextRead = false;
 
 vi.mock("fs/promises", () => ({
   stat: async () => ({ size: Buffer.byteLength(fileBytes, "utf-8") }),
   open: async () => ({
     read: async (buf: Buffer, offset: number, length: number, position: number) => {
       if (readGate) await readGate;
+      if (failNextRead) {
+        failNextRead = false;
+        throw new Error("simulated read failure");
+      }
       const slice = Buffer.from(fileBytes, "utf-8").subarray(position, position + length);
       slice.copy(buf, offset);
       return { bytesRead: slice.length, buffer: buf };
@@ -91,6 +98,7 @@ describe("ConversationWatcher — file tailing", () => {
     fileBytes = "";
     initialSize.value = 0;
     readGate = null;
+    failNextRead = false;
   });
 
   it("onNewLines fires once with all lines from a single change", async () => {
@@ -172,6 +180,42 @@ describe("ConversationWatcher — file tailing", () => {
     // Concatenate every line delivered across all calls — no duplicates.
     const delivered = onNewLines.mock.calls.flatMap((c) => c[1] as string[]);
     expect(delivered).toEqual(["first", "second"]);
+    w.dispose();
+  });
+
+  it("re-reads after a read error if a change arrived mid-read (no stranded pending)", async () => {
+    const onNewLines = vi.fn();
+    const onError = vi.fn();
+    const w = new ConversationWatcher({ onNewLines, onError });
+    w.watch("/proj/e.jsonl");
+
+    // Hold the first read open so a second change can land while it's in flight.
+    let release!: () => void;
+    readGate = new Promise<void>((r) => {
+      release = r;
+    });
+
+    fileBytes = "first\n";
+    failNextRead = true; // the in-flight read will throw when released
+    lastEmitter().emit("change");
+    await flush();
+
+    // A change arrives during the (gated, doomed-to-fail) read → sets pending.
+    fileBytes = "first\nsecond\n";
+    lastEmitter().emit("change");
+    await flush();
+
+    // Release: the first read throws → onError fires. The pending change must
+    // not be stranded — the watcher re-arms and reads the appended bytes.
+    readGate = null;
+    release();
+    await flush();
+    await flush();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    // Without re-arming, the "second" line would never be delivered.
+    const delivered = onNewLines.mock.calls.flatMap((c) => c[1] as string[]);
+    expect(delivered).toContain("second");
     w.dispose();
   });
 });
