@@ -78,11 +78,42 @@ describe("prod commands", () => {
     expect(readFileSync(stderrLog, "utf8")).toBe("");
   });
 
-  it("prod start: errors when agent not loaded", async () => {
+  it("prod start: bootstraps the agent when it was unloaded by stop", async () => {
+    // `prod stop` fully unloads the agent; `start` must re-load it, not error.
+    mockSup.isAgentLoaded.mockReturnValue(false);
+    const result = await runProdStart();
+    expect(result.ok).toBe(true);
+    expect(mockSup.bootstrapAgent).toHaveBeenCalled();
+    expect(mockSup.kickstartAgent).not.toHaveBeenCalled();
+  });
+
+  it("prod start: errors when the agent is not loaded", async () => {
     mockSup.isAgentLoaded.mockReturnValue(false);
     const result = await runProdStart();
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/(scripts\/deploy\.sh|scripts\\deploy\.ps1)/);
+  });
+
+  it("prod start: errors when the agent is not installed (bootstrap throws)", async () => {
+    mockSup.isAgentLoaded.mockReturnValue(false);
+    mockSup.bootstrapAgent.mockImplementationOnce(() => {
+      throw new Error("no such plist");
+    });
+    const result = await runProdStart();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/(scripts\/deploy\.sh|scripts\\deploy\.ps1)/);
+  });
+
+  it("prod stop then start: round-trips back to a running agent", async () => {
+    // stop unloads…
+    mockSup.isAgentLoaded.mockReturnValue(true);
+    await runProdStop();
+    expect(mockSup.bootoutAgent).toHaveBeenCalled();
+    // …and start brings it back from the unloaded state.
+    mockSup.isAgentLoaded.mockReturnValue(false);
+    const result = await runProdStart();
+    expect(result.ok).toBe(true);
+    expect(mockSup.bootstrapAgent).toHaveBeenCalled();
   });
 
   it("prod start: clears marker and kickstarts when agent loaded", async () => {

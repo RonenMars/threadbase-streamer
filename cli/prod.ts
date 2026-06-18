@@ -32,15 +32,29 @@ export function clearSupervisorLogs(): void {
 }
 
 export async function runProdStart(): Promise<CommandResult> {
-  if (!getSupervisor().isAgentLoaded()) {
-    const message =
-      process.platform === "darwin"
-        ? "launchd agent com.ronen.threadbase is not loaded. Run 'scripts/deploy.sh setup' to install it."
-        : `task '${TASK_NAME}' is not registered. Run 'scripts\\deploy.ps1 setup' to install it.`;
-    return { ok: false, message };
-  }
+  const sup = getSupervisor();
   clearMarker();
-  getSupervisor().kickstartAgent();
+  // `prod stop` fully unloads the agent (launchctl bootout / Task Scheduler
+  // disable), so `start` must be able to re-load it — not just kickstart an
+  // already-loaded one. When the agent isn't loaded, bootstrap it from its
+  // on-disk definition (mirrors `prod restart`); when it is loaded but merely
+  // suspended via a marker, a kickstart is enough.
+  if (sup.isAgentLoaded()) {
+    sup.kickstartAgent();
+  } else {
+    const specPath = process.platform === "darwin" ? darwinPlistPath() : "";
+    try {
+      sup.bootstrapAgent(specPath);
+    } catch {
+      // Agent was never installed (no plist / unregistered task) — bootstrap
+      // can't conjure a service definition. Point the user at the installer.
+      const message =
+        process.platform === "darwin"
+          ? "launchd agent com.ronen.threadbase is not loaded and could not be bootstrapped. Run 'scripts/deploy.sh setup' to install it."
+          : `task '${TASK_NAME}' is not registered. Run 'scripts\\deploy.ps1 setup' to install it.`;
+      return { ok: false, message };
+    }
+  }
   const restoredMsg =
     process.platform === "darwin"
       ? "prod streamer restored — launchd is starting it now."
