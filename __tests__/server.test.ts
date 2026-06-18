@@ -1007,5 +1007,128 @@ describe("StreamerServer", () => {
       expect(res.status).toBe(200);
       expect(scanSpy.mock.calls.length).toBe(0); // no scan triggered by the request
     });
+
+    it("does not full-rescan the detail path while scannerStale is set (Bug 2 stall)", async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-stale-profile-"));
+      const projDir = join(profileDir, "projects", "-proj-stale");
+      mkdirSync(projDir, { recursive: true });
+      const jsonlPath = join(projDir, `${convId}.jsonl`);
+      const line = (uuid: string, role: string, ts: string, text: string) =>
+        `${JSON.stringify({
+          type: role,
+          uuid,
+          timestamp: ts,
+          sessionId: convId,
+          cwd: profileDir,
+          message: { role, content: [{ type: "text", text }] },
+        })}\n`;
+      writeFileSync(
+        jsonlPath,
+        line("s-u1", "user", "2026-06-10T08:00:00.000Z", "hi") +
+          line("s-a1", "assistant", "2026-06-10T08:00:05.000Z", "hello"),
+      );
+
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-stale-cache-")),
+        scanProfiles: [
+          { id: "stale", label: "Stale", configDir: profileDir, enabled: true, emoji: "⏳" },
+        ],
+      });
+      // awaitReady → warm-up scan finishes and is adopted before we continue.
+      await reuseServer.listen(reusePort, { awaitReady: true });
+
+      // Spy AFTER warm-up so the count is scoped to the request below — a full
+      // rescan on the detail path while stale would show up here as scan() calls.
+      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan");
+
+      // Simulate the onConversationChanged stale-flip that lands between requests
+      // under active-session churn: a sibling file changed, so the global scanner
+      // is marked stale. Pre-fix, the detail request would honor this and pay a
+      // full-tree rescan (the 14–78s stall). Post-fix it must reuse the indexed
+      // scanner and never call scan().
+      (reuseServer as unknown as { scannerStale: boolean }).scannerStale = true;
+
+      const res = await fetch(
+        `http://localhost:${reusePort}/api/conversations/${convId}?msg_limit=80`,
+        { headers: auth },
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { messages: Array<{ text: string }> };
+
+      // Success criterion: no full-tree scan() on the detail path while stale.
+      expect(scanSpy.mock.calls.length).toBe(0);
+      // The request still serves correct content (not an empty/error body).
+      expect(body.messages.length).toBe(2);
+      // The global stale flag stays set so the next list-level call still rescans.
+      expect((reuseServer as unknown as { scannerStale: boolean }).scannerStale).toBe(true);
+    });
+
+    it("reconciles single-file drift on the stale detail path via refreshFile, not scan()", async () => {
+      // Deterministic unit-level proof that the detail path reconciles the one
+      // conversation it serves with refreshFile (cheap, single-file) instead of
+      // a full-tree scan — even when scannerStale is set. Driving
+      // findConversationByUuid directly with a mocked stale snapshot avoids the
+      // chokidar watcher racing ahead and refreshing the file first.
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-drift-profile-"));
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-drift-cache-")),
+        scanProfiles: [
+          { id: "drift", label: "Drift", configDir: profileDir, enabled: true, emoji: "🌊" },
+        ],
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+
+      const srv = reuseServer as unknown as {
+        scannerStale: boolean;
+        scannerReady: Promise<unknown> | null;
+        scanner: unknown;
+        isConversationSnapshotStale: (conv: unknown) => boolean;
+        findConversationByUuid: (uuid: string) => Promise<unknown>;
+      };
+
+      const staleSnapshot = {
+        id: convId,
+        sessionId: convId,
+        filePath: "/tmp/drift.jsonl",
+        timestamp: "2026-06-10T08:00:05.000Z",
+        messageCount: 2,
+        messages: [],
+      };
+      const refreshedSnapshot = { ...staleSnapshot, messageCount: 3, messages: [] };
+
+      // Force the indexed scanner to return the stale snapshot, mark it stale on
+      // disk, and capture the refresh. scan() must never be called.
+      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan");
+      const getConvSpy = vi
+        .spyOn(ConversationScanner.prototype, "getConversation")
+        .mockResolvedValueOnce(staleSnapshot as never)
+        .mockResolvedValueOnce(refreshedSnapshot as never);
+      const refreshSpy = vi
+        .spyOn(ConversationScanner.prototype, "refreshFile")
+        .mockResolvedValue({ id: convId, messageCount: 3 } as never);
+      vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+
+      srv.scannerStale = true;
+      const result = (await srv.findConversationByUuid(convId)) as { messageCount: number };
+
+      expect(scanSpy.mock.calls.length).toBe(0);
+      expect(refreshSpy).toHaveBeenCalledWith("/tmp/drift.jsonl");
+      expect(getConvSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(result.messageCount).toBe(3);
+      // Stale flag untouched: a subsequent list-level getScanner() still rescans.
+      expect(srv.scannerStale).toBe(true);
+    });
   });
 });
