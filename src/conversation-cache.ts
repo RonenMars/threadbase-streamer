@@ -179,6 +179,7 @@ export class ConversationCache {
     getById: Database.Statement;
     getFullById: Database.Statement;
     updateMeta: Database.Statement;
+    updateMetaBatch: Database.Statement;
     insertSkeleton: Database.Statement;
     backfillSkeletonProject: Database.Statement;
     upsertFull: Database.Statement;
@@ -234,6 +235,11 @@ export class ConversationCache {
       getFullById: db.prepare("SELECT * FROM conversation_meta WHERE id = ?"),
       updateMeta: db.prepare(
         "UPDATE conversation_meta SET message_count = message_count + 1, last_activity = ?, last_message = ?, updated_at = ? WHERE id = ?",
+      ),
+      // Batch equivalent of updateMeta: bumps message_count by N in one write
+      // (used by updateFromLines so a burst of appended lines is one UPDATE).
+      updateMetaBatch: db.prepare(
+        "UPDATE conversation_meta SET message_count = message_count + @inc, last_activity = @last_activity, last_message = @last_message, updated_at = @updated_at WHERE id = @id",
       ),
       insertSkeleton: db.prepare(
         "INSERT OR IGNORE INTO conversation_meta (id, file_path, message_count, updated_at) VALUES (?, ?, 1, ?)",
@@ -466,6 +472,131 @@ export class ConversationCache {
     if (msgs.length > this.tailSize) msgs.splice(0, msgs.length - this.tailSize);
 
     this.stmts.upsertTail.run(convId, JSON.stringify(msgs), msgs.length, seq);
+  }
+
+  /**
+   * Batched form of updateFromLine: applies a burst of newly-appended lines
+   * (one chokidar read) in a single transaction with one message_count bump,
+   * one meta write, and one tail read/write — instead of 2-4 synchronous
+   * writes per line. Semantics are identical to replaying each line through
+   * updateFromLine in order: the agent filter short-circuits the whole batch,
+   * project context is backfilled last-wins, message_count increases by the
+   * number of surviving message lines, and last_activity/last_message reflect
+   * the final message line.
+   */
+  updateFromLines(filePath: string, rawLines: string[]): void {
+    // Classify all lines first (outside the transaction). A single watched
+    // file maps to one conversation, so we accumulate into scalars.
+    let sawProjectContext = false;
+    let backfillProjectPath: string | null = null;
+    let backfillProjectName: string | null = null;
+    let backfillTitle: string | null = null;
+    let msgCount = 0;
+    let lastActivityMs: number | null = null;
+    let lastMessage: string | null = null;
+    const newTail: CachedTailMessage[] = [];
+
+    for (const rawLine of rawLines) {
+      let line: JsonlLine;
+      try {
+        line = JSON.parse(rawLine);
+      } catch {
+        continue;
+      }
+
+      // The first agent line nukes the file and aborts the whole batch —
+      // matches updateFromLine's per-line return.
+      if (this.filterAgentConversations && isAgentLine(line, this.agentEntrypoints)) {
+        this.deleteByFilePath(filePath);
+        this.onAgentFileDetected?.(filePath);
+        return;
+      }
+
+      const role = line.role ?? line.type;
+      const isMessage = role === "user" || role === "assistant";
+
+      // Skip lines that carry neither a message nor project context.
+      if (!isMessage && !line.cwd && !line.slug) continue;
+
+      if (line.cwd || line.slug) {
+        sawProjectContext = true;
+        // First-wins per column, mirroring updateFromLine's per-line replay:
+        // backfillSkeletonProject COALESCEs each column independently, so the
+        // first non-null value seen for a column sticks and later lines can't
+        // override it. Accumulating last-wins here would diverge from per-line
+        // replay when a conversation's cwd/slug changes mid-batch.
+        const lineProjectPath = line.cwd ?? null;
+        const lineProjectName = lineProjectPath ? shortProjectName(lineProjectPath) : null;
+        const lineTitle = line.slug ?? lineProjectName ?? null;
+        backfillProjectPath ??= lineProjectPath;
+        backfillProjectName ??= lineProjectName;
+        backfillTitle ??= lineTitle;
+      }
+
+      if (!isMessage) continue;
+
+      const timestamp = line.timestamp ?? new Date().toISOString();
+      const activityMs = new Date(timestamp).getTime();
+      if (Number.isNaN(activityMs)) continue;
+
+      const contentBlocks = normalizeContent(line.message?.content ?? line.content);
+      const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
+      msgCount += 1;
+      lastActivityMs = activityMs;
+      lastMessage = JSON.stringify({ role, timestamp, text });
+      newTail.push({ role, timestamp, text, content: contentBlocks });
+    }
+
+    // Nothing recordable in this batch.
+    if (!sawProjectContext && msgCount === 0) return;
+
+    this.ensureFileIndex();
+
+    let convId = this.fileIndex.get(filePath);
+    if (!convId) {
+      const pseudoId =
+        filePath
+          .split(/[/\\]/)
+          .pop()
+          ?.replace(/\.jsonl$/, "") ?? filePath;
+      this.stmts.insertSkeleton.run(pseudoId, filePath, 0);
+      this.fileIndex.set(filePath, pseudoId);
+      convId = pseudoId;
+    }
+    const id = convId;
+
+    const apply = this.db.transaction(() => {
+      if (sawProjectContext) {
+        this.stmts.backfillSkeletonProject.run({
+          id,
+          project_path: backfillProjectPath,
+          project_name: backfillProjectName,
+          title: backfillTitle,
+        });
+      }
+
+      if (msgCount === 0) return;
+
+      const seq = ++this.tailSeq;
+      const result = this.stmts.updateMetaBatch.run({
+        inc: msgCount,
+        last_activity: lastActivityMs,
+        last_message: lastMessage,
+        updated_at: seq,
+        id,
+      });
+      if (result.changes === 0) return;
+
+      const tailRow = this.stmts.getTail.get(id) as TailRow | undefined;
+      const msgs: CachedTailMessage[] = tailRow
+        ? (JSON.parse(tailRow.messages_json) as CachedTailMessage[])
+        : [];
+      msgs.push(...newTail);
+      if (msgs.length > this.tailSize) msgs.splice(0, msgs.length - this.tailSize);
+
+      this.stmts.upsertTail.run(id, JSON.stringify(msgs), msgs.length, seq);
+    });
+    apply();
   }
 
   // Returns the IDs of rows actually upserted (i.e. excluding any agent JSONLs

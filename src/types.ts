@@ -86,6 +86,9 @@ export type WSMessage =
     }
   | { type: "session_list"; sessions: SessionResponse[] }
   | { type: "conversation_event"; sessionId: string; line: string }
+  // Additive batched variant: one message carries all lines from a single
+  // watcher read. Old clients ignore it and rely on conversation_event.
+  | { type: "conversation_events"; sessionId: string; lines: string[] }
   | { type: "ping"; ts: number }
   | { type: "terminal_replay"; sessionId: string; lines: string[] }
   | { type: "session_ready"; session: SessionResponse }
@@ -195,6 +198,7 @@ export interface ServerConfig {
   ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes)
   cacheDir?: string;
   tailSize?: number;
+  directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)
 }
 
 // ─── PTY Manager ───────────────────────────────────────────────────

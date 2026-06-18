@@ -1,9 +1,17 @@
 import chokidar, { type FSWatcher } from "chokidar";
-import { closeSync, openSync, readSync, statSync } from "fs";
+import { statSync } from "fs";
+import { open, stat } from "fs/promises";
 
 export interface ConversationWatcherEvents {
   /** Fires once per new newline-terminated line appended to a watched file. */
   onNewLine?: (filePath: string, line: string) => void;
+  /**
+   * Fires once per chokidar read with ALL new lines from that read, batched.
+   * When set, it REPLACES the per-line onNewLine dispatch for that file —
+   * callers pick one. Lets a burst of appended lines collapse into a single
+   * downstream cache write + WebSocket broadcast.
+   */
+  onNewLines?: (filePath: string, lines: string[]) => void;
   /** Fires when chokidar reports an add/change/unlink at the directory level. */
   onConversationChanged?: (filePath: string) => void | Promise<void>;
   /** Fires when a tailed file is deleted (per-file watcher unlink event). */
@@ -15,6 +23,11 @@ export interface ConversationWatcherEvents {
 interface WatchedFile {
   watcher: FSWatcher;
   offset: number;
+  // Async-read re-entrancy guard: `reading` is set while a readNewLines is in
+  // flight; `pending` records that a change arrived during that read so the
+  // in-flight loop re-runs once more after it finishes.
+  reading: boolean;
+  pending: boolean;
 }
 
 /**
@@ -32,12 +45,14 @@ export class ConversationWatcher {
   private files = new Map<string, WatchedFile>();
   private directories = new Map<string, FSWatcher>();
   private onNewLine: ConversationWatcherEvents["onNewLine"];
+  private onNewLines: ConversationWatcherEvents["onNewLines"];
   private onConversationChanged: ConversationWatcherEvents["onConversationChanged"];
   private onFileDeleted: ConversationWatcherEvents["onFileDeleted"];
   private onError: ConversationWatcherEvents["onError"];
 
   constructor(events: ConversationWatcherEvents = {}) {
     this.onNewLine = events.onNewLine;
+    this.onNewLines = events.onNewLines;
     this.onConversationChanged = events.onConversationChanged;
     this.onFileDeleted = events.onFileDeleted;
     this.onError = events.onError;
@@ -58,15 +73,19 @@ export class ConversationWatcher {
       awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 25 },
     });
 
-    watcher.on("change", () => this.readNewLines(filePath));
-    watcher.on("add", () => this.readNewLines(filePath));
+    watcher.on("change", () => {
+      void this.readNewLines(filePath);
+    });
+    watcher.on("add", () => {
+      void this.readNewLines(filePath);
+    });
     watcher.on("unlink", () => this.onFileDeleted?.(filePath));
     watcher.on("error", (err) => {
       const error = err instanceof Error ? err : new Error(String(err));
       this.onError?.(filePath, error);
     });
 
-    this.files.set(filePath, { watcher, offset });
+    this.files.set(filePath, { watcher, offset, reading: false, pending: false });
   }
 
   unwatch(filePath: string): void {
@@ -114,27 +133,69 @@ export class ConversationWatcher {
     for (const [dir] of this.directories) this.unwatchDirectory(dir);
   }
 
-  private readNewLines(filePath: string): void {
+  private async readNewLines(filePath: string): Promise<void> {
     const entry = this.files.get(filePath);
     if (!entry) return;
 
+    // Coalesce: if a read is already running, flag that another change arrived;
+    // the in-flight loop will pick up the freshly-appended bytes before exiting.
+    if (entry.reading) {
+      entry.pending = true;
+      return;
+    }
+    entry.reading = true;
+
     try {
-      const stat = statSync(filePath);
-      if (stat.size <= entry.offset) return;
+      // Loop so bytes appended during a read (or while dispatching) are caught
+      // without re-entering — preserves offset correctness under async I/O.
+      for (;;) {
+        const st = await stat(filePath);
+        // size <= offset also covers truncation/rotation, exactly as before.
+        if (st.size <= entry.offset) break;
 
-      const bytesToRead = stat.size - entry.offset;
-      const buf = Buffer.alloc(bytesToRead);
-      const fd = openSync(filePath, "r");
-      readSync(fd, buf, 0, bytesToRead, entry.offset);
-      closeSync(fd);
-      entry.offset = stat.size;
+        const readFrom = entry.offset;
+        const bytesToRead = st.size - readFrom;
+        const buf = Buffer.alloc(bytesToRead);
+        const fh = await open(filePath, "r");
+        try {
+          await fh.read(buf, 0, bytesToRead, readFrom);
+        } finally {
+          await fh.close();
+        }
+        // Advance by exactly what we read (NOT a re-stat'd size): the file may
+        // have grown again mid-read; the next loop iteration's stat catches it.
+        // This reproduces the old `offset = stat.size` semantics, including the
+        // drop of a trailing partial line (no \n yet) via filter(Boolean).
+        entry.offset = readFrom + bytesToRead;
 
-      const lines = buf.toString("utf-8").split("\n").filter(Boolean);
-      for (const line of lines) {
-        this.onNewLine?.(filePath, line);
+        // The watcher may have been closed while we awaited; don't emit then.
+        if (!this.files.has(filePath)) return;
+
+        const lines = buf.toString("utf-8").split("\n").filter(Boolean);
+        if (this.onNewLines) {
+          this.onNewLines(filePath, lines);
+        } else {
+          for (const line of lines) this.onNewLine?.(filePath, line);
+        }
+
+        if (entry.pending) {
+          entry.pending = false;
+          continue;
+        }
+        break;
       }
     } catch (err) {
       this.onError?.(filePath, err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      entry.reading = false;
+      // If a change arrived while this read was in flight but the loop exited
+      // before consuming it (e.g. an error broke out of the loop), the pending
+      // bytes would otherwise sit unread until the next write. Re-arm once so
+      // they're picked up — guarded by files.has so a disposed watcher stays put.
+      if (entry.pending && this.files.has(filePath)) {
+        entry.pending = false;
+        void this.readNewLines(filePath);
+      }
     }
   }
 }

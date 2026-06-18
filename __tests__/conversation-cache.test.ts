@@ -730,3 +730,178 @@ describe("getFileStats()", () => {
     expect(stats.size).toBe(1);
   });
 });
+
+describe("updateFromLines() — batched write", () => {
+  const msgLine = (i: number, ts: string) =>
+    JSON.stringify({
+      role: i % 2 === 0 ? "user" : "assistant",
+      timestamp: ts,
+      content: [{ type: "text", text: `msg ${i}` }],
+    });
+
+  it("increments message_count by the number of message lines", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      msgLine(0, "2024-01-02T00:00:00.000Z"),
+      msgLine(1, "2024-01-02T00:01:00.000Z"),
+      msgLine(2, "2024-01-02T00:02:00.000Z"),
+    ]);
+    const list = cache.listConversations({ limit: 10, offset: 0 });
+    expect(list.conversations[0].messageCount).toBe(2 + 3);
+  });
+
+  it("writes the tail once, trimmed to tailSize, in order", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(
+      BASE_META.filePath,
+      Array.from({ length: 5 }, (_, i) => msgLine(i, `2024-01-0${i + 2}T00:00:00.000Z`)),
+    );
+    const tail = cache.getConversationTail("abc-123");
+    expect(tail?.messages).toHaveLength(3);
+    expect(tail?.messages[0].text).toContain("msg 2");
+    expect(tail?.messages[2].text).toContain("msg 4");
+  });
+
+  it("sets last_activity to the final message line", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      msgLine(0, "2024-03-01T00:00:00.000Z"),
+      msgLine(1, "2024-06-15T08:30:00.000Z"),
+    ]);
+    const list = cache.listConversations({ limit: 10, offset: 0 });
+    expect(list.conversations[0].lastActivity).toBe("2024-06-15T08:30:00.000Z");
+  });
+
+  it("skips non-JSON and timestamp-less garbage lines but counts valid ones", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      "not json",
+      msgLine(0, "2024-01-02T00:00:00.000Z"),
+      JSON.stringify({ role: "user", timestamp: "nonsense-date", content: [] }),
+      msgLine(1, "2024-01-02T00:01:00.000Z"),
+    ]);
+    const list = cache.listConversations({ limit: 10, offset: 0 });
+    expect(list.conversations[0].messageCount).toBe(2 + 2);
+  });
+
+  it("backfills project context from a cwd-only line in the batch", () => {
+    const file = "/home/.claude/projects/-proj-batch/batch-skel.jsonl";
+    cache.updateFromLines(file, [
+      JSON.stringify({ cwd: "/Users/me/dev/batch-project" }),
+      msgLine(0, "2024-01-02T00:00:00.000Z"),
+    ]);
+    const row = cache
+      .listConversations({ limit: 10, offset: 0 })
+      .conversations.find((c) => c.id === "batch-skel");
+    expect(row?.projectPath).toBe("/Users/me/dev/batch-project");
+    expect(row?.projectName).toBe("me/dev/batch-project");
+  });
+
+  it("agent filter short-circuits the whole batch and deletes the file", () => {
+    const agentCache = ConversationCache.open(join(dbDir, "agent.db"), 3, undefined, {
+      filterAgentConversations: true,
+    });
+    try {
+      const file = "/home/.claude/projects/-proj-agent/agent-skel.jsonl";
+      agentCache.updateFromLines(file, [
+        JSON.stringify({
+          entrypoint: "sdk-cli",
+          role: "user",
+          timestamp: "2024-01-02T00:00:00.000Z",
+        }),
+        msgLine(1, "2024-01-02T00:01:00.000Z"),
+      ]);
+      expect(agentCache.hasConversation("agent-skel")).toBe(false);
+    } finally {
+      agentCache.close();
+    }
+  });
+
+  it("parity: replaying lines via updateFromLine equals one updateFromLines (existing row)", () => {
+    const lines = Array.from({ length: 4 }, (_, i) =>
+      msgLine(i, `2024-05-0${i + 1}T00:00:00.000Z`),
+    );
+
+    const a = ConversationCache.open(join(dbDir, "parity-a.db"), 3);
+    const b = ConversationCache.open(join(dbDir, "parity-b.db"), 3);
+    try {
+      a.upsertFromScannerMeta([BASE_META as any]);
+      b.upsertFromScannerMeta([BASE_META as any]);
+      for (const l of lines) a.updateFromLine(BASE_META.filePath, l);
+      b.updateFromLines(BASE_META.filePath, lines);
+
+      const la = a.listConversations({ limit: 10, offset: 0 }).conversations[0];
+      const lb = b.listConversations({ limit: 10, offset: 0 }).conversations[0];
+      expect(lb.messageCount).toBe(la.messageCount);
+      expect(lb.lastActivity).toBe(la.lastActivity);
+      expect(a.getConversationTail("abc-123")?.messages.map((m) => m.text)).toEqual(
+        b.getConversationTail("abc-123")?.messages.map((m) => m.text),
+      );
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  it("parity: fresh-file (skeleton) path matches per-line replay", () => {
+    const file = "/home/.claude/projects/-proj-fresh/fresh-skel.jsonl";
+    const lines = Array.from({ length: 3 }, (_, i) =>
+      msgLine(i, `2024-07-0${i + 1}T00:00:00.000Z`),
+    );
+
+    const a = ConversationCache.open(join(dbDir, "fresh-a.db"), 3);
+    const b = ConversationCache.open(join(dbDir, "fresh-b.db"), 3);
+    try {
+      for (const l of lines) a.updateFromLine(file, l);
+      b.updateFromLines(file, lines);
+      const rowA = a
+        .listConversations({ limit: 10, offset: 0 })
+        .conversations.find((c) => c.id === "fresh-skel");
+      const rowB = b
+        .listConversations({ limit: 10, offset: 0 })
+        .conversations.find((c) => c.id === "fresh-skel");
+      expect(rowB?.messageCount).toBe(rowA?.messageCount);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  it("parity: multiple interleaved cwd/slug context lines resolve first-wins like per-line replay", () => {
+    // backfillSkeletonProject COALESCEs each column, so per-line replay keeps the
+    // FIRST non-null value seen for a column; later context lines can't override
+    // it. The batch path applies project context once at the end, so it must also
+    // accumulate first-wins. This exercises >1 context line + slug — the spot most
+    // likely to diverge — and asserts both paths land on identical project metadata.
+    const file = "/home/.claude/projects/-proj-ctx/ctx-skel.jsonl";
+    const lines = [
+      JSON.stringify({ cwd: "/Users/me/dev/first" }),
+      msgLine(0, "2024-08-01T00:00:00.000Z"),
+      JSON.stringify({ slug: "renamed-thread", cwd: "/Users/me/dev/second" }),
+      msgLine(1, "2024-08-02T00:00:00.000Z"),
+    ];
+
+    const a = ConversationCache.open(join(dbDir, "ctx-a.db"), 3);
+    const b = ConversationCache.open(join(dbDir, "ctx-b.db"), 3);
+    try {
+      for (const l of lines) a.updateFromLine(file, l);
+      b.updateFromLines(file, lines);
+      const rowA = a
+        .listConversations({ limit: 10, offset: 0 })
+        .conversations.find((c) => c.id === "ctx-skel");
+      const rowB = b
+        .listConversations({ limit: 10, offset: 0 })
+        .conversations.find((c) => c.id === "ctx-skel");
+      expect(rowB?.projectPath).toBe(rowA?.projectPath);
+      expect(rowB?.projectName).toBe(rowA?.projectName);
+      expect(rowB?.title).toBe(rowA?.title);
+      expect(rowB?.messageCount).toBe(rowA?.messageCount);
+      expect(b.getConversationTail("ctx-skel")?.messages.map((m) => m.text)).toEqual(
+        a.getConversationTail("ctx-skel")?.messages.map((m) => m.text),
+      );
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+});

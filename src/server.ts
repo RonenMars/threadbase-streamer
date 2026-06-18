@@ -69,6 +69,7 @@ import type {
 } from "./types";
 import { saveUploadFile } from "./uploads";
 import { computeConversationEtag } from "./utils/conversationEtag";
+import { debounce } from "./utils/debounce";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
 import { createScanProgressThrottle } from "./utils/scanProgressThrottle";
 import { WSHub } from "./ws-hub";
@@ -133,6 +134,12 @@ export class StreamerServer {
   } | null = null;
   private cacheDir: string;
   private tailSize: number;
+  private directoryDebounceMs: number;
+  // Trailing-debounced trigger that flags the scanner stale after a quiet
+  // period, collapsing a burst of directory events into one rescan. Assigned
+  // in the constructor body (NOT a field initializer) so directoryDebounceMs
+  // is already set when debounce() captures the wait.
+  private markScannerStaleDebounced!: ReturnType<typeof debounce>;
   private includeAgents: boolean;
   private agentEntrypoints: ReadonlySet<string>;
   private honoApp: Hono<AppEnv>;
@@ -149,6 +156,14 @@ export class StreamerServer {
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
+    this.directoryDebounceMs =
+      parseDirScanDebounceEnv(process.env.THREADBASE_DIR_SCAN_DEBOUNCE_MS) ??
+      config.directoryScanDebounceMs ??
+      1000;
+    this.markScannerStaleDebounced = debounce(() => {
+      if (this.scannerReady) this.scannerStale = true;
+      else this.scanner = null;
+    }, this.directoryDebounceMs);
     this.includeAgents = parseIncludeAgentsEnv(process.env.THREADBASE_INCLUDE_AGENTS);
     this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
 
@@ -180,30 +195,34 @@ export class StreamerServer {
     this.wsHub = new WSHub();
 
     this.fileWatcher = new ConversationWatcher({
-      onNewLine: (filePath, line) => {
-        this.cache?.updateFromLine(filePath, line);
+      onNewLines: (filePath, lines) => {
+        // One transactional cache write for the whole batch instead of per line.
+        this.cache?.updateFromLines(filePath, lines);
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
           if (watchedPath === filePath) {
-            this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+            // Additive batched event (one socket write) for newer clients...
+            this.wsHub.broadcast({ type: "conversation_events", sessionId, lines });
+            // ...plus per-line conversation_event so older mobile clients,
+            // which only know that shape, keep working byte-for-byte.
+            for (const line of lines) {
+              this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+            }
             break;
           }
         }
       },
       onConversationChanged: (filePath) => {
         // A new JSONL appeared (or changed) in a watched project directory.
-        // If a scan is already in-flight, mark it stale so getScanner() does a
-        // single rescan after it completes — nulling scannerReady mid-scan causes
-        // the next getScanner() call to restart the scan from scratch, which then
-        // gets invalidated again by the next file event, creating an infinite loop.
-        if (this.scannerReady) {
-          this.scannerStale = true;
-        } else {
-          this.scanner = null;
-        }
-        // Invalidate only the affected file's cache row, not the entire cache.
-        // Wiping the whole cache on every file event would prevent the warm-up
-        // from ever persisting data (active sessions write constantly).
+        // Invalidate only the affected file's cache row immediately (cheap
+        // single-row delete; wiping the whole cache on every event would
+        // prevent the warm-up from persisting while active sessions write).
         this.cache?.invalidateByFilePath(filePath);
+        // Debounce the global scanner-staleness flip so a burst of directory
+        // events during active sessions collapses into one rescan trigger
+        // after a quiet period. The debounced callback still checks
+        // scannerReady at fire time, preserving the anti-infinite-loop rule
+        // (never null scannerReady mid-scan).
+        this.markScannerStaleDebounced();
         this.log.debug?.(`Scanner invalidated by directory event: ${filePath}`, {
           filePath,
           event: "cache.directory_change",
@@ -724,6 +743,7 @@ export class StreamerServer {
   async close(): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
+    this.markScannerStaleDebounced.cancel();
     this.cache?.close();
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
@@ -2192,6 +2212,14 @@ async function writeHonoResponse(honoRes: Response, res: ServerResponse): Promis
     }
   }
   res.end();
+}
+
+// Parse THREADBASE_DIR_SCAN_DEBOUNCE_MS → a non-negative integer, or undefined
+// when unset/invalid so the caller can fall through to config/default.
+function parseDirScanDebounceEnv(raw: string | undefined): number | undefined {
+  if (raw == null || raw === "") return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isNaN(parsed) || parsed < 0 ? undefined : parsed;
 }
 
 function intParam(url: URL, name: string, defaultValue: number): number {
