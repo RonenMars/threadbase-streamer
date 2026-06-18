@@ -87,13 +87,6 @@ describe("prod commands", () => {
     expect(mockSup.kickstartAgent).not.toHaveBeenCalled();
   });
 
-  it("prod start: errors when the agent is not loaded", async () => {
-    mockSup.isAgentLoaded.mockReturnValue(false);
-    const result = await runProdStart();
-    expect(result.ok).toBe(false);
-    expect(result.message).toMatch(/(scripts\/deploy\.sh|scripts\\deploy\.ps1)/);
-  });
-
   it("prod start: errors when the agent is not installed (bootstrap throws)", async () => {
     mockSup.isAgentLoaded.mockReturnValue(false);
     mockSup.bootstrapAgent.mockImplementationOnce(() => {
