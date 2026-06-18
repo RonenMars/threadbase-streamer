@@ -4,7 +4,21 @@ PTY session management, WebSocket streaming, and REST API server for Claude Code
 
 ## Quick Start
 
-### Install via Homebrew (recommended, macOS + Linux)
+### Install via npm (recommended)
+
+```bash
+npm install -g @threadbase-sh/streamer
+
+# One-time setup:
+tb-streamer set-key <YOUR_API_KEY>
+
+# Start the server:
+tb-streamer serve
+```
+
+This installs the `tb-streamer` (and `threadbase-streamer`) CLI globally. Only `node-pty` compiles on install; everything else ships prebuilt. Optional automatic updates: see [docs/guides/auto-update.md](docs/guides/auto-update.md).
+
+### Install via Homebrew (macOS + Linux)
 
 ```bash
 brew tap RonenMars/threadbase
