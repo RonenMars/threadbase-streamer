@@ -332,20 +332,6 @@ cmd_check_browse_root() {
   ok "browse_root set to: $input"
 }
 
-# @threadbase/scanner is a git submodule consumed via file:vendor/scanner and
-# bundled inline by tsup. Ensure its source is checked out and dist/ built
-# before lint + build. Mirrors ensure_menubar_deployed.
-ensure_scanner_submodule() {
-  if [[ ! -f "$REPO_ROOT/vendor/scanner/package.json" ]]; then
-    log "initializing vendor/scanner submodule"
-    git submodule update --init --recursive vendor/scanner
-  fi
-  if [[ ! -f "$REPO_ROOT/vendor/scanner/dist/index.cjs" ]]; then
-    log "building vendor/scanner (dist missing)"
-    ( cd "$REPO_ROOT/vendor/scanner" && npm install --no-audit --no-fund )
-  fi
-}
-
 # Realign better-sqlite3's prebuilt native binary with whatever Node `bash`
 # resolves to at deploy time. Necessary because `bash scripts/deploy.sh` runs
 # in a sub-shell that doesn't load nvm's lazy-init function — `node` falls
@@ -837,7 +823,6 @@ cmd_deploy() {
   cmd_check_browse_root
 
   cd "$REPO_ROOT"
-  ensure_scanner_submodule
   ensure_native_modules_match_node
   if [[ "$force" == "--force" ]]; then
     warn "skipping lint + tests (--force)"

@@ -1,9 +1,3 @@
 [submodule "vendor/menubar"]
 	path = vendor/menubar
 	url = https://github.com/RonenMars/threadbase-menubar.git
-[submodule "vendor/scanner"]
-	path = vendor/scanner
-	url = https://github.com/RonenMars/threadbase-scanner.git
-[submodule "vendor/agent-types"]
-	path = vendor/agent-types
-	url = https://github.com/RonenMars/threadbase-agent-types.git

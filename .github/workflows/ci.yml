@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - name: Setup
         if: needs.gate.outputs.skip != 'true'
@@ -66,7 +66,7 @@ jobs:
       # exists on disk after the repo is checked out.
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - name: Lint
         if: needs.gate.outputs.skip != 'true'
@@ -82,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - name: Build
         if: needs.gate.outputs.skip != 'true'
@@ -107,7 +107,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - name: Test
         if: needs.gate.outputs.skip != 'true'
