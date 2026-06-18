@@ -1,3 +1,9 @@
+## [1.14.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.4...v1.14.0) (2026-06-18)
+
+### Features
+
+* **deps:** consume scanner + agent-types from [@threadbase-sh](https://github.com/threadbase-sh) npm ([#100](https://github.com/RonenMars/threadbase-streamer/issues/100)) ([501fb3c](https://github.com/RonenMars/threadbase-streamer/commit/501fb3c6e41c79a4a38f0dc8cbf98837f7ec727f))
+
 ## [1.13.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.13.3...v1.13.4) (2026-06-17)
 
 ### Bug Fixes
