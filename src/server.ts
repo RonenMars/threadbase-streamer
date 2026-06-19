@@ -69,12 +69,14 @@ import { pruneAgentConversations } from "./services/conversations/pruneAgentConv
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
 import { SessionStore } from "./session-store";
 import type {
+  AskQuestion,
   DiscoveredProcess,
   ServerConfig,
   SessionSortKey,
   SortOrder as SessionSortOrder,
   SessionStatus,
 } from "./types";
+import { questionsFromLines } from "./services/questions/questionBroadcast";
 import { saveUploadFile } from "./uploads";
 import { computeConversationEtag } from "./utils/conversationEtag";
 import { debounce } from "./utils/debounce";
@@ -103,6 +105,7 @@ export class StreamerServer {
   private wsHub: WSHub;
   private fileWatcher: ConversationWatcher;
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
+  private pendingQuestions = new Map<string, { toolUseId: string; questions: AskQuestion[] }>();
   private scanner: ConversationScanner | null = null;
   private scannerReady: Promise<unknown> | null = null;
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
@@ -214,6 +217,9 @@ export class StreamerServer {
         this.cache?.updateFromLines(filePath, lines);
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
           if (watchedPath === filePath) {
+            const { messages, pending } = questionsFromLines(sessionId, lines);
+            for (const p of pending) this.pendingQuestions.set(sessionId, p); // last pending wins
+            for (const m of messages) this.wsHub.broadcast(m);
             // Additive batched event (one socket write) for newer clients...
             this.wsHub.broadcast({ type: "conversation_events", sessionId, lines });
             // ...plus per-line conversation_event so older mobile clients,
