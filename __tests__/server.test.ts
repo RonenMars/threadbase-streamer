@@ -4,6 +4,7 @@ import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { ConversationCache } from "../src/conversation-cache";
+import { PTYManager } from "../src/pty-manager";
 import { StreamerServer } from "../src/server";
 
 const FIXTURE_PROFILES = [
@@ -223,6 +224,84 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}` },
       });
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe("POST /api/sessions/:id/stop", () => {
+    it("returns 404 for unknown session", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions/nonexistent-stop/stop`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body).toHaveProperty("error");
+    });
+
+    it("returns already_idle when session status is idle", async () => {
+      const getSessionSpy = vi.spyOn(PTYManager.prototype, "getSession").mockReturnValueOnce({
+        id: "idle-sess",
+        status: "idle",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: new Date(),
+        lastOutput: "",
+      } as any);
+
+      const res = await fetch(`${baseUrl}/api/sessions/idle-sess/stop`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "already_idle", sessionId: "idle-sess" });
+
+      getSessionSpy.mockRestore();
+    });
+
+    it("streams stopping→stopped for a running session", async () => {
+      const sessionId = "running-sess-stop";
+
+      const getSessionSpy = vi.spyOn(PTYManager.prototype, "getSession").mockReturnValueOnce({
+        id: sessionId,
+        status: "running",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: null,
+        lastOutput: "",
+      } as any);
+
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementationOnce(() => {
+        setImmediate(() => {
+          (server as any).sessionStatusBus.emit(`status:${sessionId}`, "idle");
+        });
+      });
+
+      const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/stop`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("ndjson");
+
+      const text = await res.text();
+      const lines = text
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+      expect(lines[0]).toEqual({ event: "stopping", sessionId });
+      expect(lines[1]).toEqual({ event: "stopped", sessionId });
+      expect(holdSpy).toHaveBeenCalledWith(sessionId);
+
+      holdSpy.mockRestore();
+      getSessionSpy.mockRestore();
     });
   });
 
