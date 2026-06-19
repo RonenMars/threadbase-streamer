@@ -72,6 +72,19 @@ export interface DiscoveredProcess {
 
 // ─── WebSocket Messages ────────────────────────────────────────────
 
+export interface AskOption {
+  label: string;
+  description: string;
+  preview?: string;
+}
+
+export interface AskQuestion {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: AskOption[];
+}
+
 export type WSMessage =
   | { type: "terminal_output"; sessionId: string; data: string }
   | {
@@ -89,6 +102,9 @@ export type WSMessage =
   // Additive batched variant: one message carries all lines from a single
   // watcher read. Old clients ignore it and rely on conversation_event.
   | { type: "conversation_events"; sessionId: string; lines: string[] }
+  // Structured interactive prompt (AskUserQuestion). Old clients ignore it.
+  | { type: "question"; sessionId: string; toolUseId: string; questions: AskQuestion[] }
+  | { type: "question_cancelled"; sessionId: string; toolUseId: string }
   | { type: "ping"; ts: number }
   | { type: "terminal_replay"; sessionId: string; lines: string[] }
   | { type: "session_ready"; session: SessionResponse }
