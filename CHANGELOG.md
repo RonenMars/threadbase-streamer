@@ -1,3 +1,9 @@
+## [1.15.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.1...v1.15.2) (2026-06-19)
+
+### Bug Fixes
+
+* **server:** fallback to recently-modified JSONL when session UUID differs on resume ([8011ea2](https://github.com/RonenMars/threadbase-streamer/commit/8011ea2c41c4ba7412af5eb3b81dc60ee69b85d1))
+
 ## [1.15.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.0...v1.15.1) (2026-06-18)
 
 ### Performance Improvements
