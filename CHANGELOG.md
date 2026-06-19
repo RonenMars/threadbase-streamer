@@ -1,3 +1,9 @@
+## [1.15.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.2...v1.15.3) (2026-06-19)
+
+### Bug Fixes
+
+* **server:** broadcast existing JSONL lines immediately on watcher wire ([af6ddce](https://github.com/RonenMars/threadbase-streamer/commit/af6ddcefb289947daf67dd13c99594e98ccadd07))
+
 ## [1.15.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.1...v1.15.2) (2026-06-19)
 
 ### Bug Fixes
