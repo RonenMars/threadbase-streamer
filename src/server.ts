@@ -67,6 +67,8 @@ import { ConversationWatcher } from "./services/conversations/conversationWatche
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
+import { questionsFromLines } from "./services/questions/questionBroadcast";
+import { resolveAnswer } from "./services/questions/resolveAnswer";
 import { SessionStore } from "./session-store";
 import type {
   AskQuestion,
@@ -76,7 +78,7 @@ import type {
   SortOrder as SessionSortOrder,
   SessionStatus,
 } from "./types";
-import { questionsFromLines } from "./services/questions/questionBroadcast";
+
 import { saveUploadFile } from "./uploads";
 import { computeConversationEtag } from "./utils/conversationEtag";
 import { debounce } from "./utils/debounce";
@@ -367,6 +369,7 @@ export class StreamerServer {
       handleGetSession: (id, res) => this.handleGetSession(id, res),
       handleGetOutput: (id, res) => this.handleGetOutput(id, res),
       handleSendInput: (id, req, res) => this.handleSendInput(id, req, res),
+      handleSendAnswer: (id, req, res) => this.handleSendAnswer(id, req, res),
       handleCancel: (id, res) => this.handleCancel(id, res),
       handleStopSession: (id, res) => this.handleStopSession(id, res),
       handleSetSessionName: (id, req, res) => this.handleSetSessionName(id, req, res),
@@ -1839,6 +1842,32 @@ export class StreamerServer {
       const message = err instanceof Error ? err.message : "Failed to send input";
       json(res, 400, { error: message });
     }
+  }
+
+  private async handleSendAnswer(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await readBody(req);
+    const pending = this.pendingQuestions.get(sessionId);
+    const resolution = resolveAnswer(pending, body);
+    if (!resolution.ok) {
+      json(res, 400, { ok: false, reason: resolution.reason });
+      return;
+    }
+    // pending is guaranteed defined when resolution.ok is true (resolveAnswer guards it)
+    const toolUseId = pending?.toolUseId ?? "";
+    try {
+      this.ptyManager.sendKeys(sessionId, resolution.keys);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to send answer";
+      json(res, 400, { ok: false, reason: message });
+      return;
+    }
+    this.pendingQuestions.delete(sessionId);
+    this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId });
+    json(res, 200, { ok: true });
   }
 
   private async handleUploadFile(
