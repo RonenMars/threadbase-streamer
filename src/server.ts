@@ -220,7 +220,15 @@ export class StreamerServer {
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
           if (watchedPath === filePath) {
             const { messages, pending } = questionsFromLines(sessionId, lines);
-            for (const p of pending) this.pendingQuestions.set(sessionId, p); // last pending wins
+            for (const p of pending) {
+              this.pendingQuestions.set(sessionId, p); // last pending wins
+              const t = setTimeout(() => {
+                if (this.pendingQuestions.get(sessionId)?.toolUseId === p.toolUseId) {
+                  this.cancelPendingQuestion(sessionId);
+                }
+              }, 60_000);
+              t.unref();
+            }
             for (const m of messages) this.wsHub.broadcast(m);
             // Additive batched event (one socket write) for newer clients...
             this.wsHub.broadcast({ type: "conversation_events", sessionId, lines });
@@ -309,6 +317,7 @@ export class StreamerServer {
           if (filePath) {
             this.fileWatcher.unwatch(filePath);
             this.sessionFileMap.delete(session.id);
+            this.cancelPendingQuestion(session.id);
           }
         }
         const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
@@ -1842,6 +1851,13 @@ export class StreamerServer {
       const message = err instanceof Error ? err.message : "Failed to send input";
       json(res, 400, { error: message });
     }
+  }
+
+  private cancelPendingQuestion(sessionId: string): void {
+    const pq = this.pendingQuestions.get(sessionId);
+    if (!pq) return;
+    this.pendingQuestions.delete(sessionId);
+    this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId: pq.toolUseId });
   }
 
   private async handleSendAnswer(
