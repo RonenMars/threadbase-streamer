@@ -12,7 +12,14 @@ import {
   type SortOrder,
   search,
 } from "@threadbase-sh/scanner";
-import { createReadStream, existsSync, watch as fsWatch, readdirSync, statSync } from "fs";
+import {
+  createReadStream,
+  existsSync,
+  watch as fsWatch,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -2080,21 +2087,58 @@ export class StreamerServer {
         cleanup();
         return;
       }
-      if (!existsSync(filePath)) return;
+
+      // Primary: Claude named the file after the session UUID
+      let resolvedFilePath = existsSync(filePath) ? filePath : null;
+
+      // Fallback: Claude resumed an existing conversation — the JSONL it writes
+      // to will be a different UUID. Pick the most recently modified JSONL in
+      // the directory that was touched within the last 5 seconds (session just started).
+      if (!resolvedFilePath && existsSync(projectsDir)) {
+        try {
+          const now = Date.now();
+          const recent = readdirSync(projectsDir)
+            .filter((f) => f.endsWith(".jsonl"))
+            .map((f) => ({ f, mtime: statSync(join(projectsDir, f)).mtimeMs }))
+            .filter(({ mtime }) => now - mtime < 5_000)
+            .sort((a, b) => b.mtime - a.mtime)[0];
+          if (recent) resolvedFilePath = join(projectsDir, recent.f);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (!resolvedFilePath) return;
 
       cleanup();
-      this.sessionFileMap.set(sessionId, filePath);
-      this.fileWatcher.watch(filePath);
+      this.sessionFileMap.set(sessionId, resolvedFilePath);
+      this.fileWatcher.watch(resolvedFilePath);
+
+      // Broadcast any lines already written before the watcher started — Claude
+      // can finish writing the JSONL in the same tick as the watcher wires up,
+      // so chokidar won't emit a change event for those lines.
+      try {
+        const existing = readFileSync(resolvedFilePath, "utf8").split("\n").filter(Boolean);
+        if (existing.length > 0) {
+          this.wsHub.broadcast({ type: "conversation_events", sessionId, lines: existing });
+          for (const line of existing) {
+            this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+          }
+        }
+      } catch {
+        /* ignore — file may not be readable yet; watcher will catch future writes */
+      }
+
       if (this.scannerReady) {
         this.scannerStale = true;
       } else {
         this.scanner = null;
       }
-      this.linkSessionToProject(sessionId, projectPath, filePath);
+      this.linkSessionToProject(sessionId, projectPath, resolvedFilePath);
       this.cache?.markAsStreamer(sessionId);
       this.log.info(
         `[startFresh] wired JSONL for ${sessionId}`,
-        { event: "session.jsonl_wired", sessionId, filePath },
+        { event: "session.jsonl_wired", sessionId, filePath: resolvedFilePath },
         "pino",
       );
     };
