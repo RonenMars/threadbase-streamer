@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getVersion, resetVersionCache } from "../src/version";
@@ -60,6 +60,23 @@ describe("getVersion", () => {
     process.argv[1] = join(distDir, "cli.cjs");
 
     expect(getVersion()).toBe("7.7.7+source");
+  });
+
+  it("resolves version.txt when process.argv[1] is a shim symlink pointing elsewhere", () => {
+    // Simulate: /opt/homebrew/bin/tb-streamer → ~/.threadbase/cli.js → releases/cli.cjs
+    const installDir = join(tmp, "install");
+    const releasesDir = join(installDir, "releases");
+    const shimDir = join(tmp, "shim");
+    mkdirSync(releasesDir, { recursive: true });
+    mkdirSync(shimDir);
+    writeFileSync(join(installDir, "version.txt"), "1.2.3+abc\n");
+    const realCli = join(releasesDir, "cli.cjs");
+    writeFileSync(realCli, "");
+    const shimPath = join(shimDir, "tb-streamer");
+    symlinkSync(realCli, shimPath);
+    process.argv[1] = shimPath;
+
+    expect(getVersion()).toBe("1.2.3+abc");
   });
 
   it("memoizes the result across calls", () => {

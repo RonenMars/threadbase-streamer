@@ -16,7 +16,7 @@
 //   4. If all fail, return "0.0.0+unknown" so callers never crash on a
 //      missing version.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 let cached: string | undefined;
@@ -35,11 +35,23 @@ export function resetVersionCache(): void {
 function resolveVersion(): string {
   const scriptPath = process.argv[1] ?? "";
   const here = scriptPath ? dirname(scriptPath) : process.cwd();
+  // Also resolve the realpath so shims (e.g. /opt/homebrew/bin/tb-streamer →
+  // ~/.threadbase/cli.js → releases/cli.<sha>.cjs) don't cause version.txt
+  // lookups to land in the wrong directory.
+  let realHere = here;
+  try {
+    realHere = dirname(realpathSync(scriptPath));
+  } catch {}
+  // Deduplicate: if realHere === here we don't want to check the same dirs twice.
+  const searchDirs =
+    realHere === here
+      ? [here, join(here, "..")]
+      : [here, join(here, ".."), realHere, join(realHere, "..")];
   // Check both the script directory and its parent — the installer places
   // version.txt in $INSTALL_DIR (~/.threadbase/) but the built CLI is a
   // symlink whose realpath resolves into $INSTALL_DIR/releases/, so `here`
   // ends up one level too deep.
-  for (const dir of [here, join(here, "..")]) {
+  for (const dir of searchDirs) {
     try {
       const v = readFileSync(join(dir, "version.txt"), "utf8").trim();
       if (v) return v;
