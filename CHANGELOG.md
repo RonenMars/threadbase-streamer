@@ -1,3 +1,9 @@
+## [1.15.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.3...v1.15.4) (2026-06-19)
+
+### Bug Fixes
+
+* **cli:** resolve version.txt through shim symlinks ([#115](https://github.com/RonenMars/threadbase-streamer/issues/115)) ([baed919](https://github.com/RonenMars/threadbase-streamer/commit/baed919a24b3414743d87fb2a897cf2ff85b39dc))
+
 ## [1.15.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.2...v1.15.3) (2026-06-19)
 
 ### Bug Fixes
