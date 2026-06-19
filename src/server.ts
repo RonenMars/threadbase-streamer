@@ -12,7 +12,14 @@ import {
   type SortOrder,
   search,
 } from "@threadbase-sh/scanner";
-import { createReadStream, existsSync, watch as fsWatch, readdirSync, statSync } from "fs";
+import {
+  createReadStream,
+  existsSync,
+  watch as fsWatch,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -2106,6 +2113,22 @@ export class StreamerServer {
       cleanup();
       this.sessionFileMap.set(sessionId, resolvedFilePath);
       this.fileWatcher.watch(resolvedFilePath);
+
+      // Broadcast any lines already written before the watcher started — Claude
+      // can finish writing the JSONL in the same tick as the watcher wires up,
+      // so chokidar won't emit a change event for those lines.
+      try {
+        const existing = readFileSync(resolvedFilePath, "utf8").split("\n").filter(Boolean);
+        if (existing.length > 0) {
+          this.wsHub.broadcast({ type: "conversation_events", sessionId, lines: existing });
+          for (const line of existing) {
+            this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+          }
+        }
+      } catch {
+        /* ignore — file may not be readable yet; watcher will catch future writes */
+      }
+
       if (this.scannerReady) {
         this.scannerStale = true;
       } else {
