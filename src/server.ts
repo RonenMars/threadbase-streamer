@@ -2080,21 +2080,42 @@ export class StreamerServer {
         cleanup();
         return;
       }
-      if (!existsSync(filePath)) return;
+
+      // Primary: Claude named the file after the session UUID
+      let resolvedFilePath = existsSync(filePath) ? filePath : null;
+
+      // Fallback: Claude resumed an existing conversation — the JSONL it writes
+      // to will be a different UUID. Pick the most recently modified JSONL in
+      // the directory that was touched within the last 5 seconds (session just started).
+      if (!resolvedFilePath && existsSync(projectsDir)) {
+        try {
+          const now = Date.now();
+          const recent = readdirSync(projectsDir)
+            .filter((f) => f.endsWith(".jsonl"))
+            .map((f) => ({ f, mtime: statSync(join(projectsDir, f)).mtimeMs }))
+            .filter(({ mtime }) => now - mtime < 5_000)
+            .sort((a, b) => b.mtime - a.mtime)[0];
+          if (recent) resolvedFilePath = join(projectsDir, recent.f);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (!resolvedFilePath) return;
 
       cleanup();
-      this.sessionFileMap.set(sessionId, filePath);
-      this.fileWatcher.watch(filePath);
+      this.sessionFileMap.set(sessionId, resolvedFilePath);
+      this.fileWatcher.watch(resolvedFilePath);
       if (this.scannerReady) {
         this.scannerStale = true;
       } else {
         this.scanner = null;
       }
-      this.linkSessionToProject(sessionId, projectPath, filePath);
+      this.linkSessionToProject(sessionId, projectPath, resolvedFilePath);
       this.cache?.markAsStreamer(sessionId);
       this.log.info(
         `[startFresh] wired JSONL for ${sessionId}`,
-        { event: "session.jsonl_wired", sessionId, filePath },
+        { event: "session.jsonl_wired", sessionId, filePath: resolvedFilePath },
         "pino",
       );
     };
