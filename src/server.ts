@@ -15,9 +15,9 @@ import {
 import {
   createReadStream,
   existsSync,
-  readFileSync,
   watch as fsWatch,
   readdirSync,
+  readFileSync,
   statSync,
 } from "fs";
 import { realpath } from "fs/promises";
