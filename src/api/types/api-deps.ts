@@ -48,7 +48,7 @@ export type ApiDeps = {
   handleAdopt: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleResume: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleStartSession: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
-  // Conversations / search / projects / browse / pair / project-chats delegates
+  // Conversations / search / projects / browse / pair delegates
   handleListConversations: (url: URL, res: ServerResponse) => Promise<void>;
   handleConversationsCount: (url: URL, res: ServerResponse) => Promise<void>;
   handleGetConversation: (
@@ -58,8 +58,8 @@ export type ApiDeps = {
     ifNoneMatch?: string,
   ) => Promise<void>;
   handleSearch: (url: URL, res: ServerResponse) => Promise<void>;
+  handleListProjects: (url: URL, res: ServerResponse) => void;
   handleGetPopularProjects: (url: URL, res: ServerResponse) => void;
-  handleListProjectChats: (url: URL, res: ServerResponse) => Promise<void>;
   handlePairStart: (res: ServerResponse) => void;
   handlePairExchange: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleBrowse: (url: URL, res: ServerResponse) => Promise<void>;
