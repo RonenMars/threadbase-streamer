@@ -1,6 +1,12 @@
-import type { AskQuestion, AskOption } from "../../types";
+import type { AskOption, AskQuestion } from "../../types";
 
-type ContentBlock = { type: string; name?: string; id?: string; input?: unknown; [key: string]: unknown };
+type ContentBlock = {
+  type: string;
+  name?: string;
+  id?: string;
+  input?: unknown;
+  [key: string]: unknown;
+};
 
 interface JsonlLineShape {
   content?: ContentBlock[] | string;
@@ -34,7 +40,12 @@ function coerceQuestions(raw: unknown): AskQuestion[] | null {
   const out: AskQuestion[] = [];
   for (const q of raw) {
     if (!q || typeof q !== "object") continue;
-    const qq = q as { question?: unknown; header?: unknown; multiSelect?: unknown; options?: unknown };
+    const qq = q as {
+      question?: unknown;
+      header?: unknown;
+      multiSelect?: unknown;
+      options?: unknown;
+    };
     const options = coerceOptions(qq.options);
     if (typeof qq.question !== "string" || !options) continue;
     out.push({
@@ -47,7 +58,9 @@ function coerceQuestions(raw: unknown): AskQuestion[] | null {
   return out.length > 0 ? out : null;
 }
 
-export function detectAskUserQuestion(rawLine: string): { toolUseId: string; questions: AskQuestion[] } | null {
+export function detectAskUserQuestion(
+  rawLine: string,
+): { toolUseId: string; questions: AskQuestion[] } | null {
   let parsed: JsonlLineShape;
   try {
     parsed = JSON.parse(rawLine) as JsonlLineShape;

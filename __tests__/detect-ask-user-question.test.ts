@@ -7,12 +7,23 @@ const realLine = JSON.stringify({
     role: "assistant",
     content: [
       { type: "text", text: "Let me ask." },
-      { type: "tool_use", id: "toolu_9", name: "AskUserQuestion", input: {
-        questions: [{ question: "Format?", header: "Format", options: [
-          { label: "Summary", description: "brief" },
-          { label: "Detailed", description: "full" },
-        ] }],
-      } },
+      {
+        type: "tool_use",
+        id: "toolu_9",
+        name: "AskUserQuestion",
+        input: {
+          questions: [
+            {
+              question: "Format?",
+              header: "Format",
+              options: [
+                { label: "Summary", description: "brief" },
+                { label: "Detailed", description: "full" },
+              ],
+            },
+          ],
+        },
+      },
     ],
   },
 });
@@ -25,11 +36,16 @@ describe("detectAskUserQuestion", () => {
     expect(r?.questions[0].multiSelect).toBe(false);
   });
   it("returns null for a deferred_tools_delta line (registration, not a question)", () => {
-    const delta = JSON.stringify({ type: "user", attachment: { type: "deferred_tools_delta", addedNames: ["AskUserQuestion", "CronCreate"] } });
+    const delta = JSON.stringify({
+      type: "user",
+      attachment: { type: "deferred_tools_delta", addedNames: ["AskUserQuestion", "CronCreate"] },
+    });
     expect(detectAskUserQuestion(delta)).toBeNull();
   });
   it("returns null for an unrelated tool_use", () => {
-    const other = JSON.stringify({ message: { content: [{ type: "tool_use", id: "t", name: "Bash", input: { command: "ls" } }] } });
+    const other = JSON.stringify({
+      message: { content: [{ type: "tool_use", id: "t", name: "Bash", input: { command: "ls" } }] },
+    });
     expect(detectAskUserQuestion(other)).toBeNull();
   });
   it("returns null on malformed JSON", () => {

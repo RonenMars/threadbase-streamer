@@ -4,7 +4,10 @@ const DOWN = "\x1b[B";
 const ENTER = "\r";
 
 export class UnknownOptionError extends Error {
-  constructor(public readonly question: string, public readonly value: string) {
+  constructor(
+    public readonly question: string,
+    public readonly value: string,
+  ) {
     super(`No option labelled "${value}" for question "${question}"`);
     this.name = "UnknownOptionError";
   }
@@ -23,7 +26,7 @@ export function answersToKeystrokes(
       throw new Error(`Missing answer for question "${q.question}"`);
     }
     const label = Array.isArray(raw) ? raw[0] : raw; // v1 ignores extra (multiSelect is v2)
-    const target = q.options.findIndex(o => o.label === label);
+    const target = q.options.findIndex((o) => o.label === label);
     if (target < 0) throw new UnknownOptionError(q.question, label);
     out += DOWN.repeat(target) + ENTER;
   }

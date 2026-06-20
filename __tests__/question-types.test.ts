@@ -8,10 +8,15 @@ describe("question WS types", () => {
       sessionId: "s1",
       toolUseId: "toolu_1",
       questions: [
-        { question: "Q?", header: "H", multiSelect: false, options: [
-          { label: "A", description: "a" },
-          { label: "B", description: "b" },
-        ] },
+        {
+          question: "Q?",
+          header: "H",
+          multiSelect: false,
+          options: [
+            { label: "A", description: "a" },
+            { label: "B", description: "b" },
+          ],
+        },
       ],
     };
     const q: AskQuestion = (msg as Extract<WSMessage, { type: "question" }>).questions[0];
