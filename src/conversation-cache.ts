@@ -36,6 +36,7 @@ export interface ConversationListItem {
   lastMessage: string | null;
   preview: string | null;
   source: string | null;
+  provider: "threadbase" | "codex-cli";
 }
 
 export interface CachedTailMessage {
@@ -66,6 +67,7 @@ export interface ScannerMeta {
   firstMessage?: unknown;
   lastMessage?: unknown;
   preview?: string;
+  provider?: "threadbase" | "codex-cli";
 }
 
 interface MetaRow {
@@ -84,6 +86,7 @@ interface MetaRow {
   last_message: string | null;
   preview: string | null;
   source: string | null;
+  provider: "threadbase" | "codex-cli";
   updated_at: number;
 }
 
@@ -259,11 +262,11 @@ export class ConversationCache {
         INSERT INTO conversation_meta
           (id, file_path, project_path, project_name, title, model, account, branch,
            message_count, last_activity, first_message, last_message, preview, updated_at,
-           mtime_ms, file_size)
+           mtime_ms, file_size, provider)
         VALUES
           (@id, @file_path, @project_path, @project_name, @title, @model, @account, @branch,
            @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at,
-           @mtime_ms, @file_size)
+           @mtime_ms, @file_size, @provider)
         ON CONFLICT(id) DO UPDATE SET
           file_path     = excluded.file_path,
           project_path  = excluded.project_path,
@@ -279,7 +282,8 @@ export class ConversationCache {
           preview       = excluded.preview,
           updated_at    = excluded.updated_at,
           mtime_ms      = excluded.mtime_ms,
-          file_size     = excluded.file_size
+          file_size     = excluded.file_size,
+          provider      = excluded.provider
         WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
@@ -364,10 +368,14 @@ export class ConversationCache {
     migrationsDir?: string,
     options?: ConversationCacheOptions,
   ): ConversationCache {
+    console.log(`[ConversationCache.open] mkdirSync ${dirname(dbPath)}`);
     mkdirSync(dirname(dbPath), { recursive: true });
+    console.log("[ConversationCache.open] opening Database");
     const db = new Database(dbPath);
+    console.log("[ConversationCache.open] setting WAL + foreign_keys");
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
+    console.log("[ConversationCache.open] constructing ConversationCache");
     return new ConversationCache(db, tailSize, migrationsDir, options);
   }
 
@@ -645,6 +653,7 @@ export class ConversationCache {
           updated_at: 0,
           mtime_ms: mtimeMs,
           file_size: fileSize,
+          provider: m.provider ?? "threadbase",
         });
         if (this.fileIndexLoaded) this.fileIndex.set(m.filePath, id);
         upsertedIds.push(id);
@@ -766,6 +775,7 @@ export class ConversationCache {
         lastMessage: r.last_message,
         preview: r.preview,
         source: r.source,
+        provider: r.provider ?? "threadbase",
       })),
     };
   }
@@ -807,6 +817,7 @@ export class ConversationCache {
       lastMessage: row.last_message,
       preview: row.preview,
       source: row.source,
+      provider: row.provider ?? "threadbase",
     };
   }
 

@@ -235,6 +235,7 @@ export interface ServerConfig {
     enabled: boolean;
     emoji: string;
   }>;
+  codexRoots?: string[]; // paths to codex sessions dirs; empty array disables codex scanning
   ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes)
   cacheDir?: string;
   tailSize?: number;

@@ -33,6 +33,7 @@ export function normalizeConversationToProjectChat(
     createdAt: null,
     status: "resumable",
     source: "hdd-cache",
+    provider: conversation.provider ?? "threadbase",
     indexedAt: null,
     fileMtime: null,
     filePath: conversation.filePath ?? null,
