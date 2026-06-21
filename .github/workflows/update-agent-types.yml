@@ -1,0 +1,102 @@
+name: Update agent-types dep
+
+# Bumps the @threadbase-sh/agent-types npm dependency to the version published
+# by the agent-types repo and opens an auto-merging PR against main. Fires when
+# agent-types publishes a release (repository_dispatch type
+# "agent-types-released", client_payload.tag = vX.Y.Z), or run manually.
+#
+# Setup required for the automatic trigger:
+#   1. agent-types' notify-consumers.yml dispatches this event using a PAT
+#      stored there as CONSUMER_DISPATCH_PAT (the default GITHUB_TOKEN cannot
+#      dispatch across repos).
+#   2. Add a PAT secret AGENT_TYPES_BUMP_PAT_FOR_STREAMER here (fine-grained:
+#      Contents read/write + Pull requests read/write on this repo). PRs created
+#      with the default GITHUB_TOKEN do NOT trigger CI (GitHub's recursion
+#      guard), so auto-merge would never see required checks pass. The PAT makes
+#      the bump PR run CI and lets `gh pr merge --auto` complete.
+
+on:
+  repository_dispatch:
+    types: [agent-types-released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "agent-types version to pin (e.g. v0.2.0). Defaults to npm latest when omitted."
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Bump @threadbase-sh/agent-types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use the PAT so the resulting PR triggers CI and can auto-merge.
+          token: ${{ secrets.AGENT_TYPES_BUMP_PAT_FOR_STREAMER || github.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+
+      - name: Resolve target version
+        id: ver
+        env:
+          # repository_dispatch sends vX.Y.Z; workflow_dispatch sends a bare
+          # input; both are normalized to a tag-less semver below.
+          DISPATCH_TAG: ${{ github.event.client_payload.tag }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          raw="${DISPATCH_TAG:-$INPUT_TAG}"
+          if [ -z "$raw" ]; then
+            raw=$(npm view @threadbase-sh/agent-types version)
+          fi
+          version="${raw#v}"
+          # client_payload is attacker-controllable; reject anything that is not
+          # a bare semver before it reaches npm install / git / gh.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::refusing non-semver version '$version'"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          current=$(node -p "require('./package.json').dependencies['@threadbase-sh/agent-types'] || ''")
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "Target: $version. Current spec: $current."
+
+      - name: Bump dependency and refresh lockfile
+        id: bump
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          npm install --save-exact "@threadbase-sh/agent-types@${VERSION}" --no-audit --no-fund
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already at ${VERSION} — nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open bump PR
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_TYPES_BUMP_PAT_FOR_STREAMER || github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          branch="chore/bump-agent-types-v${VERSION}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists — a bump PR is already open. Skipping."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add package.json package-lock.json
+          git commit -m "chore: bump @threadbase-sh/agent-types to v${VERSION}"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore: bump @threadbase-sh/agent-types to v${VERSION}" \
+            --body "Automated dependency bump to agent-types \`v${VERSION}\`, triggered by an agent-types release. \`package.json\` and \`package-lock.json\` were refreshed via \`npm install\`. Merges automatically once CI is green."
+          gh pr merge --auto --squash "$branch"
