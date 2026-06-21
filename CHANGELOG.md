@@ -1,3 +1,9 @@
+## [1.16.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.4...v1.16.0) (2026-06-21)
+
+### Features
+
+* **api:** add POST /api/sessions/:id/stop with ndjson progress stream ([#122](https://github.com/RonenMars/threadbase-streamer/issues/122)) ([ab84140](https://github.com/RonenMars/threadbase-streamer/commit/ab84140987f3385e7f7aef33b0548be2d61e896c))
+
 ## [1.15.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.3...v1.15.4) (2026-06-19)
 
 ### Bug Fixes
