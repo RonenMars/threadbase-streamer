@@ -12,6 +12,7 @@ import {
   type SortOrder,
   search,
 } from "@threadbase-sh/scanner";
+import { EventEmitter } from "events";
 import {
   createReadStream,
   existsSync,
@@ -157,8 +158,10 @@ export class StreamerServer {
   private log = getLogger("server");
   private agentConfig: AgentConfig;
   private agentClient: AgentClient | null = null;
+  private sessionStatusBus = new EventEmitter();
 
   constructor(config: ServerConfig & { apiKey: string }) {
+    this.sessionStatusBus.setMaxListeners(0);
     this.apiKey = config.apiKey;
     this.localNoAuth = config.localNoAuth ?? false;
     this.verbose = config.verbose ?? false;
@@ -304,6 +307,7 @@ export class StreamerServer {
         if (resp) {
           this.wsHub.broadcast({ type: "session_update", session: resp });
         }
+        this.sessionStatusBus.emit(`status:${session.id}`, session.status);
       },
     });
 
@@ -358,6 +362,7 @@ export class StreamerServer {
       handleGetOutput: (id, res) => this.handleGetOutput(id, res),
       handleSendInput: (id, req, res) => this.handleSendInput(id, req, res),
       handleCancel: (id, res) => this.handleCancel(id, res),
+      handleStopSession: (id, res) => this.handleStopSession(id, res),
       handleSetSessionName: (id, req, res) => this.handleSetSessionName(id, req, res),
       handleUploadFile: (id, req, res) => this.handleUploadFile(id, req, res),
       handleAdopt: (id, res) => this.handleAdopt(id, res),
@@ -1896,6 +1901,61 @@ export class StreamerServer {
       const message = err instanceof Error ? err.message : "Failed to cancel";
       json(res, 400, { error: message });
     }
+  }
+
+  private async handleStopSession(sessionId: string, res: ServerResponse): Promise<void> {
+    const STOP_TIMEOUT_MS = 5000;
+
+    const session = this.ptyManager.getSession(sessionId);
+    if (!session) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Session not found" }));
+      return;
+    }
+
+    if (session.status === "idle") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "already_idle", sessionId }));
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson",
+      "Transfer-Encoding": "chunked",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(`${JSON.stringify({ event: "stopping", sessionId })}\n`);
+
+    const idlePromise = new Promise<"idle">((resolve) => {
+      const handler = (status: string) => {
+        if (status === "idle") {
+          this.sessionStatusBus.off(`status:${sessionId}`, handler);
+          resolve("idle");
+        }
+      };
+      this.sessionStatusBus.on(`status:${sessionId}`, handler);
+    });
+
+    const timeoutPromise = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), STOP_TIMEOUT_MS),
+    );
+
+    this.ptyManager.putOnHold(sessionId);
+    this.discoveryCache = null;
+
+    const outcome = await Promise.race([idlePromise, timeoutPromise]);
+
+    if (outcome === "idle") {
+      res.write(`${JSON.stringify({ event: "stopped", sessionId })}\n`);
+    } else {
+      res.write(`${JSON.stringify({ event: "timeout", sessionId })}\n`);
+      this.log.warn(
+        `[stop] session ${sessionId.slice(0, 8)} did not idle within ${STOP_TIMEOUT_MS}ms`,
+      );
+    }
+
+    res.end();
   }
 
   private async handleAdopt(sessionId: string, res: ServerResponse): Promise<void> {
