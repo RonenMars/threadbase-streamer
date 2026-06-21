@@ -90,6 +90,7 @@ import { debounce } from "./utils/debounce";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
 import { createScanProgressThrottle } from "./utils/scanProgressThrottle";
 import { WSHub } from "./ws-hub";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
 
 const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
   `You are working within the project boundary: ${browseRoot}. ` +
@@ -727,7 +728,9 @@ export class StreamerServer {
             error: message,
             event: "cache.open_failed",
           });
-          this.log.info("warmUp: cache open failed, continuing without cache", { event: "warmup.cache_open_failed" });
+          this.log.info("warmUp: cache open failed, continuing without cache", {
+            event: "warmup.cache_open_failed",
+          });
         }
         // Use a dedicated scanner for warm-up, independent of this.scanner, so
         // that onConversationChanged invalidations during the scan cannot cause
@@ -754,7 +757,11 @@ export class StreamerServer {
           .scan({
             ...scanOpts,
             onProgress: (scanned, total) => {
-              this.log.info(`warmUp: scan progress ${scanned}/${total}`, { event: "warmup.scan_progress", scanned, total });
+              this.log.info(`warmUp: scan progress ${scanned}/${total}`, {
+                event: "warmup.scan_progress",
+                scanned,
+                total,
+              });
               if (shouldEmitProgress(scanned, total)) {
                 this.wsHub.broadcast({ type: "scan_progress", scanned, total });
               }
@@ -767,7 +774,10 @@ export class StreamerServer {
               return;
             }
             const metas = [...warmupScanner.getMetadataCache().values()] as any[];
-            this.log.info(`warmUp: processing ${metas.length} metas`, { event: "warmup.metas_count", count: metas.length });
+            this.log.info(`warmUp: processing ${metas.length} metas`, {
+              event: "warmup.metas_count",
+              count: metas.length,
+            });
             // upsertFromScannerMeta returns IDs of rows actually upserted
             // (excluding agent JSONLs skipped when includeAgents=false).
             // Warming tails for filtered-out IDs would hit the
@@ -838,7 +848,10 @@ export class StreamerServer {
               error: message,
               event: "cache.warmup_failed",
             });
-            this.log.info(`warmUp: .catch() — ${message}`, { event: "warmup.catch", error: message });
+            this.log.info(`warmUp: .catch() — ${message}`, {
+              event: "warmup.catch",
+              error: message,
+            });
           })
           .finally(() => {
             this.log.info("warmUp: .finally() — resolving", { event: "warmup.finally" });
@@ -1050,6 +1063,7 @@ export class StreamerServer {
     const offset = intParam(url, "offset", 0);
     const sort = (url.searchParams.get("sort") ?? "recent") as SortOrder;
     const project = url.searchParams.get("project") ?? undefined;
+    const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
     if (bustCache) {
@@ -1059,7 +1073,12 @@ export class StreamerServer {
     }
 
     if (this.cache && !bustCache) {
-      const { conversations, total } = this.cache.listConversations({ project, limit, offset });
+      const { conversations, total } = this.cache.listConversations({
+        project,
+        provider: providerFilter,
+        limit,
+        offset,
+      });
       const adapted = conversations.map((c) => ({
         id: c.id,
         title: deriveProjectChatTitle({
@@ -1079,7 +1098,7 @@ export class StreamerServer {
         firstMessage: c.firstMessage ? (JSON.parse(c.firstMessage) as unknown) : undefined,
         lastMessage: c.lastMessage ? (JSON.parse(c.lastMessage) as unknown) : undefined,
         model: c.model ?? undefined,
-        provider: c.provider ?? "threadbase",
+        provider: c.provider ?? CLAUDE_CODE_PROVIDER,
       }));
       json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
       return;
@@ -1089,6 +1108,8 @@ export class StreamerServer {
     let metas = [...scanner.getMetadataCache().values()];
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
+    if (providerFilter)
+      metas = metas.filter((m) => (m.provider ?? CLAUDE_CODE_PROVIDER) === providerFilter);
     metas = applySort(metas, sort);
     const total = metas.length;
     const page = applyPagination(metas, limit, offset);
@@ -1120,7 +1141,7 @@ export class StreamerServer {
         firstMessage: c.firstMessage ?? undefined,
         lastMessage: c.lastMessage ?? undefined,
         model: c.model ?? undefined,
-        provider: (c as any).provider ?? "threadbase",
+        provider: (c as any).provider ?? CLAUDE_CODE_PROVIDER,
       };
     });
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
@@ -1136,6 +1157,7 @@ export class StreamerServer {
 
   private async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
     const project = url.searchParams.get("project") ?? undefined;
+    const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
     // refresh=1 historically forced a full synchronous scan() to recount from
@@ -1145,7 +1167,12 @@ export class StreamerServer {
     // immediately and reconcile from disk in the BACKGROUND so the count stays
     // fast regardless of refresh.
     if (this.cache) {
-      const { total } = this.cache.listConversations({ project, limit: 0, offset: 0 });
+      const { total } = this.cache.listConversations({
+        project,
+        provider: providerFilter,
+        limit: 0,
+        offset: 0,
+      });
       json(res, 200, { total });
       if (bustCache) this.refreshCountInBackground();
       return;
@@ -1155,6 +1182,8 @@ export class StreamerServer {
     let metas = [...scanner.getMetadataCache().values()];
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
+    if (providerFilter)
+      metas = metas.filter((m) => (m.provider ?? CLAUDE_CODE_PROVIDER) === providerFilter);
     json(res, 200, { total: metas.length });
   }
 
@@ -1266,7 +1295,7 @@ export class StreamerServer {
   // codexRoots=[] disables codex scanning (safe no-op per scanner contract).
   private codexScanOpts() {
     return {
-      providers: ["threadbase", "codex-cli"] as ["threadbase", "codex-cli"],
+      providers: [CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER],
       codexRoots: this.codexRoots,
     };
   }
@@ -1459,7 +1488,7 @@ export class StreamerServer {
         const tail = this.cache.getConversationTail(id);
         if (tail && tail.messages.length > 0) {
           const cachedMeta = this.cache.getMetaById(id);
-          const cachedProvider = cachedMeta?.provider ?? "threadbase";
+          const cachedProvider = cachedMeta?.provider ?? CLAUDE_CODE_PROVIDER;
           const availability = classifyResumability(cachedMeta?.projectPath);
           const messagesPayload = tail.messages.map((m, idx) => ({
             message_index: idx,
@@ -1621,8 +1650,8 @@ export class StreamerServer {
 
     const conv = conversation as any;
     const cachedConvMeta = this.cache?.getMetaById(id);
-    const convProvider: "threadbase" | "codex-cli" =
-      conv.provider ?? cachedConvMeta?.provider ?? "threadbase";
+    const convProvider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER =
+      conv.provider ?? cachedConvMeta?.provider ?? CLAUDE_CODE_PROVIDER;
     const availability = classifyResumability(conv.projectPath);
     const body: Record<string, unknown> = {
       meta: {
@@ -1699,7 +1728,7 @@ export class StreamerServer {
       lastActivity: r.meta.timestamp,
       firstMessage: r.meta.firstMessage ?? undefined,
       lastMessage: r.meta.lastMessage ?? undefined,
-      provider: r.meta.provider ?? "threadbase",
+      provider: r.meta.provider ?? CLAUDE_CODE_PROVIDER,
     }));
     json(res, 200, {
       conversations: adapted,
