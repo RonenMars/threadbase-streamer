@@ -1,3 +1,9 @@
+## [1.16.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.16.0...v1.16.1) (2026-06-22)
+
+### Bug Fixes
+
+* **server:** serve count?refresh=1 from cache, reconcile in background ([#127](https://github.com/RonenMars/threadbase-streamer/issues/127)) ([154092a](https://github.com/RonenMars/threadbase-streamer/commit/154092aefa2222ec2ba61d02ca63e96daddf280a))
+
 ## [1.16.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.15.4...v1.16.0) (2026-06-21)
 
 ### Features
