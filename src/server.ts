@@ -67,12 +67,14 @@ import { ConversationWatcher } from "./services/conversations/conversationWatche
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
+import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
 import { questionsFromLines } from "./services/questions/questionBroadcast";
 import { resolveAnswer } from "./services/questions/resolveAnswer";
 import { SessionStore } from "./session-store";
 import type {
   AskQuestion,
   DiscoveredProcess,
+  PermissionOption,
   ServerConfig,
   SessionSortKey,
   SortOrder as SessionSortOrder,
@@ -108,6 +110,18 @@ export class StreamerServer {
   private fileWatcher: ConversationWatcher;
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
   private pendingQuestions = new Map<string, { toolUseId: string; questions: AskQuestion[] }>();
+  // Content key of the AskUserQuestion currently broadcast for a session (from
+  // either the rendered screen or JSONL), used to de-dupe the two paths: when
+  // the screen detection fires first, the later JSONL flush of the same question
+  // is suppressed. Cleared alongside pendingQuestions.
+  private pendingQuestionKey = new Map<string, string>();
+  // Per-session permission gate currently open (scraped via OSC 777). Parallel
+  // to pendingQuestions; mobile answers it by sending the option index via
+  // /input { keys }. Cleared when the gate closes.
+  private pendingPermission = new Map<
+    string,
+    { prompt?: string; options: PermissionOption[]; cursor?: number }
+  >();
   private scanner: ConversationScanner | null = null;
   private scannerReady: Promise<unknown> | null = null;
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
@@ -229,7 +243,16 @@ export class StreamerServer {
               }, 60_000);
               t.unref();
             }
-            for (const m of messages) this.wsHub.broadcast(m);
+            // De-dupe vs the live-screen path: if the rendered detection already
+            // broadcast this exact question (same content key), the JSONL flush
+            // records the real toolUseId in pendingQuestions above but does NOT
+            // re-broadcast — the client already has the card. Otherwise broadcast.
+            for (const m of messages) {
+              const key = questionContentKey(m.questions);
+              const alreadyShown = this.pendingQuestionKey.get(sessionId) === key;
+              this.pendingQuestionKey.set(sessionId, key);
+              if (!alreadyShown) this.wsHub.broadcast(m);
+            }
             // Additive batched event (one socket write) for newer clients...
             this.wsHub.broadcast({ type: "conversation_events", sessionId, lines });
             // ...plus per-line conversation_event so older mobile clients,
@@ -273,6 +296,12 @@ export class StreamerServer {
       logger: getLogger("pty"),
       onOutput: (sessionId, data) => {
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
+      },
+      onPermissionChange: (sessionId, gate) => {
+        this.handlePermissionChange(sessionId, gate);
+      },
+      onLiveQuestion: (sessionId, questions) => {
+        this.handleLiveQuestion(sessionId, questions);
       },
       onReady: (session) => {
         const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
@@ -319,6 +348,8 @@ export class StreamerServer {
             this.sessionFileMap.delete(session.id);
             this.cancelPendingQuestion(session.id);
           }
+          // A gone PTY can never have an open gate; clear silently.
+          this.pendingPermission.delete(session.id);
         }
         const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
         if (resp) {
@@ -1874,7 +1905,45 @@ export class StreamerServer {
     const pq = this.pendingQuestions.get(sessionId);
     if (!pq) return;
     this.pendingQuestions.delete(sessionId);
+    this.pendingQuestionKey.delete(sessionId);
     this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId: pq.toolUseId });
+  }
+
+  // Live AskUserQuestion detected from the rendered screen (ahead of JSONL).
+  // Broadcasts the `question` event immediately and records the content key so
+  // the later JSONL flush of the same question is de-duped. We synthesize a
+  // screen-scoped toolUseId; the JSONL path overwrites pendingQuestions with the
+  // real toolUseId when it lands, so answering works once JSONL catches up.
+  private handleLiveQuestion(sessionId: string, questions: AskQuestion[]): void {
+    const key = questionContentKey(questions);
+    if (this.pendingQuestionKey.get(sessionId) === key) return; // already shown
+    const toolUseId = `screen:${sessionId}:${key.length}`;
+    this.pendingQuestions.set(sessionId, { toolUseId, questions });
+    this.pendingQuestionKey.set(sessionId, key);
+    this.wsHub.broadcast({ type: "question", sessionId, toolUseId, questions });
+  }
+
+  // Permission gate opened/closed (OSC 777 + scraped options). Broadcasts the
+  // additive `permission` / `permission_cancelled` events. Mobile answers by
+  // sending the chosen option index via /input { keys } (e.g. "2\r").
+  private handlePermissionChange(
+    sessionId: string,
+    gate: { prompt?: string; options: PermissionOption[]; cursor?: number } | null,
+  ): void {
+    if (gate === null) {
+      if (!this.pendingPermission.has(sessionId)) return;
+      this.pendingPermission.delete(sessionId);
+      this.wsHub.broadcast({ type: "permission_cancelled", sessionId });
+      return;
+    }
+    this.pendingPermission.set(sessionId, gate);
+    this.wsHub.broadcast({
+      type: "permission",
+      sessionId,
+      ...(gate.prompt ? { prompt: gate.prompt } : {}),
+      options: gate.options,
+      ...(gate.cursor !== undefined ? { cursor: gate.cursor } : {}),
+    });
   }
 
   private async handleSendAnswer(

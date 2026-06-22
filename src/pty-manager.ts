@@ -4,6 +4,11 @@ import { existsSync } from "fs";
 import { basename } from "path";
 import { getLogger, type Logger } from "./logger";
 import { resolveClaudeExe } from "./platform";
+import { hasPermissionOsc, scrapePermissionGate } from "./services/questions/detectPermissionGate";
+import {
+  detectQuestionFromScreen,
+  questionContentKey,
+} from "./services/questions/detectQuestionFromScreen";
 import type {
   ManagedSession,
   PTYManagerOptions,
@@ -135,6 +140,15 @@ export class PTYManager {
   private onOutput: PTYManagerOptions["onOutput"];
   private onStatusChange: PTYManagerOptions["onStatusChange"];
   private onReady: PTYManagerOptions["onReady"];
+  private onPermissionChange: PTYManagerOptions["onPermissionChange"];
+  private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
+  // Per-session permission-gate state. True between an OSC 777 (gate open) and
+  // the next prompt-ready without a fresh 777 (gate closed). Prevents
+  // re-broadcasting open/close on every chunk.
+  private permissionOpen = new Set<string>();
+  // Content key of the last AskUserQuestion broadcast from the rendered screen,
+  // per session — de-dupes the same menu firing on consecutive repaints.
+  private lastScreenQuestionKey = new Map<string, string>();
   // Tracks sessions (both fresh and resume) whose PTY has spawned but Claude
   // hasn't yet reached an interactive prompt — i.e. onReady hasn't fired.
   private pendingReady = new Set<string>();
@@ -158,6 +172,8 @@ export class PTYManager {
     this.onOutput = options.onOutput;
     this.onStatusChange = options.onStatusChange;
     this.onReady = options.onReady;
+    this.onPermissionChange = options.onPermissionChange;
+    this.onLiveQuestion = options.onLiveQuestion;
     this.log = options.logger ?? getLogger("pty");
   }
 
@@ -448,6 +464,8 @@ export class PTYManager {
     this.pendingReady.delete(sessionId);
     this.queuedInputs.delete(sessionId);
     this.firstChunkAt.delete(sessionId);
+    this.permissionOpen.delete(sessionId);
+    this.lastScreenQuestionKey.delete(sessionId);
     try {
       session.process.kill("SIGINT");
     } catch {
@@ -520,6 +538,8 @@ export class PTYManager {
     this.firstChunkAt.clear();
     this.chunkIndex.clear();
     this.lastChunkAt.clear();
+    this.permissionOpen.clear();
+    this.lastScreenQuestionKey.clear();
   }
 
   private handleOutput(sessionId: string, data: string): void {
@@ -583,6 +603,78 @@ export class PTYManager {
     }
 
     this.onOutput?.(sessionId, data);
+
+    // Live interactive-prompt detection from the PTY stream — fires the moment
+    // a prompt is on screen, independent of (and ahead of) the JSONL flush.
+    // Trigger-gated so we don't scrape the rendered buffer on every chunk:
+    //   - OSC 777 (raw byte signal) → permission gate opened.
+    //   - "Enter to select" footer (AskUserQuestion menu) → structured question.
+    //   - prompt-ready marker without a fresh 777 → gate may have closed.
+    this.detectLivePrompts(sessionId, data, stripped).catch((err) => {
+      this.log.warn("[pty.prompt_detect] failed", {
+        event: "pty.prompt_detect_failed",
+        sessionId,
+        err,
+      });
+    });
+  }
+
+  // Detect permission gates (OSC 777 + scraped options) and AskUserQuestion
+  // menus from the rendered screen, firing the additive callbacks. Async because
+  // reading the rendered buffer needs the xterm write queue flushed. Pure
+  // detection lives in services/questions/*; this only orchestrates triggers,
+  // per-session debounce, and the callbacks.
+  private async detectLivePrompts(
+    sessionId: string,
+    rawData: string,
+    stripped: string,
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    const oscPermission = hasPermissionOsc(rawData);
+    const hasAskFooter = /Enter to select/i.test(stripped);
+    const hasPromptMarker = CLAUDE_PROMPT_MARKERS.some((m) => stripped.includes(m));
+
+    // Nothing to do unless a trigger fired or a gate is open (so we can detect
+    // its close on the next prompt-ready).
+    if (!oscPermission && !hasAskFooter && !this.permissionOpen.has(sessionId)) {
+      return;
+    }
+
+    const lines = await this.getOutputLines(sessionId, 60);
+
+    // ── Permission gate ──────────────────────────────────────────────
+    if (oscPermission) {
+      const gate = scrapePermissionGate(lines);
+      this.permissionOpen.add(sessionId);
+      // Broadcast even if options aren't painted yet (gate: empty options) so
+      // the client can show "Claude needs permission" immediately; a later
+      // repaint with the footer/options re-broadcasts the populated gate.
+      this.onPermissionChange?.(sessionId, gate ?? { options: [] });
+    } else if (this.permissionOpen.has(sessionId)) {
+      // Gate was open. If options are still on screen, refresh (cursor moved);
+      // if the prompt is ready again and the options are gone, the gate closed.
+      const gate = scrapePermissionGate(lines);
+      if (gate) {
+        this.onPermissionChange?.(sessionId, gate);
+      } else if (hasPromptMarker) {
+        this.permissionOpen.delete(sessionId);
+        this.onPermissionChange?.(sessionId, null);
+      }
+    }
+
+    // ── AskUserQuestion menu (rendered, ahead of JSONL) ──────────────
+    if (hasAskFooter) {
+      const detected = detectQuestionFromScreen(lines);
+      if (detected) {
+        const key = questionContentKey(detected.questions);
+        if (this.lastScreenQuestionKey.get(sessionId) !== key) {
+          this.lastScreenQuestionKey.set(sessionId, key);
+          this.onLiveQuestion?.(sessionId, detected.questions);
+        }
+      }
+    }
   }
 
   // Transition a session from "running" to "waiting_input", clear pendingReady,
@@ -631,6 +723,8 @@ export class PTYManager {
     this.sessions.delete(sessionId);
     this.queuedInputs.delete(sessionId);
     this.firstChunkAt.delete(sessionId);
+    this.permissionOpen.delete(sessionId);
+    this.lastScreenQuestionKey.delete(sessionId);
   }
 }
 
