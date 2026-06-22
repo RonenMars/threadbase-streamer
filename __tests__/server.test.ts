@@ -1209,5 +1209,72 @@ describe("StreamerServer", () => {
       // Stale flag untouched: a subsequent list-level getScanner() still rescans.
       expect(srv.scannerStale).toBe(true);
     });
+
+    it("returns the count?refresh=1 quickly without a synchronous full scan", async () => {
+      // refresh=1 used to force a full scan() on the request path; on a cold/empty
+      // index that scan walks every JSONL and blocks ~16s, tripping mobile's
+      // request timeout. Post-fix it serves the cached total immediately and
+      // reconciles in the background — fast regardless of refresh.
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-count-refresh-profile-"));
+      const projDir = join(profileDir, "projects", "-proj-count");
+      mkdirSync(projDir, { recursive: true });
+      writeFileSync(
+        join(projDir, `${convId}.jsonl`),
+        `${JSON.stringify({
+          type: "user",
+          uuid: "c-u1",
+          timestamp: "2026-06-10T08:00:00.000Z",
+          sessionId: convId,
+          cwd: profileDir,
+          message: { role: "user", content: [{ type: "text", text: "hi" }] },
+        })}\n`,
+      );
+
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-count-refresh-cache-")),
+        scanProfiles: [
+          { id: "count", label: "Count", configDir: profileDir, enabled: true, emoji: "🔢" },
+        ],
+      });
+      // awaitReady → warm-up scan populates the cache with the one conversation.
+      await reuseServer.listen(reusePort, { awaitReady: true });
+
+      // Spy AFTER warm-up: the background reconcile fires a scan() (fire-and-
+      // forget), but the request must RESOLVE before that scan finishes. Gate
+      // scan() so a request that blocked on it would never return in time.
+      let releaseScan: () => void = () => {};
+      const scanGate = new Promise<void>((r) => {
+        releaseScan = r;
+      });
+      const realScan = ConversationScanner.prototype.scan;
+      vi.spyOn(ConversationScanner.prototype, "scan").mockImplementation(async function (
+        this: ConversationScanner,
+        ...args: unknown[]
+      ) {
+        await scanGate;
+        return (realScan as (...a: unknown[]) => Promise<unknown>).apply(this, args);
+      } as never);
+
+      const started = Date.now();
+      const res = await fetch(`http://localhost:${reusePort}/api/conversations/count?refresh=1`, {
+        headers: auth,
+      });
+      const elapsed = Date.now() - started;
+      releaseScan();
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { total: number };
+      // Correct total served from the cache populated by warm-up.
+      expect(body.total).toBe(1);
+      // Fast: returned even though the (background) scan was still gated — the
+      // request never blocked on the full rescan.
+      expect(elapsed).toBeLessThan(2000);
+    });
   });
 });
