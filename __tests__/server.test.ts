@@ -305,6 +305,55 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("grace timer", () => {
+    // Drive the private startGraceTimer directly with a short delay and spy on
+    // the PTY/session accessors to assert it never holds a running session.
+    const SID = "grace-sess";
+    const mkSession = (status: string) =>
+      ({
+        id: SID,
+        status,
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: null,
+        lastOutput: "",
+      }) as any;
+
+    it("does NOT hold a running session, and re-arms the timer", async () => {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      vi.spyOn((server as any).sessionStore, "get").mockReturnValue(mkSession("running"));
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+      const armSpy = vi.spyOn(server as any, "startGraceTimer");
+
+      (server as any).startGraceTimer(SID, 10);
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(holdSpy).not.toHaveBeenCalled();
+      // re-armed: startGraceTimer called again (beyond the initial invocation)
+      expect(armSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+      // stop the re-armed timer so it doesn't fire after restore
+      const t = (server as any).ptyGraceTimers.get(SID);
+      if (t) clearTimeout(t);
+      vi.restoreAllMocks();
+    });
+
+    it("holds a waiting_input session when the grace timer fires", async () => {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      vi.spyOn((server as any).sessionStore, "get").mockReturnValue(mkSession("waiting_input"));
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+
+      (server as any).startGraceTimer(SID, 10);
+      await new Promise((r) => setTimeout(r, 40));
+
+      expect(holdSpy).toHaveBeenCalledWith(SID);
+      vi.restoreAllMocks();
+    });
+  });
+
   describe("GET /api/sessions/:id/output", () => {
     it("returns empty output for an untracked session id", async () => {
       const res = await fetch(`${baseUrl}/api/sessions/nonexistent/output`, {

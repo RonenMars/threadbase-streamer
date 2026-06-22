@@ -553,16 +553,33 @@ export class StreamerServer {
 
     const timer = setTimeout(() => {
       this.ptyGraceTimers.delete(sessionId);
-      this.sessionSubscribers.delete(sessionId);
       if (this.ptyManager.hasSession(sessionId)) {
+        // Never interrupt a session mid-response. A `running` PTY is actively
+        // streaming a Claude turn that hasn't flushed to the JSONL yet; killing
+        // it (SIGINT) would lose the in-flight answer. Re-arm the grace timer
+        // and re-check after another grace period — it only becomes eligible
+        // for hold once it settles back to waiting_input/idle.
+        const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+        if (resp?.status === "running") {
+          this.log.info(
+            `[grace] session ${sessionId} still running, deferring hold`,
+            { sessionId, event: "pty.grace_defer" },
+            "pino",
+          );
+          this.startGraceTimer(sessionId, delayMs);
+          return;
+        }
+        this.sessionSubscribers.delete(sessionId);
         this.log.info(
           `[grace] killing idle PTY for ${sessionId}`,
           { sessionId, event: "pty.grace_kill" },
           "pino",
         );
         this.ptyManager.putOnHold(sessionId);
-        const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-        if (resp) this.wsHub.broadcast({ type: "session_update", session: resp });
+        const held = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+        if (held) this.wsHub.broadcast({ type: "session_update", session: held });
+      } else {
+        this.sessionSubscribers.delete(sessionId);
       }
     }, delayMs);
 
