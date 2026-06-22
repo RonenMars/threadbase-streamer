@@ -78,10 +78,9 @@ describe("codex conversations — HTTP API", () => {
 
   describe("GET /api/conversations/:id", () => {
     it("returns provider=codex-cli and resumable=false", async () => {
-      const res = await fetch(
-        `${baseUrl}/api/conversations/${CODEX_SESSION_ID}?msg_limit=10`,
-        { headers: auth },
-      );
+      const res = await fetch(`${baseUrl}/api/conversations/${CODEX_SESSION_ID}?msg_limit=10`, {
+        headers: auth,
+      });
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
       expect(body.meta.provider).toBe("codex-cli");
@@ -89,10 +88,9 @@ describe("codex conversations — HTTP API", () => {
     });
 
     it("still serves messages for codex conversations", async () => {
-      const res = await fetch(
-        `${baseUrl}/api/conversations/${CODEX_SESSION_ID}?msg_limit=50`,
-        { headers: auth },
-      );
+      const res = await fetch(`${baseUrl}/api/conversations/${CODEX_SESSION_ID}?msg_limit=50`, {
+        headers: auth,
+      });
       const body = (await res.json()) as any;
       expect(body.messages.length).toBeGreaterThan(0);
     });
@@ -106,12 +104,15 @@ describe("codex conversations — HTTP API", () => {
       const res = await fetch(`${baseUrl}/project-chats?limit=50`, { headers: auth });
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
-      // /project-chats returns { projects: [{ conversations: [...] }] }
-      const allConvs = (body.projects ?? []).flatMap((p: any) => p.conversations ?? []);
+      // /project-chats returns { projectChats: [...] } (flat, merged list)
+      const allConvs = (body.projectChats ?? []) as any[];
       const codex = allConvs.find((c: any) => c.id.includes(CODEX_SESSION_ID));
       expect(codex).toBeDefined();
       expect(codex.provider).toBe("codex-cli");
-      expect(codex.status).toBe("archived");
+      // On-disk codex JSONL whose project path resolves → "resumable"
+      // (the project-chat status enum is archived|resumable, distinct from the
+      // boolean `resumable` flag on the detail/session endpoints).
+      expect(codex.status).toBe("resumable");
     });
   });
 });

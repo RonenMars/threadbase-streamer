@@ -61,6 +61,7 @@ import { handleListProjectChats } from "./handlers/handleListProjectChats";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, isProviderResumable } from "./providers";
 import { PTYManager } from "./pty-manager";
 import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
@@ -90,7 +91,6 @@ import { debounce } from "./utils/debounce";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
 import { createScanProgressThrottle } from "./utils/scanProgressThrottle";
 import { WSHub } from "./ws-hub";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
 
 const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
   `You are working within the project boundary: ${browseRoot}. ` +
@@ -680,7 +680,6 @@ export class StreamerServer {
     // healthcheck). On the final attempt we let the error propagate so a
     // genuinely occupied port still surfaces loudly.
     await this.bindWithRetry(port);
-    this.log.info("warmUp: bind complete", { event: "warmup.bind_complete", port });
 
     const warmUp = new Promise<void>((resolveWarm) => {
       {
@@ -688,9 +687,7 @@ export class StreamerServer {
           port,
           event: "server.listening",
         });
-        this.log.info("warmUp: started", { event: "warmup.started" });
         try {
-          this.log.info("warmUp: opening ConversationCache", { event: "warmup.cache_opening" });
           this.cache = ConversationCache.open(
             join(this.cacheDir, "cache.db"),
             this.tailSize,
@@ -721,22 +718,17 @@ export class StreamerServer {
           // cache so the next search/list picks them up without a restart.
           const projectsDir = join(homedir(), ".claude", "projects");
           this.fileWatcher.watchDirectory(projectsDir);
-          this.log.info("warmUp: file watcher started", { event: "warmup.watcher_started" });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.log.warn(`ConversationCache failed to open (running without cache): ${message}`, {
             error: message,
             event: "cache.open_failed",
           });
-          this.log.info("warmUp: cache open failed, continuing without cache", {
-            event: "warmup.cache_open_failed",
-          });
         }
         // Use a dedicated scanner for warm-up, independent of this.scanner, so
         // that onConversationChanged invalidations during the scan cannot cause
         // getScanner() to restart indefinitely and leave the warm-up stuck.
         const warmupScanner = new ConversationScanner();
-        this.log.info("warmUp: scanner created", { event: "warmup.scanner_created" });
         const warmupStatCache = this.buildStatCache(null);
         // Throttle the per-file onProgress firings to ~one frame per whole
         // percent (plus the final tick) so a large scan doesn't flood every
@@ -747,37 +739,18 @@ export class StreamerServer {
           ...this.codexScanOpts(),
           ...(warmupStatCache ? { statCache: warmupStatCache } : {}),
         };
-        this.log.info("warmUp: calling scan()", {
-          event: "warmup.scan_called",
-          profiles: (scanOpts as any).profiles,
-          codexRoots: (scanOpts as any).codexRoots,
-          providers: (scanOpts as any).providers,
-        });
         warmupScanner
           .scan({
             ...scanOpts,
             onProgress: (scanned, total) => {
-              this.log.info(`warmUp: scan progress ${scanned}/${total}`, {
-                event: "warmup.scan_progress",
-                scanned,
-                total,
-              });
               if (shouldEmitProgress(scanned, total)) {
                 this.wsHub.broadcast({ type: "scan_progress", scanned, total });
               }
             },
           })
           .then(async () => {
-            this.log.info("warmUp: scan() resolved", { event: "warmup.scan_resolved" });
-            if (!this.cache) {
-              this.log.info("warmUp: no cache, skipping tail warmup", { event: "warmup.no_cache" });
-              return;
-            }
+            if (!this.cache) return;
             const metas = [...warmupScanner.getMetadataCache().values()] as any[];
-            this.log.info(`warmUp: processing ${metas.length} metas`, {
-              event: "warmup.metas_count",
-              count: metas.length,
-            });
             // upsertFromScannerMeta returns IDs of rows actually upserted
             // (excluding agent JSONLs skipped when includeAgents=false).
             // Warming tails for filtered-out IDs would hit the
@@ -840,7 +813,6 @@ export class StreamerServer {
               count: pruned.length,
               event: "cache.prune_ghosts",
             });
-            this.log.info("warmUp: .then() complete", { event: "warmup.then_complete" });
           })
           .catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
@@ -848,13 +820,8 @@ export class StreamerServer {
               error: message,
               event: "cache.warmup_failed",
             });
-            this.log.info(`warmUp: .catch() — ${message}`, {
-              event: "warmup.catch",
-              error: message,
-            });
           })
           .finally(() => {
-            this.log.info("warmUp: .finally() — resolving", { event: "warmup.finally" });
             // Adopt the warm-up scan as the live scanner so the first real
             // request reuses it instead of paying for a second full scan.
             // Guard: only adopt if nothing else already owns the slot — a
@@ -1508,7 +1475,7 @@ export class StreamerServer {
               last_updated_at: cachedMeta?.lastActivity ?? undefined,
               message_count: cachedMeta?.messageCount ?? undefined,
               provider: cachedProvider,
-              resumable: cachedProvider === "codex-cli" ? false : availability.resumable,
+              resumable: isProviderResumable(cachedProvider, availability.resumable),
               ...(availability.unavailable_reason && {
                 unavailable_reason: availability.unavailable_reason,
               }),
@@ -1664,7 +1631,7 @@ export class StreamerServer {
         message_count: conv.messageCount,
         last_prompt: conv.lastPrompt ?? undefined,
         provider: convProvider,
-        resumable: convProvider === "codex-cli" ? false : availability.resumable,
+        resumable: isProviderResumable(convProvider, availability.resumable),
         ...(availability.unavailable_reason && {
           unavailable_reason: availability.unavailable_reason,
         }),
@@ -2589,6 +2556,7 @@ function classifyResumability(cwd: string | null | undefined): {
 
 function conversationToResumableSession(c: ConversationListItem) {
   const availability = classifyResumability(c.projectPath);
+  const provider = c.provider ?? CLAUDE_CODE_PROVIDER;
   return {
     type: "conversation" as const,
     id: c.id,
@@ -2613,7 +2581,8 @@ function conversationToResumableSession(c: ConversationListItem) {
     ...(c.firstMessage != null && { firstMessageText: c.firstMessage }),
     ...(c.lastMessage != null && { lastMessageText: c.lastMessage }),
     filePath: c.filePath,
-    resumable: availability.resumable,
+    provider,
+    resumable: isProviderResumable(provider, availability.resumable),
     ...(availability.unavailable_reason && {
       unavailable_reason: availability.unavailable_reason,
     }),

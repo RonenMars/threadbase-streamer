@@ -1,8 +1,8 @@
 import Database from "better-sqlite3";
-import { CLAUDE_CODE_PROVIDER } from "./providers";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "fs";
 import { dirname } from "path";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
+import { CLAUDE_CODE_PROVIDER } from "./providers";
 import {
   DEFAULT_AGENT_ENTRYPOINTS,
   isAgentFile,
@@ -313,9 +313,7 @@ export class ConversationCache {
       listByProvider: db.prepare(
         "SELECT * FROM conversation_meta WHERE provider = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?",
       ),
-      countByProvider: db.prepare(
-        "SELECT COUNT(*) as n FROM conversation_meta WHERE provider = ?",
-      ),
+      countByProvider: db.prepare("SELECT COUNT(*) as n FROM conversation_meta WHERE provider = ?"),
       deleteById: db.prepare("DELETE FROM conversation_meta WHERE id = ?"),
       deleteTailById: db.prepare("DELETE FROM conversation_tail WHERE conversation_id = ?"),
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
@@ -377,14 +375,10 @@ export class ConversationCache {
     migrationsDir?: string,
     options?: ConversationCacheOptions,
   ): ConversationCache {
-    console.log(`[ConversationCache.open] mkdirSync ${dirname(dbPath)}`);
     mkdirSync(dirname(dbPath), { recursive: true });
-    console.log("[ConversationCache.open] opening Database");
     const db = new Database(dbPath);
-    console.log("[ConversationCache.open] setting WAL + foreign_keys");
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
-    console.log("[ConversationCache.open] constructing ConversationCache");
     return new ConversationCache(db, tailSize, migrationsDir, options);
   }
 
@@ -761,7 +755,8 @@ export class ConversationCache {
       rows = limit === 0 ? [] : (this.stmts.listByProject.all(project, limit, offset) as MetaRow[]);
     } else if (provider) {
       total = (this.stmts.countByProvider.get(provider) as { n: number }).n;
-      rows = limit === 0 ? [] : (this.stmts.listByProvider.all(provider, limit, offset) as MetaRow[]);
+      rows =
+        limit === 0 ? [] : (this.stmts.listByProvider.all(provider, limit, offset) as MetaRow[]);
     } else {
       total = (this.stmts.count.get() as { n: number }).n;
       rows = limit === 0 ? [] : (this.stmts.list.all(limit, offset) as MetaRow[]);
