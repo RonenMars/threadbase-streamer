@@ -1015,23 +1015,43 @@ export class StreamerServer {
     const project = url.searchParams.get("project") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
-    if (bustCache) {
-      this.cache?.invalidate();
-      this.scanner = null;
-      this.scannerReady = null;
-    }
-
-    if (this.cache && !bustCache) {
+    // refresh=1 historically forced a full synchronous scan() to recount from
+    // disk. On a cold/empty index that scan walks every JSONL and blocks ~16s,
+    // tripping mobile's request timeout into a false "unreachable". Mirror the
+    // detail path's skipStaleRescan stance: serve the indexed/cached total
+    // immediately and reconcile from disk in the BACKGROUND so the count stays
+    // fast regardless of refresh.
+    if (this.cache) {
       const { total } = this.cache.listConversations({ project, limit: 0, offset: 0 });
       json(res, 200, { total });
+      if (bustCache) this.refreshCountInBackground();
       return;
     }
 
-    const scanner = await this.getScanner();
+    const scanner = await this.getScanner(true);
     let metas = [...scanner.getMetadataCache().values()];
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
     json(res, 200, { total: metas.length });
+  }
+
+  // Fire-and-forget full rescan that reconciles the SQLite cache from disk so a
+  // later count reflects new/removed conversations. Never awaited by the request
+  // path — refresh=1 returns the cached total synchronously and this catches up.
+  private refreshCountInBackground(): void {
+    void (async () => {
+      try {
+        const scanner = await this.getFreshScanner();
+        if (this.cache) {
+          this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+        }
+      } catch (err) {
+        this.log.warn(
+          `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+          { event: "count.refresh_failed" },
+        );
+      }
+    })();
   }
 
   private handleSessionsCount(res: ServerResponse): void {
