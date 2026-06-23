@@ -101,13 +101,25 @@ async function tryBind(start: number, offset: number): Promise<number> {
  * signal handlers that flip userHeld=true on clean exit (so launchd's shim
  * stays out until `tb-streamer prod start`).
  */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function takeoverProd(opts: { port: number; repoToplevel: string | null }): void {
   const existing = readMarker();
   if (existing) {
-    throw new Error(
-      `prod is already suspended by dev pid ${existing.devPid} (since ${existing.suspendedAt}). ` +
-        `Stop that dev session first, or run 'tb-streamer prod doctor'.`,
-    );
+    if (isPidAlive(existing.devPid)) {
+      throw new Error(
+        `prod is already suspended by dev pid ${existing.devPid} (since ${existing.suspendedAt}). ` +
+          `Stop that dev session first, or run 'tb-streamer prod doctor'.`,
+      );
+    }
+    log.info(`stale marker found (pid ${existing.devPid} is gone) — clearing and proceeding`);
   }
 
   getSupervisor().bootoutAgent();
