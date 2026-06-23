@@ -1,3 +1,9 @@
+## [1.17.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.16.1...v1.17.0) (2026-06-23)
+
+### Features
+
+* **conversations:** structured AskUserQuestion streaming ([#123](https://github.com/RonenMars/threadbase-streamer/issues/123)) ([7ed083d](https://github.com/RonenMars/threadbase-streamer/commit/7ed083dd575d6a2b1ff69abf4c27259b32f8ba86))
+
 ## [1.16.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.16.0...v1.16.1) (2026-06-22)
 
 ### Bug Fixes
