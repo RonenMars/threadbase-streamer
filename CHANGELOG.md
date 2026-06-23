@@ -1,3 +1,9 @@
+## [1.17.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.17.0...v1.17.1) (2026-06-23)
+
+### Bug Fixes
+
+* **lifecycle:** skip stale dev-takeover marker when its pid is dead ([#128](https://github.com/RonenMars/threadbase-streamer/issues/128)) ([1aa3099](https://github.com/RonenMars/threadbase-streamer/commit/1aa309969fe3c72d473863c10f33b83abcee7b32))
+
 ## [1.17.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.16.1...v1.17.0) (2026-06-23)
 
 ### Features
