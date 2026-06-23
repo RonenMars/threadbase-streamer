@@ -9,6 +9,7 @@ import {
   detectQuestionFromScreen,
   questionContentKey,
 } from "./services/questions/detectQuestionFromScreen";
+import { detectShellPrompt } from "./services/questions/detectShellPrompt";
 import type {
   ManagedSession,
   PTYManagerOptions,
@@ -142,6 +143,7 @@ export class PTYManager {
   private onReady: PTYManagerOptions["onReady"];
   private onPermissionChange: PTYManagerOptions["onPermissionChange"];
   private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
+  private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
   // Per-session permission-gate state. True between an OSC 777 (gate open) and
   // the next prompt-ready without a fresh 777 (gate closed). Prevents
   // re-broadcasting open/close on every chunk.
@@ -149,6 +151,11 @@ export class PTYManager {
   // Content key of the last AskUserQuestion broadcast from the rendered screen,
   // per session — de-dupes the same menu firing on consecutive repaints.
   private lastScreenQuestionKey = new Map<string, string>();
+  // Content key of the last unstructured shell prompt (detectShellPrompt)
+  // broadcast per session — present between open and resolve so we can clear it
+  // on a prompt-ready/marker return and de-dupe consecutive repaints. Modelled
+  // on permissionOpen but keyed by content (a shell prompt has no OSC trigger).
+  private shellPromptOpen = new Map<string, string>();
   // Tracks sessions (both fresh and resume) whose PTY has spawned but Claude
   // hasn't yet reached an interactive prompt — i.e. onReady hasn't fired.
   private pendingReady = new Set<string>();
@@ -174,6 +181,7 @@ export class PTYManager {
     this.onReady = options.onReady;
     this.onPermissionChange = options.onPermissionChange;
     this.onLiveQuestion = options.onLiveQuestion;
+    this.onLiveQuestionGone = options.onLiveQuestionGone;
     this.log = options.logger ?? getLogger("pty");
   }
 
@@ -466,6 +474,7 @@ export class PTYManager {
     this.firstChunkAt.delete(sessionId);
     this.permissionOpen.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
+    this.shellPromptOpen.delete(sessionId);
     try {
       session.process.kill("SIGINT");
     } catch {
@@ -540,6 +549,7 @@ export class PTYManager {
     this.lastChunkAt.clear();
     this.permissionOpen.clear();
     this.lastScreenQuestionKey.clear();
+    this.shellPromptOpen.clear();
   }
 
   private handleOutput(sessionId: string, data: string): void {
@@ -633,26 +643,73 @@ export class PTYManager {
     if (!session) return;
 
     const oscPermission = hasPermissionOsc(rawData);
+    // Footer test on the CURRENT chunk — a cheap trigger only. The authoritative
+    // test runs on the full rendered screen below (askFooterOnScreen), because
+    // the OSC-777 notify and the "Enter to select" footer often arrive in
+    // SEPARATE chunks: the OSC lands first (no footer yet), so a chunk-only test
+    // misclassifies an AskUserQuestion menu as a permission gate.
     const hasAskFooter = /Enter to select/i.test(stripped);
     const hasPromptMarker = CLAUDE_PROMPT_MARKERS.some((m) => stripped.includes(m));
+    // Cheap raw-chunk hint that an UNSTRUCTURED shell prompt may be on screen:
+    // a y/N hint, a "press enter"/"continue?" tail, or a numbered menu row. Just
+    // a trigger gate (mirrors hasAskFooter) — the real conservative matching is
+    // in detectShellPrompt against the rendered tail. ponytail: substring gate.
+    const hasShellPromptHint =
+      /[[(]\s*y\s*\/\s*n\s*[\])]|press\s+(enter|return|any key)|\bcontinue\b\s*\?|^\s*(?:❯|>)?\s*\d+[.)]\s+\S/im.test(
+        stripped,
+      );
 
-    // Nothing to do unless a trigger fired or a gate is open (so we can detect
-    // its close on the next prompt-ready).
-    if (!oscPermission && !hasAskFooter && !this.permissionOpen.has(sessionId)) {
+    // Nothing to do unless a trigger fired or a prompt we already broadcast is
+    // open (so we can detect its close on the next prompt-ready).
+    if (
+      !oscPermission &&
+      !hasAskFooter &&
+      !hasShellPromptHint &&
+      !this.permissionOpen.has(sessionId) &&
+      !this.shellPromptOpen.has(sessionId) &&
+      !this.lastScreenQuestionKey.has(sessionId)
+    ) {
       return;
     }
 
     const lines = await this.getOutputLines(sessionId, 60);
 
+    // Authoritative footer test on the FULL rendered screen (not just the
+    // trigger chunk). The "Enter to select · Tab/Arrow keys to navigate" footer
+    // is unique to an AskUserQuestion menu; a permission gate uses "Tab to amend
+    // · ctrl+e to explain". When this is on screen the prompt IS an
+    // AskUserQuestion — even if an OSC-777 notify also fired — so it must take
+    // priority over the permission path (Claude emits OSC 777 for BOTH).
+    const askFooterOnScreen = lines.some((l) => /Enter to select/i.test(l));
+
+    // Diagnostic: dump the rendered window + detector verdicts when a trigger
+    // fires — the on-device source of truth for prompt detection (e.g. the
+    // multi-question carousel work). At debug level so it's silent under normal
+    // --verbose; enable with LOG_LEVEL=debug.
+    if (oscPermission || hasAskFooter || askFooterOnScreen) {
+      this.log.debug?.(`[pty.prompt_detect] ${sessionId.slice(0, 8)} trigger`, {
+        event: "pty.prompt_detect",
+        sessionId,
+        oscPermission,
+        hasAskFooter,
+        askFooterOnScreen,
+        permGate: oscPermission && !askFooterOnScreen ? scrapePermissionGate(lines) : undefined,
+        askQuestion: askFooterOnScreen ? detectQuestionFromScreen(lines) : undefined,
+        renderedTail: lines.slice(-25),
+      });
+    }
+
     // ── Permission gate ──────────────────────────────────────────────
-    if (oscPermission) {
+    // Skip entirely when the screen is an AskUserQuestion menu — its OSC-777
+    // notify would otherwise be misread as a permission gate.
+    if (oscPermission && !askFooterOnScreen) {
       const gate = scrapePermissionGate(lines);
       this.permissionOpen.add(sessionId);
       // Broadcast even if options aren't painted yet (gate: empty options) so
       // the client can show "Claude needs permission" immediately; a later
       // repaint with the footer/options re-broadcasts the populated gate.
       this.onPermissionChange?.(sessionId, gate ?? { options: [] });
-    } else if (this.permissionOpen.has(sessionId)) {
+    } else if (this.permissionOpen.has(sessionId) && !askFooterOnScreen) {
       // Gate was open. If options are still on screen, refresh (cursor moved);
       // if the prompt is ready again and the options are gone, the gate closed.
       const gate = scrapePermissionGate(lines);
@@ -665,7 +722,11 @@ export class PTYManager {
     }
 
     // ── AskUserQuestion menu (rendered, ahead of JSONL) ──────────────
-    if (hasAskFooter) {
+    // The multi-question TUI's final "Ready to submit your answers?" screen is
+    // detected and broadcast as a normal card (Submit answers / Cancel) so the
+    // user can tap to confirm — the carousel doesn't reliably auto-submit.
+    // (Roadmap: robust carousel auto-submit.)
+    if (askFooterOnScreen) {
       const detected = detectQuestionFromScreen(lines);
       if (detected) {
         const key = questionContentKey(detected.questions);
@@ -673,6 +734,37 @@ export class PTYManager {
           this.lastScreenQuestionKey.set(sessionId, key);
           this.onLiveQuestion?.(sessionId, detected.questions);
         }
+      }
+    } else if (this.lastScreenQuestionKey.has(sessionId) && hasPromptMarker) {
+      // The menu was open but its footer is gone and Claude's prompt marker is
+      // back — the question was answered (or dismissed). Clear the screen key
+      // and tell the server so the pending question is cancelled; without this
+      // the answered menu lingers and a later repaint can re-broadcast it.
+      this.lastScreenQuestionKey.delete(sessionId);
+      this.onLiveQuestionGone?.(sessionId);
+    }
+
+    // ── Unstructured shell prompt (read -p "[y/N]", CLI picker, … ) ───
+    // Last fallback: only when this isn't already a structured permission gate
+    // or AskUserQuestion menu. Reuses the `permission` transport so mobile
+    // renders a QuestionCard with zero new event handling; each option carries
+    // its literal answerKeys (y\r / n\r / N\r) so the client stays dumb.
+    if (!oscPermission && !askFooterOnScreen && !this.permissionOpen.has(sessionId)) {
+      const shell = detectShellPrompt(lines);
+      if (shell) {
+        const key = `${shell.prompt} ${shell.options.map((o) => o.label).join(" ")}`;
+        if (this.shellPromptOpen.get(sessionId) !== key) {
+          this.shellPromptOpen.set(sessionId, key);
+          this.onPermissionChange?.(sessionId, {
+            prompt: shell.prompt,
+            options: shell.options,
+          });
+        }
+      } else if (this.shellPromptOpen.has(sessionId) && hasPromptMarker) {
+        // Prompt is gone and Claude's marker is back (input was answered) —
+        // close the card.
+        this.shellPromptOpen.delete(sessionId);
+        this.onPermissionChange?.(sessionId, null);
       }
     }
   }
@@ -725,6 +817,7 @@ export class PTYManager {
     this.firstChunkAt.delete(sessionId);
     this.permissionOpen.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
+    this.shellPromptOpen.delete(sessionId);
   }
 }
 

@@ -17,6 +17,13 @@ export interface PermissionOption {
   /** The real leading number shown on screen (NOT a 1-based array index). */
   index: number;
   label: string;
+  /**
+   * Literal keystroke bytes that answer this option, when the number alone
+   * isn't the answer (e.g. a y/N shell prompt answers "y\r"/"n\r", not "1\r").
+   * Additive: OSC-777 gates omit it and the client answers via `index`; the
+   * unstructured shell-prompt path (detectShellPrompt) populates it.
+   */
+  answerKeys?: string;
 }
 
 export interface PermissionGate {

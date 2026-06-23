@@ -92,6 +92,11 @@ export interface AskQuestion {
 export interface PermissionOption {
   index: number;
   label: string;
+  // Literal keystroke bytes that answer this option (e.g. "y\r", "2\r"), set by
+  // the unstructured shell-prompt detector (detectShellPrompt). Authoritative
+  // over `index` when present; absent for OSC-777 gates. Additive — old clients
+  // ignore it and fall back to `${index}\r`.
+  answerKeys?: string;
 }
 
 export type WSMessage =
@@ -252,6 +257,10 @@ export interface PTYManagerOptions {
   // Fired when an AskUserQuestion menu is detected on the rendered screen (before
   // the JSONL tool_use block flushes). The server de-dupes against the JSONL path.
   onLiveQuestion?: (sessionId: string, questions: AskQuestion[]) => void;
+  // Fired when a previously-detected AskUserQuestion screen menu disappears (the
+  // user answered it and Claude's prompt marker is back). Lets the server clear
+  // the pending question so an answered menu doesn't linger or re-appear.
+  onLiveQuestionGone?: (sessionId: string) => void;
   logger?: import("./logger").Logger;
 }
 

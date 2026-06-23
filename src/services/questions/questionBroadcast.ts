@@ -31,3 +31,25 @@ export function questionsFromLines(
   }
   return { messages, pending };
 }
+
+// Pure decision: should the JSONL-flush path (re-)broadcast this question?
+//
+// The live-screen detector may have already broadcast the same question under a
+// synthetic `screen:…` toolUseId. When that JSONL line lands with the REAL
+// toolUseId we must re-broadcast — even though the content is identical — so the
+// client swaps the stale screen id for the real one. Otherwise the client
+// answers with the screen id and resolveAnswer rejects it as tool_use_mismatch.
+//
+// - Not shown before (different/absent content key) → broadcast (new card).
+// - Shown before AND the toolUseId changed → broadcast (re-sync the id).
+// - Shown before AND same toolUseId → suppress (true duplicate).
+export function shouldBroadcastQuestion(args: {
+  newContentKey: string;
+  lastContentKey: string | undefined;
+  newToolUseId: string;
+  priorToolUseId: string | undefined;
+}): boolean {
+  const alreadyShown = args.lastContentKey === args.newContentKey;
+  if (!alreadyShown) return true;
+  return args.priorToolUseId !== args.newToolUseId;
+}

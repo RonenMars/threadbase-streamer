@@ -68,7 +68,10 @@ import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConver
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
 import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
-import { questionsFromLines } from "./services/questions/questionBroadcast";
+import {
+  questionsFromLines,
+  shouldBroadcastQuestion,
+} from "./services/questions/questionBroadcast";
 import { resolveAnswer } from "./services/questions/resolveAnswer";
 import { SessionStore } from "./session-store";
 import type {
@@ -233,6 +236,10 @@ export class StreamerServer {
         this.cache?.updateFromLines(filePath, lines);
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
           if (watchedPath === filePath) {
+            // toolUseId the client currently holds for this session (set by the
+            // live-screen path as `screen:…`, or a prior JSONL flush). Captured
+            // BEFORE the overwrite below so we can detect an id change.
+            const priorToolUseId = this.pendingQuestions.get(sessionId)?.toolUseId;
             const { messages, pending } = questionsFromLines(sessionId, lines);
             for (const p of pending) {
               this.pendingQuestions.set(sessionId, p); // last pending wins
@@ -244,14 +251,23 @@ export class StreamerServer {
               t.unref();
             }
             // De-dupe vs the live-screen path: if the rendered detection already
-            // broadcast this exact question (same content key), the JSONL flush
-            // records the real toolUseId in pendingQuestions above but does NOT
-            // re-broadcast — the client already has the card. Otherwise broadcast.
+            // broadcast this exact question (same content key), don't re-render —
+            // EXCEPT when the real JSONL toolUseId differs from the synthetic
+            // `screen:` id the client holds. The client answers with the id it
+            // was given; if it still has the screen id, resolveAnswer rejects the
+            // POST as tool_use_mismatch. Re-broadcasting the real id re-syncs the
+            // client (mapAskQuestionToBlock just replaces activeQuestion — the
+            // card re-renders identically) so answering works.
             for (const m of messages) {
               const key = questionContentKey(m.questions);
-              const alreadyShown = this.pendingQuestionKey.get(sessionId) === key;
+              const broadcast = shouldBroadcastQuestion({
+                newContentKey: key,
+                lastContentKey: this.pendingQuestionKey.get(sessionId),
+                newToolUseId: m.toolUseId,
+                priorToolUseId,
+              });
               this.pendingQuestionKey.set(sessionId, key);
-              if (!alreadyShown) this.wsHub.broadcast(m);
+              if (broadcast) this.wsHub.broadcast(m);
             }
             // Additive batched event (one socket write) for newer clients...
             this.wsHub.broadcast({ type: "conversation_events", sessionId, lines });
@@ -302,6 +318,18 @@ export class StreamerServer {
       },
       onLiveQuestion: (sessionId, questions) => {
         this.handleLiveQuestion(sessionId, questions);
+      },
+      onLiveQuestionGone: (sessionId) => {
+        // The rendered AskUserQuestion menu closed. Clear the screen-dedupe key
+        // and cancel the pending question so the answered card is dismissed and
+        // a later repaint can't re-broadcast it. Only acts on a screen-scoped
+        // question — once the JSONL flush recorded the real toolUseId, the
+        // answer path (handleSendAnswer) already cleared it.
+        this.pendingQuestionKey.delete(sessionId);
+        const pq = this.pendingQuestions.get(sessionId);
+        if (pq?.toolUseId.startsWith("screen:")) {
+          this.cancelPendingQuestion(sessionId);
+        }
       },
       onReady: (session) => {
         const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());

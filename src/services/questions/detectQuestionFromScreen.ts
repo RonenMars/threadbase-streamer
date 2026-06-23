@@ -39,6 +39,16 @@ const BOX_ONLY_RE = /^[\s│─┌┐└┘├┤┬┴┼╭╮╰╯╱╲=_-]
 // never doubles as a structured question.
 const PERMISSION_LABEL_RE = /^(Yes|No)\b/i;
 
+// The final confirmation screen of a multi-question AskUserQuestion TUI:
+//   Ready to submit your answers?
+//   ❯ 1. Submit answers
+//     2. Cancel
+//   Enter to select · …
+// The user already answered each question via cards, so this internal step is
+// auto-confirmed by the PTY layer and must never render as its own card.
+const SUBMIT_QUESTION_RE = /ready to submit your answers\?/i;
+const SUBMIT_OPTION_RE = /^submit answers?$/i;
+
 // Strip leading AND trailing box-drawing gutters ("│ … │") so a menu drawn
 // inside a box parses the same as an unboxed one (the trailing gutter matters
 // for the "?"-suffix question test).
@@ -62,8 +72,11 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
   }
   if (footerIdx === -1) return null;
 
-  // Collect contiguous option rows immediately above the footer (skipping the
-  // Esc/navigate footer line and blanks between options and footer).
+  // Collect option rows above the footer. Real menus interleave each "N. label"
+  // row with wrapped DESCRIPTION lines and may insert a box border between
+  // options, so a non-option line is NOT a hard stop — it's skipped as long as
+  // we haven't reached the question line yet. We stop at: the question line (ends
+  // with "?"), a blank gap once options have started, or the top of the window.
   const options: AskOption[] = [];
   let firstOptionIdx = -1;
   for (let i = footerIdx - 1; i >= 0; i--) {
@@ -74,17 +87,20 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
       if (options.length === 0) continue; // gap between footer and options
       break; // blank line above the option block ends it
     }
-    if (BOX_ONLY_RE.test(line.trim())) continue; // box border around the menu
+    if (BOX_ONLY_RE.test(line.trim())) continue; // box border between/around options
     if (ESC_FOOTER_RE.test(line) && options.length === 0) continue;
+    // The question line terminates the option block (it's the row right above
+    // the first option, after any descriptions). Stop before consuming it.
+    if (options.length > 0 && QUESTION_RE.test(trimmed) && !OPTION_RE.test(inner)) break;
     const m = OPTION_RE.exec(inner);
     if (m) {
       const label = m[2].trim();
       if (PERMISSION_LABEL_RE.test(label)) return null; // it's a permission gate
       options.unshift({ label, description: "" });
       firstOptionIdx = i;
-    } else {
-      break; // first non-option line above the block — that's the question region
     }
+    // else: a wrapped description / continuation line for the option below it —
+    // skip it and keep scanning upward for more options.
   }
 
   if (options.length < 2 || firstOptionIdx === -1) return null;
@@ -105,9 +121,34 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
 
   if (!question) return null;
 
+  // The multi-question "Ready to submit your answers?" confirmation IS surfaced
+  // as a real card (Submit answers / Cancel) so the user can tap to confirm —
+  // the multi-question carousel doesn't reliably auto-submit. (Roadmap: robust
+  // auto-submit.) So we no longer reject it here.
+
   return {
     questions: [{ question, header: "", multiSelect: false, options }],
   };
+}
+
+/**
+ * True when the rendered screen is the AskUserQuestion "Ready to submit your
+ * answers?" confirmation (a question line + a "Submit answers" option under the
+ * Ask footer). Pure — no I/O. Retained as a classifier (e.g. for analytics);
+ * the submit screen now renders as a normal card.
+ */
+export function isSubmitConfirmationScreen(lines: string[]): boolean {
+  let hasFooter = false;
+  let hasSubmitQuestion = false;
+  let hasSubmitOption = false;
+  for (const line of lines) {
+    const inner = stripBoxGutter(line).trim();
+    if (ASK_FOOTER_RE.test(line)) hasFooter = true;
+    if (SUBMIT_QUESTION_RE.test(inner)) hasSubmitQuestion = true;
+    const m = OPTION_RE.exec(inner);
+    if (m && SUBMIT_OPTION_RE.test(m[2].trim())) hasSubmitOption = true;
+  }
+  return hasFooter && hasSubmitQuestion && hasSubmitOption;
 }
 
 /**
@@ -116,5 +157,7 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
  * question text + option labels.
  */
 export function questionContentKey(questions: AskQuestion[]): string {
-  return questions.map((q) => `${q.question} ${q.options.map((o) => o.label).join(",")}`).join("::");
+  return questions
+    .map((q) => `${q.question} ${q.options.map((o) => o.label).join(",")}`)
+    .join("::");
 }
