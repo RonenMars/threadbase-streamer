@@ -67,14 +67,23 @@ import { ConversationWatcher } from "./services/conversations/conversationWatche
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
+import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
+import {
+  questionsFromLines,
+  shouldBroadcastQuestion,
+} from "./services/questions/questionBroadcast";
+import { resolveAnswer } from "./services/questions/resolveAnswer";
 import { SessionStore } from "./session-store";
 import type {
+  AskQuestion,
   DiscoveredProcess,
+  PermissionOption,
   ServerConfig,
   SessionSortKey,
   SortOrder as SessionSortOrder,
   SessionStatus,
 } from "./types";
+
 import { saveUploadFile } from "./uploads";
 import { computeConversationEtag } from "./utils/conversationEtag";
 import { debounce } from "./utils/debounce";
@@ -103,6 +112,19 @@ export class StreamerServer {
   private wsHub: WSHub;
   private fileWatcher: ConversationWatcher;
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
+  private pendingQuestions = new Map<string, { toolUseId: string; questions: AskQuestion[] }>();
+  // Content key of the AskUserQuestion currently broadcast for a session (from
+  // either the rendered screen or JSONL), used to de-dupe the two paths: when
+  // the screen detection fires first, the later JSONL flush of the same question
+  // is suppressed. Cleared alongside pendingQuestions.
+  private pendingQuestionKey = new Map<string, string>();
+  // Per-session permission gate currently open (scraped via OSC 777). Parallel
+  // to pendingQuestions; mobile answers it by sending the option index via
+  // /input { keys }. Cleared when the gate closes.
+  private pendingPermission = new Map<
+    string,
+    { prompt?: string; options: PermissionOption[]; cursor?: number }
+  >();
   private scanner: ConversationScanner | null = null;
   private scannerReady: Promise<unknown> | null = null;
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
@@ -214,6 +236,39 @@ export class StreamerServer {
         this.cache?.updateFromLines(filePath, lines);
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
           if (watchedPath === filePath) {
+            // toolUseId the client currently holds for this session (set by the
+            // live-screen path as `screen:…`, or a prior JSONL flush). Captured
+            // BEFORE the overwrite below so we can detect an id change.
+            const priorToolUseId = this.pendingQuestions.get(sessionId)?.toolUseId;
+            const { messages, pending } = questionsFromLines(sessionId, lines);
+            for (const p of pending) {
+              this.pendingQuestions.set(sessionId, p); // last pending wins
+              const t = setTimeout(() => {
+                if (this.pendingQuestions.get(sessionId)?.toolUseId === p.toolUseId) {
+                  this.cancelPendingQuestion(sessionId);
+                }
+              }, 60_000);
+              t.unref();
+            }
+            // De-dupe vs the live-screen path: if the rendered detection already
+            // broadcast this exact question (same content key), don't re-render —
+            // EXCEPT when the real JSONL toolUseId differs from the synthetic
+            // `screen:` id the client holds. The client answers with the id it
+            // was given; if it still has the screen id, resolveAnswer rejects the
+            // POST as tool_use_mismatch. Re-broadcasting the real id re-syncs the
+            // client (mapAskQuestionToBlock just replaces activeQuestion — the
+            // card re-renders identically) so answering works.
+            for (const m of messages) {
+              const key = questionContentKey(m.questions);
+              const broadcast = shouldBroadcastQuestion({
+                newContentKey: key,
+                lastContentKey: this.pendingQuestionKey.get(sessionId),
+                newToolUseId: m.toolUseId,
+                priorToolUseId,
+              });
+              this.pendingQuestionKey.set(sessionId, key);
+              if (broadcast) this.wsHub.broadcast(m);
+            }
             // Additive batched event (one socket write) for newer clients...
             this.wsHub.broadcast({ type: "conversation_events", sessionId, lines });
             // ...plus per-line conversation_event so older mobile clients,
@@ -258,6 +313,24 @@ export class StreamerServer {
       onOutput: (sessionId, data) => {
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
       },
+      onPermissionChange: (sessionId, gate) => {
+        this.handlePermissionChange(sessionId, gate);
+      },
+      onLiveQuestion: (sessionId, questions) => {
+        this.handleLiveQuestion(sessionId, questions);
+      },
+      onLiveQuestionGone: (sessionId) => {
+        // The rendered AskUserQuestion menu closed. Clear the screen-dedupe key
+        // and cancel the pending question so the answered card is dismissed and
+        // a later repaint can't re-broadcast it. Only acts on a screen-scoped
+        // question — once the JSONL flush recorded the real toolUseId, the
+        // answer path (handleSendAnswer) already cleared it.
+        this.pendingQuestionKey.delete(sessionId);
+        const pq = this.pendingQuestions.get(sessionId);
+        if (pq?.toolUseId.startsWith("screen:")) {
+          this.cancelPendingQuestion(sessionId);
+        }
+      },
       onReady: (session) => {
         const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
         if (resp) this.wsHub.broadcast({ type: "session_ready", session: resp });
@@ -301,7 +374,10 @@ export class StreamerServer {
           if (filePath) {
             this.fileWatcher.unwatch(filePath);
             this.sessionFileMap.delete(session.id);
+            this.cancelPendingQuestion(session.id);
           }
+          // A gone PTY can never have an open gate; clear silently.
+          this.pendingPermission.delete(session.id);
         }
         const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
         if (resp) {
@@ -361,6 +437,7 @@ export class StreamerServer {
       handleGetSession: (id, res) => this.handleGetSession(id, res),
       handleGetOutput: (id, res) => this.handleGetOutput(id, res),
       handleSendInput: (id, req, res) => this.handleSendInput(id, req, res),
+      handleSendAnswer: (id, req, res) => this.handleSendAnswer(id, req, res),
       handleCancel: (id, res) => this.handleCancel(id, res),
       handleStopSession: (id, res) => this.handleStopSession(id, res),
       handleSetSessionName: (id, req, res) => this.handleSetSessionName(id, req, res),
@@ -535,16 +612,33 @@ export class StreamerServer {
 
     const timer = setTimeout(() => {
       this.ptyGraceTimers.delete(sessionId);
-      this.sessionSubscribers.delete(sessionId);
       if (this.ptyManager.hasSession(sessionId)) {
+        // Never interrupt a session mid-response. A `running` PTY is actively
+        // streaming a Claude turn that hasn't flushed to the JSONL yet; killing
+        // it (SIGINT) would lose the in-flight answer. Re-arm the grace timer
+        // and re-check after another grace period — it only becomes eligible
+        // for hold once it settles back to waiting_input/idle.
+        const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+        if (resp?.status === "running") {
+          this.log.info(
+            `[grace] session ${sessionId} still running, deferring hold`,
+            { sessionId, event: "pty.grace_defer" },
+            "pino",
+          );
+          this.startGraceTimer(sessionId, delayMs);
+          return;
+        }
+        this.sessionSubscribers.delete(sessionId);
         this.log.info(
           `[grace] killing idle PTY for ${sessionId}`,
           { sessionId, event: "pty.grace_kill" },
           "pino",
         );
         this.ptyManager.putOnHold(sessionId);
-        const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-        if (resp) this.wsHub.broadcast({ type: "session_update", session: resp });
+        const held = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+        if (held) this.wsHub.broadcast({ type: "session_update", session: held });
+      } else {
+        this.sessionSubscribers.delete(sessionId);
       }
     }, delayMs);
 
@@ -1833,6 +1927,77 @@ export class StreamerServer {
       const message = err instanceof Error ? err.message : "Failed to send input";
       json(res, 400, { error: message });
     }
+  }
+
+  private cancelPendingQuestion(sessionId: string): void {
+    const pq = this.pendingQuestions.get(sessionId);
+    if (!pq) return;
+    this.pendingQuestions.delete(sessionId);
+    this.pendingQuestionKey.delete(sessionId);
+    this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId: pq.toolUseId });
+  }
+
+  // Live AskUserQuestion detected from the rendered screen (ahead of JSONL).
+  // Broadcasts the `question` event immediately and records the content key so
+  // the later JSONL flush of the same question is de-duped. We synthesize a
+  // screen-scoped toolUseId; the JSONL path overwrites pendingQuestions with the
+  // real toolUseId when it lands, so answering works once JSONL catches up.
+  private handleLiveQuestion(sessionId: string, questions: AskQuestion[]): void {
+    const key = questionContentKey(questions);
+    if (this.pendingQuestionKey.get(sessionId) === key) return; // already shown
+    const toolUseId = `screen:${sessionId}:${key.length}`;
+    this.pendingQuestions.set(sessionId, { toolUseId, questions });
+    this.pendingQuestionKey.set(sessionId, key);
+    this.wsHub.broadcast({ type: "question", sessionId, toolUseId, questions });
+  }
+
+  // Permission gate opened/closed (OSC 777 + scraped options). Broadcasts the
+  // additive `permission` / `permission_cancelled` events. Mobile answers by
+  // sending the chosen option index via /input { keys } (e.g. "2\r").
+  private handlePermissionChange(
+    sessionId: string,
+    gate: { prompt?: string; options: PermissionOption[]; cursor?: number } | null,
+  ): void {
+    if (gate === null) {
+      if (!this.pendingPermission.has(sessionId)) return;
+      this.pendingPermission.delete(sessionId);
+      this.wsHub.broadcast({ type: "permission_cancelled", sessionId });
+      return;
+    }
+    this.pendingPermission.set(sessionId, gate);
+    this.wsHub.broadcast({
+      type: "permission",
+      sessionId,
+      ...(gate.prompt ? { prompt: gate.prompt } : {}),
+      options: gate.options,
+      ...(gate.cursor !== undefined ? { cursor: gate.cursor } : {}),
+    });
+  }
+
+  private async handleSendAnswer(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await readBody(req);
+    const pending = this.pendingQuestions.get(sessionId);
+    const resolution = resolveAnswer(pending, body);
+    if (!resolution.ok) {
+      json(res, 400, { ok: false, reason: resolution.reason });
+      return;
+    }
+    // pending is guaranteed defined when resolution.ok is true (resolveAnswer guards it)
+    const toolUseId = pending?.toolUseId ?? "";
+    try {
+      this.ptyManager.sendKeys(sessionId, resolution.keys);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to send answer";
+      json(res, 400, { ok: false, reason: message });
+      return;
+    }
+    this.pendingQuestions.delete(sessionId);
+    this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId });
+    json(res, 200, { ok: true });
   }
 
   private async handleUploadFile(

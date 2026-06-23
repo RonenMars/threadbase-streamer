@@ -34,6 +34,7 @@ export type ApiDeps = {
   handleGetSession: (sessionId: string, res: ServerResponse) => void;
   handleGetOutput: (sessionId: string, res: ServerResponse) => void;
   handleSendInput: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
+  handleSendAnswer: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleCancel: (sessionId: string, res: ServerResponse) => void;
   handleStopSession: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleSetSessionName: (

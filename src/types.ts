@@ -72,6 +72,33 @@ export interface DiscoveredProcess {
 
 // ─── WebSocket Messages ────────────────────────────────────────────
 
+export interface AskOption {
+  label: string;
+  description: string;
+  preview?: string;
+}
+
+export interface AskQuestion {
+  question: string;
+  header: string;
+  multiSelect: boolean;
+  options: AskOption[];
+}
+
+// A permission-gate option scraped from the rendered screen. `index` is the
+// ACTUAL on-screen number (e.g. 2, 3), not a 1-based array index — gates can
+// show "2. Yes / 3. No". Mobile answers by sending `${index}\r` via the
+// existing /input { keys } route.
+export interface PermissionOption {
+  index: number;
+  label: string;
+  // Literal keystroke bytes that answer this option (e.g. "y\r", "2\r"), set by
+  // the unstructured shell-prompt detector (detectShellPrompt). Authoritative
+  // over `index` when present; absent for OSC-777 gates. Additive — old clients
+  // ignore it and fall back to `${index}\r`.
+  answerKeys?: string;
+}
+
 export type WSMessage =
   | { type: "terminal_output"; sessionId: string; data: string }
   | {
@@ -89,6 +116,19 @@ export type WSMessage =
   // Additive batched variant: one message carries all lines from a single
   // watcher read. Old clients ignore it and rely on conversation_event.
   | { type: "conversation_events"; sessionId: string; lines: string[] }
+  // Structured interactive prompt (AskUserQuestion). Old clients ignore it.
+  | { type: "question"; sessionId: string; toolUseId: string; questions: AskQuestion[] }
+  | { type: "question_cancelled"; sessionId: string; toolUseId: string }
+  // Permission gate (OSC 777). Additive; old clients ignore it. `options`/`cursor`
+  // are scraped from the rendered screen and may be absent if not yet painted.
+  | {
+      type: "permission";
+      sessionId: string;
+      prompt?: string;
+      options: PermissionOption[];
+      cursor?: number;
+    }
+  | { type: "permission_cancelled"; sessionId: string }
   | { type: "ping"; ts: number }
   | { type: "terminal_replay"; sessionId: string; lines: string[] }
   | { type: "session_ready"; session: SessionResponse }
@@ -207,6 +247,20 @@ export interface PTYManagerOptions {
   onOutput?: (sessionId: string, data: string) => void;
   onStatusChange?: (session: ManagedSession) => void;
   onReady?: (session: ManagedSession) => void;
+  // Fired when a permission gate opens (gate !== null, scraped from the rendered
+  // screen) or closes (gate === null). Detected live from the PTY stream (OSC
+  // 777 + rendered options) — not JSONL. Additive; absent in tests that omit it.
+  onPermissionChange?: (
+    sessionId: string,
+    gate: { prompt?: string; options: PermissionOption[]; cursor?: number } | null,
+  ) => void;
+  // Fired when an AskUserQuestion menu is detected on the rendered screen (before
+  // the JSONL tool_use block flushes). The server de-dupes against the JSONL path.
+  onLiveQuestion?: (sessionId: string, questions: AskQuestion[]) => void;
+  // Fired when a previously-detected AskUserQuestion screen menu disappears (the
+  // user answered it and Claude's prompt marker is back). Lets the server clear
+  // the pending question so an answered menu doesn't linger or re-appear.
+  onLiveQuestionGone?: (sessionId: string) => void;
   logger?: import("./logger").Logger;
 }
 
