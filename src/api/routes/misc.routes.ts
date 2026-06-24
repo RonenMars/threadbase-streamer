@@ -55,7 +55,7 @@ type ClientLogEntry = {
 };
 
 export const createMiscRoutes = (
-  deps: Pick<ApiDeps, "publicUrl" | "sessionStore" | "ptyAttachedIds">,
+  deps: Pick<ApiDeps, "publicUrl" | "sessionStore" | "ptyAttachedIds" | "rotateApiKey">,
 ) => {
   const app = new Hono<AppEnv>();
 
@@ -71,6 +71,11 @@ export const createMiscRoutes = (
   });
 
   app.get("/api/profiles", (c) => c.json([]));
+
+  app.post("/api/auth/rotate", (c) => {
+    const newKey = deps.rotateApiKey();
+    return c.json({ apiKey: newKey });
+  });
 
   app.post("/api/push/register", (c) => c.json({ ok: true }));
 
