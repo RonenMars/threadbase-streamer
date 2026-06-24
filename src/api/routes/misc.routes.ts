@@ -55,7 +55,10 @@ type ClientLogEntry = {
 };
 
 export const createMiscRoutes = (
-  deps: Pick<ApiDeps, "publicUrl" | "sessionStore" | "ptyAttachedIds" | "rotateApiKey">,
+  deps: Pick<
+    ApiDeps,
+    "publicUrl" | "sessionStore" | "ptyAttachedIds" | "rotateApiKey" | "localNoAuth"
+  >,
 ) => {
   const app = new Hono<AppEnv>();
 
@@ -73,6 +76,11 @@ export const createMiscRoutes = (
   app.get("/api/profiles", (c) => c.json([]));
 
   app.post("/api/auth/rotate", (c) => {
+    // Block rotation when localNoAuth is on — any localhost process could
+    // call this and lock out the legitimate owner.
+    if (deps.localNoAuth) {
+      return c.json({ error: "key rotation is disabled while localNoAuth is active" }, 403);
+    }
     const newKey = deps.rotateApiKey();
     return c.json({ apiKey: newKey });
   });
