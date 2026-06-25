@@ -96,6 +96,9 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
   `You are working within the project boundary: ${browseRoot}. ` +
   `Do not read, write, or execute commands that access files or directories outside this boundary.`;
 
+const DEFAULT_SYSTEM_PROMPT =
+  "When presenting options or choices to the user, limit the options to at most 3.";
+
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
 // Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
@@ -154,6 +157,7 @@ export class StreamerServer {
   private pairTokens = new PairTokenStore();
   private exchangeAttempts = new Map<string, number[]>();
   private ptyGracePeriodMs: number;
+  private defaultSystemPrompt: string;
   // Map of sessionId → grace timer; fires to kill PTY after WS disconnect
   private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Map of sessionId → set of subscribed WS clients
@@ -198,6 +202,7 @@ export class StreamerServer {
     this.scanProfiles = config.scanProfiles;
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
+    this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
     this.directoryDebounceMs =
@@ -2270,7 +2275,7 @@ export class StreamerServer {
       return;
     }
     const body = await readBody(req);
-    const { path: relativePath } = body;
+    const { path: relativePath, systemPrompt: clientPrompt } = body;
 
     if (typeof relativePath !== "string") {
       json(res, 400, { error: "Missing path field" });
@@ -2288,11 +2293,17 @@ export class StreamerServer {
 
     this.discoveryCache = null;
 
+    const systemPromptParts = [
+      this.defaultSystemPrompt,
+      BROWSE_SYSTEM_PROMPT(this.browseRoot),
+      typeof clientPrompt === "string" ? clientPrompt : null,
+    ].filter(Boolean);
+
     try {
       const session = await this.ptyManager.startFresh({
         projectPath: resolvedPath,
         projectName: body.projectName,
-        systemPrompt: BROWSE_SYSTEM_PROMPT(this.browseRoot),
+        systemPrompt: systemPromptParts.join("\n"),
       });
 
       this.sessionStore.addManaged(session);
