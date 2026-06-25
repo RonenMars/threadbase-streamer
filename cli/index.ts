@@ -27,6 +27,7 @@ program
   .option("--api-key <key>", "API key for authentication")
   .option("--local-no-auth", "Skip auth for localhost requests", false)
   .option("-v, --verbose", "Verbose output", false)
+  .option("--log-menubar-requests", "Log /healthz requests from the menubar app", false)
   .option("--browse-root <path>", "Root directory for file browsing")
   .option(
     "--public-url <url>",
@@ -92,6 +93,7 @@ program
       apiKey,
       localNoAuth: opts.localNoAuth,
       verbose: opts.verbose,
+      logMenubarRequests: opts.logMenubarRequests,
       browseRoot: opts.browseRoot,
       publicUrl: opts.publicUrl,
     });
