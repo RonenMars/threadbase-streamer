@@ -1,7 +1,7 @@
-import type { ServerResponse } from "http";
 import { readdirSync, statSync } from "fs";
-import { join } from "path";
+import type { ServerResponse } from "http";
 import { homedir } from "os";
+import { join } from "path";
 
 function decodeProjectPath(dirName: string): string {
   // Claude encodes project paths by replacing '/' with '-', starting from root.
@@ -38,7 +38,9 @@ export function handleListProjects(url: URL, res: ServerResponse): void {
   }
 
   const total = entries.length;
-  const page = entries.slice(offset, offset + limit).map(({ name, path, dirName }) => ({ name, path, dirName }));
+  const page = entries
+    .slice(offset, offset + limit)
+    .map(({ name, path, dirName }) => ({ name, path, dirName }));
 
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ projects: page, total }));
