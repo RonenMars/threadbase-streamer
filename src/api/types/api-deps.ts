@@ -16,7 +16,7 @@ export type ApiDeps = {
   apiKey: string;
   localNoAuth: boolean;
   logMenubarRequests: boolean;
-  rotateApiKey: () => string;
+  rotateApiKey: () => { newKey: string; persisted: boolean };
   publicUrl: string | null;
   browseRoot: string | null;
   ptyManager: PTYManager;

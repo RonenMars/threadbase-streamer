@@ -81,8 +81,19 @@ export const createMiscRoutes = (
     if (deps.localNoAuth) {
       return c.json({ error: "key rotation is disabled while localNoAuth is active" }, 403);
     }
-    const newKey = deps.rotateApiKey();
-    return c.json({ apiKey: newKey });
+    const { newKey, persisted } = deps.rotateApiKey();
+    return c.json({
+      apiKey: newKey,
+      persisted,
+      ...(persisted
+        ? {}
+        : {
+            warning:
+              "Key rotated in memory only. The server was started with --api-key, so the " +
+              "old key will be restored on restart. Remove --api-key and let the server " +
+              "manage the key via ~/.threadbase/server.yaml for rotation to survive restarts.",
+          }),
+    });
   });
 
   app.post("/api/push/register", (c) => c.json({ ok: true }));

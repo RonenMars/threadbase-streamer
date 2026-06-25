@@ -145,6 +145,7 @@ export class StreamerServer {
   private binding = false;
   private cacheReady = false;
   private apiKey: string;
+  private apiKeySource: "config" | "cli";
   private localNoAuth: boolean;
   private logMenubarRequests: boolean;
   private verbose: boolean;
@@ -199,6 +200,7 @@ export class StreamerServer {
   constructor(config: ServerConfig & { apiKey: string }) {
     this.sessionStatusBus.setMaxListeners(0);
     this.apiKey = config.apiKey;
+    this.apiKeySource = config.apiKeySource ?? "config";
     this.localNoAuth = config.localNoAuth ?? false;
     this.logMenubarRequests = config.logMenubarRequests ?? false;
     if (this.localNoAuth) {
@@ -1049,11 +1051,16 @@ export class StreamerServer {
     });
   }
 
-  private rotateApiKey(): string {
+  private rotateApiKey(): { newKey: string; persisted: boolean } {
     const newKey = generateApiKey();
-    setApiKey(newKey);
+    // Only persist to server.yaml when the key came from there.
+    // If --api-key was passed on the CLI, the flag wins on restart and
+    // would silently revert to the old key — so skip the write and let
+    // the caller know via the response.
+    const persisted = this.apiKeySource === "config";
+    if (persisted) setApiKey(newKey);
     this.apiKey = newKey;
-    return newKey;
+    return { newKey, persisted };
   }
 
   private checkRateLimit(

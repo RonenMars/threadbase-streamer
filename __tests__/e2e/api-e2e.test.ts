@@ -136,13 +136,23 @@ describe("API E2E tests", () => {
   });
 
   describe("CORS", () => {
-    it("returns CORS headers on OPTIONS", async () => {
+    it("returns CORS headers on OPTIONS from an allowed origin", async () => {
       const res = await fetch(`${baseUrl}/api/conversations`, {
         method: "OPTIONS",
+        headers: { Origin: "http://localhost:8081" },
       });
       expect(res.status).toBe(204);
-      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
       expect(res.headers.get("access-control-allow-methods")).toContain("GET");
+    });
+
+    it("rejects OPTIONS from a disallowed origin", async () => {
+      const res = await fetch(`${baseUrl}/api/conversations`, {
+        method: "OPTIONS",
+        headers: { Origin: "http://evil.example.com" },
+      });
+      expect(res.status).toBe(403);
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
     });
   });
 });
