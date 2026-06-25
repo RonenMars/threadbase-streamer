@@ -61,6 +61,7 @@ import { handleListProjectChats } from "./handlers/handleListProjectChats";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, isProviderResumable } from "./providers";
 import { PTYManager } from "./pty-manager";
 import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
@@ -174,6 +175,7 @@ export class StreamerServer {
   // in the constructor body (NOT a field initializer) so directoryDebounceMs
   // is already set when debounce() captures the wait.
   private markScannerStaleDebounced!: ReturnType<typeof debounce>;
+  private codexRoots: string[];
   private includeAgents: boolean;
   private agentEntrypoints: ReadonlySet<string>;
   private honoApp: Hono<AppEnv>;
@@ -189,6 +191,7 @@ export class StreamerServer {
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
     this.scanProfiles = config.scanProfiles;
+    this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
@@ -731,10 +734,14 @@ export class StreamerServer {
         // percent (plus the final tick) so a large scan doesn't flood every
         // WebSocket client with thousands of scan_progress messages.
         const shouldEmitProgress = createScanProgressThrottle();
+        const scanOpts = {
+          ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+          ...this.codexScanOpts(),
+          ...(warmupStatCache ? { statCache: warmupStatCache } : {}),
+        };
         warmupScanner
           .scan({
-            ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
-            ...(warmupStatCache ? { statCache: warmupStatCache } : {}),
+            ...scanOpts,
             onProgress: (scanned, total) => {
               if (shouldEmitProgress(scanned, total)) {
                 this.wsHub.broadcast({ type: "scan_progress", scanned, total });
@@ -1023,6 +1030,7 @@ export class StreamerServer {
     const offset = intParam(url, "offset", 0);
     const sort = (url.searchParams.get("sort") ?? "recent") as SortOrder;
     const project = url.searchParams.get("project") ?? undefined;
+    const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
     if (bustCache) {
@@ -1032,7 +1040,12 @@ export class StreamerServer {
     }
 
     if (this.cache && !bustCache) {
-      const { conversations, total } = this.cache.listConversations({ project, limit, offset });
+      const { conversations, total } = this.cache.listConversations({
+        project,
+        provider: providerFilter,
+        limit,
+        offset,
+      });
       const adapted = conversations.map((c) => ({
         id: c.id,
         title: deriveProjectChatTitle({
@@ -1052,6 +1065,7 @@ export class StreamerServer {
         firstMessage: c.firstMessage ? (JSON.parse(c.firstMessage) as unknown) : undefined,
         lastMessage: c.lastMessage ? (JSON.parse(c.lastMessage) as unknown) : undefined,
         model: c.model ?? undefined,
+        provider: c.provider ?? CLAUDE_CODE_PROVIDER,
       }));
       json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
       return;
@@ -1061,6 +1075,8 @@ export class StreamerServer {
     let metas = [...scanner.getMetadataCache().values()];
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
+    if (providerFilter)
+      metas = metas.filter((m) => (m.provider ?? CLAUDE_CODE_PROVIDER) === providerFilter);
     metas = applySort(metas, sort);
     const total = metas.length;
     const page = applyPagination(metas, limit, offset);
@@ -1092,6 +1108,7 @@ export class StreamerServer {
         firstMessage: c.firstMessage ?? undefined,
         lastMessage: c.lastMessage ?? undefined,
         model: c.model ?? undefined,
+        provider: (c as any).provider ?? CLAUDE_CODE_PROVIDER,
       };
     });
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
@@ -1107,6 +1124,7 @@ export class StreamerServer {
 
   private async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
     const project = url.searchParams.get("project") ?? undefined;
+    const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
     // refresh=1 historically forced a full synchronous scan() to recount from
@@ -1116,7 +1134,12 @@ export class StreamerServer {
     // immediately and reconcile from disk in the BACKGROUND so the count stays
     // fast regardless of refresh.
     if (this.cache) {
-      const { total } = this.cache.listConversations({ project, limit: 0, offset: 0 });
+      const { total } = this.cache.listConversations({
+        project,
+        provider: providerFilter,
+        limit: 0,
+        offset: 0,
+      });
       json(res, 200, { total });
       if (bustCache) this.refreshCountInBackground();
       return;
@@ -1126,6 +1149,8 @@ export class StreamerServer {
     let metas = [...scanner.getMetadataCache().values()];
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
+    if (providerFilter)
+      metas = metas.filter((m) => (m.provider ?? CLAUDE_CODE_PROVIDER) === providerFilter);
     json(res, 200, { total: metas.length });
   }
 
@@ -1233,6 +1258,15 @@ export class StreamerServer {
     return statCache.size > 0 ? statCache : undefined;
   }
 
+  // Returns the provider + codexRoots fragment to spread into every scan()/search() call.
+  // codexRoots=[] disables codex scanning (safe no-op per scanner contract).
+  private codexScanOpts() {
+    return {
+      providers: [CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER],
+      codexRoots: this.codexRoots,
+    };
+  }
+
   // skipStaleRescan: when an indexed scanner already exists, return it directly
   // even if scannerStale is set, leaving the flag untouched so the next
   // list-level call still rescans. The single-conversation detail path passes
@@ -1263,6 +1297,7 @@ export class StreamerServer {
     this.scanner = new ConversationScanner();
     this.scannerReady = this.scanner.scan({
       ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+      ...this.codexScanOpts(),
       ...(statCache ? { statCache } : {}),
     });
     await this.scannerReady;
@@ -1420,6 +1455,7 @@ export class StreamerServer {
         const tail = this.cache.getConversationTail(id);
         if (tail && tail.messages.length > 0) {
           const cachedMeta = this.cache.getMetaById(id);
+          const cachedProvider = cachedMeta?.provider ?? CLAUDE_CODE_PROVIDER;
           const availability = classifyResumability(cachedMeta?.projectPath);
           const messagesPayload = tail.messages.map((m, idx) => ({
             message_index: idx,
@@ -1438,7 +1474,8 @@ export class StreamerServer {
               file_path: cachedMeta?.filePath ?? undefined,
               last_updated_at: cachedMeta?.lastActivity ?? undefined,
               message_count: cachedMeta?.messageCount ?? undefined,
-              resumable: availability.resumable,
+              provider: cachedProvider,
+              resumable: isProviderResumable(cachedProvider, availability.resumable),
               ...(availability.unavailable_reason && {
                 unavailable_reason: availability.unavailable_reason,
               }),
@@ -1579,6 +1616,9 @@ export class StreamerServer {
     });
 
     const conv = conversation as any;
+    const cachedConvMeta = this.cache?.getMetaById(id);
+    const convProvider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER =
+      conv.provider ?? cachedConvMeta?.provider ?? CLAUDE_CODE_PROVIDER;
     const availability = classifyResumability(conv.projectPath);
     const body: Record<string, unknown> = {
       meta: {
@@ -1590,7 +1630,8 @@ export class StreamerServer {
         last_updated_at: conv.timestamp,
         message_count: conv.messageCount,
         last_prompt: conv.lastPrompt ?? undefined,
-        resumable: availability.resumable,
+        provider: convProvider,
+        resumable: isProviderResumable(convProvider, availability.resumable),
         ...(availability.unavailable_reason && {
           unavailable_reason: availability.unavailable_reason,
         }),
@@ -1633,6 +1674,7 @@ export class StreamerServer {
         limit,
         include: "conversations",
         ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+        ...this.codexScanOpts(),
       },
       scanner,
     );
@@ -1653,6 +1695,7 @@ export class StreamerServer {
       lastActivity: r.meta.timestamp,
       firstMessage: r.meta.firstMessage ?? undefined,
       lastMessage: r.meta.lastMessage ?? undefined,
+      provider: r.meta.provider ?? CLAUDE_CODE_PROVIDER,
     }));
     json(res, 200, {
       conversations: adapted,
@@ -2513,6 +2556,7 @@ function classifyResumability(cwd: string | null | undefined): {
 
 function conversationToResumableSession(c: ConversationListItem) {
   const availability = classifyResumability(c.projectPath);
+  const provider = c.provider ?? CLAUDE_CODE_PROVIDER;
   return {
     type: "conversation" as const,
     id: c.id,
@@ -2537,7 +2581,8 @@ function conversationToResumableSession(c: ConversationListItem) {
     ...(c.firstMessage != null && { firstMessageText: c.firstMessage }),
     ...(c.lastMessage != null && { lastMessageText: c.lastMessage }),
     filePath: c.filePath,
-    resumable: availability.resumable,
+    provider,
+    resumable: isProviderResumable(provider, availability.resumable),
     ...(availability.unavailable_reason && {
       unavailable_reason: availability.unavailable_reason,
     }),

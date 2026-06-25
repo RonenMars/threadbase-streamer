@@ -88,7 +88,7 @@
     "@hono/node-ws": "^1.3.1",
     "@temporalio/client": "^1.18.1",
     "@threadbase-sh/agent-types": "^0.1.0",
-    "@threadbase-sh/scanner": "^0.7.2",
+    "@threadbase-sh/scanner": "^0.8.2",
     "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",

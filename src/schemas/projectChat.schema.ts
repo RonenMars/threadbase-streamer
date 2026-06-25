@@ -30,6 +30,7 @@ export const ConversationProjectChatSchema = z.object({
   ...Common,
   status: z.enum(["archived", "resumable"]),
   source: z.literal("hdd-cache"),
+  provider: z.enum(["claude-code", "codex-cli"]).default("claude-code"),
   indexedAt: z.string().nullable().optional(),
   fileMtime: z.string().nullable().optional(),
   filePath: z.string().nullable().optional(),

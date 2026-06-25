@@ -1,4 +1,5 @@
 import type { ConversationListItem } from "../../conversation-cache";
+import { CLAUDE_CODE_PROVIDER } from "../../providers";
 import type { ConversationProjectChat } from "../../schemas/projectChat.schema";
 import { deriveProjectChatTitle } from "./deriveProjectChatTitle";
 
@@ -33,6 +34,7 @@ export function normalizeConversationToProjectChat(
     createdAt: null,
     status: "resumable",
     source: "hdd-cache",
+    provider: conversation.provider ?? CLAUDE_CODE_PROVIDER,
     indexedAt: null,
     fileMtime: null,
     filePath: conversation.filePath ?? null,

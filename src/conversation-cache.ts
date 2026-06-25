@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "fs";
 import { dirname } from "path";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
+import { CLAUDE_CODE_PROVIDER } from "./providers";
 import {
   DEFAULT_AGENT_ENTRYPOINTS,
   isAgentFile,
@@ -36,6 +37,7 @@ export interface ConversationListItem {
   lastMessage: string | null;
   preview: string | null;
   source: string | null;
+  provider: "claude-code" | "codex-cli";
 }
 
 export interface CachedTailMessage {
@@ -66,6 +68,7 @@ export interface ScannerMeta {
   firstMessage?: unknown;
   lastMessage?: unknown;
   preview?: string;
+  provider?: "claude-code" | "codex-cli";
 }
 
 interface MetaRow {
@@ -84,6 +87,7 @@ interface MetaRow {
   last_message: string | null;
   preview: string | null;
   source: string | null;
+  provider: "claude-code" | "codex-cli";
   updated_at: number;
 }
 
@@ -190,6 +194,8 @@ export class ConversationCache {
     count: Database.Statement;
     listByProject: Database.Statement;
     countByProject: Database.Statement;
+    listByProvider: Database.Statement;
+    countByProvider: Database.Statement;
     deleteById: Database.Statement;
     deleteTailById: Database.Statement;
     deleteAll: Database.Statement;
@@ -259,11 +265,11 @@ export class ConversationCache {
         INSERT INTO conversation_meta
           (id, file_path, project_path, project_name, title, model, account, branch,
            message_count, last_activity, first_message, last_message, preview, updated_at,
-           mtime_ms, file_size)
+           mtime_ms, file_size, provider)
         VALUES
           (@id, @file_path, @project_path, @project_name, @title, @model, @account, @branch,
            @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at,
-           @mtime_ms, @file_size)
+           @mtime_ms, @file_size, @provider)
         ON CONFLICT(id) DO UPDATE SET
           file_path     = excluded.file_path,
           project_path  = excluded.project_path,
@@ -279,7 +285,8 @@ export class ConversationCache {
           preview       = excluded.preview,
           updated_at    = excluded.updated_at,
           mtime_ms      = excluded.mtime_ms,
-          file_size     = excluded.file_size
+          file_size     = excluded.file_size,
+          provider      = excluded.provider
         WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
@@ -303,6 +310,10 @@ export class ConversationCache {
       countByProject: db.prepare(
         "SELECT COUNT(*) as n FROM conversation_meta WHERE project_path = ?",
       ),
+      listByProvider: db.prepare(
+        "SELECT * FROM conversation_meta WHERE provider = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?",
+      ),
+      countByProvider: db.prepare("SELECT COUNT(*) as n FROM conversation_meta WHERE provider = ?"),
       deleteById: db.prepare("DELETE FROM conversation_meta WHERE id = ?"),
       deleteTailById: db.prepare("DELETE FROM conversation_tail WHERE conversation_id = ?"),
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
@@ -645,6 +656,7 @@ export class ConversationCache {
           updated_at: 0,
           mtime_ms: mtimeMs,
           file_size: fileSize,
+          provider: m.provider ?? CLAUDE_CODE_PROVIDER,
         });
         if (this.fileIndexLoaded) this.fileIndex.set(m.filePath, id);
         upsertedIds.push(id);
@@ -730,17 +742,21 @@ export class ConversationCache {
     return true;
   }
 
-  listConversations(opts: { project?: string; limit: number; offset: number }): {
+  listConversations(opts: { project?: string; provider?: string; limit: number; offset: number }): {
     conversations: ConversationListItem[];
     total: number;
   } {
-    const { project, limit, offset } = opts;
+    const { project, provider, limit, offset } = opts;
     let total: number;
     let rows: MetaRow[];
 
     if (project) {
       total = (this.stmts.countByProject.get(project) as { n: number }).n;
       rows = limit === 0 ? [] : (this.stmts.listByProject.all(project, limit, offset) as MetaRow[]);
+    } else if (provider) {
+      total = (this.stmts.countByProvider.get(provider) as { n: number }).n;
+      rows =
+        limit === 0 ? [] : (this.stmts.listByProvider.all(provider, limit, offset) as MetaRow[]);
     } else {
       total = (this.stmts.count.get() as { n: number }).n;
       rows = limit === 0 ? [] : (this.stmts.list.all(limit, offset) as MetaRow[]);
@@ -766,6 +782,7 @@ export class ConversationCache {
         lastMessage: r.last_message,
         preview: r.preview,
         source: r.source,
+        provider: r.provider ?? CLAUDE_CODE_PROVIDER,
       })),
     };
   }
@@ -807,6 +824,7 @@ export class ConversationCache {
       lastMessage: row.last_message,
       preview: row.preview,
       source: row.source,
+      provider: row.provider ?? CLAUDE_CODE_PROVIDER,
     };
   }
 
