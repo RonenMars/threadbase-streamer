@@ -138,6 +138,7 @@ export class StreamerServer {
   private cacheReady = false;
   private apiKey: string;
   private localNoAuth: boolean;
+  private logMenubarRequests: boolean;
   private verbose: boolean;
   private scanProfiles:
     | Array<{ id: string; label: string; configDir: string; enabled: boolean; emoji: string }>
@@ -188,6 +189,7 @@ export class StreamerServer {
     this.sessionStatusBus.setMaxListeners(0);
     this.apiKey = config.apiKey;
     this.localNoAuth = config.localNoAuth ?? false;
+    this.logMenubarRequests = config.logMenubarRequests ?? false;
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
     this.scanProfiles = config.scanProfiles;
@@ -422,6 +424,7 @@ export class StreamerServer {
     const apiDeps: ApiDeps = {
       apiKey: this.apiKey,
       localNoAuth: this.localNoAuth,
+      logMenubarRequests: this.logMenubarRequests,
       publicUrl: this.publicUrl,
       browseRoot: this.browseRoot,
       ptyManager: this.ptyManager,
