@@ -240,6 +240,7 @@ export interface ServerConfig {
   cacheDir?: string;
   tailSize?: number;
   directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)
+  defaultSystemPrompt?: string; // prepended to every PTY session's --system-prompt; overrides the built-in default
 }
 
 // ─── PTY Manager ───────────────────────────────────────────────────
