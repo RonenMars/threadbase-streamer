@@ -90,6 +90,7 @@ program
     const server = new StreamerServer({
       port: resolvedPort,
       apiKey,
+      apiKeySource: opts.apiKey ? "cli" : "config",
       localNoAuth: opts.localNoAuth,
       verbose: opts.verbose,
       browseRoot: opts.browseRoot,

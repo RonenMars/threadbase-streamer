@@ -129,6 +129,39 @@ describe("security hardening", () => {
         await noAuthServer.close();
       }
     });
+
+    it("returns persisted=true and no warning when key came from server.yaml", async () => {
+      const res = await fetch(`${baseUrl}/api/auth/rotate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = (await res.json()) as { persisted: boolean; warning?: string };
+      expect(body.persisted).toBe(true);
+      expect(body.warning).toBeUndefined();
+    });
+
+    it("returns persisted=false and a warning when key came from --api-key CLI flag", async () => {
+      const p = await getRandomPort();
+      const cliServer = new StreamerServer({
+        apiKey: API_KEY,
+        apiKeySource: "cli",
+        localNoAuth: false,
+        verbose: false,
+      });
+      await cliServer.listen(p);
+      try {
+        const res = await fetch(`http://localhost:${p}/api/auth/rotate`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${API_KEY}` },
+        });
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { persisted: boolean; warning?: string };
+        expect(body.persisted).toBe(false);
+        expect(body.warning).toMatch(/--api-key/);
+      } finally {
+        await cliServer.close();
+      }
+    });
   });
 
   // ── M2: CORS origin allowlist ───────────────────────────────────────────────

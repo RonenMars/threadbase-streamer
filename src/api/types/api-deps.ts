@@ -15,7 +15,7 @@ import type { WSHub } from "../../ws-hub";
 export type ApiDeps = {
   apiKey: string;
   localNoAuth: boolean;
-  rotateApiKey: () => string;
+  rotateApiKey: () => { newKey: string; persisted: boolean };
   publicUrl: string | null;
   browseRoot: string | null;
   ptyManager: PTYManager;
