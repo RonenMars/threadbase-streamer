@@ -38,10 +38,12 @@ import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { createWsRoutes } from "./api/routes/ws.routes";
 import type { ApiDeps } from "./api/types/api-deps";
 import {
+  generateApiKey,
   loadBrowseRoot,
   loadCacheDir,
   loadPublicUrl,
   loadTailSize,
+  setApiKey,
   validatePublicUrl,
 } from "./auth";
 import {
@@ -137,6 +139,7 @@ export class StreamerServer {
   private binding = false;
   private cacheReady = false;
   private apiKey: string;
+  private apiKeySource: "config" | "cli";
   private localNoAuth: boolean;
   private verbose: boolean;
   private scanProfiles:
@@ -149,6 +152,8 @@ export class StreamerServer {
   private publicUrl: string | null = null;
   private pairTokens = new PairTokenStore();
   private exchangeAttempts = new Map<string, number[]>();
+  private sessionStartAttempts = new Map<string, number[]>();
+  private sessionInputAttempts = new Map<string, number[]>();
   private ptyGracePeriodMs: number;
   // Map of sessionId → grace timer; fires to kill PTY after WS disconnect
   private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -187,7 +192,14 @@ export class StreamerServer {
   constructor(config: ServerConfig & { apiKey: string }) {
     this.sessionStatusBus.setMaxListeners(0);
     this.apiKey = config.apiKey;
+    this.apiKeySource = config.apiKeySource ?? "config";
     this.localNoAuth = config.localNoAuth ?? false;
+    if (this.localNoAuth) {
+      console.warn(
+        "[WARN] localNoAuth is ENABLED — all requests from localhost bypass authentication. " +
+          "Do not run with --local-no-auth in shared or production environments.",
+      );
+    }
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
     this.scanProfiles = config.scanProfiles;
@@ -419,9 +431,14 @@ export class StreamerServer {
     }
     const agentClient = this.agentClient;
 
+    const self = this;
     const apiDeps: ApiDeps = {
-      apiKey: this.apiKey,
+      // ponytail: getter so rotateApiKey() takes effect without restarting the server
+      get apiKey() {
+        return self.apiKey;
+      },
       localNoAuth: this.localNoAuth,
+      rotateApiKey: () => this.rotateApiKey(),
       publicUrl: this.publicUrl,
       browseRoot: this.browseRoot,
       ptyManager: this.ptyManager,
@@ -1011,18 +1028,53 @@ export class StreamerServer {
     });
   }
 
-  private checkExchangeRateLimit(ip: string): boolean {
+  private rotateApiKey(): { newKey: string; persisted: boolean } {
+    const newKey = generateApiKey();
+    // Only persist to server.yaml when the key came from there.
+    // If --api-key was passed on the CLI, the flag wins on restart and
+    // would silently revert to the old key — so skip the write and let
+    // the caller know via the response.
+    const persisted = this.apiKeySource === "config";
+    if (persisted) setApiKey(newKey);
+    this.apiKey = newKey;
+    return { newKey, persisted };
+  }
+
+  private checkRateLimit(
+    map: Map<string, number[]>,
+    key: string,
+    limit: number,
+    windowMs: number,
+  ): boolean {
     const now = Date.now();
-    const windowMs = 60_000;
-    const limit = 5;
-    const arr = (this.exchangeAttempts.get(ip) ?? []).filter((t) => now - t < windowMs);
+    const arr = (map.get(key) ?? []).filter((t) => now - t < windowMs);
     if (arr.length >= limit) {
-      this.exchangeAttempts.set(ip, arr);
+      map.set(key, arr);
       return false;
     }
     arr.push(now);
-    this.exchangeAttempts.set(ip, arr);
+    map.set(key, arr);
+    // TTL-evict the entry once the window expires so the map doesn't grow unbounded.
+    setTimeout(() => {
+      const remaining = (map.get(key) ?? []).filter((t) => Date.now() - t < windowMs);
+      if (remaining.length === 0) map.delete(key);
+      else map.set(key, remaining);
+    }, windowMs);
     return true;
+  }
+
+  private checkExchangeRateLimit(ip: string): boolean {
+    return this.checkRateLimit(this.exchangeAttempts, ip, 5, 60_000);
+  }
+
+  private checkSessionStartRateLimit(ip: string): boolean {
+    // 10 new sessions per minute per client IP
+    return this.checkRateLimit(this.sessionStartAttempts, ip, 10, 60_000);
+  }
+
+  private checkSessionInputRateLimit(sessionId: string): boolean {
+    // 500 keystrokes per minute per session
+    return this.checkRateLimit(this.sessionInputAttempts, sessionId, 500, 60_000);
   }
 
   private async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
@@ -1888,6 +1940,10 @@ export class StreamerServer {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    if (!this.checkSessionInputRateLimit(sessionId)) {
+      json(res, 429, { error: "Too many input requests for this session. Please slow down." });
+      return;
+    }
     if (this.agentConfig.enabled) {
       const body = await readBody(req);
       const cache = this.cache;
@@ -2228,6 +2284,13 @@ export class StreamerServer {
   }
 
   private async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const ip = req.socket?.remoteAddress ?? "unknown";
+    if (!this.checkSessionStartRateLimit(ip)) {
+      json(res, 429, {
+        error: "Too many session start requests. Please wait before trying again.",
+      });
+      return;
+    }
     if (this.agentConfig.enabled) {
       const body = await readBody(req);
       const result = await handleStartAgentSession(body, {
