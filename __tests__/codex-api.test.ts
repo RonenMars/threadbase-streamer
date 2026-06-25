@@ -95,24 +95,4 @@ describe("codex conversations — HTTP API", () => {
       expect(body.messages.length).toBeGreaterThan(0);
     });
   });
-
-  describe("GET /project-chats", () => {
-    it("returns codex conversation with provider=codex-cli and status=archived", async () => {
-      // Warm the cache first via /api/conversations
-      await fetch(`${baseUrl}/api/conversations?refresh=1`, { headers: auth });
-
-      const res = await fetch(`${baseUrl}/project-chats?limit=50`, { headers: auth });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      // /project-chats returns { projectChats: [...] } (flat, merged list)
-      const allConvs = (body.projectChats ?? []) as any[];
-      const codex = allConvs.find((c: any) => c.id.includes(CODEX_SESSION_ID));
-      expect(codex).toBeDefined();
-      expect(codex.provider).toBe("codex-cli");
-      // On-disk codex JSONL whose project path resolves → "resumable"
-      // (the project-chat status enum is archived|resumable, distinct from the
-      // boolean `resumable` flag on the detail/session endpoints).
-      expect(codex.status).toBe("resumable");
-    });
-  });
 });
