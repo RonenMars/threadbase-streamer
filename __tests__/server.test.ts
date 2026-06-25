@@ -402,18 +402,40 @@ describe("StreamerServer", () => {
   });
 
   describe("CORS", () => {
-    it("returns CORS headers", async () => {
+    it("returns CORS headers for an allowed origin", async () => {
       const res = await fetch(`${baseUrl}/api/info`, {
-        headers: { Authorization: `Bearer ${API_KEY}` },
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          Origin: "http://localhost:8081",
+        },
       });
-      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
     });
 
-    it("handles OPTIONS preflight", async () => {
+    it("returns no CORS headers for a disallowed origin", async () => {
+      const res = await fetch(`${baseUrl}/api/info`, {
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          Origin: "https://evil.example.com",
+        },
+      });
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    });
+
+    it("handles OPTIONS preflight from an allowed origin", async () => {
       const res = await fetch(`${baseUrl}/api/info`, {
         method: "OPTIONS",
+        headers: { Origin: "http://localhost:8081" },
       });
       expect(res.status).toBe(204);
+    });
+
+    it("rejects OPTIONS preflight from a disallowed origin", async () => {
+      const res = await fetch(`${baseUrl}/api/info`, {
+        method: "OPTIONS",
+        headers: { Origin: "https://evil.example.com" },
+      });
+      expect(res.status).toBe(403);
     });
   });
 
