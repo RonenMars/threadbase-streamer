@@ -1,3 +1,9 @@
+## [1.18.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.17.1...v1.18.0) (2026-06-25)
+
+### Features
+
+* **codex:** read-only codex-cli provider support ([#124](https://github.com/RonenMars/threadbase-streamer/issues/124)) ([bd7e98b](https://github.com/RonenMars/threadbase-streamer/commit/bd7e98bbf63ab50fce1133fa040c6102e73eb9e9))
+
 ## [1.17.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.17.0...v1.17.1) (2026-06-23)
 
 ### Bug Fixes
