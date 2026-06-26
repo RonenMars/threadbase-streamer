@@ -27,17 +27,18 @@ export function decideShimAction(): ShimAction {
   const marker = readMarker();
   if (!marker) return { kind: "exec" };
 
+  // Check liveness first — a dead dev PID means the marker is stale regardless
+  // of userHeld (e.g. dev streamer killed without --forget, or deploy after crash).
+  if (!isPidAlive(marker.devPid)) {
+    clearMarker();
+    return { kind: "exec", reason: "crash-recovery" };
+  }
+
   if (marker.userHeld) {
     return { kind: "exit", reason: "user-held" };
   }
 
-  if (isPidAlive(marker.devPid)) {
-    return { kind: "exit", reason: "dev-alive" };
-  }
-
-  // Dev died without rewriting userHeld. Auto-restore.
-  clearMarker();
-  return { kind: "exec", reason: "crash-recovery" };
+  return { kind: "exit", reason: "dev-alive" };
 }
 
 function main(): void {
