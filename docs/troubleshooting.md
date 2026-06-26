@@ -757,3 +757,52 @@ After this, `SSH_AUTH_SOCK` resolves correctly in PTY subprocesses and the passp
 **Note:** tb-streamer does not filter PTY output for interactive prompts by design — the terminal view is meant to be a faithful mirror of what would appear in a local terminal. The fix is always on the SSH agent side, not in the streaming layer.
 
 **Related entry in tb-mobile:** see "SSH passphrase prompt appears mid-conversation in the terminal view" in `docs/troubleshooting.md`.
+
+---
+
+## Native module / Node.js version mismatch
+
+### `better-sqlite3` compiled against wrong Node ABI — cache fails to open, `/api/conversations/count` returns 500
+
+**When:** After upgrading Node.js (e.g. via Homebrew), the prod service starts but the SQLite cache never opens. Every call to `/api/conversations/count`, `/project-chats`, or `/api/conversations` returns 500. Mobile shows "Couldn't refresh sessions from \<server name\>".
+
+**Symptom in `~/.threadbase/logs/stderr.log`:**
+```
+ConversationCache failed to open (running without cache): The module
+'/Users/<you>/.threadbase/releases/node_modules/better-sqlite3/build/Release/better_sqlite3.node'
+was compiled against a different Node.js version using
+NODE_MODULE_VERSION 137. This version of Node.js requires
+NODE_MODULE_VERSION 147. Please try re-compiling or re-installing
+the module (for instance, using `npm rebuild` or `npm install`).
+```
+
+**Cause:** `better-sqlite3` is a native Node addon. The deployed release in `~/.threadbase/releases/` bundles a prebuilt binary compiled for a specific Node ABI. When the Node.js version used by launchd (set via `ProgramArguments` in the plist) changes — typically because Homebrew upgraded Node — the ABI no longer matches and the module refuses to load.
+
+**Critical detail:** launchd runs the binary specified in the plist (`/opt/homebrew/bin/node`), which may differ from the `node` on your interactive shell `$PATH` (e.g. nvm-managed). Rebuilding with the wrong Node silently fixes nothing.
+
+**Fix:**
+
+1. Identify the Node binary launchd uses:
+```sh
+grep -A2 'ProgramArguments' ~/Library/LaunchAgents/com.ronen.threadbase.plist | grep node
+# e.g. /opt/homebrew/bin/node
+```
+
+2. Rebuild `better-sqlite3` using **that exact Node** (via its paired `npm`):
+```sh
+cd ~/.threadbase/releases
+/opt/homebrew/bin/npm rebuild better-sqlite3
+```
+
+3. Restart the prod service:
+```sh
+tb-streamer prod restart
+```
+
+4. Verify the cache is working:
+```sh
+curl -s -H "Authorization: Bearer <api_key>" http://localhost:8766/api/conversations/count
+# should return {"total":<N>}, not a 500 or module error
+```
+
+**Note:** This needs to be repeated any time Homebrew upgrades the Node formula (`brew upgrade node`). The auto-updater does not currently rebuild native addons after a Node upgrade — that is a known gap.
