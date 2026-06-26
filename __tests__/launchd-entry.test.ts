@@ -1,10 +1,10 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/lifecycle/marker");
 vi.mock("../src/lifecycle/process-liveness");
 
 import { decideShimAction } from "../cli/launchd-entry";
-import { readMarker, clearMarker } from "../src/lifecycle/marker";
+import { clearMarker, readMarker } from "../src/lifecycle/marker";
 import { isPidAlive } from "../src/lifecycle/process-liveness";
 
 const mockReadMarker = vi.mocked(readMarker);
