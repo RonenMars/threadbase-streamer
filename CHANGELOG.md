@@ -1,3 +1,9 @@
+## [1.18.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.0...v1.18.1) (2026-06-26)
+
+### Bug Fixes
+
+* **lifecycle:** auto-restore prod when userHeld marker has dead devPid ([ae7c924](https://github.com/RonenMars/threadbase-streamer/commit/ae7c924d67aa760111bfe60b79c40987d7952bd4))
+
 ## [1.18.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.17.1...v1.18.0) (2026-06-25)
 
 ### Features
