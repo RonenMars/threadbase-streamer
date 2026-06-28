@@ -17,7 +17,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $env:USERPROFILE ".threadbase" }
-$ActiveLink = Join-Path $InstallDir "current\dist\cli.cjs"
+$ActiveLinkCurrent = Join-Path $InstallDir "current\dist\cli.cjs"
+$ActiveLinkShim    = Join-Path $InstallDir "cli.js"
+$ActiveLink = if (Test-Path -LiteralPath $ActiveLinkCurrent) { $ActiveLinkCurrent } else { $ActiveLinkShim }
 $UpdateYaml = Join-Path $InstallDir "update.yaml"
 $TaskName = if ($env:THREADBASE_UPDATER_TASK_NAME) { $env:THREADBASE_UPDATER_TASK_NAME } else { "Threadbase-Updater" }
 
@@ -26,7 +28,10 @@ function Read-YamlField {
   if (-not (Test-Path -LiteralPath $UpdateYaml)) { return $Default }
   $line = Get-Content -LiteralPath $UpdateYaml | Where-Object { $_ -match "^\s*${Key}\s*:\s*(.+)\s*$" } | Select-Object -First 1
   if (-not $line) { return $Default }
-  return ($Matches[1] -replace '["'']', '').Trim()
+  if ($line -match "^\s*${Key}\s*:\s*(.+)\s*$") {
+    return ($Matches[1] -replace '["'']', '').Trim()
+  }
+  return $Default
 }
 
 function Write-Log { Write-Host "[auto-update] $args" -ForegroundColor Cyan }
@@ -46,7 +51,7 @@ if ($Command -eq "uninstall") {
 }
 
 if (-not (Test-Path -LiteralPath $UpdateYaml)) {
-  Write-Warn "no $UpdateYaml — create one with at least 'github_repo: owner/name' and 'auto_update: true' to enable auto-update"
+  Write-Warn "no $UpdateYaml - create one with at least 'github_repo: owner/name' and 'auto_update: true' to enable auto-update"
   exit 0
 }
 
@@ -65,7 +70,7 @@ if (-not [int]::TryParse($intervalRaw, [ref]$intervalMin) -or $intervalMin -lt 1
 }
 
 if (-not (Test-Path -LiteralPath $ActiveLink)) {
-  Write-Err "streamer not deployed at $ActiveLink — run scripts/deploy.ps1 setup first"
+  Write-Err "streamer not deployed at $ActiveLink - run scripts/deploy.ps1 setup first"
   exit 1
 }
 
@@ -86,8 +91,7 @@ $errFile = Join-Path $logDir "updater.err"
 $cmdString = "& '$nodeBin' '$ActiveLink' update *>> '$logFile' 2>> '$errFile'"
 $action = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument "-NoProfile -Command `"$cmdString`"" -WorkingDirectory $InstallDir
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
-  -RepetitionInterval (New-TimeSpan -Minutes $intervalMin) `
-  -RepetitionDuration ([TimeSpan]::MaxValue)
+  -RepetitionInterval (New-TimeSpan -Minutes $intervalMin)
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::FromMinutes(30)) `
   -StartWhenAvailable -DontStopOnIdleEnd -MultipleInstances IgnoreNew
 
@@ -99,4 +103,4 @@ if ($existing) {
 }
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null
-Write-Log "installed scheduled task $TaskName — fires every $intervalMin min"
+Write-Log "installed scheduled task $TaskName - fires every $intervalMin min"
