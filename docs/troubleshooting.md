@@ -806,3 +806,44 @@ curl -s -H "Authorization: Bearer <api_key>" http://localhost:8766/api/conversat
 ```
 
 **Note:** This needs to be repeated any time Homebrew upgrades the Node formula (`brew upgrade node`). The auto-updater does not currently rebuild native addons after a Node upgrade — that is a known gap.
+
+---
+
+## Windows: deploy script and auto-updater conflict on `launch.cmd` entry point
+
+**When:** On Windows, after running `npm run deploy:windows` following a previous auto-update (or vice versa), the streamer fails to start and the healthcheck times out.
+
+**Cause:** The two update paths write to different entry points and do not stay in sync:
+
+| Path | What it writes | What `launch.cmd` should use |
+|---|---|---|
+| `scripts/deploy.ps1` | `~/.threadbase/cli.js` (copies built `dist/cli.cjs` directly) | `cli.js` |
+| Auto-updater (`update` command) | `~/.threadbase/current/dist/cli.cjs` (extracts tarball into `current/`) | `current\dist\cli.cjs` |
+
+After a local deploy, `launch.cmd` points to `cli.js`. After an auto-update, `current/` holds the new binary but `cli.js` is stale. After a local deploy following an auto-update, `cli.js` is updated but `launch.cmd` may still point to `current\dist\cli.cjs`.
+
+**Fix (permanent — v1.18.3+):** `swapCurrent()` on Windows now copies `current/dist/cli.cjs` → `cli.js` after every auto-update swap, keeping both in sync. `launch.cmd` always uses `cli.js`.
+
+**Manual fix (before v1.18.3 or when the service won't start):**
+
+1. Check which path `launch.cmd` currently uses:
+```cmd
+type %USERPROFILE%\.threadbase\launch.cmd
+```
+
+2. If it points to `current\dist\cli.cjs` but `cli.js` was just updated by the deploy script, change it back:
+```powershell
+(Get-Content "$env:USERPROFILE\.threadbase\launch.cmd") `
+  -replace 'current\dist\cli\.cjs', 'cli.js' |
+  Set-Content "$env:USERPROFILE\.threadbase\launch.cmd"
+```
+
+3. Restart the task:
+```powershell
+Stop-ScheduledTask -TaskName 'Threadbase'
+$p = Get-NetTCPConnection -LocalPort 8766 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess
+if ($p) { Stop-Process -Id $p -Force }
+Start-ScheduledTask -TaskName 'Threadbase'
+```
+
+**Note:** After any auto-update, also run `npm rebuild` in `~/.threadbase/current/` if the Node.js version on the machine differs from the one the release was compiled for — see the `better-sqlite3` Node ABI mismatch section above.
