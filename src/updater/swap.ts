@@ -1,4 +1,5 @@
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   lstatSync,
@@ -9,8 +10,9 @@ import {
   symlinkSync,
   unlinkSync,
 } from "node:fs";
+import { join } from "node:path";
 import semver from "semver";
-import { CURRENT_SYMLINK, RELEASES_DIR, releaseDir } from "./paths";
+import { CURRENT_SYMLINK, RELEASES_DIR, THREADBASE_ROOT, releaseDir } from "./paths";
 
 const KEEP_LAST_N = 2;
 
@@ -37,6 +39,11 @@ export function swapCurrent(version: string): void {
       rmSync(CURRENT_SYMLINK, { recursive: true, force: true });
     }
     renameSync(tmp, CURRENT_SYMLINK);
+    // Keep cli.js in sync so launch.cmd always points to the same entry
+    // point regardless of whether the update came from the deploy script
+    // (which writes cli.js directly) or the auto-updater (which writes
+    // current/ and must mirror it here).
+    copyFileSync(join(CURRENT_SYMLINK, "dist", "cli.cjs"), join(THREADBASE_ROOT, "cli.js"));
     return;
   }
 
