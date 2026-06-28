@@ -1,3 +1,9 @@
+## [1.18.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.2...v1.18.3) (2026-06-28)
+
+### Bug Fixes
+
+* **updater:** sync cli.js after Windows swapCurrent to unify launch.cmd entry point ([dc6e184](https://github.com/RonenMars/threadbase-streamer/commit/dc6e1845df3810bedfcab7526297f20f4d1de450))
+
 ## [1.18.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.1...v1.18.2) (2026-06-28)
 
 ### Bug Fixes
