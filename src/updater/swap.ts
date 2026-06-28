@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import semver from "semver";
-import { CURRENT_SYMLINK, RELEASES_DIR, THREADBASE_ROOT, releaseDir } from "./paths";
+import { CURRENT_SYMLINK, RELEASES_DIR, releaseDir, THREADBASE_ROOT } from "./paths";
 
 const KEEP_LAST_N = 2;
 
