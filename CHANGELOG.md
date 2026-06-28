@@ -1,3 +1,9 @@
+## [1.18.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.4...v1.18.5) (2026-06-28)
+
+### Bug Fixes
+
+* **lint:** bump biome schema to 2.5.0 and sort swap.ts imports ([1d37e60](https://github.com/RonenMars/threadbase-streamer/commit/1d37e60f344930b671fb6702b452f6b2d3ef2d56)), closes [#140](https://github.com/RonenMars/threadbase-streamer/issues/140)
+
 ## [1.18.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.3...v1.18.4) (2026-06-28)
 
 ### Bug Fixes
