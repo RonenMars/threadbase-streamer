@@ -1,3 +1,9 @@
+## [1.18.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.1...v1.18.2) (2026-06-28)
+
+### Bug Fixes
+
+* **auto-update:** fix install-auto-update.ps1 on Windows ([#139](https://github.com/RonenMars/threadbase-streamer/issues/139)) ([eb362d3](https://github.com/RonenMars/threadbase-streamer/commit/eb362d380c4ba4dcbf537ee97da35c5514c1c08b))
+
 ## [1.18.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.0...v1.18.1) (2026-06-26)
 
 ### Bug Fixes
