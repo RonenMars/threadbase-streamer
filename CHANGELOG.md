@@ -1,3 +1,9 @@
+## [1.18.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.3...v1.18.4) (2026-06-28)
+
+### Bug Fixes
+
+* **updater:** sync cli.js on macOS/Linux after swapCurrent (same launch.cmd conflict as Windows) ([69660a0](https://github.com/RonenMars/threadbase-streamer/commit/69660a05df5065a44328413ddce652a8d3e20db2))
+
 ## [1.18.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.2...v1.18.3) (2026-06-28)
 
 ### Bug Fixes
