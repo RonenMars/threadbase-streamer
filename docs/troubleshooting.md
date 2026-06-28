@@ -822,7 +822,7 @@ curl -s -H "Authorization: Bearer <api_key>" http://localhost:8766/api/conversat
 
 After a local deploy, `launch.cmd` points to `cli.js`. After an auto-update, `current/` holds the new binary but `cli.js` is stale. After a local deploy following an auto-update, `cli.js` is updated but `launch.cmd` may still point to `current\dist\cli.cjs`.
 
-**Fix (permanent — v1.18.3+):** `swapCurrent()` on Windows now copies `current/dist/cli.cjs` → `cli.js` after every auto-update swap, keeping both in sync. `launch.cmd` always uses `cli.js`.
+**Fix (permanent — v1.18.3+):** `swapCurrent()` now syncs `cli.js` after every auto-update swap on all platforms — Windows copies the file, macOS/Linux atomically repoints the symlink. The service entry point (`launch.cmd` / launchd plist / systemd unit) always resolves to the correct binary via `cli.js`.
 
 **Manual fix (before v1.18.3 or when the service won't start):**
 

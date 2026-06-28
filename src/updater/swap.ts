@@ -53,6 +53,16 @@ export function swapCurrent(version: string): void {
   }
   symlinkSync(target, tmpLink);
   renameSync(tmpLink, CURRENT_SYMLINK);
+
+  // Keep cli.js in sync so the launchd/systemd entry point always resolves
+  // to the new release, regardless of whether the update came from the deploy
+  // script (which writes cli.js directly) or the auto-updater (which only
+  // swaps current/ and must mirror it here).
+  const cliJs = join(THREADBASE_ROOT, "cli.js");
+  const tmpCliJs = `${cliJs}.new`;
+  if (existsSync(tmpCliJs) || lstatSafeIsSymlink(tmpCliJs)) unlinkSync(tmpCliJs);
+  symlinkSync(join(target, "dist", "cli.cjs"), tmpCliJs);
+  renameSync(tmpCliJs, cliJs);
 }
 
 function lstatSafeIsSymlink(path: string): boolean {
