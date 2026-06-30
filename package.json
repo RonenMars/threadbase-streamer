@@ -135,5 +135,10 @@
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "@hono/node-ws": {
+      "@hono/node-server": "$@hono/node-server"
+    }
   }
 }
