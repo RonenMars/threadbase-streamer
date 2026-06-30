@@ -192,9 +192,9 @@ export function registerProdCommands(program: Command): void {
   prod
     .command("start")
     .description("Restore prod after a user-held suspension")
-    .option("--preserve-logs", "Keep existing stdout + stderr logs", false)
+    .option("--clear-logs", "Clear existing stdout + stderr logs", false)
     .action(async (opts) => {
-      if (opts.preserveLogs !== true) clearSupervisorLogs();
+      if (opts.clearLogs === true) clearSupervisorLogs();
       const r = await runProdStart();
       log.info(r.message, undefined, "console");
       if (!r.ok) process.exitCode = 1;
@@ -227,13 +227,13 @@ export function registerProdCommands(program: Command): void {
   prod
     .command("restart")
     .description("Stop + restart the supervised streamer (re-reads service definition)")
-    .option("--preserve-logs", "Keep existing stdout + stderr logs", false)
+    .option("--clear-logs", "Clear existing stdout + stderr logs", false)
     .action(async (opts) => {
       const sup = getSupervisor();
       // Resolve the plist path while the service is still loaded — the label
       // probe can't detect a brew service after bootout.
       const specPath = process.platform === "darwin" ? darwinPlistPath() : "";
-      if (opts.preserveLogs !== true) clearSupervisorLogs();
+      if (opts.clearLogs === true) clearSupervisorLogs();
       sup.bootoutAgent();
       sup.bootstrapAgent(specPath);
       const what =

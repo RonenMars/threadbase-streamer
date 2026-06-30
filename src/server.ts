@@ -1052,6 +1052,7 @@ export class StreamerServer {
   }
 
   private rotateApiKey(): { newKey: string; persisted: boolean } {
+    const oldKey = this.apiKey;
     const newKey = generateApiKey();
     // Only persist to server.yaml when the key came from there.
     // If --api-key was passed on the CLI, the flag wins on restart and
@@ -1060,6 +1061,12 @@ export class StreamerServer {
     const persisted = this.apiKeySource === "config";
     if (persisted) setApiKey(newKey);
     this.apiKey = newKey;
+    this.log.info("API key rotated", {
+      event: "auth.api_key_rotated",
+      oldKeyMasked: `${oldKey.slice(0, 6)}…`,
+      newKeyMasked: `${newKey.slice(0, 6)}…`,
+      persisted,
+    });
     return { newKey, persisted };
   }
 
