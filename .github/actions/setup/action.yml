@@ -6,7 +6,7 @@ runs:
   steps:
     - uses: actions/setup-node@v4
       with:
-        node-version: 20
+        node-version: 22
         cache: npm
 
     - name: Restore node_modules cache
@@ -19,7 +19,7 @@ runs:
           vendor/agent-types/dist
           vendor/scanner/node_modules
           vendor/scanner/dist
-        key: node-modules-v4-node20-${{ hashFiles('package-lock.json') }}
+        key: node-modules-v4-node22-${{ hashFiles('package-lock.json') }}
 
     - name: Install build tools for node-pty
       if: steps.cache.outputs.cache-hit != 'true'
@@ -41,4 +41,4 @@ runs:
           vendor/agent-types/dist
           vendor/scanner/node_modules
           vendor/scanner/dist
-        key: node-modules-v4-node20-${{ hashFiles('package-lock.json') }}
+        key: node-modules-v4-node22-${{ hashFiles('package-lock.json') }}

@@ -72,7 +72,7 @@ jobs:
         if: needs.gate.outputs.skip != 'true'
         uses: ./.github/actions/run-ci
         with:
-          node-version: 20
+          node-version: 22
           command: lint
 
   build:
@@ -88,7 +88,7 @@ jobs:
         if: needs.gate.outputs.skip != 'true'
         uses: ./.github/actions/run-ci
         with:
-          node-version: 20
+          node-version: 22
           command: build
 
       - if: needs.gate.outputs.skip != 'true'
