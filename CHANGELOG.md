@@ -1,3 +1,9 @@
+## [1.19.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.19.0...v1.19.1) (2026-06-30)
+
+### Bug Fixes
+
+* **tests:** Windows compatibility for scanner handles and test isolation ([#142](https://github.com/RonenMars/threadbase-streamer/issues/142)) ([55d15a8](https://github.com/RonenMars/threadbase-streamer/commit/55d15a865c9b008aa07a25b0181ec8103b364b55))
+
 ## [1.19.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.6...v1.19.0) (2026-06-30)
 
 ### Features
