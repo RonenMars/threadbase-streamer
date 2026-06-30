@@ -1,3 +1,9 @@
+## [1.22.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.21.0...v1.22.0) (2026-06-30)
+
+### Features
+
+* **observability:** log API key rotation and preserve logs by default ([#149](https://github.com/RonenMars/threadbase-streamer/issues/149)) ([3e38579](https://github.com/RonenMars/threadbase-streamer/commit/3e38579d1f951943b529e80000b5d800d0d556d3))
+
 ## [1.21.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.20.0...v1.21.0) (2026-06-30)
 
 ### Features
