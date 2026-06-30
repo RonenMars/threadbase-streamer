@@ -3,6 +3,7 @@ import { Command } from "commander";
 import qrcode from "qrcode-terminal";
 import { loadOrCreateApiKey, loadPublicUrl } from "../src/auth";
 import { loadUpdateConfig, UPDATE_CONFIG_PATH } from "../src/config/update-config";
+import { appendDevSessionMarker } from "../src/devLog";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
@@ -59,6 +60,7 @@ program
     // Detect whether this invocation is "dev mode" (started by a human shell)
     // or "prod mode" (started by launchd). PPID 1 = launchd on macOS.
     const isProdInvocation = opts.prod === true || process.ppid === 1;
+    if (!isProdInvocation) appendDevSessionMarker();
 
     let resolvedPort = requestedPort;
 

@@ -56,23 +56,23 @@ describe("prod commands", () => {
     expect(readFileSync(stderrLog, "utf8")).toBe("");
   });
 
-  it("preserve-logs keeps the existing files intact for start and restart", async () => {
-    const program = new Command();
-    registerProdCommands(program);
-
-    await program.parseAsync(["prod", "start", "--preserve-logs"], { from: "user" });
-    await program.parseAsync(["prod", "restart", "--preserve-logs"], { from: "user" });
-
-    expect(readFileSync(stdoutLog, "utf8")).toBe("stdout");
-    expect(readFileSync(stderrLog, "utf8")).toBe("stderr");
-  });
-
-  it("start and restart clear logs by default", async () => {
+  it("start and restart preserve logs by default", async () => {
     const program = new Command();
     registerProdCommands(program);
 
     await program.parseAsync(["prod", "start"], { from: "user" });
     await program.parseAsync(["prod", "restart"], { from: "user" });
+
+    expect(readFileSync(stdoutLog, "utf8")).toBe("stdout");
+    expect(readFileSync(stderrLog, "utf8")).toBe("stderr");
+  });
+
+  it("--clear-logs clears the existing files for start and restart", async () => {
+    const program = new Command();
+    registerProdCommands(program);
+
+    await program.parseAsync(["prod", "start", "--clear-logs"], { from: "user" });
+    await program.parseAsync(["prod", "restart", "--clear-logs"], { from: "user" });
 
     expect(readFileSync(stdoutLog, "utf8")).toBe("");
     expect(readFileSync(stderrLog, "utf8")).toBe("");

@@ -162,6 +162,24 @@ describe("security hardening", () => {
         await cliServer.close();
       }
     });
+
+    it("logs the rotation event with masked key prefixes, not full keys", async () => {
+      const logs: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => logs.push(args.join(" "));
+      try {
+        const res = await fetch(`${baseUrl}/api/auth/rotate`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${API_KEY}` },
+        });
+        expect(res.status).toBe(200);
+      } finally {
+        console.log = orig;
+      }
+      const rotationLog = logs.find((l) => l.includes("API key rotated"));
+      expect(rotationLog).toBeDefined();
+      expect(rotationLog).not.toContain(API_KEY);
+    });
   });
 
   // ── M2: CORS origin allowlist ───────────────────────────────────────────────
