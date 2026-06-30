@@ -225,6 +225,7 @@ export interface ServerConfig {
   apiKey?: string;
   localNoAuth?: boolean;
   verbose?: boolean;
+  logMenubarRequests?: boolean; // log /healthz requests from the menubar app (default: false)
   browseRoot?: string;
   publicUrl?: string;
   disableDb?: boolean;

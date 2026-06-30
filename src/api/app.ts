@@ -35,6 +35,7 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
     const start = Date.now();
     const ua = c.req.header("user-agent") ?? "";
     await next();
+    if (!deps.logMenubarRequests && c.req.header("x-client") === "menubar") return;
     const ms = Date.now() - start;
     httpLog.info(`[req] ${c.req.method} ${c.req.path} → ${c.res.status} ${ms}ms`, {
       method: c.req.method,
