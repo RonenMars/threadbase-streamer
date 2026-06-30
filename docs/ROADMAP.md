@@ -16,6 +16,8 @@ Today the streamer's API key lives at `~/.threadbase/server.yaml` as plaintext `
 
 **Why not now:** a native keychain dep complicates the `pack-platform.mjs` per-arch bundle (currently only `node-pty` and `better-sqlite3` are externalized). Most CLI tools in this category ship plaintext + 0600 for the same reason. Revisit when a security review flags it, or when the streamer ships keys/secrets that are not recoverable via the pair flow.
 
+**Update (2026-06-26):** the 2026-06-24 security audit (`docs/plans/2026-06-24-security-hardening.md`) confirmed this is the remaining at-rest gap after the H1/H2/M2/M3 hardening shipped in PR #129. `POST /api/auth/rotate` now exists, making migration feasible: rotate once post-upgrade to move from the YAML-backed key to the keychain-backed one without re-pairing all devices.
+
 ---
 
 ## Feature: Homebrew vs `scripts/deploy.sh` plist conflict-check at startup
