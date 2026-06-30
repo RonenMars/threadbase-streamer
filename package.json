@@ -133,7 +133,7 @@
     "semantic-release": "^25.0.5",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.5.0",
+    "typescript": "^6.0.3",
     "vitest": "^3.2.6"
   }
 }
