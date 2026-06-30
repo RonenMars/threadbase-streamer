@@ -59,6 +59,18 @@ runs:
       shell: bash
       run: npm install --prefer-offline --ignore-scripts
 
+    - name: Save node_modules cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          node_modules
+          vendor/agent-types/node_modules
+          vendor/agent-types/dist
+          vendor/scanner/node_modules
+          vendor/scanner/dist
+        key: node-modules-v4-node${{ inputs.node-version }}-${{ hashFiles('package-lock.json') }}
+
     - name: Rebuild native modules
       if: inputs.command == 'test'
       shell: bash
