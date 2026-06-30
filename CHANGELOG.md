@@ -1,3 +1,9 @@
+## [1.19.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.6...v1.19.0) (2026-06-30)
+
+### Features
+
+* **server:** filter menubar /healthz logs by default ([#131](https://github.com/RonenMars/threadbase-streamer/issues/131)) ([59d3531](https://github.com/RonenMars/threadbase-streamer/commit/59d3531f66cd49c7c4c65d37ed30dfb46ebbd204))
+
 ## [1.18.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.5...v1.18.6) (2026-06-30)
 
 ### Bug Fixes
