@@ -1,5 +1,5 @@
 import { ConversationScanner } from "@threadbase-sh/scanner";
-import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -851,10 +851,13 @@ describe("StreamerServer", () => {
     let etagPort: number;
     let profileDir: string;
     let jsonlPath: string;
+    let scannerDb: string;
     const convId = "etag-session-2222";
 
     beforeEach(async () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-etag-profile-"));
+      scannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = scannerDb;
       const projDir = join(profileDir, "projects", "-tmp-etag-project");
       mkdirSync(projDir, { recursive: true });
       jsonlPath = join(projDir, `${convId}.jsonl`);
@@ -891,6 +894,8 @@ describe("StreamerServer", () => {
 
     afterEach(async () => {
       await etagServer.close();
+      delete process.env.TB_SCANNER_DB;
+      rmSync(scannerDb, { force: true });
     });
 
     const url = () => `http://localhost:${etagPort}/api/conversations/${convId}`;
@@ -977,6 +982,7 @@ describe("StreamerServer", () => {
     let availServer: StreamerServer;
     let profileDir: string;
     let liveCwd: string;
+    let scannerDb: string;
     const auth = { Authorization: `Bearer ${API_KEY}` };
 
     const AVAILABLE = "avail-resumable-0001";
@@ -1004,6 +1010,8 @@ describe("StreamerServer", () => {
 
     beforeEach(async () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-avail-profile-"));
+      scannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = scannerDb;
       // A cwd that exists on disk (the temp dir itself) → resumable.
       liveCwd = mkdtempSync(join(tmpdir(), "threadbase-avail-live-cwd-"));
       writeConv(AVAILABLE, liveCwd);
@@ -1024,11 +1032,13 @@ describe("StreamerServer", () => {
           { id: "avail", label: "Avail", configDir: profileDir, enabled: true, emoji: "🔎" },
         ],
       });
-      await availServer.listen(availPort);
+      await availServer.listen(availPort, { awaitReady: true });
     });
 
     afterEach(async () => {
       await availServer.close();
+      delete process.env.TB_SCANNER_DB;
+      rmSync(scannerDb, { force: true });
     });
 
     const fetchMeta = async (id: string) => {
@@ -1078,11 +1088,17 @@ describe("StreamerServer", () => {
     let reusePort: number;
     let reuseServer: StreamerServer;
     let profileDir: string;
+    let isolatedScannerDb: string | null = null;
     const convId = "reuse-session-4444";
     const auth = { Authorization: `Bearer ${API_KEY}` };
 
     afterEach(async () => {
       await reuseServer?.close();
+      if (isolatedScannerDb) {
+        delete process.env.TB_SCANNER_DB;
+        rmSync(isolatedScannerDb, { force: true });
+        isolatedScannerDb = null;
+      }
       vi.restoreAllMocks();
     });
 
@@ -1265,6 +1281,8 @@ describe("StreamerServer", () => {
       // request timeout. Post-fix it serves the cached total immediately and
       // reconciles in the background — fast regardless of refresh.
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-count-refresh-profile-"));
+      isolatedScannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = isolatedScannerDb;
       const projDir = join(profileDir, "projects", "-proj-count");
       mkdirSync(projDir, { recursive: true });
       writeFileSync(
@@ -1287,6 +1305,7 @@ describe("StreamerServer", () => {
         verbose: false,
         disableDb: true,
         cacheDir: mkdtempSync(join(tmpdir(), "threadbase-count-refresh-cache-")),
+        codexRoots: [], // don't scan ~/.codex/sessions — only the one test conversation
         scanProfiles: [
           { id: "count", label: "Count", configDir: profileDir, enabled: true, emoji: "🔢" },
         ],

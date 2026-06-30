@@ -127,6 +127,9 @@ export class StreamerServer {
     { prompt?: string; options: PermissionOption[]; cursor?: number }
   >();
   private scanner: ConversationScanner | null = null;
+  // Tracks every ConversationScanner ever created so close() can shut them all
+  // down and release SQLite handles (open handles block temp-dir deletion on Windows).
+  private allScanners = new Set<ConversationScanner>();
   private scannerReady: Promise<unknown> | null = null;
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
   // a single rescan after the current one completes instead of restarting it.
@@ -712,12 +715,18 @@ export class StreamerServer {
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
-          // Watch ~/.claude/projects so new JSONL files created after startup
-          // (e.g. resumed sessions, new conversations from other devices) are
-          // discovered: onConversationChanged will invalidate the scanner and
-          // cache so the next search/list picks them up without a restart.
-          const projectsDir = join(homedir(), ".claude", "projects");
-          this.fileWatcher.watchDirectory(projectsDir);
+          // Watch the active profile dirs (or ~/.claude/projects as fallback) so
+          // new JSONL files created after startup are discovered and the scanner
+          // and cache are invalidated without a restart.
+          if (this.scanProfiles && this.scanProfiles.length > 0) {
+            for (const profile of this.scanProfiles) {
+              if (profile.enabled) {
+                this.fileWatcher.watchDirectory(join(profile.configDir, "projects"));
+              }
+            }
+          } else {
+            this.fileWatcher.watchDirectory(join(homedir(), ".claude", "projects"));
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.log.warn(`ConversationCache failed to open (running without cache): ${message}`, {
@@ -729,6 +738,7 @@ export class StreamerServer {
         // that onConversationChanged invalidations during the scan cannot cause
         // getScanner() to restart indefinitely and leave the warm-up stuck.
         const warmupScanner = new ConversationScanner();
+        this.allScanners.add(warmupScanner);
         const warmupStatCache = this.buildStatCache(null);
         // Throttle the per-file onProgress firings to ~one frame per whole
         // percent (plus the final tick) so a large scan doesn't flood every
@@ -899,6 +909,11 @@ export class StreamerServer {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
     this.markScannerStaleDebounced.cancel();
+    // Close all scanner SQLite connections before the cache so file handles are
+    // released on Windows (open handles block temp-dir deletion in tests).
+    for (const s of this.allScanners) s.close();
+    this.allScanners.clear();
+    this.scanner = null;
     this.cache?.close();
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
@@ -1295,6 +1310,7 @@ export class StreamerServer {
     this.scannerStale = false;
     const statCache = this.buildStatCache(this.scanner);
     this.scanner = new ConversationScanner();
+    this.allScanners.add(this.scanner);
     this.scannerReady = this.scanner.scan({
       ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
       ...this.codexScanOpts(),

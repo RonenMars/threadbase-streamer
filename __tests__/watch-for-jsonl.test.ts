@@ -15,7 +15,7 @@ import { EventEmitter } from "events";
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { createServer } from "http";
 import { homedir } from "os";
-import { basename, join } from "path";
+import { basename, join, sep } from "path";
 import WebSocket from "ws";
 import { StreamerServer } from "../src/server";
 
@@ -152,7 +152,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
 
     // The expected JSONL path uses the same encoding as server.ts:
     const expectedPath = join(claudeProjectsDir(projectPath), `${sessionId}.jsonl`);
-    expect(expectedPath).toContain("/.claude/projects/");
+    expect(expectedPath).toContain([".claude", "projects"].join(sep));
   });
 
   it("fallback path: wires a recently-modified JSONL when session file never appears", async () => {

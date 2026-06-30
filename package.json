@@ -48,6 +48,7 @@
     "build": "tsup && node -e \"const{cpSync}=require('fs');cpSync('src/db/migrations','dist/migrations',{recursive:true});cpSync('src/db/pg-migrations','dist/pg-migrations',{recursive:true})\"",
     "dev": "tsup --watch",
     "test": "vitest run",
+    "test:verbose": "vitest run --reporter=verbose",
     "test:watch": "vitest",
     "lint": "tsc --noEmit && npx biome check .",
     "format": "npx biome format --write .",
