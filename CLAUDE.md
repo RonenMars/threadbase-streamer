@@ -95,6 +95,8 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 - `node-pty` — native PTY management (external, not bundled by tsup; dynamically imported for graceful failure)
 - `ws`, `better-sqlite3`, `chokidar`, `zod`, `date-fns`, `commander`
 
+**`git pull` does not refresh `node_modules`.** A pull (or branch switch) that changes `package.json`/`package-lock.json` leaves the existing `node_modules` on disk untouched — `npm run build`/`deploy` will silently bundle whatever versions are already installed, not what the new lockfile pins. Check with `npm ls --depth=0` (an `invalid: "<range>" from the root project` line means `node_modules` is stale) and resync with `npm ci` before building/deploying after any dependency-affecting pull.
+
 ## Build notes
 
 - **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and everything else must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
@@ -184,6 +186,9 @@ The hard rules:
 ## Menubar app (vendor/menubar)
 
 `vendor/menubar` is a git submodule (`RonenMars/threadbase-menubar`) — an Electron tray app that polls `GET /healthz` every 5s. Don't break without coordinating a menubar update: the `port:` field in `server.yaml` (its port resolution: `THREADBASE_PORT` env → `port:` → fallback `8766`), the `/healthz` `{ ok, version }` shape, or the default port. Submodule bumps use a `chore: bump vendor/menubar (<reason>)` commit. Deploy fetches a prebuilt release matching the submodule SHA and only builds locally as fallback — flow details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
+
+- **`git pull` does NOT update the submodule checkout.** Pulling a commit that bumps the `vendor/menubar` pointer only updates the *recorded* SHA in the parent repo's tree — the actual files on disk under `vendor/menubar` stay at the old commit until you run `git submodule update --init --recursive vendor/menubar` (`git submodule status vendor/menubar` shows a leading `+` when the two disagree). `scripts/deploy.sh menubar`'s "menubar is up-to-date" check compares `~/.threadbase/menubar-installed-sha` against the *checked-out* submodule SHA, not the parent repo's recorded pointer — so after a `git pull` that bumps the submodule, a deploy can silently skip installing the new menubar release until the submodule is explicitly updated.
+- **Avoid a dirty `vendor/menubar` checkout.** Running `npm install` inside `vendor/menubar` (e.g. via the `deploy-menubar` skill's dependency-install step) can rewrite `vendor/menubar/package-lock.json` with metadata-only npm normalization (e.g. an added `"license"` field), which marks the submodule pointer `<sha>-dirty` in the parent repo even though no real dependency changed. Only run `npm install` there if `package.json` actually changed; otherwise the packaged release should be installed via `scripts/deploy.sh menubar`, which doesn't touch `npm install` at all. If it happens anyway, `cd vendor/menubar && git checkout -- package-lock.json` clears it.
 
 ## Contributing to docs
 
