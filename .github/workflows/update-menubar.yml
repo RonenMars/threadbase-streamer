@@ -1,0 +1,85 @@
+name: Update menubar submodule
+
+# Bumps the vendor/menubar submodule to the latest threadbase-menubar release
+# tag and opens a PR against main. Fires when the menubar repo publishes a
+# release (repository_dispatch type "menubar-released"), or run manually.
+#
+# Unlike the scanner bump, the menubar is consumed purely as a git submodule
+# (no file: npm dependency), so this only moves the submodule pointer — there
+# is no lockfile to refresh.
+#
+# Setup required for the automatic trigger:
+#   1. In the threadbase-menubar repo, after publishing a v* release, send:
+#        POST /repos/RonenMars/threadbase-streamer/dispatches
+#        { "event_type": "menubar-released" }
+#      using a PAT (repo scope) stored as a secret there — the default
+#      GITHUB_TOKEN cannot dispatch across repos.
+#   2. Optional but recommended: add a PAT secret MENUBAR_VER_BUMP_PAT here so
+#      the PR this workflow opens triggers CI. PRs created with the default
+#      GITHUB_TOKEN do NOT trigger further workflow runs (GitHub's recursion
+#      guard), so without MENUBAR_VER_BUMP_PAT you must re-run CI on the bump PR
+#      manually.
+
+on:
+  repository_dispatch:
+    types: [menubar-released]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Bump vendor/menubar to latest release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Use a PAT if provided so the resulting PR triggers CI; else fall
+          # back to GITHUB_TOKEN (PR opens, but its CI must be re-run manually).
+          token: ${{ secrets.MENUBAR_VER_BUMP_PAT || github.token }}
+
+      - name: Resolve latest menubar release tag
+        id: menubar
+        run: |
+          git -C vendor/menubar fetch --tags --force origin
+          latest=$(git -C vendor/menubar tag -l 'v*' | sort -V | tail -1)
+          if [ -z "$latest" ]; then echo "::error::no v* tags found in menubar"; exit 1; fi
+          current=$(git -C vendor/menubar rev-parse HEAD)
+          target=$(git -C vendor/menubar rev-parse "$latest^{commit}")
+          echo "tag=$latest"        >> "$GITHUB_OUTPUT"
+          echo "current=$current"   >> "$GITHUB_OUTPUT"
+          echo "target=$target"     >> "$GITHUB_OUTPUT"
+          echo "Latest menubar tag: $latest ($target). Current submodule: $current."
+
+      - name: Already up to date
+        if: steps.menubar.outputs.current == steps.menubar.outputs.target
+        run: echo "vendor/menubar already at ${{ steps.menubar.outputs.tag }} — nothing to do."
+
+      - name: Bump submodule
+        if: steps.menubar.outputs.current != steps.menubar.outputs.target
+        run: git -C vendor/menubar checkout --quiet "${{ steps.menubar.outputs.tag }}"
+
+      - name: Open bump PR
+        if: steps.menubar.outputs.current != steps.menubar.outputs.target
+        env:
+          GH_TOKEN: ${{ secrets.MENUBAR_VER_BUMP_PAT || github.token }}
+        run: |
+          tag="${{ steps.menubar.outputs.tag }}"
+          branch="chore/bump-menubar-${tag}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists — a bump PR is already open. Skipping."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add vendor/menubar
+          git commit -m "chore: bump vendor/menubar to ${tag}"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore: bump vendor/menubar to ${tag}" \
+            --body "Automated submodule bump to menubar \`${tag}\`, triggered by a menubar release. Merge once CI is green."
+          gh pr merge --auto --squash "$branch"
