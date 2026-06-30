@@ -76,6 +76,16 @@ runs:
           vendor/scanner/dist
         key: node-modules-v4-node${{ inputs.node-version }}-${{ hashFiles('package-lock.json') }}
 
+    # On a cache hit, better-sqlite3 was already rebuilt the run that
+    # populated this cache — invoke vitest directly to skip npm test's
+    # `pretest` hook (npm rebuild better-sqlite3), which would otherwise
+    # unconditionally recompile it again on every run.
     - name: Run ${{ inputs.command }}
+      if: "!(inputs.command == 'test' && steps.cache.outputs.cache-hit == 'true')"
       shell: bash
       run: npm run ${{ inputs.command }}
+
+    - name: Run test (cache hit)
+      if: inputs.command == 'test' && steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: npx vitest run
