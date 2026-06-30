@@ -11,6 +11,7 @@ import { restartService, stopService } from "./restart";
 import { stampVersionTxt } from "./stamp-version";
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "./swap";
 import { unpackTarball } from "./unpack";
+import { appendUpdateLog } from "./update-log";
 
 export interface InstallOptions {
   currentVersion: string;
@@ -50,11 +51,13 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
   // file-swap never touches — downloading would orphan the new release without
   // applying it. Refuse early and point at the supported path.
   if (isBrewInstall()) {
-    return {
-      kind: "unsupported-install",
+    const result = {
+      kind: "unsupported-install" as const,
       reason: "Installed via Homebrew — run `brew upgrade tb-streamer` to update.",
       current: opts.currentVersion,
     };
+    appendUpdateLog(`[no-op] ${result.reason}`);
+    return result;
   }
 
   const check = await checkForUpdate({
@@ -63,6 +66,10 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
     pinnedVersion: opts.pinnedVersion,
     allowMajor: opts.allowMajor,
   });
+
+  appendUpdateLog(
+    `[check] current=${check.current} latest=${check.latest ?? "none"} status=${check.reason}`,
+  );
 
   if (!check.wouldInstall) {
     return { kind: "no-op", reason: check.reason, current: check.current, latest: check.latest };
@@ -96,32 +103,26 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
 
   if (opts.dryRun) {
     const asset = target.assets.find((a) => a.name === artifact.filename);
-    return {
-      kind: "dry-run",
-      latest: targetVersion,
-      tarballUrl: asset?.browserDownloadUrl ?? "(missing)",
-    };
+    const tarballUrl = asset?.browserDownloadUrl ?? "(missing)";
+    appendUpdateLog(
+      `[dry-run] would install ${check.current} → ${targetVersion} from ${tarballUrl}`,
+    );
+    return { kind: "dry-run", latest: targetVersion, tarballUrl };
   }
 
   if (opts.config.defer_if_active_sessions && !opts.force && opts.runningServer) {
     const active = await countActiveSessions(opts.runningServer);
     if (active.kind === "count" && active.count > 0) {
-      return {
-        kind: "deferred",
-        reason: `${active.count} active session(s); use --force to interrupt`,
-        activeSessions: active.count,
-        latest: targetVersion,
-      };
+      const reason = `${active.count} active session(s); use --force to interrupt`;
+      appendUpdateLog(`[deferred] ${check.current} → ${targetVersion}: ${reason}`);
+      return { kind: "deferred", reason, activeSessions: active.count, latest: targetVersion };
     }
     if (active.kind === "error") {
       // Streamer is reachable but its state is unknown — defer rather than
       // risk killing live sessions we couldn't see.
-      return {
-        kind: "deferred",
-        reason: `cannot determine active sessions (${active.reason}); use --force to override`,
-        activeSessions: -1,
-        latest: targetVersion,
-      };
+      const reason = `cannot determine active sessions (${active.reason}); use --force to override`;
+      appendUpdateLog(`[deferred] ${check.current} → ${targetVersion}: ${reason}`);
+      return { kind: "deferred", reason, activeSessions: -1, latest: targetVersion };
     }
     // active.kind === "unreachable" → streamer is down, nothing to interrupt.
   }
@@ -163,11 +164,15 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
     restartMethod = `failed: ${err instanceof Error ? err.message : String(err)}`;
   }
 
-  return {
-    kind: "installed",
+  const installed = {
+    kind: "installed" as const,
     previous: check.current,
     installed: targetVersion,
     pruned,
     restart: { method: restartMethod },
   };
+  appendUpdateLog(
+    `[installed] ${installed.previous} → ${installed.installed} restart=${installed.restart.method}${pruned.length > 0 ? ` pruned=${pruned.length}` : ""}`,
+  );
+  return installed;
 }
