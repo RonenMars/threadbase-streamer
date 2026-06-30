@@ -223,6 +223,8 @@ export interface SessionCursor {
 export interface ServerConfig {
   port: number;
   apiKey?: string;
+  /** 'cli' when --api-key was passed; rotation persists in-memory only and reverts on restart */
+  apiKeySource?: "config" | "cli";
   localNoAuth?: boolean;
   verbose?: boolean;
   logMenubarRequests?: boolean; // log /healthz requests from the menubar app (default: false)
