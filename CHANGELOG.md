@@ -1,3 +1,9 @@
+## [1.20.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.19.1...v1.20.0) (2026-06-30)
+
+### Features
+
+* **session:** add default system prompt + per-session systemPrompt param ([#132](https://github.com/RonenMars/threadbase-streamer/issues/132)) ([525c3fa](https://github.com/RonenMars/threadbase-streamer/commit/525c3fa4a696f9514232d486973d591c82a246ec))
+
 ## [1.19.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.19.0...v1.19.1) (2026-06-30)
 
 ### Bug Fixes
