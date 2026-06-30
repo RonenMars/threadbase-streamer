@@ -8,6 +8,12 @@ const alreadyHandled = () => new Response(null, { status: ALREADY_HANDLED });
 export const createProjectRoutes = (deps: ApiDeps) => {
   const app = new Hono<AppEnv>();
 
+  app.get("/", (c) => {
+    const url = new URL(c.req.url);
+    deps.handleListProjects(url, c.env.outgoing);
+    return alreadyHandled();
+  });
+
   app.get("/popular", (c) => {
     const url = new URL(c.req.url);
     deps.handleGetPopularProjects(url, c.env.outgoing);

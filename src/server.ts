@@ -59,7 +59,7 @@ import { ConversationsRepository } from "./db/repositories/conversations.reposit
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
-import { handleListProjectChats } from "./handlers/handleListProjectChats";
+import { handleListProjects } from "./handlers/handleListProjects";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
@@ -481,8 +481,8 @@ export class StreamerServer {
       handleGetConversation: (id, url, res, ifNoneMatch) =>
         this.handleGetConversation(id, url, res, ifNoneMatch),
       handleSearch: (url, res) => this.handleSearch(url, res),
+      handleListProjects: (url, res) => handleListProjects(url, res),
       handleGetPopularProjects: (url, res) => this.handleGetPopularProjects(url, res),
-      handleListProjectChats: (url, res) => this.handleListProjectChats(url, res),
       handlePairStart: (res) => this.handlePairStart(res),
       handlePairExchange: (req, res) => this.handlePairExchange(req, res),
       handleBrowse: (url, res) => this.handleBrowse(url, res),
@@ -1288,29 +1288,6 @@ export class StreamerServer {
     }
     const projects = this.cache.getPopularProjects(limit);
     json(res, 200, { projects, total: projects.length });
-  }
-
-  private async handleListProjectChats(url: URL, res: ServerResponse): Promise<void> {
-    if (
-      !this.cache ||
-      !this.projectsRepo ||
-      !this.conversationsRepo ||
-      !this.sessionsRepo ||
-      !this.cacheMetadataRepo
-    ) {
-      json(res, 503, { error: "Cache not available" });
-      return;
-    }
-
-    await handleListProjectChats(url, res, {
-      cache: this.cache,
-      projectsRepo: this.projectsRepo,
-      conversationsRepo: this.conversationsRepo,
-      sessionsRepo: this.sessionsRepo,
-      cacheMetadataRepo: this.cacheMetadataRepo,
-      getSessionResponses: () => this.sessionStore.list(this.ptyAttachedIds()),
-      getFreshScanner: () => this.getFreshScanner(),
-    });
   }
 
   private buildStatCache(
