@@ -8,6 +8,7 @@ import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
+import { appendUpdateLog } from "../src/updater/update-log";
 import { getVersion } from "../src/version";
 import { registerProdCommands } from "./prod";
 
@@ -247,6 +248,9 @@ program
           pinnedVersion: opts.version,
           allowMajor: opts.allowMajor,
         });
+        appendUpdateLog(
+          `[check] current=${result.current} latest=${result.latest ?? "none"} status=${result.reason}`,
+        );
         log.info(`Current : ${result.current}`, undefined, "console");
         log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
         log.info(`Channel : ${cfg.channel}`, undefined, "console");
@@ -302,6 +306,7 @@ program
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      appendUpdateLog(`[error] ${message}`);
       log.error(`Update failed: ${message}`, { error: message }, "console");
       process.exitCode = 1;
     }
