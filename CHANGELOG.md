@@ -1,3 +1,14 @@
+## [1.21.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.20.0...v1.21.0) (2026-06-30)
+
+### Features
+
+* **api:** add GET /api/projects, remove /project-chats ([#117](https://github.com/RonenMars/threadbase-streamer/issues/117)) ([ae1ade8](https://github.com/RonenMars/threadbase-streamer/commit/ae1ade8c63eb9b83e48acc9308e5c0b03f9c1622))
+* **updater:** append check and install results to update.log ([#144](https://github.com/RonenMars/threadbase-streamer/issues/144)) ([bb1bc69](https://github.com/RonenMars/threadbase-streamer/commit/bb1bc69151c404159b7c7767e01492c65a7337b8))
+
+### Bug Fixes
+
+* **security:** harden streamer-mobile API surface ([#129](https://github.com/RonenMars/threadbase-streamer/issues/129)) ([1e5700c](https://github.com/RonenMars/threadbase-streamer/commit/1e5700c21e3e7d988a30625d5d420f6c97070721))
+
 ## [1.20.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.19.1...v1.20.0) (2026-06-30)
 
 ### Features
