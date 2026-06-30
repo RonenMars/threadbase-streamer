@@ -1,3 +1,9 @@
+## [1.18.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.5...v1.18.6) (2026-06-30)
+
+### Bug Fixes
+
+* **tests:** make test suite pass on Windows ([abe253a](https://github.com/RonenMars/threadbase-streamer/commit/abe253a032c7db9677a532d6772d76f9c4ae14ec))
+
 ## [1.18.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.4...v1.18.5) (2026-06-28)
 
 ### Bug Fixes
