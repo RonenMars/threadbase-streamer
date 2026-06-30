@@ -596,12 +596,17 @@ The `Cannot read properties of undefined` is a red herring — it's the `afterEa
 
 **Cause:** Sibling problem to the "deployed `releases/node_modules` after a Node major upgrade" entry above — but for the *repo's* `node_modules`, not `~/.threadbase/releases/node_modules`. The repo's prebuilt `better-sqlite3` binary is locked to whatever Node ABI was current when `npm install` last ran. Once the system Node moves to a new major (or sometimes minor) the ABI no longer matches and every test that touches the cache fails.
 
-**Fix:** rebuild the native module against the current Node, then re-run the deploy:
+**Fix:** `npm test` (and `npm run deploy`) now run `npm rebuild better-sqlite3` automatically via a `pretest` hook — just re-run the failing command and it will self-heal:
 ```sh
-npm rebuild better-sqlite3
 npm run deploy
 ```
-If you also see `node-pty` complain (it didn't in this incident, but it's the other native dep), rebuild it the same way.
+If you also see `node-pty` complain (it didn't in this incident, but it's the other native dep), rebuild it manually: `npm rebuild node-pty`.
+
+**Staying on the right Node version:** the repo pins its Node version in `.nvmrc`. Use your version manager's auto-switch to avoid stale ABIs in the first place:
+
+- **macOS / Linux (nvm):** `nvm use` in the repo root, or add `nvm use --silent` to your shell's `cd` hook via `nvm`'s `--auto-use` option.
+- **Windows (fnm):** install [fnm](https://github.com/Schniz/fnm), then add `fnm env --use-on-cd | Out-String | Invoke-Expression` to your PowerShell profile (`$PROFILE`). fnm reads `.nvmrc` automatically on `cd`.
+- **nvm-windows:** reads `.nvmrc` but requires a manual `nvm use` — no auto-cd hook.
 
 **Diagnosis cue:** the `NODE_MODULE_VERSION 127 / 137` mismatch is the real signal. If you only see "Cannot read properties of undefined (reading 'close')" you're looking at the cascade, not the cause — scroll up in the test output for the `NODE_MODULE_VERSION` line.
 

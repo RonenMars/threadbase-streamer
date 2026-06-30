@@ -59,6 +59,11 @@ runs:
       shell: bash
       run: npm install --prefer-offline --ignore-scripts
 
+    - name: Rebuild native modules
+      if: inputs.command == 'test'
+      shell: bash
+      run: npm rebuild better-sqlite3
+
     - name: Run ${{ inputs.command }}
       shell: bash
       run: npm run ${{ inputs.command }}
