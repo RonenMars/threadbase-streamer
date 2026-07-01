@@ -137,6 +137,7 @@ export type WSMessage =
       type: "permission";
       sessionId: string;
       prompt?: string;
+      detail?: string;
       options: PermissionOption[];
       cursor?: number;
     }
@@ -272,7 +273,12 @@ export interface PTYManagerOptions {
   // 777 + rendered options) — not JSONL. Additive; absent in tests that omit it.
   onPermissionChange?: (
     sessionId: string,
-    gate: { prompt?: string; options: PermissionOption[]; cursor?: number } | null,
+    gate: {
+      prompt?: string;
+      detail?: string;
+      options: PermissionOption[];
+      cursor?: number;
+    } | null,
   ) => void;
   // Fired when an AskUserQuestion menu is detected on the rendered screen (before
   // the JSONL tool_use block flushes). The server de-dupes against the JSONL path.
