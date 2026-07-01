@@ -3,8 +3,16 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "f
 import { homedir } from "os";
 import { join } from "path";
 
-const CONFIG_DIR = join(homedir(), ".threadbase");
-const CONFIG_FILE = join(CONFIG_DIR, "server.yaml");
+// Resolved per call (not frozen at module load) so tests can redirect writes
+// away from the real config via THREADBASE_CONFIG_DIR. Without this, importing
+// this module freezes the path to the real home before any test can sandbox it,
+// and a rotate/set-key test would clobber the live ~/.threadbase/server.yaml.
+function configDir(): string {
+  return process.env.THREADBASE_CONFIG_DIR ?? join(homedir(), ".threadbase");
+}
+function configFile(): string {
+  return join(configDir(), "server.yaml");
+}
 
 export function generateApiKey(): string {
   return `tb_${randomBytes(16).toString("hex")}`;
@@ -19,7 +27,7 @@ export function validateApiKey(provided: string, expected: string): boolean {
 
 export function loadOrCreateApiKey(): string {
   try {
-    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const content = readFileSync(configFile(), "utf-8");
     const match = content.match(/api_key:\s*(.+)/);
     if (match?.[1]) return match[1].trim();
   } catch {
@@ -27,14 +35,14 @@ export function loadOrCreateApiKey(): string {
   }
 
   const key = generateApiKey();
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_FILE, `api_key: ${key}\n`, "utf-8");
+  mkdirSync(configDir(), { recursive: true });
+  writeFileSync(configFile(), `api_key: ${key}\n`, "utf-8");
   return key;
 }
 
 export function loadBrowseRoot(): string | undefined {
   try {
-    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const content = readFileSync(configFile(), "utf-8");
     const match = content.match(/browse_root:\s*(.+)/);
     if (match?.[1]) return match[1].trim();
   } catch {
@@ -45,7 +53,7 @@ export function loadBrowseRoot(): string | undefined {
 
 export function loadPublicUrl(): string | undefined {
   try {
-    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const content = readFileSync(configFile(), "utf-8");
     const match = content.match(/public_url:\s*(.+)/);
     if (match?.[1]) return match[1].trim();
   } catch {
@@ -56,7 +64,7 @@ export function loadPublicUrl(): string | undefined {
 
 export function loadCacheDir(): string | undefined {
   try {
-    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const content = readFileSync(configFile(), "utf-8");
     const match = content.match(/cache_dir:\s*(.+)/);
     if (match?.[1]) return match[1].trim();
   } catch {
@@ -67,7 +75,7 @@ export function loadCacheDir(): string | undefined {
 
 export function loadTailSize(): number | undefined {
   try {
-    const content = readFileSync(CONFIG_FILE, "utf-8");
+    const content = readFileSync(configFile(), "utf-8");
     const match = content.match(/tail_size:\s*(\d+)/);
     if (match?.[1]) return Number.parseInt(match[1], 10);
   } catch {
@@ -103,11 +111,12 @@ function stripTrailingSlash(url: string): string {
 }
 
 export function setApiKey(key: string): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
+  const file = configFile();
+  mkdirSync(configDir(), { recursive: true });
 
   let content = "";
   try {
-    content = readFileSync(CONFIG_FILE, "utf-8");
+    content = readFileSync(file, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     // file does not exist; we'll create it
@@ -123,8 +132,8 @@ export function setApiKey(key: string): void {
     updated = `${content}\n${apiKeyLine}\n`;
   }
 
-  const tmpFile = `${CONFIG_FILE}.tmp`;
+  const tmpFile = `${file}.tmp`;
   writeFileSync(tmpFile, updated, { encoding: "utf-8", mode: 0o600 });
   chmodSync(tmpFile, 0o600);
-  renameSync(tmpFile, CONFIG_FILE);
+  renameSync(tmpFile, file);
 }

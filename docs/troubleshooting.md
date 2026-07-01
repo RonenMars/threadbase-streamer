@@ -339,6 +339,22 @@ Restart the streamer to pick it up.
 
 ---
 
+### `tb-streamer pair` (and the mobile app) return `401` even though the server is running
+
+**When:** `POST /api/pair/start` returns 401, or the mobile app 401s on `/ws`, despite a healthy server on `localhost` (`/healthz` → 200).
+**Cause:** The running server loads its API key from `~/.threadbase/server.yaml` **once at startup** and holds it in memory — it does not watch the file. If `server.yaml`'s `api_key:` line changed after the server started, the CLI/mobile (reading the current file) and the server (holding the old key) disagree, so every non-localhost request is rejected.
+One way this happened historically: running the test suite from a checkout where `__tests__/security-hardening.test.ts` didn't sandbox the config path — its `/api/auth/rotate` tests rewrote the live `server.yaml` (fixed by resolving the config dir per call via `THREADBASE_CONFIG_DIR` in `src/auth.ts`).
+**Fix:** Restart the supervised instance so it reloads the current key, then re-pair:
+
+```bash
+tb-streamer prod restart
+tb-streamer pair
+```
+
+Verify with `curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $(awk '/^api_key:/{print $2}' ~/.threadbase/server.yaml)" http://localhost:8766/api/pair/start` → expect `200`.
+
+---
+
 ## Launchd plist (macOS)
 
 ### `launchctl kickstart` fails with `could not find service`

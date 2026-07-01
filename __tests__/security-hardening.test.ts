@@ -1,5 +1,34 @@
+import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { createServer } from "http";
 import { StreamerServer } from "../src/server";
+
+// The /api/auth/rotate tests below rotate the API key, which calls setApiKey() →
+// writes server.yaml. Redirect that write to a throwaway dir so the suite never
+// clobbers the user's live ~/.threadbase/server.yaml (which would desync a
+// running prod streamer and 401 every client until restart).
+const REAL_CONFIG = join(homedir(), ".threadbase", "server.yaml");
+let originalConfigDir: string | undefined;
+let realConfigMtimeBefore: number | undefined;
+
+beforeAll(() => {
+  originalConfigDir = process.env.THREADBASE_CONFIG_DIR;
+  process.env.THREADBASE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "tb-sec-"));
+  realConfigMtimeBefore = existsSync(REAL_CONFIG) ? statSync(REAL_CONFIG).mtimeMs : undefined;
+});
+
+afterAll(() => {
+  if (originalConfigDir !== undefined) {
+    process.env.THREADBASE_CONFIG_DIR = originalConfigDir;
+  } else {
+    delete process.env.THREADBASE_CONFIG_DIR;
+  }
+  // Guard: prove the suite never touched the real config.
+  if (realConfigMtimeBefore !== undefined) {
+    expect(statSync(REAL_CONFIG).mtimeMs).toBe(realConfigMtimeBefore);
+  }
+});
 
 async function getRandomPort(): Promise<number> {
   return new Promise((resolve) => {
