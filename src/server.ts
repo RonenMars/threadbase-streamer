@@ -129,7 +129,7 @@ export class StreamerServer {
   // /input { keys }. Cleared when the gate closes.
   private pendingPermission = new Map<
     string,
-    { prompt?: string; options: PermissionOption[]; cursor?: number }
+    { prompt?: string; detail?: string; options: PermissionOption[]; cursor?: number }
   >();
   private scanner: ConversationScanner | null = null;
   // Tracks every ConversationScanner ever created so close() can shut them all
@@ -2063,7 +2063,12 @@ export class StreamerServer {
   // sending the chosen option index via /input { keys } (e.g. "2\r").
   private handlePermissionChange(
     sessionId: string,
-    gate: { prompt?: string; options: PermissionOption[]; cursor?: number } | null,
+    gate: {
+      prompt?: string;
+      detail?: string;
+      options: PermissionOption[];
+      cursor?: number;
+    } | null,
   ): void {
     if (gate === null) {
       if (!this.pendingPermission.has(sessionId)) return;
@@ -2076,6 +2081,7 @@ export class StreamerServer {
       type: "permission",
       sessionId,
       ...(gate.prompt ? { prompt: gate.prompt } : {}),
+      ...(gate.detail ? { detail: gate.detail } : {}),
       options: gate.options,
       ...(gate.cursor !== undefined ? { cursor: gate.cursor } : {}),
     });

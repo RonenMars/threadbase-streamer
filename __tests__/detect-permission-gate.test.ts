@@ -54,6 +54,55 @@ describe("scrapePermissionGate", () => {
       { index: 2, label: "No" },
     ]);
     expect(gate?.cursor).toBe(1);
+    expect(gate?.detail).toBeUndefined();
+  });
+
+  it("captures the descriptive block above the prompt as `detail`", () => {
+    const lines = [
+      "╭──────────────────────────────────────╮",
+      "│ Bash command",
+      "│",
+      "│   git push origin main",
+      "│   Push the merge commit to origin/main",
+      "│",
+      "│ Do you want to proceed?",
+      "│ ❯ 1. Yes",
+      "│   2. Yes, and don't ask again for git push commands",
+      "│   3. No, and tell Claude what to do differently",
+      "╰──────────────────────────────────────╯",
+    ];
+    const gate = scrapePermissionGate(lines);
+    expect(gate?.prompt).toBe("Do you want to proceed?");
+    expect(gate?.detail).toBe(
+      "Bash command\ngit push origin main\nPush the merge commit to origin/main",
+    );
+    expect(gate?.options).toEqual([
+      { index: 1, label: "Yes" },
+      { index: 2, label: "Yes, and don't ask again for git push commands" },
+      { index: 3, label: "No, and tell Claude what to do differently" },
+    ]);
+    expect(gate?.cursor).toBe(1);
+  });
+
+  it("leaves `detail` undefined when there are no descriptive lines above the prompt", () => {
+    const lines = ["Do you want to proceed?", "❯ 1. Yes", "  2. No"];
+    const gate = scrapePermissionGate(lines);
+    expect(gate?.prompt).toBe("Do you want to proceed?");
+    expect(gate?.detail).toBeUndefined();
+  });
+
+  it("stops `detail` capture at a 2-blank gap so prior scrollback isn't swept in", () => {
+    const lines = [
+      "unrelated build output from earlier",
+      "",
+      "",
+      "Do you want to proceed?",
+      "❯ 1. Yes",
+      "  2. No",
+    ];
+    const gate = scrapePermissionGate(lines);
+    expect(gate?.prompt).toBe("Do you want to proceed?");
+    expect(gate?.detail).toBeUndefined();
   });
 
   it("returns null when no numbered options are painted yet", () => {
