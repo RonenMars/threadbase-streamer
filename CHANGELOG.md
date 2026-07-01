@@ -1,3 +1,9 @@
+## [1.22.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.0...v1.22.1) (2026-07-01)
+
+### Bug Fixes
+
+* **auth:** resolve config dir per call so tests can't rotate the live api key ([#153](https://github.com/RonenMars/threadbase-streamer/issues/153)) ([6fffa87](https://github.com/RonenMars/threadbase-streamer/commit/6fffa8733a3be33be32884cdc961a8b73f42454a))
+
 ## [1.22.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.21.0...v1.22.0) (2026-06-30)
 
 ### Features
