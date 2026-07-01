@@ -868,3 +868,21 @@ Start-ScheduledTask -TaskName 'Threadbase'
 ```
 
 **Note:** After any auto-update, also run `npm rebuild` in `~/.threadbase/current/` if the Node.js version on the machine differs from the one the release was compiled for — see the `better-sqlite3` Node ABI mismatch section above.
+
+---
+
+## `npm run build` fails DTS step with `TS5101: Option 'baseUrl' is deprecated`
+
+**When:** The `build` job (CI or local) fails only at the `DTS Build` step with:
+
+```
+error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+```
+
+The ESM/CJS bundles build fine — only declaration generation fails.
+
+**Cause:** `tsconfig.json` **must** keep `"ignoreDeprecations": "6.0"`. The deprecated `baseUrl` is **not** in our tsconfig — tsup's DTS worker injects `baseUrl` internally when generating declarations, and TypeScript 6.0 flags that injected option. `ignoreDeprecations: "6.0"` is the only way to silence it. Removing the option (on the mistaken belief that TS 6.0 dropped it — it didn't; that happens in TS 7.0) breaks the build. This is exactly what closed PR #152 did.
+
+**Fix:** Keep `"ignoreDeprecations": "6.0"` in `tsconfig.json`'s `compilerOptions`. `main` already has it (added in the TS 6.0 bump, #119). Do not remove it.
+
+**TypeScript 7.0 heads-up:** `ignoreDeprecations: "6.0"` stops working in TS 7.0, so this recurs on that upgrade. The real fix then is to move DTS generation off tsup's worker (which is what injects `baseUrl`) — e.g. a separate `tsc --emitDeclarationOnly` pass — rather than touching our tsconfig.
