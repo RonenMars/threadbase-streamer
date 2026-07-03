@@ -1,5 +1,13 @@
 import { ConversationScanner } from "@threadbase-sh/scanner";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -214,6 +222,114 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ input: "hello" }),
       });
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe("POST /api/sessions/start provider", () => {
+    let browseRoot: string;
+    let previousBrowseRootEnv: string | undefined;
+
+    beforeEach(async () => {
+      await server.close();
+      browseRoot = mkdtempSync(join(tmpdir(), "threadbase-browse-test-"));
+      mkdirSync(join(browseRoot, "project"));
+      previousBrowseRootEnv = process.env.THREADBASE_BROWSE_ROOT;
+      process.env.THREADBASE_BROWSE_ROOT = browseRoot;
+      server = new StreamerServer({
+        port,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir,
+        browseRoot,
+        scanProfiles: FIXTURE_PROFILES,
+      });
+      await server.listen(port);
+    });
+
+    afterEach(() => {
+      if (previousBrowseRootEnv === undefined) {
+        delete process.env.THREADBASE_BROWSE_ROOT;
+      } else {
+        process.env.THREADBASE_BROWSE_ROOT = previousBrowseRootEnv;
+      }
+      rmSync(browseRoot, { recursive: true, force: true });
+    });
+
+    it("defaults missing provider to claude-code", async () => {
+      const sessionId = "039fd3ce-ad78-4980-b441-1cfa05edaec7";
+      const startFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh").mockResolvedValueOnce({
+        id: sessionId,
+        provider: "claude-code",
+        projectPath: join(browseRoot, "project"),
+        projectName: "project",
+        branch: "",
+        status: "running",
+        startedAt: new Date(),
+        completedAt: null,
+        promptCount: 0,
+        lastOutput: "",
+      });
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project" }),
+      });
+
+      expect(res.status).toBe(202);
+      expect(startFreshSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "claude-code",
+          projectPath: realpathSync(join(browseRoot, "project")),
+        }),
+      );
+
+      startFreshSpy.mockRestore();
+    });
+
+    it("rejects invalid providers before starting a PTY", async () => {
+      const startFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh");
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project", provider: "other-cli" }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("Invalid provider");
+      expect(startFreshSpy).not.toHaveBeenCalled();
+
+      startFreshSpy.mockRestore();
+    });
+
+    it("returns not implemented for codex-cli live starts in this phase", async () => {
+      const startFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh");
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+
+      expect(res.status).toBe(501);
+      const body = await res.json();
+      expect(body.error).toMatch(/Live codex-cli sessions are not implemented yet/);
+      expect(startFreshSpy).not.toHaveBeenCalled();
+
+      startFreshSpy.mockRestore();
     });
   });
 

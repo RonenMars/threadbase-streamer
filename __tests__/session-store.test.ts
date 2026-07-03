@@ -46,6 +46,7 @@ describe("SessionStore", () => {
       const resp = store.get(UUID_A, noPty);
       expect(resp).not.toBeNull();
       expect(resp?.id).toBe(UUID_A);
+      expect(resp?.provider).toBe("claude-code");
       expect(resp?.ptyAttached).toBe(false);
     });
 
@@ -90,6 +91,7 @@ describe("SessionStore", () => {
 
       const resp = store.get(UUID_B, noPty);
       expect(resp).not.toBeNull();
+      expect(resp?.provider).toBe("claude-code");
       expect(resp?.ptyAttached).toBe(false);
       expect(resp?.pid).toBe(12345);
       expect(resp?.status).toBe("idle");

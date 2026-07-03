@@ -8,7 +8,7 @@ import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadat
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";
 import type { ProjectsRepository } from "../../db/repositories/projects.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
-import type { PTYManager } from "../../pty-manager";
+import type { LiveSessionManager } from "../../live-session-manager";
 import type { SessionStore } from "../../session-store";
 import type { WSHub } from "../../ws-hub";
 
@@ -19,7 +19,7 @@ export type ApiDeps = {
   rotateApiKey: () => { newKey: string; persisted: boolean };
   publicUrl: string | null;
   browseRoot: string | null;
-  ptyManager: PTYManager;
+  ptyManager: LiveSessionManager;
   sessionStore: SessionStore;
   wsHub: WSHub;
   cache: () => ConversationCache | null;
