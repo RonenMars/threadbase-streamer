@@ -14,6 +14,7 @@ import { detectShellPrompt } from "./services/questions/detectShellPrompt";
 import type {
   ManagedSession,
   PTYManagerOptions,
+  SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
 } from "./types";
@@ -137,7 +138,7 @@ function buildSpawnEnv(): Record<string, string> {
   return env;
 }
 
-export class PTYManager {
+export class PTYManager implements SessionRunner {
   private sessions = new Map<string, InternalSession>();
   private onOutput: PTYManagerOptions["onOutput"];
   private onStatusChange: PTYManagerOptions["onStatusChange"];
