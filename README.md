@@ -25,7 +25,7 @@ brew services start tb-streamer      # also starts on login
 
 Stop/restart with `brew services stop|restart tb-streamer`. Mutually exclusive with the manual `scripts/deploy.sh` install — if switching from that, run `launchctl bootout gui/$UID/com.threadbase.streamer` first.
 
-### From source
+### Build locally
 
 ```bash
 npm install
@@ -33,46 +33,13 @@ npm run build
 node dist/cli.cjs serve --verbose --local-no-auth
 ```
 
-Either way, the server listens on `http://localhost:8766` (WebSocket at `ws://localhost:8766/ws`). Automatic updates: [docs/guides/auto-update.md](docs/guides/auto-update.md).
+#### Server address
 
-## Persistence
+The server listens on `http://localhost:8766` (WebSocket at `ws://localhost:8766/ws`).
 
-Conversation metadata is cached in SQLite at `~/.threadbase/cache/cache.db`, created and migrated automatically — no setup needed. Sessions are in-memory: a restart drops live PTYs, but history is on disk and any session can be resumed with `POST /api/sessions/resume`.
+#### Automatic updates
 
-PostgreSQL is optional and only stores upload records today. Enable it by setting `THREADBASE_DATABASE_URL`; migrations run automatically.
-
-## Architecture
-
-Three layers: **core engine** (`src/*.ts`) → **API layer** (`src/api/` + `src/index.ts`) → **CLI** (`cli/`).
-
-- `POST /api/sessions/start` / `resume` spawns `claude` in a PTY; output streams to WebSocket clients as `terminal_output`, with a `terminal_replay` snapshot on subscribe.
-- `SessionStore` tracks both PTY-managed sessions and externally-running `claude` processes discovered on disk.
-- A chokidar-backed watcher tails conversation JSONL files into the SQLite cache, so list/search endpoints don't scan the filesystem.
-- When the last WebSocket subscriber disconnects, a grace timer (default 4.5 min) puts the PTY on hold — history stays intact and it's resumable anytime.
-
-More detail: [docs/how-it-works.md](docs/how-it-works.md) and [docs/architecture/](docs/architecture/README.md).
-
-## REST API
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/healthz` | Health check |
-| GET | `/api/info` | Server info |
-| GET | `/api/sessions` | List active sessions |
-| GET | `/api/sessions/:id` | Get a session |
-| POST | `/api/sessions/start` | Start a session |
-| POST | `/api/sessions/resume` | Resume a conversation |
-| POST | `/api/sessions/:id/input` | Send input |
-| POST | `/api/sessions/:id/cancel` | Cancel a session |
-| GET | `/api/sessions/:id/output` | Get terminal output buffer |
-| POST | `/api/sessions/:id/files` | Upload a file attachment |
-| GET | `/api/conversations` | Paginated conversation history |
-| GET | `/api/conversations/:id` | Full conversation with messages |
-| GET | `/project-chats` | Active sessions + historical conversations, combined |
-| GET | `/api/search?q=...` | Full-text search across conversations |
-| GET | `/api/browse` | Browse the file system |
-| GET | `/api/profiles` | List scan profiles |
-| POST | `/api/pair/start` / `/api/pair/exchange` | Mobile pairing handshake |
+npm and Homebrew installs can auto-update: [docs/guides/auto-update.md](docs/guides/auto-update.md).
 
 ## Remote Access
 
@@ -83,17 +50,7 @@ bash scripts/remote-access/cloudflare.sh      # macOS/Linux/WSL/Git Bash
 pwsh scripts/remote-access/cloudflare.ps1     # anywhere pwsh is installed
 ```
 
-Other providers and full setup: [docs/guides/remote-access/](docs/guides/remote-access/).
-
-## Mobile Pairing (QR)
-
-A pairing QR is printed on server start (skip with `--no-pair-qr`), or reprint one anytime with `tb-streamer pair`. Scanning it trades a single-use token for a sealed API key — the key itself never appears in the QR.
-
-If the phone can't reach `localhost`, give it a reachable address via (in order of precedence) `--public-url`, `THREADBASE_PUBLIC_URL`, or `public_url:` in `server.yaml`. HTTPS is required except for `localhost`.
-
-## Global commands
-
-Deploying installs two equivalent global commands wrapping `~/.threadbase/cli.js`: `tb-streamer` and `threadbase-streamer`. Details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
+Other providers and full setup: [docs/guides/remote-access/README.md](docs/guides/remote-access/README.md).
 
 ## Development
 
@@ -107,6 +64,68 @@ npm run migrate           # apply SQLite migrations
 npm run db:validate       # check for missing/duplicate/orphaned project_id data
 ```
 
-## Dependencies
+## Persistence
 
-`@threadbase-sh/scanner`, `@threadbase-sh/agent-types`, `node-pty`, `ws`, `better-sqlite3`, `chokidar`, `zod`, `date-fns`, `commander`, and `pg` (lazy-loaded, only used if `THREADBASE_DATABASE_URL` is set).
+Conversation metadata is cached in SQLite at `~/.threadbase/cache/cache.db`, created and migrated automatically — no setup needed. Sessions are in-memory: a restart drops live PTYs, but history is on disk and any session can be resumed with `POST /api/sessions/resume`.
+
+PostgreSQL is optional and only stores upload records today. Enable it by setting `THREADBASE_DATABASE_URL`; migrations run automatically.
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph Mobile["tb-mobile"]
+        Client[Mobile / CLI client]
+    end
+
+    subgraph Streamer["tb-streamer"]
+        API[API layer<br/>src/api]
+        Core[Core engine<br/>server.ts]
+        WSHub[WS hub]
+        PTY[PTY sessions<br/>node-pty]
+        Watcher[Conversation watcher<br/>chokidar]
+        Cache[(SQLite cache<br/>cache.db)]
+    end
+
+    subgraph ScannerPkg["tb-scanner (npm dep)"]
+        Scanner[ConversationScanner]
+        SCache[(SQLite index<br/>index.db)]
+    end
+
+    Client -- HTTP --> API
+    Client -- WebSocket --> WSHub
+    API --> Core
+    Core --> WSHub
+    Core --> PTY
+    Core --> Watcher
+    Core --> Scanner
+    Watcher --> Cache
+    Watcher --> WSHub
+    PTY -- JSONL --> Watcher
+    PTY -- terminal_output --> WSHub
+    Scanner --> SCache
+    Scanner --> Cache
+```
+
+Three layers: **core engine** (`src/*.ts`) → **API layer** (`src/api/` + `src/index.ts`) → **CLI** (`cli/`).
+
+- `POST /api/sessions/start` / `resume` spawns `claude` in a PTY; output streams to WebSocket clients as `terminal_output`, with a `terminal_replay` snapshot on subscribe.
+- `SessionStore` tracks both PTY-managed sessions and externally-running `claude` processes discovered on disk.
+- A chokidar-backed watcher tails conversation JSONL files into the SQLite cache, so list/search endpoints don't scan the filesystem.
+- When the last WebSocket subscriber disconnects, a grace timer (default 4.5 min) puts the PTY on hold — history stays intact and it's resumable anytime.
+
+More detail: [docs/how-it-works.md](docs/how-it-works.md) and [docs/architecture/](docs/architecture/README.md).
+
+## REST API
+
+Full endpoint reference: [docs/api-reference.md](docs/api-reference.md).
+
+## Mobile Pairing (QR)
+
+A pairing QR is printed on server start (skip with `--no-pair-qr`), or reprint one anytime with `tb-streamer pair`. Scanning it trades a single-use token for a sealed API key — the key itself never appears in the QR.
+
+If the phone can't reach `localhost`, give it a reachable address via (in order of precedence) `--public-url`, `THREADBASE_PUBLIC_URL`, or `public_url:` in `server.yaml`. HTTPS is required except for `localhost`.
+
+## Global CLI Commands
+
+Deploying installs two equivalent global commands wrapping `~/.threadbase/cli.js`: `tb-streamer` and `threadbase-streamer`. Details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
