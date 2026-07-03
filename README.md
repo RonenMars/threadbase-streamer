@@ -50,7 +50,7 @@ bash scripts/remote-access/cloudflare.sh      # macOS/Linux/WSL/Git Bash
 pwsh scripts/remote-access/cloudflare.ps1     # anywhere pwsh is installed
 ```
 
-Other providers and full setup: [docs/guides/remote-access/README.md](docs/guides/remote-access/README.md).
+Other providers and full setup: [docs/guides/remote-access](docs/guides/remote-access/README.md).
 
 ## Development
 
