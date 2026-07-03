@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import { basename } from "path";
 import { getLogger, type Logger } from "./logger";
 import { resolveClaudeExe } from "./platform";
+import { CLAUDE_CODE_PROVIDER } from "./providers";
 import { hasPermissionOsc, scrapePermissionGate } from "./services/questions/detectPermissionGate";
 import {
   detectQuestionFromScreen,
@@ -222,6 +223,7 @@ export class PTYManager {
 
     const session: InternalSession = {
       id: sessionId,
+      provider: CLAUDE_CODE_PROVIDER,
       projectPath: options.projectPath,
       projectName,
       branch: options.branch ?? "",
@@ -288,6 +290,7 @@ export class PTYManager {
 
     const session: InternalSession = {
       id: sessionId,
+      provider: CLAUDE_CODE_PROVIDER,
       projectPath: options.projectPath,
       projectName,
       branch: "",
@@ -824,6 +827,7 @@ export class PTYManager {
 function toPublicSession(s: InternalSession): ManagedSession {
   return {
     id: s.id,
+    provider: s.provider ?? CLAUDE_CODE_PROVIDER,
     projectPath: s.projectPath,
     projectName: s.projectName,
     branch: s.branch,

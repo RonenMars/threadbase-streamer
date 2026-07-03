@@ -60,11 +60,16 @@ import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
 import { handleListProjects } from "./handlers/handleListProjects";
+import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, isProviderResumable } from "./providers";
-import { PTYManager } from "./pty-manager";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  isProviderName,
+  isProviderResumable,
+} from "./providers";
 import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
@@ -113,7 +118,7 @@ export function parseIncludeAgentsEnv(raw: string | undefined): boolean {
 
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
-  private ptyManager: PTYManager;
+  private ptyManager: LiveSessionManager;
   private sessionStore: SessionStore;
   private wsHub: WSHub;
   private fileWatcher: ConversationWatcher;
@@ -336,7 +341,7 @@ export class StreamerServer {
       },
     });
 
-    this.ptyManager = new PTYManager({
+    this.ptyManager = new LiveSessionManager({
       logger: getLogger("pty"),
       onOutput: (sessionId, data) => {
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
@@ -2317,6 +2322,15 @@ export class StreamerServer {
       }
       return;
     }
+    const body = await readBody(req);
+    const { path: relativePath, provider: requestedProvider, systemPrompt: clientPrompt } = body;
+
+    if (requestedProvider !== undefined && !isProviderName(requestedProvider)) {
+      json(res, 400, { error: "Invalid provider" });
+      return;
+    }
+    const provider = requestedProvider ?? CLAUDE_CODE_PROVIDER;
+
     if (!this.browseRoot) {
       json(res, 403, {
         error: "File browsing not configured. Set browseRoot on the server.",
@@ -2324,8 +2338,6 @@ export class StreamerServer {
       });
       return;
     }
-    const body = await readBody(req);
-    const { path: relativePath, systemPrompt: clientPrompt } = body;
 
     if (typeof relativePath !== "string") {
       json(res, 400, { error: "Missing path field" });
@@ -2351,6 +2363,7 @@ export class StreamerServer {
 
     try {
       const session = await this.ptyManager.startFresh({
+        provider,
         projectPath: resolvedPath,
         projectName: body.projectName,
         systemPrompt: systemPromptParts.join("\n"),
@@ -2367,11 +2380,15 @@ export class StreamerServer {
       this.broadcastOrUnicastSessionList(req);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
+      const statusCode =
+        typeof (err as Error & { statusCode?: unknown }).statusCode === "number"
+          ? (err as Error & { statusCode: number }).statusCode
+          : 500;
       this.log.error(`[start] failed to start session: ${message}`, {
         event: "session.start_failed",
         error: message,
       });
-      json(res, 500, { error: message });
+      json(res, statusCode, { error: message });
     }
   }
 
