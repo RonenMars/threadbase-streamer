@@ -64,6 +64,7 @@ describe("PTYManager — ready detection", () => {
     const session = await spawnFresh(mgr);
     const proc = getMockProc(mgr, session.id);
 
+    expect(session.provider).toBe("claude-code");
     proc._emit("data", TIPS_BANNER_BOOT);
 
     expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
@@ -297,6 +298,7 @@ describe("PTYManager — spawn permission flags", () => {
 
     expect(args).toContain("--permission-mode");
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
+    expect(args).toContain("--session-id");
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 

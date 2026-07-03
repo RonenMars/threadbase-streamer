@@ -1,5 +1,6 @@
 import type { Stage } from "@threadbase-sh/agent-types";
 import type { ProgressDedupeLRU } from "./agent/dedupe";
+import type { ProviderName } from "./providers";
 
 // ─── Session Lifecycle ─────────────────────────────────────────────
 
@@ -7,6 +8,7 @@ export type SessionStatus = "running" | "waiting_input" | "idle";
 
 export interface ManagedSession {
   id: string; // JSONL UUID — the .jsonl filename under ~/.claude/projects/
+  provider?: ProviderName;
   projectId?: string; // Stable identity into the projects table (added during migration).
   projectPath: string;
   projectName: string;
@@ -158,6 +160,7 @@ export type WSMessage =
 export interface SessionResponse {
   id: string; // JSONL UUID
   conversationId: string; // alias for id — mobile uses this to build deep-link URLs
+  provider?: ProviderName;
   projectId?: string; // Stable identity into the projects table (added during migration).
   status: SessionStatus;
   projectPath: string;
