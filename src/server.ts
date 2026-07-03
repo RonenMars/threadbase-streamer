@@ -317,6 +317,11 @@ export class StreamerServer {
       },
       onConversationChanged: (filePath) => {
         // A new JSONL appeared (or changed) in a watched project directory.
+        // If we hold a per-file tail for it, re-drive the tail read from here
+        // too: per-file fs.watch handles can die silently (2026-07-01 incident
+        // — tails went permanently quiet while directory events kept flowing),
+        // and the directory watcher is the survivor that can heal them.
+        this.fileWatcher.poke(filePath);
         // Invalidate only the affected file's cache row immediately (cheap
         // single-row delete; wiping the whole cache on every event would
         // prevent the warm-up from persisting while active sessions write).
