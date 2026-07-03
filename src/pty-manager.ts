@@ -135,6 +135,16 @@ function buildSpawnEnv(): Record<string, string> {
   if (env.CLAUDE_API_KEY) {
     env.ANTHROPIC_API_KEY = env.CLAUDE_API_KEY;
   }
+  // If the streamer itself was launched from inside a Claude Code session,
+  // it inherits that session's markers (CLAUDECODE, CLAUDE_CODE_SESSION_ID,
+  // CLAUDE_CODE_CHILD_SESSION, ...). A spawned `claude` seeing them treats
+  // itself as a nested child session and never persists a project JSONL —
+  // the session "works" in the terminal but has no conversation to stream.
+  for (const key of Object.keys(env)) {
+    if (key === "CLAUDECODE" || key.startsWith("CLAUDE_CODE_")) {
+      delete env[key];
+    }
+  }
   return env;
 }
 
