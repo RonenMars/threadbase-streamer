@@ -18,17 +18,6 @@ Three things are always true regardless of which provider you pick:
 2. **The streamer doesn't know or care which tunnel sits in front of it.** Provider choice is purely an ops decision. Swapping Cloudflare for Tailscale Funnel doesn't touch a single line of `src/`.
 3. **`public_url` in `~/.threadbase/server.yaml` is the only place the streamer "sees" the public hostname** — it gets embedded into the pairing QR so mobile dials the public URL instead of `localhost`. If you don't set it, the QR shows the LAN IP, which only works on the same Wi-Fi.
 
-## Pick a provider
-
-| Provider | Best for | Cost | Account needed | Persistent hostname | Identity layer in front |
-|----------|---------|------|-----------------|---------------------|-------------------------|
-| **Cloudflare Tunnel — quick** | First-time onboarding, "does this even work?", demos | Free | None | ❌ Random `*.trycloudflare.com` per run | ❌ Anonymous (Bearer is your only gate) |
-| **Cloudflare Tunnel — named** | Always-on personal deployment, the setup this repo uses | Free | Cloudflare account + domain on Cloudflare DNS | ✅ Your own hostname | ✅ Cloudflare Access (recommended) |
-| **ngrok** | Same niche as quick-tunnel but with optional named domains on paid plans | Free tier with random URLs; paid for reserved | ngrok account | Paid tier only | ✅ ngrok OAuth/keys |
-| **Tailscale Serve** | Reaching the streamer from **your own** devices over any network (incl. cellular), **tailnet-private** — not public | Free for personal use | Tailscale account | ✅ Tied to your tailnet | ✅ Tailnet membership (devices only) |
-| **Tailscale Funnel** | Private-by-default networks where you also want a public endpoint | Free for personal use | Tailscale account | ✅ Tied to your tailnet | ✅ Tailscale ACLs |
-| **VPS reverse proxy** | Full control, self-hosted, want one box doing many things | VPS rental | Anywhere you can rent a Linux box | ✅ Whatever DNS you point at it | ✅ Whatever you configure (nginx auth, Caddy, etc.) |
-
 ## Start here: 5-minute Cloudflare quick-tunnel
 
 The fastest path from "streamer is running on my machine" to "mobile app paired over the internet" is a Cloudflare quick-tunnel. No Cloudflare account, no domain, no DNS. You get a random `*.trycloudflare.com` URL that rotates every time you run it — perfect for proving the pairing flow works, **not** for persistent exposure.
@@ -53,15 +42,26 @@ cd scripts/remote-access/tui && go run .
 
 The Claude Code skill `setup-cloudflare-tunnel` runs the same script and handles the prereq checks for you — useful if you'd rather talk to the agent than touch the shell.
 
-Full Cloudflare guide (quick-tunnel walkthrough + how to graduate to a persistent named tunnel + how Cloudflare Access fits in): **[remote-access/cloudflare.md](./remote-access/cloudflare.md)**.
+Full Cloudflare guide (quick-tunnel walkthrough + how to graduate to a persistent named tunnel + how Cloudflare Access fits in): **[cloudflare.md](./cloudflare.md)**.
+
+## Pick a provider
+
+| Provider | Best for | Cost | Account needed | Persistent hostname | Identity layer in front |
+|----------|---------|------|-----------------|---------------------|-------------------------|
+| **Cloudflare Tunnel — quick** | First-time onboarding, "does this even work?", demos | Free | None | ❌ Random `*.trycloudflare.com` per run | ❌ Anonymous (Bearer is your only gate) |
+| **Cloudflare Tunnel — named** | Always-on personal deployment, the setup this repo uses | Free | Cloudflare account + domain on Cloudflare DNS | ✅ Your own hostname | ✅ Cloudflare Access (recommended) |
+| **ngrok** | Same niche as quick-tunnel but with optional named domains on paid plans | Free tier with random URLs; paid for reserved | ngrok account | Paid tier only | ✅ ngrok OAuth/keys |
+| **Tailscale Serve** | Reaching the streamer from **your own** devices over any network (incl. cellular), **tailnet-private** — not public | Free for personal use | Tailscale account | ✅ Tied to your tailnet | ✅ Tailnet membership (devices only) |
+| **Tailscale Funnel** | Private-by-default networks where you also want a public endpoint | Free for personal use | Tailscale account | ✅ Tied to your tailnet | ✅ Tailscale ACLs |
+| **VPS reverse proxy** | Full control, self-hosted, want one box doing many things | VPS rental | Anywhere you can rent a Linux box | ✅ Whatever DNS you point at it | ✅ Whatever you configure (nginx auth, Caddy, etc.) |
 
 ## Per-provider guides
 
-- **Cloudflare Tunnel** — [remote-access/cloudflare.md](./remote-access/cloudflare.md) (full guide; this is the path this repo's `tb-pc.rbv1000.win` deployment uses)
-- **ngrok** — [remote-access/ngrok.md](./remote-access/ngrok.md) (stub; scripted onboarding coming)
+- **Cloudflare Tunnel** — [cloudflare.md](./cloudflare.md) (full guide; this is the path this repo's `tb-pc.rbv1000.win` deployment uses)
+- **ngrok** — [ngrok.md](./ngrok.md) (stub; scripted onboarding coming)
 - **Tailscale Serve (tailnet-private HTTPS)** — [tailscale-serve.md](./tailscale-serve.md) (the path for reaching your own machine from your own phone over cellular; covers the iOS ATS plaintext-`http`-to-`100.x` gotcha)
-- **Tailscale Funnel** — [remote-access/tailscale-funnel.md](./remote-access/tailscale-funnel.md) (stub; scripted onboarding coming)
-- **VPS reverse proxy (nginx / Caddy)** — [remote-access/vps-reverse-proxy.md](./remote-access/vps-reverse-proxy.md) (stub; scripted onboarding coming)
+- **Tailscale Funnel** — [tailscale-funnel.md](./tailscale-funnel.md) (stub; scripted onboarding coming)
+- **VPS reverse proxy (nginx / Caddy)** — [vps-reverse-proxy.md](./vps-reverse-proxy.md) (stub; scripted onboarding coming)
 
 ## Security baseline (read this no matter which provider you pick)
 
