@@ -283,3 +283,24 @@ export interface StartFreshSessionOptions {
   projectName?: string;
   systemPrompt?: string;
 }
+
+// ─── Session Runner ────────────────────────────────────────────────
+
+// Provider-neutral subset of PTYManager's public surface that
+// LiveSessionManager delegates to. Each provider (claude-code, codex-cli,
+// ...) implements this against its own process-management mechanics.
+export interface SessionRunner {
+  start(sessionId: string, options: StartSessionOptions): Promise<ManagedSession>;
+  startFresh(options: StartFreshSessionOptions): Promise<ManagedSession>;
+  sendInput(sessionId: string, input: string): number;
+  sendKeys(sessionId: string, keys: string): void;
+  cancel(sessionId: string): void;
+  killPid(pid: number): void;
+  putOnHold(sessionId: string): void;
+  getOutput(sessionId: string): string;
+  getOutputLines(sessionId: string, maxLines: number): Promise<string[]>;
+  getSession(sessionId: string): ManagedSession | null;
+  hasSession(sessionId: string): boolean;
+  listSessions(): ManagedSession[];
+  dispose(): void;
+}
