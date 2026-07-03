@@ -1,3 +1,9 @@
+## [1.22.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.1...v1.22.2) (2026-07-03)
+
+### Bug Fixes
+
+* **build:** restore ignoreDeprecations for TS6 baseUrl deprecation warning ([#156](https://github.com/RonenMars/threadbase-streamer/issues/156)) ([c658b02](https://github.com/RonenMars/threadbase-streamer/commit/c658b02fbfd227b2822ca6dcf89b86d8ae0051b2))
+
 ## [1.22.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.0...v1.22.1) (2026-07-01)
 
 ### Bug Fixes
