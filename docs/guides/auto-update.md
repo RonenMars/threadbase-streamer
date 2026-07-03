@@ -31,9 +31,9 @@ command exits with a no-op message; that is the intended "disabled" state.
 
 - `threadbase-streamer update --check`
   Hits the GitHub Releases API for the configured channel, compares against
-  the running version, and prints `Status:` with one of: `Already up to
-  date`, `Would install X → Y (minor)`, `Diff 'major' not in allow list …`,
-  `Major bump … re-run with --allow-major`. Never writes to disk.
+  the running version, and prints a `Status:` line — up to date, a pending
+  version diff with its semver class, or blocked by the allow-list. Never
+  writes to disk.
 
 - `threadbase-streamer update`
   Same checks as `--check`, then downloads the platform tarball into
@@ -72,14 +72,17 @@ expect this exact layout.
 ## Service-manager restart
 
 After the swap, the updater calls the platform's service manager so the
-running streamer picks up the new binary. The defaults match what the
-existing deploy scripts create:
+running streamer picks up the new binary. `scripts/install-auto-update.{sh,ps1}`
+registers a *second*, separate platform job that runs `threadbase-streamer
+update` on a timer (`poll_interval_minutes` in `update.yaml`; gated on
+`auto_update: true`; `... uninstall` removes just this job, leaving the
+streamer service untouched). Logs land in `~/.threadbase/logs/updater.{log,err}`.
 
-| Platform | Manager     | Default label              | Override env var          |
-|----------|-------------|----------------------------|---------------------------|
-| macOS    | launchctl   | `com.ronen.threadbase`     | `LAUNCHD_LABEL`           |
-| Linux    | systemctl   | `threadbase.service`       | `THREADBASE_SYSTEMD_UNIT` |
-| Windows  | schtasks    | `Threadbase`               | `THREADBASE_TASK_NAME`    |
+| Platform | Manager     | Default service label      | Default updater-timer label    | Override env var          |
+|----------|-------------|-----------------------------|---------------------------------|---------------------------|
+| macOS    | launchctl   | `com.ronen.threadbase`      | `com.ronen.threadbase.updater`  | `LAUNCHD_LABEL`           |
+| Linux    | systemctl   | `threadbase.service`        | `threadbase-updater.timer`      | `THREADBASE_SYSTEMD_UNIT` |
+| Windows  | schtasks    | `Threadbase`                | `Threadbase-Updater`            | `THREADBASE_TASK_NAME`    |
 
 If the restart fails (e.g. the service was never installed by the deploy
 script), the installer still returns success — the new release is on disk
@@ -105,27 +108,6 @@ because it's unnecessary and would interrupt active sessions for no reason.
   populated. Manually remove `~/.threadbase/releases/<version>/` and
   retry. The previous `current` symlink is still pointing at the old
   release.
-- **Restart fails.** `current/` is on the new version but the running
-  process is on the old one. Restart the service manually or reboot.
-
-## Scheduled job
-
-`scripts/install-auto-update.sh` (macOS/Linux) and
-`scripts/install-auto-update.ps1` (Windows) register a separate platform
-job that runs `threadbase-streamer update` on a timer. The interval comes
-from `poll_interval_minutes` in `update.yaml`. The installer is gated on
-`auto_update: true` — without that flag it prints a hint and exits without
-registering anything. Logs land in `~/.threadbase/logs/updater.{log,err}`.
-
-| Platform | Mechanism                          | Default label             |
-|----------|------------------------------------|---------------------------|
-| macOS    | launchd plist with `StartInterval` | `com.ronen.threadbase.updater` |
-| Linux    | systemd `--user` timer             | `threadbase-updater.timer`     |
-| Windows  | Scheduled Task with repetition     | `Threadbase-Updater`           |
-
-Rerun the installer after editing `update.yaml` to pick up changes. Use
-`... uninstall` to remove just the updater job (leaves the streamer
-service untouched).
 
 ## Webhook
 
@@ -152,33 +134,27 @@ mistake is signing pretty-printed JSON while posting minified (or vice
 versa). Sign and send byte-identical content; the verifier accepts either
 a bare hex string or `sha256=<hex>` in the header.
 
-## Releases and branching
+## Releases
 
 semantic-release runs on `main` (stable) and `next` (prerelease) per
 `.releaserc.json`. Bumps are computed from conventional-commits messages:
 `feat:` → minor, `fix:` → patch, `BREAKING CHANGE:` → major. `chore:`,
 `docs:`, `test:`, `build:`, `ci:` do not trigger a release.
+(`@semantic-release/changelog` overwrites `CHANGELOG.md` on first run —
+the stub in this repo is a placeholder.)
 
 The `next` branch does not exist by default. Create it
 (`git switch -c next && git push -u origin next`) only when you want
 canarying — servers with `channel: next` in `update.yaml` will consume
 from it. To promote a prerelease to stable, merge `next` → `main`.
 
-### First-release situation
+`package.json` sits at `0.1.0` today, with no prior `vX.Y.Z` tag, so the
+first `release.yml` run on `main` computes its bump from the full commit
+history — a `feat:` commit produces `0.2.0`, not `1.0.0`. If you want
+`1.0.0` as the baseline, manually tag `v1.0.0` on `main` before triggering
+the workflow, or include `BREAKING CHANGE:` in a commit body.
 
-`package.json` sits at `0.1.0` today. The first run of `release.yml` on
-`main` will:
-1. Walk commits since the last `vX.Y.Z` git tag (none yet).
-2. Compute the bump from the full commit history.
-3. Tag and publish the result.
-
-Without a prior tag, a `feat:` commit produces `0.2.0`, not `1.0.0`. If
-you want `1.0.0` as the baseline, manually tag `v1.0.0` on `main` before
-triggering the workflow, or include `BREAKING CHANGE:` in a commit body.
-
-### Rollback
-
-There is no automated rollback. Manual options:
+**Rollback.** There is no automated rollback. Manual options:
 
 1. **Single server, older version:** `threadbase-streamer update --version 1.4.2`
    re-installs the older tarball (still attached to its GitHub Release).
@@ -187,24 +163,3 @@ There is no automated rollback. Manual options:
    `channel: stable` then stay on whatever they currently have.
 3. **Forward-only fix:** ship `1.4.3` reverting whatever broke. Usually
    cleanest.
-
-## Known limitations
-
-- `@semantic-release/changelog` overwrites `CHANGELOG.md` on first run;
-  the stub in this repo is a placeholder.
-
-## Validating the release pipeline without publishing
-
-To exercise the matrix on a feature branch — confirm `npm ci` succeeds and
-`npm run build` + pack work on all four runners — trigger
-`.github/workflows/release.yml` via `workflow_dispatch` with `publish=false`
-(the default):
-
-```sh
-gh workflow run release.yml --ref feat/updater
-```
-
-The `release` job is gated by `if: github.event_name == 'push' || (workflow_dispatch && publish == true)`,
-so a manual run with `publish=false` runs only the build matrix and uploads
-the tarballs as workflow artifacts (1-day retention). To actually publish,
-re-run with `-f publish=true`, or merge the branch into `main`/`next`.
