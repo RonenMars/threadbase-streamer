@@ -11,6 +11,7 @@ import {
 import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
+import WebSocket from "ws";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
 import { PTYManager } from "../src/pty-manager";
@@ -397,8 +398,12 @@ describe("StreamerServer", () => {
       rmSync(codexRoot, { recursive: true, force: true });
     });
 
-    function writeRolloutFixture(codexSessionId: string, cwd: string): void {
+    function writeRolloutFixture(codexSessionId: string, cwd: string, createdAt?: Date): void {
       const now = new Date();
+      // The rollout lives in today's date-nested dir (that's what the poller
+      // scans), but its session_meta timestamp can be back-dated to simulate a
+      // stale same-cwd rollout from an earlier run.
+      const created = createdAt ?? now;
       const dateDir = join(
         codexRoot,
         String(now.getFullYear()),
@@ -407,9 +412,14 @@ describe("StreamerServer", () => {
       );
       mkdirSync(dateDir, { recursive: true });
       const sessionMeta = {
-        timestamp: now.toISOString(),
+        timestamp: created.toISOString(),
         type: "session_meta",
-        payload: { id: codexSessionId, session_id: codexSessionId, cwd },
+        payload: {
+          id: codexSessionId,
+          session_id: codexSessionId,
+          cwd,
+          timestamp: created.toISOString(),
+        },
       };
       writeFileSync(
         join(dateDir, `rollout-2026-01-01T00-00-00-${codexSessionId}.jsonl`),
@@ -499,6 +509,175 @@ describe("StreamerServer", () => {
 
       expect(detail.boundConversationId).toBeUndefined();
 
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it("ignores a stale same-cwd rollout created before the session started", async () => {
+      const liveSessionId = "079fd3ce-ad78-4980-b441-1cfa05edaecb";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: liveSessionId,
+          provider: "codex-cli",
+          projectPath,
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+
+      // Same cwd, but written a full minute before this session started.
+      writeRolloutFixture("stale-codex-id", projectPath, new Date(Date.now() - 60_000));
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(202);
+
+      const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const detail = await detailRes.json();
+
+      expect(detail.boundConversationId).toBeUndefined();
+
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it("does not bind a codex id already bound to another live session", async () => {
+      const liveSessionId = "089fd3ce-ad78-4980-b441-1cfa05edaecc";
+      const otherSessionId = "099fd3ce-ad78-4980-b441-1cfa05edaecd";
+      const codexSessionId = "shared-codex-id";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      // Another live session already owns this codex id.
+      (boundServer as any).sessionStore.addManaged({
+        id: otherSessionId,
+        provider: "codex-cli",
+        projectPath,
+        projectName: "project",
+        branch: "",
+        status: "running",
+        startedAt: new Date(),
+        completedAt: null,
+        promptCount: 0,
+        lastOutput: "",
+        boundConversationId: codexSessionId,
+      });
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: liveSessionId,
+          provider: "codex-cli",
+          projectPath,
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+
+      writeRolloutFixture(codexSessionId, projectPath);
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(202);
+
+      const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const detail = await detailRes.json();
+
+      expect(detail.boundConversationId).toBeUndefined();
+
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it("wires the bound rollout into the live path: replays lines and broadcasts session_update", async () => {
+      const liveSessionId = "0a9fd3ce-ad78-4980-b441-1cfa05edaece";
+      const codexSessionId = "codex-live-wire-id";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: liveSessionId,
+          provider: "codex-cli",
+          projectPath,
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+
+      // Connect a WS client before starting so it receives the replay + update.
+      const events: any[] = [];
+      const ws = new WebSocket(`ws://localhost:${boundPort}/ws?key=${API_KEY}`);
+      ws.on("message", (d) => {
+        try {
+          events.push(JSON.parse(d.toString()));
+        } catch {
+          /* ignore non-JSON */
+        }
+      });
+      await new Promise<void>((r) => ws.on("open", () => r()));
+
+      writeRolloutFixture(codexSessionId, projectPath);
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(202);
+
+      // tryWire() runs synchronously during start: it replays the existing
+      // session_meta line (conversation_event) and broadcasts session_update
+      // carrying the freshly-bound conversation id.
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const gotEvent = events.some(
+          (e) => e.type === "conversation_event" && e.sessionId === liveSessionId,
+        );
+        const gotUpdate = events.some(
+          (e) => e.type === "session_update" && e.session?.boundConversationId === codexSessionId,
+        );
+        if (gotEvent && gotUpdate) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      expect(
+        events.some((e) => e.type === "conversation_event" && e.sessionId === liveSessionId),
+      ).toBe(true);
+      expect(
+        events.some(
+          (e) => e.type === "session_update" && e.session?.boundConversationId === codexSessionId,
+        ),
+      ).toBe(true);
+
+      ws.close();
       codexStartFreshSpy.mockRestore();
       vi.restoreAllMocks();
     });

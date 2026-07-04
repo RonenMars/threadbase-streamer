@@ -182,17 +182,24 @@ export class CodexPtyRunner implements SessionRunner {
     const sessionId = randomUUID();
     const projectName = options.projectName ?? basename(options.projectPath);
 
-    const proc = nodePty.spawn(
-      resolveCodexExe(),
-      ["--cd", options.projectPath, "--no-alt-screen"],
-      {
-        name: "xterm-256color",
-        cols: PTY_COLS,
-        rows: PTY_ROWS,
-        cwd: options.projectPath,
-        env: process.env as Record<string, string>,
-      },
-    );
+    // Codex CLI has no `--system-prompt` flag (unlike Claude). Its only
+    // launch-time injection point is the positional `[PROMPT]` argument, which
+    // Codex processes as the opening turn. Pass the server-built prompt
+    // (default + browse-root boundary + client prompt) there so the safety
+    // boundary and client instructions aren't silently dropped for Codex
+    // sessions. Positional arg goes last, after all `[OPTIONS]`.
+    const args = ["--cd", options.projectPath, "--no-alt-screen"];
+    if (options.systemPrompt) {
+      args.push(options.systemPrompt);
+    }
+
+    const proc = nodePty.spawn(resolveCodexExe(), args, {
+      name: "xterm-256color",
+      cols: PTY_COLS,
+      rows: PTY_ROWS,
+      cwd: options.projectPath,
+      env: process.env as Record<string, string>,
+    });
 
     const session: InternalSession = {
       id: sessionId,

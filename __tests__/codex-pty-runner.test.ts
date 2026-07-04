@@ -70,6 +70,18 @@ describe("CodexPtyRunner — spawn args", () => {
     expect(args).toEqual(["--cd", "/tmp/proj", "--no-alt-screen"]);
   });
 
+  it("startFresh appends systemPrompt as the trailing positional [PROMPT] arg", async () => {
+    const runner = new CodexPtyRunner();
+    await runner.startFresh({
+      projectPath: "/tmp/proj",
+      projectName: "test",
+      systemPrompt: "stay in the sandbox",
+    });
+
+    const args = spawnArgs();
+    expect(args).toEqual(["--cd", "/tmp/proj", "--no-alt-screen", "stay in the sandbox"]);
+  });
+
   it("start (resume) spawns codex resume <sessionId> --cd <projectPath> --no-alt-screen", async () => {
     const runner = new CodexPtyRunner();
     await runner.start("abc-123", { projectPath: "/tmp/proj", projectName: "test" });
