@@ -47,6 +47,7 @@
   "scripts": {
     "build": "tsup && node -e \"const{cpSync}=require('fs');cpSync('src/db/migrations','dist/migrations',{recursive:true});cpSync('src/db/pg-migrations','dist/pg-migrations',{recursive:true})\"",
     "dev": "tsup --watch",
+    "dev:verbose": "npm run build && mkdir -p ~/.threadbase/logs && node dist/cli.cjs serve --verbose 2>&1 | tee -a ~/.threadbase/logs/dev.log",
     "pretest": "npm rebuild better-sqlite3",
     "test": "vitest run",
     "test:verbose": "vitest run --reporter=verbose",
