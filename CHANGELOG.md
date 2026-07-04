@@ -1,3 +1,9 @@
+## [1.24.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.0...v1.24.1) (2026-07-04)
+
+### Bug Fixes
+
+* **pty:** strip inherited Claude session env from spawned sessions ([#160](https://github.com/RonenMars/threadbase-streamer/issues/160)) ([f9a2303](https://github.com/RonenMars/threadbase-streamer/commit/f9a230368b6954a70220e0d72ed28ff61d00d322))
+
 ## [1.24.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.23.1...v1.24.0) (2026-07-04)
 
 ### Features
