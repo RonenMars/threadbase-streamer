@@ -137,6 +137,11 @@ export class StreamerServer {
     { prompt?: string; options: PermissionOption[]; cursor?: number }
   >();
   private scanner: ConversationScanner | null = null;
+  // Set when better-sqlite3 is unusable (e.g. node ABI mismatch made
+  // ConversationCache.open throw). All scanners are then built with
+  // persistent: false so requests serve from disk instead of 500ing on
+  // every touch of the scanner's own SQLite index.
+  private scannerPersistenceDisabled = false;
   // Tracks every ConversationScanner ever created so close() can shut them all
   // down and release SQLite handles (open handles block temp-dir deletion on Windows).
   private allScanners = new Set<ConversationScanner>();
@@ -762,27 +767,31 @@ export class StreamerServer {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          // Loud, not swallowed: a dead cache turns every /api/conversations*
-          // request into a 500. The most common cause is a better-sqlite3 ABI
-          // mismatch (node_modules built against a different Node) — name the
-          // fix so it isn't rediscovered from a bare 500. The serve preflight
-          // (check-sqlite-abi.ts) catches the ABI case before we ever get here;
-          // this covers a cache that dies for any other reason mid-run.
+          // Loud, not swallowed: without the cache every /api/conversations*
+          // request falls back to slower disk-only scans. The most common
+          // cause is a better-sqlite3 ABI mismatch (node_modules built against
+          // a different Node) — name the fix so it isn't rediscovered from a
+          // bare failure. The serve preflight (check-sqlite-abi.ts) catches
+          // the ABI case before we ever get here; this covers a cache that
+          // dies for any other reason mid-run.
           const abiMismatch =
             message.includes("NODE_MODULE_VERSION") ||
             message.includes("was compiled against a different Node.js version");
           this.log.error(
             `ConversationCache failed to open — running WITHOUT cache; ` +
-              `/api/conversations, /api/conversations/count and /project-chats will 500.` +
+              `/api/conversations, /api/conversations/count and /project-chats serve from disk (degraded).` +
               (abiMismatch ? ` Fix: npm rebuild better-sqlite3` : "") +
               ` (${message})`,
             { error: message, abiMismatch, event: "cache.open_failed" },
           );
+          // The scanner's persistent index uses the same better-sqlite3 module;
+          // fall back to in-memory scans so requests keep working from disk.
+          this.scannerPersistenceDisabled = true;
         }
         // Use a dedicated scanner for warm-up, independent of this.scanner, so
         // that onConversationChanged invalidations during the scan cannot cause
         // getScanner() to restart indefinitely and leave the warm-up stuck.
-        const warmupScanner = new ConversationScanner();
+        const warmupScanner = this.newScanner();
         this.allScanners.add(warmupScanner);
         const warmupStatCache = this.buildStatCache(null);
         // Throttle the per-file onProgress firings to ~one frame per whole
@@ -804,6 +813,16 @@ export class StreamerServer {
             },
           })
           .then(async () => {
+            // Adopt the warm-up scan as the live scanner so the first real
+            // request reuses it instead of paying for a second full scan.
+            // Success path only — adopting a scanner whose scan rejected would
+            // pair a broken engine with a resolved scannerReady, making every
+            // later request throw instantly. Guard: only adopt if nothing else
+            // already owns the slot.
+            if (!this.scannerReady && !this.scanner) {
+              this.scanner = warmupScanner;
+              this.scannerReady = Promise.resolve();
+            }
             if (!this.cache) return;
             const metas = [...warmupScanner.getMetadataCache().values()] as any[];
             // upsertFromScannerMeta returns IDs of rows actually upserted
@@ -877,18 +896,6 @@ export class StreamerServer {
             });
           })
           .finally(() => {
-            // Adopt the warm-up scan as the live scanner so the first real
-            // request reuses it instead of paying for a second full scan.
-            // Guard: only adopt if nothing else already owns the slot — a
-            // request-path getScanner() that built its own scanner during
-            // warm-up, or an onConversationChanged that nulled both fields.
-            // If invalidation fires after we adopt, the next request rescans
-            // (pre-existing fallback); the per-request refreshFile path
-            // reconciles single-file drift.
-            if (!this.scannerReady && !this.scanner) {
-              this.scanner = warmupScanner;
-              this.scannerReady = Promise.resolve();
-            }
             this.cacheReady = true;
             this.wsHub.broadcast({ type: "cache_ready" });
             resolveWarm();
@@ -1352,6 +1359,12 @@ export class StreamerServer {
   // this — its per-file refreshFile (in findConversationByUuid) already
   // reconciles the one conversation being requested, so paying a full-tree
   // rescan just because some OTHER file changed is the stall this avoids.
+  private newScanner(): ConversationScanner {
+    return new ConversationScanner(
+      this.scannerPersistenceDisabled ? { persistent: false } : undefined,
+    );
+  }
+
   private async getScanner(skipStaleRescan = false): Promise<ConversationScanner> {
     if (this.scannerReady) {
       await this.scannerReady;
@@ -1373,14 +1386,22 @@ export class StreamerServer {
     }
     this.scannerStale = false;
     const statCache = this.buildStatCache(this.scanner);
-    this.scanner = new ConversationScanner();
+    this.scanner = this.newScanner();
     this.allScanners.add(this.scanner);
     this.scannerReady = this.scanner.scan({
       ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
       ...this.codexScanOpts(),
       ...(statCache ? { statCache } : {}),
     });
-    await this.scannerReady;
+    try {
+      await this.scannerReady;
+    } catch (err) {
+      // Don't memoize the rejection — a stored rejected promise would make
+      // every future request replay this error instantly instead of retrying.
+      this.scanner = null;
+      this.scannerReady = null;
+      throw err;
+    }
     // Capture before returning — onConversationChanged could null this.scanner
     // in the microtask between the await and the return.
     const scanner = this.scanner;
@@ -1450,7 +1471,7 @@ export class StreamerServer {
       const filePath = this.findJsonlPath(uuid);
       if (filePath) {
         const account = this.cache?.getMetaById(uuid)?.account ?? undefined;
-        const coldScanner = this.scanner ?? new ConversationScanner();
+        const coldScanner = this.scanner ?? this.newScanner();
         const page = await coldScanner.parseSingleFilePage(filePath, account, {
           limit: Number.MAX_SAFE_INTEGER,
         });
