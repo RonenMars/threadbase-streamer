@@ -1,3 +1,9 @@
+## [1.24.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.3...v1.24.4) (2026-07-04)
+
+### Bug Fixes
+
+* **watcher:** self-heal dead file tails via directory events ([#162](https://github.com/RonenMars/threadbase-streamer/issues/162)) ([4126aa1](https://github.com/RonenMars/threadbase-streamer/commit/4126aa11e12574becaf0c92f9bbd45ed0c97f226))
+
 ## [1.24.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.2...v1.24.3) (2026-07-04)
 
 ### Bug Fixes
