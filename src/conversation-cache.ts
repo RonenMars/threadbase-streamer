@@ -927,9 +927,25 @@ export class ConversationCache {
     }
   }
 
-  invalidateByFilePath(filePath: string): string | null {
+  /**
+   * Drop the cached row for a file. Two callers with opposite intent:
+   *  - a directory-watch "change" event (the file was appended to) — pass
+   *    `skipIfTailed: true`. A cached tail means the row is being actively
+   *    maintained from the file's real content by the live-tail
+   *    (updateFromLines) or warm-up path, fresher than any scanner-derived
+   *    view. Both watchers fire on the same append with no ordering guarantee;
+   *    without this guard the invalidate can land after the tail write and wipe
+   *    the just-cached row, flickering the conversation out of
+   *    /api/conversations on nearly every message (CRITICAL #2). The debounced
+   *    rescan still re-derives metadata, so skipping the eager drop loses
+   *    nothing.
+   *  - a genuine unlink (the file is gone) — leave `skipIfTailed` false so the
+   *    row is always removed, otherwise a deleted session ghosts in the cache.
+   */
+  invalidateByFilePath(filePath: string, opts?: { skipIfTailed?: boolean }): string | null {
     const row = this.stmts.getIdByFilePath.get(filePath) as { id: string } | undefined;
     if (!row) return null;
+    if (opts?.skipIfTailed && this.stmts.hasTail.get(row.id)) return null;
     this.invalidate(row.id);
     return row.id;
   }

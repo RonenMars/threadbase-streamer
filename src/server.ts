@@ -310,7 +310,10 @@ export class StreamerServer {
         // Invalidate only the affected file's cache row immediately (cheap
         // single-row delete; wiping the whole cache on every event would
         // prevent the warm-up from persisting while active sessions write).
-        this.cache?.invalidateByFilePath(filePath);
+        // skipIfTailed: this same append also drives the live-tail watcher's
+        // updateFromLines upsert; the two fire with no ordering guarantee, so
+        // never delete a row a live tail just wrote (CRITICAL #2).
+        this.cache?.invalidateByFilePath(filePath, { skipIfTailed: true });
         // Debounce the global scanner-staleness flip so a burst of directory
         // events during active sessions collapses into one rescan trigger
         // after a quiet period. The debounced callback still checks
