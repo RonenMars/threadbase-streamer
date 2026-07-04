@@ -77,14 +77,23 @@ describe("codex conversations — HTTP API", () => {
   });
 
   describe("GET /api/conversations/:id", () => {
-    it("returns provider=codex-cli and resumable=false", async () => {
+    it("returns provider=codex-cli and resumable based on project-path availability", async () => {
+      // Codex resume is implemented (Task 4) — resumability now depends on
+      // the same on-disk availability check as claude-code, not a
+      // provider-forced false. This fixture's cwd is a real path on the dev
+      // machine that may or may not exist in other environments, so assert
+      // against the same classifyResumability-shaped outcome rather than a
+      // hardcoded value.
       const res = await fetch(`${baseUrl}/api/conversations/${CODEX_SESSION_ID}?msg_limit=10`, {
         headers: auth,
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
       expect(body.meta.provider).toBe("codex-cli");
-      expect(body.meta.resumable).toBe(false);
+      expect(typeof body.meta.resumable).toBe("boolean");
+      if (!body.meta.resumable) {
+        expect(["path_missing", "worktree_removed"]).toContain(body.meta.unavailable_reason);
+      }
     });
 
     it("still serves messages for codex conversations", async () => {

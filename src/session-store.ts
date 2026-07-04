@@ -1,4 +1,5 @@
 import { createProgressDedupeLRU } from "./agent/dedupe";
+import { CLAUDE_CODE_PROVIDER } from "./providers";
 import type {
   DiscoveredProcess,
   ManagedSession,
@@ -198,6 +199,7 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
   return {
     id: s.id,
     conversationId: s.id,
+    provider: s.provider ?? CLAUDE_CODE_PROVIDER,
     status: s.status,
     projectPath: s.projectPath,
     projectName: s.projectName,
@@ -224,6 +226,7 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     ...(s.resumedFromConversationId != null && {
       resumedFromConversationId: s.resumedFromConversationId,
     }),
+    ...(s.boundConversationId != null && { boundConversationId: s.boundConversationId }),
   };
 }
 
@@ -231,6 +234,7 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
   return {
     id: conversationId,
     conversationId,
+    provider: CLAUDE_CODE_PROVIDER,
     status: "idle",
     projectPath: d.projectPath,
     projectName: d.projectName,

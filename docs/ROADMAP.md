@@ -77,3 +77,11 @@ The deploy downloads `*-universal.dmg` / `*-x86_64.AppImage` / `*-x64.exe` from 
 `cli/prod.ts:233-240` uses `opts.follow !== false` / `opts.errorsOnly === true` / `opts.clear === true` to coerce Commander's option output to booleans. The pattern works today because the defaults are typed (`--no-follow` → `false`; `--errors-only` default `false`; `--clear` default `false`), but it is brittle: any future refactor that changes the default to `undefined` silently flips the inverted comparison.
 
 **Approach:** introduce a small normaliser at the action callback boundary — `Boolean(opts.follow ?? true)`, `Boolean(opts.errorsOnly)`, `Boolean(opts.clear)` — or rely on Commander's typed defaults and drop the `!== false` / `=== true` idioms. Picked up on next touch of `registerProdCommands`.
+
+---
+
+## Feature: structured prompt cards (permission gates + AskUserQuestion) for Codex sessions
+
+Claude Code live sessions get a native `QuestionCard` UI in `tb-mobile` for permission gates and `AskUserQuestion` menus, detected server-side from the rendered PTY screen (`src/services/questions/*`, orchestrated in `src/pty-manager.ts`). Codex sessions (added in [PR #159](https://github.com/RonenMars/threadbase-streamer/pull/159)) don't get this — `CodexPtyRunner` never emits the `permission`/`question` WebSocket events, so any Codex-side approval or choice prompt only shows as raw terminal text.
+
+**Approach:** see [docs/plans/2026-07-04-codex-structured-prompts-followup.md](plans/2026-07-04-codex-structured-prompts-followup.md) for the full scoping — which existing detector files are reusable vs. Claude-only, and the open questions (Codex's `--ask-for-approval` on-screen shape is unverified) that need a live probe before implementation starts. The mobile-side rendering pipeline is already provider-agnostic; all follow-up work is server-side.

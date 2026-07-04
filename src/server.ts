@@ -60,11 +60,16 @@ import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
 import { handleListProjects } from "./handlers/handleListProjects";
+import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, isProviderResumable } from "./providers";
-import { PTYManager } from "./pty-manager";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  isProviderName,
+  isProviderResumable,
+} from "./providers";
 import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
@@ -113,7 +118,7 @@ export function parseIncludeAgentsEnv(raw: string | undefined): boolean {
 
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
-  private ptyManager: PTYManager;
+  private ptyManager: LiveSessionManager;
   private sessionStore: SessionStore;
   private wsHub: WSHub;
   private fileWatcher: ConversationWatcher;
@@ -336,7 +341,7 @@ export class StreamerServer {
       },
     });
 
-    this.ptyManager = new PTYManager({
+    this.ptyManager = new LiveSessionManager({
       logger: getLogger("pty"),
       onOutput: (sessionId, data) => {
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
@@ -757,10 +762,22 @@ export class StreamerServer {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          this.log.warn(`ConversationCache failed to open (running without cache): ${message}`, {
-            error: message,
-            event: "cache.open_failed",
-          });
+          // Loud, not swallowed: a dead cache turns every /api/conversations*
+          // request into a 500. The most common cause is a better-sqlite3 ABI
+          // mismatch (node_modules built against a different Node) — name the
+          // fix so it isn't rediscovered from a bare 500. The serve preflight
+          // (check-sqlite-abi.ts) catches the ABI case before we ever get here;
+          // this covers a cache that dies for any other reason mid-run.
+          const abiMismatch =
+            message.includes("NODE_MODULE_VERSION") ||
+            message.includes("was compiled against a different Node.js version");
+          this.log.error(
+            `ConversationCache failed to open — running WITHOUT cache; ` +
+              `/api/conversations, /api/conversations/count and /project-chats will 500.` +
+              (abiMismatch ? ` Fix: npm rebuild better-sqlite3` : "") +
+              ` (${message})`,
+            { error: message, abiMismatch, event: "cache.open_failed" },
+          );
         }
         // Use a dedicated scanner for warm-up, independent of this.scanner, so
         // that onConversationChanged invalidations during the scan cannot cause
@@ -1873,7 +1890,15 @@ export class StreamerServer {
       return;
     }
 
+    // Same provider-resolution fallback as the conversation-detail path
+    // (server.ts ~1685): `conv` (the full Conversation shape) doesn't carry
+    // provider, so fall back to the cached metadata, then default to Claude.
+    const cachedConvMeta = this.cache?.getMetaById(sessionId);
+    const provider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER =
+      (conv as any)?.provider ?? cachedConvMeta?.provider ?? CLAUDE_CODE_PROVIDER;
+
     const session = await this.ptyManager.start(sessionId, {
+      provider,
       projectPath,
       projectName: body.projectName,
       branch: body.branch,
@@ -2317,6 +2342,15 @@ export class StreamerServer {
       }
       return;
     }
+    const body = await readBody(req);
+    const { path: relativePath, provider: requestedProvider, systemPrompt: clientPrompt } = body;
+
+    if (requestedProvider !== undefined && !isProviderName(requestedProvider)) {
+      json(res, 400, { error: "Invalid provider" });
+      return;
+    }
+    const provider = requestedProvider ?? CLAUDE_CODE_PROVIDER;
+
     if (!this.browseRoot) {
       json(res, 403, {
         error: "File browsing not configured. Set browseRoot on the server.",
@@ -2324,8 +2358,6 @@ export class StreamerServer {
       });
       return;
     }
-    const body = await readBody(req);
-    const { path: relativePath, systemPrompt: clientPrompt } = body;
 
     if (typeof relativePath !== "string") {
       json(res, 400, { error: "Missing path field" });
@@ -2351,6 +2383,7 @@ export class StreamerServer {
 
     try {
       const session = await this.ptyManager.startFresh({
+        provider,
         projectPath: resolvedPath,
         projectName: body.projectName,
         systemPrompt: systemPromptParts.join("\n"),
@@ -2361,17 +2394,26 @@ export class StreamerServer {
       // Return the real UUID immediately — no pending_ dance needed.
       json(res, 202, { id: session.id, status: "pending" });
 
-      // Wire up JSONL watching once Claude creates the conversation file.
-      this.watchForJsonl(session.id, resolvedPath);
+      if (provider === CODEX_CLI_PROVIDER) {
+        // Wire up rollout-file binding once Codex creates its persisted session.
+        this.watchForCodexRollout(session.id, resolvedPath);
+      } else {
+        // Wire up JSONL watching once Claude creates the conversation file.
+        this.watchForJsonl(session.id, resolvedPath);
+      }
 
       this.broadcastOrUnicastSessionList(req);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
+      const statusCode =
+        typeof (err as Error & { statusCode?: unknown }).statusCode === "number"
+          ? (err as Error & { statusCode: number }).statusCode
+          : 500;
       this.log.error(`[start] failed to start session: ${message}`, {
         event: "session.start_failed",
         error: message,
       });
-      json(res, 500, { error: message });
+      json(res, statusCode, { error: message });
     }
   }
 
@@ -2520,6 +2562,168 @@ export class StreamerServer {
       watcher.on("error", cleanup);
     } catch {
       // fs.watch not available (e.g. in tests), ignore
+    }
+  }
+
+  // Codex-equivalent of watchForJsonl(). Differs because Codex has no
+  // filename-encoded session id (it assigns its own persisted id) and its
+  // rollout files live under a date-nested directory
+  // (~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl) that Codex creates
+  // itself — it may not exist yet when this function is first called, so we
+  // poll rather than fs.watch a not-yet-existent directory. Per Phase 0
+  // findings, the rollout file appears within ~1s of process spawn (after
+  // any directory-trust gate is cleared), well before any user input.
+  private watchForCodexRollout(sessionId: string, projectPath: string): void {
+    const deadline = Date.now() + 120_000;
+    const now = new Date();
+    const dateDir = join(
+      String(now.getFullYear()),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    );
+
+    // When this placeholder session started. Used to reject a stale same-cwd
+    // rollout that Codex wrote before this session launched — the cwd match
+    // alone can't tell a fresh rollout from a seconds-old one. 5s of slack
+    // absorbs clock skew between our clock and Codex's session_meta timestamp.
+    const sessionStartedAtMs =
+      (this.sessionStore.getManaged(sessionId)?.startedAt?.getTime() ?? Date.now()) - 5_000;
+
+    let intervalHandle: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (intervalHandle) clearInterval(intervalHandle);
+      intervalHandle = null;
+    };
+
+    // Read a candidate file's session_meta first line; accept only if its cwd
+    // matches this session's projectPath and it was created at/after this
+    // session started. Guards against picking up an unrelated concurrent Codex
+    // session's rollout, or a stale same-cwd rollout from an earlier run, in
+    // the same date-nested directory. Returns { id, createdAtMs } or null.
+    const matchesProjectPath = (
+      candidatePath: string,
+    ): { id: string; createdAtMs: number } | null => {
+      try {
+        const firstLine = readFileSync(candidatePath, "utf8").split("\n", 1)[0];
+        if (!firstLine) return null;
+        const parsed = JSON.parse(firstLine);
+        if (parsed?.type !== "session_meta") return null;
+        const payload = parsed.payload ?? {};
+        if (payload.cwd !== projectPath) return null;
+        if (typeof payload.id !== "string") return null;
+        // payload.timestamp is Codex's session-creation time; fall back to the
+        // outer envelope timestamp if absent.
+        const createdIso = payload.timestamp ?? parsed.timestamp;
+        const createdAtMs = typeof createdIso === "string" ? Date.parse(createdIso) : Number.NaN;
+        if (Number.isNaN(createdAtMs) || createdAtMs < sessionStartedAtMs) return null;
+        return { id: payload.id, createdAtMs };
+      } catch {
+        return null;
+      }
+    };
+
+    const tryWire = () => {
+      if (!this.ptyManager.hasSession(sessionId)) {
+        cleanup();
+        return;
+      }
+      if (Date.now() > deadline) {
+        cleanup();
+        return;
+      }
+
+      // Codex ids already bound to another live placeholder — never bind two
+      // placeholders to the same rollout (e.g. two Codex sessions started in
+      // the same project inside the mtime window).
+      const boundElsewhere = new Set(
+        this.sessionStore
+          .listManaged()
+          .filter((s) => s.id !== sessionId && s.boundConversationId != null)
+          .map((s) => s.boundConversationId as string),
+      );
+
+      for (const root of this.codexRoots) {
+        const sessionsDir = join(root, dateDir);
+        if (!existsSync(sessionsDir)) continue;
+
+        let candidateFiles: string[];
+        try {
+          candidateFiles = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
+        } catch {
+          continue;
+        }
+
+        const nowMs = Date.now();
+        const recentCandidates = candidateFiles
+          .map((f) => ({ f, mtime: statSync(join(sessionsDir, f)).mtimeMs }))
+          .filter(({ mtime }) => nowMs - mtime < 10_000)
+          .sort((a, b) => b.mtime - a.mtime);
+
+        for (const { f } of recentCandidates) {
+          const candidatePath = join(sessionsDir, f);
+          const match = matchesProjectPath(candidatePath);
+          if (!match) continue;
+          if (boundElsewhere.has(match.id)) continue;
+          const codexSessionId = match.id;
+
+          cleanup();
+          this.sessionStore.updateManaged(sessionId, { boundConversationId: codexSessionId });
+
+          // Wire the bound rollout into the live update path: tail it for
+          // structured events and replay anything already written before the
+          // watcher attached (mirrors watchForJsonl()). Without this the bound
+          // Codex JSONL is never live-streamed to clients.
+          this.sessionFileMap.set(sessionId, candidatePath);
+          this.fileWatcher.watch(candidatePath);
+          try {
+            const existing = readFileSync(candidatePath, "utf8").split("\n").filter(Boolean);
+            if (existing.length > 0) {
+              this.wsHub.broadcast({ type: "conversation_events", sessionId, lines: existing });
+              for (const line of existing) {
+                this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+              }
+            }
+          } catch {
+            /* ignore — file may not be readable yet; watcher will catch future writes */
+          }
+
+          if (this.scannerReady) {
+            this.scannerStale = true;
+          } else {
+            this.scanner = null;
+          }
+          this.linkSessionToProject(sessionId, projectPath, candidatePath);
+          this.cache?.markAsStreamer(sessionId);
+
+          // Push the binding to subscribers now — the async discovery means the
+          // session_update at start time carried no boundConversationId.
+          const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+          if (resp) {
+            this.wsHub.broadcast({ type: "session_update", session: resp });
+          }
+
+          this.log.info(
+            `[startFresh] bound Codex rollout for ${sessionId}`,
+            {
+              event: "session.codex_rollout_bound",
+              sessionId,
+              boundConversationId: codexSessionId,
+              filePath: candidatePath,
+            },
+            "pino",
+          );
+          return;
+        }
+      }
+    };
+
+    tryWire();
+    if (!intervalHandle && Date.now() <= deadline) {
+      // Only keep polling if tryWire() didn't already find + cleanup() the match.
+      const alreadyBound = this.sessionStore.getManaged(sessionId)?.boundConversationId != null;
+      if (!alreadyBound) {
+        intervalHandle = setInterval(tryWire, 250);
+      }
     }
   }
 

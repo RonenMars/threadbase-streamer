@@ -17,7 +17,15 @@ export { createProgressRoutes } from "./api/routes/progress.routes";
 export { generateApiKey, loadOrCreateApiKey, validateApiKey } from "./auth";
 export type { DbConfig } from "./db";
 export { createPool, getDbConfig, isDbEnabled, maskConnectionString } from "./db";
+export { LiveSessionManager } from "./live-session-manager";
 export { discoverClaudeProcesses } from "./process-discovery";
+export {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  isProviderName,
+  isProviderResumable,
+  type ProviderName,
+} from "./providers";
 export { PTYManager } from "./pty-manager";
 export { StreamerServer } from "./server";
 export { ConversationWatcher } from "./services/conversations/conversationWatcher";

@@ -1,5 +1,6 @@
 import type { Stage } from "@threadbase-sh/agent-types";
 import type { ProgressDedupeLRU } from "./agent/dedupe";
+import type { ProviderName } from "./providers";
 
 // ─── Session Lifecycle ─────────────────────────────────────────────
 
@@ -7,6 +8,7 @@ export type SessionStatus = "running" | "waiting_input" | "idle";
 
 export interface ManagedSession {
   id: string; // JSONL UUID — the .jsonl filename under ~/.claude/projects/
+  provider?: ProviderName;
   projectId?: string; // Stable identity into the projects table (added during migration).
   projectPath: string;
   projectName: string;
@@ -29,6 +31,16 @@ export interface ManagedSession {
   lastActivityAt?: Date;
   filePath?: string;
   resumedFromConversationId?: string;
+
+  /**
+   * Set once a live session's underlying persisted conversation file is
+   * discovered after the fact (currently: fresh Codex sessions, whose
+   * rollout id isn't known until the CLI creates its own JSONL). Distinct
+   * from `resumedFromConversationId` (resume flow) and `conversationId` on
+   * `SessionResponse` (stable mobile deep-link alias, always === id for the
+   * lifetime of a live PTY) — must never be written into either of those.
+   */
+  boundConversationId?: string;
 
   /**
    * Multi-agent mode only. Per-session in-memory LRU of progress event ids
@@ -158,6 +170,7 @@ export type WSMessage =
 export interface SessionResponse {
   id: string; // JSONL UUID
   conversationId: string; // alias for id — mobile uses this to build deep-link URLs
+  provider?: ProviderName;
   projectId?: string; // Stable identity into the projects table (added during migration).
   status: SessionStatus;
   projectPath: string;
@@ -183,6 +196,8 @@ export interface SessionResponse {
   lastActivityAt?: string;
   filePath?: string;
   resumedFromConversationId?: string;
+  /** See `ManagedSession.boundConversationId` — never repurposes `conversationId`. */
+  boundConversationId?: string;
 }
 
 export interface ConversationListResponse {
@@ -279,4 +294,25 @@ export interface StartFreshSessionOptions {
   projectPath: string;
   projectName?: string;
   systemPrompt?: string;
+}
+
+// ─── Session Runner ────────────────────────────────────────────────
+
+// Provider-neutral subset of PTYManager's public surface that
+// LiveSessionManager delegates to. Each provider (claude-code, codex-cli,
+// ...) implements this against its own process-management mechanics.
+export interface SessionRunner {
+  start(sessionId: string, options: StartSessionOptions): Promise<ManagedSession>;
+  startFresh(options: StartFreshSessionOptions): Promise<ManagedSession>;
+  sendInput(sessionId: string, input: string): number;
+  sendKeys(sessionId: string, keys: string): void;
+  cancel(sessionId: string): void;
+  killPid(pid: number): void;
+  putOnHold(sessionId: string): void;
+  getOutput(sessionId: string): string;
+  getOutputLines(sessionId: string, maxLines: number): Promise<string[]>;
+  getSession(sessionId: string): ManagedSession | null;
+  hasSession(sessionId: string): boolean;
+  listSessions(): ManagedSession[];
+  dispose(): void;
 }
