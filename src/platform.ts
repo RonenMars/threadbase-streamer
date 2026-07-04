@@ -84,6 +84,79 @@ export function resolveClaudeExe(): string {
   return _claudeExe;
 }
 
+// ─── Codex executable resolution ──────────────────────────────────────────────
+// Mirrors resolveClaudeExe() exactly, swapped for the `codex` binary. Same
+// rationale: launchd/Task Scheduler strip PATH down to system directories, so
+// an explicit which/where.exe + well-known-path fallback is needed.
+
+let _codexExe: string | undefined;
+
+export function resolveCodexExe(): string {
+  if (_codexExe !== undefined) return _codexExe;
+
+  if (isWindows) {
+    try {
+      const found = execFileSync("where.exe", ["codex"], {
+        encoding: "utf-8",
+        windowsHide: true,
+        timeout: 3000,
+      })
+        .trim()
+        .split("\n")[0]
+        .trim();
+      if (found) {
+        _codexExe = found;
+        return _codexExe;
+      }
+    } catch {}
+
+    const candidates = [
+      join(homedir(), ".local", "bin", "codex.exe"),
+      join(
+        process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
+        "Microsoft",
+        "WindowsApps",
+        "codex.exe",
+      ),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) {
+        _codexExe = p;
+        return _codexExe;
+      }
+    }
+  } else {
+    try {
+      const found = execFileSync("/usr/bin/which", ["codex"], {
+        encoding: "utf-8",
+        timeout: 3000,
+      })
+        .trim()
+        .split("\n")[0]
+        .trim();
+      if (found && existsSync(found)) {
+        _codexExe = found;
+        return _codexExe;
+      }
+    } catch {}
+
+    const candidates = [
+      "/opt/homebrew/bin/codex",
+      "/usr/local/bin/codex",
+      join(homedir(), ".local", "bin", "codex"),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) {
+        _codexExe = p;
+        return _codexExe;
+      }
+    }
+  }
+
+  _codexExe = "codex";
+  return _codexExe;
+}
+
 // ─── execHidden ────────────────────────────────────────────────────────────────
 // Thin wrapper around execFileSync that adds windowsHide: true on Windows so
 // spawned child processes (where.exe, tasklist, wmic, pgrep, git …) don't
