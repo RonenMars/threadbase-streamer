@@ -278,7 +278,10 @@ export class ConversationCache {
           model         = excluded.model,
           account       = excluded.account,
           branch        = excluded.branch,
-          message_count = excluded.message_count,
+          -- message_count is incremented by live tailing but recounted from
+          -- scratch by a scanner rescan; a stale rescan must not carry a live
+          -- session's count backwards, so take the max instead of overwriting.
+          message_count = MAX(conversation_meta.message_count, excluded.message_count),
           last_activity = excluded.last_activity,
           first_message = excluded.first_message,
           last_message  = excluded.last_message,
@@ -639,6 +642,12 @@ export class ConversationCache {
         } catch {
           // file disappeared between scan and upsert — store without stat
         }
+        // Share the same monotonic counter as live-tail writes so "newest
+        // wins" holds in both directions: a rescan after a live line must
+        // update scanner-owned fields (title/model/branch/etc.), and a live
+        // line after a rescan must still take precedence. A hardcoded 0 here
+        // let any live write win forever (CRITICAL #1).
+        const seq = ++this.tailSeq;
         this.stmts.upsertFull.run({
           id,
           file_path: m.filePath,
@@ -653,7 +662,7 @@ export class ConversationCache {
           first_message: m.firstMessage ? JSON.stringify(m.firstMessage) : null,
           last_message: m.lastMessage ? JSON.stringify(m.lastMessage) : null,
           preview: m.preview ?? null,
-          updated_at: 0,
+          updated_at: seq,
           mtime_ms: mtimeMs,
           file_size: fileSize,
           provider: m.provider ?? CLAUDE_CODE_PROVIDER,
