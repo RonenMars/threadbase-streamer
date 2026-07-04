@@ -226,6 +226,7 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     ...(s.resumedFromConversationId != null && {
       resumedFromConversationId: s.resumedFromConversationId,
     }),
+    ...(s.boundConversationId != null && { boundConversationId: s.boundConversationId }),
   };
 }
 

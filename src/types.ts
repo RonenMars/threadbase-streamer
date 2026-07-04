@@ -33,6 +33,16 @@ export interface ManagedSession {
   resumedFromConversationId?: string;
 
   /**
+   * Set once a live session's underlying persisted conversation file is
+   * discovered after the fact (currently: fresh Codex sessions, whose
+   * rollout id isn't known until the CLI creates its own JSONL). Distinct
+   * from `resumedFromConversationId` (resume flow) and `conversationId` on
+   * `SessionResponse` (stable mobile deep-link alias, always === id for the
+   * lifetime of a live PTY) — must never be written into either of those.
+   */
+  boundConversationId?: string;
+
+  /**
    * Multi-agent mode only. Per-session in-memory LRU of progress event ids
    * seen by the webhook receiver. Used to drop Temporal-replay duplicates
    * before they reach the WebSocket. See spec §7.1.
@@ -186,6 +196,8 @@ export interface SessionResponse {
   lastActivityAt?: string;
   filePath?: string;
   resumedFromConversationId?: string;
+  /** See `ManagedSession.boundConversationId` — never repurposes `conversationId`. */
+  boundConversationId?: string;
 }
 
 export interface ConversationListResponse {
