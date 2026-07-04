@@ -176,6 +176,59 @@ describe("upsertFromScannerMeta()", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Regression test for a CRITICAL cache bug found in the 2026-07-04 review.
+// Encodes the intended contract, not the present (buggy) behavior.
+// See CODE-REVIEW-2026-07-04.md #1.
+// ---------------------------------------------------------------------------
+
+describe("CRITICAL #1 — rescan must still update metadata after a conversation goes live", () => {
+  // Bug: upsertFromScannerMeta writes updated_at:0 (conversation-cache.ts:656),
+  // while the upsert is guarded by `WHERE conversation_meta.updated_at <
+  // excluded.updated_at` (:290). Live tailing stamps updated_at with a
+  // Date.now()-seeded tailSeq (:178), so once ANY live line has landed, every
+  // later scanner upsert (0 < huge) loses the guard and silently no-ops — the
+  // scanner's authoritative fields (title/model/branch/message_count/mtime/size)
+  // freeze for the process lifetime.
+  //
+  // The existing "does not overwrite a row updated within 24h" test masks this:
+  // it only asserts messageCount, which the LIVE update already bumped, so it
+  // passes whether or not the scanner rewrite lands. This test instead asserts
+  // on fields ONLY the scanner rewrite can change.
+  it("applies a later scanner rescan (new title/model/branch) after a live line", () => {
+    // 1. Initial scanner index.
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, title: "Old Title", model: "old-model", gitBranch: "main" } as any,
+    ]);
+
+    // 2. A live line arrives (as ConversationWatcher.onNewLines → updateFromLines
+    //    would deliver it). This stamps updated_at with the huge tailSeq value.
+    cache.updateFromLine(
+      BASE_META.filePath,
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    );
+
+    // 3. A later full rescan re-derives the conversation with corrected
+    //    metadata (e.g. the branch changed mid-conversation, the model was
+    //    resolved, the title was derived). This is exactly what warm-up,
+    //    ?refresh=1, and the background count rescan all call.
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, title: "New Title", model: "new-model", gitBranch: "feature/x" } as any,
+    ]);
+
+    // The rescan's values must win — a conversation going live must not freeze
+    // its scanner-owned metadata forever.
+    const meta = cache.getMetaById("abc-123");
+    expect(meta?.title).toBe("New Title");
+    expect(meta?.model).toBe("new-model");
+    expect(meta?.branch).toBe("feature/x");
+  });
+});
+
 describe("updateFromLine()", () => {
   beforeEach(() => {
     cache.upsertFromScannerMeta([BASE_META as any]);
