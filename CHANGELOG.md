@@ -1,3 +1,9 @@
+## [1.23.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.2...v1.23.0) (2026-07-04)
+
+### Features
+
+* **claude:** add /ship skill (copied from dotfiles canonical) ([#169](https://github.com/RonenMars/threadbase-streamer/issues/169)) ([2fb0ec5](https://github.com/RonenMars/threadbase-streamer/commit/2fb0ec5a0344ff3a0ef8c9bd75e09e5200771db9))
+
 ## [1.22.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.1...v1.22.2) (2026-07-03)
 
 ### Bug Fixes
