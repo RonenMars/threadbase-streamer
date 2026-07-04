@@ -12,7 +12,7 @@ process.stdout.write = (chunk: any, ...args: any[]): boolean => {
 };
 
 import { EventEmitter } from "events";
-import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { createServer } from "http";
 import { homedir } from "os";
 import { basename, join, sep } from "path";
@@ -73,6 +73,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
   let port: number;
   let baseUrl: string;
   let projectPath: string;
+  let cacheDir: string;
   let origBrowseRoot: string | undefined;
 
   beforeEach(async () => {
@@ -89,13 +90,14 @@ describe("watchForJsonl — conversation_event wiring", () => {
     origBrowseRoot = process.env.THREADBASE_BROWSE_ROOT;
     process.env.THREADBASE_BROWSE_ROOT = homedir();
 
+    cacheDir = mkdtempSync(join(homedir(), "threadbase-wfj-cache-"));
     server = new StreamerServer({
       port,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
       disableDb: true,
-      cacheDir: mkdtempSync(join(homedir(), "threadbase-wfj-cache-")),
+      cacheDir,
       scanProfiles: [],
     });
     await server.listen(port);
@@ -103,6 +105,8 @@ describe("watchForJsonl — conversation_event wiring", () => {
 
   afterEach(async () => {
     await server.close();
+    rmSync(projectPath, { recursive: true, force: true });
+    rmSync(cacheDir, { recursive: true, force: true });
     if (origBrowseRoot === undefined) {
       delete process.env.THREADBASE_BROWSE_ROOT;
     } else {
