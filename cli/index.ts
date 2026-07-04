@@ -50,6 +50,17 @@ program
     false,
   )
   .action(async (opts) => {
+    // Fail loudly before binding if the better-sqlite3 native binary can't load
+    // under this Node — otherwise the cache silently dies and every
+    // /api/conversations* request 500s with no obvious cause.
+    try {
+      const { checkSqliteAbi } = await import("../src/db/check-sqlite-abi");
+      checkSqliteAbi();
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err), undefined, "console");
+      process.exit(1);
+    }
+
     if (opts.multiAgentFlow) {
       process.env.MULTI_AGENT_FLOW = "true";
     }

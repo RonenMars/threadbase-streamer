@@ -759,10 +759,22 @@ export class StreamerServer {
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          this.log.warn(`ConversationCache failed to open (running without cache): ${message}`, {
-            error: message,
-            event: "cache.open_failed",
-          });
+          // Loud, not swallowed: a dead cache turns every /api/conversations*
+          // request into a 500. The most common cause is a better-sqlite3 ABI
+          // mismatch (node_modules built against a different Node) — name the
+          // fix so it isn't rediscovered from a bare 500. The serve preflight
+          // (check-sqlite-abi.ts) catches the ABI case before we ever get here;
+          // this covers a cache that dies for any other reason mid-run.
+          const abiMismatch =
+            message.includes("NODE_MODULE_VERSION") ||
+            message.includes("was compiled against a different Node.js version");
+          this.log.error(
+            `ConversationCache failed to open — running WITHOUT cache; ` +
+              `/api/conversations, /api/conversations/count and /project-chats will 500.` +
+              (abiMismatch ? ` Fix: npm rebuild better-sqlite3` : "") +
+              ` (${message})`,
+            { error: message, abiMismatch, event: "cache.open_failed" },
+          );
         }
         // Use a dedicated scanner for warm-up, independent of this.scanner, so
         // that onConversationChanged invalidations during the scan cannot cause
