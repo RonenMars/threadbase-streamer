@@ -177,9 +177,9 @@ describe("upsertFromScannerMeta()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Regression test for a CRITICAL cache bug found in the 2026-07-04 review.
-// Encodes the intended contract, not the present (buggy) behavior.
-// See CODE-REVIEW-2026-07-04.md #1.
+// Regression tests for two CRITICAL cache bugs found in the 2026-07-04 review.
+// Both encode the intended contract, not the present (buggy) behavior.
+// See CODE-REVIEW-2026-07-04.md #1 and #2.
 // ---------------------------------------------------------------------------
 
 describe("CRITICAL #1 — rescan must still update metadata after a conversation goes live", () => {
@@ -226,6 +226,49 @@ describe("CRITICAL #1 — rescan must still update metadata after a conversation
     expect(meta?.title).toBe("New Title");
     expect(meta?.model).toBe("new-model");
     expect(meta?.branch).toBe("feature/x");
+  });
+});
+
+describe("CRITICAL #2 — a directory-watch invalidate must not delete a freshly live-tailed row", () => {
+  // Bug: every managed session's JSONL is watched TWICE — individually
+  // (onNewLines → updateFromLines, an upsert) and via the project-directory
+  // watcher (onConversationChanged → invalidateByFilePath, which deletes the
+  // conversation_meta + conversation_tail rows, conversation-cache.ts:902-919).
+  // chokidar fires BOTH on the same append with no ordering guarantee. When the
+  // invalidate lands last, the just-cached row is deleted right after being
+  // written, so the conversation vanishes from /api/conversations and Recents
+  // until the ~1s debounced rescan repairs it — a flicker on nearly every
+  // message of an active session.
+  //
+  // This test reproduces the exact "invalidate wins the race" interleaving that
+  // the two watcher callbacks in server.ts (258-330) can produce, operating on
+  // the ConversationCache unit both callbacks mutate. It is expected to FAIL:
+  // after the sequence, the live row should still be present and correct.
+  it("keeps the row after: scanner upsert → live append → directory-change invalidate", () => {
+    // 1. Scanner has indexed the conversation.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.hasConversation("abc-123")).toBe(true);
+
+    // 2. A live line is appended and tailed (onNewLines path).
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    ]);
+    expect(cache.hasConversation("abc-123")).toBe(true);
+
+    // 3. The SAME fs append also reaches the directory watcher, whose handler
+    //    (onConversationChanged) calls invalidateByFilePath with skipIfTailed
+    //    — and here it lands AFTER the tail write (the unspecified-order race
+    //    resolving the "bad" way).
+    cache.invalidateByFilePath(BASE_META.filePath, { skipIfTailed: true });
+
+    // The conversation must survive a live append. Deleting it on every message
+    // (to be re-created only by a later debounced rescan) is the bug.
+    expect(cache.hasConversation("abc-123")).toBe(true);
+    expect(cache.getMetaById("abc-123")?.messageCount).toBe(3);
   });
 });
 
@@ -735,6 +778,42 @@ describe("invalidateByFilePath()", () => {
     const removed = cache.invalidateByFilePath("/p/match-1.jsonl");
     expect(removed).toBe("match-1");
     expect(cache.hasConversation("match-1")).toBe(false);
+  });
+
+  it("removes a TAIL'D row on the unlink path (default, no skipIfTailed)", () => {
+    // onFileDeleted → invalidateByFilePath with no opts: a genuinely deleted
+    // JSONL must be removed even if it had a cached tail, or it ghosts in
+    // /api/conversations. The skipIfTailed guard is for the change path only.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    ]);
+    expect(cache.getConversationTail("abc-123")).not.toBeNull(); // has a tail
+
+    const removed = cache.invalidateByFilePath(BASE_META.filePath);
+    expect(removed).toBe("abc-123");
+    expect(cache.hasConversation("abc-123")).toBe(false);
+  });
+
+  it("keeps a TAIL'D row on the change path (skipIfTailed: true)", () => {
+    // onConversationChanged → invalidateByFilePath({ skipIfTailed: true }): a
+    // row a live tail just wrote must survive the directory-change event.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    ]);
+
+    const removed = cache.invalidateByFilePath(BASE_META.filePath, { skipIfTailed: true });
+    expect(removed).toBeNull();
+    expect(cache.hasConversation("abc-123")).toBe(true);
   });
 });
 
