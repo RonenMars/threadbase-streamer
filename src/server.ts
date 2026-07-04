@@ -2582,17 +2582,27 @@ export class StreamerServer {
       String(now.getDate()).padStart(2, "0"),
     );
 
+    // When this placeholder session started. Used to reject a stale same-cwd
+    // rollout that Codex wrote before this session launched — the cwd match
+    // alone can't tell a fresh rollout from a seconds-old one. 5s of slack
+    // absorbs clock skew between our clock and Codex's session_meta timestamp.
+    const sessionStartedAtMs =
+      (this.sessionStore.getManaged(sessionId)?.startedAt?.getTime() ?? Date.now()) - 5_000;
+
     let intervalHandle: ReturnType<typeof setInterval> | null = null;
     const cleanup = () => {
       if (intervalHandle) clearInterval(intervalHandle);
       intervalHandle = null;
     };
 
-    // Read a candidate file's session_meta first line; accept only if its
-    // cwd matches this session's projectPath — guards against picking up an
-    // unrelated concurrent Codex session's rollout file in the same
-    // date-nested directory.
-    const matchesProjectPath = (candidatePath: string): string | null => {
+    // Read a candidate file's session_meta first line; accept only if its cwd
+    // matches this session's projectPath and it was created at/after this
+    // session started. Guards against picking up an unrelated concurrent Codex
+    // session's rollout, or a stale same-cwd rollout from an earlier run, in
+    // the same date-nested directory. Returns { id, createdAtMs } or null.
+    const matchesProjectPath = (
+      candidatePath: string,
+    ): { id: string; createdAtMs: number } | null => {
       try {
         const firstLine = readFileSync(candidatePath, "utf8").split("\n", 1)[0];
         if (!firstLine) return null;
@@ -2600,7 +2610,13 @@ export class StreamerServer {
         if (parsed?.type !== "session_meta") return null;
         const payload = parsed.payload ?? {};
         if (payload.cwd !== projectPath) return null;
-        return typeof payload.id === "string" ? payload.id : null;
+        if (typeof payload.id !== "string") return null;
+        // payload.timestamp is Codex's session-creation time; fall back to the
+        // outer envelope timestamp if absent.
+        const createdIso = payload.timestamp ?? parsed.timestamp;
+        const createdAtMs = typeof createdIso === "string" ? Date.parse(createdIso) : Number.NaN;
+        if (Number.isNaN(createdAtMs) || createdAtMs < sessionStartedAtMs) return null;
+        return { id: payload.id, createdAtMs };
       } catch {
         return null;
       }
@@ -2615,6 +2631,16 @@ export class StreamerServer {
         cleanup();
         return;
       }
+
+      // Codex ids already bound to another live placeholder — never bind two
+      // placeholders to the same rollout (e.g. two Codex sessions started in
+      // the same project inside the mtime window).
+      const boundElsewhere = new Set(
+        this.sessionStore
+          .listManaged()
+          .filter((s) => s.id !== sessionId && s.boundConversationId != null)
+          .map((s) => s.boundConversationId as string),
+      );
 
       for (const root of this.codexRoots) {
         const sessionsDir = join(root, dateDir);
@@ -2635,11 +2661,31 @@ export class StreamerServer {
 
         for (const { f } of recentCandidates) {
           const candidatePath = join(sessionsDir, f);
-          const codexSessionId = matchesProjectPath(candidatePath);
-          if (!codexSessionId) continue;
+          const match = matchesProjectPath(candidatePath);
+          if (!match) continue;
+          if (boundElsewhere.has(match.id)) continue;
+          const codexSessionId = match.id;
 
           cleanup();
           this.sessionStore.updateManaged(sessionId, { boundConversationId: codexSessionId });
+
+          // Wire the bound rollout into the live update path: tail it for
+          // structured events and replay anything already written before the
+          // watcher attached (mirrors watchForJsonl()). Without this the bound
+          // Codex JSONL is never live-streamed to clients.
+          this.sessionFileMap.set(sessionId, candidatePath);
+          this.fileWatcher.watch(candidatePath);
+          try {
+            const existing = readFileSync(candidatePath, "utf8").split("\n").filter(Boolean);
+            if (existing.length > 0) {
+              this.wsHub.broadcast({ type: "conversation_events", sessionId, lines: existing });
+              for (const line of existing) {
+                this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+              }
+            }
+          } catch {
+            /* ignore — file may not be readable yet; watcher will catch future writes */
+          }
 
           if (this.scannerReady) {
             this.scannerStale = true;
@@ -2648,6 +2694,14 @@ export class StreamerServer {
           }
           this.linkSessionToProject(sessionId, projectPath, candidatePath);
           this.cache?.markAsStreamer(sessionId);
+
+          // Push the binding to subscribers now — the async discovery means the
+          // session_update at start time carried no boundConversationId.
+          const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+          if (resp) {
+            this.wsHub.broadcast({ type: "session_update", session: resp });
+          }
+
           this.log.info(
             `[startFresh] bound Codex rollout for ${sessionId}`,
             {
