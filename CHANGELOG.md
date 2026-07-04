@@ -1,3 +1,9 @@
+## [1.24.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.2...v1.24.3) (2026-07-04)
+
+### Bug Fixes
+
+* **permission:** capture the action description above "Do you want to proceed?" ([#151](https://github.com/RonenMars/threadbase-streamer/issues/151)) ([a498ae0](https://github.com/RonenMars/threadbase-streamer/commit/a498ae08b65460a6bda0570c9f1c1290201e035a))
+
 ## [1.24.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.1...v1.24.2) (2026-07-04)
 
 ### Bug Fixes
