@@ -1,3 +1,9 @@
+## [1.24.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.1...v1.24.2) (2026-07-04)
+
+### Bug Fixes
+
+* **server:** serve conversations from disk when sqlite is unusable ([#161](https://github.com/RonenMars/threadbase-streamer/issues/161)) ([284fb8c](https://github.com/RonenMars/threadbase-streamer/commit/284fb8c8419bd556abc7d1966e0aa5e46d717d93))
+
 ## [1.24.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.0...v1.24.1) (2026-07-04)
 
 ### Bug Fixes
