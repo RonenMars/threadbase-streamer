@@ -1,3 +1,10 @@
+## [1.23.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.23.0...v1.23.1) (2026-07-04)
+
+### Bug Fixes
+
+* **cache:** directory-watch invalidate must not delete a live-tailed row ([#171](https://github.com/RonenMars/threadbase-streamer/issues/171)) ([a9e7ae3](https://github.com/RonenMars/threadbase-streamer/commit/a9e7ae31234b359b86d9acf5ebc3cc8402ce0b4f)), closes [#2](https://github.com/RonenMars/threadbase-streamer/issues/2) [#2](https://github.com/RonenMars/threadbase-streamer/issues/2) [#1](https://github.com/RonenMars/threadbase-streamer/issues/1) [#1](https://github.com/RonenMars/threadbase-streamer/issues/1)
+* **cache:** scanner rescan must update metadata after a conversation goes live ([#170](https://github.com/RonenMars/threadbase-streamer/issues/170)) ([7964ccf](https://github.com/RonenMars/threadbase-streamer/commit/7964ccf320c5c018275152881b4d3b21e675a8bb)), closes [#1](https://github.com/RonenMars/threadbase-streamer/issues/1) [#2](https://github.com/RonenMars/threadbase-streamer/issues/2)
+
 ## [1.23.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.2...v1.23.0) (2026-07-04)
 
 ### Features
