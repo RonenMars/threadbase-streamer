@@ -1878,7 +1878,15 @@ export class StreamerServer {
       return;
     }
 
+    // Same provider-resolution fallback as the conversation-detail path
+    // (server.ts ~1685): `conv` (the full Conversation shape) doesn't carry
+    // provider, so fall back to the cached metadata, then default to Claude.
+    const cachedConvMeta = this.cache?.getMetaById(sessionId);
+    const provider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER =
+      (conv as any)?.provider ?? cachedConvMeta?.provider ?? CLAUDE_CODE_PROVIDER;
+
     const session = await this.ptyManager.start(sessionId, {
+      provider,
       projectPath,
       projectName: body.projectName,
       branch: body.branch,
