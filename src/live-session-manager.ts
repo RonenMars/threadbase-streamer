@@ -1,5 +1,6 @@
 import { basename } from "path";
-import { CLAUDE_CODE_PROVIDER, type ProviderName } from "./providers";
+import { CodexPtyRunner } from "./codex-pty-runner";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
 import { PTYManager } from "./pty-manager";
 import type {
   ManagedSession,
@@ -13,7 +14,10 @@ export class LiveSessionManager {
   private runners: Map<ProviderName, SessionRunner>;
 
   constructor(options: PTYManagerOptions = {}) {
-    this.runners = new Map([[CLAUDE_CODE_PROVIDER, new PTYManager(options)]]);
+    this.runners = new Map<ProviderName, SessionRunner>([
+      [CLAUDE_CODE_PROVIDER, new PTYManager(options)],
+      [CODEX_CLI_PROVIDER, new CodexPtyRunner(options)],
+    ]);
   }
 
   async start(
