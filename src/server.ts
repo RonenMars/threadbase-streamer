@@ -2374,8 +2374,13 @@ export class StreamerServer {
       // Return the real UUID immediately — no pending_ dance needed.
       json(res, 202, { id: session.id, status: "pending" });
 
-      // Wire up JSONL watching once Claude creates the conversation file.
-      this.watchForJsonl(session.id, resolvedPath);
+      if (provider === CODEX_CLI_PROVIDER) {
+        // Wire up rollout-file binding once Codex creates its persisted session.
+        this.watchForCodexRollout(session.id, resolvedPath);
+      } else {
+        // Wire up JSONL watching once Claude creates the conversation file.
+        this.watchForJsonl(session.id, resolvedPath);
+      }
 
       this.broadcastOrUnicastSessionList(req);
     } catch (err) {
@@ -2537,6 +2542,114 @@ export class StreamerServer {
       watcher.on("error", cleanup);
     } catch {
       // fs.watch not available (e.g. in tests), ignore
+    }
+  }
+
+  // Codex-equivalent of watchForJsonl(). Differs because Codex has no
+  // filename-encoded session id (it assigns its own persisted id) and its
+  // rollout files live under a date-nested directory
+  // (~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl) that Codex creates
+  // itself — it may not exist yet when this function is first called, so we
+  // poll rather than fs.watch a not-yet-existent directory. Per Phase 0
+  // findings, the rollout file appears within ~1s of process spawn (after
+  // any directory-trust gate is cleared), well before any user input.
+  private watchForCodexRollout(sessionId: string, projectPath: string): void {
+    const deadline = Date.now() + 120_000;
+    const now = new Date();
+    const dateDir = join(
+      String(now.getFullYear()),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    );
+
+    let intervalHandle: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (intervalHandle) clearInterval(intervalHandle);
+      intervalHandle = null;
+    };
+
+    // Read a candidate file's session_meta first line; accept only if its
+    // cwd matches this session's projectPath — guards against picking up an
+    // unrelated concurrent Codex session's rollout file in the same
+    // date-nested directory.
+    const matchesProjectPath = (candidatePath: string): string | null => {
+      try {
+        const firstLine = readFileSync(candidatePath, "utf8").split("\n", 1)[0];
+        if (!firstLine) return null;
+        const parsed = JSON.parse(firstLine);
+        if (parsed?.type !== "session_meta") return null;
+        const payload = parsed.payload ?? {};
+        if (payload.cwd !== projectPath) return null;
+        return typeof payload.id === "string" ? payload.id : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const tryWire = () => {
+      if (!this.ptyManager.hasSession(sessionId)) {
+        cleanup();
+        return;
+      }
+      if (Date.now() > deadline) {
+        cleanup();
+        return;
+      }
+
+      for (const root of this.codexRoots) {
+        const sessionsDir = join(root, dateDir);
+        if (!existsSync(sessionsDir)) continue;
+
+        let candidateFiles: string[];
+        try {
+          candidateFiles = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
+        } catch {
+          continue;
+        }
+
+        const nowMs = Date.now();
+        const recentCandidates = candidateFiles
+          .map((f) => ({ f, mtime: statSync(join(sessionsDir, f)).mtimeMs }))
+          .filter(({ mtime }) => nowMs - mtime < 10_000)
+          .sort((a, b) => b.mtime - a.mtime);
+
+        for (const { f } of recentCandidates) {
+          const candidatePath = join(sessionsDir, f);
+          const codexSessionId = matchesProjectPath(candidatePath);
+          if (!codexSessionId) continue;
+
+          cleanup();
+          this.sessionStore.updateManaged(sessionId, { boundConversationId: codexSessionId });
+
+          if (this.scannerReady) {
+            this.scannerStale = true;
+          } else {
+            this.scanner = null;
+          }
+          this.linkSessionToProject(sessionId, projectPath, candidatePath);
+          this.cache?.markAsStreamer(sessionId);
+          this.log.info(
+            `[startFresh] bound Codex rollout for ${sessionId}`,
+            {
+              event: "session.codex_rollout_bound",
+              sessionId,
+              boundConversationId: codexSessionId,
+              filePath: candidatePath,
+            },
+            "pino",
+          );
+          return;
+        }
+      }
+    };
+
+    tryWire();
+    if (!intervalHandle && Date.now() <= deadline) {
+      // Only keep polling if tryWire() didn't already find + cleanup() the match.
+      const alreadyBound = this.sessionStore.getManaged(sessionId)?.boundConversationId != null;
+      if (!alreadyBound) {
+        intervalHandle = setInterval(tryWire, 250);
+      }
     }
   }
 
