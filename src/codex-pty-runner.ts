@@ -112,6 +112,10 @@ export class CodexPtyRunner implements SessionRunner {
   private queuedInputs = new Map<string, string[]>();
   // Per-session debounce so the directory-trust gate's \r is only written once.
   private trustGateAnswered = new Set<string>();
+  // In-flight start()/startFresh() calls keyed by sessionId. A second
+  // concurrent resume for the same session (double-tap, client retry) awaits
+  // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
+  private startPromises = new Map<string, Promise<ManagedSession>>();
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
@@ -127,6 +131,23 @@ export class CodexPtyRunner implements SessionRunner {
   // session_meta.payload.id (Phase 0, Section 8) — Codex has no fresh-session
   // equivalent of --session-id, so start() always means "resume".
   async start(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
+    // Guard the check-then-spawn: a second concurrent resume for the same
+    // sessionId must not race past both checks and spawn a second PTY. See
+    // PTYManager.start() for the identical pattern (CRITICAL #3).
+    const existing = this.sessions.get(sessionId);
+    if (existing) return toPublicSession(existing);
+
+    const inFlight = this.startPromises.get(sessionId);
+    if (inFlight) return inFlight;
+
+    const promise = this.doStart(sessionId, options).finally(() => {
+      this.startPromises.delete(sessionId);
+    });
+    this.startPromises.set(sessionId, promise);
+    return promise;
+  }
+
+  private async doStart(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
     const projectName = options.projectName ?? basename(options.projectPath);
 
