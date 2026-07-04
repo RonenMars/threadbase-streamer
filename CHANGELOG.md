@@ -1,3 +1,9 @@
+## [1.24.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.23.1...v1.24.0) (2026-07-04)
+
+### Features
+
+* **sessions:** add Codex CLI live-session support (provider plumbing, runner, rollout binding) ([#159](https://github.com/RonenMars/threadbase-streamer/issues/159)) ([3ae9d4f](https://github.com/RonenMars/threadbase-streamer/commit/3ae9d4f373b4b6f907d7021eefd65dd642a82b8f))
+
 ## [1.23.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.23.0...v1.23.1) (2026-07-04)
 
 ### Bug Fixes
