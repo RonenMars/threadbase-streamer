@@ -1,3 +1,9 @@
+## [1.24.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.4...v1.24.5) (2026-07-05)
+
+### Performance Improvements
+
+* **conversations:** reconcile refresh=1 instead of wiping the cache ([#175](https://github.com/RonenMars/threadbase-streamer/issues/175)) ([13d3111](https://github.com/RonenMars/threadbase-streamer/commit/13d3111e20782ac632c2d9a3678b799a23a79f6a))
+
 ## [1.24.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.3...v1.24.4) (2026-07-04)
 
 ### Bug Fixes
