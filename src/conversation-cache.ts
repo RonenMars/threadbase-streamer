@@ -985,4 +985,66 @@ export class ConversationCache {
     }
     return ghosts;
   }
+
+  /**
+   * Reconcile the cache against the authoritative set of conversation file
+   * paths a fresh scan surfaced: drop any cached row whose `file_path` is not
+   * in `livePaths` (removed from disk, or now filtered out — e.g. became an
+   * agent JSONL). This is the "removed conversations" half of a ?refresh=1
+   * reconcile; the additions/updates half is upsertFromScannerMeta.
+   *
+   * Skip semantics depend on whether the file still exists on disk:
+   *  - File GONE from disk → always removed, tail or not. This matches the old
+   *    invalidate()+rebuild behavior (a deleted conversation must disappear on
+   *    refresh) and keeps refresh=1 truthful about removals. NOTE: this is an
+   *    INTENTIONAL divergence from pruneGhostFiles(), which KEEPS tailed ghosts
+   *    so their cached history stays viewable on a background prune. refresh=1
+   *    has the opposite contract (mobile relies on removals being reflected), so
+   *    do not "unify" the two — they serve different purposes.
+   *  - File STILL on disk but absent from `livePaths` → the CRITICAL #2 race:
+   *    the scan snapshot predates a just-created (and now live-tailed) file.
+   *    A tailed row here is actively maintained from real content, so it is
+   *    kept — dropping it would flicker the active conversation out of
+   *    /api/conversations. An untailed on-disk row not in the snapshot is a
+   *    transient scan/discovery gap; it is left alone (not removed) and the
+   *    next reconcile picks it up, rather than risk removing a real file the
+   *    scan simply hasn't surfaced yet.
+   * Returns the removed IDs.
+   */
+  reconcileDeletions(
+    livePaths: Set<string>,
+    opts?: { exists?: (filePath: string) => boolean },
+  ): string[] {
+    const exists = opts?.exists ?? existsSync;
+    const rows = this.stmts.allFilePaths.all() as { id: string; file_path: string }[];
+    const removed: string[] = [];
+    const drop = this.db.transaction((ids: string[]) => {
+      for (const id of ids) {
+        this.stmts.deleteTailById.run(id);
+        this.stmts.deleteById.run(id);
+      }
+    });
+    for (const row of rows) {
+      if (livePaths.has(row.file_path)) continue;
+      // Not in the scan snapshot. If the file is gone from disk, it's a genuine
+      // deletion — remove it. If it still exists, this is a scan/discovery gap
+      // (the CRITICAL #2 race for live files); leave it for the next reconcile.
+      if (exists(row.file_path)) continue;
+      removed.push(row.id);
+    }
+    if (removed.length > 0) {
+      drop(removed);
+      if (this.fileIndexLoaded) {
+        for (const id of removed) {
+          for (const [fp, cid] of this.fileIndex) {
+            if (cid === id) {
+              this.fileIndex.delete(fp);
+              break;
+            }
+          }
+        }
+      }
+    }
+    return removed;
+  }
 }

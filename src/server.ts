@@ -154,6 +154,14 @@ export class StreamerServer {
   // window so the self-healing kickstart-relaunch race doesn't spam warn.
   private binding = false;
   private cacheReady = false;
+  // Every fire-and-forget task that runs a scan and then writes to this.cache
+  // in an async continuation (startup warm-up, background count refresh, …).
+  // close() awaits all of them before closing this.cache, so a scan's post-scan
+  // cache writes (upsertFromScannerMeta / populateTailFromFile / pruneGhostFiles
+  // / reconcileDeletions) can never hit a cache.db that was already closed
+  // ("database connection is not open"), which would otherwise leave the cache
+  // empty. Register via trackCacheWrite(); each entry removes itself on settle.
+  private inFlightCacheWrites = new Set<Promise<unknown>>();
   private apiKey: string;
   private apiKeySource: "config" | "cli";
   private localNoAuth: boolean;
@@ -907,6 +915,8 @@ export class StreamerServer {
           });
       }
     });
+    // Track the warm-up's scan→cache-write chain so close() can await it.
+    this.trackCacheWrite(warmUp);
     if (opts?.awaitReady) await warmUp;
   }
 
@@ -962,13 +972,36 @@ export class StreamerServer {
     }
   }
 
+  // Register a fire-and-forget task that writes to this.cache after a scan, so
+  // close() can await it before closing cache.db. Removes itself on settle. The
+  // caller keeps its own error handling; this wrapper swallows rejections so a
+  // failed task never rejects close()'s Promise.all.
+  private trackCacheWrite(task: Promise<unknown>): void {
+    const guarded = task.catch(() => undefined);
+    this.inFlightCacheWrites.add(guarded);
+    void guarded.finally(() => {
+      this.inFlightCacheWrites.delete(guarded);
+    });
+  }
+
   async close(): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
     this.markScannerStaleDebounced.cancel();
+    // Wait for every fire-and-forget scan→cache-write task to finish before
+    // tearing anything down. Their post-scan steps write to this.cache
+    // (upsert / populateTail / pruneGhostFiles); closing cache.db under them
+    // throws "database connection is not open" and leaves the cache empty
+    // (deterministic once Stage 4's dir-mtime gate widened the scan window).
+    // Snapshot the set — entries remove themselves as they settle.
+    await Promise.all([...this.inFlightCacheWrites]);
     // Close all scanner SQLite connections before the cache so file handles are
     // released on Windows (open handles block temp-dir deletion in tests).
-    for (const s of this.allScanners) s.close();
+    // scanner.close() is async (scanner >=0.9.2): it awaits any in-flight scan
+    // before releasing the DB handle, so a fire-and-forget refresh scan can't be
+    // shut mid-indexAll(). Await all so handles are torn down only after scans
+    // settle.
+    await Promise.all([...this.allScanners].map((s) => s.close()));
     this.allScanners.clear();
     this.scanner = null;
     this.cache?.close();
@@ -1147,13 +1180,33 @@ export class StreamerServer {
     const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
-    if (bustCache) {
-      this.cache?.invalidate();
-      this.scanner = null;
-      this.scannerReady = null;
+    // refresh=1 is a RECONCILE, not a wipe. The old path did
+    // cache.invalidate() (deletes every row, including live-tailed ones) +
+    // scanner=null (discards the warm scanner and forces a cold cache
+    // rebuild). Instead: run one fresh full-glob scan (fullRescan bypasses the
+    // scanner's dir-mtime gate — an explicit user refresh is the "check for
+    // real" signal), then reconcile the cache from disk truth: upsert what
+    // exists (newest-wins, so a concurrent live line still takes precedence),
+    // and drop only the rows whose files no longer exist. Live-tailed rows are
+    // never blanket-deleted, so an active conversation can't flicker out.
+    if (bustCache && this.cache) {
+      const scanner = await this.rescanForRefresh();
+      const metas = [...scanner.getMetadataCache().values()];
+      try {
+        this.cache.upsertFromScannerMeta(metas as any[]);
+        const livePaths = new Set(
+          metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
+        );
+        this.cache.reconcileDeletions(livePaths);
+      } catch (err) {
+        this.log.warn(
+          `refresh reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+          { event: "conversations.reconcile_failed" },
+        );
+      }
     }
 
-    if (this.cache && !bustCache) {
+    if (this.cache) {
       const { conversations, total } = this.cache.listConversations({
         project,
         provider: providerFilter,
@@ -1226,14 +1279,6 @@ export class StreamerServer {
       };
     });
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
-
-    if (this.cache && bustCache) {
-      try {
-        this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
-      } catch {
-        // Best-effort; response already sent
-      }
-    }
   }
 
   private async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
@@ -1272,19 +1317,22 @@ export class StreamerServer {
   // later count reflects new/removed conversations. Never awaited by the request
   // path — refresh=1 returns the cached total synchronously and this catches up.
   private refreshCountInBackground(): void {
-    void (async () => {
-      try {
-        const scanner = await this.getFreshScanner();
-        if (this.cache) {
-          this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+    // Tracked so close() awaits this scan→cache-write before closing cache.db.
+    this.trackCacheWrite(
+      (async () => {
+        try {
+          const scanner = await this.getFreshScanner();
+          if (this.cache) {
+            this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+          }
+        } catch (err) {
+          this.log.warn(
+            `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+            { event: "count.refresh_failed" },
+          );
         }
-      } catch (err) {
-        this.log.warn(
-          `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-          { event: "count.refresh_failed" },
-        );
-      }
-    })();
+      })(),
+    );
   }
 
   private handleSessionsCount(res: ServerResponse): void {
@@ -1418,6 +1466,34 @@ export class StreamerServer {
     this.scanner = null;
     this.scannerReady = null;
     return this.getScanner();
+  }
+
+  // refresh=1's scan: reuse the WARM persistent scanner (its index.db + cursors
+  // survive, so classify() still skips unchanged files) and re-run its scan
+  // with fullRescan:true — the escape hatch that bypasses the scanner's
+  // dir-mtime discovery gate, since an explicit user pull-to-refresh is exactly
+  // the "don't trust the gate, check disk for real" signal. Unlike
+  // getFreshScanner() this does NOT discard the warm scanner. scannerReady is
+  // only ever reassigned to a live scan promise (never nulled mid-scan), so the
+  // getScanner() anti-infinite-loop guard is preserved.
+  private async rescanForRefresh(): Promise<ConversationScanner> {
+    // Let any in-flight scan finish first so we don't run two scans on the same
+    // index concurrently.
+    if (this.scannerReady) await this.scannerReady;
+    // A full rescan supersedes any pending staleness.
+    this.scannerStale = false;
+    if (!this.scanner) {
+      this.scanner = new ConversationScanner();
+      this.allScanners.add(this.scanner);
+    }
+    const scanner = this.scanner;
+    this.scannerReady = scanner.scan({
+      ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+      ...this.codexScanOpts(),
+      fullRescan: true,
+    });
+    await this.scannerReady;
+    return scanner;
   }
 
   private findJsonlPath(uuid: string): string | null {

@@ -1465,6 +1465,136 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("GET /api/conversations?refresh=1 reconcile (Stage 3)", () => {
+    let refreshServer: StreamerServer;
+    let refreshPort: number;
+    let profileDir: string;
+    let projDir: string;
+    let scannerDb: string;
+    const auth = { Authorization: `Bearer ${API_KEY}` };
+
+    const convLine = (convId: string, ts: string, text: string) =>
+      `${JSON.stringify({
+        type: "user",
+        uuid: `u-${convId}-${ts}`,
+        timestamp: ts,
+        sessionId: convId,
+        slug: convId,
+        cwd: "/tmp/refresh-project",
+        message: { role: "user", content: [{ type: "text", text }] },
+      })}\n`;
+
+    const writeConv = (convId: string, text: string) =>
+      writeFileSync(
+        join(projDir, `${convId}.jsonl`),
+        convLine(convId, "2026-06-05T08:00:00.000Z", text),
+      );
+
+    const listConversations = async () => {
+      const res = await fetch(`http://localhost:${refreshPort}/api/conversations?refresh=1`, {
+        headers: auth,
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        conversations: Array<{ id: string; preview?: string; messageCount: number }>;
+      };
+    };
+
+    beforeEach(async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-refresh-profile-"));
+      scannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = scannerDb;
+      projDir = join(profileDir, "projects", "-tmp-refresh-project");
+      mkdirSync(projDir, { recursive: true });
+      writeConv("refresh-a", "alpha");
+      writeConv("refresh-b", "beta");
+
+      refreshPort = await getRandomPort();
+      refreshServer = new StreamerServer({
+        port: refreshPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-refresh-cache-")),
+        scanProfiles: [
+          { id: "refresh", label: "Refresh", configDir: profileDir, enabled: true, emoji: "🔄" },
+        ],
+        // Disable Codex scanning so the test doesn't pick up the real
+        // ~/.codex/sessions history (the default codexRoots).
+        codexRoots: [],
+      });
+      await refreshServer.listen(refreshPort);
+    });
+
+    afterEach(async () => {
+      await refreshServer.close();
+      delete process.env.TB_SCANNER_DB;
+      rmSync(profileDir, { recursive: true, force: true });
+    });
+
+    it("passes fullRescan:true to the scanner (bypasses the dir-mtime gate) on refresh=1", async () => {
+      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan");
+      await listConversations();
+      // Some scan() ran with fullRescan:true — the explicit-refresh escape hatch.
+      const sawFullRescan = scanSpy.mock.calls.some(
+        (args) => (args[0] as { fullRescan?: boolean } | undefined)?.fullRescan === true,
+      );
+      expect(sawFullRescan).toBe(true);
+      scanSpy.mockRestore();
+    });
+
+    it("returns the full correct list on refresh=1 with nothing changed", async () => {
+      const first = await listConversations();
+      const firstIds = first.conversations.map((c) => c.id).sort();
+      expect(firstIds).toEqual(["refresh-a", "refresh-b"]);
+
+      // A second refresh with nothing changed on disk returns the identical list
+      // (unchanged files are served from the reconciled cache, not reparsed —
+      // the scanner's classify() skips them; proven in the scanner package).
+      const second = await listConversations();
+      expect(second.conversations.map((c) => c.id).sort()).toEqual(firstIds);
+    });
+
+    it("reflects an added conversation on the next refresh=1", async () => {
+      const before = await listConversations();
+      expect(before.conversations.map((c) => c.id).sort()).toEqual(["refresh-a", "refresh-b"]);
+
+      writeConv("refresh-c", "gamma");
+      const after = await listConversations();
+      expect(after.conversations.map((c) => c.id).sort()).toEqual([
+        "refresh-a",
+        "refresh-b",
+        "refresh-c",
+      ]);
+    });
+
+    it("drops a removed conversation on the next refresh=1 (reconcile, not stale cache)", async () => {
+      const before = await listConversations();
+      expect(before.conversations.map((c) => c.id).sort()).toEqual(["refresh-a", "refresh-b"]);
+
+      rmSync(join(projDir, "refresh-b.jsonl"));
+      const after = await listConversations();
+      expect(after.conversations.map((c) => c.id).sort()).toEqual(["refresh-a"]);
+    });
+
+    it("reflects a changed conversation's new content on the next refresh=1", async () => {
+      await listConversations();
+
+      // Rewrite refresh-a with different, longer content and bump its mtime.
+      writeFileSync(
+        join(projDir, "refresh-a.jsonl"),
+        convLine("refresh-a", "2026-06-06T09:00:00.000Z", "alpha rewritten with new text"),
+      );
+      const future = new Date("2026-06-06T09:00:01.000Z");
+      utimesSync(join(projDir, "refresh-a.jsonl"), future, future);
+
+      const after = await listConversations();
+      const a = after.conversations.find((c) => c.id === "refresh-a");
+      expect(a?.preview).toContain("alpha rewritten");
+    });
+  });
+
   describe("GET /api/conversations/:id resumability classification", () => {
     let availPort: number;
     let availServer: StreamerServer;
