@@ -1147,13 +1147,33 @@ export class StreamerServer {
     const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
-    if (bustCache) {
-      this.cache?.invalidate();
-      this.scanner = null;
-      this.scannerReady = null;
+    // refresh=1 is a RECONCILE, not a wipe. The old path did
+    // cache.invalidate() (deletes every row, including live-tailed ones) +
+    // scanner=null (discards the warm scanner and forces a cold cache
+    // rebuild). Instead: run one fresh full-glob scan (fullRescan bypasses the
+    // scanner's dir-mtime gate — an explicit user refresh is the "check for
+    // real" signal), then reconcile the cache from disk truth: upsert what
+    // exists (newest-wins, so a concurrent live line still takes precedence),
+    // and drop only the rows whose files no longer exist. Live-tailed rows are
+    // never blanket-deleted, so an active conversation can't flicker out.
+    if (bustCache && this.cache) {
+      const scanner = await this.rescanForRefresh();
+      const metas = [...scanner.getMetadataCache().values()];
+      try {
+        this.cache.upsertFromScannerMeta(metas as any[]);
+        const livePaths = new Set(
+          metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
+        );
+        this.cache.reconcileDeletions(livePaths);
+      } catch (err) {
+        this.log.warn(
+          `refresh reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+          { event: "conversations.reconcile_failed" },
+        );
+      }
     }
 
-    if (this.cache && !bustCache) {
+    if (this.cache) {
       const { conversations, total } = this.cache.listConversations({
         project,
         provider: providerFilter,
@@ -1226,14 +1246,6 @@ export class StreamerServer {
       };
     });
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
-
-    if (this.cache && bustCache) {
-      try {
-        this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
-      } catch {
-        // Best-effort; response already sent
-      }
-    }
   }
 
   private async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
@@ -1418,6 +1430,34 @@ export class StreamerServer {
     this.scanner = null;
     this.scannerReady = null;
     return this.getScanner();
+  }
+
+  // refresh=1's scan: reuse the WARM persistent scanner (its index.db + cursors
+  // survive, so classify() still skips unchanged files) and re-run its scan
+  // with fullRescan:true — the escape hatch that bypasses the scanner's
+  // dir-mtime discovery gate, since an explicit user pull-to-refresh is exactly
+  // the "don't trust the gate, check disk for real" signal. Unlike
+  // getFreshScanner() this does NOT discard the warm scanner. scannerReady is
+  // only ever reassigned to a live scan promise (never nulled mid-scan), so the
+  // getScanner() anti-infinite-loop guard is preserved.
+  private async rescanForRefresh(): Promise<ConversationScanner> {
+    // Let any in-flight scan finish first so we don't run two scans on the same
+    // index concurrently.
+    if (this.scannerReady) await this.scannerReady;
+    // A full rescan supersedes any pending staleness.
+    this.scannerStale = false;
+    if (!this.scanner) {
+      this.scanner = new ConversationScanner();
+      this.allScanners.add(this.scanner);
+    }
+    const scanner = this.scanner;
+    this.scannerReady = scanner.scan({
+      ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+      ...this.codexScanOpts(),
+      fullRescan: true,
+    });
+    await this.scannerReady;
+    return scanner;
   }
 
   private findJsonlPath(uuid: string): string | null {
