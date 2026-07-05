@@ -154,6 +154,14 @@ export class StreamerServer {
   // window so the self-healing kickstart-relaunch race doesn't spam warn.
   private binding = false;
   private cacheReady = false;
+  // Every fire-and-forget task that runs a scan and then writes to this.cache
+  // in an async continuation (startup warm-up, background count refresh, …).
+  // close() awaits all of them before closing this.cache, so a scan's post-scan
+  // cache writes (upsertFromScannerMeta / populateTailFromFile / pruneGhostFiles
+  // / reconcileDeletions) can never hit a cache.db that was already closed
+  // ("database connection is not open"), which would otherwise leave the cache
+  // empty. Register via trackCacheWrite(); each entry removes itself on settle.
+  private inFlightCacheWrites = new Set<Promise<unknown>>();
   private apiKey: string;
   private apiKeySource: "config" | "cli";
   private localNoAuth: boolean;
@@ -907,6 +915,8 @@ export class StreamerServer {
           });
       }
     });
+    // Track the warm-up's scan→cache-write chain so close() can await it.
+    this.trackCacheWrite(warmUp);
     if (opts?.awaitReady) await warmUp;
   }
 
@@ -962,13 +972,36 @@ export class StreamerServer {
     }
   }
 
+  // Register a fire-and-forget task that writes to this.cache after a scan, so
+  // close() can await it before closing cache.db. Removes itself on settle. The
+  // caller keeps its own error handling; this wrapper swallows rejections so a
+  // failed task never rejects close()'s Promise.all.
+  private trackCacheWrite(task: Promise<unknown>): void {
+    const guarded = task.catch(() => undefined);
+    this.inFlightCacheWrites.add(guarded);
+    void guarded.finally(() => {
+      this.inFlightCacheWrites.delete(guarded);
+    });
+  }
+
   async close(): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
     this.markScannerStaleDebounced.cancel();
+    // Wait for every fire-and-forget scan→cache-write task to finish before
+    // tearing anything down. Their post-scan steps write to this.cache
+    // (upsert / populateTail / pruneGhostFiles); closing cache.db under them
+    // throws "database connection is not open" and leaves the cache empty
+    // (deterministic once Stage 4's dir-mtime gate widened the scan window).
+    // Snapshot the set — entries remove themselves as they settle.
+    await Promise.all([...this.inFlightCacheWrites]);
     // Close all scanner SQLite connections before the cache so file handles are
     // released on Windows (open handles block temp-dir deletion in tests).
-    for (const s of this.allScanners) s.close();
+    // scanner.close() is async (scanner >=0.9.2): it awaits any in-flight scan
+    // before releasing the DB handle, so a fire-and-forget refresh scan can't be
+    // shut mid-indexAll(). Await all so handles are torn down only after scans
+    // settle.
+    await Promise.all([...this.allScanners].map((s) => s.close()));
     this.allScanners.clear();
     this.scanner = null;
     this.cache?.close();
@@ -1284,19 +1317,22 @@ export class StreamerServer {
   // later count reflects new/removed conversations. Never awaited by the request
   // path — refresh=1 returns the cached total synchronously and this catches up.
   private refreshCountInBackground(): void {
-    void (async () => {
-      try {
-        const scanner = await this.getFreshScanner();
-        if (this.cache) {
-          this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+    // Tracked so close() awaits this scan→cache-write before closing cache.db.
+    this.trackCacheWrite(
+      (async () => {
+        try {
+          const scanner = await this.getFreshScanner();
+          if (this.cache) {
+            this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+          }
+        } catch (err) {
+          this.log.warn(
+            `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+            { event: "count.refresh_failed" },
+          );
         }
-      } catch (err) {
-        this.log.warn(
-          `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-          { event: "count.refresh_failed" },
-        );
-      }
-    })();
+      })(),
+    );
   }
 
   private handleSessionsCount(res: ServerResponse): void {
