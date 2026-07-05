@@ -29,7 +29,7 @@ describe("codex scan plumbing", () => {
     const { root, cleanup } = makeCodexRoot();
     const dbPath = join(root, "scanner.db");
     try {
-      const scanner = new ConversationScanner({ dbPath });
+      const scanner = new ConversationScanner({ persistent: { dbPath } });
       await scanner.scan({ ...CODEX_ONLY_SCAN, codexRoots: [root] });
       const codexItems = [...scanner.getMetadataCache().values()].filter(
         (m) => m.provider === "codex-cli",
@@ -45,7 +45,7 @@ describe("codex scan plumbing", () => {
     const { root, cleanup } = makeCodexRoot();
     const dbPath = join(root, "scanner.db");
     try {
-      const scanner = new ConversationScanner({ dbPath });
+      const scanner = new ConversationScanner({ persistent: { dbPath } });
       await scanner.scan({ ...CODEX_ONLY_SCAN, codexRoots: [] });
       const codexItems = [...scanner.getMetadataCache().values()].filter(
         (m) => m.provider === "codex-cli",
@@ -60,7 +60,7 @@ describe("codex scan plumbing", () => {
     const { root, cleanup } = makeCodexRoot();
     const dbPath = join(root, "scanner.db");
     try {
-      const scanner = new ConversationScanner({ dbPath });
+      const scanner = new ConversationScanner({ persistent: { dbPath } });
       await scanner.scan({ ...CODEX_ONLY_SCAN, codexRoots: [root] });
       const codexItems = [...scanner.getMetadataCache().values()].filter((m) =>
         m.id?.includes(CODEX_SESSION_ID),
