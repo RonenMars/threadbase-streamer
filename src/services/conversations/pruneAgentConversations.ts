@@ -1,6 +1,5 @@
 import { existsSync } from "fs";
 import type { ConversationCache } from "../../conversation-cache";
-import { isAgentFile } from "./isAgentConversation";
 
 export interface PruneAgentConversationsResult {
   scanned: number;
@@ -25,7 +24,7 @@ export function pruneAgentConversations(cache: ConversationCache): PruneAgentCon
       missing += 1;
       continue;
     }
-    if (isAgentFile(row.file_path, cache.getAgentEntrypoints())) {
+    if (cache.isAgentFileCached(row.file_path)) {
       cache.deleteByFilePath(row.file_path);
       pruned += 1;
     }

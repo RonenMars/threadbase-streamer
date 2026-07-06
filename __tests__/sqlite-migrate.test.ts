@@ -36,6 +36,7 @@ describe("runSqliteMigrations", () => {
     const names = tables.map((t) => t.name);
     expect(names).toContain("projects");
     expect(names).toContain("cache_metadata");
+    expect(names).toContain("conversation_file_metadata");
     expect(names).toContain("schema_migrations");
   });
 
@@ -45,5 +46,6 @@ describe("runSqliteMigrations", () => {
       .prepare("PRAGMA table_info(conversation_meta)")
       .all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("project_id");
+    expect(cols.map((c) => c.name)).toContain("scanner_meta_json");
   });
 });
