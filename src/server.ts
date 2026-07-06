@@ -1306,6 +1306,10 @@ export class StreamerServer {
     previousScanner: ConversationScanner | null,
   ): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> | undefined {
     if (!this.cache) return undefined;
+    if (!previousScanner) {
+      const persisted = this.cache.getScannerStatCache();
+      return persisted.size > 0 ? persisted : undefined;
+    }
     const dbStats = this.cache.getFileStats();
     if (dbStats.size === 0) return undefined;
     const metaByPath = new Map<string, ConversationMeta>();

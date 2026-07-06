@@ -1,3 +1,4 @@
+import type { ConversationMeta, FileStatEntry } from "@threadbase-sh/scanner";
 import Database from "better-sqlite3";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "fs";
 import { dirname } from "path";
@@ -89,6 +90,7 @@ interface MetaRow {
   source: string | null;
   provider: "claude-code" | "codex-cli";
   updated_at: number;
+  scanner_meta_json: string | null;
 }
 
 interface TailRow {
@@ -203,6 +205,10 @@ export class ConversationCache {
     getIdByFilePath: Database.Statement;
     allFilePaths: Database.Statement;
     allFileStats: Database.Statement;
+    allScannerStatCacheRows: Database.Statement;
+    updateScannerCache: Database.Statement;
+    getFileMetadata: Database.Statement;
+    upsertFileMetadata: Database.Statement;
     upsertSessionName: Database.Statement;
     getSessionName: Database.Statement;
     listSessionNames: Database.Statement;
@@ -265,11 +271,11 @@ export class ConversationCache {
         INSERT INTO conversation_meta
           (id, file_path, project_path, project_name, title, model, account, branch,
            message_count, last_activity, first_message, last_message, preview, updated_at,
-           mtime_ms, file_size, provider)
+           mtime_ms, file_size, provider, scanner_meta_json)
         VALUES
           (@id, @file_path, @project_path, @project_name, @title, @model, @account, @branch,
            @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at,
-           @mtime_ms, @file_size, @provider)
+           @mtime_ms, @file_size, @provider, @scanner_meta_json)
         ON CONFLICT(id) DO UPDATE SET
           file_path     = excluded.file_path,
           project_path  = excluded.project_path,
@@ -286,7 +292,8 @@ export class ConversationCache {
           updated_at    = excluded.updated_at,
           mtime_ms      = excluded.mtime_ms,
           file_size     = excluded.file_size,
-          provider      = excluded.provider
+          provider      = excluded.provider,
+          scanner_meta_json = excluded.scanner_meta_json
         WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
@@ -323,6 +330,27 @@ export class ConversationCache {
       allFileStats: db.prepare(
         "SELECT file_path, mtime_ms, file_size FROM conversation_meta WHERE mtime_ms IS NOT NULL AND file_size IS NOT NULL",
       ),
+      allScannerStatCacheRows: db.prepare(
+        "SELECT file_path, mtime_ms, file_size, scanner_meta_json FROM conversation_meta WHERE mtime_ms IS NOT NULL AND file_size IS NOT NULL AND scanner_meta_json IS NOT NULL",
+      ),
+      updateScannerCache: db.prepare(
+        "UPDATE conversation_meta SET mtime_ms = ?, file_size = ?, scanner_meta_json = ? WHERE id = ?",
+      ),
+      getFileMetadata: db.prepare(
+        "SELECT mtime_ms, file_size, is_agent, agent_entrypoints_key FROM conversation_file_metadata WHERE file_path = ?",
+      ),
+      upsertFileMetadata: db.prepare(`
+        INSERT INTO conversation_file_metadata
+          (file_path, mtime_ms, file_size, is_agent, agent_entrypoints_key, updated_at)
+        VALUES
+          (@file_path, @mtime_ms, @file_size, @is_agent, @agent_entrypoints_key, @updated_at)
+        ON CONFLICT(file_path) DO UPDATE SET
+          mtime_ms = excluded.mtime_ms,
+          file_size = excluded.file_size,
+          is_agent = excluded.is_agent,
+          agent_entrypoints_key = excluded.agent_entrypoints_key,
+          updated_at = excluded.updated_at
+      `),
       upsertSessionName: db.prepare(`
         INSERT INTO session_names (session_id, name, updated_at)
         VALUES (?, ?, ?)
@@ -365,8 +393,51 @@ export class ConversationCache {
     return this.db;
   }
 
-  getAgentEntrypoints(): ReadonlySet<string> {
-    return this.agentEntrypoints;
+  private agentEntrypointsKey(): string {
+    return [...this.agentEntrypoints].sort().join(",");
+  }
+
+  private classifyAgentFile(filePath: string, mtimeMs: number, fileSize: number): boolean {
+    if (this.agentEntrypoints.size === 0) return false;
+
+    const entrypointsKey = this.agentEntrypointsKey();
+    const cached = this.stmts.getFileMetadata.get(filePath) as
+      | {
+          mtime_ms: number;
+          file_size: number;
+          is_agent: number;
+          agent_entrypoints_key: string;
+        }
+      | undefined;
+    if (
+      cached &&
+      cached.mtime_ms === mtimeMs &&
+      cached.file_size === fileSize &&
+      cached.agent_entrypoints_key === entrypointsKey
+    ) {
+      return cached.is_agent === 1;
+    }
+
+    const isAgent = isAgentFile(filePath, this.agentEntrypoints);
+    this.stmts.upsertFileMetadata.run({
+      file_path: filePath,
+      mtime_ms: mtimeMs,
+      file_size: fileSize,
+      is_agent: isAgent ? 1 : 0,
+      agent_entrypoints_key: entrypointsKey,
+      updated_at: Date.now(),
+    });
+    return isAgent;
+  }
+
+  isAgentFileCached(filePath: string): boolean {
+    let s: ReturnType<typeof statSync>;
+    try {
+      s = statSync(filePath);
+    } catch {
+      return false;
+    }
+    return this.classifyAgentFile(filePath, s.mtimeMs, s.size);
   }
 
   static open(
@@ -617,11 +688,9 @@ export class ConversationCache {
   // in conversation-cache.test.ts).
   upsertFromScannerMeta(metas: ScannerMeta[]): string[] {
     const filter = this.filterAgentConversations;
-    const entrypoints = this.agentEntrypoints;
     const upsertedIds: string[] = [];
     const run = this.db.transaction((items: ScannerMeta[]) => {
       for (const m of items) {
-        if (filter && isAgentFile(m.filePath, entrypoints)) continue;
         const id =
           m.sessionId ||
           m.id
@@ -639,6 +708,15 @@ export class ConversationCache {
         } catch {
           // file disappeared between scan and upsert — store without stat
         }
+        if (
+          filter &&
+          mtimeMs !== null &&
+          fileSize !== null &&
+          this.classifyAgentFile(m.filePath, mtimeMs, fileSize)
+        ) {
+          continue;
+        }
+        const scannerMetaJson = JSON.stringify(m);
         this.stmts.upsertFull.run({
           id,
           file_path: m.filePath,
@@ -657,7 +735,9 @@ export class ConversationCache {
           mtime_ms: mtimeMs,
           file_size: fileSize,
           provider: m.provider ?? CLAUDE_CODE_PROVIDER,
+          scanner_meta_json: scannerMetaJson,
         });
+        this.stmts.updateScannerCache.run(mtimeMs, fileSize, scannerMetaJson, id);
         if (this.fileIndexLoaded) this.fileIndex.set(m.filePath, id);
         upsertedIds.push(id);
       }
@@ -799,6 +879,28 @@ export class ConversationCache {
     const map = new Map<string, { mtimeMs: number; size: number }>();
     for (const r of rows) {
       map.set(r.file_path, { mtimeMs: r.mtime_ms, size: r.file_size });
+    }
+    return map;
+  }
+
+  getScannerStatCache(): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> {
+    const rows = this.stmts.allScannerStatCacheRows.all() as Array<{
+      file_path: string;
+      mtime_ms: number;
+      file_size: number;
+      scanner_meta_json: string;
+    }>;
+    const map = new Map<string, { stat: FileStatEntry; meta: ConversationMeta }>();
+    for (const r of rows) {
+      try {
+        const meta = JSON.parse(r.scanner_meta_json) as ConversationMeta;
+        map.set(r.file_path, {
+          stat: { mtimeMs: r.mtime_ms, size: r.file_size },
+          meta,
+        });
+      } catch {
+        // Ignore malformed legacy/cache rows; the scanner will parse the file.
+      }
     }
     return map;
   }

@@ -102,6 +102,11 @@ describe("upsertFromScannerMeta()", () => {
       // so a follow-up populateTailFromFile("agent-1", ...) would hit FK.
       expect(agentCache.hasConversation("normal-1")).toBe(true);
       expect(agentCache.hasConversation("agent-1")).toBe(false);
+      const fileMetadata = agentCache
+        .getDatabase()
+        .prepare("SELECT is_agent FROM conversation_file_metadata WHERE file_path = ?")
+        .get(agentFile) as { is_agent: number } | undefined;
+      expect(fileMetadata?.is_agent).toBe(1);
     } finally {
       agentCache.close();
     }
@@ -796,6 +801,29 @@ describe("getFileStats()", () => {
     expect(stats.has(filePath)).toBe(true);
     expect(stats.has("/nonexistent/path.jsonl")).toBe(false);
     expect(stats.size).toBe(1);
+  });
+
+  it("returns persisted scanner metadata for unchanged-file stat cache", () => {
+    const filePath = join(dbDir, "scanner-meta.jsonl");
+    writeFileSync(filePath, '{"role":"user"}\n');
+    const s = statSync(filePath);
+
+    cache.upsertFromScannerMeta([
+      {
+        ...BASE_META,
+        id: "scanner-meta",
+        sessionId: "scanner-meta",
+        filePath,
+        preview: "cached preview",
+      },
+    ] as any);
+
+    const statCache = cache.getScannerStatCache();
+    const entry = statCache.get(filePath);
+    expect(entry?.stat.mtimeMs).toBe(s.mtimeMs);
+    expect(entry?.stat.size).toBe(s.size);
+    expect(entry?.meta.id).toBe("scanner-meta");
+    expect(entry?.meta.preview).toBe("cached preview");
   });
 });
 
