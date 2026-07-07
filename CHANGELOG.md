@@ -1,3 +1,9 @@
+## [1.24.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.5...v1.24.6) (2026-07-07)
+
+### Bug Fixes
+
+* Auto-updater broken on Windows; conversations blank after v1.18.1 install ([#179](https://github.com/RonenMars/threadbase-streamer/issues/179)) ([0ea66bb](https://github.com/RonenMars/threadbase-streamer/commit/0ea66bb0af422ed44ad07487562d7b7f7c190e1b))
+
 ## [1.24.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.4...v1.24.5) (2026-07-05)
 
 ### Performance Improvements
