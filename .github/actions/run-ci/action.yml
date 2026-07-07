@@ -59,6 +59,33 @@ runs:
       shell: bash
       run: npm install --prefer-offline --ignore-scripts
 
+    - name: Rebuild native modules
+      if: inputs.command == 'test' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm rebuild better-sqlite3
+
+    - name: Save node_modules cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          node_modules
+          vendor/agent-types/node_modules
+          vendor/agent-types/dist
+          vendor/scanner/node_modules
+          vendor/scanner/dist
+        key: node-modules-v4-node${{ inputs.node-version }}-${{ hashFiles('package-lock.json') }}
+
+    # On a cache hit, better-sqlite3 was already rebuilt the run that
+    # populated this cache — invoke vitest directly to skip npm test's
+    # `pretest` hook (npm rebuild better-sqlite3), which would otherwise
+    # unconditionally recompile it again on every run.
     - name: Run ${{ inputs.command }}
+      if: "!(inputs.command == 'test' && steps.cache.outputs.cache-hit == 'true')"
       shell: bash
       run: npm run ${{ inputs.command }}
+
+    - name: Run test (cache hit)
+      if: inputs.command == 'test' && steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: npx vitest run

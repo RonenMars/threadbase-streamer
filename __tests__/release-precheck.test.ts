@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -67,9 +75,12 @@ beforeEach(() => {
   // <repo>/node_modules. The script computes repoRoot as its parent's parent
   // ('scripts/..') and reads .releaserc.json + resolves @semantic-release/* from there.
   cpSync(RELEASERC, join(repo, ".releaserc.json"));
-  execFileSync("mkdir", ["-p", join(repo, "scripts")]);
+  // Exclude node_modules from git so git add -A doesn't traverse the junction
+  // on Windows (junctions are transparent to git, unlike Unix symlinks).
+  writeFileSync(join(repo, ".gitignore"), "node_modules/\n");
+  mkdirSync(join(repo, "scripts"), { recursive: true });
   cpSync(SCRIPT, join(repo, "scripts", "release-precheck.mjs"));
-  execFileSync("ln", ["-s", NODE_MODULES, join(repo, "node_modules")]);
+  symlinkSync(NODE_MODULES, join(repo, "node_modules"), "junction");
   commit("chore: initial");
   git(["tag", "-a", "v1.0.0", "-m", "v1.0.0"]);
 });

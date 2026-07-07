@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import { basename } from "path";
 import { getLogger, type Logger } from "./logger";
 import { resolveClaudeExe } from "./platform";
+import { CLAUDE_CODE_PROVIDER } from "./providers";
 import { hasPermissionOsc, scrapePermissionGate } from "./services/questions/detectPermissionGate";
 import {
   detectQuestionFromScreen,
@@ -13,6 +14,7 @@ import { detectShellPrompt } from "./services/questions/detectShellPrompt";
 import type {
   ManagedSession,
   PTYManagerOptions,
+  SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
 } from "./types";
@@ -133,10 +135,20 @@ function buildSpawnEnv(): Record<string, string> {
   if (env.CLAUDE_API_KEY) {
     env.ANTHROPIC_API_KEY = env.CLAUDE_API_KEY;
   }
+  // If the streamer itself was launched from inside a Claude Code session,
+  // it inherits that session's markers (CLAUDECODE, CLAUDE_CODE_SESSION_ID,
+  // CLAUDE_CODE_CHILD_SESSION, ...). A spawned `claude` seeing them treats
+  // itself as a nested child session and never persists a project JSONL —
+  // the session "works" in the terminal but has no conversation to stream.
+  for (const key of Object.keys(env)) {
+    if (key === "CLAUDECODE" || key.startsWith("CLAUDE_CODE_")) {
+      delete env[key];
+    }
+  }
   return env;
 }
 
-export class PTYManager {
+export class PTYManager implements SessionRunner {
   private sessions = new Map<string, InternalSession>();
   private onOutput: PTYManagerOptions["onOutput"];
   private onStatusChange: PTYManagerOptions["onStatusChange"];
@@ -174,6 +186,10 @@ export class PTYManager {
   // to a given input or fell silent. Reset on dispose().
   private chunkIndex = new Map<string, number>();
   private lastChunkAt = new Map<string, number>();
+  // In-flight start()/startFresh() calls keyed by sessionId. A second
+  // concurrent resume for the same session (double-tap, client retry) awaits
+  // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
+  private startPromises = new Map<string, Promise<ManagedSession>>();
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
@@ -198,6 +214,26 @@ export class PTYManager {
   // custom-API-key — are cleared by the seeded ~/.claude.json in
   // docker/entrypoint.sh.) startFresh() uses the same flag for the same reason.
   async start(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
+    // Guard the check-then-spawn: a second concurrent resume for the same
+    // sessionId (double-tap, client retry — server.ts's own hasSession check
+    // has an await gap before it calls start()) must not race past both
+    // checks and spawn a second PTY. Returning the first call's in-flight
+    // promise serializes the spawn; an already-running session short-circuits
+    // without touching doStart at all.
+    const existing = this.sessions.get(sessionId);
+    if (existing) return toPublicSession(existing);
+
+    const inFlight = this.startPromises.get(sessionId);
+    if (inFlight) return inFlight;
+
+    const promise = this.doStart(sessionId, options).finally(() => {
+      this.startPromises.delete(sessionId);
+    });
+    this.startPromises.set(sessionId, promise);
+    return promise;
+  }
+
+  private async doStart(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
     const projectName = options.projectName ?? basename(options.projectPath);
 
@@ -222,6 +258,7 @@ export class PTYManager {
 
     const session: InternalSession = {
       id: sessionId,
+      provider: CLAUDE_CODE_PROVIDER,
       projectPath: options.projectPath,
       projectName,
       branch: options.branch ?? "",
@@ -288,6 +325,7 @@ export class PTYManager {
 
     const session: InternalSession = {
       id: sessionId,
+      provider: CLAUDE_CODE_PROVIDER,
       projectPath: options.projectPath,
       projectName,
       branch: "",
@@ -824,6 +862,7 @@ export class PTYManager {
 function toPublicSession(s: InternalSession): ManagedSession {
   return {
     id: s.id,
+    provider: s.provider ?? CLAUDE_CODE_PROVIDER,
     projectPath: s.projectPath,
     projectName: s.projectName,
     branch: s.branch,

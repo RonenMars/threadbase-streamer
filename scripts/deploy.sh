@@ -4,6 +4,7 @@
 # Usage:
 #   scripts/deploy.sh                       # build + deploy current HEAD
 #   scripts/deploy.sh --force               # deploy even if working tree is dirty / not on main
+#   scripts/deploy.sh --clear-logs          # clear stdout/stderr logs after deploy (default: preserve)
 #   scripts/deploy.sh --publish-menubar     # also upload the menubar .dmg to GitHub Releases
 #                                           #   (requires ~/.threadbase/menubar-signing.env + gh auth)
 #   scripts/deploy.sh --install-shim=<m>    # m = standard|user-local|custom|skip; non-interactive choice
@@ -790,10 +791,11 @@ activate_release() {
 }
 
 cmd_deploy() {
-  local force="" publish_menubar_flag=0
+  local force="" publish_menubar_flag=0 clear_logs_flag=0
   for arg in "$@"; do
     case "$arg" in
       --force)                 force="--force" ;;
+      --clear-logs)            clear_logs_flag=1 ;;
       --publish-menubar)       publish_menubar_flag=1 ;;
       --install-shim=*)        export TB_INSTALL_SHIM="${arg#--install-shim=}" ;;
       --path-update=*)         export TB_PATH_UPDATE="${arg#--path-update=}" ;;
@@ -890,15 +892,15 @@ cmd_deploy() {
     ensure_plist_healthy
   fi
 
-  # Truncate logs in place so the next kickstart writes from a clean baseline.
-  # Without this, `tb-streamer prod logs` would keep surfacing stderr from
-  # crashes under the previous build long after the underlying bug was fixed,
-  # making it impossible to tell stale errors from current ones. Truncating
-  # (not unlinking) preserves the inode launchd already has open via the
-  # plist's StandardOut/ErrorPath.
-  log "truncating logs for fresh baseline"
-  : > "$INSTALL_DIR/logs/stdout.log" 2>/dev/null || true
-  : > "$INSTALL_DIR/logs/stderr.log" 2>/dev/null || true
+  # Truncate logs in place only when --clear-logs is passed (opt-in — logs
+  # are preserved by default so history isn't silently lost on every deploy).
+  # Truncating (not unlinking) preserves the inode launchd already has open
+  # via the plist's StandardOut/ErrorPath.
+  if (( clear_logs_flag )); then
+    log "clearing logs (--clear-logs)"
+    : > "$INSTALL_DIR/logs/stdout.log" 2>/dev/null || true
+    : > "$INSTALL_DIR/logs/stderr.log" 2>/dev/null || true
+  fi
 
   log "kickstarting $LAUNCHD_LABEL"
   cmd_kickstart

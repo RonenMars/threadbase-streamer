@@ -8,16 +8,18 @@ import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadat
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";
 import type { ProjectsRepository } from "../../db/repositories/projects.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
-import type { PTYManager } from "../../pty-manager";
+import type { LiveSessionManager } from "../../live-session-manager";
 import type { SessionStore } from "../../session-store";
 import type { WSHub } from "../../ws-hub";
 
 export type ApiDeps = {
   apiKey: string;
   localNoAuth: boolean;
+  logMenubarRequests: boolean;
+  rotateApiKey: () => { newKey: string; persisted: boolean };
   publicUrl: string | null;
   browseRoot: string | null;
-  ptyManager: PTYManager;
+  ptyManager: LiveSessionManager;
   sessionStore: SessionStore;
   wsHub: WSHub;
   cache: () => ConversationCache | null;
@@ -46,7 +48,7 @@ export type ApiDeps = {
   handleAdopt: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleResume: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleStartSession: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
-  // Conversations / search / projects / browse / pair / project-chats delegates
+  // Conversations / search / projects / browse / pair delegates
   handleListConversations: (url: URL, res: ServerResponse) => Promise<void>;
   handleConversationsCount: (url: URL, res: ServerResponse) => Promise<void>;
   handleGetConversation: (
@@ -56,8 +58,8 @@ export type ApiDeps = {
     ifNoneMatch?: string,
   ) => Promise<void>;
   handleSearch: (url: URL, res: ServerResponse) => Promise<void>;
+  handleListProjects: (url: URL, res: ServerResponse) => void;
   handleGetPopularProjects: (url: URL, res: ServerResponse) => void;
-  handleListProjectChats: (url: URL, res: ServerResponse) => Promise<void>;
   handlePairStart: (res: ServerResponse) => void;
   handlePairExchange: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleBrowse: (url: URL, res: ServerResponse) => Promise<void>;

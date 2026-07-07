@@ -77,14 +77,23 @@ describe("codex conversations — HTTP API", () => {
   });
 
   describe("GET /api/conversations/:id", () => {
-    it("returns provider=codex-cli and resumable=false", async () => {
+    it("returns provider=codex-cli and resumable based on project-path availability", async () => {
+      // Codex resume is implemented (Task 4) — resumability now depends on
+      // the same on-disk availability check as claude-code, not a
+      // provider-forced false. This fixture's cwd is a real path on the dev
+      // machine that may or may not exist in other environments, so assert
+      // against the same classifyResumability-shaped outcome rather than a
+      // hardcoded value.
       const res = await fetch(`${baseUrl}/api/conversations/${CODEX_SESSION_ID}?msg_limit=10`, {
         headers: auth,
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
       expect(body.meta.provider).toBe("codex-cli");
-      expect(body.meta.resumable).toBe(false);
+      expect(typeof body.meta.resumable).toBe("boolean");
+      if (!body.meta.resumable) {
+        expect(["path_missing", "worktree_removed"]).toContain(body.meta.unavailable_reason);
+      }
     });
 
     it("still serves messages for codex conversations", async () => {
@@ -93,26 +102,6 @@ describe("codex conversations — HTTP API", () => {
       });
       const body = (await res.json()) as any;
       expect(body.messages.length).toBeGreaterThan(0);
-    });
-  });
-
-  describe("GET /project-chats", () => {
-    it("returns codex conversation with provider=codex-cli and status=archived", async () => {
-      // Warm the cache first via /api/conversations
-      await fetch(`${baseUrl}/api/conversations?refresh=1`, { headers: auth });
-
-      const res = await fetch(`${baseUrl}/project-chats?limit=50`, { headers: auth });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      // /project-chats returns { projectChats: [...] } (flat, merged list)
-      const allConvs = (body.projectChats ?? []) as any[];
-      const codex = allConvs.find((c: any) => c.id.includes(CODEX_SESSION_ID));
-      expect(codex).toBeDefined();
-      expect(codex.provider).toBe("codex-cli");
-      // On-disk codex JSONL whose project path resolves → "resumable"
-      // (the project-chat status enum is archived|resumable, distinct from the
-      // boolean `resumable` flag on the detail/session endpoints).
-      expect(codex.status).toBe("resumable");
     });
   });
 });

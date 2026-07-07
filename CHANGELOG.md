@@ -1,3 +1,129 @@
+## [1.24.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.4...v1.24.5) (2026-07-05)
+
+### Performance Improvements
+
+* **conversations:** reconcile refresh=1 instead of wiping the cache ([#175](https://github.com/RonenMars/threadbase-streamer/issues/175)) ([13d3111](https://github.com/RonenMars/threadbase-streamer/commit/13d3111e20782ac632c2d9a3678b799a23a79f6a))
+
+## [1.24.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.3...v1.24.4) (2026-07-04)
+
+### Bug Fixes
+
+* **watcher:** self-heal dead file tails via directory events ([#162](https://github.com/RonenMars/threadbase-streamer/issues/162)) ([4126aa1](https://github.com/RonenMars/threadbase-streamer/commit/4126aa11e12574becaf0c92f9bbd45ed0c97f226))
+
+## [1.24.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.2...v1.24.3) (2026-07-04)
+
+### Bug Fixes
+
+* **permission:** capture the action description above "Do you want to proceed?" ([#151](https://github.com/RonenMars/threadbase-streamer/issues/151)) ([a498ae0](https://github.com/RonenMars/threadbase-streamer/commit/a498ae08b65460a6bda0570c9f1c1290201e035a))
+
+## [1.24.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.1...v1.24.2) (2026-07-04)
+
+### Bug Fixes
+
+* **server:** serve conversations from disk when sqlite is unusable ([#161](https://github.com/RonenMars/threadbase-streamer/issues/161)) ([284fb8c](https://github.com/RonenMars/threadbase-streamer/commit/284fb8c8419bd556abc7d1966e0aa5e46d717d93))
+
+## [1.24.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.24.0...v1.24.1) (2026-07-04)
+
+### Bug Fixes
+
+* **pty:** strip inherited Claude session env from spawned sessions ([#160](https://github.com/RonenMars/threadbase-streamer/issues/160)) ([f9a2303](https://github.com/RonenMars/threadbase-streamer/commit/f9a230368b6954a70220e0d72ed28ff61d00d322))
+
+## [1.24.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.23.1...v1.24.0) (2026-07-04)
+
+### Features
+
+* **sessions:** add Codex CLI live-session support (provider plumbing, runner, rollout binding) ([#159](https://github.com/RonenMars/threadbase-streamer/issues/159)) ([3ae9d4f](https://github.com/RonenMars/threadbase-streamer/commit/3ae9d4f373b4b6f907d7021eefd65dd642a82b8f))
+
+## [1.23.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.23.0...v1.23.1) (2026-07-04)
+
+### Bug Fixes
+
+* **cache:** directory-watch invalidate must not delete a live-tailed row ([#171](https://github.com/RonenMars/threadbase-streamer/issues/171)) ([a9e7ae3](https://github.com/RonenMars/threadbase-streamer/commit/a9e7ae31234b359b86d9acf5ebc3cc8402ce0b4f)), closes [#2](https://github.com/RonenMars/threadbase-streamer/issues/2) [#2](https://github.com/RonenMars/threadbase-streamer/issues/2) [#1](https://github.com/RonenMars/threadbase-streamer/issues/1) [#1](https://github.com/RonenMars/threadbase-streamer/issues/1)
+* **cache:** scanner rescan must update metadata after a conversation goes live ([#170](https://github.com/RonenMars/threadbase-streamer/issues/170)) ([7964ccf](https://github.com/RonenMars/threadbase-streamer/commit/7964ccf320c5c018275152881b4d3b21e675a8bb)), closes [#1](https://github.com/RonenMars/threadbase-streamer/issues/1) [#2](https://github.com/RonenMars/threadbase-streamer/issues/2)
+
+## [1.23.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.2...v1.23.0) (2026-07-04)
+
+### Features
+
+* **claude:** add /ship skill (copied from dotfiles canonical) ([#169](https://github.com/RonenMars/threadbase-streamer/issues/169)) ([2fb0ec5](https://github.com/RonenMars/threadbase-streamer/commit/2fb0ec5a0344ff3a0ef8c9bd75e09e5200771db9))
+
+## [1.22.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.1...v1.22.2) (2026-07-03)
+
+### Bug Fixes
+
+* **build:** restore ignoreDeprecations for TS6 baseUrl deprecation warning ([#156](https://github.com/RonenMars/threadbase-streamer/issues/156)) ([c658b02](https://github.com/RonenMars/threadbase-streamer/commit/c658b02fbfd227b2822ca6dcf89b86d8ae0051b2))
+
+## [1.22.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.22.0...v1.22.1) (2026-07-01)
+
+### Bug Fixes
+
+* **auth:** resolve config dir per call so tests can't rotate the live api key ([#153](https://github.com/RonenMars/threadbase-streamer/issues/153)) ([6fffa87](https://github.com/RonenMars/threadbase-streamer/commit/6fffa8733a3be33be32884cdc961a8b73f42454a))
+
+## [1.22.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.21.0...v1.22.0) (2026-06-30)
+
+### Features
+
+* **observability:** log API key rotation and preserve logs by default ([#149](https://github.com/RonenMars/threadbase-streamer/issues/149)) ([3e38579](https://github.com/RonenMars/threadbase-streamer/commit/3e38579d1f951943b529e80000b5d800d0d556d3))
+
+## [1.21.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.20.0...v1.21.0) (2026-06-30)
+
+### Features
+
+* **api:** add GET /api/projects, remove /project-chats ([#117](https://github.com/RonenMars/threadbase-streamer/issues/117)) ([ae1ade8](https://github.com/RonenMars/threadbase-streamer/commit/ae1ade8c63eb9b83e48acc9308e5c0b03f9c1622))
+* **updater:** append check and install results to update.log ([#144](https://github.com/RonenMars/threadbase-streamer/issues/144)) ([bb1bc69](https://github.com/RonenMars/threadbase-streamer/commit/bb1bc69151c404159b7c7767e01492c65a7337b8))
+
+### Bug Fixes
+
+* **security:** harden streamer-mobile API surface ([#129](https://github.com/RonenMars/threadbase-streamer/issues/129)) ([1e5700c](https://github.com/RonenMars/threadbase-streamer/commit/1e5700c21e3e7d988a30625d5d420f6c97070721))
+
+## [1.20.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.19.1...v1.20.0) (2026-06-30)
+
+### Features
+
+* **session:** add default system prompt + per-session systemPrompt param ([#132](https://github.com/RonenMars/threadbase-streamer/issues/132)) ([525c3fa](https://github.com/RonenMars/threadbase-streamer/commit/525c3fa4a696f9514232d486973d591c82a246ec))
+
+## [1.19.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.19.0...v1.19.1) (2026-06-30)
+
+### Bug Fixes
+
+* **tests:** Windows compatibility for scanner handles and test isolation ([#142](https://github.com/RonenMars/threadbase-streamer/issues/142)) ([55d15a8](https://github.com/RonenMars/threadbase-streamer/commit/55d15a865c9b008aa07a25b0181ec8103b364b55))
+
+## [1.19.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.6...v1.19.0) (2026-06-30)
+
+### Features
+
+* **server:** filter menubar /healthz logs by default ([#131](https://github.com/RonenMars/threadbase-streamer/issues/131)) ([59d3531](https://github.com/RonenMars/threadbase-streamer/commit/59d3531f66cd49c7c4c65d37ed30dfb46ebbd204))
+
+## [1.18.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.5...v1.18.6) (2026-06-30)
+
+### Bug Fixes
+
+* **tests:** make test suite pass on Windows ([abe253a](https://github.com/RonenMars/threadbase-streamer/commit/abe253a032c7db9677a532d6772d76f9c4ae14ec))
+
+## [1.18.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.4...v1.18.5) (2026-06-28)
+
+### Bug Fixes
+
+* **lint:** bump biome schema to 2.5.0 and sort swap.ts imports ([1d37e60](https://github.com/RonenMars/threadbase-streamer/commit/1d37e60f344930b671fb6702b452f6b2d3ef2d56)), closes [#140](https://github.com/RonenMars/threadbase-streamer/issues/140)
+
+## [1.18.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.3...v1.18.4) (2026-06-28)
+
+### Bug Fixes
+
+* **updater:** sync cli.js on macOS/Linux after swapCurrent (same launch.cmd conflict as Windows) ([69660a0](https://github.com/RonenMars/threadbase-streamer/commit/69660a05df5065a44328413ddce652a8d3e20db2))
+
+## [1.18.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.2...v1.18.3) (2026-06-28)
+
+### Bug Fixes
+
+* **updater:** sync cli.js after Windows swapCurrent to unify launch.cmd entry point ([dc6e184](https://github.com/RonenMars/threadbase-streamer/commit/dc6e1845df3810bedfcab7526297f20f4d1de450))
+
+## [1.18.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.1...v1.18.2) (2026-06-28)
+
+### Bug Fixes
+
+* **auto-update:** fix install-auto-update.ps1 on Windows ([#139](https://github.com/RonenMars/threadbase-streamer/issues/139)) ([eb362d3](https://github.com/RonenMars/threadbase-streamer/commit/eb362d380c4ba4dcbf537ee97da35c5514c1c08b))
+
 ## [1.18.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.18.0...v1.18.1) (2026-06-26)
 
 ### Bug Fixes

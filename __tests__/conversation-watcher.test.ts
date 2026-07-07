@@ -219,3 +219,52 @@ describe("ConversationWatcher — file tailing", () => {
     w.dispose();
   });
 });
+
+describe("ConversationWatcher — poke (dead-handle self-heal)", () => {
+  beforeEach(() => {
+    emitters.length = 0;
+    watchSpy.mockClear();
+    fileBytes = "";
+    initialSize.value = 0;
+    readGate = null;
+    failNextRead = false;
+  });
+
+  it("reads appended lines without any chokidar event (dead per-file handle)", async () => {
+    const onNewLines = vi.fn();
+    const w = new ConversationWatcher({ onNewLines });
+    w.watch("/proj/conv.jsonl");
+
+    // Bytes appended, but the per-file watcher never fires — the incident mode.
+    fileBytes = "line-1\nline-2\n";
+    expect(w.poke("/proj/conv.jsonl")).toBe(true);
+    await flush();
+
+    expect(onNewLines).toHaveBeenCalledTimes(1);
+    expect(onNewLines.mock.calls[0][1]).toEqual(["line-1", "line-2"]);
+    w.dispose();
+  });
+
+  it("is a cheap no-op when there is nothing new to read", async () => {
+    const onNewLines = vi.fn();
+    const w = new ConversationWatcher({ onNewLines });
+    w.watch("/proj/conv.jsonl");
+
+    fileBytes = "line-1\n";
+    lastEmitter().emit("change");
+    await flush();
+    expect(onNewLines).toHaveBeenCalledTimes(1);
+
+    // Redundant poke after the normal event already consumed the bytes.
+    expect(w.poke("/proj/conv.jsonl")).toBe(true);
+    await flush();
+    expect(onNewLines).toHaveBeenCalledTimes(1);
+    w.dispose();
+  });
+
+  it("returns false for a path that has no tail", () => {
+    const w = new ConversationWatcher();
+    expect(w.poke("/proj/not-watched.jsonl")).toBe(false);
+    w.dispose();
+  });
+});

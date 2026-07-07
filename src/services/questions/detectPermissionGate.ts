@@ -29,6 +29,12 @@ export interface PermissionOption {
 export interface PermissionGate {
   /** Prompt text above the options, e.g. "Claude needs your permission to use Bash". */
   prompt?: string;
+  /**
+   * The descriptive block above the prompt — the tool title, the command, and any
+   * action description Claude paints inside the gate box (newline-joined). Lets the
+   * client show WHAT is being permitted, not just "Do you want to proceed?".
+   */
+  detail?: string;
   options: PermissionOption[];
   /** Index value (the on-screen number) of the `❯`-highlighted option, if any. */
   cursor?: number;
@@ -85,13 +91,51 @@ export function scrapePermissionGate(lines: string[]): PermissionGate | null {
 
   // Prompt = nearest non-empty, non-chrome line above the first option row.
   let prompt: string | undefined;
+  let promptLine = -1;
   for (let i = firstOptionLine - 1; i >= 0; i--) {
     const t = stripGutter(lines[i]).trim();
     if (t.length === 0) continue;
     if (BOX_ONLY_RE.test(lines[i].trim()) || FOOTER_RE.test(t) || PROMPT_ARROW_RE.test(t)) continue;
     prompt = t || undefined;
+    promptLine = i;
     break;
   }
 
-  return { ...(prompt ? { prompt } : {}), options, ...(cursor !== undefined ? { cursor } : {}) };
+  // Detail = the descriptive block ABOVE the prompt (tool title + command +
+  // action description), newline-joined. The box top, 2+ consecutive blanks (the
+  // gap to prior scrollback), or a ~6-line cap ends the block — so a
+  // partial-window scrape can't vacuum unrelated terminal output.
+  const detail = promptLine > 0 ? scrapeDetail(lines, promptLine) : undefined;
+
+  return {
+    ...(prompt ? { prompt } : {}),
+    ...(detail ? { detail } : {}),
+    options,
+    ...(cursor !== undefined ? { cursor } : {}),
+  };
+}
+
+const MAX_DETAIL_LINES = 6;
+
+function scrapeDetail(lines: string[], promptLine: number): string | undefined {
+  const collected: string[] = []; // bottom-up, content lines only
+  let blankRun = 0;
+  for (let i = promptLine - 1; i >= 0; i--) {
+    // Strip the gutter first: a bare "│" is an INTERNAL blank line, not a frame
+    // edge — only the true border rows ("╭──╮" / "╰──╯") are box-only once the
+    // gutter is removed.
+    const t = stripGutter(lines[i]).trim();
+    if (BOX_ONLY_RE.test(t)) break; // box top / frame edge
+    if (t.length === 0) {
+      blankRun++;
+      if (blankRun >= 2) break; // gap to prior scrollback
+      continue; // single blank: skip (join already separates lines)
+    }
+    blankRun = 0;
+    if (FOOTER_RE.test(t) || PROMPT_ARROW_RE.test(t)) continue; // skip chrome, keep walking
+    collected.push(t);
+    if (collected.length >= MAX_DETAIL_LINES) break;
+  }
+
+  return collected.length > 0 ? collected.reverse().join("\n") : undefined;
 }

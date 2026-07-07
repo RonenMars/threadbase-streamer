@@ -3,11 +3,13 @@ import { Command } from "commander";
 import qrcode from "qrcode-terminal";
 import { loadOrCreateApiKey, loadPublicUrl } from "../src/auth";
 import { loadUpdateConfig, UPDATE_CONFIG_PATH } from "../src/config/update-config";
+import { appendDevSessionMarker } from "../src/devLog";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
+import { appendUpdateLog } from "../src/updater/update-log";
 import { getVersion } from "../src/version";
 import { registerProdCommands } from "./prod";
 
@@ -27,6 +29,7 @@ program
   .option("--api-key <key>", "API key for authentication")
   .option("--local-no-auth", "Skip auth for localhost requests", false)
   .option("-v, --verbose", "Verbose output", false)
+  .option("--log-menubar-requests", "Log /healthz requests from the menubar app", false)
   .option("--browse-root <path>", "Root directory for file browsing")
   .option(
     "--public-url <url>",
@@ -47,6 +50,17 @@ program
     false,
   )
   .action(async (opts) => {
+    // Fail loudly before binding if the better-sqlite3 native binary can't load
+    // under this Node — otherwise the cache silently dies and every
+    // /api/conversations* request 500s with no obvious cause.
+    try {
+      const { checkSqliteAbi } = await import("../src/db/check-sqlite-abi");
+      checkSqliteAbi();
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err), undefined, "console");
+      process.exit(1);
+    }
+
     if (opts.multiAgentFlow) {
       process.env.MULTI_AGENT_FLOW = "true";
     }
@@ -57,6 +71,7 @@ program
     // Detect whether this invocation is "dev mode" (started by a human shell)
     // or "prod mode" (started by launchd). PPID 1 = launchd on macOS.
     const isProdInvocation = opts.prod === true || process.ppid === 1;
+    if (!isProdInvocation) appendDevSessionMarker();
 
     let resolvedPort = requestedPort;
 
@@ -90,8 +105,10 @@ program
     const server = new StreamerServer({
       port: resolvedPort,
       apiKey,
+      apiKeySource: opts.apiKey ? "cli" : "config",
       localNoAuth: opts.localNoAuth,
       verbose: opts.verbose,
+      logMenubarRequests: opts.logMenubarRequests,
       browseRoot: opts.browseRoot,
       publicUrl: opts.publicUrl,
     });
@@ -244,6 +261,9 @@ program
           pinnedVersion: opts.version,
           allowMajor: opts.allowMajor,
         });
+        appendUpdateLog(
+          `[check] current=${result.current} latest=${result.latest ?? "none"} status=${result.reason}`,
+        );
         log.info(`Current : ${result.current}`, undefined, "console");
         log.info(`Latest  : ${result.latest ?? "(none)"}`, undefined, "console");
         log.info(`Channel : ${cfg.channel}`, undefined, "console");
@@ -299,6 +319,7 @@ program
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      appendUpdateLog(`[error] ${message}`);
       log.error(`Update failed: ${message}`, { error: message }, "console");
       process.exitCode = 1;
     }

@@ -339,6 +339,22 @@ Restart the streamer to pick it up.
 
 ---
 
+### `tb-streamer pair` (and the mobile app) return `401` even though the server is running
+
+**When:** `POST /api/pair/start` returns 401, or the mobile app 401s on `/ws`, despite a healthy server on `localhost` (`/healthz` → 200).
+**Cause:** The running server loads its API key from `~/.threadbase/server.yaml` **once at startup** and holds it in memory — it does not watch the file. If `server.yaml`'s `api_key:` line changed after the server started, the CLI/mobile (reading the current file) and the server (holding the old key) disagree, so every non-localhost request is rejected.
+One way this happened historically: running the test suite from a checkout where `__tests__/security-hardening.test.ts` didn't sandbox the config path — its `/api/auth/rotate` tests rewrote the live `server.yaml` (fixed by resolving the config dir per call via `THREADBASE_CONFIG_DIR` in `src/auth.ts`).
+**Fix:** Restart the supervised instance so it reloads the current key, then re-pair:
+
+```bash
+tb-streamer prod restart
+tb-streamer pair
+```
+
+Verify with `curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $(awk '/^api_key:/{print $2}' ~/.threadbase/server.yaml)" http://localhost:8766/api/pair/start` → expect `200`.
+
+---
+
 ## Launchd plist (macOS)
 
 ### `launchctl kickstart` fails with `could not find service`
@@ -596,12 +612,17 @@ The `Cannot read properties of undefined` is a red herring — it's the `afterEa
 
 **Cause:** Sibling problem to the "deployed `releases/node_modules` after a Node major upgrade" entry above — but for the *repo's* `node_modules`, not `~/.threadbase/releases/node_modules`. The repo's prebuilt `better-sqlite3` binary is locked to whatever Node ABI was current when `npm install` last ran. Once the system Node moves to a new major (or sometimes minor) the ABI no longer matches and every test that touches the cache fails.
 
-**Fix:** rebuild the native module against the current Node, then re-run the deploy:
+**Fix:** `npm test` (and `npm run deploy`) now run `npm rebuild better-sqlite3` automatically via a `pretest` hook — just re-run the failing command and it will self-heal:
 ```sh
-npm rebuild better-sqlite3
 npm run deploy
 ```
-If you also see `node-pty` complain (it didn't in this incident, but it's the other native dep), rebuild it the same way.
+If you also see `node-pty` complain (it didn't in this incident, but it's the other native dep), rebuild it manually: `npm rebuild node-pty`.
+
+**Staying on the right Node version:** the repo pins its Node version in `.nvmrc`. Use your version manager's auto-switch to avoid stale ABIs in the first place:
+
+- **macOS / Linux (nvm):** `nvm use` in the repo root, or add `nvm use --silent` to your shell's `cd` hook via `nvm`'s `--auto-use` option.
+- **Windows (fnm):** install [fnm](https://github.com/Schniz/fnm), then add `fnm env --use-on-cd | Out-String | Invoke-Expression` to your PowerShell profile (`$PROFILE`). fnm reads `.nvmrc` automatically on `cd`.
+- **nvm-windows:** reads `.nvmrc` but requires a manual `nvm use` — no auto-cd hook.
 
 **Diagnosis cue:** the `NODE_MODULE_VERSION 127 / 137` mismatch is the real signal. If you only see "Cannot read properties of undefined (reading 'close')" you're looking at the cascade, not the cause — scroll up in the test output for the `NODE_MODULE_VERSION` line.
 
@@ -806,3 +827,62 @@ curl -s -H "Authorization: Bearer <api_key>" http://localhost:8766/api/conversat
 ```
 
 **Note:** This needs to be repeated any time Homebrew upgrades the Node formula (`brew upgrade node`). The auto-updater does not currently rebuild native addons after a Node upgrade — that is a known gap.
+
+---
+
+## Windows: deploy script and auto-updater conflict on `launch.cmd` entry point
+
+**When:** On Windows, after running `npm run deploy:windows` following a previous auto-update (or vice versa), the streamer fails to start and the healthcheck times out.
+
+**Cause:** The two update paths write to different entry points and do not stay in sync:
+
+| Path | What it writes | What `launch.cmd` should use |
+|---|---|---|
+| `scripts/deploy.ps1` | `~/.threadbase/cli.js` (copies built `dist/cli.cjs` directly) | `cli.js` |
+| Auto-updater (`update` command) | `~/.threadbase/current/dist/cli.cjs` (extracts tarball into `current/`) | `current\dist\cli.cjs` |
+
+After a local deploy, `launch.cmd` points to `cli.js`. After an auto-update, `current/` holds the new binary but `cli.js` is stale. After a local deploy following an auto-update, `cli.js` is updated but `launch.cmd` may still point to `current\dist\cli.cjs`.
+
+**Fix (permanent — v1.18.3+):** `swapCurrent()` now syncs `cli.js` after every auto-update swap on all platforms — Windows copies the file, macOS/Linux atomically repoints the symlink. The service entry point (`launch.cmd` / launchd plist / systemd unit) always resolves to the correct binary via `cli.js`.
+
+**Manual fix (before v1.18.3 or when the service won't start):**
+
+1. Check which path `launch.cmd` currently uses:
+```cmd
+type %USERPROFILE%\.threadbase\launch.cmd
+```
+
+2. If it points to `current\dist\cli.cjs` but `cli.js` was just updated by the deploy script, change it back:
+```powershell
+(Get-Content "$env:USERPROFILE\.threadbase\launch.cmd") `
+  -replace 'current\dist\cli\.cjs', 'cli.js' |
+  Set-Content "$env:USERPROFILE\.threadbase\launch.cmd"
+```
+
+3. Restart the task:
+```powershell
+Stop-ScheduledTask -TaskName 'Threadbase'
+$p = Get-NetTCPConnection -LocalPort 8766 -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess
+if ($p) { Stop-Process -Id $p -Force }
+Start-ScheduledTask -TaskName 'Threadbase'
+```
+
+**Note:** After any auto-update, also run `npm rebuild` in `~/.threadbase/current/` if the Node.js version on the machine differs from the one the release was compiled for — see the `better-sqlite3` Node ABI mismatch section above.
+
+---
+
+## `npm run build` fails DTS step with `TS5101: Option 'baseUrl' is deprecated`
+
+**When:** The `build` job (CI or local) fails only at the `DTS Build` step with:
+
+```
+error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+```
+
+The ESM/CJS bundles build fine — only declaration generation fails.
+
+**Cause:** `tsconfig.json` **must** keep `"ignoreDeprecations": "6.0"`. The deprecated `baseUrl` is **not** in our tsconfig — tsup's DTS worker injects `baseUrl` internally when generating declarations, and TypeScript 6.0 flags that injected option. `ignoreDeprecations: "6.0"` is the only way to silence it. Removing the option (on the mistaken belief that TS 6.0 dropped it — it didn't; that happens in TS 7.0) breaks the build. This is exactly what closed PR #152 did.
+
+**Fix:** Keep `"ignoreDeprecations": "6.0"` in `tsconfig.json`'s `compilerOptions`. `main` already has it (added in the TS 6.0 bump, #119). Do not remove it.
+
+**TypeScript 7.0 heads-up:** `ignoreDeprecations: "6.0"` stops working in TS 7.0, so this recurs on that upgrade. The real fix then is to move DTS generation off tsup's worker (which is what injects `baseUrl`) — e.g. a separate `tsc --emitDeclarationOnly` pass — rather than touching our tsconfig.

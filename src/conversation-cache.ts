@@ -278,7 +278,10 @@ export class ConversationCache {
           model         = excluded.model,
           account       = excluded.account,
           branch        = excluded.branch,
-          message_count = excluded.message_count,
+          -- message_count is incremented by live tailing but recounted from
+          -- scratch by a scanner rescan; a stale rescan must not carry a live
+          -- session's count backwards, so take the max instead of overwriting.
+          message_count = MAX(conversation_meta.message_count, excluded.message_count),
           last_activity = excluded.last_activity,
           first_message = excluded.first_message,
           last_message  = excluded.last_message,
@@ -639,6 +642,12 @@ export class ConversationCache {
         } catch {
           // file disappeared between scan and upsert — store without stat
         }
+        // Share the same monotonic counter as live-tail writes so "newest
+        // wins" holds in both directions: a rescan after a live line must
+        // update scanner-owned fields (title/model/branch/etc.), and a live
+        // line after a rescan must still take precedence. A hardcoded 0 here
+        // let any live write win forever (CRITICAL #1).
+        const seq = ++this.tailSeq;
         this.stmts.upsertFull.run({
           id,
           file_path: m.filePath,
@@ -653,7 +662,7 @@ export class ConversationCache {
           first_message: m.firstMessage ? JSON.stringify(m.firstMessage) : null,
           last_message: m.lastMessage ? JSON.stringify(m.lastMessage) : null,
           preview: m.preview ?? null,
-          updated_at: 0,
+          updated_at: seq,
           mtime_ms: mtimeMs,
           file_size: fileSize,
           provider: m.provider ?? CLAUDE_CODE_PROVIDER,
@@ -918,9 +927,25 @@ export class ConversationCache {
     }
   }
 
-  invalidateByFilePath(filePath: string): string | null {
+  /**
+   * Drop the cached row for a file. Two callers with opposite intent:
+   *  - a directory-watch "change" event (the file was appended to) — pass
+   *    `skipIfTailed: true`. A cached tail means the row is being actively
+   *    maintained from the file's real content by the live-tail
+   *    (updateFromLines) or warm-up path, fresher than any scanner-derived
+   *    view. Both watchers fire on the same append with no ordering guarantee;
+   *    without this guard the invalidate can land after the tail write and wipe
+   *    the just-cached row, flickering the conversation out of
+   *    /api/conversations on nearly every message (CRITICAL #2). The debounced
+   *    rescan still re-derives metadata, so skipping the eager drop loses
+   *    nothing.
+   *  - a genuine unlink (the file is gone) — leave `skipIfTailed` false so the
+   *    row is always removed, otherwise a deleted session ghosts in the cache.
+   */
+  invalidateByFilePath(filePath: string, opts?: { skipIfTailed?: boolean }): string | null {
     const row = this.stmts.getIdByFilePath.get(filePath) as { id: string } | undefined;
     if (!row) return null;
+    if (opts?.skipIfTailed && this.stmts.hasTail.get(row.id)) return null;
     this.invalidate(row.id);
     return row.id;
   }
@@ -959,5 +984,67 @@ export class ConversationCache {
       }
     }
     return ghosts;
+  }
+
+  /**
+   * Reconcile the cache against the authoritative set of conversation file
+   * paths a fresh scan surfaced: drop any cached row whose `file_path` is not
+   * in `livePaths` (removed from disk, or now filtered out — e.g. became an
+   * agent JSONL). This is the "removed conversations" half of a ?refresh=1
+   * reconcile; the additions/updates half is upsertFromScannerMeta.
+   *
+   * Skip semantics depend on whether the file still exists on disk:
+   *  - File GONE from disk → always removed, tail or not. This matches the old
+   *    invalidate()+rebuild behavior (a deleted conversation must disappear on
+   *    refresh) and keeps refresh=1 truthful about removals. NOTE: this is an
+   *    INTENTIONAL divergence from pruneGhostFiles(), which KEEPS tailed ghosts
+   *    so their cached history stays viewable on a background prune. refresh=1
+   *    has the opposite contract (mobile relies on removals being reflected), so
+   *    do not "unify" the two — they serve different purposes.
+   *  - File STILL on disk but absent from `livePaths` → the CRITICAL #2 race:
+   *    the scan snapshot predates a just-created (and now live-tailed) file.
+   *    A tailed row here is actively maintained from real content, so it is
+   *    kept — dropping it would flicker the active conversation out of
+   *    /api/conversations. An untailed on-disk row not in the snapshot is a
+   *    transient scan/discovery gap; it is left alone (not removed) and the
+   *    next reconcile picks it up, rather than risk removing a real file the
+   *    scan simply hasn't surfaced yet.
+   * Returns the removed IDs.
+   */
+  reconcileDeletions(
+    livePaths: Set<string>,
+    opts?: { exists?: (filePath: string) => boolean },
+  ): string[] {
+    const exists = opts?.exists ?? existsSync;
+    const rows = this.stmts.allFilePaths.all() as { id: string; file_path: string }[];
+    const removed: string[] = [];
+    const drop = this.db.transaction((ids: string[]) => {
+      for (const id of ids) {
+        this.stmts.deleteTailById.run(id);
+        this.stmts.deleteById.run(id);
+      }
+    });
+    for (const row of rows) {
+      if (livePaths.has(row.file_path)) continue;
+      // Not in the scan snapshot. If the file is gone from disk, it's a genuine
+      // deletion — remove it. If it still exists, this is a scan/discovery gap
+      // (the CRITICAL #2 race for live files); leave it for the next reconcile.
+      if (exists(row.file_path)) continue;
+      removed.push(row.id);
+    }
+    if (removed.length > 0) {
+      drop(removed);
+      if (this.fileIndexLoaded) {
+        for (const id of removed) {
+          for (const [fp, cid] of this.fileIndex) {
+            if (cid === id) {
+              this.fileIndex.delete(fp);
+              break;
+            }
+          }
+        }
+      }
+    }
+    return removed;
   }
 }

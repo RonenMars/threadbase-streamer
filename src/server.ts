@@ -38,10 +38,12 @@ import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { createWsRoutes } from "./api/routes/ws.routes";
 import type { ApiDeps } from "./api/types/api-deps";
 import {
+  generateApiKey,
   loadBrowseRoot,
   loadCacheDir,
   loadPublicUrl,
   loadTailSize,
+  setApiKey,
   validatePublicUrl,
 } from "./auth";
 import {
@@ -57,12 +59,17 @@ import { ConversationsRepository } from "./db/repositories/conversations.reposit
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
-import { handleListProjectChats } from "./handlers/handleListProjectChats";
+import { handleListProjects } from "./handlers/handleListProjects";
+import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
 import { discoverClaudeProcesses } from "./process-discovery";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, isProviderResumable } from "./providers";
-import { PTYManager } from "./pty-manager";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  isProviderName,
+  isProviderResumable,
+} from "./providers";
 import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
@@ -96,6 +103,9 @@ const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
   `You are working within the project boundary: ${browseRoot}. ` +
   `Do not read, write, or execute commands that access files or directories outside this boundary.`;
 
+const DEFAULT_SYSTEM_PROMPT =
+  "When presenting options or choices to the user, limit the options to at most 3.";
+
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
 // Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
@@ -108,7 +118,7 @@ export function parseIncludeAgentsEnv(raw: string | undefined): boolean {
 
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
-  private ptyManager: PTYManager;
+  private ptyManager: LiveSessionManager;
   private sessionStore: SessionStore;
   private wsHub: WSHub;
   private fileWatcher: ConversationWatcher;
@@ -124,9 +134,17 @@ export class StreamerServer {
   // /input { keys }. Cleared when the gate closes.
   private pendingPermission = new Map<
     string,
-    { prompt?: string; options: PermissionOption[]; cursor?: number }
+    { prompt?: string; detail?: string; options: PermissionOption[]; cursor?: number }
   >();
   private scanner: ConversationScanner | null = null;
+  // Set when better-sqlite3 is unusable (e.g. node ABI mismatch made
+  // ConversationCache.open throw). All scanners are then built with
+  // persistent: false so requests serve from disk instead of 500ing on
+  // every touch of the scanner's own SQLite index.
+  private scannerPersistenceDisabled = false;
+  // Tracks every ConversationScanner ever created so close() can shut them all
+  // down and release SQLite handles (open handles block temp-dir deletion on Windows).
+  private allScanners = new Set<ConversationScanner>();
   private scannerReady: Promise<unknown> | null = null;
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
   // a single rescan after the current one completes instead of restarting it.
@@ -136,8 +154,18 @@ export class StreamerServer {
   // window so the self-healing kickstart-relaunch race doesn't spam warn.
   private binding = false;
   private cacheReady = false;
+  // Every fire-and-forget task that runs a scan and then writes to this.cache
+  // in an async continuation (startup warm-up, background count refresh, …).
+  // close() awaits all of them before closing this.cache, so a scan's post-scan
+  // cache writes (upsertFromScannerMeta / populateTailFromFile / pruneGhostFiles
+  // / reconcileDeletions) can never hit a cache.db that was already closed
+  // ("database connection is not open"), which would otherwise leave the cache
+  // empty. Register via trackCacheWrite(); each entry removes itself on settle.
+  private inFlightCacheWrites = new Set<Promise<unknown>>();
   private apiKey: string;
+  private apiKeySource: "config" | "cli";
   private localNoAuth: boolean;
+  private logMenubarRequests: boolean;
   private verbose: boolean;
   private scanProfiles:
     | Array<{ id: string; label: string; configDir: string; enabled: boolean; emoji: string }>
@@ -149,7 +177,10 @@ export class StreamerServer {
   private publicUrl: string | null = null;
   private pairTokens = new PairTokenStore();
   private exchangeAttempts = new Map<string, number[]>();
+  private sessionStartAttempts = new Map<string, number[]>();
+  private sessionInputAttempts = new Map<string, number[]>();
   private ptyGracePeriodMs: number;
+  private defaultSystemPrompt: string;
   // Map of sessionId → grace timer; fires to kill PTY after WS disconnect
   private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Map of sessionId → set of subscribed WS clients
@@ -187,12 +218,21 @@ export class StreamerServer {
   constructor(config: ServerConfig & { apiKey: string }) {
     this.sessionStatusBus.setMaxListeners(0);
     this.apiKey = config.apiKey;
+    this.apiKeySource = config.apiKeySource ?? "config";
     this.localNoAuth = config.localNoAuth ?? false;
+    this.logMenubarRequests = config.logMenubarRequests ?? false;
+    if (this.localNoAuth) {
+      console.warn(
+        "[WARN] localNoAuth is ENABLED — all requests from localhost bypass authentication. " +
+          "Do not run with --local-no-auth in shared or production environments.",
+      );
+    }
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
     this.scanProfiles = config.scanProfiles;
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
+    this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
     this.directoryDebounceMs =
@@ -285,10 +325,18 @@ export class StreamerServer {
       },
       onConversationChanged: (filePath) => {
         // A new JSONL appeared (or changed) in a watched project directory.
+        // If we hold a per-file tail for it, re-drive the tail read from here
+        // too: per-file fs.watch handles can die silently (2026-07-01 incident
+        // — tails went permanently quiet while directory events kept flowing),
+        // and the directory watcher is the survivor that can heal them.
+        this.fileWatcher.poke(filePath);
         // Invalidate only the affected file's cache row immediately (cheap
         // single-row delete; wiping the whole cache on every event would
         // prevent the warm-up from persisting while active sessions write).
-        this.cache?.invalidateByFilePath(filePath);
+        // skipIfTailed: this same append also drives the live-tail watcher's
+        // updateFromLines upsert; the two fire with no ordering guarantee, so
+        // never delete a row a live tail just wrote (CRITICAL #2).
+        this.cache?.invalidateByFilePath(filePath, { skipIfTailed: true });
         // Debounce the global scanner-staleness flip so a burst of directory
         // events during active sessions collapses into one rescan trigger
         // after a quiet period. The debounced callback still checks
@@ -311,7 +359,7 @@ export class StreamerServer {
       },
     });
 
-    this.ptyManager = new PTYManager({
+    this.ptyManager = new LiveSessionManager({
       logger: getLogger("pty"),
       onOutput: (sessionId, data) => {
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
@@ -419,9 +467,15 @@ export class StreamerServer {
     }
     const agentClient = this.agentClient;
 
+    const self = this;
     const apiDeps: ApiDeps = {
-      apiKey: this.apiKey,
+      // ponytail: getter so rotateApiKey() takes effect without restarting the server
+      get apiKey() {
+        return self.apiKey;
+      },
       localNoAuth: this.localNoAuth,
+      logMenubarRequests: this.logMenubarRequests,
+      rotateApiKey: () => this.rotateApiKey(),
       publicUrl: this.publicUrl,
       browseRoot: this.browseRoot,
       ptyManager: this.ptyManager,
@@ -453,8 +507,8 @@ export class StreamerServer {
       handleGetConversation: (id, url, res, ifNoneMatch) =>
         this.handleGetConversation(id, url, res, ifNoneMatch),
       handleSearch: (url, res) => this.handleSearch(url, res),
+      handleListProjects: (url, res) => handleListProjects(url, res),
       handleGetPopularProjects: (url, res) => this.handleGetPopularProjects(url, res),
-      handleListProjectChats: (url, res) => this.handleListProjectChats(url, res),
       handlePairStart: (res) => this.handlePairStart(res),
       handlePairExchange: (req, res) => this.handlePairExchange(req, res),
       handleBrowse: (url, res) => this.handleBrowse(url, res),
@@ -712,23 +766,46 @@ export class StreamerServer {
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
-          // Watch ~/.claude/projects so new JSONL files created after startup
-          // (e.g. resumed sessions, new conversations from other devices) are
-          // discovered: onConversationChanged will invalidate the scanner and
-          // cache so the next search/list picks them up without a restart.
-          const projectsDir = join(homedir(), ".claude", "projects");
-          this.fileWatcher.watchDirectory(projectsDir);
+          // Watch the active profile dirs (or ~/.claude/projects as fallback) so
+          // new JSONL files created after startup are discovered and the scanner
+          // and cache are invalidated without a restart.
+          if (this.scanProfiles && this.scanProfiles.length > 0) {
+            for (const profile of this.scanProfiles) {
+              if (profile.enabled) {
+                this.fileWatcher.watchDirectory(join(profile.configDir, "projects"));
+              }
+            }
+          } else {
+            this.fileWatcher.watchDirectory(join(homedir(), ".claude", "projects"));
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          this.log.warn(`ConversationCache failed to open (running without cache): ${message}`, {
-            error: message,
-            event: "cache.open_failed",
-          });
+          // Loud, not swallowed: without the cache every /api/conversations*
+          // request falls back to slower disk-only scans. The most common
+          // cause is a better-sqlite3 ABI mismatch (node_modules built against
+          // a different Node) — name the fix so it isn't rediscovered from a
+          // bare failure. The serve preflight (check-sqlite-abi.ts) catches
+          // the ABI case before we ever get here; this covers a cache that
+          // dies for any other reason mid-run.
+          const abiMismatch =
+            message.includes("NODE_MODULE_VERSION") ||
+            message.includes("was compiled against a different Node.js version");
+          this.log.error(
+            `ConversationCache failed to open — running WITHOUT cache; ` +
+              `/api/conversations, /api/conversations/count and /project-chats serve from disk (degraded).` +
+              (abiMismatch ? ` Fix: npm rebuild better-sqlite3` : "") +
+              ` (${message})`,
+            { error: message, abiMismatch, event: "cache.open_failed" },
+          );
+          // The scanner's persistent index uses the same better-sqlite3 module;
+          // fall back to in-memory scans so requests keep working from disk.
+          this.scannerPersistenceDisabled = true;
         }
         // Use a dedicated scanner for warm-up, independent of this.scanner, so
         // that onConversationChanged invalidations during the scan cannot cause
         // getScanner() to restart indefinitely and leave the warm-up stuck.
-        const warmupScanner = new ConversationScanner();
+        const warmupScanner = this.newScanner();
+        this.allScanners.add(warmupScanner);
         const warmupStatCache = this.buildStatCache(null);
         // Throttle the per-file onProgress firings to ~one frame per whole
         // percent (plus the final tick) so a large scan doesn't flood every
@@ -749,6 +826,16 @@ export class StreamerServer {
             },
           })
           .then(async () => {
+            // Adopt the warm-up scan as the live scanner so the first real
+            // request reuses it instead of paying for a second full scan.
+            // Success path only — adopting a scanner whose scan rejected would
+            // pair a broken engine with a resolved scannerReady, making every
+            // later request throw instantly. Guard: only adopt if nothing else
+            // already owns the slot.
+            if (!this.scannerReady && !this.scanner) {
+              this.scanner = warmupScanner;
+              this.scannerReady = Promise.resolve();
+            }
             if (!this.cache) return;
             const metas = [...warmupScanner.getMetadataCache().values()] as any[];
             // upsertFromScannerMeta returns IDs of rows actually upserted
@@ -822,24 +909,14 @@ export class StreamerServer {
             });
           })
           .finally(() => {
-            // Adopt the warm-up scan as the live scanner so the first real
-            // request reuses it instead of paying for a second full scan.
-            // Guard: only adopt if nothing else already owns the slot — a
-            // request-path getScanner() that built its own scanner during
-            // warm-up, or an onConversationChanged that nulled both fields.
-            // If invalidation fires after we adopt, the next request rescans
-            // (pre-existing fallback); the per-request refreshFile path
-            // reconciles single-file drift.
-            if (!this.scannerReady && !this.scanner) {
-              this.scanner = warmupScanner;
-              this.scannerReady = Promise.resolve();
-            }
             this.cacheReady = true;
             this.wsHub.broadcast({ type: "cache_ready" });
             resolveWarm();
           });
       }
     });
+    // Track the warm-up's scan→cache-write chain so close() can await it.
+    this.trackCacheWrite(warmUp);
     if (opts?.awaitReady) await warmUp;
   }
 
@@ -895,10 +972,38 @@ export class StreamerServer {
     }
   }
 
+  // Register a fire-and-forget task that writes to this.cache after a scan, so
+  // close() can await it before closing cache.db. Removes itself on settle. The
+  // caller keeps its own error handling; this wrapper swallows rejections so a
+  // failed task never rejects close()'s Promise.all.
+  private trackCacheWrite(task: Promise<unknown>): void {
+    const guarded = task.catch(() => undefined);
+    this.inFlightCacheWrites.add(guarded);
+    void guarded.finally(() => {
+      this.inFlightCacheWrites.delete(guarded);
+    });
+  }
+
   async close(): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
     this.markScannerStaleDebounced.cancel();
+    // Wait for every fire-and-forget scan→cache-write task to finish before
+    // tearing anything down. Their post-scan steps write to this.cache
+    // (upsert / populateTail / pruneGhostFiles); closing cache.db under them
+    // throws "database connection is not open" and leaves the cache empty
+    // (deterministic once Stage 4's dir-mtime gate widened the scan window).
+    // Snapshot the set — entries remove themselves as they settle.
+    await Promise.all([...this.inFlightCacheWrites]);
+    // Close all scanner SQLite connections before the cache so file handles are
+    // released on Windows (open handles block temp-dir deletion in tests).
+    // scanner.close() is async (scanner >=0.9.2): it awaits any in-flight scan
+    // before releasing the DB handle, so a fire-and-forget refresh scan can't be
+    // shut mid-indexAll(). Await all so handles are torn down only after scans
+    // settle.
+    await Promise.all([...this.allScanners].map((s) => s.close()));
+    this.allScanners.clear();
+    this.scanner = null;
     this.cache?.close();
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
@@ -1011,18 +1116,60 @@ export class StreamerServer {
     });
   }
 
-  private checkExchangeRateLimit(ip: string): boolean {
+  private rotateApiKey(): { newKey: string; persisted: boolean } {
+    const oldKey = this.apiKey;
+    const newKey = generateApiKey();
+    // Only persist to server.yaml when the key came from there.
+    // If --api-key was passed on the CLI, the flag wins on restart and
+    // would silently revert to the old key — so skip the write and let
+    // the caller know via the response.
+    const persisted = this.apiKeySource === "config";
+    if (persisted) setApiKey(newKey);
+    this.apiKey = newKey;
+    this.log.info("API key rotated", {
+      event: "auth.api_key_rotated",
+      oldKeyMasked: `${oldKey.slice(0, 6)}…`,
+      newKeyMasked: `${newKey.slice(0, 6)}…`,
+      persisted,
+    });
+    return { newKey, persisted };
+  }
+
+  private checkRateLimit(
+    map: Map<string, number[]>,
+    key: string,
+    limit: number,
+    windowMs: number,
+  ): boolean {
     const now = Date.now();
-    const windowMs = 60_000;
-    const limit = 5;
-    const arr = (this.exchangeAttempts.get(ip) ?? []).filter((t) => now - t < windowMs);
+    const arr = (map.get(key) ?? []).filter((t) => now - t < windowMs);
     if (arr.length >= limit) {
-      this.exchangeAttempts.set(ip, arr);
+      map.set(key, arr);
       return false;
     }
     arr.push(now);
-    this.exchangeAttempts.set(ip, arr);
+    map.set(key, arr);
+    // TTL-evict the entry once the window expires so the map doesn't grow unbounded.
+    setTimeout(() => {
+      const remaining = (map.get(key) ?? []).filter((t) => Date.now() - t < windowMs);
+      if (remaining.length === 0) map.delete(key);
+      else map.set(key, remaining);
+    }, windowMs);
     return true;
+  }
+
+  private checkExchangeRateLimit(ip: string): boolean {
+    return this.checkRateLimit(this.exchangeAttempts, ip, 5, 60_000);
+  }
+
+  private checkSessionStartRateLimit(ip: string): boolean {
+    // 10 new sessions per minute per client IP
+    return this.checkRateLimit(this.sessionStartAttempts, ip, 10, 60_000);
+  }
+
+  private checkSessionInputRateLimit(sessionId: string): boolean {
+    // 500 keystrokes per minute per session
+    return this.checkRateLimit(this.sessionInputAttempts, sessionId, 500, 60_000);
   }
 
   private async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
@@ -1033,13 +1180,33 @@ export class StreamerServer {
     const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
-    if (bustCache) {
-      this.cache?.invalidate();
-      this.scanner = null;
-      this.scannerReady = null;
+    // refresh=1 is a RECONCILE, not a wipe. The old path did
+    // cache.invalidate() (deletes every row, including live-tailed ones) +
+    // scanner=null (discards the warm scanner and forces a cold cache
+    // rebuild). Instead: run one fresh full-glob scan (fullRescan bypasses the
+    // scanner's dir-mtime gate — an explicit user refresh is the "check for
+    // real" signal), then reconcile the cache from disk truth: upsert what
+    // exists (newest-wins, so a concurrent live line still takes precedence),
+    // and drop only the rows whose files no longer exist. Live-tailed rows are
+    // never blanket-deleted, so an active conversation can't flicker out.
+    if (bustCache && this.cache) {
+      const scanner = await this.rescanForRefresh();
+      const metas = [...scanner.getMetadataCache().values()];
+      try {
+        this.cache.upsertFromScannerMeta(metas as any[]);
+        const livePaths = new Set(
+          metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
+        );
+        this.cache.reconcileDeletions(livePaths);
+      } catch (err) {
+        this.log.warn(
+          `refresh reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+          { event: "conversations.reconcile_failed" },
+        );
+      }
     }
 
-    if (this.cache && !bustCache) {
+    if (this.cache) {
       const { conversations, total } = this.cache.listConversations({
         project,
         provider: providerFilter,
@@ -1112,14 +1279,6 @@ export class StreamerServer {
       };
     });
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
-
-    if (this.cache && bustCache) {
-      try {
-        this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
-      } catch {
-        // Best-effort; response already sent
-      }
-    }
   }
 
   private async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
@@ -1158,19 +1317,22 @@ export class StreamerServer {
   // later count reflects new/removed conversations. Never awaited by the request
   // path — refresh=1 returns the cached total synchronously and this catches up.
   private refreshCountInBackground(): void {
-    void (async () => {
-      try {
-        const scanner = await this.getFreshScanner();
-        if (this.cache) {
-          this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+    // Tracked so close() awaits this scan→cache-write before closing cache.db.
+    this.trackCacheWrite(
+      (async () => {
+        try {
+          const scanner = await this.getFreshScanner();
+          if (this.cache) {
+            this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+          }
+        } catch (err) {
+          this.log.warn(
+            `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+            { event: "count.refresh_failed" },
+          );
         }
-      } catch (err) {
-        this.log.warn(
-          `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-          { event: "count.refresh_failed" },
-        );
-      }
-    })();
+      })(),
+    );
   }
 
   private handleSessionsCount(res: ServerResponse): void {
@@ -1215,29 +1377,6 @@ export class StreamerServer {
     json(res, 200, { projects, total: projects.length });
   }
 
-  private async handleListProjectChats(url: URL, res: ServerResponse): Promise<void> {
-    if (
-      !this.cache ||
-      !this.projectsRepo ||
-      !this.conversationsRepo ||
-      !this.sessionsRepo ||
-      !this.cacheMetadataRepo
-    ) {
-      json(res, 503, { error: "Cache not available" });
-      return;
-    }
-
-    await handleListProjectChats(url, res, {
-      cache: this.cache,
-      projectsRepo: this.projectsRepo,
-      conversationsRepo: this.conversationsRepo,
-      sessionsRepo: this.sessionsRepo,
-      cacheMetadataRepo: this.cacheMetadataRepo,
-      getSessionResponses: () => this.sessionStore.list(this.ptyAttachedIds()),
-      getFreshScanner: () => this.getFreshScanner(),
-    });
-  }
-
   private buildStatCache(
     previousScanner: ConversationScanner | null,
   ): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> | undefined {
@@ -1273,6 +1412,12 @@ export class StreamerServer {
   // this — its per-file refreshFile (in findConversationByUuid) already
   // reconciles the one conversation being requested, so paying a full-tree
   // rescan just because some OTHER file changed is the stall this avoids.
+  private newScanner(): ConversationScanner {
+    return new ConversationScanner(
+      this.scannerPersistenceDisabled ? { persistent: false } : undefined,
+    );
+  }
+
   private async getScanner(skipStaleRescan = false): Promise<ConversationScanner> {
     if (this.scannerReady) {
       await this.scannerReady;
@@ -1294,13 +1439,22 @@ export class StreamerServer {
     }
     this.scannerStale = false;
     const statCache = this.buildStatCache(this.scanner);
-    this.scanner = new ConversationScanner();
+    this.scanner = this.newScanner();
+    this.allScanners.add(this.scanner);
     this.scannerReady = this.scanner.scan({
       ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
       ...this.codexScanOpts(),
       ...(statCache ? { statCache } : {}),
     });
-    await this.scannerReady;
+    try {
+      await this.scannerReady;
+    } catch (err) {
+      // Don't memoize the rejection — a stored rejected promise would make
+      // every future request replay this error instantly instead of retrying.
+      this.scanner = null;
+      this.scannerReady = null;
+      throw err;
+    }
     // Capture before returning — onConversationChanged could null this.scanner
     // in the microtask between the await and the return.
     const scanner = this.scanner;
@@ -1312,6 +1466,34 @@ export class StreamerServer {
     this.scanner = null;
     this.scannerReady = null;
     return this.getScanner();
+  }
+
+  // refresh=1's scan: reuse the WARM persistent scanner (its index.db + cursors
+  // survive, so classify() still skips unchanged files) and re-run its scan
+  // with fullRescan:true — the escape hatch that bypasses the scanner's
+  // dir-mtime discovery gate, since an explicit user pull-to-refresh is exactly
+  // the "don't trust the gate, check disk for real" signal. Unlike
+  // getFreshScanner() this does NOT discard the warm scanner. scannerReady is
+  // only ever reassigned to a live scan promise (never nulled mid-scan), so the
+  // getScanner() anti-infinite-loop guard is preserved.
+  private async rescanForRefresh(): Promise<ConversationScanner> {
+    // Let any in-flight scan finish first so we don't run two scans on the same
+    // index concurrently.
+    if (this.scannerReady) await this.scannerReady;
+    // A full rescan supersedes any pending staleness.
+    this.scannerStale = false;
+    if (!this.scanner) {
+      this.scanner = new ConversationScanner();
+      this.allScanners.add(this.scanner);
+    }
+    const scanner = this.scanner;
+    this.scannerReady = scanner.scan({
+      ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
+      ...this.codexScanOpts(),
+      fullRescan: true,
+    });
+    await this.scannerReady;
+    return scanner;
   }
 
   private findJsonlPath(uuid: string): string | null {
@@ -1370,7 +1552,7 @@ export class StreamerServer {
       const filePath = this.findJsonlPath(uuid);
       if (filePath) {
         const account = this.cache?.getMetaById(uuid)?.account ?? undefined;
-        const coldScanner = this.scanner ?? new ConversationScanner();
+        const coldScanner = this.scanner ?? this.newScanner();
         const page = await coldScanner.parseSingleFilePage(filePath, account, {
           limit: Number.MAX_SAFE_INTEGER,
         });
@@ -1810,7 +1992,15 @@ export class StreamerServer {
       return;
     }
 
+    // Same provider-resolution fallback as the conversation-detail path
+    // (server.ts ~1685): `conv` (the full Conversation shape) doesn't carry
+    // provider, so fall back to the cached metadata, then default to Claude.
+    const cachedConvMeta = this.cache?.getMetaById(sessionId);
+    const provider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER =
+      (conv as any)?.provider ?? cachedConvMeta?.provider ?? CLAUDE_CODE_PROVIDER;
+
     const session = await this.ptyManager.start(sessionId, {
+      provider,
       projectPath,
       projectName: body.projectName,
       branch: body.branch,
@@ -1888,6 +2078,10 @@ export class StreamerServer {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    if (!this.checkSessionInputRateLimit(sessionId)) {
+      json(res, 429, { error: "Too many input requests for this session. Please slow down." });
+      return;
+    }
     if (this.agentConfig.enabled) {
       const body = await readBody(req);
       const cache = this.cache;
@@ -1999,7 +2193,12 @@ export class StreamerServer {
   // sending the chosen option index via /input { keys } (e.g. "2\r").
   private handlePermissionChange(
     sessionId: string,
-    gate: { prompt?: string; options: PermissionOption[]; cursor?: number } | null,
+    gate: {
+      prompt?: string;
+      detail?: string;
+      options: PermissionOption[];
+      cursor?: number;
+    } | null,
   ): void {
     if (gate === null) {
       if (!this.pendingPermission.has(sessionId)) return;
@@ -2012,6 +2211,7 @@ export class StreamerServer {
       type: "permission",
       sessionId,
       ...(gate.prompt ? { prompt: gate.prompt } : {}),
+      ...(gate.detail ? { detail: gate.detail } : {}),
       options: gate.options,
       ...(gate.cursor !== undefined ? { cursor: gate.cursor } : {}),
     });
@@ -2228,6 +2428,13 @@ export class StreamerServer {
   }
 
   private async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const ip = req.socket?.remoteAddress ?? "unknown";
+    if (!this.checkSessionStartRateLimit(ip)) {
+      json(res, 429, {
+        error: "Too many session start requests. Please wait before trying again.",
+      });
+      return;
+    }
     if (this.agentConfig.enabled) {
       const body = await readBody(req);
       const result = await handleStartAgentSession(body, {
@@ -2243,6 +2450,15 @@ export class StreamerServer {
       }
       return;
     }
+    const body = await readBody(req);
+    const { path: relativePath, provider: requestedProvider, systemPrompt: clientPrompt } = body;
+
+    if (requestedProvider !== undefined && !isProviderName(requestedProvider)) {
+      json(res, 400, { error: "Invalid provider" });
+      return;
+    }
+    const provider = requestedProvider ?? CLAUDE_CODE_PROVIDER;
+
     if (!this.browseRoot) {
       json(res, 403, {
         error: "File browsing not configured. Set browseRoot on the server.",
@@ -2250,8 +2466,6 @@ export class StreamerServer {
       });
       return;
     }
-    const body = await readBody(req);
-    const { path: relativePath } = body;
 
     if (typeof relativePath !== "string") {
       json(res, 400, { error: "Missing path field" });
@@ -2269,11 +2483,18 @@ export class StreamerServer {
 
     this.discoveryCache = null;
 
+    const systemPromptParts = [
+      this.defaultSystemPrompt,
+      BROWSE_SYSTEM_PROMPT(this.browseRoot),
+      typeof clientPrompt === "string" ? clientPrompt : null,
+    ].filter(Boolean);
+
     try {
       const session = await this.ptyManager.startFresh({
+        provider,
         projectPath: resolvedPath,
         projectName: body.projectName,
-        systemPrompt: BROWSE_SYSTEM_PROMPT(this.browseRoot),
+        systemPrompt: systemPromptParts.join("\n"),
       });
 
       this.sessionStore.addManaged(session);
@@ -2281,17 +2502,26 @@ export class StreamerServer {
       // Return the real UUID immediately — no pending_ dance needed.
       json(res, 202, { id: session.id, status: "pending" });
 
-      // Wire up JSONL watching once Claude creates the conversation file.
-      this.watchForJsonl(session.id, resolvedPath);
+      if (provider === CODEX_CLI_PROVIDER) {
+        // Wire up rollout-file binding once Codex creates its persisted session.
+        this.watchForCodexRollout(session.id, resolvedPath);
+      } else {
+        // Wire up JSONL watching once Claude creates the conversation file.
+        this.watchForJsonl(session.id, resolvedPath);
+      }
 
       this.broadcastOrUnicastSessionList(req);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start session";
+      const statusCode =
+        typeof (err as Error & { statusCode?: unknown }).statusCode === "number"
+          ? (err as Error & { statusCode: number }).statusCode
+          : 500;
       this.log.error(`[start] failed to start session: ${message}`, {
         event: "session.start_failed",
         error: message,
       });
-      json(res, 500, { error: message });
+      json(res, statusCode, { error: message });
     }
   }
 
@@ -2440,6 +2670,168 @@ export class StreamerServer {
       watcher.on("error", cleanup);
     } catch {
       // fs.watch not available (e.g. in tests), ignore
+    }
+  }
+
+  // Codex-equivalent of watchForJsonl(). Differs because Codex has no
+  // filename-encoded session id (it assigns its own persisted id) and its
+  // rollout files live under a date-nested directory
+  // (~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl) that Codex creates
+  // itself — it may not exist yet when this function is first called, so we
+  // poll rather than fs.watch a not-yet-existent directory. Per Phase 0
+  // findings, the rollout file appears within ~1s of process spawn (after
+  // any directory-trust gate is cleared), well before any user input.
+  private watchForCodexRollout(sessionId: string, projectPath: string): void {
+    const deadline = Date.now() + 120_000;
+    const now = new Date();
+    const dateDir = join(
+      String(now.getFullYear()),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    );
+
+    // When this placeholder session started. Used to reject a stale same-cwd
+    // rollout that Codex wrote before this session launched — the cwd match
+    // alone can't tell a fresh rollout from a seconds-old one. 5s of slack
+    // absorbs clock skew between our clock and Codex's session_meta timestamp.
+    const sessionStartedAtMs =
+      (this.sessionStore.getManaged(sessionId)?.startedAt?.getTime() ?? Date.now()) - 5_000;
+
+    let intervalHandle: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (intervalHandle) clearInterval(intervalHandle);
+      intervalHandle = null;
+    };
+
+    // Read a candidate file's session_meta first line; accept only if its cwd
+    // matches this session's projectPath and it was created at/after this
+    // session started. Guards against picking up an unrelated concurrent Codex
+    // session's rollout, or a stale same-cwd rollout from an earlier run, in
+    // the same date-nested directory. Returns { id, createdAtMs } or null.
+    const matchesProjectPath = (
+      candidatePath: string,
+    ): { id: string; createdAtMs: number } | null => {
+      try {
+        const firstLine = readFileSync(candidatePath, "utf8").split("\n", 1)[0];
+        if (!firstLine) return null;
+        const parsed = JSON.parse(firstLine);
+        if (parsed?.type !== "session_meta") return null;
+        const payload = parsed.payload ?? {};
+        if (payload.cwd !== projectPath) return null;
+        if (typeof payload.id !== "string") return null;
+        // payload.timestamp is Codex's session-creation time; fall back to the
+        // outer envelope timestamp if absent.
+        const createdIso = payload.timestamp ?? parsed.timestamp;
+        const createdAtMs = typeof createdIso === "string" ? Date.parse(createdIso) : Number.NaN;
+        if (Number.isNaN(createdAtMs) || createdAtMs < sessionStartedAtMs) return null;
+        return { id: payload.id, createdAtMs };
+      } catch {
+        return null;
+      }
+    };
+
+    const tryWire = () => {
+      if (!this.ptyManager.hasSession(sessionId)) {
+        cleanup();
+        return;
+      }
+      if (Date.now() > deadline) {
+        cleanup();
+        return;
+      }
+
+      // Codex ids already bound to another live placeholder — never bind two
+      // placeholders to the same rollout (e.g. two Codex sessions started in
+      // the same project inside the mtime window).
+      const boundElsewhere = new Set(
+        this.sessionStore
+          .listManaged()
+          .filter((s) => s.id !== sessionId && s.boundConversationId != null)
+          .map((s) => s.boundConversationId as string),
+      );
+
+      for (const root of this.codexRoots) {
+        const sessionsDir = join(root, dateDir);
+        if (!existsSync(sessionsDir)) continue;
+
+        let candidateFiles: string[];
+        try {
+          candidateFiles = readdirSync(sessionsDir).filter((f) => f.endsWith(".jsonl"));
+        } catch {
+          continue;
+        }
+
+        const nowMs = Date.now();
+        const recentCandidates = candidateFiles
+          .map((f) => ({ f, mtime: statSync(join(sessionsDir, f)).mtimeMs }))
+          .filter(({ mtime }) => nowMs - mtime < 10_000)
+          .sort((a, b) => b.mtime - a.mtime);
+
+        for (const { f } of recentCandidates) {
+          const candidatePath = join(sessionsDir, f);
+          const match = matchesProjectPath(candidatePath);
+          if (!match) continue;
+          if (boundElsewhere.has(match.id)) continue;
+          const codexSessionId = match.id;
+
+          cleanup();
+          this.sessionStore.updateManaged(sessionId, { boundConversationId: codexSessionId });
+
+          // Wire the bound rollout into the live update path: tail it for
+          // structured events and replay anything already written before the
+          // watcher attached (mirrors watchForJsonl()). Without this the bound
+          // Codex JSONL is never live-streamed to clients.
+          this.sessionFileMap.set(sessionId, candidatePath);
+          this.fileWatcher.watch(candidatePath);
+          try {
+            const existing = readFileSync(candidatePath, "utf8").split("\n").filter(Boolean);
+            if (existing.length > 0) {
+              this.wsHub.broadcast({ type: "conversation_events", sessionId, lines: existing });
+              for (const line of existing) {
+                this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+              }
+            }
+          } catch {
+            /* ignore — file may not be readable yet; watcher will catch future writes */
+          }
+
+          if (this.scannerReady) {
+            this.scannerStale = true;
+          } else {
+            this.scanner = null;
+          }
+          this.linkSessionToProject(sessionId, projectPath, candidatePath);
+          this.cache?.markAsStreamer(sessionId);
+
+          // Push the binding to subscribers now — the async discovery means the
+          // session_update at start time carried no boundConversationId.
+          const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+          if (resp) {
+            this.wsHub.broadcast({ type: "session_update", session: resp });
+          }
+
+          this.log.info(
+            `[startFresh] bound Codex rollout for ${sessionId}`,
+            {
+              event: "session.codex_rollout_bound",
+              sessionId,
+              boundConversationId: codexSessionId,
+              filePath: candidatePath,
+            },
+            "pino",
+          );
+          return;
+        }
+      }
+    };
+
+    tryWire();
+    if (!intervalHandle && Date.now() <= deadline) {
+      // Only keep polling if tryWire() didn't already find + cleanup() the match.
+      const alreadyBound = this.sessionStore.getManaged(sessionId)?.boundConversationId != null;
+      if (!alreadyBound) {
+        intervalHandle = setInterval(tryWire, 250);
+      }
     }
   }
 

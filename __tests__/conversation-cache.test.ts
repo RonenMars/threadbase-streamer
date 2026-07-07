@@ -176,6 +176,177 @@ describe("upsertFromScannerMeta()", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Regression tests for two CRITICAL cache bugs found in the 2026-07-04 review.
+// Both encode the intended contract, not the present (buggy) behavior.
+// See CODE-REVIEW-2026-07-04.md #1 and #2.
+// ---------------------------------------------------------------------------
+
+describe("CRITICAL #1 — rescan must still update metadata after a conversation goes live", () => {
+  // Bug: upsertFromScannerMeta writes updated_at:0 (conversation-cache.ts:656),
+  // while the upsert is guarded by `WHERE conversation_meta.updated_at <
+  // excluded.updated_at` (:290). Live tailing stamps updated_at with a
+  // Date.now()-seeded tailSeq (:178), so once ANY live line has landed, every
+  // later scanner upsert (0 < huge) loses the guard and silently no-ops — the
+  // scanner's authoritative fields (title/model/branch/message_count/mtime/size)
+  // freeze for the process lifetime.
+  //
+  // The existing "does not overwrite a row updated within 24h" test masks this:
+  // it only asserts messageCount, which the LIVE update already bumped, so it
+  // passes whether or not the scanner rewrite lands. This test instead asserts
+  // on fields ONLY the scanner rewrite can change.
+  it("applies a later scanner rescan (new title/model/branch) after a live line", () => {
+    // 1. Initial scanner index.
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, title: "Old Title", model: "old-model", gitBranch: "main" } as any,
+    ]);
+
+    // 2. A live line arrives (as ConversationWatcher.onNewLines → updateFromLines
+    //    would deliver it). This stamps updated_at with the huge tailSeq value.
+    cache.updateFromLine(
+      BASE_META.filePath,
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    );
+
+    // 3. A later full rescan re-derives the conversation with corrected
+    //    metadata (e.g. the branch changed mid-conversation, the model was
+    //    resolved, the title was derived). This is exactly what warm-up,
+    //    ?refresh=1, and the background count rescan all call.
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, title: "New Title", model: "new-model", gitBranch: "feature/x" } as any,
+    ]);
+
+    // The rescan's values must win — a conversation going live must not freeze
+    // its scanner-owned metadata forever.
+    const meta = cache.getMetaById("abc-123");
+    expect(meta?.title).toBe("New Title");
+    expect(meta?.model).toBe("new-model");
+    expect(meta?.branch).toBe("feature/x");
+  });
+});
+
+describe("CRITICAL #2 — a directory-watch invalidate must not delete a freshly live-tailed row", () => {
+  // Bug: every managed session's JSONL is watched TWICE — individually
+  // (onNewLines → updateFromLines, an upsert) and via the project-directory
+  // watcher (onConversationChanged → invalidateByFilePath, which deletes the
+  // conversation_meta + conversation_tail rows, conversation-cache.ts:902-919).
+  // chokidar fires BOTH on the same append with no ordering guarantee. When the
+  // invalidate lands last, the just-cached row is deleted right after being
+  // written, so the conversation vanishes from /api/conversations and Recents
+  // until the ~1s debounced rescan repairs it — a flicker on nearly every
+  // message of an active session.
+  //
+  // This test reproduces the exact "invalidate wins the race" interleaving that
+  // the two watcher callbacks in server.ts (258-330) can produce, operating on
+  // the ConversationCache unit both callbacks mutate. It is expected to FAIL:
+  // after the sequence, the live row should still be present and correct.
+  it("keeps the row after: scanner upsert → live append → directory-change invalidate", () => {
+    // 1. Scanner has indexed the conversation.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.hasConversation("abc-123")).toBe(true);
+
+    // 2. A live line is appended and tailed (onNewLines path).
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    ]);
+    expect(cache.hasConversation("abc-123")).toBe(true);
+
+    // 3. The SAME fs append also reaches the directory watcher, whose handler
+    //    (onConversationChanged) calls invalidateByFilePath with skipIfTailed
+    //    — and here it lands AFTER the tail write (the unspecified-order race
+    //    resolving the "bad" way).
+    cache.invalidateByFilePath(BASE_META.filePath, { skipIfTailed: true });
+
+    // The conversation must survive a live append. Deleting it on every message
+    // (to be re-created only by a later debounced rescan) is the bug.
+    expect(cache.hasConversation("abc-123")).toBe(true);
+    expect(cache.getMetaById("abc-123")?.messageCount).toBe(3);
+  });
+});
+
+describe("reconcileDeletions() — refresh=1's remove-what-vanished half", () => {
+  const OTHER_META = {
+    ...BASE_META,
+    id: "gone-456",
+    sessionId: "gone-456",
+    filePath: "/home/.claude/projects/proj/gone-456.jsonl",
+  };
+
+  it("drops rows whose file was deleted from disk, keeps the rest", () => {
+    cache.upsertFromScannerMeta([BASE_META as any, OTHER_META as any]);
+    expect(cache.hasConversation("abc-123")).toBe(true);
+    expect(cache.hasConversation("gone-456")).toBe(true);
+
+    // A fresh scan only surfaces BASE_META's file; gone-456's JSONL was deleted
+    // from disk. reconcileDeletions must drop the stale row.
+    const exists = (fp: string) => fp === BASE_META.filePath; // gone-456 gone
+    const removed = cache.reconcileDeletions(new Set([BASE_META.filePath]), { exists });
+
+    expect(removed).toEqual(["gone-456"]);
+    expect(cache.hasConversation("abc-123")).toBe(true);
+    expect(cache.hasConversation("gone-456")).toBe(false);
+  });
+
+  it("removes a deleted-from-disk row even if it still has a cached tail", () => {
+    // A conversation that went live (has a tail) but whose file was then deleted
+    // must still disappear on refresh — refresh=1 has to be truthful about
+    // removals. This matches the old invalidate()+rebuild behavior, where a
+    // deleted file simply wasn't re-added regardless of any cached tail.
+    cache.upsertFromScannerMeta([OTHER_META as any]);
+    cache.updateFromLines(OTHER_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "was live, now deleted" }],
+      }),
+    ]);
+    expect(cache.getConversationTail("gone-456")).not.toBeNull();
+
+    const removed = cache.reconcileDeletions(new Set(), { exists: () => false });
+
+    expect(removed).toContain("gone-456");
+    expect(cache.hasConversation("gone-456")).toBe(false);
+  });
+
+  // Regression mirroring CRITICAL #2 for the Stage 3 reconcile path: a
+  // refresh=1 computes livePaths from a scan SNAPSHOT, then upserts +
+  // reconcileDeletions. If a brand-new live session's file is created AFTER that
+  // snapshot but BEFORE reconcileDeletions runs, its path is absent from
+  // livePaths. Because the file still EXISTS on disk, it must not be removed —
+  // dropping it would flicker the just-created (live-tailed) conversation out of
+  // /api/conversations. The next reconcile (fresh scan) includes it in livePaths.
+  it("does not delete a still-on-disk row missing from the scan snapshot", () => {
+    // Scan snapshot only knew about BASE_META.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+
+    // Concurrently, a new live session starts: its row is upserted and tailed.
+    cache.upsertFromScannerMeta([OTHER_META as any]);
+    cache.updateFromLines(OTHER_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message on a brand-new session" }],
+      }),
+    ]);
+
+    // Reconcile with the stale snapshot (no gone-456), but gone-456's file
+    // exists on disk (it's a live session mid-write).
+    const exists = (fp: string) => fp === BASE_META.filePath || fp === OTHER_META.filePath;
+    const removed = cache.reconcileDeletions(new Set([BASE_META.filePath]), { exists });
+
+    expect(removed).not.toContain("gone-456");
+    expect(cache.hasConversation("gone-456")).toBe(true);
+  });
+});
+
 describe("updateFromLine()", () => {
   beforeEach(() => {
     cache.upsertFromScannerMeta([BASE_META as any]);
@@ -682,6 +853,42 @@ describe("invalidateByFilePath()", () => {
     const removed = cache.invalidateByFilePath("/p/match-1.jsonl");
     expect(removed).toBe("match-1");
     expect(cache.hasConversation("match-1")).toBe(false);
+  });
+
+  it("removes a TAIL'D row on the unlink path (default, no skipIfTailed)", () => {
+    // onFileDeleted → invalidateByFilePath with no opts: a genuinely deleted
+    // JSONL must be removed even if it had a cached tail, or it ghosts in
+    // /api/conversations. The skipIfTailed guard is for the change path only.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    ]);
+    expect(cache.getConversationTail("abc-123")).not.toBeNull(); // has a tail
+
+    const removed = cache.invalidateByFilePath(BASE_META.filePath);
+    expect(removed).toBe("abc-123");
+    expect(cache.hasConversation("abc-123")).toBe(false);
+  });
+
+  it("keeps a TAIL'D row on the change path (skipIfTailed: true)", () => {
+    // onConversationChanged → invalidateByFilePath({ skipIfTailed: true }): a
+    // row a live tail just wrote must survive the directory-change event.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "live message" }],
+      }),
+    ]);
+
+    const removed = cache.invalidateByFilePath(BASE_META.filePath, { skipIfTailed: true });
+    expect(removed).toBeNull();
+    expect(cache.hasConversation("abc-123")).toBe(true);
   });
 });
 

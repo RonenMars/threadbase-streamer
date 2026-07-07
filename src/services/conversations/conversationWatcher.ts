@@ -96,6 +96,20 @@ export class ConversationWatcher {
   }
 
   /**
+   * Re-drive the tail read for a file that's already being tailed. A per-file
+   * chokidar handle can die silently (fs.watch stops firing after inode churn)
+   * while the coarser directory watcher keeps reporting changes — calling this
+   * from the directory-event path makes the tail self-healing. Reads are
+   * offset-based and coalesced, so a redundant poke after a normal change
+   * event is a cheap stat + no-op. Returns false for untailed paths.
+   */
+  poke(filePath: string): boolean {
+    if (!this.files.has(filePath)) return false;
+    void this.readNewLines(filePath);
+    return true;
+  }
+
+  /**
    * Watch a directory of conversation JSONL files. Fires
    * onConversationChanged for any add/change/unlink event so the caller
    * can mark the cache dirty without scanning everything immediately.

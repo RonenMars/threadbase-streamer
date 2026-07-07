@@ -1,8 +1,18 @@
 import { ConversationScanner } from "@threadbase-sh/scanner";
-import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
+import WebSocket from "ws";
+import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
 import { PTYManager } from "../src/pty-manager";
 import { StreamerServer } from "../src/server";
@@ -217,6 +227,462 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("POST /api/sessions/start provider", () => {
+    let browseRoot: string;
+    let previousBrowseRootEnv: string | undefined;
+
+    beforeEach(async () => {
+      await server.close();
+      browseRoot = mkdtempSync(join(tmpdir(), "threadbase-browse-test-"));
+      mkdirSync(join(browseRoot, "project"));
+      previousBrowseRootEnv = process.env.THREADBASE_BROWSE_ROOT;
+      process.env.THREADBASE_BROWSE_ROOT = browseRoot;
+      server = new StreamerServer({
+        port,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir,
+        browseRoot,
+        scanProfiles: FIXTURE_PROFILES,
+      });
+      await server.listen(port);
+    });
+
+    afterEach(() => {
+      if (previousBrowseRootEnv === undefined) {
+        delete process.env.THREADBASE_BROWSE_ROOT;
+      } else {
+        process.env.THREADBASE_BROWSE_ROOT = previousBrowseRootEnv;
+      }
+      rmSync(browseRoot, { recursive: true, force: true });
+    });
+
+    it("defaults missing provider to claude-code", async () => {
+      const sessionId = "039fd3ce-ad78-4980-b441-1cfa05edaec7";
+      const startFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh").mockResolvedValueOnce({
+        id: sessionId,
+        provider: "claude-code",
+        projectPath: join(browseRoot, "project"),
+        projectName: "project",
+        branch: "",
+        status: "running",
+        startedAt: new Date(),
+        completedAt: null,
+        promptCount: 0,
+        lastOutput: "",
+      });
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project" }),
+      });
+
+      expect(res.status).toBe(202);
+      expect(startFreshSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "claude-code",
+          projectPath: realpathSync(join(browseRoot, "project")),
+        }),
+      );
+
+      startFreshSpy.mockRestore();
+    });
+
+    it("rejects invalid providers before starting a PTY", async () => {
+      const startFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh");
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project", provider: "other-cli" }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe("Invalid provider");
+      expect(startFreshSpy).not.toHaveBeenCalled();
+
+      startFreshSpy.mockRestore();
+    });
+
+    it("starts a codex-cli live session via the Codex runner", async () => {
+      const sessionId = "049fd3ce-ad78-4980-b441-1cfa05edaec8";
+      const claudeStartFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh");
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: sessionId,
+          provider: "codex-cli",
+          projectPath: join(browseRoot, "project"),
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+
+      expect(res.status).toBe(202);
+      const body = await res.json();
+      expect(body.id).toBe(sessionId);
+      expect(codexStartFreshSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "codex-cli",
+          projectPath: realpathSync(join(browseRoot, "project")),
+        }),
+      );
+      expect(claudeStartFreshSpy).not.toHaveBeenCalled();
+
+      claudeStartFreshSpy.mockRestore();
+      codexStartFreshSpy.mockRestore();
+    });
+  });
+
+  describe("Codex rollout-file binding", () => {
+    let browseRoot: string;
+    let codexRoot: string;
+    let boundServer: StreamerServer;
+    let boundPort: number;
+    let boundBaseUrl: string;
+    let previousBrowseRootEnv: string | undefined;
+
+    beforeEach(async () => {
+      boundPort = await getRandomPort();
+      boundBaseUrl = `http://localhost:${boundPort}`;
+      browseRoot = mkdtempSync(join(tmpdir(), "threadbase-browse-test-"));
+      mkdirSync(join(browseRoot, "project"));
+      codexRoot = mkdtempSync(join(tmpdir(), "threadbase-codex-root-"));
+      previousBrowseRootEnv = process.env.THREADBASE_BROWSE_ROOT;
+      process.env.THREADBASE_BROWSE_ROOT = browseRoot;
+      boundServer = new StreamerServer({
+        port: boundPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-server-test-")),
+        browseRoot,
+        scanProfiles: FIXTURE_PROFILES,
+        codexRoots: [codexRoot],
+      });
+      await boundServer.listen(boundPort);
+    });
+
+    afterEach(async () => {
+      await boundServer.close();
+      if (previousBrowseRootEnv === undefined) {
+        delete process.env.THREADBASE_BROWSE_ROOT;
+      } else {
+        process.env.THREADBASE_BROWSE_ROOT = previousBrowseRootEnv;
+      }
+      rmSync(browseRoot, { recursive: true, force: true });
+      rmSync(codexRoot, { recursive: true, force: true });
+    });
+
+    function writeRolloutFixture(codexSessionId: string, cwd: string, createdAt?: Date): void {
+      const now = new Date();
+      // The rollout lives in today's date-nested dir (that's what the poller
+      // scans), but its session_meta timestamp can be back-dated to simulate a
+      // stale same-cwd rollout from an earlier run.
+      const created = createdAt ?? now;
+      const dateDir = join(
+        codexRoot,
+        String(now.getFullYear()),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      );
+      mkdirSync(dateDir, { recursive: true });
+      const sessionMeta = {
+        timestamp: created.toISOString(),
+        type: "session_meta",
+        payload: {
+          id: codexSessionId,
+          session_id: codexSessionId,
+          cwd,
+          timestamp: created.toISOString(),
+        },
+      };
+      writeFileSync(
+        join(dateDir, `rollout-2026-01-01T00-00-00-${codexSessionId}.jsonl`),
+        `${JSON.stringify(sessionMeta)}\n`,
+      );
+    }
+
+    it("binds a matching-cwd rollout file to boundConversationId, leaving id/conversationId unchanged", async () => {
+      const liveSessionId = "059fd3ce-ad78-4980-b441-1cfa05edaec9";
+      const codexSessionId = "codex-persisted-id-abc123";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: liveSessionId,
+          provider: "codex-cli",
+          projectPath,
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+
+      writeRolloutFixture(codexSessionId, projectPath);
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(202);
+
+      // watchForCodexRollout's first synchronous tryWire() call already runs
+      // inline before handleStartSession returns, so no poll wait is needed
+      // for this fixture (file exists before start is called).
+      const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const detail = await detailRes.json();
+
+      expect(detail.id).toBe(liveSessionId);
+      expect(detail.conversationId).toBe(liveSessionId);
+      expect(detail.boundConversationId).toBe(codexSessionId);
+
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it("ignores a rollout file whose cwd does not match the session's projectPath", async () => {
+      const liveSessionId = "069fd3ce-ad78-4980-b441-1cfa05edaeca";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: liveSessionId,
+          provider: "codex-cli",
+          projectPath,
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+
+      writeRolloutFixture("unrelated-session-id", "/some/other/unrelated/path");
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(202);
+
+      const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const detail = await detailRes.json();
+
+      expect(detail.boundConversationId).toBeUndefined();
+
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it("ignores a stale same-cwd rollout created before the session started", async () => {
+      const liveSessionId = "079fd3ce-ad78-4980-b441-1cfa05edaecb";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: liveSessionId,
+          provider: "codex-cli",
+          projectPath,
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+
+      // Same cwd, but written a full minute before this session started.
+      writeRolloutFixture("stale-codex-id", projectPath, new Date(Date.now() - 60_000));
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(202);
+
+      const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const detail = await detailRes.json();
+
+      expect(detail.boundConversationId).toBeUndefined();
+
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it("does not bind a codex id already bound to another live session", async () => {
+      const liveSessionId = "089fd3ce-ad78-4980-b441-1cfa05edaecc";
+      const otherSessionId = "099fd3ce-ad78-4980-b441-1cfa05edaecd";
+      const codexSessionId = "shared-codex-id";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      // Another live session already owns this codex id.
+      (boundServer as any).sessionStore.addManaged({
+        id: otherSessionId,
+        provider: "codex-cli",
+        projectPath,
+        projectName: "project",
+        branch: "",
+        status: "running",
+        startedAt: new Date(),
+        completedAt: null,
+        promptCount: 0,
+        lastOutput: "",
+        boundConversationId: codexSessionId,
+      });
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: liveSessionId,
+          provider: "codex-cli",
+          projectPath,
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+
+      writeRolloutFixture(codexSessionId, projectPath);
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(202);
+
+      const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const detail = await detailRes.json();
+
+      expect(detail.boundConversationId).toBeUndefined();
+
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+
+    it("wires the bound rollout into the live path: replays lines and broadcasts session_update", async () => {
+      const liveSessionId = "0a9fd3ce-ad78-4980-b441-1cfa05edaece";
+      const codexSessionId = "codex-live-wire-id";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockResolvedValueOnce({
+          id: liveSessionId,
+          provider: "codex-cli",
+          projectPath,
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+
+      // Connect a WS client before starting so it receives the replay + update.
+      const events: any[] = [];
+      const ws = new WebSocket(`ws://localhost:${boundPort}/ws?key=${API_KEY}`);
+      ws.on("message", (d) => {
+        try {
+          events.push(JSON.parse(d.toString()));
+        } catch {
+          /* ignore non-JSON */
+        }
+      });
+      await new Promise<void>((r) => ws.on("open", () => r()));
+
+      writeRolloutFixture(codexSessionId, projectPath);
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(202);
+
+      // tryWire() runs synchronously during start: it replays the existing
+      // session_meta line (conversation_event) and broadcasts session_update
+      // carrying the freshly-bound conversation id.
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const gotEvent = events.some(
+          (e) => e.type === "conversation_event" && e.sessionId === liveSessionId,
+        );
+        const gotUpdate = events.some(
+          (e) => e.type === "session_update" && e.session?.boundConversationId === codexSessionId,
+        );
+        if (gotEvent && gotUpdate) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      expect(
+        events.some((e) => e.type === "conversation_event" && e.sessionId === liveSessionId),
+      ).toBe(true);
+      expect(
+        events.some(
+          (e) => e.type === "session_update" && e.session?.boundConversationId === codexSessionId,
+        ),
+      ).toBe(true);
+
+      ws.close();
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+  });
+
   describe("POST /api/sessions/:id/cancel", () => {
     it("returns 400 for nonexistent session", async () => {
       const res = await fetch(`${baseUrl}/api/sessions/nonexistent/cancel`, {
@@ -402,18 +868,40 @@ describe("StreamerServer", () => {
   });
 
   describe("CORS", () => {
-    it("returns CORS headers", async () => {
+    it("returns CORS headers for an allowed origin", async () => {
       const res = await fetch(`${baseUrl}/api/info`, {
-        headers: { Authorization: `Bearer ${API_KEY}` },
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          Origin: "http://localhost:8081",
+        },
       });
-      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
     });
 
-    it("handles OPTIONS preflight", async () => {
+    it("returns no CORS headers for a disallowed origin", async () => {
+      const res = await fetch(`${baseUrl}/api/info`, {
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          Origin: "https://evil.example.com",
+        },
+      });
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    });
+
+    it("handles OPTIONS preflight from an allowed origin", async () => {
       const res = await fetch(`${baseUrl}/api/info`, {
         method: "OPTIONS",
+        headers: { Origin: "http://localhost:8081" },
       });
       expect(res.status).toBe(204);
+    });
+
+    it("rejects OPTIONS preflight from a disallowed origin", async () => {
+      const res = await fetch(`${baseUrl}/api/info`, {
+        method: "OPTIONS",
+        headers: { Origin: "https://evil.example.com" },
+      });
+      expect(res.status).toBe(403);
     });
   });
 
@@ -851,10 +1339,13 @@ describe("StreamerServer", () => {
     let etagPort: number;
     let profileDir: string;
     let jsonlPath: string;
+    let scannerDb: string;
     const convId = "etag-session-2222";
 
     beforeEach(async () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-etag-profile-"));
+      scannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = scannerDb;
       const projDir = join(profileDir, "projects", "-tmp-etag-project");
       mkdirSync(projDir, { recursive: true });
       jsonlPath = join(projDir, `${convId}.jsonl`);
@@ -891,6 +1382,8 @@ describe("StreamerServer", () => {
 
     afterEach(async () => {
       await etagServer.close();
+      delete process.env.TB_SCANNER_DB;
+      rmSync(scannerDb, { force: true });
     });
 
     const url = () => `http://localhost:${etagPort}/api/conversations/${convId}`;
@@ -972,11 +1465,142 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("GET /api/conversations?refresh=1 reconcile (Stage 3)", () => {
+    let refreshServer: StreamerServer;
+    let refreshPort: number;
+    let profileDir: string;
+    let projDir: string;
+    let scannerDb: string;
+    const auth = { Authorization: `Bearer ${API_KEY}` };
+
+    const convLine = (convId: string, ts: string, text: string) =>
+      `${JSON.stringify({
+        type: "user",
+        uuid: `u-${convId}-${ts}`,
+        timestamp: ts,
+        sessionId: convId,
+        slug: convId,
+        cwd: "/tmp/refresh-project",
+        message: { role: "user", content: [{ type: "text", text }] },
+      })}\n`;
+
+    const writeConv = (convId: string, text: string) =>
+      writeFileSync(
+        join(projDir, `${convId}.jsonl`),
+        convLine(convId, "2026-06-05T08:00:00.000Z", text),
+      );
+
+    const listConversations = async () => {
+      const res = await fetch(`http://localhost:${refreshPort}/api/conversations?refresh=1`, {
+        headers: auth,
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        conversations: Array<{ id: string; preview?: string; messageCount: number }>;
+      };
+    };
+
+    beforeEach(async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-refresh-profile-"));
+      scannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = scannerDb;
+      projDir = join(profileDir, "projects", "-tmp-refresh-project");
+      mkdirSync(projDir, { recursive: true });
+      writeConv("refresh-a", "alpha");
+      writeConv("refresh-b", "beta");
+
+      refreshPort = await getRandomPort();
+      refreshServer = new StreamerServer({
+        port: refreshPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-refresh-cache-")),
+        scanProfiles: [
+          { id: "refresh", label: "Refresh", configDir: profileDir, enabled: true, emoji: "🔄" },
+        ],
+        // Disable Codex scanning so the test doesn't pick up the real
+        // ~/.codex/sessions history (the default codexRoots).
+        codexRoots: [],
+      });
+      await refreshServer.listen(refreshPort);
+    });
+
+    afterEach(async () => {
+      await refreshServer.close();
+      delete process.env.TB_SCANNER_DB;
+      rmSync(profileDir, { recursive: true, force: true });
+    });
+
+    it("passes fullRescan:true to the scanner (bypasses the dir-mtime gate) on refresh=1", async () => {
+      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan");
+      await listConversations();
+      // Some scan() ran with fullRescan:true — the explicit-refresh escape hatch.
+      const sawFullRescan = scanSpy.mock.calls.some(
+        (args) => (args[0] as { fullRescan?: boolean } | undefined)?.fullRescan === true,
+      );
+      expect(sawFullRescan).toBe(true);
+      scanSpy.mockRestore();
+    });
+
+    it("returns the full correct list on refresh=1 with nothing changed", async () => {
+      const first = await listConversations();
+      const firstIds = first.conversations.map((c) => c.id).sort();
+      expect(firstIds).toEqual(["refresh-a", "refresh-b"]);
+
+      // A second refresh with nothing changed on disk returns the identical list
+      // (unchanged files are served from the reconciled cache, not reparsed —
+      // the scanner's classify() skips them; proven in the scanner package).
+      const second = await listConversations();
+      expect(second.conversations.map((c) => c.id).sort()).toEqual(firstIds);
+    });
+
+    it("reflects an added conversation on the next refresh=1", async () => {
+      const before = await listConversations();
+      expect(before.conversations.map((c) => c.id).sort()).toEqual(["refresh-a", "refresh-b"]);
+
+      writeConv("refresh-c", "gamma");
+      const after = await listConversations();
+      expect(after.conversations.map((c) => c.id).sort()).toEqual([
+        "refresh-a",
+        "refresh-b",
+        "refresh-c",
+      ]);
+    });
+
+    it("drops a removed conversation on the next refresh=1 (reconcile, not stale cache)", async () => {
+      const before = await listConversations();
+      expect(before.conversations.map((c) => c.id).sort()).toEqual(["refresh-a", "refresh-b"]);
+
+      rmSync(join(projDir, "refresh-b.jsonl"));
+      const after = await listConversations();
+      expect(after.conversations.map((c) => c.id).sort()).toEqual(["refresh-a"]);
+    });
+
+    it("reflects a changed conversation's new content on the next refresh=1", async () => {
+      await listConversations();
+
+      // Rewrite refresh-a with different, longer content and bump its mtime.
+      writeFileSync(
+        join(projDir, "refresh-a.jsonl"),
+        convLine("refresh-a", "2026-06-06T09:00:00.000Z", "alpha rewritten with new text"),
+      );
+      const future = new Date("2026-06-06T09:00:01.000Z");
+      utimesSync(join(projDir, "refresh-a.jsonl"), future, future);
+
+      const after = await listConversations();
+      const a = after.conversations.find((c) => c.id === "refresh-a");
+      expect(a?.preview).toContain("alpha rewritten");
+    });
+  });
+
   describe("GET /api/conversations/:id resumability classification", () => {
     let availPort: number;
     let availServer: StreamerServer;
     let profileDir: string;
     let liveCwd: string;
+    let scannerDb: string;
     const auth = { Authorization: `Bearer ${API_KEY}` };
 
     const AVAILABLE = "avail-resumable-0001";
@@ -1004,6 +1628,8 @@ describe("StreamerServer", () => {
 
     beforeEach(async () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-avail-profile-"));
+      scannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = scannerDb;
       // A cwd that exists on disk (the temp dir itself) → resumable.
       liveCwd = mkdtempSync(join(tmpdir(), "threadbase-avail-live-cwd-"));
       writeConv(AVAILABLE, liveCwd);
@@ -1024,11 +1650,13 @@ describe("StreamerServer", () => {
           { id: "avail", label: "Avail", configDir: profileDir, enabled: true, emoji: "🔎" },
         ],
       });
-      await availServer.listen(availPort);
+      await availServer.listen(availPort, { awaitReady: true });
     });
 
     afterEach(async () => {
       await availServer.close();
+      delete process.env.TB_SCANNER_DB;
+      rmSync(scannerDb, { force: true });
     });
 
     const fetchMeta = async (id: string) => {
@@ -1078,11 +1706,17 @@ describe("StreamerServer", () => {
     let reusePort: number;
     let reuseServer: StreamerServer;
     let profileDir: string;
+    let isolatedScannerDb: string | null = null;
     const convId = "reuse-session-4444";
     const auth = { Authorization: `Bearer ${API_KEY}` };
 
     afterEach(async () => {
       await reuseServer?.close();
+      if (isolatedScannerDb) {
+        delete process.env.TB_SCANNER_DB;
+        rmSync(isolatedScannerDb, { force: true });
+        isolatedScannerDb = null;
+      }
       vi.restoreAllMocks();
     });
 
@@ -1265,6 +1899,8 @@ describe("StreamerServer", () => {
       // request timeout. Post-fix it serves the cached total immediately and
       // reconciles in the background — fast regardless of refresh.
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-count-refresh-profile-"));
+      isolatedScannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = isolatedScannerDb;
       const projDir = join(profileDir, "projects", "-proj-count");
       mkdirSync(projDir, { recursive: true });
       writeFileSync(
@@ -1287,6 +1923,7 @@ describe("StreamerServer", () => {
         verbose: false,
         disableDb: true,
         cacheDir: mkdtempSync(join(tmpdir(), "threadbase-count-refresh-cache-")),
+        codexRoots: [], // don't scan ~/.codex/sessions — only the one test conversation
         scanProfiles: [
           { id: "count", label: "Count", configDir: profileDir, enabled: true, emoji: "🔢" },
         ],
