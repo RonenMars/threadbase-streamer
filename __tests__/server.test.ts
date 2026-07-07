@@ -1720,6 +1720,72 @@ describe("StreamerServer", () => {
       vi.restoreAllMocks();
     });
 
+    it("uses a non-persistent scanner for startup warm-up when a persisted stat cache exists", async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-statcache-profile-"));
+      const projDir = join(profileDir, "projects", "-proj-statcache");
+      mkdirSync(projDir, { recursive: true });
+      const jsonlPath = join(projDir, `${convId}.jsonl`);
+      writeFileSync(
+        jsonlPath,
+        `${JSON.stringify({
+          type: "user",
+          uuid: "sc-u1",
+          timestamp: "2026-06-10T08:00:00.000Z",
+          sessionId: convId,
+          cwd: profileDir,
+          message: { role: "user", content: [{ type: "text", text: "hi" }] },
+        })}\n`,
+      );
+
+      const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-statcache-cache-"));
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      cache.upsertFromScannerMeta([
+        {
+          id: convId,
+          sessionId: convId,
+          filePath: jsonlPath,
+          projectPath: profileDir,
+          projectName: "statcache",
+          title: "statcache",
+          messageCount: 1,
+          timestamp: "2026-06-10T08:00:00.000Z",
+          preview: "cached preview",
+          toolNames: [],
+        },
+      ]);
+      cache.close();
+
+      const scanCalls: Array<{ persistent: boolean; hasStatCache: boolean }> = [];
+      const realScan = ConversationScanner.prototype.scan;
+      vi.spyOn(ConversationScanner.prototype, "scan").mockImplementation(async function (
+        this: ConversationScanner,
+        options: unknown,
+      ) {
+        scanCalls.push({
+          persistent: (this as unknown as { persistent: boolean }).persistent,
+          hasStatCache: !!(options as { statCache?: unknown } | undefined)?.statCache,
+        });
+        return (realScan as (...a: unknown[]) => Promise<unknown>).call(this, options);
+      } as never);
+
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir,
+        codexRoots: [],
+        scanProfiles: [
+          { id: "statcache", label: "StatCache", configDir: profileDir, enabled: true, emoji: "S" },
+        ],
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+
+      expect(scanCalls).toContainEqual({ persistent: false, hasStatCache: true });
+    });
+
     it("does not re-scan on the first request after warm-up completes", async () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-reuse-profile-"));
       const projDir = join(profileDir, "projects", "-proj-reuse");

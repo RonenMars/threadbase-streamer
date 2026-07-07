@@ -176,6 +176,8 @@ Rules:
 
 Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP server on random ports. Run the full verification before committing: `npm run lint && npm test`
 
+Use the Node version in `.nvmrc` for local verification, especially for tests or code paths that load `better-sqlite3`. Running under a newer Homebrew/global Node can pick up native modules compiled for a different `NODE_MODULE_VERSION`, causing ABI errors or failed rebuilds unrelated to the product change.
+
 ## Backward compatibility with tb-mobile
 
 `tb-mobile` is a released iOS/Android app that cannot be force-updated — a breaking server change silently breaks any user who hasn't updated. The streamer must stay backward-compatible with older mobile clients.

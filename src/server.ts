@@ -811,9 +811,10 @@ export class StreamerServer {
         // Use a dedicated scanner for warm-up, independent of this.scanner, so
         // that onConversationChanged invalidations during the scan cannot cause
         // getScanner() to restart indefinitely and leave the warm-up stuck.
-        const warmupScanner = this.newScanner();
-        this.allScanners.add(warmupScanner);
         const warmupStatCache = this.buildStatCache(null);
+        // Scanner 0.9.4 reads statCache only in non-persistent scans.
+        const warmupScanner = this.newScanner(warmupStatCache ? { persistent: false } : undefined);
+        this.allScanners.add(warmupScanner);
         // Throttle the per-file onProgress firings to ~one frame per whole
         // percent (plus the final tick) so a large scan doesn't flood every
         // WebSocket client with thousands of scan_progress messages.
@@ -1423,9 +1424,11 @@ export class StreamerServer {
   // this — its per-file refreshFile (in findConversationByUuid) already
   // reconciles the one conversation being requested, so paying a full-tree
   // rescan just because some OTHER file changed is the stall this avoids.
-  private newScanner(): ConversationScanner {
+  private newScanner(
+    options?: ConstructorParameters<typeof ConversationScanner>[0],
+  ): ConversationScanner {
     return new ConversationScanner(
-      this.scannerPersistenceDisabled ? { persistent: false } : undefined,
+      options ?? (this.scannerPersistenceDisabled ? { persistent: false } : undefined),
     );
   }
 
@@ -1450,7 +1453,8 @@ export class StreamerServer {
     }
     this.scannerStale = false;
     const statCache = this.buildStatCache(this.scanner);
-    this.scanner = this.newScanner();
+    // Scanner 0.9.4 reads statCache only in non-persistent scans.
+    this.scanner = this.newScanner(statCache ? { persistent: false } : undefined);
     this.allScanners.add(this.scanner);
     this.scannerReady = this.scanner.scan({
       ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
@@ -1479,9 +1483,8 @@ export class StreamerServer {
     return this.getScanner();
   }
 
-  // refresh=1's scan: reuse the WARM persistent scanner (its index.db + cursors
-  // survive, so classify() still skips unchanged files) and re-run its scan
-  // with fullRescan:true — the escape hatch that bypasses the scanner's
+  // refresh=1's scan: reuse the WARM scanner and re-run its scan with
+  // fullRescan:true — the escape hatch that bypasses the scanner's
   // dir-mtime discovery gate, since an explicit user pull-to-refresh is exactly
   // the "don't trust the gate, check disk for real" signal. Unlike
   // getFreshScanner() this does NOT discard the warm scanner. scannerReady is
