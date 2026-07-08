@@ -109,6 +109,11 @@ const DEFAULT_SYSTEM_PROMPT =
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
+// Session start blocks for the PTY to reach waiting_input/idle before
+// responding. Must exceed pty-manager's PROMPT_MARKER_FALLBACK_MS (10s) with
+// margin for slow boots; past this we fall back to the async 202 shape.
+const START_READY_TIMEOUT_MS = 15_000;
+
 // Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
 // runs in /api/conversations and /project-chats.
 export function parseIncludeAgentsEnv(raw: string | undefined): boolean {
@@ -2516,8 +2521,39 @@ export class StreamerServer {
 
       this.sessionStore.addManaged(session);
 
-      // Return the real UUID immediately — no pending_ dance needed.
-      json(res, 202, { id: session.id, status: "pending" });
+      // Block for the PTY to actually reach waiting_input (or fail) so the
+      // caller gets a trustworthy status instead of navigating on a guess.
+      // Races against the same fallback window pty-manager itself uses for
+      // prompt-marker detection, plus margin — if neither settles in time we
+      // fall back to the old fire-and-forget shape rather than hang the request.
+      const readyOrFailed = new Promise<"ready" | "failed">((resolve) => {
+        const handler = (status: string) => {
+          if (status === "waiting_input" || status === "idle") {
+            this.sessionStatusBus.off(`status:${session.id}`, handler);
+            resolve(status === "waiting_input" ? "ready" : "failed");
+          }
+        };
+        this.sessionStatusBus.on(`status:${session.id}`, handler);
+      });
+      const timeoutPromise = new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), START_READY_TIMEOUT_MS),
+      );
+
+      const outcome = await Promise.race([readyOrFailed, timeoutPromise]);
+      const current = this.sessionStore.get(session.id, this.ptyAttachedIds());
+
+      if (outcome === "ready" && current) {
+        json(res, 200, { session: current });
+      } else if (outcome === "failed" && current) {
+        json(res, 502, {
+          id: session.id,
+          status: "idle",
+          error: current.failureReason ?? "Session exited before becoming ready",
+        });
+      } else {
+        // Timeout, or session vanished from the store — old async contract.
+        json(res, 202, { id: session.id, status: "pending" });
+      }
 
       if (provider === CODEX_CLI_PROVIDER) {
         // Wire up rollout-file binding once Codex creates its persisted session.
