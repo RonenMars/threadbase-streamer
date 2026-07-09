@@ -187,6 +187,72 @@ describe("PTYManager — ready detection", () => {
     }
   });
 
+  it("defers \\r submit while the TUI keeps repainting (redraw race)", async () => {
+    // Regression for 2026-07 session 14dda340: a "Yes" reply landed while
+    // Claude's TUI was still mid-redraw right after posting its question. The
+    // old fixed SUBMIT_DELAY_MS timer fired \r regardless of TUI activity, so
+    // the redraw could absorb the Enter and the reply never became a
+    // submitted JSONL turn even though the session kept running. writeSubmit
+    // now polls until the PTY has been quiet for a full SUBMIT_DELAY_MS
+    // before writing \r.
+    vi.useFakeTimers();
+    try {
+      const mgr = new PTYManager();
+      const session = await spawnFresh(mgr);
+      const proc = getMockProc(mgr, session.id);
+
+      proc._emit("data", MCP_SPLASH_BOOT);
+      proc.write.mockClear();
+
+      mgr.sendInput(session.id, "Yes");
+      expect(proc.write).toHaveBeenCalledTimes(1);
+
+      // TUI is still repainting: a chunk lands just before the first poll.
+      vi.advanceTimersByTime(10);
+      proc._emit("data", "\x1b[2K\x1b[1Grepainting...");
+
+      // The original poll tick (16ms) fires now, but the PTY went quiet only
+      // 6ms ago — not yet quiet for SUBMIT_DELAY_MS, so \r must NOT submit.
+      vi.advanceTimersByTime(6);
+      expect(proc.write).toHaveBeenCalledTimes(1);
+
+      // Once the PTY has been quiet for a full SUBMIT_DELAY_MS, \r submits.
+      vi.advanceTimersByTime(16);
+      expect(proc.write).toHaveBeenCalledTimes(2);
+      expect(proc.write).toHaveBeenLastCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("submits \\r after SUBMIT_MAX_WAIT_MS even if the PTY never goes quiet", async () => {
+    // Bound on the quiescence wait: a pathologically chatty or wedged PTY
+    // must not hold a queued reply forever.
+    vi.useFakeTimers();
+    try {
+      const mgr = new PTYManager();
+      const session = await spawnFresh(mgr);
+      const proc = getMockProc(mgr, session.id);
+
+      proc._emit("data", MCP_SPLASH_BOOT);
+      proc.write.mockClear();
+
+      mgr.sendInput(session.id, "Yes");
+      expect(proc.write).toHaveBeenCalledTimes(1);
+
+      // Keep the PTY "busy" with a chunk on every poll tick, well past the
+      // SUBMIT_MAX_WAIT_MS cap — \r must still submit rather than wait forever.
+      for (let elapsed = 0; elapsed < 600; elapsed += 16) {
+        vi.advanceTimersByTime(16);
+        proc._emit("data", "still repainting...");
+      }
+      expect(proc.write).toHaveBeenCalledTimes(2);
+      expect(proc.write).toHaveBeenLastCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not re-fire markReady on subsequent matching chunks", async () => {
     const ready: ManagedSession[] = [];
     const mgr = new PTYManager({ onReady: (s) => ready.push(s) });
