@@ -4,7 +4,7 @@
 // onboarding/theme picker, workspace-trust dialog, and the "custom API key
 // detected" approval. Seeding these flags clears all three. (The fourth gate,
 // the Bypass Permissions warning, is avoided by launching with
-// `--permission-mode dontAsk` rather than `--dangerously-skip-permissions` —
+// `--permission-mode acceptEdits` rather than `--dangerously-skip-permissions` —
 // see src/pty-manager.ts.)
 //
 // Compiled by tsup to dist/seed-claude-config.cjs; docker/entrypoint.sh runs it

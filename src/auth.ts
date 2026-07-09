@@ -84,6 +84,49 @@ export function loadTailSize(): number | undefined {
   return undefined;
 }
 
+export function loadDefaultPermissionMode(): "acceptEdits" | "manual" | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/default_permission_mode:\s*(\S+)/);
+    const value = match?.[1]?.trim();
+    if (value === "acceptEdits" || value === "manual") return value;
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
+// Persists the first-run prompt's answer so subsequent `serve` invocations
+// don't ask again (loadDefaultPermissionMode() returning a value is the
+// "already configured" signal cli/index.ts checks before prompting).
+export function setDefaultPermissionMode(mode: "acceptEdits" | "manual"): void {
+  const file = configFile();
+  mkdirSync(configDir(), { recursive: true });
+
+  let content = "";
+  try {
+    content = readFileSync(file, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    // file does not exist; we'll create it
+  }
+
+  const line = `default_permission_mode: ${mode}`;
+  let updated: string;
+  if (/^default_permission_mode:\s*.+$/m.test(content)) {
+    updated = content.replace(/^default_permission_mode:\s*.+$/m, line);
+  } else if (content.length === 0 || content.endsWith("\n")) {
+    updated = `${content}${line}\n`;
+  } else {
+    updated = `${content}\n${line}\n`;
+  }
+
+  const tmpFile = `${file}.tmp`;
+  writeFileSync(tmpFile, updated, { encoding: "utf-8", mode: 0o600 });
+  chmodSync(tmpFile, 0o600);
+  renameSync(tmpFile, file);
+}
+
 export type PublicUrlValidation = { ok: true; normalized: string } | { ok: false; error: string };
 
 export function validatePublicUrl(raw: string): PublicUrlValidation {

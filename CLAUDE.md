@@ -69,6 +69,7 @@ running / waiting_input ──(grace timer / hold_session msg)──► idle  (P
 | `THREADBASE_DIR_SCAN_DEBOUNCE_MS` | Trailing debounce (ms) before a project-directory change flags the scanner stale; collapses an event storm during active sessions into one rescan. Default `1000`. |
 | `THREADBASE_CONFIG_DIR` | Overrides the config directory (default `~/.threadbase`) that `server.yaml` — including the `api_key` — is read from and written to. Mainly a test hook: it lets `setApiKey`/`loadOrCreateApiKey` target a throwaway dir so `POST /api/auth/rotate` and `set-key` never clobber the real live config. Unset in production. |
 | `MULTI_AGENT_FLOW` | Routes `POST /api/sessions/start` + `/input` to the multi-agent path instead of PTY. `AGENT_*` tuning vars: see [docs/multi-agent-mode.md](docs/multi-agent-mode.md). |
+| `THREADBASE_SKIP_PERMISSION_MODE_PROMPT` | Set to `true` to disable the `serve` first-run interactive permission-mode prompt (see below); falls straight through to `acceptEdits`. |
 
 ## Multi-agent mode
 
@@ -76,7 +77,11 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 
 ## CLI flags vs. `server.yaml`
 
-`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`) from it, but most runtime knobs come exclusively from CLI flags. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
+`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`) from it, but most runtime knobs come exclusively from CLI flags. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
+
+`--default-permission-mode <acceptEdits|manual>` (or `default_permission_mode:` in `server.yaml`) controls the Claude Code `--permission-mode` used to spawn every PTY session — `acceptEdits` (default) auto-approves file edits and still prompts for shell commands; `manual` prompts for everything. `bypassPermissions`/`plan`/`dontAsk`/`auto` are intentionally not offered — `bypassPermissions` renders a blocking "Bypass Permissions mode" TUI warning on every boot that hangs the mobile client (see `src/pty-manager.ts`).
+
+If none of the flag/env/yaml sources set a mode, `serve` shows a one-time interactive prompt (`src/lifecycle/prompt.ts`'s `interactivePermissionModePrompt`) and persists the answer to `server.yaml` via `setDefaultPermissionMode()` — but only for a human dev invocation on a real TTY (never under `--prod`/launchd, which must never block on stdin). Set `THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true` to skip it and fall through to `acceptEdits`.
 
 ## ServerConfig options (beyond CLI flags)
 

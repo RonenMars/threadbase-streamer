@@ -443,4 +443,29 @@ describe("PTYManager — spawn permission flags", () => {
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
+
+  it("startFresh honors an explicit permissionMode override", async () => {
+    const mgr = new PTYManager();
+    await mgr.startFresh({
+      projectPath: "/tmp/test",
+      projectName: "test",
+      permissionMode: "manual",
+    });
+    const args = spawnArgs();
+
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("manual");
+  });
+
+  it("resume (start) honors an explicit permissionMode override", async () => {
+    const mgr = new PTYManager();
+    await mgr.start("uuid-resume", {
+      projectPath: "/tmp/test",
+      projectName: "test",
+      branch: "main",
+      permissionMode: "manual",
+    });
+    const args = spawnArgs();
+
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("manual");
+  });
 });
