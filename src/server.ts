@@ -74,6 +74,10 @@ import {
 } from "./providers";
 import { seal } from "./seal";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
+import {
+  findSearchTarget,
+  type SearchableMessage,
+} from "./services/conversations/findSearchTarget";
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
@@ -524,6 +528,7 @@ export class StreamerServer {
       handleGetConversation: (id, url, res, ifNoneMatch) =>
         this.handleGetConversation(id, url, res, ifNoneMatch),
       handleSearch: (url, res) => this.handleSearch(url, res),
+      handleSearchTarget: (id, url, res) => this.handleSearchTarget(id, url, res),
       handleListProjects: (url, res) => handleListProjects(url, res),
       handleGetPopularProjects: (url, res) => this.handleGetPopularProjects(url, res),
       handlePairStart: (res) => this.handlePairStart(res),
@@ -1726,8 +1731,14 @@ export class StreamerServer {
     // Only the first page ("is the conversation as a whole still current?")
     // participates in the freshness check. Older pages are immutable history —
     // a back-page request (before_index set) always returns its 200 body, never
-    // a 304, even when the client echoes a matching If-None-Match.
-    const isFirstPage = !url.searchParams.has("before_index");
+    // a 304, even when the client echoes a matching If-None-Match. Anchored and
+    // after-windows also always return 200: their ETag inputs are identical to
+    // the tail page's, so honoring If-None-Match here would 304 a client that
+    // holds the tail page but is asking for a different window.
+    const isFirstPage =
+      !url.searchParams.has("before_index") &&
+      !url.searchParams.has("anchor_index") &&
+      !url.searchParams.has("after_index");
     if (isFirstPage && ifNoneMatch && ifNoneMatch === etag) {
       // This is a direct-`ServerResponse` write, so the Hono CORS middleware's
       // headers don't reach it — set the expose header here so a cross-origin
@@ -1740,7 +1751,13 @@ export class StreamerServer {
     const filtered = conversation.messages;
     const total = filtered.length;
 
-    const usePaging = url.searchParams.has("msg_limit") || url.searchParams.has("before_index");
+    const hasAnchor = url.searchParams.has("anchor_index");
+    const hasAfter = url.searchParams.has("after_index");
+    const usePaging =
+      url.searchParams.has("msg_limit") ||
+      url.searchParams.has("before_index") ||
+      hasAnchor ||
+      hasAfter;
 
     let slice = filtered;
     let fromIdx = 0;
@@ -1749,9 +1766,32 @@ export class StreamerServer {
     if (usePaging) {
       const limit = Math.min(Math.max(intParam(url, "msg_limit", 80), 1), 500);
       let beforeIndex = total;
+      let scanLimit = limit;
+      let anchorIndex: number | null = null;
+      let newerPaging = false;
       if (url.searchParams.has("before_index")) {
         beforeIndex = intParam(url, "before_index", total);
         beforeIndex = Math.min(Math.max(beforeIndex, 0), total);
+      } else if (hasAfter) {
+        // Newer-direction page: [after_index, after_index + limit). The paged
+        // reader is end-anchored, so cap its limit at the window width — a full
+        // `limit` near the tail would widen the window backward over rows the
+        // client already has (duplicate message_index rows on mobile).
+        const from = Math.min(Math.max(intParam(url, "after_index", 0), 0), total);
+        beforeIndex = Math.min(total, from + limit);
+        scanLimit = beforeIndex - from;
+        newerPaging = true;
+      } else if (hasAnchor) {
+        // Centered window around the anchor, clamped into [0, total-1] — a
+        // stale index from search must still open the conversation, never 400.
+        // Near the tail the window widens backward so it stays full-size.
+        anchorIndex = Math.min(
+          Math.max(intParam(url, "anchor_index", 0), 0),
+          Math.max(0, total - 1),
+        );
+        const from = Math.max(0, anchorIndex - Math.floor(limit / 2));
+        beforeIndex = Math.min(total, from + limit);
+        newerPaging = true;
       }
       // Only consult the scanner's paged reader when it's already warm. On the
       // cold path `conversation` came from the single-file fast path and holds
@@ -1769,19 +1809,25 @@ export class StreamerServer {
           })
         : null;
       const page =
-        pagedScanner && typeof pagedScanner.getConversationPage === "function"
-          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit })
+        scanLimit > 0 && pagedScanner && typeof pagedScanner.getConversationPage === "function"
+          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit: scanLimit })
           : null;
-      const start = page?.fromIndex ?? Math.max(0, beforeIndex - limit);
+      const start = page?.fromIndex ?? Math.max(0, beforeIndex - scanLimit);
       slice = page?.messages ?? filtered.slice(start, beforeIndex);
       fromIdx = start;
+      const effectiveTotal = page?.total ?? total;
       messagePagination = {
-        total: page?.total ?? total,
+        total: effectiveTotal,
         before_index: beforeIndex,
         from_index: start,
         has_more_older: start > 0,
         next_before_index: start > 0 ? start : null,
       };
+      if (anchorIndex != null) messagePagination.anchor_index = anchorIndex;
+      if (newerPaging) {
+        messagePagination.has_more_newer = beforeIndex < effectiveTotal;
+        messagePagination.next_after_index = beforeIndex < effectiveTotal ? beforeIndex : null;
+      }
     }
 
     const messagesPayload = slice.map((m: any, localIdx: number) => {
@@ -1863,6 +1909,43 @@ export class StreamerServer {
       "Access-Control-Expose-Headers": "ETag",
     });
     res.end(JSON.stringify(body));
+  }
+
+  // Resolves an active search query to the message a client should anchor to
+  // inside one conversation. Matching is body-only (text first, then
+  // thinking/tool payloads) — a metadata-only search hit (project path, title)
+  // has no scroll target and returns 404 search_target_not_found.
+  private async handleSearchTarget(id: string, url: URL, res: ServerResponse): Promise<void> {
+    const q = (url.searchParams.get("q") ?? "").trim();
+    if (!q) {
+      json(res, 400, { error: "Missing or empty query parameter: q", code: "invalid_query" });
+      return;
+    }
+    if (q.length > 256) {
+      json(res, 400, { error: "Query too long (max 256 characters)", code: "invalid_query" });
+      return;
+    }
+
+    const conversation = await this.findConversationByUuid(id);
+    if (!conversation) {
+      json(res, 404, { error: "Conversation not found", code: "not_found" });
+      return;
+    }
+
+    const target = findSearchTarget(conversation.messages as unknown as SearchableMessage[], q);
+    if (!target) {
+      json(res, 404, { error: "No message body matches query", code: "search_target_not_found" });
+      return;
+    }
+
+    json(res, 200, {
+      query: q,
+      message_index: target.messageIndex,
+      uuid: target.uuid,
+      snippet: target.snippet,
+      match_indexes: target.matchIndexes,
+      total_matches: target.totalMatches,
+    });
   }
 
   private async handleSearch(url: URL, res: ServerResponse): Promise<void> {

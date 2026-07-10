@@ -78,12 +78,43 @@
         "content": { "type": "array", "items": { "$ref": "#/$defs/MobileContentBlock" } }
       }
     },
+    "MobileMessagePagination": {
+      "type": "object",
+      "required": ["total", "before_index", "from_index", "has_more_older", "next_before_index"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "before_index": { "type": "integer", "minimum": 0 },
+        "from_index": { "type": "integer", "minimum": 0 },
+        "has_more_older": { "type": "boolean" },
+        "next_before_index": { "type": ["integer", "null"] },
+        "anchor_index": { "type": "integer", "minimum": 0 },
+        "has_more_newer": { "type": "boolean" },
+        "next_after_index": { "type": ["integer", "null"] }
+      }
+    },
     "MobileConversationDetail": {
       "type": "object",
       "required": ["meta", "messages"],
       "properties": {
         "meta": { "$ref": "#/$defs/MobileDetailMeta" },
-        "messages": { "type": "array", "items": { "$ref": "#/$defs/MobileMessage" } }
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/MobileMessage" } },
+        "message_pagination": { "$ref": "#/$defs/MobileMessagePagination" }
+      }
+    },
+    "MobileSearchTarget": {
+      "type": "object",
+      "required": ["query", "message_index", "snippet", "match_indexes", "total_matches"],
+      "properties": {
+        "query": { "type": "string", "minLength": 1 },
+        "message_index": { "type": "integer", "minimum": 0 },
+        "uuid": { "type": ["string", "null"] },
+        "snippet": { "type": "string" },
+        "match_indexes": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "minItems": 1
+        },
+        "total_matches": { "type": "integer", "minimum": 1 }
       }
     }
   }

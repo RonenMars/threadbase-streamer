@@ -59,6 +59,7 @@ export type ApiDeps = {
     ifNoneMatch?: string,
   ) => Promise<void>;
   handleSearch: (url: URL, res: ServerResponse) => Promise<void>;
+  handleSearchTarget: (id: string, url: URL, res: ServerResponse) => Promise<void>;
   handleListProjects: (url: URL, res: ServerResponse) => void;
   handleGetPopularProjects: (url: URL, res: ServerResponse) => void;
   handlePairStart: (res: ServerResponse) => void;

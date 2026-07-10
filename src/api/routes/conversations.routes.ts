@@ -14,6 +14,15 @@ export const createConversationRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
+  // Must be registered before the greedy "/:id{.+}" catch-all or Hono would
+  // swallow "<id>/search-target" as a conversation id.
+  app.get("/:id{.+}/search-target", async (c) => {
+    const id = c.req.param("id");
+    const url = new URL(c.req.url);
+    await deps.handleSearchTarget(id, url, c.env.outgoing);
+    return alreadyHandled();
+  });
+
   app.get("/:id{.+}", async (c) => {
     const id = c.req.param("id");
     const url = new URL(c.req.url);

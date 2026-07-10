@@ -80,6 +80,53 @@ describe("Mobile contract tests", () => {
     });
   });
 
+  describe("GET /api/conversations/:id?anchor_index", () => {
+    it("returns anchored detail with pagination matching mobile schema", async () => {
+      const list = await get(baseUrl, "/api/conversations?limit=1", headers);
+      const id = list.body.conversations[0].id;
+
+      const { status, body } = await get(
+        baseUrl,
+        `/api/conversations/${id}?msg_limit=10&anchor_index=0`,
+        headers,
+      );
+      expect(status).toBe(200);
+      validateAgainstSchema(body, "mobile", "MobileConversationDetail");
+      validateAgainstSchema(body.message_pagination, "mobile", "MobileMessagePagination");
+      expect(body.message_pagination).toHaveProperty("anchor_index");
+      expect(body.message_pagination).toHaveProperty("has_more_newer");
+      expect(body.message_pagination).toHaveProperty("next_after_index");
+    });
+  });
+
+  describe("GET /api/conversations/:id/search-target", () => {
+    it("returns SearchTarget matching mobile schema for a body match", async () => {
+      const search = await get(baseUrl, "/api/search?q=help", headers);
+      const id = search.body.conversations[0].id;
+
+      const { status, body } = await get(
+        baseUrl,
+        `/api/conversations/${id}/search-target?q=help`,
+        headers,
+      );
+      expect(status).toBe(200);
+      validateAgainstSchema(body, "mobile", "MobileSearchTarget");
+    });
+
+    it("returns 404 search_target_not_found when no message body matches", async () => {
+      const list = await get(baseUrl, "/api/conversations?limit=1", headers);
+      const id = list.body.conversations[0].id;
+
+      const { status, body } = await get(
+        baseUrl,
+        `/api/conversations/${id}/search-target?q=zz-no-such-term-zz`,
+        headers,
+      );
+      expect(status).toBe(404);
+      expect(body.code).toBe("search_target_not_found");
+    });
+  });
+
   describe("GET /api/info", () => {
     it("returns ServerInfo matching mobile schema", async () => {
       const { status, body } = await get(baseUrl, "/api/info", headers);
