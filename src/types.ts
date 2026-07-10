@@ -255,6 +255,13 @@ export interface ServerConfig {
     emoji: string;
   }>;
   codexRoots?: string[]; // paths to codex sessions dirs; empty array disables codex scanning
+  // false forces every ConversationScanner to run in-memory (persistent: false)
+  // instead of the scanner package's shared default SQLite index at
+  // ~/.config/threadbase-scanner/index.db. That index isn't scoped by
+  // scanProfiles, so multiple StreamerServer instances (e.g. test servers)
+  // see each other's — and any real serve instance's — indexed conversations.
+  // Default true (real serve usage keeps the persistent index).
+  scannerPersistent?: boolean;
   ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes)
   cacheDir?: string;
   tailSize?: number;
