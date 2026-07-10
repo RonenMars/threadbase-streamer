@@ -19,6 +19,7 @@ export type ApiDeps = {
   rotateApiKey: () => { newKey: string; persisted: boolean };
   publicUrl: string | null;
   browseRoot: string | null;
+  browserCors: string | undefined;
   ptyManager: LiveSessionManager;
   sessionStore: SessionStore;
   wsHub: WSHub;

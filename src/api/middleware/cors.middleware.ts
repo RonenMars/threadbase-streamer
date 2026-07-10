@@ -34,8 +34,13 @@ export function resolveAllowedOrigins(raw: string | undefined): Set<string> | nu
   return origins;
 }
 
-export const corsMiddleware = (): MiddlewareHandler<AppEnv> => {
-  const allowedOrigins = resolveAllowedOrigins(process.env.THREADBASE_ALLOW_BROWSER_CORS);
+// `configValue` is the resolved server.yaml `browser_cors:` setting (if any);
+// THREADBASE_ALLOW_BROWSER_CORS always takes precedence, matching the
+// env-over-yaml precedence used for browseRoot/publicUrl/etc. in server.ts.
+export const corsMiddleware = (configValue?: string): MiddlewareHandler<AppEnv> => {
+  const allowedOrigins = resolveAllowedOrigins(
+    process.env.THREADBASE_ALLOW_BROWSER_CORS ?? configValue,
+  );
 
   return async (c, next) => {
     const origin = c.req.header("origin");

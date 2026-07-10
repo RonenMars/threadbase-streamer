@@ -46,7 +46,7 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
       event: "http.request",
     });
   });
-  app.use("*", corsMiddleware());
+  app.use("*", corsMiddleware(deps.browserCors));
   app.use("*", authMiddleware(deps));
   app.onError(errorMiddleware);
 

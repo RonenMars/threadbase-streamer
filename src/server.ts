@@ -40,6 +40,7 @@ import type { ApiDeps } from "./api/types/api-deps";
 import {
   generateApiKey,
   loadBrowseRoot,
+  loadBrowserCors,
   loadCacheDir,
   loadDefaultPermissionMode,
   loadPublicUrl,
@@ -183,6 +184,7 @@ export class StreamerServer {
   private disableDb = false;
   private browseRoot: string | null = null;
   private publicUrl: string | null = null;
+  private browserCors: string | undefined;
   private pairTokens = new PairTokenStore();
   private exchangeAttempts = new Map<string, number[]>();
   private sessionStartAttempts = new Map<string, number[]>();
@@ -281,6 +283,8 @@ export class StreamerServer {
         this.log.warn(`Warning: ${result.error}`, { error: result.error });
       }
     }
+
+    this.browserCors = config.browserCors ?? loadBrowserCors();
 
     this.sessionStore = new SessionStore();
     this.wsHub = new WSHub();
@@ -490,6 +494,7 @@ export class StreamerServer {
       rotateApiKey: () => this.rotateApiKey(),
       publicUrl: this.publicUrl,
       browseRoot: this.browseRoot,
+      browserCors: this.browserCors,
       ptyManager: this.ptyManager,
       sessionStore: this.sessionStore,
       wsHub: this.wsHub,
