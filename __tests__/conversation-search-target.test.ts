@@ -113,7 +113,7 @@ describe("findSearchTarget", () => {
   });
 });
 
-describe("GET /api/conversations/:id/search-target", () => {
+describe("QUERY /api/conversations/:id/search-target", () => {
   let server: StreamerServer;
   let port: number;
   const convId = "search-target-session-4444";
@@ -165,8 +165,10 @@ describe("GET /api/conversations/:id/search-target", () => {
 
   const auth = { Authorization: `Bearer ${API_KEY}` };
   const target = (id: string, q: string) =>
-    fetch(`http://localhost:${port}/api/conversations/${id}/search-target?q=${q}`, {
-      headers: auth,
+    fetch(`http://localhost:${port}/api/conversations/${id}/search-target`, {
+      method: "QUERY",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ q }),
     });
 
   it("resolves a body match to the last matching message_index", async () => {
@@ -206,12 +208,55 @@ describe("GET /api/conversations/:id/search-target", () => {
     expect(body.code).toBe("not_found");
   });
 
-  it("returns 400 invalid_query for a missing, blank, or overlong q", async () => {
-    for (const q of ["", "%20%20", "x".repeat(300)]) {
+  it("returns 422 invalid_query for a missing, blank, or overlong q", async () => {
+    for (const q of ["", "   ", "x".repeat(300)]) {
       const res = await target(convId, q);
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(422);
       const body = (await res.json()) as Record<string, unknown>;
       expect(body.code).toBe("invalid_query");
     }
+  });
+
+  it("advertises the supported query media type via Accept-Query", async () => {
+    const res = await target(convId, "wombat");
+    expect(res.headers.get("accept-query")).toBe("application/json");
+  });
+
+  it("returns 415 for an unsupported Content-Type", async () => {
+    const res = await fetch(`http://localhost:${port}/api/conversations/${convId}/search-target`, {
+      method: "QUERY",
+      headers: { ...auth, "Content-Type": "text/plain" },
+      body: "q=wombat",
+    });
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("unsupported_media_type");
+  });
+
+  it("returns 422 for a malformed JSON body", async () => {
+    const res = await fetch(`http://localhost:${port}/api/conversations/${convId}/search-target`, {
+      method: "QUERY",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: "{not json",
+    });
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("invalid_query");
+  });
+
+  it("does not respond to the old GET ?q= form (method no longer accepted)", async () => {
+    const res = await fetch(
+      `http://localhost:${port}/api/conversations/${convId}/search-target?q=wombat`,
+      { headers: auth },
+    );
+    // No QUERY route is registered for GET, so this now falls through to the
+    // greedy "/:id{.+}" conversation-detail route, which treats the whole
+    // "<convId>/search-target" segment as the id — an id that doesn't exist —
+    // and 404s as not_found. Proves the endpoint is QUERY-only: the old GET
+    // ?q= form is no longer silently answered by the resolver.
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("not_found");
+    expect(body).not.toHaveProperty("message_index");
   });
 });

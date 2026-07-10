@@ -528,7 +528,7 @@ export class StreamerServer {
       handleGetConversation: (id, url, res, ifNoneMatch) =>
         this.handleGetConversation(id, url, res, ifNoneMatch),
       handleSearch: (url, res) => this.handleSearch(url, res),
-      handleSearchTarget: (id, url, res) => this.handleSearchTarget(id, url, res),
+      handleSearchTarget: (id, req, res) => this.handleSearchTarget(id, req, res),
       handleListProjects: (url, res) => handleListProjects(url, res),
       handleGetPopularProjects: (url, res) => this.handleGetPopularProjects(url, res),
       handlePairStart: (res) => this.handlePairStart(res),
@@ -1915,14 +1915,46 @@ export class StreamerServer {
   // inside one conversation. Matching is body-only (text first, then
   // thinking/tool payloads) — a metadata-only search hit (project path, title)
   // has no scroll target and returns 404 search_target_not_found.
-  private async handleSearchTarget(id: string, url: URL, res: ServerResponse): Promise<void> {
-    const q = (url.searchParams.get("q") ?? "").trim();
+  //
+  // Implements HTTP QUERY (RFC 10008): the search query travels in a JSON
+  // request body instead of a URL query param — QUERY is safe + idempotent +
+  // cacheable like GET, but (like POST) can carry a body, which fits this
+  // endpoint's single-string input exactly. `Accept-Query` advertises the
+  // supported request media type per the spec.
+  private async handleSearchTarget(
+    id: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const contentType = (req.headers["content-type"] ?? "").split(";")[0].trim();
+    if (contentType && contentType !== "application/json") {
+      res.setHeader("Accept-Query", "application/json");
+      json(res, 415, {
+        error: "Unsupported Content-Type; expected application/json",
+        code: "unsupported_media_type",
+      });
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = await readBody(req);
+    } catch {
+      res.setHeader("Accept-Query", "application/json");
+      json(res, 422, { error: "Malformed JSON body", code: "invalid_query" });
+      return;
+    }
+
+    const q =
+      typeof (body as { q?: unknown })?.q === "string" ? (body as { q: string }).q.trim() : "";
     if (!q) {
-      json(res, 400, { error: "Missing or empty query parameter: q", code: "invalid_query" });
+      res.setHeader("Accept-Query", "application/json");
+      json(res, 422, { error: "Missing or empty query field: q", code: "invalid_query" });
       return;
     }
     if (q.length > 256) {
-      json(res, 400, { error: "Query too long (max 256 characters)", code: "invalid_query" });
+      res.setHeader("Accept-Query", "application/json");
+      json(res, 422, { error: "Query too long (max 256 characters)", code: "invalid_query" });
       return;
     }
 
@@ -1938,6 +1970,7 @@ export class StreamerServer {
       return;
     }
 
+    res.setHeader("Accept-Query", "application/json");
     json(res, 200, {
       query: q,
       message_index: target.messageIndex,

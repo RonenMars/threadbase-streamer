@@ -108,3 +108,18 @@ export async function post(
   });
   return { status: res.status, body: await res.json() };
 }
+
+// HTTP QUERY (RFC 10008) — safe/idempotent/cacheable like GET, JSON body like POST.
+export async function query(
+  baseUrl: string,
+  path: string,
+  data: unknown,
+  headers: Record<string, string>,
+) {
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: "QUERY",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return { status: res.status, body: await res.json() };
+}

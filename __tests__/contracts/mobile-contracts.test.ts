@@ -1,6 +1,6 @@
 import { join } from "path";
 import type { StreamerServer } from "../../src/server";
-import { createTestServer, FIXTURES_DIR, get, validateAgainstSchema } from "./test-helpers";
+import { createTestServer, FIXTURES_DIR, get, query, validateAgainstSchema } from "./test-helpers";
 
 const FIXTURE_DIR = join(FIXTURES_DIR, "contract-projects");
 
@@ -99,14 +99,15 @@ describe("Mobile contract tests", () => {
     });
   });
 
-  describe("GET /api/conversations/:id/search-target", () => {
+  describe("QUERY /api/conversations/:id/search-target", () => {
     it("returns SearchTarget matching mobile schema for a body match", async () => {
       const search = await get(baseUrl, "/api/search?q=help", headers);
       const id = search.body.conversations[0].id;
 
-      const { status, body } = await get(
+      const { status, body } = await query(
         baseUrl,
-        `/api/conversations/${id}/search-target?q=help`,
+        `/api/conversations/${id}/search-target`,
+        { q: "help" },
         headers,
       );
       expect(status).toBe(200);
@@ -117,9 +118,10 @@ describe("Mobile contract tests", () => {
       const list = await get(baseUrl, "/api/conversations?limit=1", headers);
       const id = list.body.conversations[0].id;
 
-      const { status, body } = await get(
+      const { status, body } = await query(
         baseUrl,
-        `/api/conversations/${id}/search-target?q=zz-no-such-term-zz`,
+        `/api/conversations/${id}/search-target`,
+        { q: "zz-no-such-term-zz" },
         headers,
       );
       expect(status).toBe(404);

@@ -54,18 +54,18 @@ export const corsMiddleware = (configValue?: string): MiddlewareHandler<AppEnv> 
       const raw = c.env.outgoing;
       raw.setHeader("Access-Control-Allow-Origin", allowedOrigin);
       raw.setHeader("Vary", "Origin");
-      raw.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+      raw.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, QUERY, OPTIONS");
       raw.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match");
-      raw.setHeader("Access-Control-Expose-Headers", "ETag");
+      raw.setHeader("Access-Control-Expose-Headers", "ETag, Accept-Query");
 
       c.res.headers.set("Access-Control-Allow-Origin", allowedOrigin);
       c.res.headers.set("Vary", "Origin");
-      c.res.headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+      c.res.headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, QUERY, OPTIONS");
       c.res.headers.set(
         "Access-Control-Allow-Headers",
         "Authorization, Content-Type, If-None-Match",
       );
-      c.res.headers.set("Access-Control-Expose-Headers", "ETag");
+      c.res.headers.set("Access-Control-Expose-Headers", "ETag, Accept-Query");
     }
 
     if (c.req.method === "OPTIONS") {

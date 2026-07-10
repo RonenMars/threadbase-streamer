@@ -14,12 +14,14 @@ export const createConversationRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
-  // Must be registered before the greedy "/:id{.+}" catch-all or Hono would
-  // swallow "<id>/search-target" as a conversation id.
-  app.get("/:id{.+}/search-target", async (c) => {
+  // QUERY (RFC 10008): safe + idempotent + cacheable like GET, but the query
+  // travels in a JSON body instead of ?q= — this endpoint's input is a single
+  // search string, exactly what QUERY was designed to carry. Must be
+  // registered before the greedy "/:id{.+}" catch-all or Hono would swallow
+  // "<id>/search-target" as a conversation id.
+  app.on("QUERY", "/:id{.+}/search-target", async (c) => {
     const id = c.req.param("id");
-    const url = new URL(c.req.url);
-    await deps.handleSearchTarget(id, url, c.env.outgoing);
+    await deps.handleSearchTarget(id, c.env.incoming, c.env.outgoing);
     return alreadyHandled();
   });
 
