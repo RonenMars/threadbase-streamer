@@ -267,6 +267,7 @@ export interface ServerConfig {
   tailSize?: number;
   directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)
   defaultSystemPrompt?: string; // prepended to every PTY session's --system-prompt; overrides the built-in default
+  defaultPermissionMode?: "acceptEdits" | "manual"; // Claude Code --permission-mode for spawned PTY sessions (default "acceptEdits")
 }
 
 // ─── PTY Manager ───────────────────────────────────────────────────
@@ -301,12 +302,14 @@ export interface StartSessionOptions {
   projectPath: string;
   projectName?: string;
   branch?: string;
+  permissionMode?: "acceptEdits" | "manual";
 }
 
 export interface StartFreshSessionOptions {
   projectPath: string;
   projectName?: string;
   systemPrompt?: string;
+  permissionMode?: "acceptEdits" | "manual";
 }
 
 // ─── Session Runner ────────────────────────────────────────────────

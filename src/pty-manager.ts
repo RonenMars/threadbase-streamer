@@ -223,16 +223,19 @@ export class PTYManager implements SessionRunner {
 
   // Resume an existing Claude conversation. sessionId is the JSONL UUID.
   //
-  // We use `--permission-mode acceptEdits` rather than `--dangerously-skip-permissions`.
-  // Both suppress file-edit prompts, but in an interactive (TUI) launch the
-  // skip-permissions flag renders a blocking "Bypass Permissions mode" warning
-  // menu on every boot that no known ~/.claude.json flag suppressed (as of
-  // Claude CLI v2.1.x) — the session never reaches a usable prompt, so the
-  // mobile app shows an empty/stuck screen. `acceptEdits` auto-approves file edits
+  // options.permissionMode defaults to `acceptEdits` rather than
+  // `--dangerously-skip-permissions`/`bypassPermissions`. Both suppress
+  // file-edit prompts, but in an interactive (TUI) launch the skip-permissions
+  // flag renders a blocking "Bypass Permissions mode" warning menu on every
+  // boot that no known ~/.claude.json flag suppressed (as of Claude CLI
+  // v2.1.x) — the session never reaches a usable prompt, so the mobile app
+  // shows an empty/stuck screen. `acceptEdits` auto-approves file edits
   // without that warning gate, while still prompting for shell commands.
+  // `manual` (prompt for everything) is the only other mode callers may pass;
+  // `bypassPermissions`/`plan`/`dontAsk`/`auto` are not supported here.
   // (The other first-run gates — onboarding/theme, workspace trust,
   // custom-API-key — are cleared by the seeded ~/.claude.json in
-  // docker/entrypoint.sh.) startFresh() uses the same flag for the same reason.
+  // docker/entrypoint.sh.) startFresh() uses the same default for the same reason.
   async start(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
     // Guard the check-then-spawn: a second concurrent resume for the same
     // sessionId (double-tap, client retry — server.ts's own hasSession check
@@ -261,7 +264,7 @@ export class PTYManager implements SessionRunner {
       resolveClaudeExe(),
       [
         "--permission-mode",
-        "acceptEdits",
+        options.permissionMode ?? "acceptEdits",
         "--settings",
         '{"spinnerTipsEnabled":false}',
         "--resume",
@@ -320,12 +323,12 @@ export class PTYManager implements SessionRunner {
     const sessionId = randomUUID();
     const projectName = options.projectName ?? basename(options.projectPath);
 
-    // `--permission-mode acceptEdits` for the same reason as start() above — do not
-    // swap back to --dangerously-skip-permissions (TUI warning gate). Guarded by
+    // `--permission-mode` defaults to acceptEdits for the same reason as start()
+    // above — do not allow bypassPermissions (TUI warning gate). Guarded by
     // __tests__/pty-ready-detection.test.ts.
     const args = [
       "--permission-mode",
-      "acceptEdits",
+      options.permissionMode ?? "acceptEdits",
       "--settings",
       '{"spinnerTipsEnabled":false}',
       "--session-id",

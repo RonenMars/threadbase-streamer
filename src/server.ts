@@ -41,6 +41,7 @@ import {
   generateApiKey,
   loadBrowseRoot,
   loadCacheDir,
+  loadDefaultPermissionMode,
   loadPublicUrl,
   loadTailSize,
   setApiKey,
@@ -183,6 +184,7 @@ export class StreamerServer {
   private sessionInputAttempts = new Map<string, number[]>();
   private ptyGracePeriodMs: number;
   private defaultSystemPrompt: string;
+  private defaultPermissionMode: "acceptEdits" | "manual";
   // Map of sessionId → grace timer; fires to kill PTY after WS disconnect
   private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Map of sessionId → set of subscribed WS clients
@@ -236,6 +238,8 @@ export class StreamerServer {
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.defaultPermissionMode =
+      config.defaultPermissionMode ?? loadDefaultPermissionMode() ?? "acceptEdits";
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
     this.directoryDebounceMs =
@@ -2007,6 +2011,7 @@ export class StreamerServer {
       projectPath,
       projectName: body.projectName,
       branch: body.branch,
+      permissionMode: this.defaultPermissionMode,
     });
 
     this.sessionStore.addManaged(session);
@@ -2417,6 +2422,7 @@ export class StreamerServer {
       projectPath,
       projectName,
       branch,
+      permissionMode: this.defaultPermissionMode,
     });
 
     this.sessionStore.addManaged(session);
@@ -2498,6 +2504,7 @@ export class StreamerServer {
         projectPath: resolvedPath,
         projectName: body.projectName,
         systemPrompt: systemPromptParts.join("\n"),
+        permissionMode: this.defaultPermissionMode,
       });
 
       this.sessionStore.addManaged(session);

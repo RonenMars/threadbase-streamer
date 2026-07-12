@@ -32,7 +32,9 @@ export async function resolveDevPlan(opts: ResolveDevPlanOpts): Promise<DevPlan>
 
   const prodActive = opts.isProdActive();
   const portTaken = opts.portInUse(opts.requestedPort);
-  if (!prodActive && !portTaken) {
+  // Prod running on a different port than requested is not a conflict — only
+  // the requested port actually being held (by prod or anything else) is.
+  if (!portTaken) {
     return { kind: "use-port", port: opts.requestedPort };
   }
 
@@ -50,7 +52,12 @@ export async function resolveDevPlan(opts: ResolveDevPlanOpts): Promise<DevPlan>
   }
 
   const suggested = await opts.findFreePort(opts.requestedPort + 1);
-  const answer = await opts.prompt({ prodPort: opts.requestedPort, suggestedAltPort: suggested });
+  const answer = await opts.prompt({
+    prodPort: opts.requestedPort,
+    suggestedAltPort: suggested,
+    prodActive,
+    portTaken,
+  });
 
   if (answer.remember && opts.repoToplevel) {
     if (answer.choice === "replace-prod") {

@@ -30,6 +30,23 @@ describe("resolveDevPlan", () => {
     expect(plan).toEqual({ kind: "use-port", port: 9999 });
   });
 
+  it("prod active but requested port free → use requested port, no prompt", async () => {
+    const prompt = vi.fn();
+    const plan = await resolveDevPlan({
+      requestedPort: 9999,
+      replaceProd: false,
+      forget: false,
+      forgetAll: false,
+      repoToplevel: "/repo/a",
+      isProdActive: () => true,
+      portInUse: () => false,
+      prompt,
+      findFreePort: vi.fn(),
+    });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(plan).toEqual({ kind: "use-port", port: 9999 });
+  });
+
   it("--replace-prod flag wins over everything", async () => {
     const plan = await resolveDevPlan({
       requestedPort: 8766,

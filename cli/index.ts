@@ -1,7 +1,13 @@
 import "dotenv/config";
+import { stdin } from "node:process";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
-import { loadOrCreateApiKey, loadPublicUrl } from "../src/auth";
+import {
+  loadDefaultPermissionMode,
+  loadOrCreateApiKey,
+  loadPublicUrl,
+  setDefaultPermissionMode,
+} from "../src/auth";
 import { loadUpdateConfig, UPDATE_CONFIG_PATH } from "../src/config/update-config";
 import { appendDevSessionMarker } from "../src/devLog";
 import { resolveServerUrl } from "../src/lan-url";
@@ -35,7 +41,11 @@ program
     "--public-url <url>",
     "Public URL clients should use to reach this server (https:// required, except localhost). Falls back to THREADBASE_PUBLIC_URL env or public_url: in ~/.threadbase/server.yaml.",
   )
-  .option("--no-pair-qr", "Skip the pairing QR on startup", false)
+  .option(
+    "--default-permission-mode <mode>",
+    "Claude Code permission mode for spawned sessions: acceptEdits (auto-approve file edits, default) or manual (prompt for everything). Falls back to default_permission_mode: in ~/.threadbase/server.yaml, or a first-run interactive prompt on a human TTY invocation (skip with THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true).",
+  )
+  .option("--no-pair-qr", "Skip the pairing QR on startup")
   .option("--replace-prod", "Stop the launchd-supervised prod streamer and bind its port", false)
   .option("--forget", "Clear this repo's remembered dev-vs-prod choice and re-prompt", false)
   .option("--forget-all", "Clear every repo's remembered dev-vs-prod choice", false)
@@ -64,6 +74,18 @@ program
     if (opts.multiAgentFlow) {
       process.env.MULTI_AGENT_FLOW = "true";
     }
+    if (
+      opts.defaultPermissionMode !== undefined &&
+      opts.defaultPermissionMode !== "acceptEdits" &&
+      opts.defaultPermissionMode !== "manual"
+    ) {
+      log.error(
+        `Invalid --default-permission-mode: ${opts.defaultPermissionMode}`,
+        undefined,
+        "console",
+      );
+      process.exit(1);
+    }
     const requestedPort = Number.parseInt(opts.port, 10);
     const apiKey = opts.apiKey ?? loadOrCreateApiKey();
     const publicUrl = opts.publicUrl ?? loadPublicUrl() ?? null;
@@ -72,6 +94,23 @@ program
     // or "prod mode" (started by launchd). PPID 1 = launchd on macOS.
     const isProdInvocation = opts.prod === true || process.ppid === 1;
     if (!isProdInvocation) appendDevSessionMarker();
+
+    // First-run interactive prompt for permission mode. Only fires for a human
+    // dev invocation (never under --prod/launchd, which must never block on
+    // stdin) on a real TTY, when the mode isn't already pinned by --flag or a
+    // prior answer persisted to server.yaml, and unless explicitly disabled.
+    let resolvedDefaultPermissionMode = opts.defaultPermissionMode;
+    if (
+      resolvedDefaultPermissionMode === undefined &&
+      !isProdInvocation &&
+      process.env.THREADBASE_SKIP_PERMISSION_MODE_PROMPT !== "true" &&
+      loadDefaultPermissionMode() === undefined &&
+      stdin.isTTY
+    ) {
+      const { interactivePermissionModePrompt } = await import("../src/lifecycle/prompt");
+      resolvedDefaultPermissionMode = await interactivePermissionModePrompt();
+      setDefaultPermissionMode(resolvedDefaultPermissionMode);
+    }
 
     let resolvedPort = requestedPort;
 
@@ -111,6 +150,7 @@ program
       logMenubarRequests: opts.logMenubarRequests,
       browseRoot: opts.browseRoot,
       publicUrl: opts.publicUrl,
+      defaultPermissionMode: resolvedDefaultPermissionMode,
     });
 
     await server.listen(resolvedPort);
@@ -127,13 +167,21 @@ program
     });
     log.info(`API key: ${apiKey}`, { apiKeyMasked: `${apiKey.slice(0, 6)}…` });
 
-    if (opts.pairQr !== false) {
-      try {
-        await printPairQR({ port: resolvedPort, apiKey, publicUrl });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log.warn(`(skipped pairing QR: ${message})`, { reason: message });
-      }
+    try {
+      await printServerBanner({
+        port: resolvedPort,
+        apiKey,
+        publicUrl,
+        includeQr: opts.pairQr !== false,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn(`(skipped pairing QR: ${message})`, { reason: message });
+      log.info(
+        printUrlBanner({ url: resolveServerUrl({ publicUrl, port: resolvedPort }) }),
+        undefined,
+        "console",
+      );
     }
 
     const shutdown = async () => {
@@ -212,7 +260,7 @@ program
     const port = Number.parseInt(opts.port, 10);
     const apiKey = loadOrCreateApiKey();
     const publicUrl = loadPublicUrl() ?? null;
-    await printPairQR({ port, apiKey, publicUrl });
+    await printServerBanner({ port, apiKey, publicUrl, includeQr: true });
   });
 
 program
@@ -329,15 +377,60 @@ registerProdCommands(program);
 
 program.parse();
 
-async function printPairQR({
+function generateQr(payload: string): Promise<string> {
+  return new Promise((resolve) => {
+    qrcode.generate(payload, { small: true }, resolve);
+  });
+}
+
+function printUrlBanner({
+  url,
+  qr,
+  expiresAt,
+}: {
+  url: string;
+  qr?: string;
+  expiresAt?: number;
+}): string {
+  const contentLines = ["Threadbase Streamer — server address", "", url];
+  if (qr) {
+    contentLines.push("", ...qr.split("\n").filter((l) => l.length > 0));
+    if (expiresAt !== undefined) {
+      contentLines.push(
+        "",
+        `Scan to pair a mobile client (expires ${new Date(expiresAt).toLocaleTimeString()})`,
+      );
+    } else {
+      contentLines.push("", "Scan to pair a mobile client");
+    }
+  }
+
+  const width = Math.max(...contentLines.map((l) => l.length));
+  const pad = (l: string) => `║ ${l}${" ".repeat(width - l.length)} ║`;
+  const top = `╔${"═".repeat(width + 2)}╗`;
+  const bottom = `╚${"═".repeat(width + 2)}╝`;
+
+  return `\n${top}\n${contentLines.map(pad).join("\n")}\n${bottom}\n`;
+}
+
+async function printServerBanner({
   port,
   apiKey,
   publicUrl,
+  includeQr,
 }: {
   port: number;
   apiKey: string;
   publicUrl: string | null;
+  includeQr: boolean;
 }): Promise<void> {
+  const url = resolveServerUrl({ publicUrl, port });
+
+  if (!includeQr) {
+    log.info(printUrlBanner({ url }), undefined, "console");
+    return;
+  }
+
   const res = await fetch(`http://localhost:${port}/api/pair/start`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -352,17 +445,11 @@ async function printPairQR({
     expiresInSeconds: number;
   };
 
-  const url = resolveServerUrl({ publicUrl, port });
   const expSeconds = Math.floor(expiresAt / 1000);
   const payload = `threadbase://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}`;
+  const qr = await generateQr(payload);
 
-  log.info("Scan to pair a mobile client:\n", undefined, "console");
-  qrcode.generate(payload, { small: true });
-  log.info(`Server URL : ${url}`, undefined, "console");
-  log.info(`Pair URL   : ${payload}`, undefined, "console");
-  log.info(
-    `Expires    : ${new Date(expiresAt).toLocaleTimeString()} (${expiresInSeconds}s)\n`,
-    undefined,
-    "console",
-  );
+  log.info(printUrlBanner({ url, qr, expiresAt }), undefined, "console");
+  log.info(`Pair URL: ${payload}`, undefined, "console");
+  log.info(`Expires in ${expiresInSeconds}s`, undefined, "console");
 }
