@@ -34,6 +34,20 @@ describe("API E2E tests", () => {
       validateAgainstSchema(body, "mobile", "MobileConversationPage");
     });
 
+    // Regression test for test-server isolation: without scannerPersistent: false
+    // and codexRoots: [] in createTestServer(), the scanner's shared default
+    // SQLite index (~/.config/threadbase-scanner/index.db) leaks real host
+    // conversations in on machines with actual Claude Code / Codex history,
+    // making `total` wildly exceed the fixture count.
+    it("returns exactly the fixture conversations, isolated from real host data", async () => {
+      const { status, body } = await get(baseUrl, "/api/conversations?limit=100", headers);
+      expect(status).toBe(200);
+      expect(body.total).toBe(3);
+      for (const convo of body.conversations) {
+        expect(convo.filePath).toContain(FIXTURE_DIR);
+      }
+    });
+
     it("respects limit parameter", async () => {
       const { body } = await get(baseUrl, "/api/conversations?limit=1", headers);
       expect(body.conversations.length).toBeLessThanOrEqual(1);
