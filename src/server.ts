@@ -69,6 +69,7 @@ import { discoverClaudeProcesses } from "./process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  coerceProviderForRunner,
   isProviderName,
   isProviderResumable,
 } from "./providers";
@@ -1869,8 +1870,7 @@ export class StreamerServer {
 
     const conv = conversation as any;
     const cachedConvMeta = this.cache?.getMetaById(id);
-    const convProvider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER =
-      conv.provider ?? cachedConvMeta?.provider ?? CLAUDE_CODE_PROVIDER;
+    const convProvider = coerceProviderForRunner(conv.provider ?? cachedConvMeta?.provider);
     const availability = classifyResumability(conv.projectPath);
     const body: Record<string, unknown> = {
       meta: {
@@ -2136,8 +2136,7 @@ export class StreamerServer {
     // (server.ts ~1685): `conv` (the full Conversation shape) doesn't carry
     // provider, so fall back to the cached metadata, then default to Claude.
     const cachedConvMeta = this.cache?.getMetaById(sessionId);
-    const provider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER =
-      (conv as any)?.provider ?? cachedConvMeta?.provider ?? CLAUDE_CODE_PROVIDER;
+    const provider = coerceProviderForRunner((conv as any)?.provider ?? cachedConvMeta?.provider);
 
     const session = await this.ptyManager.start(sessionId, {
       provider,
