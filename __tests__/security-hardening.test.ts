@@ -12,13 +12,20 @@ const REAL_CONFIG = join(homedir(), ".threadbase", "server.yaml");
 let originalConfigDir: string | undefined;
 let realConfigMtimeBefore: number | undefined;
 
+let originalCorsEnv: string | undefined;
+
 beforeAll(() => {
   originalConfigDir = process.env.THREADBASE_CONFIG_DIR;
   process.env.THREADBASE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "tb-sec-"));
+  // CORS is off by default; the allowlist tests below assert the enabled path.
+  originalCorsEnv = process.env.THREADBASE_ALLOW_BROWSER_CORS;
+  process.env.THREADBASE_ALLOW_BROWSER_CORS = "true";
   realConfigMtimeBefore = existsSync(REAL_CONFIG) ? statSync(REAL_CONFIG).mtimeMs : undefined;
 });
 
 afterAll(() => {
+  if (originalCorsEnv === undefined) delete process.env.THREADBASE_ALLOW_BROWSER_CORS;
+  else process.env.THREADBASE_ALLOW_BROWSER_CORS = originalCorsEnv;
   if (originalConfigDir !== undefined) {
     process.env.THREADBASE_CONFIG_DIR = originalConfigDir;
   } else {

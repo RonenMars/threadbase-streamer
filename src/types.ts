@@ -246,6 +246,7 @@ export interface ServerConfig {
   logMenubarRequests?: boolean; // log /healthz requests from the menubar app (default: false)
   browseRoot?: string;
   publicUrl?: string;
+  browserCors?: string;
   disableDb?: boolean;
   scanProfiles?: Array<{
     id: string;

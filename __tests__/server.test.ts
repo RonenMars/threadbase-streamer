@@ -905,6 +905,22 @@ describe("StreamerServer", () => {
   });
 
   describe("CORS", () => {
+    let prevCorsEnv: string | undefined;
+
+    beforeAll(() => {
+      // CORS is off by default; enable it so these assertions exercise the
+      // allowed-origin path. Read once at middleware construction (per
+      // beforeEach's `new StreamerServer`), so it must be set before this
+      // describe block's tests run.
+      prevCorsEnv = process.env.THREADBASE_ALLOW_BROWSER_CORS;
+      process.env.THREADBASE_ALLOW_BROWSER_CORS = "true";
+    });
+
+    afterAll(() => {
+      if (prevCorsEnv === undefined) delete process.env.THREADBASE_ALLOW_BROWSER_CORS;
+      else process.env.THREADBASE_ALLOW_BROWSER_CORS = prevCorsEnv;
+    });
+
     it("returns CORS headers for an allowed origin", async () => {
       const res = await fetch(`${baseUrl}/api/info`, {
         headers: {

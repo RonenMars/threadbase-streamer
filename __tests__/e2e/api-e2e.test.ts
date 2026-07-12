@@ -13,8 +13,13 @@ describe("API E2E tests", () => {
   let server: StreamerServer;
   let baseUrl: string;
   let headers: Record<string, string>;
+  const prevCorsEnv = process.env.THREADBASE_ALLOW_BROWSER_CORS;
 
   beforeAll(async () => {
+    // CORS is off by default; enable it so the CORS assertions below exercise
+    // the allowed-origin path. Read once at middleware construction, so it must
+    // be set before createTestServer builds the app.
+    process.env.THREADBASE_ALLOW_BROWSER_CORS = "true";
     const ctx = await createTestServer(FIXTURE_DIR);
     server = ctx.server;
     baseUrl = ctx.baseUrl;
@@ -23,6 +28,8 @@ describe("API E2E tests", () => {
 
   afterAll(async () => {
     await server.close();
+    if (prevCorsEnv === undefined) delete process.env.THREADBASE_ALLOW_BROWSER_CORS;
+    else process.env.THREADBASE_ALLOW_BROWSER_CORS = prevCorsEnv;
   });
 
   describe("conversation list pipeline", () => {
@@ -167,6 +174,17 @@ describe("API E2E tests", () => {
       });
       expect(res.status).toBe(403);
       expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    });
+
+    // Regression: /api/sessions/count writes directly to the raw ServerResponse
+    // and returns the ALREADY_HANDLED sentinel, so Hono never pipes c.res.headers.
+    // The header must still land on the actual GET, not just the preflight.
+    it("returns CORS header on an actual GET to a direct-write route", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions/count`, {
+        headers: { ...headers, Origin: "http://localhost:8081" },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
     });
   });
 });

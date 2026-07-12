@@ -62,6 +62,17 @@ export function loadPublicUrl(): string | undefined {
   return undefined;
 }
 
+export function loadBrowserCors(): string | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/browser_cors:\s*(.+)/);
+    if (match?.[1]) return match[1].trim();
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
 export function loadCacheDir(): string | undefined {
   try {
     const content = readFileSync(configFile(), "utf-8");
