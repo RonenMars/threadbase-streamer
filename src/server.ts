@@ -2001,11 +2001,11 @@ export class StreamerServer {
       scanner,
     );
     const adapted = results.map((r: any) => ({
-      id:
-        r.meta.id
-          .split("/")
-          .pop()
-          ?.replace(/\.jsonl$/, "") || r.meta.id,
+      // Use sessionId so the id matches /api/conversations and resolves via
+      // findConversationByUuid — a client can round-trip a search result into
+      // GET /api/conversations/:id or the search-target QUERY. The old
+      // filename-stem derivation produced an id no other endpoint recognized.
+      id: r.meta.sessionId || r.meta.id,
       title: r.meta.projectName,
       sessionName: r.meta.sessionName || undefined,
       filePath: r.meta.filePath,
