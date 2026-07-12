@@ -18,6 +18,7 @@ import type {
   StartFreshSessionOptions,
   StartSessionOptions,
 } from "./types";
+import { debounce } from "./utils/debounce";
 
 const OUTPUT_BUFFER_MAX = 65536;
 
@@ -42,6 +43,15 @@ const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
 // fired within this window, flush queued input anyway. Defense against future
 // TUI changes that drop both markers from the boot screen.
 const PROMPT_MARKER_FALLBACK_MS = 10_000;
+
+// Re-run ready/prompt detection this long after the PTY goes quiet, instead of
+// waiting for another chunk (which may never come if Claude is blocked on a
+// prompt) or the full PROMPT_MARKER_FALLBACK_MS. 500ms was picked from real
+// [pty.chunk] gap logs: p50/p75 inter-chunk gaps while status=running are
+// 31ms/467ms, so 500ms clears normal streaming pauses without adding
+// meaningful perceived latency (see docs/postmortems or session notes for the
+// gapMs sample this was based on).
+const QUIET_DETECT_MS = 500;
 
 // Build the two byte sequences for a paste-then-submit. We deliberately split
 // the paste body and the trailing \r into two separate PTY writes (see
@@ -186,6 +196,10 @@ export class PTYManager implements SessionRunner {
   // to a given input or fell silent. Reset on dispose().
   private chunkIndex = new Map<string, number>();
   private lastChunkAt = new Map<string, number>();
+  // Per-session debounced "went quiet" checker, re-armed on every chunk. Fires
+  // QUIET_DETECT_MS after the last chunk so ready/prompt detection doesn't
+  // wait for another chunk that may never arrive (Claude blocked on input).
+  private quietCheckers = new Map<string, ReturnType<typeof debounce>>();
   // In-flight start()/startFresh() calls keyed by sessionId. A second
   // concurrent resume for the same session (double-tap, client retry) awaits
   // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
@@ -513,6 +527,8 @@ export class PTYManager implements SessionRunner {
     this.permissionOpen.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
+    this.quietCheckers.get(sessionId)?.cancel();
+    this.quietCheckers.delete(sessionId);
     try {
       session.process.kill("SIGINT");
     } catch {
@@ -585,6 +601,8 @@ export class PTYManager implements SessionRunner {
     this.firstChunkAt.clear();
     this.chunkIndex.clear();
     this.lastChunkAt.clear();
+    for (const quiet of this.quietCheckers.values()) quiet.cancel();
+    this.quietCheckers.clear();
     this.permissionOpen.clear();
     this.lastScreenQuestionKey.clear();
     this.shellPromptOpen.clear();
@@ -665,6 +683,16 @@ export class PTYManager implements SessionRunner {
         err,
       });
     });
+
+    // Re-arm the quiet-checker on every chunk. If no further chunk arrives for
+    // QUIET_DETECT_MS, re-run the same ready/prompt detection without waiting
+    // for a chunk that may never come (Claude blocked on a prompt).
+    let quiet = this.quietCheckers.get(sessionId);
+    if (!quiet) {
+      quiet = debounce(() => this.handleQuiet(sessionId), QUIET_DETECT_MS);
+      this.quietCheckers.set(sessionId, quiet);
+    }
+    quiet();
   }
 
   // Detect permission gates (OSC 777 + scraped options) and AskUserQuestion
@@ -807,6 +835,27 @@ export class PTYManager implements SessionRunner {
     }
   }
 
+  // Fired QUIET_DETECT_MS after the last PTY chunk. Re-runs the same
+  // ready/prompt detection handleOutput() runs per-chunk, using the last
+  // rendered output — a session blocked on a prompt (or an unmarked boot
+  // screen) may never produce another chunk to trigger detection otherwise.
+  private handleQuiet(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session?.status !== "running") return;
+
+    if (this.pendingReady.has(sessionId)) {
+      this.markReady(sessionId, session, "quiet:timeout");
+    }
+
+    this.detectLivePrompts(sessionId, "", session.lastOutput).catch((err) => {
+      this.log.warn("[pty.prompt_detect] failed", {
+        event: "pty.prompt_detect_failed",
+        sessionId,
+        err,
+      });
+    });
+  }
+
   // Transition a session from "running" to "waiting_input", clear pendingReady,
   // and flush any queued input. Idempotent: callers can invoke at any chunk.
   private markReady(sessionId: string, session: InternalSession, reason: string): void {
@@ -856,6 +905,8 @@ export class PTYManager implements SessionRunner {
     this.permissionOpen.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
+    this.quietCheckers.get(sessionId)?.cancel();
+    this.quietCheckers.delete(sessionId);
   }
 }
 

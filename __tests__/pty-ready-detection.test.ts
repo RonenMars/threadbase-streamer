@@ -201,6 +201,68 @@ describe("PTYManager — ready detection", () => {
     // the first match.
     expect(ready).toHaveLength(1);
   });
+
+  it("flushes queued input via quiet-timeout when the PTY goes silent (no marker, no further chunk)", async () => {
+    vi.useFakeTimers();
+    try {
+      const statusChanges: ManagedSession[] = [];
+      const ready: ManagedSession[] = [];
+      const mgr = new PTYManager({
+        onStatusChange: (s) => statusChanges.push(s),
+        onReady: (s) => ready.push(s),
+      });
+      const session = await spawnFresh(mgr);
+      const proc = getMockProc(mgr, session.id);
+
+      mgr.sendInput(session.id, "hello");
+
+      // Chunk with no marker, well under both the quiet-detect window and the
+      // 10s fallback. Nothing should fire yet.
+      proc._emit("data", "\x1b[?2004h booting...");
+      expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
+
+      // No further chunk ever arrives (Claude is blocked on a prompt with no
+      // marker in the boot screen). Advancing past the 500ms quiet window
+      // should flip the session to waiting_input on its own.
+      vi.advanceTimersByTime(500);
+
+      expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
+      expect(ready).toHaveLength(1);
+
+      expect(proc.write).toHaveBeenCalledWith("\x1b[200~hello\x1b[201~");
+      vi.advanceTimersByTime(20);
+      expect(proc.write).toHaveBeenCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not fire the quiet-timeout while chunks keep arriving within the debounce window", async () => {
+    vi.useFakeTimers();
+    try {
+      const statusChanges: ManagedSession[] = [];
+      const mgr = new PTYManager({ onStatusChange: (s) => statusChanges.push(s) });
+      const session = await spawnFresh(mgr);
+      const proc = getMockProc(mgr, session.id);
+
+      // Simulate a steady stream of small chunks (no marker), each arriving
+      // well inside the 500ms debounce window — mimics Claude mid-response.
+      for (let i = 0; i < 5; i++) {
+        proc._emit("data", `chunk ${i}...`);
+        vi.advanceTimersByTime(200);
+      }
+
+      // The debounce should have been re-armed on every chunk, so the quiet
+      // handler never got 500ms of uninterrupted silence to fire in.
+      expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
+
+      // Now let it actually go quiet — the debounce should fire from here.
+      vi.advanceTimersByTime(500);
+      expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // Regression for the resume side of the "dot bug": before the fix, start()
