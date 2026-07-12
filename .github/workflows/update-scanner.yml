@@ -1,25 +1,32 @@
-name: Update scanner submodule
+name: Update scanner dep
 
-# Bumps the vendor/scanner submodule to the latest threadbase-scanner release
-# tag and opens a PR against main. Fires when the scanner repo publishes a
-# release (repository_dispatch type "scanner-released"), or run manually.
+# Bumps the @threadbase-sh/scanner npm dependency to the version published by
+# the scanner repo and opens an auto-merging PR against main. Fires when scanner
+# publishes a release (repository_dispatch type "scanner-released",
+# client_payload.tag = vX.Y.Z), or run manually.
+#
+# scanner used to be a vendor/scanner git submodule; it is now a published npm
+# package (@threadbase-sh/scanner) wired as a normal semver dep, so this bumps
+# the npm version rather than the submodule pointer — same shape as
+# update-agent-types.yml.
 #
 # Setup required for the automatic trigger:
-#   1. In the threadbase-scanner repo, after publishing a release, send:
-#        POST /repos/RonenMars/threadbase-streamer/dispatches
-#        { "event_type": "scanner-released" }
-#      using a PAT (repo scope) stored as a secret there — the default
-#      GITHUB_TOKEN cannot dispatch across repos.
-#   2. Optional but recommended: add a PAT secret SCANNER_VER_BUMP_PAT here so
-#      the PR this workflow opens triggers CI. PRs created with the default
-#      GITHUB_TOKEN do NOT trigger further workflow runs (GitHub's recursion
-#      guard), so without SCANNER_VER_BUMP_PAT you must re-run CI on the bump PR
-#      manually.
+#   1. scanner's release/notify workflow dispatches this event using a PAT
+#      stored there (the default GITHUB_TOKEN cannot dispatch across repos).
+#   2. Add a PAT secret SCANNER_VER_BUMP_PAT here (fine-grained: Contents
+#      read/write + Pull requests read/write on this repo). PRs created with the
+#      default GITHUB_TOKEN do NOT trigger CI (GitHub's recursion guard), so
+#      auto-merge would never see required checks pass. The PAT makes the bump PR
+#      run CI and lets `gh pr merge --auto` complete.
 
 on:
   repository_dispatch:
     types: [scanner-released]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "scanner version to pin (e.g. v0.9.5). Defaults to npm latest when omitted."
+        required: false
 
 permissions:
   contents: write
@@ -27,55 +34,62 @@ permissions:
 
 jobs:
   bump:
-    name: Bump vendor/scanner to latest release tag
+    name: Bump @threadbase-sh/scanner
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          # Use a PAT if provided so the resulting PR triggers CI; else fall
-          # back to GITHUB_TOKEN (PR opens, but its CI must be re-run manually).
+          # Use the PAT so the resulting PR triggers CI and can auto-merge.
           token: ${{ secrets.SCANNER_VER_BUMP_PAT || github.token }}
 
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
 
-      - name: Install build tools for node-pty
-        run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
-      - name: Resolve latest scanner release tag
-        id: scanner
+      - name: Resolve target version
+        id: ver
+        env:
+          # repository_dispatch sends vX.Y.Z; workflow_dispatch sends a bare
+          # input; both are normalized to a tag-less semver below.
+          DISPATCH_TAG: ${{ github.event.client_payload.tag }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          git -C vendor/scanner fetch --tags --force origin
-          latest=$(git -C vendor/scanner tag -l 'v*' | sort -V | tail -1)
-          if [ -z "$latest" ]; then echo "::error::no v* tags found in scanner"; exit 1; fi
-          current=$(git -C vendor/scanner rev-parse HEAD)
-          target=$(git -C vendor/scanner rev-parse "$latest^{commit}")
-          echo "tag=$latest"        >> "$GITHUB_OUTPUT"
-          echo "current=$current"   >> "$GITHUB_OUTPUT"
-          echo "target=$target"     >> "$GITHUB_OUTPUT"
-          echo "Latest scanner tag: $latest ($target). Current submodule: $current."
+          raw="${DISPATCH_TAG:-$INPUT_TAG}"
+          if [ -z "$raw" ]; then
+            raw=$(npm view @threadbase-sh/scanner version)
+          fi
+          version="${raw#v}"
+          # client_payload is attacker-controllable; reject anything that is not
+          # a bare semver before it reaches npm install / git / gh.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::refusing non-semver version '$version'"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          current=$(node -p "require('./package.json').dependencies['@threadbase-sh/scanner'] || ''")
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "Target: $version. Current spec: $current."
 
-      - name: Already up to date
-        if: steps.scanner.outputs.current == steps.scanner.outputs.target
-        run: echo "vendor/scanner already at ${{ steps.scanner.outputs.tag }} — nothing to do."
-
-      - name: Bump submodule and refresh lockfile
-        if: steps.scanner.outputs.current != steps.scanner.outputs.target
+      - name: Bump dependency and refresh lockfile
+        id: bump
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          git -C vendor/scanner checkout --quiet "${{ steps.scanner.outputs.tag }}"
-          # Refresh package-lock.json for the file:vendor/scanner dep and verify
-          # the install/build chain (postinstall builds scanner's dist).
-          npm install --no-audit --no-fund
+          npm install --save-exact "@threadbase-sh/scanner@${VERSION}" --no-audit --no-fund
+          if git diff --quiet -- package.json package-lock.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already at ${VERSION} — nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Open bump PR
-        if: steps.scanner.outputs.current != steps.scanner.outputs.target
+        if: steps.bump.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.SCANNER_VER_BUMP_PAT || github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          tag="${{ steps.scanner.outputs.tag }}"
-          branch="chore/bump-scanner-${tag}"
+          branch="chore/bump-scanner-v${VERSION}"
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             echo "Branch $branch already exists — a bump PR is already open. Skipping."
             exit 0
@@ -83,10 +97,10 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add vendor/scanner package-lock.json
-          git commit -m "chore: bump vendor/scanner to ${tag}"
+          git add package.json package-lock.json
+          git commit -m "chore: bump @threadbase-sh/scanner to v${VERSION}"
           git push -u origin "$branch"
           gh pr create --base main --head "$branch" \
-            --title "chore: bump vendor/scanner to ${tag}" \
-            --body "Automated submodule bump to scanner \`${tag}\`, triggered by a scanner release. The \`file:vendor/scanner\` pin and \`package-lock.json\` were refreshed via \`npm install\`. Merge once CI is green."
+            --title "chore: bump @threadbase-sh/scanner to v${VERSION}" \
+            --body "Automated dependency bump to scanner \`v${VERSION}\`, triggered by a scanner release. \`package.json\` and \`package-lock.json\` were refreshed via \`npm install\`. Merges automatically once CI is green."
           gh pr merge --auto --squash "$branch"
