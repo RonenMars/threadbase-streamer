@@ -95,3 +95,11 @@ The deploy downloads `*-universal.dmg` / `*-x86_64.AppImage` / `*-x64.exe` from 
 Claude Code live sessions get a native `QuestionCard` UI in `tb-mobile` for permission gates and `AskUserQuestion` menus, detected server-side from the rendered PTY screen (`src/services/questions/*`, orchestrated in `src/pty-manager.ts`). Codex sessions (added in [PR #159](https://github.com/RonenMars/threadbase-streamer/pull/159)) don't get this — `CodexPtyRunner` never emits the `permission`/`question` WebSocket events, so any Codex-side approval or choice prompt only shows as raw terminal text.
 
 **Approach:** see [docs/plans/2026-07-04-codex-structured-prompts-followup.md](plans/2026-07-04-codex-structured-prompts-followup.md) for the full scoping — which existing detector files are reusable vs. Claude-only, and the open questions (Codex's `--ask-for-approval` on-screen shape is unverified) that need a live probe before implementation starts. The mobile-side rendering pipeline is already provider-agnostic; all follow-up work is server-side.
+
+---
+
+## Improvement: split `src/server.ts` along the existing `ApiDeps` seams
+
+`src/server.ts` is ~3300 lines, dominated by the `StreamerServer` god class — the repo's #1 merge-conflict magnet, touched in nearly every PR. The routing migration is half-done: `src/api/routes/*.ts` are thin Hono factories that delegate back into the class via `ApiDeps.handleXxx` bound methods, but the handler **bodies** (~2000 lines) still live inside the class.
+
+**Approach:** see [docs/plans/2026-07-12-server-ts-split.md](plans/2026-07-12-server-ts-split.md) — extract handler bodies into factory-with-context handler modules (`src/api/handlers/`), plus a `ScannerManager` for scanner lifecycle/freshness state and a `session-watchers` module. `ApiDeps` and all HTTP behavior stay identical (tb-mobile compat untouched). Four mechanical-move PRs, each independently mergeable; sequenced after the in-flight reparse-stall guard-rails work lands, since that touches the exact code the first extraction moves.
