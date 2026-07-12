@@ -49,6 +49,11 @@ export async function createTestServer(fixtureDir: string) {
     disableDb: true,
     cacheDir,
     scanProfiles: createFixtureProfiles(fixtureDir),
+    // Isolate from any real ~/.claude or ~/.codex data on the host: the
+    // scanner's default persistent index is a single shared SQLite file
+    // unscoped by scanProfiles, and codexRoots defaults to ~/.codex/sessions.
+    scannerPersistent: false,
+    codexRoots: [],
   });
   await server.listen(port, { awaitReady: true });
   const baseUrl = `http://localhost:${port}`;

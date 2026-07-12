@@ -34,6 +34,12 @@ async function getRandomPort(): Promise<number> {
 
 function makeServer(port: number): StreamerServer {
   const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-shutdown-test-"));
+  // An empty `scanProfiles` array falls back to watching the real
+  // ~/.claude/projects directory (see server.ts's `listen()`), which on a dev
+  // machine can hold thousands of JSONL files. Tearing down that many chokidar
+  // watchers in close() takes seconds, blowing every wall-clock budget below.
+  // Point at an empty fixture dir instead so file-watching stays a no-op.
+  const configDir = mkdtempSync(join(tmpdir(), "threadbase-shutdown-fixture-"));
   return new StreamerServer({
     port,
     apiKey: API_KEY,
@@ -41,7 +47,9 @@ function makeServer(port: number): StreamerServer {
     verbose: false,
     disableDb: true,
     cacheDir,
-    scanProfiles: [],
+    scanProfiles: [{ id: "test", label: "Test", configDir, enabled: true, emoji: "🧪" }],
+    codexRoots: [],
+    scannerPersistent: false,
   });
 }
 
