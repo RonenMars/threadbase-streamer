@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
-const MockPool = vi.fn(() => ({
-  query: vi.fn(),
-  end: vi.fn().mockResolvedValue(undefined),
-  on: vi.fn(),
-}));
+// A class so `new Pool(...)` in createPool works — vitest 4 no longer makes an
+// arrow-function vi.fn constructable, and biome's useArrowFunction would rewrite
+// a plain function expression back into a non-constructable arrow.
+const MockPool = vi.fn(
+  class {
+    query = vi.fn();
+    end = vi.fn().mockResolvedValue(undefined);
+    on = vi.fn();
+  },
+);
 
 vi.mock("pg", () => ({
   default: { Pool: MockPool },
