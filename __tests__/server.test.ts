@@ -1977,6 +1977,7 @@ describe("StreamerServer", () => {
         scanner: unknown;
         isConversationSnapshotStale: (conv: unknown) => boolean;
         findConversationByUuid: (uuid: string) => Promise<unknown>;
+        inFlightCacheWrites: Set<Promise<unknown>>;
       };
 
       const staleSnapshot = {
@@ -1987,29 +1988,206 @@ describe("StreamerServer", () => {
         messageCount: 2,
         messages: [],
       };
-      const refreshedSnapshot = { ...staleSnapshot, messageCount: 3, messages: [] };
 
       // Force the indexed scanner to return the stale snapshot, mark it stale on
       // disk, and capture the refresh. scan() must never be called.
       const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan");
       const getConvSpy = vi
         .spyOn(ConversationScanner.prototype, "getConversation")
-        .mockResolvedValueOnce(staleSnapshot as never)
-        .mockResolvedValueOnce(refreshedSnapshot as never);
+        .mockResolvedValue(staleSnapshot as never);
       const refreshSpy = vi
         .spyOn(ConversationScanner.prototype, "refreshFile")
         .mockResolvedValue({ id: convId, messageCount: 3 } as never);
       vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(false);
 
       srv.scannerStale = true;
+      // Stale-while-revalidate: the response is the current snapshot, served
+      // synchronously without awaiting the parse. scan() must never be called;
+      // the single-file refresh runs in the background (tracked so close()
+      // awaits it) rather than blocking the request behind a full-tree scan.
       const result = (await srv.findConversationByUuid(convId)) as { messageCount: number };
-
+      expect(result.messageCount).toBe(2);
       expect(scanSpy.mock.calls.length).toBe(0);
+
+      // Drain the tracked background refresh, then confirm it hit the one file.
+      await Promise.all([...srv.inFlightCacheWrites]);
       expect(refreshSpy).toHaveBeenCalledWith("/tmp/drift.jsonl");
-      expect(getConvSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(result.messageCount).toBe(3);
       // Stale flag untouched: a subsequent list-level getScanner() still rescans.
       expect(srv.scannerStale).toBe(true);
+      void getConvSpy;
+    });
+
+    it("single-flights refreshFile: 20 concurrent stale detail requests → one parse", async () => {
+      // A live, actively-appended file's mtime is always newer than the
+      // snapshot, so pre-guard every request refreshed. The single-flight +
+      // TTL guard collapses a retry storm to one underlying refreshFile.
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-sf-profile-"));
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-sf-cache-")),
+        scanProfiles: [
+          { id: "sf", label: "SF", configDir: profileDir, enabled: true, emoji: "🌊" },
+        ],
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+
+      const srv = reuseServer as unknown as {
+        isConversationSnapshotStale: (conv: unknown) => boolean;
+        findConversationByUuid: (uuid: string) => Promise<unknown>;
+        inFlightCacheWrites: Set<Promise<unknown>>;
+      };
+
+      const snapshot = {
+        id: convId,
+        sessionId: convId,
+        filePath: "/tmp/sf.jsonl",
+        timestamp: "2026-06-10T08:00:05.000Z",
+        messageCount: 2,
+        messages: [],
+      };
+      vi.spyOn(ConversationScanner.prototype, "getConversation").mockResolvedValue(
+        snapshot as never,
+      );
+      // A refresh that stays pending until we release it, so all 20 requests
+      // land while it is in flight and coalesce onto the same promise.
+      let release!: () => void;
+      const gate = new Promise<void>((r) => {
+        release = () => r();
+      });
+      const refreshSpy = vi
+        .spyOn(ConversationScanner.prototype, "refreshFile")
+        .mockImplementation(async () => {
+          await gate;
+          return { id: convId, messageCount: 3 } as never;
+        });
+      vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(false);
+
+      const results = await Promise.all(
+        Array.from({ length: 20 }, () => srv.findConversationByUuid(convId)),
+      );
+      // Every request got the snapshot immediately (SWR), before any refresh
+      // completed.
+      for (const r of results) expect((r as { messageCount: number }).messageCount).toBe(2);
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+      release();
+      await Promise.all([...srv.inFlightCacheWrites]);
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("live-session bypass: hasSession true → zero refreshFile from the detail path", async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-live-profile-"));
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-live-cache-")),
+        scanProfiles: [
+          { id: "live", label: "Live", configDir: profileDir, enabled: true, emoji: "🔴" },
+        ],
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+
+      const srv = reuseServer as unknown as {
+        isConversationSnapshotStale: (conv: unknown) => boolean;
+        findConversationByUuid: (uuid: string) => Promise<unknown>;
+      };
+
+      const snapshot = {
+        id: convId,
+        sessionId: convId,
+        filePath: "/tmp/live.jsonl",
+        timestamp: "2026-06-10T08:00:05.000Z",
+        messageCount: 2,
+        messages: [],
+      };
+      vi.spyOn(ConversationScanner.prototype, "getConversation").mockResolvedValue(
+        snapshot as never,
+      );
+      const refreshSpy = vi.spyOn(ConversationScanner.prototype, "refreshFile");
+      // Even though the on-disk file looks stale, a live session must bypass the
+      // stale-check entirely.
+      const staleSpy = vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+
+      const result = (await srv.findConversationByUuid(convId)) as { messageCount: number };
+      expect(result.messageCount).toBe(2);
+      expect(refreshSpy).not.toHaveBeenCalled();
+      // The stale-check itself is skipped on the live path.
+      expect(staleSpy).not.toHaveBeenCalled();
+    });
+
+    it("TTL: two sequential stale requests inside the window → one refresh; spaced beyond it → two", async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-ttl-profile-"));
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-ttl-cache-")),
+        scanProfiles: [
+          { id: "ttl", label: "TTL", configDir: profileDir, enabled: true, emoji: "⏱️" },
+        ],
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+
+      const srv = reuseServer as unknown as {
+        isConversationSnapshotStale: (conv: unknown) => boolean;
+        findConversationByUuid: (uuid: string) => Promise<unknown>;
+        inFlightCacheWrites: Set<Promise<unknown>>;
+      };
+
+      const snapshot = {
+        id: convId,
+        sessionId: convId,
+        filePath: "/tmp/ttl.jsonl",
+        timestamp: "2026-06-10T08:00:05.000Z",
+        messageCount: 2,
+        messages: [],
+      };
+      vi.spyOn(ConversationScanner.prototype, "getConversation").mockResolvedValue(
+        snapshot as never,
+      );
+      const refreshSpy = vi
+        .spyOn(ConversationScanner.prototype, "refreshFile")
+        .mockResolvedValue({ id: convId, messageCount: 3 } as never);
+      vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(false);
+
+      // First request refreshes; drain it so its completedAt is stamped.
+      await srv.findConversationByUuid(convId);
+      await Promise.all([...srv.inFlightCacheWrites]);
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+      // Second request within REFRESH_TTL_MS (2s) → skipped, no new refresh.
+      await srv.findConversationByUuid(convId);
+      await Promise.all([...srv.inFlightCacheWrites]);
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+      // Advance past the TTL (REFRESH_TTL_MS = 2000 in server.ts) → the next
+      // request refreshes again. Fake timers only for the clock the guard reads
+      // (Date.now).
+      vi.useFakeTimers();
+      vi.setSystemTime(Date.now() + 2000 + 1);
+      try {
+        await srv.findConversationByUuid(convId);
+        await Promise.all([...srv.inFlightCacheWrites]);
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(refreshSpy).toHaveBeenCalledTimes(2);
     });
 
     it("returns the count?refresh=1 quickly without a synchronous full scan", async () => {
