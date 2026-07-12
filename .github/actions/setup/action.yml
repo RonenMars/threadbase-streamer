@@ -1,12 +1,18 @@
 name: Setup
 description: Install and cache node_modules (with submodule support)
 
+inputs:
+  node-version:
+    description: "Node.js version to set up and key the cache on"
+    required: false
+    default: "22"
+
 runs:
   using: composite
   steps:
     - uses: actions/setup-node@v4
       with:
-        node-version: 22
+        node-version: ${{ inputs.node-version }}
         cache: npm
 
     - name: Restore node_modules cache
@@ -19,7 +25,7 @@ runs:
           vendor/agent-types/dist
           vendor/scanner/node_modules
           vendor/scanner/dist
-        key: node-modules-v4-node22-${{ hashFiles('package-lock.json') }}
+        key: node-modules-v4-node${{ inputs.node-version }}-${{ hashFiles('package-lock.json') }}
 
     - name: Install build tools for node-pty
       if: steps.cache.outputs.cache-hit != 'true'
@@ -31,6 +37,14 @@ runs:
       shell: bash
       run: npm ci
 
+    # Rebuild the native binary for THIS node version before saving, so the
+    # test job's cache-hit path (which runs `npx vitest` without rebuilding)
+    # gets an ABI-correct better-sqlite3 for node 20/24, not just node 22.
+    - name: Rebuild native modules
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm rebuild better-sqlite3
+
     - name: Save node_modules cache
       if: steps.cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
@@ -41,4 +55,4 @@ runs:
           vendor/agent-types/dist
           vendor/scanner/node_modules
           vendor/scanner/dist
-        key: node-modules-v4-node22-${{ hashFiles('package-lock.json') }}
+        key: node-modules-v4-node${{ inputs.node-version }}-${{ hashFiles('package-lock.json') }}
