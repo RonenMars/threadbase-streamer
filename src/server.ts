@@ -138,7 +138,9 @@ export class StreamerServer {
   >();
   private scanner: ConversationScanner | null = null;
   // Set when better-sqlite3 is unusable (e.g. node ABI mismatch made
-  // ConversationCache.open throw). All scanners are then built with
+  // ConversationCache.open throw), or when config.scannerPersistent is false
+  // (test isolation — the scanner's default SQLite index is a single shared
+  // file unscoped by scanProfiles). All scanners are then built with
   // persistent: false so requests serve from disk instead of 500ing on
   // every touch of the scanner's own SQLite index.
   private scannerPersistenceDisabled = false;
@@ -229,6 +231,7 @@ export class StreamerServer {
     }
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
+    this.scannerPersistenceDisabled = config.scannerPersistent === false;
     this.scanProfiles = config.scanProfiles;
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
