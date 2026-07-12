@@ -85,6 +85,12 @@ const SUBMIT_BYTES = "\r";
 // across multiple data events. Kept tiny so user-perceived latency is nil.
 const SUBMIT_DELAY_MS = 16;
 
+// writeSubmit() polls in SUBMIT_DELAY_MS steps and only writes \r once the PTY
+// has been quiet (no chunk) for a full SUBMIT_DELAY_MS — see writeSubmit() for
+// the redraw race this closes. Cap the wait so a genuinely wedged/silent PTY
+// still gets its \r rather than hanging forever.
+const SUBMIT_MAX_WAIT_MS = 500;
+
 function digestBytes(s: string): string {
   // Replace control chars with their hex form so logs are grep-able.
   // Building the regex via RegExp() sidesteps a Biome lint rule that flags
@@ -428,9 +434,20 @@ export class PTYManager implements SessionRunner {
     return session.promptCount;
   }
 
-  // Two-step paste-then-submit. Writes the bracketed-paste body, yields the
-  // event loop for SUBMIT_DELAY_MS, then writes \r. See buildPasteBytes() for
-  // why the split matters.
+  // Two-step paste-then-submit. Writes the bracketed-paste body, then waits
+  // for the PTY to go quiet before writing \r. See buildPasteBytes() for why
+  // the split matters.
+  //
+  // The wait is quiescence-based, not a flat delay: a fixed SUBMIT_DELAY_MS
+  // timer (the original fix) still races a TUI that's mid-redraw of its own
+  // output (e.g. re-painting right after posting a question) when the paste
+  // lands — the timer can elapse and fire \r while the TUI is still busy,
+  // and that \r gets absorbed by the redraw instead of submitting (see
+  // 2026-07 session 14dda340: a "Yes" reply was accepted into the input line
+  // but never landed as a submitted JSONL turn). Polling in SUBMIT_DELAY_MS
+  // steps and only submitting once lastChunkAt hasn't advanced for a full
+  // step gives the TUI as many extra ticks as it needs, capped at
+  // SUBMIT_MAX_WAIT_MS so a silent/wedged PTY still gets its \r eventually.
   private writeSubmit(
     sessionId: string,
     session: InternalSession,
@@ -451,12 +468,22 @@ export class PTYManager implements SessionRunner {
         phase: "paste",
       },
     );
+    const pasteAt = Date.now();
     session.process.write(pasteBytes);
-    setTimeout(() => {
+
+    const trySubmit = () => {
       const current = this.sessions.get(sessionId);
       if (!current || current !== session) return;
+      const now = Date.now();
+      const lastChunk = this.lastChunkAt.get(sessionId) ?? pasteAt;
+      const quiet = now - lastChunk >= SUBMIT_DELAY_MS;
+      const timedOut = now - pasteAt >= SUBMIT_MAX_WAIT_MS;
+      if (!quiet && !timedOut) {
+        setTimeout(trySubmit, SUBMIT_DELAY_MS);
+        return;
+      }
       this.log.info(
-        `[pty.input.submit] ${sessionId.slice(0, 8)} promptCount=${promptCount} digest=\\r`,
+        `[pty.input.submit] ${sessionId.slice(0, 8)} promptCount=${promptCount} digest=\\r waitedMs=${now - pasteAt} timedOut=${timedOut}`,
         {
           event: "pty.input_write",
           sessionId,
@@ -465,10 +492,13 @@ export class PTYManager implements SessionRunner {
           digest: "\\r",
           path,
           phase: "submit",
+          waitedMs: now - pasteAt,
+          timedOut,
         },
       );
       current.process.write(SUBMIT_BYTES);
-    }, SUBMIT_DELAY_MS);
+    };
+    setTimeout(trySubmit, SUBMIT_DELAY_MS);
   }
 
   // Drain any inputs that were sent while the session was still pendingReady,
