@@ -147,7 +147,10 @@ describe("runInstall orchestration", () => {
   });
 
   it("--force skips the active-session check", async () => {
-    vi.mocked(countActiveSessions).mockResolvedValueOnce({ kind: "count", count: 2 });
+    // No mockResolvedValueOnce here: --force never calls countActiveSessions,
+    // so a queued once-value would go unconsumed and leak into the next test
+    // (vitest 4's clearAllMocks no longer flushes the mockResolvedValueOnce
+    // queue between tests, unlike vitest 3).
     const r = await runInstall({
       currentVersion: "1.0.0",
       config: cfg,
