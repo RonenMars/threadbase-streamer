@@ -19,9 +19,14 @@
 **New endpoint** — purely additive; older mobile builds simply don't call it:
 
 - `GET /project-chats` — unified active-sessions + historical-conversations list. Accepts `?refreshConversations=1` (or legacy `?refresh=1`) to force a rescan; otherwise the server short-circuits via `cache_metadata.last_conversation_id`. Response shape is `{ projectChats: ProjectChat[] }` where `ProjectChat` is a discriminated union on `type: "session" | "conversation"`. Both variants carry `projectId` (the canonical project identity) and `projectPath` (compatibility metadata).
+- `QUERY /api/conversations/{id}/search-target` — resolves an active search query to the message a client should scroll to. Uses the HTTP QUERY method ([RFC 10008](https://www.rfc-editor.org/rfc/rfc10008)): safe, idempotent, and cacheable like GET, but the query travels as a JSON request body (`{ "q": "<query>" }`, `Content-Type: application/json`) instead of a URL param — this is the only endpoint in the API that uses QUERY; everything else stays GET/POST. `200` body: `{ query, message_index, uuid, snippet, match_indexes, total_matches }` (`message_index` is the same absolute index the detail endpoint emits — the last chronological match; `uuid` may be null; `match_indexes` lists all matching indexes ascending, capped at the last 1000; `total_matches` is the uncapped count for the client's "N of M" counter). The response carries `Accept-Query: application/json` per the spec. `404` with `code: "search_target_not_found"` when no message body contains the query (metadata-only search hit); `404` with `code: "not_found"` for an unknown conversation; `415` with `code: "unsupported_media_type"` for a non-JSON `Content-Type`; `422` with `code: "invalid_query"` for an empty/whitespace or >256-char `q`, or a malformed JSON body. Mobile treats any 404 as "open the tail view, no highlight". `CORS`: `Access-Control-Allow-Methods` includes `QUERY`; a cross-origin browser caller triggers an `OPTIONS` preflight, same as any other non-simple method — mobile requests carry no `Origin` header and are unaffected.
 
 **Query parameter names** — mobile builds URLs with these exact strings:
-`limit`, `offset`, `sort`, `project`, `refresh`, `msg_limit`, `before_index`, `q`, `path`
+`limit`, `offset`, `sort`, `project`, `refresh`, `msg_limit`, `before_index`, `anchor_index`, `after_index`, `q`, `path`
+
+(`q` is still a URL query param on `GET /api/search`, unchanged. It moved to a QUERY-method JSON body field of the same name only for `search-target` — see above.)
+
+- `anchor_index` on `GET /api/conversations/{id}` — returns a bounded window centered on that absolute message index (clamped into range, never an error). `after_index` returns the newer-direction window `[after_index, after_index + msg_limit)`. Precedence when combined: `before_index` > `after_index` > `anchor_index`. Anchored/after responses never answer `304` to `If-None-Match` — only the plain tail page participates in the ETag freshness check.
 
 **Response field names** — these are deserialized by name in mobile types; casing matters:
 
@@ -34,6 +39,8 @@
 - Conversation detail `meta` — new optional fields (additive; older clients ignore them): `provider` (`"claude-code"` | `"codex-cli"`; absent means `claude-code`), `resumable` (boolean — false when the conversation's project dir no longer exists, so resume would fail; history is still served), `unavailable_reason` (`"path_missing"` | `"worktree_removed"`, present only when `resumable` is false). The same fields are also added to the resumable session shape (`status: "on_hold"`) returned by `GET /api/sessions/{id}` for conversation ids. **Behavior note (Codex resume support):** `resumable` for a `codex-cli` conversation previously was always forced to `false`; it now reflects the same on-disk project-path availability check as `claude-code` conversations, since Codex resume (`POST /api/sessions/resume`) is implemented and functional.
 - Message: `message_index` (snake_case), `role`, `timestamp`, `text`, `content` (array), `tool_use_id` (snake_case)
 - Pagination: `hasMore`, `offset`, `total`
+- `message_pagination` — new optional fields (additive, emitted only on anchored/after windows): `anchor_index` (the clamped anchor the window was centered on), `has_more_newer`, `next_after_index` (cursor for the next `after_index` request, or null at the tail). The pre-existing fields `total`, `before_index`, `from_index`, `has_more_older`, `next_before_index` are unchanged.
+- Search target (`/api/conversations/{id}/search-target`): `query`, `message_index`, `uuid`, `snippet`, `match_indexes`, `total_matches`, and the error `code` values `search_target_not_found` / `not_found` / `invalid_query` — mobile keys its fallback on the 404 status.
 
 **Session status values** — mobile switches on these exact strings; adding a new value is fine, renaming or removing one breaks UI:
 `running`, `waiting_input`, `completed`, `failed`, `on_hold`, `idle`

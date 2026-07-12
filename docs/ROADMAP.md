@@ -6,6 +6,16 @@ For bugs (work that fixes broken behavior rather than adding new behavior) see [
 
 ---
 
+## Feature: migrate `GET /api/search` to the HTTP QUERY method
+
+`GET /api/conversations/{id}/search-target` was migrated from `GET ?q=` to the HTTP QUERY method (RFC 10008 — safe, idempotent, cacheable like GET, but carries the query as a JSON body like POST). `GET /api/search?q=<query>&limit=50` — the separate conversation-search-by-metadata endpoint (`handleSearch` in `src/server.ts`, `src/api/routes/scanner.routes.ts`) — was deliberately left as GET at the time, out of scope for that change. Migrate it the same way for consistency: `q` and `limit` move into a JSON request body (`{ q, limit }`), the route registers via `app.on("QUERY", "/api/search", ...)`, and the response gains an `Accept-Query: application/json` header. Mirror the same validation/error-code shape as `search-target` (415 for a non-JSON `Content-Type`, 422 for an invalid query body).
+
+**Mobile side:** `tb-mobile`'s `useConversationSearch` (`hooks/useConversations.ts`) currently builds `GET /api/search?q=...&limit=50` via `api.get`. It would switch to the `query()` method already added to `services/api-client.ts` for the `search-target` migration — no new client plumbing needed, just wiring the call site.
+
+**Why not now:** RFC 10008 is only weeks old (published 2026-06-15) with no mature runtime/framework support yet. Migrating `search-target` first was a smaller, isolated proof — one endpoint, one caller, no compatibility payoff since the streamer controls both ends. `/api/search` is a higher-traffic, more visible endpoint (every search keystroke in the mobile hub); wait for QUERY to see broader ecosystem adoption (or at least a stable Node/undici release with no rough edges) before touching it. Also needs the mobile PR that ships `query()` (paired with the `search-target` migration) merged first, since this migration reuses that client method rather than reintroducing its own.
+
+---
+
 ## Feature: keychain storage for the API key
 
 Today the streamer's API key lives at `~/.threadbase/server.yaml` as plaintext `api_key: tb_<32hex>`, protected only by filesystem perms (`chmod 0600`). The `tb-streamer set-key` command writes through the same path. That matches the de-facto convention for CLI tools (`~/.ssh/id_rsa`, `~/.aws/credentials`, `~/.npmrc`), but a determined local attacker — or a malicious postinstall running as the user — can read the file directly.
