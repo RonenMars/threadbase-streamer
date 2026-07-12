@@ -261,18 +261,25 @@ describe("StreamerServer", () => {
 
     it("defaults missing provider to claude-code", async () => {
       const sessionId = "039fd3ce-ad78-4980-b441-1cfa05edaec7";
-      const startFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh").mockResolvedValueOnce({
-        id: sessionId,
-        provider: "claude-code",
-        projectPath: join(browseRoot, "project"),
-        projectName: "project",
-        branch: "",
-        status: "running",
-        startedAt: new Date(),
-        completedAt: null,
-        promptCount: 0,
-        lastOutput: "",
-      });
+      const startFreshSpy = vi
+        .spyOn(PTYManager.prototype, "startFresh")
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (server as any).sessionStatusBus.emit(`status:${sessionId}`, "waiting_input");
+          });
+          return {
+            id: sessionId,
+            provider: "claude-code",
+            projectPath: join(browseRoot, "project"),
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
+        });
 
       const res = await fetch(`${baseUrl}/api/sessions/start`, {
         method: "POST",
@@ -283,7 +290,7 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ path: "project" }),
       });
 
-      expect(res.status).toBe(202);
+      expect(res.status).toBe(200);
       expect(startFreshSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: "claude-code",
@@ -319,17 +326,22 @@ describe("StreamerServer", () => {
       const claudeStartFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh");
       const codexStartFreshSpy = vi
         .spyOn(CodexPtyRunner.prototype, "startFresh")
-        .mockResolvedValueOnce({
-          id: sessionId,
-          provider: "codex-cli",
-          projectPath: join(browseRoot, "project"),
-          projectName: "project",
-          branch: "",
-          status: "running",
-          startedAt: new Date(),
-          completedAt: null,
-          promptCount: 0,
-          lastOutput: "",
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (server as any).sessionStatusBus.emit(`status:${sessionId}`, "waiting_input");
+          });
+          return {
+            id: sessionId,
+            provider: "codex-cli",
+            projectPath: join(browseRoot, "project"),
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
         });
 
       const res = await fetch(`${baseUrl}/api/sessions/start`, {
@@ -341,9 +353,9 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
 
-      expect(res.status).toBe(202);
+      expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.id).toBe(sessionId);
+      expect(body.session.id).toBe(sessionId);
       expect(codexStartFreshSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: "codex-cli",
@@ -434,17 +446,22 @@ describe("StreamerServer", () => {
 
       const codexStartFreshSpy = vi
         .spyOn(CodexPtyRunner.prototype, "startFresh")
-        .mockResolvedValueOnce({
-          id: liveSessionId,
-          provider: "codex-cli",
-          projectPath,
-          projectName: "project",
-          branch: "",
-          status: "running",
-          startedAt: new Date(),
-          completedAt: null,
-          promptCount: 0,
-          lastOutput: "",
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (boundServer as any).sessionStatusBus.emit(`status:${liveSessionId}`, "waiting_input");
+          });
+          return {
+            id: liveSessionId,
+            provider: "codex-cli",
+            projectPath,
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
         });
       vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
 
@@ -455,7 +472,7 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
-      expect(startRes.status).toBe(202);
+      expect(startRes.status).toBe(200);
 
       // watchForCodexRollout's first synchronous tryWire() call already runs
       // inline before handleStartSession returns, so no poll wait is needed
@@ -479,17 +496,22 @@ describe("StreamerServer", () => {
 
       const codexStartFreshSpy = vi
         .spyOn(CodexPtyRunner.prototype, "startFresh")
-        .mockResolvedValueOnce({
-          id: liveSessionId,
-          provider: "codex-cli",
-          projectPath,
-          projectName: "project",
-          branch: "",
-          status: "running",
-          startedAt: new Date(),
-          completedAt: null,
-          promptCount: 0,
-          lastOutput: "",
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (boundServer as any).sessionStatusBus.emit(`status:${liveSessionId}`, "waiting_input");
+          });
+          return {
+            id: liveSessionId,
+            provider: "codex-cli",
+            projectPath,
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
         });
       vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
 
@@ -500,7 +522,7 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
-      expect(startRes.status).toBe(202);
+      expect(startRes.status).toBe(200);
 
       const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
@@ -519,17 +541,22 @@ describe("StreamerServer", () => {
 
       const codexStartFreshSpy = vi
         .spyOn(CodexPtyRunner.prototype, "startFresh")
-        .mockResolvedValueOnce({
-          id: liveSessionId,
-          provider: "codex-cli",
-          projectPath,
-          projectName: "project",
-          branch: "",
-          status: "running",
-          startedAt: new Date(),
-          completedAt: null,
-          promptCount: 0,
-          lastOutput: "",
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (boundServer as any).sessionStatusBus.emit(`status:${liveSessionId}`, "waiting_input");
+          });
+          return {
+            id: liveSessionId,
+            provider: "codex-cli",
+            projectPath,
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
         });
       vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
 
@@ -541,7 +568,7 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
-      expect(startRes.status).toBe(202);
+      expect(startRes.status).toBe(200);
 
       const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
@@ -577,17 +604,22 @@ describe("StreamerServer", () => {
 
       const codexStartFreshSpy = vi
         .spyOn(CodexPtyRunner.prototype, "startFresh")
-        .mockResolvedValueOnce({
-          id: liveSessionId,
-          provider: "codex-cli",
-          projectPath,
-          projectName: "project",
-          branch: "",
-          status: "running",
-          startedAt: new Date(),
-          completedAt: null,
-          promptCount: 0,
-          lastOutput: "",
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (boundServer as any).sessionStatusBus.emit(`status:${liveSessionId}`, "waiting_input");
+          });
+          return {
+            id: liveSessionId,
+            provider: "codex-cli",
+            projectPath,
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
         });
       vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
 
@@ -598,7 +630,7 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
-      expect(startRes.status).toBe(202);
+      expect(startRes.status).toBe(200);
 
       const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
@@ -618,17 +650,22 @@ describe("StreamerServer", () => {
 
       const codexStartFreshSpy = vi
         .spyOn(CodexPtyRunner.prototype, "startFresh")
-        .mockResolvedValueOnce({
-          id: liveSessionId,
-          provider: "codex-cli",
-          projectPath,
-          projectName: "project",
-          branch: "",
-          status: "running",
-          startedAt: new Date(),
-          completedAt: null,
-          promptCount: 0,
-          lastOutput: "",
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (boundServer as any).sessionStatusBus.emit(`status:${liveSessionId}`, "waiting_input");
+          });
+          return {
+            id: liveSessionId,
+            provider: "codex-cli",
+            projectPath,
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
         });
       vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
 
@@ -651,7 +688,7 @@ describe("StreamerServer", () => {
         headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
-      expect(startRes.status).toBe(202);
+      expect(startRes.status).toBe(200);
 
       // tryWire() runs synchronously during start: it replays the existing
       // session_meta line (conversation_event) and broadcasts session_update

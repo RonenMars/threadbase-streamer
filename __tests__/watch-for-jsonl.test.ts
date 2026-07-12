@@ -24,6 +24,10 @@ import { StreamerServer } from "../src/server";
 vi.mock("node-pty", () => {
   function makeMockProcess() {
     const ee = new EventEmitter();
+    // Emit a prompt marker shortly after spawn, like a real Claude session
+    // does, so pty-manager's markReady()/onReady fires instead of the
+    // server blocking POST /api/sessions/start until its ready-timeout.
+    setImmediate(() => ee.emit("data", "╭\n"));
     return {
       onData: (cb: (data: string) => void) => ee.on("data", cb),
       onExit: (cb: (e: { exitCode: number }) => void) => ee.on("exit", cb),
@@ -136,9 +140,9 @@ describe("watchForJsonl — conversation_event wiring", () => {
       // path is relative to browseRoot (homedir); pass just the basename
       body: JSON.stringify({ path: basename(projectPath) }),
     });
-    expect(res.status).toBe(202);
-    const body = (await res.json()) as { id: string };
-    return body.id;
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { session: { id: string } };
+    return body.session.id;
   }
 
   it("primary path: wires {sessionId}.jsonl when it is present at session start", async () => {
