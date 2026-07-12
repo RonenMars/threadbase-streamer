@@ -3,6 +3,7 @@
 > **Run in:** the `tb-mobile` repo
 > **Depends on:** nothing to START — items 1, 2, 4, 5 work against today's server.
 > Item 3 (WS resume-by-`seq`) requires streamer PR 2 deployed — implement it last.
+> **Design PR (full spec + context):** https://github.com/RonenMars/threadbase-streamer/pull/197
 
 ---
 

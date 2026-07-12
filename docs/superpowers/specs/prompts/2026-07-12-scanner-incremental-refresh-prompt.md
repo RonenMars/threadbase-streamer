@@ -3,6 +3,7 @@
 > **Run in:** the `tb-scanner` repo (publishes `@threadbase-sh/scanner`)
 > **Depends on:** nothing — fully independent, start any time
 > **Unblocks:** tb-streamer PR 2 (offset index) imports the new `parseJsonlLine` export
+> **Design PR (full spec + context):** https://github.com/RonenMars/threadbase-streamer/pull/197
 > Extracted from `tb-streamer/docs/superpowers/specs/2026-07-12-live-conversation-reparse-stall-design.md`.
 
 ---
