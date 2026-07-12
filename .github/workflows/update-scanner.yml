@@ -75,7 +75,9 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          npm install --save-exact "@threadbase-sh/scanner@${VERSION}" --no-audit --no-fund
+          # Default (caret) save so the pin matches the repo convention of a
+          # ^range for the threadbase-sh deps, not an exact version.
+          npm install "@threadbase-sh/scanner@${VERSION}" --no-audit --no-fund
           if git diff --quiet -- package.json package-lock.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Already at ${VERSION} — nothing to do."
