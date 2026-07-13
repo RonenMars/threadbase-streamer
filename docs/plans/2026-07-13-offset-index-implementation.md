@@ -1,5 +1,6 @@
 # Offset index (PR 2 / phase 1b) — implementation plan
 
+**Status:** IMPLEMENTED (all 8 stages committed on `feat/offset-index`). Perf smoke (§8) deferred to a local-only guarded run.
 **Date:** 2026-07-13
 **Branch:** `feat/offset-index` (stacked on `fix/reparse-stall-guard-rails` / PR #199)
 **Design:** [../superpowers/specs/2026-07-12-live-conversation-reparse-stall-design.md](../superpowers/specs/2026-07-12-live-conversation-reparse-stall-design.md) §7
