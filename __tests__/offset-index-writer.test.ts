@@ -58,7 +58,10 @@ describe("ConversationCache.extendMessageIndex (incremental writer)", () => {
     const content = `${l0}\n${summaryLine}\n${l1}\n`;
     const { spans } = appendAndSpan(content, 0);
 
-    cache.extendMessageIndex(jsonlPath, spans, statSync(jsonlPath));
+    const seqs = cache.extendMessageIndex(jsonlPath, spans, statSync(jsonlPath));
+    // Returned seqs are parallel to spans: message lines get their
+    // message_index, the summary line (middle) gets null.
+    expect(seqs).toEqual([0, null, 1]);
 
     // Two message lines → two rows; the summary line got no row.
     expect(cache.getIndexedMessageCount(convId)).toBe(2);

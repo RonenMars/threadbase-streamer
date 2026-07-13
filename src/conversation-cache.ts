@@ -550,10 +550,14 @@ export class ConversationCache {
    * of the last consumed span.
    *
    * Requires an up-to-date `stat` (identity/size/mtime) for the file so the read
-   * path can detect truncation/replacement. A no-op when spans is empty.
+   * path can detect truncation/replacement.
+   *
+   * Returns the message_index assigned to each input span (null for a
+   * non-message line), so the caller can stamp WS `seq` on the matching
+   * conversation_event entries. Empty array when spans is empty.
    */
-  extendMessageIndex(filePath: string, spans: LineSpan[], stat: Stats): void {
-    if (spans.length === 0) return;
+  extendMessageIndex(filePath: string, spans: LineSpan[], stat: Stats): (number | null)[] {
+    if (spans.length === 0) return [];
     const convId = ConversationCache.conversationIdForFile(filePath);
 
     let state = this.indexParseState.get(filePath);
@@ -565,10 +569,14 @@ export class ConversationCache {
     const existing = this.getFileState(filePath);
     let nextIndex = existing ? existing.last_message_index + 1 : 0;
     const rows: MessageIndexRow[] = [];
+    const seqs: (number | null)[] = [];
 
     for (const span of spans) {
       const msg = parseJsonlLine(span.text, state);
-      if (!msg) continue; // summary/sidecar/malformed → no index row
+      if (!msg) {
+        seqs.push(null); // summary/sidecar/malformed → no index row, no seq
+        continue;
+      }
       rows.push({
         conversation_id: convId,
         message_index: nextIndex,
@@ -578,6 +586,7 @@ export class ConversationCache {
         role: msg.role ?? null,
         ts: msg.timestamp ? Date.parse(msg.timestamp) || null : null,
       });
+      seqs.push(nextIndex);
       nextIndex++;
     }
 
@@ -596,6 +605,7 @@ export class ConversationCache {
       });
     });
     tx();
+    return seqs;
   }
 
   clearIndexParseState(filePath: string): void {

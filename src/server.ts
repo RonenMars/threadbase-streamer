@@ -140,6 +140,10 @@ export class StreamerServer {
   private wsHub: WSHub;
   private fileWatcher: ConversationWatcher;
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
+  // Per-file seq assignments from the most recent onNewLineSpans (offset index),
+  // handed to the immediately-following onNewLines so it can stamp WS `seq` on
+  // the matching conversation_events entries. Same read → same lines order.
+  private pendingLineSeqs = new Map<string, (number | null)[]>();
   private pendingQuestions = new Map<string, { toolUseId: string; questions: AskQuestion[] }>();
   // Content key of the AskUserQuestion currently broadcast for a session (from
   // either the rendered screen or JSONL), used to de-dupe the two paths: when
@@ -313,8 +317,12 @@ export class StreamerServer {
         // the tail write or WS broadcast.
         if (!this.cache) return;
         try {
-          this.cache.extendMessageIndex(filePath, spans, statSync(filePath));
+          const seqs = this.cache.extendMessageIndex(filePath, spans, statSync(filePath));
+          // Stash for the onNewLines handler (fires next for the same read) to
+          // stamp WS `seq`. spans and lines are the same set in the same order.
+          this.pendingLineSeqs.set(filePath, seqs);
         } catch (err) {
+          this.pendingLineSeqs.delete(filePath);
           this.log.warn("offset-index.extend_failed", {
             event: "offset_index.extend_failed",
             filePath,
@@ -360,8 +368,16 @@ export class StreamerServer {
               this.pendingQuestionKey.set(sessionId, key);
               if (broadcast) this.wsHub.broadcast(m);
             }
-            // Additive batched event (one socket write) for newer clients...
-            this.wsHub.broadcast({ type: "conversation_events", sessionId, lines });
+            // Additive batched event (one socket write) for newer clients. When
+            // the offset index assigned seqs for this read, carry them parallel
+            // to lines so a client can map each event to its message_index.
+            const seqs = this.pendingLineSeqs.get(filePath);
+            this.wsHub.broadcast({
+              type: "conversation_events",
+              sessionId,
+              lines,
+              ...(seqs && seqs.length === lines.length ? { seqs } : {}),
+            });
             // ...plus per-line conversation_event so older mobile clients,
             // which only know that shape, keep working byte-for-byte.
             for (const line of lines) {
@@ -370,6 +386,9 @@ export class StreamerServer {
             break;
           }
         }
+        // Seqs are consumed for this read; drop them so a later read for a file
+        // with no watched session can't reuse a stale mapping.
+        this.pendingLineSeqs.delete(filePath);
       },
       onConversationChanged: (filePath) => {
         // A new JSONL appeared (or changed) in a watched project directory.
@@ -1944,6 +1963,13 @@ export class StreamerServer {
       if (newerPaging) {
         messagePagination.has_more_newer = beforeIndex < effectiveTotal;
         messagePagination.next_after_index = beforeIndex < effectiveTotal ? beforeIndex : null;
+      }
+      // Delta-validity token: an after_index delta carries the conversation's
+      // current etag so a client can detect that its stored cursor is stale
+      // (etag mismatch → discard the cursor, refetch the tail). Only on the
+      // forward-delta path; additive, so old clients ignore it.
+      if (hasAfter) {
+        messagePagination.etag = etag;
       }
     }
 

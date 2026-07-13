@@ -110,12 +110,15 @@ describe("GET /api/conversations/:id served from the offset index", () => {
     expect(body.message_pagination.total).toBe(200);
   });
 
-  it("serves an after_index delta window (exactly the requested slice)", async () => {
+  it("serves an after_index delta window (exactly the requested slice) with an etag cursor token", async () => {
     await warmIndex();
     const res = await detail("after_index=100&msg_limit=4");
     const body = (await res.json()) as DetailBody;
     expect(body.messages.map((m) => m.message_index)).toEqual([100, 101, 102, 103]);
     expect(body.messages.map((m) => m.uuid)).toEqual(["od-100", "od-101", "od-102", "od-103"]);
+    // Delta responses carry the conversation etag as a cursor-validity token.
+    expect(typeof body.message_pagination.etag).toBe("string");
+    expect((body.message_pagination.etag as string).length).toBeGreaterThan(0);
   });
 
   it("serves a before_index back-page window", async () => {
