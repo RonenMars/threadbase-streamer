@@ -98,6 +98,20 @@ Claude Code live sessions get a native `QuestionCard` UI in `tb-mobile` for perm
 
 ---
 
+## Improvement: fully incremental warm-up (delta-only cache reconcile)
+
+Every `listen()` fires a background warm-up scan (`src/server.ts:836`) that reconciles the SQLite cache from disk. The scan itself is already cursor-incremental at the scanner layer (persistent index at `~/.config/threadbase-scanner/index.db`: dir watermarks gate discovery, per-file byte cursors make unchanged files stat-only and appended files O(Δ) — same Filebeat pattern as the offset index). Three streamer-side pieces are not delta-only yet:
+
+1. **The ABI-resilience fallback is a full re-parse.** When `warmupStatCache` exists or `config.scannerPersistent === false` (`src/server.ts:898-907`), warm-up runs `persistent: false` — an in-memory scanner that re-parses every JSONL (currently ~3,300 files / 1.4 GB). The mode that actually ran is not logged, so a silent fallback pays the full cost on every restart without anyone noticing.
+2. **The cache reconcile is proportional to all metas, not changed ones.** `upsertFromScannerMeta` receives the full meta set each warm-up; tail-warming then re-reads file tails for every upserted id. Whether truly-unchanged rows are skipped decides if this step is O(Δ) or near-O(n).
+3. **The offset index doesn't participate in warm-up.** `conversation_file_state` backfills lazily per detail request; files that grew while the server was down pay the backfill on first open instead of during warm-up.
+
+**Approach (measure first):** log the warm-up mode + duration so the full-reparse fallback is visible; then make `upsertFromScannerMeta` + tail-warming strictly delta-only by comparing against the stored `(file_size, mtime_ms)` in `conversation_file_metadata`; optionally extend the offset index for files with `size > byte_offset` in the same delta pass. No new registry — the primitives already exist twice (scanner cursors + streamer file metadata); the work is wiring, not architecture.
+
+**Why not now:** unmeasured. On the happy path (persistent scanner, few changed files) warm-up may already be cheap enough that only item 1 (observability of the fallback) is worth shipping. Measure warm-up duration and mode on prod before/after a restart; pick up the rest only if the numbers justify it.
+
+---
+
 ## Improvement: split `src/server.ts` along the existing `ApiDeps` seams
 
 `src/server.ts` is ~3300 lines, dominated by the `StreamerServer` god class — the repo's #1 merge-conflict magnet, touched in nearly every PR. The routing migration is half-done: `src/api/routes/*.ts` are thin Hono factories that delegate back into the class via `ApiDeps.handleXxx` bound methods, but the handler **bodies** (~2000 lines) still live inside the class.
