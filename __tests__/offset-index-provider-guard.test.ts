@@ -120,10 +120,22 @@ describe("offset index provider guard", () => {
     expect(window?.messages).toHaveLength(4);
   });
 
-  it("files with no cached meta default to indexable (claude-code)", async () => {
-    // No conversation_meta row at all — e.g. the watcher indexed a brand-new
-    // file before the meta upsert landed. Defaults to claude-code, indexable.
+  it("files with no cached meta are NOT indexable (provider unknown = unsafe)", async () => {
+    // No conversation_meta row at all: the provider is unknown, so indexing
+    // is declined. A later request backfills once the meta row exists.
     await cache.backfillIndex(claudePath);
-    expect(cache.getFileState(claudePath)).not.toBeNull();
+    expect(cache.getFileState(claudePath)).toBeNull();
+  });
+
+  it("guards a codex rollout file whose filename stem differs from its meta id", async () => {
+    // Real codex naming: rollout-<ts>-<uuid>.jsonl, while the meta row's id is
+    // the bare uuid — an id-by-filename lookup misses, which is exactly how the
+    // first version of this guard failed in production. The by-path lookup
+    // must resolve it.
+    const rolloutPath = join(dbDir, "rollout-2026-07-13T14-21-49-abc-123.jsonl");
+    writeFileSync(rolloutPath, `${codexLine}\n`);
+    seedMeta("abc-123", rolloutPath, "codex-cli");
+    await cache.backfillIndex(rolloutPath);
+    expect(cache.getFileState(rolloutPath)).toBeNull();
   });
 });

@@ -39,6 +39,14 @@ beforeEach(() => {
   mkdirSync(dbDir, { recursive: true });
   cache = ConversationCache.open(join(dbDir, "cache.db"));
   jsonlPath = join(dbDir, "backfill-conv.jsonl");
+  // The offset index only touches files whose cached meta says claude-code
+  // (provider-guard hotfix); seed the row the production flow would have.
+  cache
+    .getDatabase()
+    .prepare(
+      "INSERT INTO conversation_meta (id, file_path, provider, message_count, updated_at) VALUES (?, ?, 'claude-code', 1, 1)",
+    )
+    .run("backfill-conv", jsonlPath);
 });
 
 afterEach(() => {
