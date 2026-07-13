@@ -540,6 +540,17 @@ export class ConversationCache {
     );
   }
 
+  // The offset index understands only claude-code JSONL: parseJsonlLine is the
+  // claude-code reducer, so a codex file "indexes" as zero messages and the
+  // resulting file_state serves empty windows for a real conversation (the
+  // silent-wrong-data bug hotfixed after 1.28.0). Non-claude providers are
+  // excluded from the index entirely; the scanner serves them (it routes each
+  // provider to its own parser).
+  private isIndexableFile(filePath: string): boolean {
+    const meta = this.getMetaById(ConversationCache.conversationIdForFile(filePath));
+    return (meta?.provider ?? CLAUDE_CODE_PROVIDER) === CLAUDE_CODE_PROVIDER;
+  }
+
   /**
    * Incremental offset-index writer: extend the index for a burst of appended
    * lines (one watcher read) using their byte spans. Each line is classified
@@ -573,6 +584,11 @@ export class ConversationCache {
     readFrom: number,
     endOffset: number,
   ): (number | null)[] | null {
+    // Non-indexable provider: write nothing, but return all-null seqs (not
+    // null) — a null return means "decline" and would send the caller into an
+    // endless drop-and-backfill loop for a file that can never be indexed.
+    if (!this.isIndexableFile(filePath)) return spans.map(() => null);
+
     const existing = this.getFileState(filePath);
     const expectedStart = existing?.byte_offset ?? 0;
     // Non-contiguous read → the index would develop a hole with wrong indices.
@@ -655,9 +671,13 @@ export class ConversationCache {
 
   private async runBackfill(filePath: string): Promise<void> {
     const convId = ConversationCache.conversationIdForFile(filePath);
-    // Reset any partial/stale state before rebuilding from scratch.
+    // Reset any partial/stale state before rebuilding from scratch. For a
+    // non-indexable (non-claude) file the purge IS the whole job — it also
+    // heals a poisoned row left by a pre-hotfix backfill — so return before
+    // walking the file.
     this.deleteFileIndex(filePath, convId);
     this.indexParseState.delete(filePath);
+    if (!this.isIndexableFile(filePath)) return;
 
     const CHUNK = 256 * 1024;
     const YIELD_EVERY = 1000;
@@ -765,6 +785,14 @@ export class ConversationCache {
     // the exact live-append bug this feature exists to fix. In every mismatch
     // the caller drops the index + backfills and falls back to the scanner.
     if (fileIdentity(stat) !== fileState.identity || stat.size !== fileState.byte_offset) {
+      return null;
+    }
+    // A file_state that covered the file but indexed no messages is a poisoned
+    // row (pre-hotfix backfill of a non-claude file) — serving it would render
+    // a real conversation empty. Belt-and-braces: also decline non-indexable
+    // providers outright in case a poisoned row carries a nonzero count. The
+    // decline routes the caller to backfill, which purges the row.
+    if (fileState.last_message_index < 0 || !this.isIndexableFile(filePath)) {
       return null;
     }
 
