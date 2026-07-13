@@ -7,7 +7,9 @@ import {
 } from "@threadbase-sh/scanner";
 import Database from "better-sqlite3";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, type Stats, statSync } from "fs";
+import { open as openAsync } from "fs/promises";
 import { dirname } from "path";
+import { setImmediate as yieldToEventLoop } from "timers/promises";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
 import {
@@ -15,7 +17,7 @@ import {
   isAgentFile,
   isAgentLine,
 } from "./services/conversations/isAgentConversation";
-import { fileIdentity, type LineSpan } from "./utils/fileIdentity";
+import { fileIdentity, type LineSpan, splitCompleteLines } from "./utils/fileIdentity";
 
 export interface ConversationCacheOptions {
   // When true, drop conversations whose JSONL came from an agent entrypoint.
@@ -208,6 +210,9 @@ export class ConversationCache {
   // it must persist between watcher reads of the same file. Cleared on
   // truncation/backfill.
   private indexParseState = new Map<string, JsonlParseState>();
+  // Single-flight guard for backfillIndex — concurrent detail requests for the
+  // same cold file await one walk, not N. Entry dropped on settle.
+  private backfillInFlight = new Map<string, Promise<void>>();
   // Monotonically increasing counter for tail updated_at — guarantees strict
   // ordering even when multiple updateFromLine() calls land within the same ms.
   private tailSeq = Date.now();
@@ -594,6 +599,102 @@ export class ConversationCache {
 
   clearIndexParseState(filePath: string): void {
     this.indexParseState.delete(filePath);
+  }
+
+  /**
+   * On-demand full backfill of the offset index for a file with no/stale
+   * file_state (cold conversation, or after a truncation/replacement). Rebuilds
+   * from byte 0: drops any existing rows, walks the whole file in chunks with a
+   * running parse state, yields to the event loop every ~1000 lines so a large
+   * file never blocks, and writes index rows + file_state.
+   *
+   * Single-flighted per path: concurrent callers await the same walk. The
+   * triggering detail request is served by the scanner fallback while this runs.
+   */
+  backfillIndex(filePath: string): Promise<void> {
+    const inFlight = this.backfillInFlight.get(filePath);
+    if (inFlight) return inFlight;
+    const walk = this.runBackfill(filePath).finally(() => {
+      this.backfillInFlight.delete(filePath);
+    });
+    this.backfillInFlight.set(filePath, walk);
+    return walk;
+  }
+
+  private async runBackfill(filePath: string): Promise<void> {
+    const convId = ConversationCache.conversationIdForFile(filePath);
+    // Reset any partial/stale state before rebuilding from scratch.
+    this.deleteFileIndex(filePath, convId);
+    this.indexParseState.delete(filePath);
+
+    const CHUNK = 256 * 1024;
+    const YIELD_EVERY = 1000;
+    const state = createJsonlParseState();
+    const fh = await openAsync(filePath, "r");
+    let fileOffset = 0; // absolute byte offset of `carry`'s first byte
+    let carry = Buffer.alloc(0); // bytes after the last "\n" of the previous chunk
+    let nextIndex = 0;
+    let linesSinceYield = 0;
+    let lastConsumedEnd = 0; // absolute byte offset just past the last full line
+    let stat: Stats;
+
+    try {
+      stat = await fh.stat();
+      const buf = Buffer.alloc(CHUNK);
+      for (;;) {
+        const { bytesRead } = await fh.read(buf, 0, CHUNK, null);
+        if (bytesRead === 0) break;
+        const combined =
+          carry.length > 0
+            ? Buffer.concat([carry, buf.subarray(0, bytesRead)])
+            : buf.subarray(0, bytesRead);
+        const { spans, consumed } = splitCompleteLines(combined, fileOffset);
+
+        const rows: MessageIndexRow[] = [];
+        for (const span of spans) {
+          const msg = parseJsonlLine(span.text, state);
+          linesSinceYield++;
+          if (msg) {
+            rows.push({
+              conversation_id: convId,
+              message_index: nextIndex,
+              byte_offset: span.byteOffset,
+              byte_length: span.byteLength,
+              uuid: msg.uuid ?? null,
+              role: msg.role ?? null,
+              ts: msg.timestamp ? Date.parse(msg.timestamp) || null : null,
+            });
+            nextIndex++;
+          }
+          if (linesSinceYield >= YIELD_EVERY) {
+            linesSinceYield = 0;
+            await yieldToEventLoop();
+          }
+        }
+        if (rows.length > 0) this.appendMessageIndexRows(rows);
+
+        lastConsumedEnd = fileOffset + consumed;
+        // Keep the unconsumed remainder (a torn line at the chunk boundary).
+        // Copy it — `combined` may be a view into the reused read buffer, which
+        // the next fh.read overwrites.
+        carry = Buffer.from(combined.subarray(consumed));
+        fileOffset += consumed;
+      }
+    } finally {
+      await fh.close();
+    }
+
+    this.upsertFileState({
+      path: filePath,
+      identity: fileIdentity(stat),
+      size: stat.size,
+      mtime_ms: Math.round(stat.mtimeMs),
+      byte_offset: lastConsumedEnd,
+      last_message_index: nextIndex - 1,
+    });
+    // Seed the incremental writer's state so subsequent appends continue the
+    // same reducer instead of re-parsing from scratch.
+    this.indexParseState.set(filePath, state);
   }
 
   private agentEntrypointsKey(): string {
