@@ -242,6 +242,7 @@ export class ConversationCache {
     deleteAll: Database.Statement;
     deleteTailAll: Database.Statement;
     getIdByFilePath: Database.Statement;
+    getProviderByFilePath: Database.Statement;
     allFilePaths: Database.Statement;
     allFileStats: Database.Statement;
     allScannerStatCacheRows: Database.Statement;
@@ -375,6 +376,9 @@ export class ConversationCache {
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
       deleteTailAll: db.prepare("DELETE FROM conversation_tail"),
       getIdByFilePath: db.prepare("SELECT id FROM conversation_meta WHERE file_path = ?"),
+      getProviderByFilePath: db.prepare(
+        "SELECT provider FROM conversation_meta WHERE file_path = ?",
+      ),
       allFilePaths: db.prepare("SELECT id, file_path FROM conversation_meta"),
       allFileStats: db.prepare(
         "SELECT file_path, mtime_ms, file_size FROM conversation_meta WHERE mtime_ms IS NOT NULL AND file_size IS NOT NULL",
@@ -547,8 +551,16 @@ export class ConversationCache {
   // excluded from the index entirely; the scanner serves them (it routes each
   // provider to its own parser).
   private isIndexableFile(filePath: string): boolean {
-    const meta = this.getMetaById(ConversationCache.conversationIdForFile(filePath));
-    return (meta?.provider ?? CLAUDE_CODE_PROVIDER) === CLAUDE_CODE_PROVIDER;
+    // Resolve by file_path, NOT by conversationIdForFile: codex rollout files
+    // are named rollout-<ts>-<uuid>.jsonl, so the filename stem is not the
+    // meta row's id and an id lookup silently misses. A file with no meta row
+    // at all is NOT indexable — provider unknown means indexing is unsafe; a
+    // later request backfills once the meta row exists.
+    const row = this.stmts.getProviderByFilePath.get(filePath) as
+      | { provider: string | null }
+      | undefined;
+    if (!row) return false;
+    return (row.provider ?? CLAUDE_CODE_PROVIDER) === CLAUDE_CODE_PROVIDER;
   }
 
   /**
