@@ -127,7 +127,10 @@ export type WSMessage =
   | { type: "conversation_event"; sessionId: string; line: string }
   // Additive batched variant: one message carries all lines from a single
   // watcher read. Old clients ignore it and rely on conversation_event.
-  | { type: "conversation_events"; sessionId: string; lines: string[] }
+  // `seqs`, when present, is parallel to `lines`: seqs[i] is the message_index
+  // (offset-index seq) of lines[i], or null for a non-message line. Additive —
+  // old clients ignore it.
+  | { type: "conversation_events"; sessionId: string; lines: string[]; seqs?: (number | null)[] }
   // Structured interactive prompt (AskUserQuestion). Old clients ignore it.
   | { type: "question"; sessionId: string; toolUseId: string; questions: AskQuestion[] }
   | { type: "question_cancelled"; sessionId: string; toolUseId: string }

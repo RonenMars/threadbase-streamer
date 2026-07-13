@@ -1,6 +1,7 @@
 import chokidar, { type FSWatcher } from "chokidar";
 import { statSync } from "fs";
 import { open, stat } from "fs/promises";
+import { type LineSpan, splitCompleteLines } from "../../utils/fileIdentity";
 
 export interface ConversationWatcherEvents {
   /** Fires once per new newline-terminated line appended to a watched file. */
@@ -12,6 +13,20 @@ export interface ConversationWatcherEvents {
    * downstream cache write + WebSocket broadcast.
    */
   onNewLines?: (filePath: string, lines: string[]) => void;
+  /**
+   * Like onNewLines but also carries each line's absolute byte span in the
+   * file (for the offset index). Fires ALONGSIDE onNewLines/onNewLine (it does
+   * not replace them) so the cache tail write and the index extend can both
+   * consume the same read. `readFrom` is the absolute byte offset the read
+   * started at; `spans` are complete lines only (a torn trailing line is held
+   * for the next read).
+   */
+  onNewLineSpans?: (
+    filePath: string,
+    spans: LineSpan[],
+    readFrom: number,
+    endOffset: number,
+  ) => void;
   /** Fires when chokidar reports an add/change/unlink at the directory level. */
   onConversationChanged?: (filePath: string) => void | Promise<void>;
   /** Fires when a tailed file is deleted (per-file watcher unlink event). */
@@ -46,6 +61,7 @@ export class ConversationWatcher {
   private directories = new Map<string, FSWatcher>();
   private onNewLine: ConversationWatcherEvents["onNewLine"];
   private onNewLines: ConversationWatcherEvents["onNewLines"];
+  private onNewLineSpans: ConversationWatcherEvents["onNewLineSpans"];
   private onConversationChanged: ConversationWatcherEvents["onConversationChanged"];
   private onFileDeleted: ConversationWatcherEvents["onFileDeleted"];
   private onError: ConversationWatcherEvents["onError"];
@@ -53,6 +69,7 @@ export class ConversationWatcher {
   constructor(events: ConversationWatcherEvents = {}) {
     this.onNewLine = events.onNewLine;
     this.onNewLines = events.onNewLines;
+    this.onNewLineSpans = events.onNewLineSpans;
     this.onConversationChanged = events.onConversationChanged;
     this.onFileDeleted = events.onFileDeleted;
     this.onError = events.onError;
@@ -176,16 +193,28 @@ export class ConversationWatcher {
         } finally {
           await fh.close();
         }
-        // Advance by exactly what we read (NOT a re-stat'd size): the file may
-        // have grown again mid-read; the next loop iteration's stat catches it.
-        // This reproduces the old `offset = stat.size` semantics, including the
-        // drop of a trailing partial line (no \n yet) via filter(Boolean).
-        entry.offset = readFrom + bytesToRead;
+        // Split into complete lines only, with absolute byte spans. Advance by
+        // `consumed` (up to the last "\n"), NOT `bytesToRead`: a trailing
+        // partial line (no "\n" yet) is left unconsumed so `offset` never moves
+        // past an unparsed line — it arrives whole on the next read. The file
+        // may have grown again mid-read; the next loop iteration's stat catches
+        // the rest.
+        const { spans, consumed } = splitCompleteLines(buf, readFrom);
+        entry.offset = readFrom + consumed;
 
         // The watcher may have been closed while we awaited; don't emit then.
         if (!this.files.has(filePath)) return;
 
-        const lines = buf.toString("utf-8").split("\n").filter(Boolean);
+        const lines = spans.map((s) => s.text);
+        // The spans callback (offset index) fires alongside the text callbacks
+        // — they consume the same read, so a burst extends the index and writes
+        // the tail in one pass.
+        // Pass both the start (readFrom) and the post-read end offset
+        // (entry.offset = readFrom + consumed) so the index can enforce
+        // contiguity and store the same offset the watcher tracks.
+        if (spans.length > 0) {
+          this.onNewLineSpans?.(filePath, spans, readFrom, entry.offset);
+        }
         if (this.onNewLines) {
           this.onNewLines(filePath, lines);
         } else {

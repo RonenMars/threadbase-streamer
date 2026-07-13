@@ -130,7 +130,7 @@ describe("ConversationWatcher — file tailing", () => {
     w.dispose();
   });
 
-  it("drops a trailing partial line (no newline yet)", async () => {
+  it("holds a trailing partial line until its newline arrives (torn-write safe)", async () => {
     const onNewLines = vi.fn();
     const w = new ConversationWatcher({ onNewLines });
     w.watch("/proj/c.jsonl");
@@ -139,18 +139,52 @@ describe("ConversationWatcher — file tailing", () => {
     lastEmitter().emit("change");
     await flush();
 
-    expect(onNewLines).toHaveBeenCalledWith("/proj/c.jsonl", [
-      "complete",
-      "partial-without-newline",
-    ]);
-    // NOTE: this documents existing behavior — split("\n").filter(Boolean)
-    // keeps the trailing partial here because there's no \n to split on; the
-    // offset advances past it so it is not re-emitted on the next change.
+    // Only the complete line is emitted; the trailing partial is NOT delivered
+    // yet, and the offset does not advance past it (torn-write safety).
+    expect(onNewLines).toHaveBeenCalledWith("/proj/c.jsonl", ["complete"]);
+
+    // When the newline (and more) arrives, the previously-partial line is
+    // delivered whole — never split or lost.
     onNewLines.mockClear();
     fileBytes += "\nmore\n";
     lastEmitter().emit("change");
     await flush();
-    expect(onNewLines).toHaveBeenCalledWith("/proj/c.jsonl", ["more"]);
+    expect(onNewLines).toHaveBeenCalledWith("/proj/c.jsonl", ["partial-without-newline", "more"]);
+    w.dispose();
+  });
+
+  it("emits onNewLineSpans with correct absolute byte offsets across reads", async () => {
+    const onNewLineSpans = vi.fn();
+    const w = new ConversationWatcher({ onNewLines: vi.fn(), onNewLineSpans });
+    w.watch("/proj/spans.jsonl");
+
+    // Read 1: two complete lines + a torn trailing line.
+    fileBytes = "aa\nbbb\npar";
+    lastEmitter().emit("change");
+    await flush();
+
+    expect(onNewLineSpans).toHaveBeenCalledTimes(1);
+    const [path1, spans1, readFrom1] = onNewLineSpans.mock.calls[0];
+    expect(path1).toBe("/proj/spans.jsonl");
+    expect(readFrom1).toBe(0);
+    expect(spans1).toEqual([
+      { byteOffset: 0, byteLength: 2, text: "aa" },
+      { byteOffset: 3, byteLength: 3, text: "bbb" },
+    ]);
+
+    // Read 2: the torn line is completed and a new line appended. The offset
+    // resumed at 7 (past "aa\nbbb\n"), NOT past the partial "par".
+    onNewLineSpans.mockClear();
+    fileBytes += "tial\nccc\n";
+    lastEmitter().emit("change");
+    await flush();
+
+    const [, spans2, readFrom2] = onNewLineSpans.mock.calls[0];
+    expect(readFrom2).toBe(7);
+    expect(spans2).toEqual([
+      { byteOffset: 7, byteLength: 7, text: "partial" },
+      { byteOffset: 15, byteLength: 3, text: "ccc" },
+    ]);
     w.dispose();
   });
 

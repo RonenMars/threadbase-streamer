@@ -169,6 +169,8 @@ describe("GET /api/conversations/:id anchored and after windows", () => {
       next_before_index: 210,
       has_more_newer: false,
       next_after_index: null,
+      // after_index responses carry the conversation etag as a cursor token.
+      etag: expect.any(String),
     });
     const idx = indexes(body);
     expect(idx.length).toBe(90);

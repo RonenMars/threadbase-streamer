@@ -140,6 +140,10 @@ export class StreamerServer {
   private wsHub: WSHub;
   private fileWatcher: ConversationWatcher;
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
+  // Per-file seq assignments from the most recent onNewLineSpans (offset index),
+  // handed to the immediately-following onNewLines so it can stamp WS `seq` on
+  // the matching conversation_events entries. Same read → same lines order.
+  private pendingLineSeqs = new Map<string, (number | null)[]>();
   private pendingQuestions = new Map<string, { toolUseId: string; questions: AskQuestion[] }>();
   // Content key of the AskUserQuestion currently broadcast for a session (from
   // either the rendered screen or JSONL), used to de-dupe the two paths: when
@@ -306,6 +310,53 @@ export class StreamerServer {
     this.wsHub = new WSHub();
 
     this.fileWatcher = new ConversationWatcher({
+      onNewLineSpans: (filePath, spans, readFrom, endOffset) => {
+        // Offset index: extend the per-message byte-span index with this read's
+        // lines. Fires alongside onNewLines (which writes the tail); both
+        // consume the same read. Best-effort — a failure here must never break
+        // the tail write or WS broadcast.
+        if (!this.cache) return;
+        const cache = this.cache;
+        // No stale seqs from a prior read may leak into this one's WS stamping.
+        this.pendingLineSeqs.delete(filePath);
+        try {
+          const seqs = cache.extendMessageIndex(
+            filePath,
+            spans,
+            statSync(filePath),
+            readFrom,
+            endOffset,
+          );
+          if (seqs === null) {
+            // Non-contiguous read (watcher attached at EOF after downtime, or an
+            // append raced a backfill): drop the file's index and rebuild from
+            // scratch. Single-flighted, tracked so close() awaits it. No seqs
+            // are stamped for this read — the client refetches on reconcile.
+            cache.deleteFileIndex(filePath, ConversationCache.conversationIdForFile(filePath));
+            cache.clearIndexParseState(filePath);
+            this.trackCacheWrite(
+              cache.backfillIndex(filePath).catch((err) => {
+                this.log.warn("offset-index.backfill_failed", {
+                  event: "offset_index.backfill_failed",
+                  filePath,
+                  trigger: "noncontiguous-append",
+                  err,
+                });
+              }),
+            );
+            return;
+          }
+          // Stash for the onNewLines handler (fires next for the same read) to
+          // stamp WS `seq`. spans and lines are the same set in the same order.
+          this.pendingLineSeqs.set(filePath, seqs);
+        } catch (err) {
+          this.log.warn("offset-index.extend_failed", {
+            event: "offset_index.extend_failed",
+            filePath,
+            err,
+          });
+        }
+      },
       onNewLines: (filePath, lines) => {
         // One transactional cache write for the whole batch instead of per line.
         this.cache?.updateFromLines(filePath, lines);
@@ -344,8 +395,16 @@ export class StreamerServer {
               this.pendingQuestionKey.set(sessionId, key);
               if (broadcast) this.wsHub.broadcast(m);
             }
-            // Additive batched event (one socket write) for newer clients...
-            this.wsHub.broadcast({ type: "conversation_events", sessionId, lines });
+            // Additive batched event (one socket write) for newer clients. When
+            // the offset index assigned seqs for this read, carry them parallel
+            // to lines so a client can map each event to its message_index.
+            const seqs = this.pendingLineSeqs.get(filePath);
+            this.wsHub.broadcast({
+              type: "conversation_events",
+              sessionId,
+              lines,
+              ...(seqs && seqs.length === lines.length ? { seqs } : {}),
+            });
             // ...plus per-line conversation_event so older mobile clients,
             // which only know that shape, keep working byte-for-byte.
             for (const line of lines) {
@@ -354,6 +413,9 @@ export class StreamerServer {
             break;
           }
         }
+        // Seqs are consumed for this read; drop them so a later read for a file
+        // with no watched session can't reuse a stale mapping.
+        this.pendingLineSeqs.delete(filePath);
       },
       onConversationChanged: (filePath) => {
         // A new JSONL appeared (or changed) in a watched project directory.
@@ -1792,9 +1854,20 @@ export class StreamerServer {
       messageCount: number;
       timestamp: string;
     };
+    // Fold the offset index's count into the validator: when the index is
+    // fresher than the scanner snapshot (a live/appended file), the ETag must
+    // change so a client holding the old tail doesn't get a 304 against grown
+    // content. Cheap count lookup; the window read below reuses the same number.
+    const indexedCount =
+      etagSource.filePath && this.cache
+        ? this.cache.getIndexedMessageCount(
+            ConversationCache.conversationIdForFile(etagSource.filePath),
+          )
+        : 0;
+    const etagMessageCount = Math.max(etagSource.messageCount, indexedCount);
     const etag = computeConversationEtag({
       filePath: etagSource.filePath,
-      messageCount: etagSource.messageCount,
+      messageCount: etagMessageCount,
       timestamp: etagSource.timestamp,
     });
 
@@ -1832,6 +1905,10 @@ export class StreamerServer {
     let slice = filtered;
     let fromIdx = 0;
     let messagePagination: Record<string, unknown> | undefined;
+    // Set to the offset index's total when it served this response, so the meta
+    // block can reflect the freshly-indexed count/timestamp instead of the
+    // (possibly stale) scanner snapshot.
+    let indexTotal: number | null = null;
 
     if (usePaging) {
       const limit = Math.min(Math.max(intParam(url, "msg_limit", 80), 1), 500);
@@ -1839,6 +1916,9 @@ export class StreamerServer {
       let scanLimit = limit;
       let anchorIndex: number | null = null;
       let newerPaging = false;
+      // True only when the after_index branch actually ran (before_index takes
+      // precedence over after_index, so `hasAfter` alone isn't enough).
+      let usedAfterIndex = false;
       if (url.searchParams.has("before_index")) {
         beforeIndex = intParam(url, "before_index", total);
         beforeIndex = Math.min(Math.max(beforeIndex, 0), total);
@@ -1851,6 +1931,7 @@ export class StreamerServer {
         beforeIndex = Math.min(total, from + limit);
         scanLimit = beforeIndex - from;
         newerPaging = true;
+        usedAfterIndex = true;
       } else if (hasAnchor) {
         // Centered window around the anchor, clamped into [0, total-1] — a
         // stale index from search must still open the conversation, never 400.
@@ -1863,6 +1944,50 @@ export class StreamerServer {
         beforeIndex = Math.min(total, from + limit);
         newerPaging = true;
       }
+      // A plain tail request (no explicit cursor) means "the newest `limit`
+      // messages". Its window was derived from the scanner's snapshot `total`,
+      // which lags a live, actively-appended file — the exact case the offset
+      // index exists to serve. When the index is fresher than the snapshot,
+      // anchor the tail on the INDEX's total so newly-appended messages aren't
+      // dropped by a stale upper bound.
+      const isTailRequest = !url.searchParams.has("before_index") && !hasAfter && !hasAnchor;
+      const indexFilePath = (conversation as { filePath?: string }).filePath;
+      if (isTailRequest && indexFilePath && this.cache) {
+        const indexed = this.cache.getIndexedMessageCount(
+          ConversationCache.conversationIdForFile(indexFilePath),
+        );
+        if (indexed > beforeIndex) {
+          beforeIndex = indexed;
+        }
+      }
+      const windowStart = Math.max(0, beforeIndex - scanLimit);
+
+      // Offset-index fast path: when the index is warm and matches the file on
+      // disk, serve the window straight from SQLite + pread of the exact byte
+      // ranges — no scanner, no re-parse. Falls through to the scanner (and
+      // enqueues a backfill) on any miss/mismatch so the response is never
+      // wrong. Only for the linear paging windows (before/after/tail); the
+      // anchored-search window keeps using the scanner's reader.
+      const indexWindow =
+        scanLimit > 0 && !hasAnchor && indexFilePath && this.cache
+          ? this.cache.readMessageWindow(indexFilePath, windowStart, beforeIndex)
+          : null;
+      if (!indexWindow && indexFilePath && this.cache && !hasAnchor) {
+        // Cold/stale index for a file we page linearly → backfill in the
+        // background (tracked so close() awaits it) for next time. The current
+        // request is served by the scanner path below.
+        this.trackCacheWrite(
+          this.cache.backfillIndex(indexFilePath).catch((err) => {
+            this.log.warn("offset-index.backfill_failed", {
+              event: "offset_index.backfill_failed",
+              conversationId: id,
+              filePath: indexFilePath,
+              err,
+            });
+          }),
+        );
+      }
+
       // Only consult the scanner's paged reader when it's already warm. On the
       // cold path `conversation` came from the single-file fast path and holds
       // every message in memory, so slice it locally — calling getScanner()
@@ -1870,19 +1995,22 @@ export class StreamerServer {
       // skipStaleRescan: this is the same single-conversation detail path, whose
       // refreshFile already reconciled the one file we page here, so a sibling
       // file's stale flag must not stall this read behind a full-tree rescan.
-      const pagedScanner = this.scannerReady
-        ? ((await this.getScanner(true)) as unknown as {
-            getConversationPage?: (
-              id: string,
-              options: { beforeIndex: number; limit: number },
-            ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
-          })
-        : null;
-      const page =
-        scanLimit > 0 && pagedScanner && typeof pagedScanner.getConversationPage === "function"
-          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit: scanLimit })
+      const pagedScanner =
+        !indexWindow && this.scannerReady
+          ? ((await this.getScanner(true)) as unknown as {
+              getConversationPage?: (
+                id: string,
+                options: { beforeIndex: number; limit: number },
+              ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
+            })
           : null;
-      const start = page?.fromIndex ?? Math.max(0, beforeIndex - scanLimit);
+      const page =
+        indexWindow ??
+        (scanLimit > 0 && pagedScanner && typeof pagedScanner.getConversationPage === "function"
+          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit: scanLimit })
+          : null);
+      if (indexWindow) indexTotal = indexWindow.total;
+      const start = page?.fromIndex ?? windowStart;
       slice = page?.messages ?? filtered.slice(start, beforeIndex);
       fromIdx = start;
       const effectiveTotal = page?.total ?? total;
@@ -1897,6 +2025,14 @@ export class StreamerServer {
       if (newerPaging) {
         messagePagination.has_more_newer = beforeIndex < effectiveTotal;
         messagePagination.next_after_index = beforeIndex < effectiveTotal ? beforeIndex : null;
+      }
+      // Delta-validity token: an after_index delta carries the conversation's
+      // current etag so a client can detect that its stored cursor is stale
+      // (etag mismatch → discard the cursor, refetch the tail). Only on the
+      // forward-delta path (before_index takes precedence, so gate on the flag
+      // not merely hasAfter); additive, so old clients ignore it.
+      if (usedAfterIndex) {
+        messagePagination.etag = etag;
       }
     }
 
@@ -1941,6 +2077,16 @@ export class StreamerServer {
     const cachedConvMeta = this.cache?.getMetaById(id);
     const convProvider = coerceProviderForRunner(conv.provider ?? cachedConvMeta?.provider);
     const availability = classifyResumability(conv.projectPath);
+    // When the offset index served a fresher view than the scanner snapshot,
+    // the meta (message_count / last_updated_at) must reflect what was actually
+    // served — otherwise meta disagrees with the messages array. Prefer the
+    // index total and the newest served message's timestamp.
+    const metaMessageCount =
+      indexTotal != null && indexTotal > conv.messageCount ? indexTotal : conv.messageCount;
+    const metaLastUpdatedAt =
+      indexTotal != null && indexTotal > conv.messageCount
+        ? (slice.at(-1)?.timestamp ?? conv.timestamp)
+        : conv.timestamp;
     const body: Record<string, unknown> = {
       meta: {
         id,
@@ -1948,8 +2094,8 @@ export class StreamerServer {
         project_name: conv.projectName,
         project_path: conv.projectPath,
         file_path: conv.filePath,
-        last_updated_at: conv.timestamp,
-        message_count: conv.messageCount,
+        last_updated_at: metaLastUpdatedAt,
+        message_count: metaMessageCount,
         last_prompt: conv.lastPrompt ?? undefined,
         provider: convProvider,
         resumable: isProviderResumable(convProvider, availability.resumable),
