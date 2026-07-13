@@ -776,9 +776,15 @@ export class ConversationCache {
     const messages: ConversationMessage[] = [];
     const fd = openSync(filePath, "r");
     try {
-      // A fresh parse state per window: each returned line is self-contained for
-      // rendering (tool blocks are per-line); cross-line stitching isn't needed
-      // for a detail slice.
+      // A fresh parse state per window (not seeded by replaying earlier lines —
+      // that would re-read from byte 0 and defeat the index). parseJsonlLine's
+      // per-line ConversationMessage output does not depend on the cross-line
+      // reducer state in the current scanner, so a windowed read is byte-
+      // identical to a full contiguous parse — pinned by
+      // offset-index-read.test.ts ("windowed read of a tool_use → tool_result
+      // pair matches a full contiguous parse"). If a future scanner makes the
+      // per-line shape state-dependent, that test fails rather than silently
+      // serving a slightly-less-enriched payload.
       const state = createJsonlParseState();
       for (const row of rows) {
         const buf = Buffer.alloc(row.byte_length);
