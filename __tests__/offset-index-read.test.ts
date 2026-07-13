@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { mkdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { appendFileSync, mkdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -94,6 +94,28 @@ describe("ConversationCache.readMessageWindow", () => {
       writeFileSync(jsonlPath, `${userLine("z0", "z")}\n`);
       expect(cache.readMessageWindow(jsonlPath, 0, 10)).toBeNull();
     });
+  });
+
+  it("returns null when the file GREW past the index (untailed appends)", async () => {
+    // The index must never serve a slice of a file that grew beyond byte_offset
+    // — those appended messages aren't indexed yet, so a slice would silently
+    // drop them. This is the live-append bug: an append with no watcher
+    // extending the index must force a scanner fallback + re-backfill, not a
+    // truncated view. (Regression guard.)
+    const lines = [0, 1].map((i) => userLine(`u${i}`, `m${i}`));
+    writeFileSync(jsonlPath, `${lines.join("\n")}\n`);
+    await cache.backfillIndex(jsonlPath);
+    expect(cache.readMessageWindow(jsonlPath, 0, 10)?.total).toBe(2);
+
+    // Append a 3rd message directly (no incremental extend). size > byte_offset.
+    appendFileSync(jsonlPath, `${userLine("u2", "m2")}\n`);
+    expect(cache.readMessageWindow(jsonlPath, 0, 10)).toBeNull();
+
+    // A re-backfill re-covers the file, and the read now returns all three.
+    await cache.backfillIndex(jsonlPath);
+    const win = cache.readMessageWindow(jsonlPath, 0, 10);
+    expect(win?.total).toBe(3);
+    expect(win?.messages.map((m) => m.uuid)).toEqual(["u0", "u1", "u2"]);
   });
 
   it("clamps an over-wide window to the indexed total", () => {

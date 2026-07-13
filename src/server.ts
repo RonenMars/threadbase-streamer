@@ -1854,9 +1854,20 @@ export class StreamerServer {
       messageCount: number;
       timestamp: string;
     };
+    // Fold the offset index's count into the validator: when the index is
+    // fresher than the scanner snapshot (a live/appended file), the ETag must
+    // change so a client holding the old tail doesn't get a 304 against grown
+    // content. Cheap count lookup; the window read below reuses the same number.
+    const indexedCount =
+      etagSource.filePath && this.cache
+        ? this.cache.getIndexedMessageCount(
+            ConversationCache.conversationIdForFile(etagSource.filePath),
+          )
+        : 0;
+    const etagMessageCount = Math.max(etagSource.messageCount, indexedCount);
     const etag = computeConversationEtag({
       filePath: etagSource.filePath,
-      messageCount: etagSource.messageCount,
+      messageCount: etagMessageCount,
       timestamp: etagSource.timestamp,
     });
 
@@ -1894,6 +1905,10 @@ export class StreamerServer {
     let slice = filtered;
     let fromIdx = 0;
     let messagePagination: Record<string, unknown> | undefined;
+    // Set to the offset index's total when it served this response, so the meta
+    // block can reflect the freshly-indexed count/timestamp instead of the
+    // (possibly stale) scanner snapshot.
+    let indexTotal: number | null = null;
 
     if (usePaging) {
       const limit = Math.min(Math.max(intParam(url, "msg_limit", 80), 1), 500);
@@ -1929,6 +1944,22 @@ export class StreamerServer {
         beforeIndex = Math.min(total, from + limit);
         newerPaging = true;
       }
+      // A plain tail request (no explicit cursor) means "the newest `limit`
+      // messages". Its window was derived from the scanner's snapshot `total`,
+      // which lags a live, actively-appended file — the exact case the offset
+      // index exists to serve. When the index is fresher than the snapshot,
+      // anchor the tail on the INDEX's total so newly-appended messages aren't
+      // dropped by a stale upper bound.
+      const isTailRequest = !url.searchParams.has("before_index") && !hasAfter && !hasAnchor;
+      const indexFilePath = (conversation as { filePath?: string }).filePath;
+      if (isTailRequest && indexFilePath && this.cache) {
+        const indexed = this.cache.getIndexedMessageCount(
+          ConversationCache.conversationIdForFile(indexFilePath),
+        );
+        if (indexed > beforeIndex) {
+          beforeIndex = indexed;
+        }
+      }
       const windowStart = Math.max(0, beforeIndex - scanLimit);
 
       // Offset-index fast path: when the index is warm and matches the file on
@@ -1937,7 +1968,6 @@ export class StreamerServer {
       // enqueues a backfill) on any miss/mismatch so the response is never
       // wrong. Only for the linear paging windows (before/after/tail); the
       // anchored-search window keeps using the scanner's reader.
-      const indexFilePath = (conversation as { filePath?: string }).filePath;
       const indexWindow =
         scanLimit > 0 && !hasAnchor && indexFilePath && this.cache
           ? this.cache.readMessageWindow(indexFilePath, windowStart, beforeIndex)
@@ -1979,6 +2009,7 @@ export class StreamerServer {
         (scanLimit > 0 && pagedScanner && typeof pagedScanner.getConversationPage === "function"
           ? await pagedScanner.getConversationPage(id, { beforeIndex, limit: scanLimit })
           : null);
+      if (indexWindow) indexTotal = indexWindow.total;
       const start = page?.fromIndex ?? windowStart;
       slice = page?.messages ?? filtered.slice(start, beforeIndex);
       fromIdx = start;
@@ -2046,6 +2077,16 @@ export class StreamerServer {
     const cachedConvMeta = this.cache?.getMetaById(id);
     const convProvider = coerceProviderForRunner(conv.provider ?? cachedConvMeta?.provider);
     const availability = classifyResumability(conv.projectPath);
+    // When the offset index served a fresher view than the scanner snapshot,
+    // the meta (message_count / last_updated_at) must reflect what was actually
+    // served — otherwise meta disagrees with the messages array. Prefer the
+    // index total and the newest served message's timestamp.
+    const metaMessageCount =
+      indexTotal != null && indexTotal > conv.messageCount ? indexTotal : conv.messageCount;
+    const metaLastUpdatedAt =
+      indexTotal != null && indexTotal > conv.messageCount
+        ? (slice.at(-1)?.timestamp ?? conv.timestamp)
+        : conv.timestamp;
     const body: Record<string, unknown> = {
       meta: {
         id,
@@ -2053,8 +2094,8 @@ export class StreamerServer {
         project_name: conv.projectName,
         project_path: conv.projectPath,
         file_path: conv.filePath,
-        last_updated_at: conv.timestamp,
-        message_count: conv.messageCount,
+        last_updated_at: metaLastUpdatedAt,
+        message_count: metaMessageCount,
         last_prompt: conv.lastPrompt ?? undefined,
         provider: convProvider,
         resumable: isProviderResumable(convProvider, availability.resumable),

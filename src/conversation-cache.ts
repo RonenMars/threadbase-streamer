@@ -755,9 +755,16 @@ export class ConversationCache {
     } catch {
       return null;
     }
-    // Truncation / replacement: the index is stale and must not serve a slice.
-    // The caller drops it + backfills; here we just decline.
-    if (stat.size < fileState.byte_offset || fileIdentity(stat) !== fileState.identity) {
+    // The index is authoritative only up to byte_offset. Decline unless it
+    // covers the whole file exactly:
+    //  - identity changed  → file replaced;
+    //  - size < byte_offset → truncated;
+    //  - size > byte_offset → the file grew past the index (untailed messages
+    //    at the tail, e.g. an append with no live watcher extending the index).
+    // Serving a slice in that last case silently drops the appended messages —
+    // the exact live-append bug this feature exists to fix. In every mismatch
+    // the caller drops the index + backfills and falls back to the scanner.
+    if (fileIdentity(stat) !== fileState.identity || stat.size !== fileState.byte_offset) {
       return null;
     }
 
