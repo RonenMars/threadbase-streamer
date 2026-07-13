@@ -54,6 +54,27 @@ export interface CachedTail {
   tailSize: number;
 }
 
+/** A row of `conversation_file_state` — per-file offset-index resume state. */
+export interface FileStateRow {
+  path: string;
+  identity: string;
+  size: number;
+  mtime_ms: number;
+  byte_offset: number;
+  last_message_index: number;
+}
+
+/** A row of `conversation_message_index` — one indexed message's byte span. */
+export interface MessageIndexRow {
+  conversation_id: string;
+  message_index: number;
+  byte_offset: number;
+  byte_length: number;
+  uuid: string | null;
+  role: string | null;
+  ts: number | null;
+}
+
 export interface ScannerMeta {
   id: string;
   sessionId?: string;
@@ -218,6 +239,13 @@ export class ConversationCache {
     listConversationsForProjectBackfill: Database.Statement;
     hasOrphanProjectId: Database.Statement;
     popularProjects: Database.Statement;
+    getFileState: Database.Statement;
+    upsertFileState: Database.Statement;
+    deleteFileState: Database.Statement;
+    deleteMessageIndex: Database.Statement;
+    insertMessageIndexRow: Database.Statement;
+    getMessageIndexWindow: Database.Statement;
+    getIndexedMessageCount: Database.Statement;
   };
 
   private migrationsDir?: string;
@@ -385,6 +413,42 @@ export class ConversationCache {
          ORDER BY cnt DESC
          LIMIT ?`,
       ),
+      getFileState: db.prepare("SELECT * FROM conversation_file_state WHERE path = ?"),
+      upsertFileState: db.prepare(
+        `INSERT INTO conversation_file_state
+           (path, identity, size, mtime_ms, byte_offset, last_message_index)
+         VALUES (@path, @identity, @size, @mtime_ms, @byte_offset, @last_message_index)
+         ON CONFLICT(path) DO UPDATE SET
+           identity           = excluded.identity,
+           size               = excluded.size,
+           mtime_ms           = excluded.mtime_ms,
+           byte_offset        = excluded.byte_offset,
+           last_message_index = excluded.last_message_index`,
+      ),
+      deleteFileState: db.prepare("DELETE FROM conversation_file_state WHERE path = ?"),
+      deleteMessageIndex: db.prepare(
+        "DELETE FROM conversation_message_index WHERE conversation_id = ?",
+      ),
+      insertMessageIndexRow: db.prepare(
+        `INSERT INTO conversation_message_index
+           (conversation_id, message_index, byte_offset, byte_length, uuid, role, ts)
+         VALUES (@conversation_id, @message_index, @byte_offset, @byte_length, @uuid, @role, @ts)
+         ON CONFLICT(conversation_id, message_index) DO UPDATE SET
+           byte_offset = excluded.byte_offset,
+           byte_length = excluded.byte_length,
+           uuid        = excluded.uuid,
+           role        = excluded.role,
+           ts          = excluded.ts`,
+      ),
+      getMessageIndexWindow: db.prepare(
+        `SELECT message_index, byte_offset, byte_length, uuid, role, ts
+         FROM conversation_message_index
+         WHERE conversation_id = ? AND message_index >= ? AND message_index < ?
+         ORDER BY message_index ASC`,
+      ),
+      getIndexedMessageCount: db.prepare(
+        "SELECT COUNT(*) as cnt FROM conversation_message_index WHERE conversation_id = ?",
+      ),
     };
   }
 
@@ -394,6 +458,53 @@ export class ConversationCache {
    */
   getDatabase(): Database.Database {
     return this.db;
+  }
+
+  // ── Offset index (design 1b) ────────────────────────────────────────────
+  // conversation_file_state + conversation_message_index back the windowed
+  // detail read path (SQL window select + pread of byte ranges). All methods
+  // are thin wrappers over the prepared statements above.
+
+  getFileState(path: string): FileStateRow | null {
+    return (this.stmts.getFileState.get(path) as FileStateRow | undefined) ?? null;
+  }
+
+  upsertFileState(row: FileStateRow): void {
+    this.stmts.upsertFileState.run(row);
+  }
+
+  /** Drop a file's index rows + file_state (truncation / identity change). */
+  deleteFileIndex(path: string, conversationId: string): void {
+    const tx = this.db.transaction(() => {
+      this.stmts.deleteMessageIndex.run(conversationId);
+      this.stmts.deleteFileState.run(path);
+    });
+    tx();
+  }
+
+  /** Append/replace index rows in one transaction. */
+  appendMessageIndexRows(rows: MessageIndexRow[]): void {
+    const tx = this.db.transaction((batch: MessageIndexRow[]) => {
+      for (const r of batch) this.stmts.insertMessageIndexRow.run(r);
+    });
+    tx(rows);
+  }
+
+  /** Rows for message_index in [fromIndex, toIndex), ordered ascending. */
+  getMessageIndexWindow(
+    conversationId: string,
+    fromIndex: number,
+    toIndex: number,
+  ): MessageIndexRow[] {
+    return this.stmts.getMessageIndexWindow.all(
+      conversationId,
+      fromIndex,
+      toIndex,
+    ) as MessageIndexRow[];
+  }
+
+  getIndexedMessageCount(conversationId: string): number {
+    return (this.stmts.getIndexedMessageCount.get(conversationId) as { cnt: number }).cnt;
   }
 
   private agentEntrypointsKey(): string {
