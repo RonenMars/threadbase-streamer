@@ -306,6 +306,22 @@ export class StreamerServer {
     this.wsHub = new WSHub();
 
     this.fileWatcher = new ConversationWatcher({
+      onNewLineSpans: (filePath, spans) => {
+        // Offset index: extend the per-message byte-span index with this read's
+        // lines. Fires alongside onNewLines (which writes the tail); both
+        // consume the same read. Best-effort — a failure here must never break
+        // the tail write or WS broadcast.
+        if (!this.cache) return;
+        try {
+          this.cache.extendMessageIndex(filePath, spans, statSync(filePath));
+        } catch (err) {
+          this.log.warn("offset-index.extend_failed", {
+            event: "offset_index.extend_failed",
+            filePath,
+            err,
+          });
+        }
+      },
       onNewLines: (filePath, lines) => {
         // One transactional cache write for the whole batch instead of per line.
         this.cache?.updateFromLines(filePath, lines);

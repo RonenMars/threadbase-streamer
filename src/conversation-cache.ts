@@ -1,6 +1,12 @@
-import type { ConversationMeta, FileStatEntry } from "@threadbase-sh/scanner";
+import {
+  type ConversationMeta,
+  createJsonlParseState,
+  type FileStatEntry,
+  type JsonlParseState,
+  parseJsonlLine,
+} from "@threadbase-sh/scanner";
 import Database from "better-sqlite3";
-import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from "fs";
+import { closeSync, existsSync, mkdirSync, openSync, readSync, type Stats, statSync } from "fs";
 import { dirname } from "path";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
@@ -9,6 +15,7 @@ import {
   isAgentFile,
   isAgentLine,
 } from "./services/conversations/isAgentConversation";
+import { fileIdentity, type LineSpan } from "./utils/fileIdentity";
 
 export interface ConversationCacheOptions {
   // When true, drop conversations whose JSONL came from an agent entrypoint.
@@ -196,6 +203,11 @@ export class ConversationCache {
   private tailSize: number;
   private fileIndex = new Map<string, string>();
   private fileIndexLoaded = false;
+  // Per-file scanner parse state for the incremental offset-index writer. The
+  // reducer is stateful across lines (pending tool_uses, latest timestamp), so
+  // it must persist between watcher reads of the same file. Cleared on
+  // truncation/backfill.
+  private indexParseState = new Map<string, JsonlParseState>();
   // Monotonically increasing counter for tail updated_at — guarantees strict
   // ordering even when multiple updateFromLine() calls land within the same ms.
   private tailSeq = Date.now();
@@ -480,6 +492,7 @@ export class ConversationCache {
       this.stmts.deleteFileState.run(path);
     });
     tx();
+    this.indexParseState.delete(path);
   }
 
   /** Append/replace index rows in one transaction. */
@@ -505,6 +518,82 @@ export class ConversationCache {
 
   getIndexedMessageCount(conversationId: string): number {
     return (this.stmts.getIndexedMessageCount.get(conversationId) as { cnt: number }).cnt;
+  }
+
+  /**
+   * Conversation id for a JSONL path — the filename stem (matches the pseudo-id
+   * updateFromLine derives and the uuid the detail read path resolves). The
+   * offset index keys on this so the window select and the cursor agree.
+   */
+  static conversationIdForFile(filePath: string): string {
+    return (
+      filePath
+        .split(/[/\\]/)
+        .pop()
+        ?.replace(/\.jsonl$/, "") ?? filePath
+    );
+  }
+
+  /**
+   * Incremental offset-index writer: extend the index for a burst of appended
+   * lines (one watcher read) using their byte spans. Each line is classified
+   * with the scanner's parseJsonlLine (a running per-file reducer state), so the
+   * message ordering can never drift from the scanner's. Message lines get an
+   * index row at the next message_index; non-message lines (summary/sidecar)
+   * get no row but still advance byte_offset. file_state is updated to the end
+   * of the last consumed span.
+   *
+   * Requires an up-to-date `stat` (identity/size/mtime) for the file so the read
+   * path can detect truncation/replacement. A no-op when spans is empty.
+   */
+  extendMessageIndex(filePath: string, spans: LineSpan[], stat: Stats): void {
+    if (spans.length === 0) return;
+    const convId = ConversationCache.conversationIdForFile(filePath);
+
+    let state = this.indexParseState.get(filePath);
+    if (!state) {
+      state = createJsonlParseState();
+      this.indexParseState.set(filePath, state);
+    }
+
+    const existing = this.getFileState(filePath);
+    let nextIndex = existing ? existing.last_message_index + 1 : 0;
+    const rows: MessageIndexRow[] = [];
+
+    for (const span of spans) {
+      const msg = parseJsonlLine(span.text, state);
+      if (!msg) continue; // summary/sidecar/malformed → no index row
+      rows.push({
+        conversation_id: convId,
+        message_index: nextIndex,
+        byte_offset: span.byteOffset,
+        byte_length: span.byteLength,
+        uuid: msg.uuid ?? null,
+        role: msg.role ?? null,
+        ts: msg.timestamp ? Date.parse(msg.timestamp) || null : null,
+      });
+      nextIndex++;
+    }
+
+    const lastSpan = spans[spans.length - 1];
+    const byteOffset = lastSpan.byteOffset + lastSpan.byteLength + 1; // past the "\n"
+
+    const tx = this.db.transaction(() => {
+      for (const r of rows) this.stmts.insertMessageIndexRow.run(r);
+      this.stmts.upsertFileState.run({
+        path: filePath,
+        identity: fileIdentity(stat),
+        size: stat.size,
+        mtime_ms: Math.round(stat.mtimeMs),
+        byte_offset: byteOffset,
+        last_message_index: nextIndex - 1,
+      });
+    });
+    tx();
+  }
+
+  clearIndexParseState(filePath: string): void {
+    this.indexParseState.delete(filePath);
   }
 
   private agentEntrypointsKey(): string {
