@@ -1285,13 +1285,23 @@ describe("StreamerServer", () => {
       const future = new Date("2026-06-07T10:04:12.000Z");
       utimesSync(jsonlPath, future, future);
 
-      // The re-fetch must re-scan and surface the appended message.
-      const second = await fetch(url, { headers });
-      expect(second.status).toBe(200);
-      const secondBody = (await second.json()) as {
+      // Stale-while-revalidate (guard rails): the first re-fetch serves the
+      // current snapshot and refreshes in the background, so the appended
+      // message surfaces on a subsequent fetch once the refresh settles. The
+      // refresh is TTL-throttled (REFRESH_TTL_MS = 2s), so the poll interval
+      // must be long enough to cross that window. Poll until it lands — exactly
+      // how a live client reconciles.
+      let secondBody: {
         meta: { message_count: number; last_updated_at: string };
         messages: Array<{ text: string }>;
-      };
+      } = { meta: { message_count: 2, last_updated_at: "" }, messages: [] };
+      for (let attempt = 0; attempt < 24; attempt++) {
+        const res = await fetch(url, { headers });
+        expect(res.status).toBe(200);
+        secondBody = await res.json();
+        if (secondBody.messages.length === 3) break;
+        await new Promise((r) => setTimeout(r, 150));
+      }
       expect(secondBody.messages.length).toBe(3);
       expect(secondBody.messages.at(-1)?.text).toContain("the real latest message");
       expect(secondBody.meta.last_updated_at).toBe("2026-06-07T10:04:11.912Z");
@@ -1484,12 +1494,23 @@ describe("StreamerServer", () => {
       const future = new Date("2026-06-07T10:04:12.000Z");
       utimesSync(jsonlPath, future, future);
 
-      const second = await fetch(url(), {
-        headers: { ...auth, "If-None-Match": etag },
-      });
-      expect(second.status).toBe(200);
-      expect(second.headers.get("etag")).not.toBe(etag);
-      const body = (await second.json()) as { messages: Array<{ text: string }> };
+      // Stale-while-revalidate: the first re-fetch still matches the old ETag
+      // (304) and refreshes in the background; the new ETag + appended message
+      // surface once the refresh settles. The refresh is TTL-throttled
+      // (REFRESH_TTL_MS = 2s), so the poll interval crosses that window. Poll
+      // with the client's stored ETag until it 200s with fresh content.
+      let last: Response = first;
+      let body: { messages: Array<{ text: string }> } = { messages: [] };
+      for (let attempt = 0; attempt < 24; attempt++) {
+        last = await fetch(url(), { headers: { ...auth, "If-None-Match": etag } });
+        if (last.status === 200) {
+          body = await last.json();
+          if (body.messages.length === 3) break;
+        }
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      expect(last.status).toBe(200);
+      expect(last.headers.get("etag")).not.toBe(etag);
       expect(body.messages.length).toBe(3);
       expect(body.messages.at(-1)?.text).toContain("a brand new message");
     });
