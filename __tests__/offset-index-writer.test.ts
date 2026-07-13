@@ -38,6 +38,15 @@ function appendAndSpan(content: string, from: number): ReturnType<typeof splitCo
   return splitCompleteLines(buf, from);
 }
 
+/**
+ * Simulate a contiguous watcher read: split [from, EOF) and feed the spans to
+ * extendMessageIndex with readFrom=from and the correct end offset.
+ */
+function extendFrom(content: string, from: number): (number | null)[] | null {
+  const { spans, consumed } = appendAndSpan(content, from);
+  return cache.extendMessageIndex(jsonlPath, spans, statSync(jsonlPath), from, from + consumed);
+}
+
 beforeEach(() => {
   dbDir = join(tmpdir(), `offset-writer-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dbDir, { recursive: true });
@@ -56,9 +65,8 @@ describe("ConversationCache.extendMessageIndex (incremental writer)", () => {
     const l0 = userLine("u0", "2026-01-01T00:00:00.000Z", "hi");
     const l1 = asstLine("a1", "2026-01-01T00:00:01.000Z", "yo");
     const content = `${l0}\n${summaryLine}\n${l1}\n`;
-    const { spans } = appendAndSpan(content, 0);
 
-    const seqs = cache.extendMessageIndex(jsonlPath, spans, statSync(jsonlPath));
+    const seqs = extendFrom(content, 0);
     // Returned seqs are parallel to spans: message lines get their
     // message_index, the summary line (middle) gets null.
     expect(seqs).toEqual([0, null, 1]);
@@ -91,15 +99,16 @@ describe("ConversationCache.extendMessageIndex (incremental writer)", () => {
     const convId = ConversationCache.conversationIdForFile(jsonlPath);
     const l0 = userLine("u0", "2026-01-01T00:00:00.000Z", "one");
     const first = `${l0}\n`;
-    cache.extendMessageIndex(jsonlPath, appendAndSpan(first, 0).spans, statSync(jsonlPath));
+    extendFrom(first, 0);
     expect(cache.getIndexedMessageCount(convId)).toBe(1);
 
-    // Append two more messages, reading only the new bytes.
+    // Append two more messages, reading only the new bytes (contiguous from the
+    // end of the first read).
     const l1 = asstLine("a1", "2026-01-01T00:00:01.000Z", "two");
     const l2 = userLine("u2", "2026-01-01T00:00:02.000Z", "three");
     const content = `${first}${l1}\n${l2}\n`;
     const from = Buffer.byteLength(first, "utf-8");
-    cache.extendMessageIndex(jsonlPath, appendAndSpan(content, from).spans, statSync(jsonlPath));
+    extendFrom(content, from);
 
     expect(cache.getIndexedMessageCount(convId)).toBe(3);
     const rows = cache.getMessageIndexWindow(convId, 0, 10);
@@ -112,8 +121,37 @@ describe("ConversationCache.extendMessageIndex (incremental writer)", () => {
   it("is a no-op for an empty span batch", () => {
     const convId = ConversationCache.conversationIdForFile(jsonlPath);
     writeFileSync(jsonlPath, "");
-    cache.extendMessageIndex(jsonlPath, [], statSync(jsonlPath));
+    cache.extendMessageIndex(jsonlPath, [], statSync(jsonlPath), 0, 0);
     expect(cache.getIndexedMessageCount(convId)).toBe(0);
     expect(cache.getFileState(jsonlPath)).toBeNull();
+  });
+
+  it("declines a non-contiguous read (readFrom !== byte_offset) and writes nothing", () => {
+    const convId = ConversationCache.conversationIdForFile(jsonlPath);
+    // Seed a contiguous first read so file_state.byte_offset is set.
+    const first = `${userLine("u0", "2026-01-01T00:00:00.000Z", "one")}\n`;
+    extendFrom(first, 0);
+    const before = cache.getFileState(jsonlPath);
+    expect(before?.last_message_index).toBe(0);
+    const expectedStart = before?.byte_offset ?? -1;
+
+    // A later read that starts PAST where the index left off (e.g. the watcher
+    // attached at EOF after downtime) must be declined: returns null, no rows,
+    // file_state untouched.
+    const l1 = userLine("u1", "2026-01-01T00:00:01.000Z", "gap");
+    const content = `${first}${userLine("skipped", "2026-01-01T00:00:00.500Z", "hole")}\n${l1}\n`;
+    const from = expectedStart + 50; // deliberately not equal to byte_offset
+    const { spans, consumed } = appendAndSpan(content, from);
+    const result = cache.extendMessageIndex(
+      jsonlPath,
+      spans,
+      statSync(jsonlPath),
+      from,
+      from + consumed,
+    );
+
+    expect(result).toBeNull();
+    expect(cache.getIndexedMessageCount(convId)).toBe(1); // still just u0
+    expect(cache.getFileState(jsonlPath)?.byte_offset).toBe(expectedStart); // untouched
   });
 });

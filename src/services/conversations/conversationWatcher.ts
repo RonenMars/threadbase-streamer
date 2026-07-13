@@ -21,7 +21,12 @@ export interface ConversationWatcherEvents {
    * started at; `spans` are complete lines only (a torn trailing line is held
    * for the next read).
    */
-  onNewLineSpans?: (filePath: string, spans: LineSpan[], readFrom: number) => void;
+  onNewLineSpans?: (
+    filePath: string,
+    spans: LineSpan[],
+    readFrom: number,
+    endOffset: number,
+  ) => void;
   /** Fires when chokidar reports an add/change/unlink at the directory level. */
   onConversationChanged?: (filePath: string) => void | Promise<void>;
   /** Fires when a tailed file is deleted (per-file watcher unlink event). */
@@ -204,7 +209,12 @@ export class ConversationWatcher {
         // The spans callback (offset index) fires alongside the text callbacks
         // — they consume the same read, so a burst extends the index and writes
         // the tail in one pass.
-        if (spans.length > 0) this.onNewLineSpans?.(filePath, spans, readFrom);
+        // Pass both the start (readFrom) and the post-read end offset
+        // (entry.offset = readFrom + consumed) so the index can enforce
+        // contiguity and store the same offset the watcher tracks.
+        if (spans.length > 0) {
+          this.onNewLineSpans?.(filePath, spans, readFrom, entry.offset);
+        }
         if (this.onNewLines) {
           this.onNewLines(filePath, lines);
         } else {

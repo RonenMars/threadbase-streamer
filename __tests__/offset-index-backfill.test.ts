@@ -1,8 +1,9 @@
-import { mkdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
+import { splitCompleteLines } from "../src/utils/fileIdentity";
 
 let dbDir: string;
 let cache: ConversationCache;
@@ -133,5 +134,42 @@ describe("ConversationCache.backfillIndex", () => {
     const fs = cache.getFileState(jsonlPath);
     expect(fs?.last_message_index).toBe(1);
     expect(fs?.size).toBe(statSync(jsonlPath).size);
+  });
+
+  it("a tail append during an in-flight backfill declines instead of colliding at index 0", async () => {
+    // While a backfill is in flight there is no file_state yet, so a naive
+    // extend would start the appended tail at message_index 0 and collide with
+    // the backfill's own rows. The contiguity guard (readFrom !== 0) makes it
+    // decline. Simulate the exact state: no file_state, a tail read at
+    // readFrom > 0.
+    const convId = ConversationCache.conversationIdForFile(jsonlPath);
+    writeConversation(5);
+    expect(cache.getFileState(jsonlPath)).toBeNull(); // backfill hasn't written state
+
+    const content = readFileSync(jsonlPath, "utf-8");
+    const from = 100; // a tail read starting mid-file, not byte 0
+    const { spans, consumed } = splitCompleteLines(
+      Buffer.from(content, "utf-8").subarray(from),
+      from,
+    );
+    const result = cache.extendMessageIndex(
+      jsonlPath,
+      spans,
+      statSync(jsonlPath),
+      from,
+      from + consumed,
+    );
+
+    // Declined — no rows written at message_index 0, no file_state created.
+    expect(result).toBeNull();
+    expect(cache.getIndexedMessageCount(convId)).toBe(0);
+    expect(cache.getFileState(jsonlPath)).toBeNull();
+
+    // The single-flighted backfill still produces a correct, collision-free index.
+    await cache.backfillIndex(jsonlPath);
+    expect(cache.getIndexedMessageCount(convId)).toBe(5);
+    expect(cache.getMessageIndexWindow(convId, 0, 100).map((r) => r.message_index)).toEqual([
+      0, 1, 2, 3, 4,
+    ]);
   });
 });

@@ -27,8 +27,8 @@ function extendToEof() {
   const prev = cache.getFileState(jsonlPath);
   const from = prev?.byte_offset ?? 0;
   const buf = fs.readFileSync(jsonlPath).subarray(from);
-  const { spans } = splitCompleteLines(buf, from);
-  cache.extendMessageIndex(jsonlPath, spans, st);
+  const { spans, consumed } = splitCompleteLines(buf, from);
+  cache.extendMessageIndex(jsonlPath, spans, st, from, from + consumed);
 }
 
 beforeEach(() => {

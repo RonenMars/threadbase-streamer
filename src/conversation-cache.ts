@@ -552,11 +552,33 @@ export class ConversationCache {
    * Requires an up-to-date `stat` (identity/size/mtime) for the file so the read
    * path can detect truncation/replacement.
    *
-   * Returns the message_index assigned to each input span (null for a
-   * non-message line), so the caller can stamp WS `seq` on the matching
-   * conversation_event entries. Empty array when spans is empty.
+   * `readFrom` is the absolute byte offset the watcher read started at, and
+   * `endOffset` is where it ended (readFrom + consumed, i.e. the watcher's new
+   * entry.offset). CONTIGUITY GUARD: the read must begin exactly where the index
+   * left off (`readFrom === existing.byte_offset`, or 0 with no state). If it
+   * doesn't — the watcher attached at EOF after the server was down, or an
+   * append raced an in-flight backfill — extending would assign wrong
+   * message_index values over a hole. In that case this writes nothing and
+   * returns null so the caller drops the index and backfills.
+   *
+   * On success returns the message_index assigned to each input span (null for a
+   * non-message line) so the caller can stamp WS `seq`. Empty array when spans
+   * is empty. `endOffset` is stored verbatim as byte_offset so the watcher's
+   * offset and file_state.byte_offset are the same number by construction.
    */
-  extendMessageIndex(filePath: string, spans: LineSpan[], stat: Stats): (number | null)[] {
+  extendMessageIndex(
+    filePath: string,
+    spans: LineSpan[],
+    stat: Stats,
+    readFrom: number,
+    endOffset: number,
+  ): (number | null)[] | null {
+    const existing = this.getFileState(filePath);
+    const expectedStart = existing?.byte_offset ?? 0;
+    // Non-contiguous read → the index would develop a hole with wrong indices.
+    // Decline; the caller drops + backfills.
+    if (readFrom !== expectedStart) return null;
+
     if (spans.length === 0) return [];
     const convId = ConversationCache.conversationIdForFile(filePath);
 
@@ -566,7 +588,6 @@ export class ConversationCache {
       this.indexParseState.set(filePath, state);
     }
 
-    const existing = this.getFileState(filePath);
     let nextIndex = existing ? existing.last_message_index + 1 : 0;
     const rows: MessageIndexRow[] = [];
     const seqs: (number | null)[] = [];
@@ -590,9 +611,6 @@ export class ConversationCache {
       nextIndex++;
     }
 
-    const lastSpan = spans[spans.length - 1];
-    const byteOffset = lastSpan.byteOffset + lastSpan.byteLength + 1; // past the "\n"
-
     const tx = this.db.transaction(() => {
       for (const r of rows) this.stmts.insertMessageIndexRow.run(r);
       this.stmts.upsertFileState.run({
@@ -600,7 +618,10 @@ export class ConversationCache {
         identity: fileIdentity(stat),
         size: stat.size,
         mtime_ms: Math.round(stat.mtimeMs),
-        byte_offset: byteOffset,
+        // Store the watcher's end offset verbatim — same number as entry.offset,
+        // so the next read's contiguity check compares like-for-like (never
+        // false-positive on a read that ended in trailing empty lines).
+        byte_offset: endOffset,
         last_message_index: nextIndex - 1,
       });
     });

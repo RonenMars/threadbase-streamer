@@ -310,19 +310,46 @@ export class StreamerServer {
     this.wsHub = new WSHub();
 
     this.fileWatcher = new ConversationWatcher({
-      onNewLineSpans: (filePath, spans) => {
+      onNewLineSpans: (filePath, spans, readFrom, endOffset) => {
         // Offset index: extend the per-message byte-span index with this read's
         // lines. Fires alongside onNewLines (which writes the tail); both
         // consume the same read. Best-effort — a failure here must never break
         // the tail write or WS broadcast.
         if (!this.cache) return;
+        const cache = this.cache;
+        // No stale seqs from a prior read may leak into this one's WS stamping.
+        this.pendingLineSeqs.delete(filePath);
         try {
-          const seqs = this.cache.extendMessageIndex(filePath, spans, statSync(filePath));
+          const seqs = cache.extendMessageIndex(
+            filePath,
+            spans,
+            statSync(filePath),
+            readFrom,
+            endOffset,
+          );
+          if (seqs === null) {
+            // Non-contiguous read (watcher attached at EOF after downtime, or an
+            // append raced a backfill): drop the file's index and rebuild from
+            // scratch. Single-flighted, tracked so close() awaits it. No seqs
+            // are stamped for this read — the client refetches on reconcile.
+            cache.deleteFileIndex(filePath, ConversationCache.conversationIdForFile(filePath));
+            cache.clearIndexParseState(filePath);
+            this.trackCacheWrite(
+              cache.backfillIndex(filePath).catch((err) => {
+                this.log.warn("offset-index.backfill_failed", {
+                  event: "offset_index.backfill_failed",
+                  filePath,
+                  trigger: "noncontiguous-append",
+                  err,
+                });
+              }),
+            );
+            return;
+          }
           // Stash for the onNewLines handler (fires next for the same read) to
           // stamp WS `seq`. spans and lines are the same set in the same order.
           this.pendingLineSeqs.set(filePath, seqs);
         } catch (err) {
-          this.pendingLineSeqs.delete(filePath);
           this.log.warn("offset-index.extend_failed", {
             event: "offset_index.extend_failed",
             filePath,
