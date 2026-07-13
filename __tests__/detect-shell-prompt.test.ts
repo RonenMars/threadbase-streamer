@@ -44,6 +44,21 @@ describe("detectShellPrompt — numbered menu", () => {
     expect(p?.options.map((o) => o.answerKeys)).toEqual(["1\r", "2\r"]);
   });
 
+  it("scrapes numbered options above a 'Press enter to confirm' footer (Codex trust dialog)", () => {
+    const p = detectShellPrompt([
+      "Hooks need review",
+      "1 hook is new or changed.",
+      "Hooks can run outside the sandbox after you trust them.",
+      "1. Trust all and continue",
+      "2. Continue without trusting (hooks won't run)",
+      "Press enter to confirm or esc to go back",
+    ]);
+    expect(p?.options).toEqual([
+      { index: 1, label: "Trust all and continue", answerKeys: "1\r" },
+      { index: 2, label: "Continue without trusting (hooks won't run)", answerKeys: "2\r" },
+    ]);
+  });
+
   it("falls back to a default prompt when no header line precedes the menu", () => {
     const p = detectShellPrompt(["1) a", "2) b"]);
     expect(p?.prompt).toBe("Select an option");
