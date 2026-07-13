@@ -44,7 +44,6 @@ beforeEach(() => {
       "INSERT INTO conversation_meta (id, file_path, provider, message_count, updated_at) VALUES (?, ?, 'claude-code', 1, 1)",
     )
     .run("read-conv", jsonlPath);
-
 });
 
 afterEach(() => {
