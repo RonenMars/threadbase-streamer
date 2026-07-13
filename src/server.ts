@@ -115,6 +115,11 @@ const DEFAULT_SYSTEM_PROMPT =
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
+// A completed refreshFile within this window is treated as fresh — a retry
+// storm on a live conversation collapses to one parse per window instead of
+// one per request.
+const REFRESH_TTL_MS = 2000;
+
 // Session start blocks for the PTY to reach waiting_input/idle before
 // responding. Must exceed pty-manager's PROMPT_MARKER_FALLBACK_MS (10s) with
 // margin for slow boots; past this we fall back to the async 202 shape.
@@ -163,6 +168,12 @@ export class StreamerServer {
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
   // a single rescan after the current one completes instead of restarting it.
   private scannerStale = false;
+  // Single-flight + TTL guard around scanner.refreshFile (see refreshFileGuarded).
+  // A live file's mtime is always newer than the snapshot, so an unguarded
+  // refresh fires on every request and re-parses the whole file from byte 0.
+  // Keyed by filePath; entries drop on settle + TTL expiry, so the map stays
+  // bounded by the active-file set.
+  private refreshInFlight = new Map<string, { promise: Promise<unknown>; completedAt: number }>();
   // True only while bindWithRetry is actively retrying. The persistent
   // listener-level 'error' handler demotes EADDRINUSE to debug during this
   // window so the self-healing kickstart-relaunch race doesn't spam warn.
@@ -419,8 +430,10 @@ export class StreamerServer {
           const filePath = this.sessionFileMap.get(session.id);
           if (filePath) {
             this.getScanner()
-              .then((scanner) => scanner.refreshFile(filePath))
+              .then((scanner) => this.refreshFileGuarded(scanner, filePath))
               .then((meta) => {
+                // meta === null means the guard coalesced/skipped this refresh
+                // (already in flight or within the TTL) — not a real result.
                 this.log.info("scanner.refreshFile: ok", {
                   event: "scanner.refresh",
                   sessionId: session.id,
@@ -1006,6 +1019,42 @@ export class StreamerServer {
     void guarded.finally(() => {
       this.inFlightCacheWrites.delete(guarded);
     });
+  }
+
+  // Single-flight + TTL wrapper for scanner.refreshFile. Both call sites (the
+  // detail-stale branch and the per-turn refresh) route through here so that
+  // N stacked retries on a live, actively-appended file cost one parse, not N:
+  //  - a refresh already in flight for the path → await the same promise;
+  //  - a refresh that settled within REFRESH_TTL_MS → skip, return null (the
+  //    caller keeps serving the current snapshot);
+  //  - otherwise start one, cache the promise, and stamp completedAt on settle.
+  // The map is bounded by the active-file set (entries only live while a
+  // refresh is in flight or within its TTL and are overwritten on the next
+  // refresh of the same path).
+  private refreshFileGuarded(
+    scanner: ConversationScanner,
+    filePath: string,
+  ): Promise<Awaited<ReturnType<ConversationScanner["refreshFile"]>> | null> {
+    const existing = this.refreshInFlight.get(filePath);
+    if (existing) {
+      const settled = existing.completedAt > 0;
+      if (!settled) {
+        // In flight: coalesce onto the same parse.
+        return existing.promise as Promise<Awaited<
+          ReturnType<ConversationScanner["refreshFile"]>
+        > | null>;
+      }
+      if (Date.now() - existing.completedAt < REFRESH_TTL_MS) {
+        // Completed recently enough: serve the snapshot, skip the parse.
+        return Promise.resolve(null);
+      }
+    }
+    const entry = { promise: Promise.resolve<unknown>(null), completedAt: 0 };
+    entry.promise = scanner.refreshFile(filePath).finally(() => {
+      entry.completedAt = Date.now();
+    });
+    this.refreshInFlight.set(filePath, entry);
+    return entry.promise as Promise<Awaited<ReturnType<ConversationScanner["refreshFile"]>> | null>;
   }
 
   async close(): Promise<void> {
@@ -1601,23 +1650,43 @@ export class StreamerServer {
     const scanner = await this.getScanner(true);
     const fromIndex = await scanner.getConversation(uuid);
     if (fromIndex) {
+      // Live-session bypass: a conversation with a live PTY is exactly the case
+      // that stalls — its mtime is always newer than the snapshot, so the stale
+      // check below would refresh on every request. Serve the current snapshot
+      // with no stale-check and no refresh. The live client is on WS receiving
+      // conversation_event lines; the (TTL-throttled) turn-end refresh advances
+      // the snapshot server-side; mobile refetches once on the running →
+      // not-running transition, which is the reconcile point.
+      if (this.ptyManager.hasSession(uuid)) {
+        return fromIndex;
+      }
       // The scanner memoizes both its metadata index and parsed conversations
       // for the server's lifetime. A conversation that grows after the initial
       // scan (the chokidar watcher keeps the SQLite cache fresh, but never the
       // scanner) keeps serving the startup snapshot here — so the detail/info
       // view shows a stale message count + last activity that disagrees with
-      // the list view and with what --resume actually replays. If the JSONL on
-      // disk is newer than the snapshot, refresh just that one file's indexes
-      // (refreshFile evicts the stale parse and re-parses on the next read)
-      // rather than dropping and rebuilding the entire scanner.
+      // the list view and with what --resume actually replays.
+      //
+      // Stale-while-revalidate: since a snapshot already exists, respond from it
+      // immediately and refresh the one file's indexes in the background
+      // (single-flighted + TTL-throttled via refreshFileGuarded, tracked so
+      // close() awaits it). The next request after the refresh settles sees the
+      // fresh data. Only a conversation with NO snapshot pays the parse
+      // synchronously (the getConversation-null fallthrough below), so a cold
+      // thundering herd costs one parse, not N.
       if (fromIndex.filePath && this.isConversationSnapshotStale(fromIndex)) {
-        const refreshedMeta = await scanner.refreshFile(fromIndex.filePath);
-        // refreshFile returns null and drops the entry when the file no longer
-        // parses (deleted/emptied). In that case return null so the caller's
-        // ghost-prune + cache-tail fallback runs instead of serving the stale
-        // snapshot we already know is wrong.
-        if (!refreshedMeta) return null;
-        return (await scanner.getConversation(uuid)) ?? fromIndex;
+        const filePath = fromIndex.filePath;
+        this.trackCacheWrite(
+          this.refreshFileGuarded(scanner, filePath).catch((err) => {
+            this.log.warn("scanner.refreshFile: failed", {
+              event: "scanner.refresh_failed",
+              conversationId: uuid,
+              filePath,
+              trigger: "detail-swr",
+              err,
+            });
+          }),
+        );
       }
       return fromIndex;
     }
