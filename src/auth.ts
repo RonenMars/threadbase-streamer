@@ -95,6 +95,20 @@ export function loadTailSize(): number | undefined {
   return undefined;
 }
 
+// Auto-kill grace period in ms. 0 disables the automatic hold-on-disconnect
+// timer entirely (explicit hold_session still works); a positive value sets the
+// delay; unset falls through to DEFAULT_PTY_GRACE_PERIOD_MS.
+export function loadPtyGracePeriodMs(): number | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/pty_grace_period_ms:\s*(\d+)/);
+    if (match?.[1]) return Number.parseInt(match[1], 10);
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
 export function loadDefaultPermissionMode(): "acceptEdits" | "manual" | undefined {
   try {
     const content = readFileSync(configFile(), "utf-8");

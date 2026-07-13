@@ -650,7 +650,9 @@ export class StreamerServer {
         }
         for (const [sessionId, subscribers] of this.sessionSubscribers) {
           subscribers.delete(ws);
-          if (subscribers.size === 0) {
+          // ptyGracePeriodMs === 0 disables the automatic hold-on-disconnect
+          // timer; an explicit hold_session message still holds immediately.
+          if (subscribers.size === 0 && this.ptyGracePeriodMs > 0) {
             this.startGraceTimer(sessionId, this.ptyGracePeriodMs);
           }
         }
