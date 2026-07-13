@@ -1,4 +1,5 @@
 import {
+  type ConversationMessage,
   type ConversationMeta,
   createJsonlParseState,
   type FileStatEntry,
@@ -695,6 +696,70 @@ export class ConversationCache {
     // Seed the incremental writer's state so subsequent appends continue the
     // same reducer instead of re-parsing from scratch.
     this.indexParseState.set(filePath, state);
+  }
+
+  /**
+   * Windowed detail read straight from the offset index — the hot path.
+   * Returns the parsed messages for message_index in [fromIndex, toIndex) plus
+   * the total indexed count, or null when the index can't serve this file (no
+   * file_state, identity/size mismatch = truncation/replacement, or cold index)
+   * so the caller falls back to the scanner and enqueues a backfill.
+   *
+   * On a match it SQL-selects the window's byte ranges and preads exactly those
+   * ranges from the JSONL (never the whole file), parsing only the sliced lines.
+   * Returns messages in the same ConversationMessage shape parseJsonlLine
+   * produces during a scan, so the payload is identical to the scanner path.
+   */
+  readMessageWindow(
+    filePath: string,
+    fromIndex: number,
+    toIndex: number,
+  ): { messages: ConversationMessage[]; total: number; fromIndex: number } | null {
+    const fileState = this.getFileState(filePath);
+    if (!fileState) return null;
+
+    let stat: Stats;
+    try {
+      stat = statSync(filePath);
+    } catch {
+      return null;
+    }
+    // Truncation / replacement: the index is stale and must not serve a slice.
+    // The caller drops it + backfills; here we just decline.
+    if (stat.size < fileState.byte_offset || fileIdentity(stat) !== fileState.identity) {
+      return null;
+    }
+
+    const total = fileState.last_message_index + 1;
+    const from = Math.max(0, fromIndex);
+    const to = Math.min(toIndex, total);
+    if (to <= from) return { messages: [], total, fromIndex: from };
+
+    const rows = this.getMessageIndexWindow(
+      ConversationCache.conversationIdForFile(filePath),
+      from,
+      to,
+    );
+    if (rows.length === 0) return { messages: [], total, fromIndex: from };
+
+    const messages: ConversationMessage[] = [];
+    const fd = openSync(filePath, "r");
+    try {
+      // A fresh parse state per window: each returned line is self-contained for
+      // rendering (tool blocks are per-line); cross-line stitching isn't needed
+      // for a detail slice.
+      const state = createJsonlParseState();
+      for (const row of rows) {
+        const buf = Buffer.alloc(row.byte_length);
+        readSync(fd, buf, 0, row.byte_length, row.byte_offset);
+        const msg = parseJsonlLine(buf.toString("utf-8"), state);
+        if (msg) messages.push(msg);
+      }
+    } finally {
+      closeSync(fd);
+    }
+
+    return { messages, total, fromIndex: from };
   }
 
   private agentEntrypointsKey(): string {

@@ -1879,6 +1879,35 @@ export class StreamerServer {
         beforeIndex = Math.min(total, from + limit);
         newerPaging = true;
       }
+      const windowStart = Math.max(0, beforeIndex - scanLimit);
+
+      // Offset-index fast path: when the index is warm and matches the file on
+      // disk, serve the window straight from SQLite + pread of the exact byte
+      // ranges — no scanner, no re-parse. Falls through to the scanner (and
+      // enqueues a backfill) on any miss/mismatch so the response is never
+      // wrong. Only for the linear paging windows (before/after/tail); the
+      // anchored-search window keeps using the scanner's reader.
+      const indexFilePath = (conversation as { filePath?: string }).filePath;
+      const indexWindow =
+        scanLimit > 0 && !hasAnchor && indexFilePath && this.cache
+          ? this.cache.readMessageWindow(indexFilePath, windowStart, beforeIndex)
+          : null;
+      if (!indexWindow && indexFilePath && this.cache && !hasAnchor) {
+        // Cold/stale index for a file we page linearly → backfill in the
+        // background (tracked so close() awaits it) for next time. The current
+        // request is served by the scanner path below.
+        this.trackCacheWrite(
+          this.cache.backfillIndex(indexFilePath).catch((err) => {
+            this.log.warn("offset-index.backfill_failed", {
+              event: "offset_index.backfill_failed",
+              conversationId: id,
+              filePath: indexFilePath,
+              err,
+            });
+          }),
+        );
+      }
+
       // Only consult the scanner's paged reader when it's already warm. On the
       // cold path `conversation` came from the single-file fast path and holds
       // every message in memory, so slice it locally — calling getScanner()
@@ -1886,19 +1915,21 @@ export class StreamerServer {
       // skipStaleRescan: this is the same single-conversation detail path, whose
       // refreshFile already reconciled the one file we page here, so a sibling
       // file's stale flag must not stall this read behind a full-tree rescan.
-      const pagedScanner = this.scannerReady
-        ? ((await this.getScanner(true)) as unknown as {
-            getConversationPage?: (
-              id: string,
-              options: { beforeIndex: number; limit: number },
-            ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
-          })
-        : null;
-      const page =
-        scanLimit > 0 && pagedScanner && typeof pagedScanner.getConversationPage === "function"
-          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit: scanLimit })
+      const pagedScanner =
+        !indexWindow && this.scannerReady
+          ? ((await this.getScanner(true)) as unknown as {
+              getConversationPage?: (
+                id: string,
+                options: { beforeIndex: number; limit: number },
+              ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
+            })
           : null;
-      const start = page?.fromIndex ?? Math.max(0, beforeIndex - scanLimit);
+      const page =
+        indexWindow ??
+        (scanLimit > 0 && pagedScanner && typeof pagedScanner.getConversationPage === "function"
+          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit: scanLimit })
+          : null);
+      const start = page?.fromIndex ?? windowStart;
       slice = page?.messages ?? filtered.slice(start, beforeIndex);
       fromIdx = start;
       const effectiveTotal = page?.total ?? total;
