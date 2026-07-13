@@ -1874,6 +1874,9 @@ export class StreamerServer {
       let scanLimit = limit;
       let anchorIndex: number | null = null;
       let newerPaging = false;
+      // True only when the after_index branch actually ran (before_index takes
+      // precedence over after_index, so `hasAfter` alone isn't enough).
+      let usedAfterIndex = false;
       if (url.searchParams.has("before_index")) {
         beforeIndex = intParam(url, "before_index", total);
         beforeIndex = Math.min(Math.max(beforeIndex, 0), total);
@@ -1886,6 +1889,7 @@ export class StreamerServer {
         beforeIndex = Math.min(total, from + limit);
         scanLimit = beforeIndex - from;
         newerPaging = true;
+        usedAfterIndex = true;
       } else if (hasAnchor) {
         // Centered window around the anchor, clamped into [0, total-1] — a
         // stale index from search must still open the conversation, never 400.
@@ -1967,8 +1971,9 @@ export class StreamerServer {
       // Delta-validity token: an after_index delta carries the conversation's
       // current etag so a client can detect that its stored cursor is stale
       // (etag mismatch → discard the cursor, refetch the tail). Only on the
-      // forward-delta path; additive, so old clients ignore it.
-      if (hasAfter) {
+      // forward-delta path (before_index takes precedence, so gate on the flag
+      // not merely hasAfter); additive, so old clients ignore it.
+      if (usedAfterIndex) {
         messagePagination.etag = etag;
       }
     }
