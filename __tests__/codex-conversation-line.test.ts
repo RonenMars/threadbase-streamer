@@ -86,6 +86,36 @@ describe("normalizeCodexLineToClaudeShape", () => {
       ),
     ).toBeNull();
   });
+
+  it("drops streamer DEFAULT/BROWSE system prompts injected as user turns", () => {
+    expect(
+      isCodexInjectedContext(
+        "When presenting options or choices to the user, limit the options to at most 3.",
+      ),
+    ).toBe(true);
+    expect(
+      isCodexInjectedContext(
+        "You are working within the project boundary: /tmp/proj. Do not read, write, or execute commands that access files or directories outside this boundary.",
+      ),
+    ).toBe(true);
+    expect(
+      normalizeCodexLineToClaudeShape(
+        JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "When presenting options or choices to the user, limit the options to at most 3.",
+              },
+            ],
+          },
+        }),
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("toClientConversationLines", () => {

@@ -136,6 +136,17 @@ export function isCodexInjectedContext(text: string): boolean {
   ) {
     return true;
   }
+  // Streamer-injected prompts passed as Codex CLI argv (no --system-prompt flag).
+  // DEFAULT_SYSTEM_PROMPT + BROWSE_SYSTEM_PROMPT land as role:user in the rollout.
+  if (text.includes("limit the options to at most 3")) return true;
+  if (text.includes("You are working within the project boundary:")) return true;
+  if (
+    text.includes(
+      "Do not read, write, or execute commands that access files or directories outside this boundary",
+    )
+  ) {
+    return true;
+  }
   return false;
 }
 
