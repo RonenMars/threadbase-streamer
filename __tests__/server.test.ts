@@ -610,6 +610,168 @@ describe("StreamerServer", () => {
       vi.restoreAllMocks();
     });
 
+    it("msg_limit on bound id slices the injection-filtered list (not scanner getConversationPage)", async () => {
+      // Regression: handleGetConversation used to call getConversationPage after
+      // building `filtered`, which re-read the unfiltered LRU and dropped the
+      // newest user turn while surfacing AGENTS.md — mobile always sends msg_limit=80.
+      const liveSessionId = "259fd3ce-ad78-4980-b441-1cfa05edaec9";
+      const codexSessionId = "codex-persisted-id-msg-limit";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      const now = new Date();
+      const dateDir = join(
+        codexRoot,
+        String(now.getFullYear()),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      );
+      mkdirSync(dateDir, { recursive: true });
+      const lines = [
+        {
+          timestamp: now.toISOString(),
+          type: "session_meta",
+          payload: {
+            id: codexSessionId,
+            session_id: codexSessionId,
+            cwd: projectPath,
+            timestamp: now.toISOString(),
+          },
+        },
+        {
+          timestamp: now.toISOString(),
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_text", text: "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nhide me" },
+            ],
+          },
+        },
+        {
+          timestamp: now.toISOString(),
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "first user turn" }],
+          },
+        },
+        {
+          timestamp: now.toISOString(),
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "first assistant reply" }],
+          },
+        },
+        {
+          timestamp: now.toISOString(),
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "second user turn" }],
+          },
+        },
+        {
+          timestamp: now.toISOString(),
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "second assistant reply" }],
+          },
+        },
+      ];
+      writeFileSync(
+        join(dateDir, `rollout-2026-01-01T00-00-00-${codexSessionId}.jsonl`),
+        lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+      );
+
+      const poisonPage = {
+        messages: [
+          {
+            role: "user",
+            text: "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nhide me",
+            timestamp: now.toISOString(),
+          },
+          {
+            role: "user",
+            text: "first user turn",
+            timestamp: now.toISOString(),
+          },
+          {
+            role: "assistant",
+            text: "first assistant reply",
+            timestamp: now.toISOString(),
+          },
+          // Deliberately omit the second turn — the old getConversationPage path
+          // could serve a stale/unfiltered window that looked like this.
+        ],
+        total: 7,
+        fromIndex: 0,
+      };
+
+      const scannerProto = (await import("@threadbase-sh/scanner")).ConversationScanner
+        .prototype as unknown as {
+        getConversationPage?: (...args: unknown[]) => unknown;
+      };
+      const originalGetPage = scannerProto.getConversationPage;
+      scannerProto.getConversationPage = async () => poisonPage;
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (boundServer as any).sessionStatusBus.emit(`status:${liveSessionId}`, "waiting_input");
+          });
+          return {
+            id: liveSessionId,
+            provider: "codex-cli",
+            projectPath,
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+      vi.spyOn((boundServer as any).ptyManager, "hasSession").mockImplementation(
+        (id: string) => id === liveSessionId,
+      );
+
+      try {
+        const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+        });
+        expect(startRes.status).toBe(200);
+
+        const byBound = await fetch(
+          `${boundBaseUrl}/api/conversations/${codexSessionId}?msg_limit=80`,
+          { headers: { Authorization: `Bearer ${API_KEY}` } },
+        );
+        expect(byBound.status).toBe(200);
+        const body = await byBound.json();
+        const texts = (body.messages ?? []).map((m: { text: string }) => m.text);
+        expect(texts.some((t: string) => t.includes("AGENTS.md"))).toBe(false);
+        expect(texts).toContain("first user turn");
+        expect(texts).toContain("second user turn");
+        expect(texts).toContain("second assistant reply");
+        expect(body.message_pagination?.total).toBe(4);
+      } finally {
+        scannerProto.getConversationPage = originalGetPage;
+        codexStartFreshSpy.mockRestore();
+        vi.restoreAllMocks();
+      }
+    });
+
     it("ignores a rollout file whose cwd does not match the session's projectPath", async () => {
       const liveSessionId = "069fd3ce-ad78-4980-b441-1cfa05edaeca";
       const projectPath = realpathSync(join(browseRoot, "project"));

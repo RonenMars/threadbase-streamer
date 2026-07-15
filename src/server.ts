@@ -1786,6 +1786,37 @@ export class StreamerServer {
         this.ptyManager.hasSession(lookupId) ||
         this.isBoundConversationLive(lookupId)
       ) {
+        // Codex live sessions: the scanner LRU snapshot is often frozen at bind
+        // time (mtime always looks "live", so SWR never refreshes). Re-parse the
+        // watched rollout so REST history includes turns written after bind.
+        // Claude keeps the cheap bypass — its offset index + WS seq path stay fresh.
+        const livePath =
+          this.findLiveSessionFilePath(uuid) ??
+          this.findLiveSessionFilePath(lookupId) ??
+          fromIndex.filePath ??
+          null;
+        const isCodexLive =
+          this.isBoundConversationLive(lookupId) ||
+          this.sessionStore.getManaged(uuid)?.provider === CODEX_CLI_PROVIDER;
+        if (isCodexLive && livePath) {
+          try {
+            const account =
+              this.cache?.getMetaById(lookupId)?.account ??
+              (fromIndex as { account?: string }).account ??
+              undefined;
+            const page = await scanner.parseSingleFilePage(livePath, account, {
+              limit: Number.MAX_SAFE_INTEGER,
+            });
+            if (page?.conversation) return page.conversation;
+          } catch (err) {
+            this.log.warn("codex.live_reparse_failed", {
+              event: "codex.live_reparse_failed",
+              conversationId: lookupId,
+              filePath: livePath,
+              err,
+            });
+          }
+        }
         return fromIndex;
       }
       // The scanner memoizes both its metadata index and parsed conversations
@@ -2070,20 +2101,12 @@ export class StreamerServer {
       // skipStaleRescan: this is the same single-conversation detail path, whose
       // refreshFile already reconciled the one file we page here, so a sibling
       // file's stale flag must not stall this read behind a full-tree rescan.
-      const pagedScanner =
-        !indexWindow && this.scannerReady
-          ? ((await this.getScanner(true)) as unknown as {
-              getConversationPage?: (
-                id: string,
-                options: { beforeIndex: number; limit: number },
-              ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
-            })
-          : null;
-      const page =
-        indexWindow ??
-        (scanLimit > 0 && pagedScanner && typeof pagedScanner.getConversationPage === "function"
-          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit: scanLimit })
-          : null);
+      // Prefer the offset-index window when warm (Claude). Otherwise slice the
+      // in-memory `filtered` list — do NOT call getConversationPage here.
+      // That helper re-reads the scanner LRU (unfiltered, often stale for live
+      // Codex) and would bypass isCodexInjectedContext, which is exactly how
+      // mobile's ?msg_limit=80 path lost real user turns / showed PTY-only UI.
+      const page = indexWindow;
       if (indexWindow) indexTotal = indexWindow.total;
       const start = page?.fromIndex ?? windowStart;
       slice = page?.messages ?? filtered.slice(start, beforeIndex);
