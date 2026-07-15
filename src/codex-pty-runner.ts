@@ -5,13 +5,20 @@ import { basename } from "path";
 import { getLogger, type Logger } from "./logger";
 import { resolveCodexExe } from "./platform";
 import { CODEX_CLI_PROVIDER } from "./providers";
+import {
+  type CodexGateType,
+  rememberedGateDigit,
+  saveGateAnswer,
+} from "./services/questions/codexGateAnswers";
 import type {
   ManagedSession,
+  PermissionOption,
   PTYManagerOptions,
   SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
 } from "./types";
+import { debounce } from "./utils/debounce";
 
 const OUTPUT_BUFFER_MAX = 65536;
 
@@ -38,6 +45,29 @@ export const CODEX_PROMPT_READY_TEXT = "Ready";
 // already-trusted directory (Codex persists trust in ~/.codex/config.toml).
 export const CODEX_TRUST_GATE_REGEX = /trust the contents/i;
 
+// Codex's hooks-review gate: shown pre-boot (fresh start AND resume) whenever
+// a configured hook is new/changed vs the trusted hashes in
+// ~/.codex/config.toml [hooks.state]. Options "1. Review hooks" (highlighted
+// default) / "2. Trust all and continue" / "3. Continue without trusting",
+// with a "Press enter to confirm or esc to go back" footer. Live-probe
+// verified: a digit keypress selects AND confirms instantly (no Enter).
+export const CODEX_HOOKS_GATE_REGEX = /hooks need review/i;
+
+// Re-run screen detection this long after the PTY goes quiet — a session
+// blocked on a gate (or a status bar whose "Ready" got truncated) may never
+// produce another chunk to trigger detection. Same value/rationale as
+// pty-manager.ts QUIET_DETECT_MS. On quiet with pendingReady still set we mark
+// ready anyway: the mobile client is better off inside the session watching
+// live boot output than stuck on a spinner.
+const QUIET_DETECT_MS = 500;
+
+// Flat backstop from spawn: "Ready" lives at the END of a single status line
+// whose prefix (dir · repo · branch · diffstats) can exceed PTY_COLS, in which
+// case the marker is truncated off-screen and can NEVER match (live-probe
+// verified). Must stay below server.ts START_READY_TIMEOUT_MS (10s) so the
+// start request resolves 200-with-session rather than 202-pending.
+const CODEX_READY_FALLBACK_MS = 8_000;
+
 const SUBMIT_BYTES = "\r";
 
 // Delay between the input write and the submit \r. Same value as Claude's
@@ -55,6 +85,56 @@ function digestBytes(s: string): string {
     .replace(/\t/g, "\\t");
   if (escaped.length <= 200) return escaped;
   return `${escaped.slice(0, 100)}…[${escaped.length - 200}B omitted]…${escaped.slice(-100)}`;
+}
+
+// Build the question card for a gate, broadcast over the existing `permission`
+// WS transport (mobile already renders these as tappable cards). Real options
+// keep their literal on-screen digits; the synthetic "remember" variants
+// continue the numbering and are intercepted in sendKeys() — they never reach
+// the PTY as-is. answerKeys mirrors `${index}\r` so old clients (index
+// fallback) and new clients (answerKeys) send identical bytes.
+// "1. Review hooks" is deliberately omitted: a per-hook review screen is a
+// desktop affordance with no workable mobile rendering.
+function gateCard(
+  gate: CodexGateType,
+  lines: string[],
+): { prompt: string; options: PermissionOption[] } {
+  if (gate === "hooks") {
+    const countLine = lines.find((l) => /new or changed/i.test(l))?.trim();
+    return {
+      prompt: [
+        "Hooks need review",
+        countLine,
+        "Hooks can run outside the sandbox after you trust them.",
+      ]
+        .filter(Boolean)
+        .join(" — "),
+      options: [
+        { index: 2, label: "Trust all and continue", answerKeys: "2\r" },
+        { index: 3, label: "Continue without trusting (hooks won't run)", answerKeys: "3\r" },
+        {
+          index: 4,
+          label: "Trust all and continue (remember for all projects)",
+          answerKeys: "4\r",
+        },
+        {
+          index: 5,
+          label: "Continue without trusting (remember for all projects)",
+          answerKeys: "5\r",
+        },
+      ],
+    };
+  }
+  return {
+    prompt:
+      lines.find((l) => CODEX_TRUST_GATE_REGEX.test(l))?.trim() ??
+      "Do you trust the contents of this directory?",
+    options: [
+      { index: 1, label: "Yes, continue", answerKeys: "1\r" },
+      { index: 2, label: "No, quit", answerKeys: "2\r" },
+      { index: 3, label: "Yes, continue (remember for all projects)", answerKeys: "3\r" },
+    ],
+  };
 }
 
 // node-pty is a native addon — import dynamically to allow graceful failure
@@ -98,8 +178,8 @@ export class CodexPtyRunner implements SessionRunner {
   private onOutput: PTYManagerOptions["onOutput"];
   private onStatusChange: PTYManagerOptions["onStatusChange"];
   private onReady: PTYManagerOptions["onReady"];
-  // Accepted for shape-compatibility with PTYManagerOptions; Codex has no
-  // detected equivalent yet (Phase 0) — never invoked.
+  // Broadcasts Codex's blocking startup gates (directory trust, hooks review)
+  // as question cards; null dismisses the card once the gate leaves the screen.
   private onPermissionChange: PTYManagerOptions["onPermissionChange"];
   private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
   private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
@@ -110,8 +190,18 @@ export class CodexPtyRunner implements SessionRunner {
   // Inputs received via sendInput() while the session was still pendingReady.
   // Flushed in arrival order once Codex reaches Ready.
   private queuedInputs = new Map<string, string[]>();
-  // Per-session debounce so the directory-trust gate's \r is only written once.
-  private trustGateAnswered = new Set<string>();
+  // Gate currently on a session's screen (card broadcast, unanswered). While
+  // set, queued-input flushes are held — a flushed digit would CONFIRM a
+  // dialog option — and sendKeys() intercepts remember-variant digits.
+  private openGate = new Map<string, CodexGateType>();
+  // `${sessionId}:${gate}` once a gate has been actioned (auto-answered or
+  // card broadcast) — dedupes repaints of the same dialog.
+  private gateActioned = new Set<string>();
+  // Per-session trailing debounce re-armed on every chunk; on quiet, re-runs
+  // screen detection so a blocked/truncated boot still reaches ready.
+  private quietCheckers = new Map<string, ReturnType<typeof debounce<[]>>>();
+  // Per-session flat backstop from spawn (CODEX_READY_FALLBACK_MS).
+  private readyFallbackTimers = new Map<string, NodeJS.Timeout>();
   // In-flight start()/startFresh() calls keyed by sessionId. A second
   // concurrent resume for the same session (double-tap, client retry) awaits
   // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
@@ -181,6 +271,7 @@ export class CodexPtyRunner implements SessionRunner {
 
     this.sessions.set(sessionId, session);
     this.pendingReady.add(sessionId);
+    this.armReadyFallback(sessionId);
 
     proc.onData((data: string) => {
       this.handleOutput(sessionId, data);
@@ -240,6 +331,7 @@ export class CodexPtyRunner implements SessionRunner {
 
     this.sessions.set(sessionId, session);
     this.pendingReady.add(sessionId);
+    this.armReadyFallback(sessionId);
 
     proc.onData((data: string) => {
       this.handleOutput(sessionId, data);
@@ -253,6 +345,22 @@ export class CodexPtyRunner implements SessionRunner {
     return toPublicSession(session);
   }
 
+  // Flat backstop: if neither the "Ready" marker nor the quiet-checker settled
+  // the session within CODEX_READY_FALLBACK_MS of spawn, mark it ready anyway
+  // so start requests resolve and mobile can watch the boot live. unref() so a
+  // pending timer never holds the process open.
+  private armReadyFallback(sessionId: string): void {
+    const timer = setTimeout(() => {
+      this.readyFallbackTimers.delete(sessionId);
+      const session = this.sessions.get(sessionId);
+      if (session?.status === "running" && this.pendingReady.has(sessionId)) {
+        this.markReady(sessionId, session, "fallback:timeout");
+      }
+    }, CODEX_READY_FALLBACK_MS);
+    timer.unref?.();
+    this.readyFallbackTimers.set(sessionId, timer);
+  }
+
   // Write raw key bytes directly to the PTY, same as PTYManager.sendKeys.
   sendKeys(sessionId: string, keys: string): void {
     const session = this.sessions.get(sessionId);
@@ -264,12 +372,47 @@ export class CodexPtyRunner implements SessionRunner {
       session.status = "running";
       this.onStatusChange?.(toPublicSession(session));
     }
+    const gate = this.openGate.get(sessionId);
+    const digit = gate ? /^([0-9])\r?$/.exec(keys)?.[1] : undefined;
+    const out = gate && digit ? this.resolveGateAnswer(sessionId, gate, digit) : keys;
     this.log.info(
-      `[codex.keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length} digest=${digestBytes(keys)}`,
-      { event: "codex.keys_write", sessionId, byteLen: keys.length },
+      `[codex.keys.write] ${sessionId.slice(0, 8)} bytes=${out.length} digest=${digestBytes(out)}`,
+      { event: "codex.keys_write", sessionId, byteLen: out.length },
     );
-    session.process.write(keys);
+    session.process.write(out);
     session.lastActivityAt = new Date();
+  }
+
+  // Map a gate-card digit to the PTY bytes that answer the real dialog,
+  // persisting the choice when the digit was a synthetic "remember for all
+  // projects" option (those numbers don't exist on the actual dialog and must
+  // never reach codex). The trailing \r mobile sends is dropped: a digit alone
+  // selects AND confirms (live-probe verified), and a stray Enter would land
+  // on whatever screen follows.
+  private resolveGateAnswer(sessionId: string, gate: CodexGateType, digit: string): string {
+    let real = digit;
+    let remembered = false;
+    if (gate === "hooks" && digit === "4") {
+      saveGateAnswer("codexHooksGate", "trust_all");
+      real = "2";
+      remembered = true;
+    } else if (gate === "hooks" && digit === "5") {
+      saveGateAnswer("codexHooksGate", "continue_untrusted");
+      real = "3";
+      remembered = true;
+    } else if (gate === "trust" && digit === "3") {
+      saveGateAnswer("codexTrustGate", "yes");
+      real = "1";
+      remembered = true;
+    }
+    this.log.info(`[codex.gate_answer] ${sessionId.slice(0, 8)} ${gate} digit=${real}`, {
+      event: "codex.gate_answer",
+      sessionId,
+      gate,
+      digit: real,
+      remembered,
+    });
+    return real;
   }
 
   sendInput(sessionId: string, input: string): number {
@@ -352,8 +495,12 @@ export class CodexPtyRunner implements SessionRunner {
   }
 
   // Drain any inputs sent while the session was still pendingReady, writing
-  // them in arrival order now that Codex is Ready.
+  // them in arrival order now that Codex is Ready. No-op while a gate dialog
+  // is open (a flushed digit would confirm a dialog option) or while still
+  // pendingReady (markReady drains it) — the gate-close path re-drives it for
+  // the ready-with-gate-open case.
   private flushQueuedInputs(sessionId: string): void {
+    if (this.openGate.has(sessionId) || this.pendingReady.has(sessionId)) return;
     const queue = this.queuedInputs.get(sessionId);
     if (!queue || queue.length === 0) return;
     this.queuedInputs.delete(sessionId);
@@ -402,7 +549,7 @@ export class CodexPtyRunner implements SessionRunner {
     if (!session) return;
     this.pendingReady.delete(sessionId);
     this.queuedInputs.delete(sessionId);
-    this.trustGateAnswered.delete(sessionId);
+    this.clearSessionDetectors(sessionId);
     try {
       session.process.kill("SIGINT");
     } catch {
@@ -413,6 +560,22 @@ export class CodexPtyRunner implements SessionRunner {
     session.screen.dispose();
     this.sessions.delete(sessionId);
     this.onStatusChange?.(toPublicSession(session));
+  }
+
+  // Drop a session's detection state: quiet-checker, ready-fallback timer,
+  // gate bookkeeping — and dismiss a still-open gate card so mobile doesn't
+  // keep rendering a question for a dead PTY.
+  private clearSessionDetectors(sessionId: string): void {
+    this.quietCheckers.get(sessionId)?.cancel();
+    this.quietCheckers.delete(sessionId);
+    const timer = this.readyFallbackTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.readyFallbackTimers.delete(sessionId);
+    if (this.openGate.delete(sessionId)) {
+      this.onPermissionChange?.(sessionId, null);
+    }
+    this.gateActioned.delete(`${sessionId}:hooks`);
+    this.gateActioned.delete(`${sessionId}:trust`);
   }
 
   getOutput(sessionId: string): string {
@@ -461,10 +624,19 @@ export class CodexPtyRunner implements SessionRunner {
       }
       session.screen.dispose();
     }
+    for (const sessionId of Array.from(this.quietCheckers.keys())) {
+      this.clearSessionDetectors(sessionId);
+    }
+    for (const timer of this.readyFallbackTimers.values()) {
+      clearTimeout(timer);
+    }
     this.sessions.clear();
     this.pendingReady.clear();
     this.queuedInputs.clear();
-    this.trustGateAnswered.clear();
+    this.openGate.clear();
+    this.gateActioned.clear();
+    this.quietCheckers.clear();
+    this.readyFallbackTimers.clear();
   }
 
   private handleOutput(sessionId: string, data: string): void {
@@ -488,50 +660,121 @@ export class CodexPtyRunner implements SessionRunner {
 
     this.onOutput?.(sessionId, data);
 
-    this.detectReady(sessionId, session).catch((err) => {
+    this.detectScreenState(sessionId, "chunk").catch((err) => {
       this.log.warn("[codex.ready_detect] failed", {
         event: "codex.ready_detect_failed",
         sessionId,
         err,
       });
     });
+
+    // Re-arm the quiet-checker on every chunk. A session blocked on a gate
+    // dialog (or whose status-bar "Ready" is truncated off-screen) may never
+    // produce the chunk that would trigger detection — re-run after
+    // QUIET_DETECT_MS of silence instead.
+    let quiet = this.quietCheckers.get(sessionId);
+    if (!quiet) {
+      quiet = debounce(() => {
+        this.detectScreenState(sessionId, "quiet").catch((err) => {
+          this.log.warn("[codex.ready_detect] failed", {
+            event: "codex.ready_detect_failed",
+            sessionId,
+            err,
+          });
+        });
+      }, QUIET_DETECT_MS);
+      this.quietCheckers.set(sessionId, quiet);
+    }
+    quiet();
   }
 
-  // Renders the session's headless screen and checks for the directory-trust
-  // gate (answered once, debounced) and the "Ready" status-bar text. Only
-  // transitions to waiting_input / fires onReady when the rendered status
-  // line literally contains "Ready" — `›` alone (visible during "Starting")
-  // is NOT a valid readiness signal (Phase 0).
-  private async detectReady(sessionId: string, session: InternalSession): Promise<void> {
-    if (session.status !== "running" || !this.pendingReady.has(sessionId)) return;
+  // Renders the session's headless screen and drives both detections:
+  //   - Gates (directory trust, hooks review) — checked on EVERY pass,
+  //     independent of pendingReady, so a gate appearing after ready is still
+  //     surfaced and a gate leaving the screen closes its card.
+  //   - Readiness — the "Ready" status-bar marker while pendingReady, plus the
+  //     quiet path: after QUIET_DETECT_MS of PTY silence a still-pending
+  //     session is marked ready anyway (`›` alone is NOT a marker — Phase 0 —
+  //     but a quiet boot screen is more useful to the user live than a
+  //     spinner, and "Ready" may be truncated off the 120-col status bar).
+  private async detectScreenState(sessionId: string, trigger: "chunk" | "quiet"): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status === "idle") return;
 
     const lines = await this.getOutputLines(sessionId, PTY_ROWS);
     const screenText = lines.join("\n");
 
-    if (CODEX_TRUST_GATE_REGEX.test(screenText)) {
-      if (!this.trustGateAnswered.has(sessionId)) {
-        this.trustGateAnswered.add(sessionId);
-        this.log.info(`[codex.trust_gate] ${sessionId.slice(0, 8)} auto-answering`, {
-          event: "codex.trust_gate",
-          sessionId,
-        });
-        session.process.write("\r");
-      }
+    // ── Gates ──────────────────────────────────────────────────────
+    const gate: CodexGateType | null = CODEX_HOOKS_GATE_REGEX.test(screenText)
+      ? "hooks"
+      : CODEX_TRUST_GATE_REGEX.test(screenText)
+        ? "trust"
+        : null;
+
+    if (gate) {
+      this.handleGate(sessionId, session, gate, lines);
+    } else if (this.openGate.delete(sessionId)) {
+      // The dialog left the screen (answered via card, keys, or desktop) —
+      // dismiss the card and release inputs held while it was open.
+      this.onPermissionChange?.(sessionId, null);
+      this.flushQueuedInputs(sessionId);
+    }
+
+    // ── Readiness ──────────────────────────────────────────────────
+    if (session.status !== "running" || !this.pendingReady.has(sessionId)) return;
+    const lastNonBlank = [...lines].reverse().find((l) => l.trim() !== "") ?? "";
+    if (lastNonBlank.includes(CODEX_PROMPT_READY_TEXT)) {
+      this.markReady(sessionId, session, `marker:${CODEX_PROMPT_READY_TEXT}`);
+    } else if (trigger === "quiet") {
+      this.markReady(sessionId, session, "quiet:timeout");
+    }
+  }
+
+  // Answer a gate from the persisted remember-store, or surface it as a
+  // question card over the permission transport. Actioned once per session and
+  // gate type — repaints of the same dialog neither re-write nor re-broadcast.
+  private handleGate(
+    sessionId: string,
+    session: InternalSession,
+    gate: CodexGateType,
+    lines: string[],
+  ): void {
+    const key = `${sessionId}:${gate}`;
+    if (this.gateActioned.has(key)) return;
+    this.gateActioned.add(key);
+
+    const remembered = rememberedGateDigit(gate);
+    if (remembered) {
+      this.log.info(`[codex.gate_auto_answer] ${sessionId.slice(0, 8)} ${gate} → ${remembered}`, {
+        event: "codex.gate_auto_answer",
+        sessionId,
+        gate,
+        digit: remembered,
+      });
+      session.process.write(remembered);
       return;
     }
 
-    const lastNonBlank = [...lines].reverse().find((l) => l.trim() !== "") ?? "";
-    if (!lastNonBlank.includes(CODEX_PROMPT_READY_TEXT)) return;
-
-    this.markReady(sessionId, session);
+    this.openGate.set(sessionId, gate);
+    const card = gateCard(gate, lines);
+    this.log.info(`[codex.gate_prompt] ${sessionId.slice(0, 8)} ${gate}`, {
+      event: "codex.gate_prompt",
+      sessionId,
+      gate,
+      prompt: card.prompt,
+    });
+    this.onPermissionChange?.(sessionId, card);
   }
 
-  private markReady(sessionId: string, session: InternalSession): void {
+  private markReady(sessionId: string, session: InternalSession, reason: string): void {
     session.lastActivityAt = new Date();
     session.status = "waiting_input";
-    this.log.info(`[codex.ready] ${sessionId.slice(0, 8)}`, {
+    // `reason=quiet:timeout`/`fallback:timeout` in volume would mean the
+    // status-bar marker regressed (e.g. a Codex TUI redesign) — keep logged.
+    this.log.info(`[codex.ready] ${sessionId.slice(0, 8)} ${reason}`, {
       event: "codex.ready",
       sessionId,
+      reason,
     });
     this.onStatusChange?.(toPublicSession(session));
     if (this.pendingReady.has(sessionId)) {
@@ -562,7 +805,7 @@ export class CodexPtyRunner implements SessionRunner {
     session.screen.dispose();
     this.sessions.delete(sessionId);
     this.queuedInputs.delete(sessionId);
-    this.trustGateAnswered.delete(sessionId);
+    this.clearSessionDetectors(sessionId);
   }
 }
 

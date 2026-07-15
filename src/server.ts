@@ -130,9 +130,12 @@ const WS_CLOSE_UNAUTHORIZED = 4401;
 const REFRESH_TTL_MS = 2000;
 
 // Session start blocks for the PTY to reach waiting_input/idle before
-// responding. Must exceed pty-manager's PROMPT_MARKER_FALLBACK_MS (10s) with
-// margin for slow boots; past this we fall back to the async 202 shape.
-const START_READY_TIMEOUT_MS = 15_000;
+// responding; past this we fall back to the async 202 shape. Must stay BELOW
+// the mobile client's start-request fetch timeout (15s) — at the old 15s value
+// the client aborted first ("fetch canceled") and its retry double-spawned
+// sessions. Ready normally lands well under this: Claude's quiet-checker and
+// Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
+const START_READY_TIMEOUT_MS = 10_000;
 
 // Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
 // runs in /api/conversations and /project-chats.
