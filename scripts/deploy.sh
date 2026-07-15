@@ -15,6 +15,8 @@
 #   scripts/deploy.sh rollback              # repoint cli.js to the previous release
 #   scripts/deploy.sh status                # show current release, PID, and recent releases
 #   scripts/deploy.sh healthcheck           # probe /healthz on the running server
+#   scripts/deploy.sh restart               # kickstart + healthcheck (auto-clears EADDRINUSE once)
+#   scripts/deploy.sh free-port             # kill stale threadbase listener on $PORT
 #   scripts/deploy.sh menubar [--publish]   # build + install the menubar .app only
 #
 # Layout:
@@ -662,6 +664,92 @@ cmd_kickstart() {
   launchctl kickstart -k "gui/$(id -u)/$LAUNCHD_LABEL"
 }
 
+# PIDs currently listening on $PORT (space-separated), or empty.
+port_listener_pids() {
+  lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//'
+}
+
+# True when $1 looks like a threadbase streamer / launchd-entry process.
+is_threadbase_listener() {
+  local pid="$1"
+  local cmd
+  cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ -z "$cmd" ]] && return 1
+  [[ "$cmd" == *"$INSTALL_DIR"* ]] \
+    || [[ "$cmd" == *"threadbase"* ]] \
+    || [[ "$cmd" == *"/cli."*".cjs"* ]] \
+    || [[ "$cmd" == *"launchd-entry"* ]]
+}
+
+# Kill threadbase listeners holding $PORT (orphans from a raced kickstart).
+# Returns 0 if the port is free (or was freed); 1 if a non-threadbase process holds it.
+cmd_free_stale_port() {
+  local pids pid cmd waited=0
+  pids="$(port_listener_pids)"
+  [[ -n "$pids" ]] || return 0
+
+  for pid in $pids; do
+    if ! is_threadbase_listener "$pid"; then
+      cmd="$(ps -p "$pid" -o command= 2>/dev/null || echo "?")"
+      warn "port $PORT held by non-threadbase pid=$pid ($cmd) — not killing"
+      return 1
+    fi
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || echo "?")"
+    warn "port $PORT held by stale threadbase pid=$pid — killing"
+    warn "  $cmd"
+    kill "$pid" 2>/dev/null || true
+  done
+
+  # Wait briefly for the kernel to release the socket.
+  while (( waited < 20 )); do
+    pids="$(port_listener_pids)"
+    [[ -z "$pids" ]] && return 0
+    # Re-signal anything still alive.
+    for pid in $pids; do
+      if is_threadbase_listener "$pid"; then
+        kill -9 "$pid" 2>/dev/null || true
+      else
+        return 1
+      fi
+    done
+    sleep 0.25
+    waited=$((waited + 1))
+  done
+
+  pids="$(port_listener_pids)"
+  [[ -z "$pids" ]]
+}
+
+stderr_shows_eaddrinuse() {
+  local stderr_log
+  stderr_log="$(streamer_stderr_log)"
+  [[ -s "$stderr_log" ]] || return 1
+  tail -n 40 "$stderr_log" 2>/dev/null | grep -q "EADDRINUSE"
+}
+
+# Kickstart + healthcheck, with one automatic recovery when a raced/orphaned
+# streamer still holds $PORT (EADDRINUSE). Matches the manual recovery:
+#   kill <listener>; launchctl kickstart -k ...; curl /healthz
+cmd_kickstart_and_healthcheck() {
+  cmd_kickstart
+  if cmd_healthcheck; then
+    return 0
+  fi
+
+  if ! stderr_shows_eaddrinuse; then
+    return 1
+  fi
+
+  warn "detected EADDRINUSE on port $PORT — clearing stale listener and retrying once"
+  if ! cmd_free_stale_port; then
+    err "could not free port $PORT; resolve the listener manually and re-run deploy"
+    return 1
+  fi
+  sleep 0.5
+  cmd_kickstart
+  cmd_healthcheck
+}
+
 # Locate the streamer's stderr log. The plist writes to $INSTALL_DIR/logs/stderr.log;
 # /tmp/threadbase.err is a legacy fallback for older plist layouts.
 streamer_stderr_log() {
@@ -767,8 +855,8 @@ cmd_rollback() {
   fi
   log "rolling back to $prev"
   activate_release "$prev"
-  cmd_kickstart
-  cmd_healthcheck
+  log "kickstarting $LAUNCHD_LABEL"
+  cmd_kickstart_and_healthcheck
 }
 
 # Atomically replace $ACTIVE_LINK with a symlink to $1 (relative to $INSTALL_DIR).
@@ -903,9 +991,7 @@ cmd_deploy() {
   fi
 
   log "kickstarting $LAUNCHD_LABEL"
-  cmd_kickstart
-
-  cmd_healthcheck
+  cmd_kickstart_and_healthcheck
 
   # Prompt to install the nightly restart job on first deploy only, and only
   # in interactive shells. Re-deploys skip silently.
@@ -948,6 +1034,8 @@ case "${1:-deploy}" in
   rollback)     cmd_rollback ;;
   status)       cmd_status ;;
   healthcheck)  cmd_healthcheck ;;
+  free-port)    cmd_free_stale_port ;;
+  restart)      cmd_kickstart_and_healthcheck ;;
   nightly-install)   install_nightly_restart_job ;;
   nightly-uninstall) uninstall_nightly_restart_job ;;
   menubar)
@@ -968,7 +1056,7 @@ case "${1:-deploy}" in
     ;;
   *)
     err "unknown command: $1"
-    echo "usage: $0 [deploy [--force] [--publish-menubar] | menubar [--publish] | rollback | status | healthcheck | nightly-install | nightly-uninstall]" >&2
+    echo "usage: $0 [deploy [--force] [--publish-menubar] | menubar [--publish] | rollback | status | healthcheck | restart | free-port | nightly-install | nightly-uninstall]" >&2
     exit 2
     ;;
 esac
