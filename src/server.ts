@@ -683,6 +683,43 @@ export class StreamerServer {
               const lines = await this.ptyManager.getOutputLines(msg.sessionId, 200);
               ws.send(JSON.stringify({ type: "terminal_replay", sessionId: msg.sessionId, lines }));
             }
+            // A gate/question can open before the client finishes subscribing
+            // (Codex's startup gates fire within ~500ms of spawn) — broadcast()
+            // only reaches already-subscribed sockets, so a card that opened in
+            // that window is otherwise lost forever. Replay pending state the
+            // same way terminal_replay does above.
+            const pendingGate = this.pendingPermission.get(msg.sessionId);
+            if (pendingGate) {
+              this.log.info(`[ws.replay_permission] ${msg.sessionId.slice(0, 8)}`, {
+                event: "ws.replay_permission",
+                sessionId: msg.sessionId,
+              });
+              ws.send(
+                JSON.stringify({
+                  type: "permission",
+                  sessionId: msg.sessionId,
+                  ...(pendingGate.prompt ? { prompt: pendingGate.prompt } : {}),
+                  ...(pendingGate.detail ? { detail: pendingGate.detail } : {}),
+                  options: pendingGate.options,
+                  ...(pendingGate.cursor !== undefined ? { cursor: pendingGate.cursor } : {}),
+                }),
+              );
+            }
+            const pendingQuestion = this.pendingQuestions.get(msg.sessionId);
+            if (pendingQuestion) {
+              this.log.info(`[ws.replay_question] ${msg.sessionId.slice(0, 8)}`, {
+                event: "ws.replay_question",
+                sessionId: msg.sessionId,
+              });
+              ws.send(
+                JSON.stringify({
+                  type: "question",
+                  sessionId: msg.sessionId,
+                  toolUseId: pendingQuestion.toolUseId,
+                  questions: pendingQuestion.questions,
+                }),
+              );
+            }
           }
           if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
             // L1: only the socket that subscribed to this session may hold it.
@@ -2758,6 +2795,11 @@ export class StreamerServer {
       const answerKeys = sanitizeAnswerKeys(o.answerKeys);
       return answerKeys === undefined ? { index: o.index, label: o.label } : { ...o, answerKeys };
     });
+    const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
+    this.log.info(
+      `[ws.broadcast_permission] ${sessionId.slice(0, 8)} subscribers=${subscriberCount}`,
+      { event: "ws.broadcast_permission", sessionId, subscriberCount },
+    );
     this.wsHub.broadcast({
       type: "permission",
       sessionId,
