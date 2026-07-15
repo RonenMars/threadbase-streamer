@@ -520,7 +520,9 @@ describe("StreamerServer", () => {
           payload: {
             type: "message",
             role: "user",
-            content: [{ type: "input_text", text: "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nhide me" }],
+            content: [
+              { type: "input_text", text: "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nhide me" },
+            ],
           },
         },
         {

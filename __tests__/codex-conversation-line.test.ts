@@ -19,7 +19,7 @@ describe("normalizeCodexLineToClaudeShape", () => {
     });
     const out = normalizeCodexLineToClaudeShape(raw);
     expect(out).not.toBeNull();
-    const parsed = JSON.parse(out!);
+    const parsed = JSON.parse(out as string);
     expect(parsed.type).toBe("user");
     expect(parsed.message.role).toBe("user");
     expect(parsed.message.content).toEqual([{ type: "text", text: "Hello from mobile" }]);
@@ -37,7 +37,9 @@ describe("normalizeCodexLineToClaudeShape", () => {
         content: [{ type: "output_text", text: "Understood." }],
       },
     });
-    const parsed = JSON.parse(normalizeCodexLineToClaudeShape(raw)!);
+    const normalized = normalizeCodexLineToClaudeShape(raw);
+    expect(normalized).not.toBeNull();
+    const parsed = JSON.parse(normalized as string);
     expect(parsed.type).toBe("assistant");
     expect(parsed.message.content[0].text).toBe("Understood.");
   });
@@ -76,7 +78,9 @@ describe("normalizeCodexLineToClaudeShape", () => {
           payload: {
             type: "message",
             role: "user",
-            content: [{ type: "input_text", text: "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nx" }],
+            content: [
+              { type: "input_text", text: "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nx" },
+            ],
           },
         }),
       ),

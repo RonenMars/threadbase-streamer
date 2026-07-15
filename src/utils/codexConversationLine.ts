@@ -22,7 +22,10 @@ function extractCodexText(content: unknown): string {
       if (typeof item === "string") return item;
       const block = item as CodexContentBlock;
       const t = block?.type;
-      if ((t === "input_text" || t === "output_text" || t === "text") && typeof block.text === "string") {
+      if (
+        (t === "input_text" || t === "output_text" || t === "text") &&
+        typeof block.text === "string"
+      ) {
         return block.text;
       }
       return "";
@@ -55,7 +58,7 @@ export function normalizeCodexLineToClaudeShape(line: string): string | null {
 
   if (entry.type !== "response_item") return null;
   const payload = entry.payload;
-  if (!payload || payload.type !== "message") return null;
+  if (payload?.type !== "message") return null;
 
   const role = payload.role;
   if (role !== "user" && role !== "assistant") return null;
@@ -68,7 +71,8 @@ export function normalizeCodexLineToClaudeShape(line: string): string | null {
   // overlay so the chat doesn't open with fake user bubbles.
   if (role === "user" && isCodexInjectedContext(text)) return null;
 
-  const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString();
+  const timestamp =
+    typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString();
   // Prefer payload.id when present; otherwise derive a stable-enough id from
   // timestamp+role+text prefix so WS seenIds can dedupe without colliding
   // across consecutive turns in the same second.
@@ -126,7 +130,10 @@ export function isCodexInjectedContext(text: string): boolean {
   // AGENTS.md / instruction dumps Codex prepends as the first "user" turn.
   if (text.startsWith("# AGENTS.md") || text.includes("<INSTRUCTIONS>")) return true;
   // Permissions / sandbox preamble sometimes arrives as a giant user-role blob.
-  if (text.startsWith("<permissions instructions>") || text.includes("Filesystem sandboxing defines")) {
+  if (
+    text.startsWith("<permissions instructions>") ||
+    text.includes("Filesystem sandboxing defines")
+  ) {
     return true;
   }
   return false;

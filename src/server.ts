@@ -100,10 +100,7 @@ import type {
 } from "./types";
 
 import { saveUploadFile } from "./uploads";
-import {
-  isCodexInjectedContext,
-  toClientConversationLines,
-} from "./utils/codexConversationLine";
+import { isCodexInjectedContext, toClientConversationLines } from "./utils/codexConversationLine";
 import { computeConversationEtag } from "./utils/conversationEtag";
 import { debounce } from "./utils/debounce";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
@@ -1725,8 +1722,7 @@ export class StreamerServer {
   ): void {
     const clientLines = toClientConversationLines(lines);
     if (clientLines.length === 0) return;
-    const seqsOk =
-      !!seqs && seqs.length === lines.length && clientLines.length === lines.length;
+    const seqsOk = !!seqs && seqs.length === lines.length && clientLines.length === lines.length;
     this.wsHub.broadcast({
       type: "conversation_events",
       sessionId,
@@ -1752,7 +1748,9 @@ export class StreamerServer {
     // scanner, subsequent requests use the indexed hot path below.
     if (!this.scannerReady && !this.scanProfiles) {
       const filePath =
-        this.findJsonlPath(lookupId) ?? this.findLiveSessionFilePath(uuid) ?? this.findLiveSessionFilePath(lookupId);
+        this.findJsonlPath(lookupId) ??
+        this.findLiveSessionFilePath(uuid) ??
+        this.findLiveSessionFilePath(lookupId);
       if (filePath) {
         const account = this.cache?.getMetaById(lookupId)?.account ?? undefined;
         const coldScanner = this.scanner ?? this.newScanner();
@@ -1824,7 +1822,9 @@ export class StreamerServer {
     if (this.scanProfiles) return null;
 
     const filePath =
-      this.findJsonlPath(lookupId) ?? this.findLiveSessionFilePath(uuid) ?? this.findLiveSessionFilePath(lookupId);
+      this.findJsonlPath(lookupId) ??
+      this.findLiveSessionFilePath(uuid) ??
+      this.findLiveSessionFilePath(lookupId);
     if (!filePath) return null;
     this.scanner = null;
     this.scannerReady = null;
