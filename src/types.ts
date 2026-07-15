@@ -266,7 +266,7 @@ export interface ServerConfig {
   // see each other's — and any real serve instance's — indexed conversations.
   // Default true (real serve usage keeps the persistent index).
   scannerPersistent?: boolean;
-  ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes)
+  ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes); 0 disables the auto-hold timer (explicit hold_session still works)
   cacheDir?: string;
   tailSize?: number;
   directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)

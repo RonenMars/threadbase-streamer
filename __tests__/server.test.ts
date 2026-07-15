@@ -857,6 +857,112 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("ptyGracePeriodMs = 0 disables auto-hold", () => {
+    // Subscribe a real WS to a session id, close it, and inspect whether the
+    // last-subscriber-disconnect path armed a grace timer. subscribe_session's
+    // addSessionSubscriber runs regardless of hasSession (the hasSession check
+    // only gates terminal_replay), so no live PTY is needed.
+    const SID = "disable-grace-sess";
+    const mkSession = (status: string) =>
+      ({
+        id: SID,
+        status,
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: null,
+        lastOutput: "",
+      }) as any;
+
+    async function subscribeAndClose(srv: StreamerServer, srvPort: number): Promise<void> {
+      const ws = new WebSocket(`ws://localhost:${srvPort}/ws?key=${API_KEY}`);
+      await new Promise<void>((r) => ws.on("open", () => r()));
+      ws.send(JSON.stringify({ type: "subscribe_session", sessionId: SID }));
+      // let the server register the subscriber before we disconnect
+      await new Promise((r) => setTimeout(r, 50));
+      expect((srv as any).sessionSubscribers.has(SID)).toBe(true);
+      ws.close();
+      // let handleWsClose run
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    it("does NOT arm a grace timer on disconnect when grace is 0", async () => {
+      const p = await getRandomPort();
+      const srv = new StreamerServer({
+        port: p,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-grace0-test-")),
+        scanProfiles: FIXTURE_PROFILES,
+        ptyGracePeriodMs: 0,
+      });
+      await srv.listen(p);
+      try {
+        await subscribeAndClose(srv, p);
+        expect((srv as any).ptyGraceTimers.has(SID)).toBe(false);
+      } finally {
+        await srv.close();
+      }
+    });
+
+    it("still arms a grace timer on disconnect when grace is positive", async () => {
+      const p = await getRandomPort();
+      const srv = new StreamerServer({
+        port: p,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-gracepos-test-")),
+        scanProfiles: FIXTURE_PROFILES,
+        ptyGracePeriodMs: 60_000,
+      });
+      await srv.listen(p);
+      try {
+        await subscribeAndClose(srv, p);
+        expect((srv as any).ptyGraceTimers.has(SID)).toBe(true);
+        // clean up the armed timer so it can't fire after teardown
+        const t = (srv as any).ptyGraceTimers.get(SID);
+        if (t) clearTimeout(t);
+      } finally {
+        await srv.close();
+      }
+    });
+
+    it("holds immediately on an explicit hold_session even when grace is 0", async () => {
+      const p = await getRandomPort();
+      const srv = new StreamerServer({
+        port: p,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-hold0-test-")),
+        scanProfiles: FIXTURE_PROFILES,
+        ptyGracePeriodMs: 0,
+      });
+      await srv.listen(p);
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      vi.spyOn((srv as any).sessionStore, "get").mockReturnValue(mkSession("waiting_input"));
+      try {
+        const ws = new WebSocket(`ws://localhost:${p}/ws?key=${API_KEY}`);
+        await new Promise<void>((r) => ws.on("open", () => r()));
+        ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
+        await new Promise((r) => setTimeout(r, 50));
+        expect(holdSpy).toHaveBeenCalledWith(SID);
+        ws.close();
+      } finally {
+        vi.restoreAllMocks();
+        await srv.close();
+      }
+    });
+  });
+
   describe("GET /api/sessions/:id/output", () => {
     it("returns empty output for an untracked session id", async () => {
       const res = await fetch(`${baseUrl}/api/sessions/nonexistent/output`, {

@@ -5,6 +5,7 @@ import qrcode from "qrcode-terminal";
 import {
   loadDefaultPermissionMode,
   loadOrCreateApiKey,
+  loadPtyGracePeriodMs,
   loadPublicUrl,
   setDefaultPermissionMode,
 } from "../src/auth";
@@ -44,6 +45,10 @@ program
   .option(
     "--default-permission-mode <mode>",
     "Claude Code permission mode for spawned sessions: acceptEdits (auto-approve file edits, default) or manual (prompt for everything). Falls back to default_permission_mode: in ~/.threadbase/server.yaml, or a first-run interactive prompt on a human TTY invocation (skip with THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true).",
+  )
+  .option(
+    "--pty-grace-period-ms <ms>",
+    "Ms to keep a PTY alive after the last WebSocket subscriber disconnects before auto-holding it (default 270000, 4.5 min). 0 disables auto-hold entirely (an explicit hold_session still works). Falls back to pty_grace_period_ms: in ~/.threadbase/server.yaml.",
   )
   .option("--no-pair-qr", "Skip the pairing QR on startup")
   .option("--replace-prod", "Stop the launchd-supervised prod streamer and bind its port", false)
@@ -85,6 +90,24 @@ program
         "console",
       );
       process.exit(1);
+    }
+    // Resolve the auto-hold grace period: --pty-grace-period-ms flag → yaml →
+    // undefined (server applies DEFAULT_PTY_GRACE_PERIOD_MS). A non-negative
+    // integer is required; 0 is valid and disables auto-hold.
+    let ptyGracePeriodMs: number | undefined;
+    if (opts.ptyGracePeriodMs !== undefined) {
+      const parsed = Number(opts.ptyGracePeriodMs);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        log.error(
+          `Invalid --pty-grace-period-ms: ${opts.ptyGracePeriodMs} (expected a non-negative integer; 0 disables auto-hold)`,
+          undefined,
+          "console",
+        );
+        process.exit(1);
+      }
+      ptyGracePeriodMs = parsed;
+    } else {
+      ptyGracePeriodMs = loadPtyGracePeriodMs();
     }
     const requestedPort = Number.parseInt(opts.port, 10);
     const apiKey = opts.apiKey ?? loadOrCreateApiKey();
@@ -151,6 +174,7 @@ program
       browseRoot: opts.browseRoot,
       publicUrl: opts.publicUrl,
       defaultPermissionMode: resolvedDefaultPermissionMode,
+      ptyGracePeriodMs,
     });
 
     await server.listen(resolvedPort);

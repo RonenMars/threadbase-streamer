@@ -78,17 +78,21 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 
 ## CLI flags vs. `server.yaml`
 
-`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`) from it, but most runtime knobs come exclusively from CLI flags. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
+`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`) from it, but most runtime knobs come exclusively from CLI flags. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
 
 `--default-permission-mode <acceptEdits|manual>` (or `default_permission_mode:` in `server.yaml`) controls the Claude Code `--permission-mode` used to spawn every PTY session — `acceptEdits` (default) auto-approves file edits and still prompts for shell commands; `manual` prompts for everything. `bypassPermissions`/`plan`/`dontAsk`/`auto` are intentionally not offered — `bypassPermissions` renders a blocking "Bypass Permissions mode" TUI warning on every boot that hangs the mobile client (see `src/pty-manager.ts`).
 
 If none of the flag/env/yaml sources set a mode, `serve` shows a one-time interactive prompt (`src/lifecycle/prompt.ts`'s `interactivePermissionModePrompt`) and persists the answer to `server.yaml` via `setDefaultPermissionMode()` — but only for a human dev invocation on a real TTY (never under `--prod`/launchd, which must never block on stdin). Set `THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true` to skip it and fall through to `acceptEdits`.
 
+`--pty-grace-period-ms <ms>` (or `pty_grace_period_ms:` in `server.yaml`) sets the auto-hold delay: how long a PTY stays alive after its last WebSocket subscriber disconnects before `server.ts` holds it (SIGINT + screen disposal, history intact, resumable). Precedence is flag → yaml → default `270000` (4.5 min). `0` disables the automatic timer — the PTY lives until process exit or an explicit `{ type: "hold_session" }` message (that path always holds immediately, regardless of this setting). Any positive integer is a custom delay in ms.
+The value is resolved once at startup, so changing it requires a restart — there is no hot-reload.
+For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args are fixed and don't pass this flag), set `pty_grace_period_ms:` in `server.yaml` and run `tb-streamer prod restart`; the `--pty-grace-period-ms` flag is the path for ad-hoc `serve` runs (an ad-hoc `serve` with the flag would otherwise collide with prod on port 8766).
+
 ## ServerConfig options (beyond CLI flags)
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `ptyGracePeriodMs` | `270000` | Ms to keep the PTY alive after all WebSocket subscribers disconnect (4.5 minutes) |
+| `ptyGracePeriodMs` | `270000` | Ms to keep the PTY alive after all WebSocket subscribers disconnect (4.5 minutes). `0` disables the auto-hold timer entirely — the PTY stays live until process exit or an explicit `hold_session`. Set via `--pty-grace-period-ms` or `pty_grace_period_ms:` in server.yaml. |
 | `cacheDir` | `~/.threadbase/cache` | Directory for the SQLite conversation cache |
 | `tailSize` | `10` | Tail messages cached per conversation for fast session-list enrichment |
 | `directoryScanDebounceMs` | `1000` | Trailing debounce (ms) before a directory change flags the scanner stale (env override: `THREADBASE_DIR_SCAN_DEBOUNCE_MS`) |
