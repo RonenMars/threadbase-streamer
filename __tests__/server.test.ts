@@ -490,6 +490,124 @@ describe("StreamerServer", () => {
       vi.restoreAllMocks();
     });
 
+    it("resolves GET /api/conversations/:placeholderId via boundConversationId and serves Codex messages", async () => {
+      const liveSessionId = "159fd3ce-ad78-4980-b441-1cfa05edaec9";
+      const codexSessionId = "codex-persisted-id-messages";
+      const projectPath = realpathSync(join(browseRoot, "project"));
+
+      const now = new Date();
+      const dateDir = join(
+        codexRoot,
+        String(now.getFullYear()),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      );
+      mkdirSync(dateDir, { recursive: true });
+      const lines = [
+        {
+          timestamp: now.toISOString(),
+          type: "session_meta",
+          payload: {
+            id: codexSessionId,
+            session_id: codexSessionId,
+            cwd: projectPath,
+            timestamp: now.toISOString(),
+          },
+        },
+        {
+          timestamp: now.toISOString(),
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nhide me" }],
+          },
+        },
+        {
+          timestamp: now.toISOString(),
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "real user question" }],
+          },
+        },
+        {
+          timestamp: now.toISOString(),
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "real assistant reply" }],
+          },
+        },
+      ];
+      writeFileSync(
+        join(dateDir, `rollout-2026-01-01T00-00-00-${codexSessionId}.jsonl`),
+        lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+      );
+
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (boundServer as any).sessionStatusBus.emit(`status:${liveSessionId}`, "waiting_input");
+          });
+          return {
+            id: liveSessionId,
+            provider: "codex-cli",
+            projectPath,
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
+        });
+      vi.spyOn(CodexPtyRunner.prototype, "hasSession").mockReturnValue(true);
+      // PtyManager.hasSession is what findConversationByUuid live-bypass checks.
+      vi.spyOn((boundServer as any).ptyManager, "hasSession").mockImplementation(
+        (id: string) => id === liveSessionId,
+      );
+
+      const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+      expect(startRes.status).toBe(200);
+
+      // Placeholder id (what mobile used to request) must resolve via boundConversationId.
+      const byPlaceholder = await fetch(
+        `${boundBaseUrl}/api/conversations/${liveSessionId}?msg_limit=80`,
+        { headers: { Authorization: `Bearer ${API_KEY}` } },
+      );
+      expect(byPlaceholder.status).toBe(200);
+      const placeholderBody = await byPlaceholder.json();
+      const roles = (placeholderBody.messages ?? []).map((m: { role: string }) => m.role);
+      const texts = (placeholderBody.messages ?? []).map((m: { text: string }) => m.text);
+      expect(texts.some((t: string) => t.includes("AGENTS.md"))).toBe(false);
+      expect(texts).toContain("real user question");
+      expect(texts).toContain("real assistant reply");
+      expect(roles).toEqual(["user", "assistant"]);
+
+      // Bound Codex UUID also works directly.
+      const byBound = await fetch(
+        `${boundBaseUrl}/api/conversations/${codexSessionId}?msg_limit=80`,
+        { headers: { Authorization: `Bearer ${API_KEY}` } },
+      );
+      expect(byBound.status).toBe(200);
+      const boundBody = await byBound.json();
+      expect((boundBody.messages ?? []).map((m: { text: string }) => m.text)).toContain(
+        "real user question",
+      );
+
+      codexStartFreshSpy.mockRestore();
+      vi.restoreAllMocks();
+    });
+
     it("ignores a rollout file whose cwd does not match the session's projectPath", async () => {
       const liveSessionId = "069fd3ce-ad78-4980-b441-1cfa05edaeca";
       const projectPath = realpathSync(join(browseRoot, "project"));
@@ -681,7 +799,40 @@ describe("StreamerServer", () => {
       });
       await new Promise<void>((r) => ws.on("open", () => r()));
 
-      writeRolloutFixture(codexSessionId, projectPath);
+      // Include a real user response_item — session_meta alone is filtered out
+      // when normalizing Codex lines to the Claude shape mobile understands.
+      const now = new Date();
+      const dateDir = join(
+        codexRoot,
+        String(now.getFullYear()),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      );
+      mkdirSync(dateDir, { recursive: true });
+      writeFileSync(
+        join(dateDir, `rollout-2026-01-01T00-00-00-${codexSessionId}.jsonl`),
+        [
+          JSON.stringify({
+            timestamp: now.toISOString(),
+            type: "session_meta",
+            payload: {
+              id: codexSessionId,
+              session_id: codexSessionId,
+              cwd: projectPath,
+              timestamp: now.toISOString(),
+            },
+          }),
+          JSON.stringify({
+            timestamp: now.toISOString(),
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "wire-test question" }],
+            },
+          }),
+        ].join("\n") + "\n",
+      );
 
       const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
         method: "POST",
@@ -690,9 +841,9 @@ describe("StreamerServer", () => {
       });
       expect(startRes.status).toBe(200);
 
-      // tryWire() runs synchronously during start: it replays the existing
-      // session_meta line (conversation_event) and broadcasts session_update
-      // carrying the freshly-bound conversation id.
+      // tryWire() runs synchronously during start: it replays chat-bearing
+      // lines as Claude-shaped conversation_event frames and broadcasts
+      // session_update carrying the freshly-bound conversation id.
       const deadline = Date.now() + 3000;
       while (Date.now() < deadline) {
         const gotEvent = events.some(
@@ -705,9 +856,13 @@ describe("StreamerServer", () => {
         await new Promise((r) => setTimeout(r, 50));
       }
 
-      expect(
-        events.some((e) => e.type === "conversation_event" && e.sessionId === liveSessionId),
-      ).toBe(true);
+      const chatEvent = events.find(
+        (e) => e.type === "conversation_event" && e.sessionId === liveSessionId,
+      );
+      expect(chatEvent).toBeTruthy();
+      const parsedLine = JSON.parse(chatEvent.line);
+      expect(parsedLine.type).toBe("user");
+      expect(parsedLine.message.content[0].text).toBe("wire-test question");
       expect(
         events.some(
           (e) => e.type === "session_update" && e.session?.boundConversationId === codexSessionId,
