@@ -1,3 +1,5 @@
+## [1.31.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.30.0...v1.31.0) (2026-07-16)
+
 ## [1.30.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.29.2...v1.30.0) (2026-07-16)
 
 ## [1.29.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.29.1...v1.29.2) (2026-07-16)
