@@ -8,6 +8,7 @@ import type {
   SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
+  UserMessage,
 } from "./types";
 
 export class LiveSessionManager {
@@ -78,6 +79,10 @@ export class LiveSessionManager {
 
   getOutputLines(sessionId: string, maxLines: number): Promise<string[]> {
     return this.runnerFor(sessionId).getOutputLines(sessionId, maxLines);
+  }
+
+  getInputHistory(sessionId: string): UserMessage[] {
+    return this.runnerFor(sessionId).getInputHistory(sessionId);
   }
 
   getSession(sessionId: string): ManagedSession | null {
