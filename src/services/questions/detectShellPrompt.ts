@@ -85,11 +85,21 @@ export function detectShellPrompt(lines: string[]): ShellPrompt | null {
   }
 
   // ── numbered menu ────────────────────────────────────────────────
-  // Only when the LAST line is itself a numbered row (the menu just finished
-  // printing and is waiting) — collect the contiguous numbered block ending it.
-  if (NUMBERED_RE.test(last.text)) {
+  // Fire when the last line is itself a numbered row (menu just finished
+  // printing) OR when a bare "Press enter to confirm"-style footer trails a
+  // numbered block (Codex's "Hooks need review" trust dialog paints its options
+  // above a "Press enter to confirm or esc to go back" line). Collect the
+  // contiguous numbered block regardless — its options must not collapse into a
+  // single generic Continue button (the bare-confirmation branch below).
+  const lastNumberedIdx = (() => {
+    for (let i = last.idx; i >= 0; i--) {
+      if (NUMBERED_RE.test(lines[i])) return i;
+    }
+    return -1;
+  })();
+  if (lastNumberedIdx >= 0) {
     const options: ShellPromptOption[] = [];
-    for (let i = 0; i <= last.idx; i++) {
+    for (let i = 0; i <= lastNumberedIdx; i++) {
       const m = NUMBERED_RE.exec(lines[i]);
       if (!m) continue;
       const num = Number.parseInt(m[1], 10);

@@ -15,6 +15,8 @@ function isLocalRequest(remoteAddr: string | undefined): boolean {
 // it — so older tb-mobile builds are unaffected.
 // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L40
 const PUBLIC_PATHS = new Set(["/healthz", "/ws"]);
+// Localhost-only unauthenticated paths (menubar logs viewer).
+const LOCAL_ONLY_PATHS = new Set(["/api/logs", "/api/logs/meta"]);
 // /api/__update uses HMAC signature auth instead of Bearer; skip the
 // Bearer-token middleware so the route handler can validate the signature.
 const PUBLIC_POST_PATHS = new Set(["/api/pair/exchange", "/api/__update"]);
@@ -35,8 +37,13 @@ export const authMiddleware =
       return;
     }
 
+    const remoteAddr = c.env.incoming?.socket?.remoteAddress;
+    if (LOCAL_ONLY_PATHS.has(path) && isLocalRequest(remoteAddr)) {
+      await next();
+      return;
+    }
+
     if (deps.localNoAuth) {
-      const remoteAddr = c.env.incoming?.socket?.remoteAddress;
       if (isLocalRequest(remoteAddr)) {
         await next();
         return;
