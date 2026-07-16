@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   rmSync,
   writeFileSync,
@@ -45,6 +46,19 @@ function makeRelease(version: string): void {
   writeFileSync(join(dir, "package.json"), JSON.stringify({ version }));
 }
 
+// A release laid out the way unpackTarball + stampVersionTxt leave it: a dist/
+// with the CLI bundle and (unless suppressed) the staged version sidecar. The
+// dist/cli.cjs matters on Windows, where swapCurrent copies it out to cli.js.
+function makeStagedRelease(version: string, opts: { sidecar?: string | null } = {}): void {
+  const dir = join(tmpRoot, "releases", version);
+  mkdirSync(join(dir, "dist"), { recursive: true });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ version }));
+  writeFileSync(join(dir, "dist", "cli.cjs"), "#!/usr/bin/env node\n");
+  if (opts.sidecar !== null) {
+    writeFileSync(join(dir, "dist", "version.txt"), opts.sidecar ?? `${version}+update\n`);
+  }
+}
+
 describe("swap / prune (POSIX symlink path)", () => {
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "tb-swap-"));
@@ -66,6 +80,34 @@ describe("swap / prune (POSIX symlink path)", () => {
 
     swapCurrent("1.1.0");
     expect(readlinkSync(link1)).toBe(join(tmpRoot, "releases", "1.1.0"));
+  });
+
+  it("publishes the staged sidecar to $INSTALL_DIR/version.txt", () => {
+    makeStagedRelease("1.1.0");
+    swapCurrent("1.1.0");
+    expect(readFileSync(join(tmpRoot, "version.txt"), "utf8")).toBe("1.1.0+update\n");
+  });
+
+  // Regression: swapCurrent used to repoint cli.js without republishing
+  // version.txt, so getVersion() kept reporting the previously activated build
+  // and every subsequent `update --check` reinstalled the same release.
+  it("overwrites a stale version.txt left by an earlier activate", () => {
+    writeFileSync(join(tmpRoot, "version.txt"), "1.0.0+deploy\n");
+    makeStagedRelease("1.1.0");
+    swapCurrent("1.1.0");
+    expect(readFileSync(join(tmpRoot, "version.txt"), "utf8")).toBe("1.1.0+update\n");
+  });
+
+  it("stamps the activated version when the release ships no sidecar", () => {
+    makeStagedRelease("1.1.0", { sidecar: null });
+    swapCurrent("1.1.0");
+    expect(readFileSync(join(tmpRoot, "version.txt"), "utf8")).toBe("1.1.0+update\n");
+  });
+
+  it("keeps a sidecar shipped inside the tarball authoritative", () => {
+    makeStagedRelease("1.1.0", { sidecar: "1.1.0+ci\n" });
+    swapCurrent("1.1.0");
+    expect(readFileSync(join(tmpRoot, "version.txt"), "utf8")).toBe("1.1.0+ci\n");
   });
 
   it("pruneOldReleases keeps the most recent N plus the active one", () => {
