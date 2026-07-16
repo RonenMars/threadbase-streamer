@@ -14,5 +14,11 @@ export function stampVersionTxt(destDir: string, version: string): void {
   // mkdirSync handles the (defensive) case where the tarball didn't include
   // a dist/ tree — shouldn't happen in practice, but cheaper than crashing.
   mkdirSync(distDir, { recursive: true });
-  writeFileSync(join(distDir, "version.txt"), `${version}+update\n`);
+  writeFileSync(join(distDir, "version.txt"), versionStamp(version));
+}
+
+// Shared so swapCurrent() can fall back to the same format when it publishes
+// the active version.txt without a staged sidecar to copy.
+export function versionStamp(version: string): string {
+  return `${version}+update\n`;
 }

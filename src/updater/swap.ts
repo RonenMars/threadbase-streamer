@@ -9,10 +9,12 @@ import {
   rmSync,
   symlinkSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import semver from "semver";
 import { CURRENT_SYMLINK, RELEASES_DIR, releaseDir, THREADBASE_ROOT } from "./paths";
+import { versionStamp } from "./stamp-version";
 
 const KEEP_LAST_N = 2;
 
@@ -44,6 +46,7 @@ export function swapCurrent(version: string): void {
     // (which writes cli.js directly) or the auto-updater (which writes
     // current/ and must mirror it here).
     copyFileSync(join(CURRENT_SYMLINK, "dist", "cli.cjs"), join(THREADBASE_ROOT, "cli.js"));
+    publishVersionTxt(target, version);
     return;
   }
 
@@ -63,6 +66,34 @@ export function swapCurrent(version: string): void {
   if (existsSync(tmpCliJs) || lstatSafeIsSymlink(tmpCliJs)) unlinkSync(tmpCliJs);
   symlinkSync(join(target, "dist", "cli.cjs"), tmpCliJs);
   renameSync(tmpCliJs, cliJs);
+
+  publishVersionTxt(target, version);
+}
+
+/**
+ * Publishes the activated release's version stamp to $INSTALL_DIR/version.txt,
+ * which is where getVersion() reads the running version from on every install
+ * layout.
+ *
+ * This mirrors the second half of activate_release() in scripts/deploy.sh and
+ * Invoke-Activate in scripts/deploy.ps1, which copy the same sidecar. Without
+ * it the updater swaps the code but leaves version.txt reporting the previously
+ * activated build, so the next `update --check` re-detects the old version and
+ * reinstalls the same release — forever, once an hour.
+ *
+ * Copies the staged sidecar rather than formatting the version here so a
+ * tarball that already ships its own dist/version.txt stays authoritative.
+ */
+function publishVersionTxt(target: string, version: string): void {
+  const dest = join(THREADBASE_ROOT, "version.txt");
+  try {
+    copyFileSync(join(target, "dist", "version.txt"), dest);
+  } catch {
+    // No staged sidecar (a tarball unpacked without one). We still know the
+    // version being activated, so stamp it directly rather than leaving
+    // version.txt pointing at the release we just replaced.
+    writeFileSync(dest, versionStamp(version));
+  }
 }
 
 function lstatSafeIsSymlink(path: string): boolean {
