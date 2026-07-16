@@ -100,6 +100,7 @@ import type {
 } from "./types";
 
 import { saveUploadFile } from "./uploads";
+import { isCodexInjectedContext, toClientConversationLines } from "./utils/codexConversationLine";
 import { computeConversationEtag } from "./utils/conversationEtag";
 import { debounce } from "./utils/debounce";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
@@ -398,18 +399,10 @@ export class StreamerServer {
             // Additive batched event (one socket write) for newer clients. When
             // the offset index assigned seqs for this read, carry them parallel
             // to lines so a client can map each event to its message_index.
+            // Codex rollout lines are normalized to Claude shape here — mobile
+            // parseLineToMessage only understands type:user|assistant.
             const seqs = this.pendingLineSeqs.get(filePath);
-            this.wsHub.broadcast({
-              type: "conversation_events",
-              sessionId,
-              lines,
-              ...(seqs && seqs.length === lines.length ? { seqs } : {}),
-            });
-            // ...plus per-line conversation_event so older mobile clients,
-            // which only know that shape, keep working byte-for-byte.
-            for (const line of lines) {
-              this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
-            }
+            this.broadcastConversationLines(sessionId, lines, seqs);
             break;
           }
         }
@@ -1683,7 +1676,69 @@ export class StreamerServer {
     });
   }
 
+  /**
+   * Live Codex sessions keep `SessionResponse.conversationId === managed.id`
+   * (stable deep-link / PTY key) and store the rollout UUID separately as
+   * `boundConversationId`. REST history is indexed under the rollout UUID, so
+   * resolve the placeholder → bound id before looking up the scanner.
+   */
+  private resolveConversationLookupId(uuid: string): string {
+    const managed = this.sessionStore.getManaged(uuid);
+    if (managed?.boundConversationId) return managed.boundConversationId;
+    return uuid;
+  }
+
+  /** File path for a live managed session (placeholder id or bound Codex id). */
+  private findLiveSessionFilePath(uuid: string): string | null {
+    const direct = this.sessionFileMap.get(uuid);
+    if (direct) return direct;
+    for (const s of this.sessionStore.listManaged()) {
+      if (s.boundConversationId === uuid) {
+        return this.sessionFileMap.get(s.id) ?? null;
+      }
+    }
+    return null;
+  }
+
+  /** True when a conversation UUID is the bound rollout of a live PTY session. */
+  private isBoundConversationLive(boundId: string): boolean {
+    for (const s of this.sessionStore.listManaged()) {
+      if (s.boundConversationId === boundId && this.ptyManager.hasSession(s.id)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Broadcast conversation JSONL lines to WS clients. Codex rollout lines are
+   * normalized to the Claude `type:user|assistant` shape mobile understands;
+   * Claude lines pass through unchanged so seq alignment stays intact.
+   */
+  private broadcastConversationLines(
+    sessionId: string,
+    lines: string[],
+    seqs?: (number | null)[] | null,
+  ): void {
+    const clientLines = toClientConversationLines(lines);
+    if (clientLines.length === 0) return;
+    const seqsOk = !!seqs && seqs.length === lines.length && clientLines.length === lines.length;
+    this.wsHub.broadcast({
+      type: "conversation_events",
+      sessionId,
+      lines: clientLines,
+      ...(seqsOk ? { seqs } : {}),
+    });
+    // ...plus per-line conversation_event so older mobile clients,
+    // which only know that shape, keep working byte-for-byte.
+    for (const line of clientLines) {
+      this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+    }
+  }
+
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
+    const lookupId = this.resolveConversationLookupId(uuid);
+
     // Cold-start fast path: until the warm-up scan has populated this.scanner
     // (this.scannerReady is null), do NOT trigger a full scan to answer a
     // single-conversation request — that scan walks every JSONL on disk and is
@@ -1692,9 +1747,12 @@ export class StreamerServer {
     // The warm-up scan keeps running in the background; once it adopts the
     // scanner, subsequent requests use the indexed hot path below.
     if (!this.scannerReady && !this.scanProfiles) {
-      const filePath = this.findJsonlPath(uuid);
+      const filePath =
+        this.findJsonlPath(lookupId) ??
+        this.findLiveSessionFilePath(uuid) ??
+        this.findLiveSessionFilePath(lookupId);
       if (filePath) {
-        const account = this.cache?.getMetaById(uuid)?.account ?? undefined;
+        const account = this.cache?.getMetaById(lookupId)?.account ?? undefined;
         const coldScanner = this.scanner ?? this.newScanner();
         const page = await coldScanner.parseSingleFilePage(filePath, account, {
           limit: Number.MAX_SAFE_INTEGER,
@@ -1712,7 +1770,7 @@ export class StreamerServer {
     // conversation we care about, so a sibling file changing must not stall this
     // single-conversation request behind a full-tree rescan.
     const scanner = await this.getScanner(true);
-    const fromIndex = await scanner.getConversation(uuid);
+    const fromIndex = await scanner.getConversation(lookupId);
     if (fromIndex) {
       // Live-session bypass: a conversation with a live PTY is exactly the case
       // that stalls — its mtime is always newer than the snapshot, so the stale
@@ -1721,7 +1779,44 @@ export class StreamerServer {
       // conversation_event lines; the (TTL-throttled) turn-end refresh advances
       // the snapshot server-side; mobile refetches once on the running →
       // not-running transition, which is the reconcile point.
-      if (this.ptyManager.hasSession(uuid)) {
+      // Codex: PTY is keyed by the placeholder session id, while the scanner
+      // indexes the bound rollout UUID — check both.
+      if (
+        this.ptyManager.hasSession(uuid) ||
+        this.ptyManager.hasSession(lookupId) ||
+        this.isBoundConversationLive(lookupId)
+      ) {
+        // Codex live sessions: the scanner LRU snapshot is often frozen at bind
+        // time (mtime always looks "live", so SWR never refreshes). Re-parse the
+        // watched rollout so REST history includes turns written after bind.
+        // Claude keeps the cheap bypass — its offset index + WS seq path stay fresh.
+        const livePath =
+          this.findLiveSessionFilePath(uuid) ??
+          this.findLiveSessionFilePath(lookupId) ??
+          fromIndex.filePath ??
+          null;
+        const isCodexLive =
+          this.isBoundConversationLive(lookupId) ||
+          this.sessionStore.getManaged(uuid)?.provider === CODEX_CLI_PROVIDER;
+        if (isCodexLive && livePath) {
+          try {
+            const account =
+              this.cache?.getMetaById(lookupId)?.account ??
+              (fromIndex as { account?: string }).account ??
+              undefined;
+            const page = await scanner.parseSingleFilePage(livePath, account, {
+              limit: Number.MAX_SAFE_INTEGER,
+            });
+            if (page?.conversation) return page.conversation;
+          } catch (err) {
+            this.log.warn("codex.live_reparse_failed", {
+              event: "codex.live_reparse_failed",
+              conversationId: lookupId,
+              filePath: livePath,
+              err,
+            });
+          }
+        }
         return fromIndex;
       }
       // The scanner memoizes both its metadata index and parsed conversations
@@ -1757,12 +1852,15 @@ export class StreamerServer {
 
     if (this.scanProfiles) return null;
 
-    const filePath = this.findJsonlPath(uuid);
+    const filePath =
+      this.findJsonlPath(lookupId) ??
+      this.findLiveSessionFilePath(uuid) ??
+      this.findLiveSessionFilePath(lookupId);
     if (!filePath) return null;
     this.scanner = null;
     this.scannerReady = null;
     const freshScanner = await this.getScanner();
-    return freshScanner.getConversation(uuid);
+    return freshScanner.getConversation(lookupId);
   }
 
   // True when the JSONL on disk is meaningfully newer than the scanned
@@ -1893,7 +1991,13 @@ export class StreamerServer {
       return;
     }
 
-    const filtered = conversation.messages;
+    // Codex writes AGENTS.md / permissions dumps as role:user before any real
+    // turn. Drop them from the REST payload so the chat opens as user→agent
+    // rather than fake-user→fake-user→agent. Heuristic is Codex-specific text;
+    // Claude messages never match.
+    const filtered = conversation.messages.filter(
+      (m) => !(m.role === "user" && typeof m.text === "string" && isCodexInjectedContext(m.text)),
+    );
     const total = filtered.length;
 
     const hasAnchor = url.searchParams.has("anchor_index");
@@ -1997,20 +2101,12 @@ export class StreamerServer {
       // skipStaleRescan: this is the same single-conversation detail path, whose
       // refreshFile already reconciled the one file we page here, so a sibling
       // file's stale flag must not stall this read behind a full-tree rescan.
-      const pagedScanner =
-        !indexWindow && this.scannerReady
-          ? ((await this.getScanner(true)) as unknown as {
-              getConversationPage?: (
-                id: string,
-                options: { beforeIndex: number; limit: number },
-              ) => Promise<{ messages: typeof filtered; total: number; fromIndex: number } | null>;
-            })
-          : null;
-      const page =
-        indexWindow ??
-        (scanLimit > 0 && pagedScanner && typeof pagedScanner.getConversationPage === "function"
-          ? await pagedScanner.getConversationPage(id, { beforeIndex, limit: scanLimit })
-          : null);
+      // Prefer the offset-index window when warm (Claude). Otherwise slice the
+      // in-memory `filtered` list — do NOT call getConversationPage here.
+      // That helper re-reads the scanner LRU (unfiltered, often stale for live
+      // Codex) and would bypass isCodexInjectedContext, which is exactly how
+      // mobile's ?msg_limit=80 path lost real user turns / showed PTY-only UI.
+      const page = indexWindow;
       if (indexWindow) indexTotal = indexWindow.total;
       const start = page?.fromIndex ?? windowStart;
       slice = page?.messages ?? filtered.slice(start, beforeIndex);
@@ -3028,10 +3124,7 @@ export class StreamerServer {
       try {
         const existing = readFileSync(resolvedFilePath, "utf8").split("\n").filter(Boolean);
         if (existing.length > 0) {
-          this.wsHub.broadcast({ type: "conversation_events", sessionId, lines: existing });
-          for (const line of existing) {
-            this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
-          }
+          this.broadcastConversationLines(sessionId, existing);
         }
       } catch {
         /* ignore — file may not be readable yet; watcher will catch future writes */
@@ -3176,10 +3269,7 @@ export class StreamerServer {
           try {
             const existing = readFileSync(candidatePath, "utf8").split("\n").filter(Boolean);
             if (existing.length > 0) {
-              this.wsHub.broadcast({ type: "conversation_events", sessionId, lines: existing });
-              for (const line of existing) {
-                this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
-              }
+              this.broadcastConversationLines(sessionId, existing);
             }
           } catch {
             /* ignore — file may not be readable yet; watcher will catch future writes */
