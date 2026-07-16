@@ -454,6 +454,9 @@ export class StreamerServer {
       onOutput: (sessionId, data) => {
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
       },
+      onUserMessage: (sessionId, text, ts) => {
+        this.wsHub.broadcast({ type: "user_message", sessionId, text, ts });
+      },
       onPermissionChange: (sessionId, gate) => {
         this.handlePermissionChange(sessionId, gate);
       },
@@ -628,7 +631,15 @@ export class StreamerServer {
             this.addSessionSubscriber(msg.sessionId, ws);
             if (this.ptyManager.hasSession(msg.sessionId)) {
               const lines = await this.ptyManager.getOutputLines(msg.sessionId, 200);
-              ws.send(JSON.stringify({ type: "terminal_replay", sessionId: msg.sessionId, lines }));
+              const userMessages = this.ptyManager.getInputHistory(msg.sessionId);
+              ws.send(
+                JSON.stringify({
+                  type: "terminal_replay",
+                  sessionId: msg.sessionId,
+                  lines,
+                  userMessages,
+                }),
+              );
             }
             // A gate/question can open before the client finishes subscribing
             // (Codex's startup gates fire within ~500ms of spawn) — broadcast()
