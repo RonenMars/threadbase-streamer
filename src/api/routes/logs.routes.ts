@@ -1,6 +1,6 @@
-import { Hono } from "hono";
-import { existsSync, openSync, readSync, closeSync, fstatSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { Hono } from "hono";
 import { installDir } from "../../lifecycle/constants";
 import { getLogger } from "../../logger";
 
@@ -47,9 +47,7 @@ function readLogLines(
       if (firstNl >= 0) text = text.slice(firstNl + 1);
     }
 
-    const allLines = text
-      .split("\n")
-      .filter((line) => line.trim() && !line.startsWith("==="));
+    const allLines = text.split("\n").filter((line) => line.trim() && !line.startsWith("==="));
 
     let lines: string[];
     let newOffset: number;
