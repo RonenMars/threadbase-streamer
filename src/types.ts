@@ -278,7 +278,6 @@ export interface ServerConfig {
   // Default true (real serve usage keeps the persistent index).
   scannerPersistent?: boolean;
   ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes); 0 disables the auto-hold timer (explicit hold_session still works)
-  wsAuthTimeoutMs?: number; // ms a keyless WS has to send { type: "auth", token } before it's closed (default 5000)
   cacheDir?: string;
   tailSize?: number;
   directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)

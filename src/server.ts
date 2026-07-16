@@ -46,7 +46,6 @@ import {
   loadPublicUrl,
   loadTailSize,
   setApiKey,
-  validateApiKey,
   validatePublicUrl,
 } from "./auth";
 import {
@@ -84,7 +83,6 @@ import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConver
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
 import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
-import { sanitizeAnswerKeys } from "./services/questions/permissionAnswerKeys";
 import {
   questionsFromLines,
   shouldBroadcastQuestion,
@@ -117,12 +115,6 @@ const DEFAULT_SYSTEM_PROMPT =
   "When presenting options or choices to the user, limit the options to at most 3.";
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
-// M1 — a WebSocket that connects without a valid ?key= must send its
-// { type: "auth", token } handshake within this window or the socket is closed.
-// Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L40
-const DEFAULT_WS_AUTH_TIMEOUT_MS = 5_000;
-// Application-level WS close code for a failed/absent auth handshake.
-const WS_CLOSE_UNAUTHORIZED = 4401;
 
 // A completed refreshFile within this window is treated as fresh — a retry
 // storm on a live conversation collapses to one parse per window instead of
@@ -232,14 +224,6 @@ export class StreamerServer {
   private clientIdToWs = new Map<string, WebSocket>();
   // Reverse map for cleanup on close
   private wsToClientId = new Map<WebSocket, string>();
-  // M1 — WS auth. Sockets that have authenticated (via ?key= at upgrade OR a
-  // { type: "auth", token } first message). Only authed sockets are added to
-  // the hub and receive broadcasts.
-  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L40
-  private wsAuthed = new Set<WebSocket>();
-  // Keyless sockets awaiting their first-message auth handshake → close timer.
-  private wsAuthPending = new Map<WebSocket, ReturnType<typeof setTimeout>>();
-  private wsAuthTimeoutMs: number;
   private cache: ConversationCache | null = null;
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
@@ -284,7 +268,6 @@ export class StreamerServer {
     this.scanProfiles = config.scanProfiles;
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
-    this.wsAuthTimeoutMs = config.wsAuthTimeoutMs ?? DEFAULT_WS_AUTH_TIMEOUT_MS;
     this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.defaultPermissionMode =
       config.defaultPermissionMode ?? loadDefaultPermissionMode() ?? "acceptEdits";
@@ -627,53 +610,17 @@ export class StreamerServer {
       handlePairExchange: (req, res) => this.handlePairExchange(req, res),
       handleBrowse: (url, res) => this.handleBrowse(url, res),
       handleMkdir: (req, res) => this.handleMkdir(req, res),
-      handleWsOpen: (ws, preAuthed) => {
-        // M1: a connection carrying a valid ?key= is authed immediately
-        // (backward compat — older tb-mobile builds rely on ?key=). A keyless
-        // connection is accepted at the socket layer but NOT added to the hub;
-        // it must send { type: "auth", token } within wsAuthTimeoutMs or it's
-        // closed. This lets newer clients keep the key out of the URL (and thus
-        // out of proxy/access logs) while never breaking the ?key= path.
-        // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L40
-        if (preAuthed) {
-          this.completeWsAuth(ws);
-          return;
+      handleWsOpen: (ws) => {
+        this.wsHub.addClient(ws);
+        const sessions = this.sessionStore.list(this.ptyAttachedIds());
+        ws.send(JSON.stringify({ type: "session_list", sessions }));
+        if (this.cacheReady) {
+          ws.send(JSON.stringify({ type: "cache_ready" }));
         }
-        const timer = setTimeout(() => {
-          this.wsAuthPending.delete(ws);
-          try {
-            ws.close(WS_CLOSE_UNAUTHORIZED, "auth timeout");
-          } catch {
-            // socket already gone
-          }
-        }, this.wsAuthTimeoutMs);
-        this.wsAuthPending.set(ws, timer);
       },
       handleWsMessage: async (ws, raw) => {
         try {
           const msg = JSON.parse(String(raw));
-          // M1: until a keyless socket completes the auth handshake, the only
-          // message we honor is { type: "auth", token }. A valid token authes
-          // the socket; an invalid one closes it; any other message is ignored
-          // (the auth-timeout still guards against a silent client).
-          // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L40
-          if (!this.wsAuthed.has(ws)) {
-            if (msg.type === "auth" && typeof msg.token === "string") {
-              const t = this.wsAuthPending.get(ws);
-              if (t) clearTimeout(t);
-              this.wsAuthPending.delete(ws);
-              if (validateApiKey(msg.token, this.apiKey)) {
-                this.completeWsAuth(ws);
-              } else {
-                try {
-                  ws.close(WS_CLOSE_UNAUTHORIZED, "unauthorized");
-                } catch {
-                  // socket already gone
-                }
-              }
-            }
-            return;
-          }
           if (msg.type === "register" && typeof msg.clientId === "string") {
             const oldClientId = this.wsToClientId.get(ws);
             if (oldClientId) this.clientIdToWs.delete(oldClientId);
@@ -733,25 +680,13 @@ export class StreamerServer {
             }
           }
           if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
-            // L1: only the socket that subscribed to this session may hold it.
-            // Otherwise any authenticated client could kill the PTY grace timer
-            // of a session it doesn't own. Non-subscribers are silently ignored.
-            // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L85
-            if (this.sessionSubscribers.get(msg.sessionId)?.has(ws)) {
-              this.startGraceTimer(msg.sessionId, 0);
-            }
+            this.startGraceTimer(msg.sessionId, 0);
           }
         } catch {
           // malformed JSON, ignore
         }
       },
       handleWsClose: (ws) => {
-        const pendingTimer = this.wsAuthPending.get(ws);
-        if (pendingTimer) {
-          clearTimeout(pendingTimer);
-          this.wsAuthPending.delete(ws);
-        }
-        this.wsAuthed.delete(ws);
         const clientId = this.wsToClientId.get(ws);
         if (clientId) {
           this.clientIdToWs.delete(clientId);
@@ -854,21 +789,6 @@ export class StreamerServer {
       this.wsHub.unicast(ws, payload);
     } else {
       this.wsHub.broadcast(payload);
-    }
-  }
-
-  // M1: finalize a WebSocket auth (via ?key= at upgrade or a first-message
-  // handshake) — register it with the hub and send the initial snapshot. Only
-  // authed sockets reach this, so no unauthenticated client ever receives a
-  // broadcast.
-  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L40
-  private completeWsAuth(ws: WebSocket): void {
-    this.wsAuthed.add(ws);
-    this.wsHub.addClient(ws);
-    const sessions = this.sessionStore.list(this.ptyAttachedIds());
-    ws.send(JSON.stringify({ type: "session_list", sessions }));
-    if (this.cacheReady) {
-      ws.send(JSON.stringify({ type: "cache_ready" }));
     }
   }
 
@@ -1269,12 +1189,6 @@ export class StreamerServer {
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.wsHub.dispose();
-    // Clear any outstanding WS auth-handshake timers so they can't fire against
-    // a torn-down server or leak across instances in a shared test process. The
-    // pending sockets themselves are force-closed by closeAllConnections() below.
-    for (const timer of this.wsAuthPending.values()) clearTimeout(timer);
-    this.wsAuthPending.clear();
-    this.wsAuthed.clear();
     this.pairTokens.dispose();
     if (this.dbPool) {
       await this.dbPool.end();
@@ -2797,15 +2711,6 @@ export class StreamerServer {
       return;
     }
     this.pendingPermission.set(sessionId, gate);
-    // M5: strip any answerKeys that aren't on the safe allowlist before
-    // broadcasting so a compromised/misbehaving detection path can't tell the
-    // client to forward arbitrary keystroke bytes to the PTY. Dropping the
-    // field leaves the client to answer by the on-screen option index.
-    // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L74
-    const safeOptions = gate.options.map((o) => {
-      const answerKeys = sanitizeAnswerKeys(o.answerKeys);
-      return answerKeys === undefined ? { index: o.index, label: o.label } : { ...o, answerKeys };
-    });
     const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
     this.log.info(
       `[ws.broadcast_permission] ${sessionId.slice(0, 8)} subscribers=${subscriberCount}`,
@@ -2816,7 +2721,7 @@ export class StreamerServer {
       sessionId,
       ...(gate.prompt ? { prompt: gate.prompt } : {}),
       ...(gate.detail ? { detail: gate.detail } : {}),
-      options: safeOptions,
+      options: gate.options,
       ...(gate.cursor !== undefined ? { cursor: gate.cursor } : {}),
     });
   }
