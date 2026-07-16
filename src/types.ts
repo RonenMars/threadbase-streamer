@@ -111,6 +111,13 @@ export interface PermissionOption {
   answerKeys?: string;
 }
 
+// A user message the streamer submitted to the PTY. `ts` is epoch ms recorded
+// at submit time.
+export interface UserMessage {
+  text: string;
+  ts: number;
+}
+
 export type WSMessage =
   | { type: "terminal_output"; sessionId: string; data: string }
   | {
@@ -146,7 +153,11 @@ export type WSMessage =
     }
   | { type: "permission_cancelled"; sessionId: string }
   | { type: "ping"; ts: number }
-  | { type: "terminal_replay"; sessionId: string; lines: string[] }
+  // Ground-truth user message: the streamer wrote this text to the PTY, so the
+  // client can positively identify user-owned output instead of parsing the
+  // `❯ <text>` transcript line heuristically. Additive; old clients ignore it.
+  | { type: "user_message"; sessionId: string; text: string; ts: number }
+  | { type: "terminal_replay"; sessionId: string; lines: string[]; userMessages?: UserMessage[] }
   | { type: "session_ready"; session: SessionResponse }
   // Multi-agent additive variants. Old clients ignore unknown types.
   | {
@@ -299,6 +310,10 @@ export interface PTYManagerOptions {
   // user answered it and Claude's prompt marker is back). Lets the server clear
   // the pending question so an answered menu doesn't linger or re-appear.
   onLiveQuestionGone?: (sessionId: string) => void;
+  // Fired when a user message is actually submitted to the PTY (after the
+  // paste/submit write, including the queued-input flush). Ground truth for
+  // user-owned output — not fired for raw keystrokes (sendKeys).
+  onUserMessage?: (sessionId: string, text: string, ts: number) => void;
   logger?: import("./logger").Logger;
 }
 
@@ -331,6 +346,10 @@ export interface SessionRunner {
   putOnHold(sessionId: string): void;
   getOutput(sessionId: string): string;
   getOutputLines(sessionId: string, maxLines: number): Promise<string[]>;
+  // Recorded user messages submitted to the PTY, oldest-first. Empty for an
+  // unknown session. Sourced by terminal_replay so a re-subscribing client can
+  // reconcile ground-truth ownership without the live user_message stream.
+  getInputHistory(sessionId: string): UserMessage[];
   getSession(sessionId: string): ManagedSession | null;
   hasSession(sessionId: string): boolean;
   listSessions(): ManagedSession[];

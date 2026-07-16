@@ -17,10 +17,15 @@ import type {
   SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
+  UserMessage,
 } from "./types";
 import { debounce } from "./utils/debounce";
 
 const OUTPUT_BUFFER_MAX = 65536;
+
+// Cap on recorded user messages per session (drop oldest). Bounds memory on a
+// long-lived session; replay only needs the recent tail for ownership.
+const INPUT_HISTORY_MAX = 50;
 
 // PTY geometry. The headless render terminal (session.screen) MUST match these
 // so Claude's absolute cursor moves (ESC[<row>;<col>H) resolve to the same
@@ -129,6 +134,9 @@ interface InternalSession extends ManagedSession {
   // order rather than raw byte order (which Claude's absolute-cursor repaints
   // scramble — see getOutputLines for the desync this fixes).
   screen: Terminal;
+  // Ground-truth user messages submitted to this PTY, oldest-first, capped at
+  // INPUT_HISTORY_MAX. Recorded in writeSubmit(); replayed via getInputHistory().
+  inputHistory: UserMessage[];
 }
 
 function createScreen(): Terminal {
@@ -172,6 +180,7 @@ export class PTYManager implements SessionRunner {
   private onPermissionChange: PTYManagerOptions["onPermissionChange"];
   private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
   private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
+  private onUserMessage: PTYManagerOptions["onUserMessage"];
   // Per-session permission-gate state. True between an OSC 777 (gate open) and
   // the next prompt-ready without a fresh 777 (gate closed). Prevents
   // re-broadcasting open/close on every chunk.
@@ -218,6 +227,7 @@ export class PTYManager implements SessionRunner {
     this.onPermissionChange = options.onPermissionChange;
     this.onLiveQuestion = options.onLiveQuestion;
     this.onLiveQuestionGone = options.onLiveQuestionGone;
+    this.onUserMessage = options.onUserMessage;
     this.log = options.logger ?? getLogger("pty");
   }
 
@@ -293,6 +303,7 @@ export class PTYManager implements SessionRunner {
       process: proc,
       outputBuffer: Buffer.alloc(0),
       screen: createScreen(),
+      inputHistory: [],
     };
 
     this.sessions.set(sessionId, session);
@@ -360,6 +371,7 @@ export class PTYManager implements SessionRunner {
       process: proc,
       outputBuffer: Buffer.alloc(0),
       screen: createScreen(),
+      inputHistory: [],
     };
 
     this.sessions.set(sessionId, session);
@@ -458,6 +470,7 @@ export class PTYManager implements SessionRunner {
     path: "direct" | "flush",
     promptCount: number,
   ): void {
+    this.recordUserMessage(session, input);
     const pasteBytes = buildPasteBytes(input);
     this.log.info(
       `[pty.input.write] ${sessionId.slice(0, 8)} promptCount=${promptCount} bytes=${pasteBytes.length} digest=${digestBytes(pasteBytes)}`,
@@ -606,6 +619,22 @@ export class PTYManager implements SessionRunner {
       lines.pop();
     }
     return lines.slice(-maxLines);
+  }
+
+  getInputHistory(sessionId: string): UserMessage[] {
+    return this.sessions.get(sessionId)?.inputHistory ?? [];
+  }
+
+  // Record a submitted user message as ground truth and fire onUserMessage.
+  // Called from writeSubmit (both direct and flush paths) — never from
+  // sendKeys, so raw keystrokes aren't logged as messages.
+  private recordUserMessage(session: InternalSession, text: string): void {
+    const ts = Date.now();
+    session.inputHistory.push({ text, ts });
+    if (session.inputHistory.length > INPUT_HISTORY_MAX) {
+      session.inputHistory.shift();
+    }
+    this.onUserMessage?.(session.id, text, ts);
   }
 
   getSession(sessionId: string): ManagedSession | null {

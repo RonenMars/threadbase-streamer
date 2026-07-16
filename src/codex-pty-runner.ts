@@ -17,10 +17,15 @@ import type {
   SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
+  UserMessage,
 } from "./types";
 import { debounce } from "./utils/debounce";
 
 const OUTPUT_BUFFER_MAX = 65536;
+
+// Cap on recorded user messages per session (drop oldest); mirrors
+// pty-manager.ts INPUT_HISTORY_MAX.
+const INPUT_HISTORY_MAX = 50;
 
 // PTY geometry — same as pty-manager.ts. The headless render terminal
 // (session.screen) MUST match these so Codex's absolute cursor moves
@@ -162,6 +167,9 @@ interface InternalSession extends ManagedSession {
   // scramble raw byte order, so readiness/trust-gate detection reads the
   // rendered screen, not the raw chunk.
   screen: Terminal;
+  // Ground-truth user messages submitted to this PTY, oldest-first, capped at
+  // INPUT_HISTORY_MAX. Recorded in writeSubmit(); replayed via getInputHistory().
+  inputHistory: UserMessage[];
 }
 
 function createScreen(): Terminal {
@@ -183,6 +191,7 @@ export class CodexPtyRunner implements SessionRunner {
   private onPermissionChange: PTYManagerOptions["onPermissionChange"];
   private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
   private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
+  private onUserMessage: PTYManagerOptions["onUserMessage"];
   private log: Logger;
   // Tracks sessions whose PTY has spawned but Codex hasn't yet reached its
   // "Ready" status bar — i.e. onReady hasn't fired.
@@ -214,6 +223,7 @@ export class CodexPtyRunner implements SessionRunner {
     this.onPermissionChange = options.onPermissionChange;
     this.onLiveQuestion = options.onLiveQuestion;
     this.onLiveQuestionGone = options.onLiveQuestionGone;
+    this.onUserMessage = options.onUserMessage;
     this.log = options.logger ?? getLogger("codex-pty");
   }
 
@@ -267,6 +277,7 @@ export class CodexPtyRunner implements SessionRunner {
       process: proc,
       outputBuffer: Buffer.alloc(0),
       screen: createScreen(),
+      inputHistory: [],
     };
 
     this.sessions.set(sessionId, session);
@@ -327,6 +338,7 @@ export class CodexPtyRunner implements SessionRunner {
       process: proc,
       outputBuffer: Buffer.alloc(0),
       screen: createScreen(),
+      inputHistory: [],
     };
 
     this.sessions.set(sessionId, session);
@@ -462,6 +474,7 @@ export class CodexPtyRunner implements SessionRunner {
     path: "direct" | "flush",
     promptCount: number,
   ): void {
+    this.recordUserMessage(session, input);
     this.log.info(
       `[codex.input.write] ${sessionId.slice(0, 8)} promptCount=${promptCount} bytes=${input.length} digest=${digestBytes(input)}`,
       {
@@ -600,6 +613,21 @@ export class CodexPtyRunner implements SessionRunner {
       lines.pop();
     }
     return lines.slice(-maxLines);
+  }
+
+  getInputHistory(sessionId: string): UserMessage[] {
+    return this.sessions.get(sessionId)?.inputHistory ?? [];
+  }
+
+  // Record a submitted user message as ground truth and fire onUserMessage.
+  // Called from writeSubmit (direct and flush paths) — never from sendKeys.
+  private recordUserMessage(session: InternalSession, text: string): void {
+    const ts = Date.now();
+    session.inputHistory.push({ text, ts });
+    if (session.inputHistory.length > INPUT_HISTORY_MAX) {
+      session.inputHistory.shift();
+    }
+    this.onUserMessage?.(session.id, text, ts);
   }
 
   getSession(sessionId: string): ManagedSession | null {
