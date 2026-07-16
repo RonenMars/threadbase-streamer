@@ -62,7 +62,11 @@ function verifySignature(rawBody: Buffer, signature: string, secret: string): bo
 }
 
 function isWithinSkew(timestampHeader: string | undefined, skewSeconds: number): boolean {
-  if (!timestampHeader) return true; // header optional in milestone B
+  // X-Progress-Timestamp is REQUIRED (M4). A missing or unparseable timestamp
+  // fails the skew check so an attacker can't replay a captured webhook body
+  // indefinitely by simply omitting the header.
+  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L67
+  if (!timestampHeader) return false;
   const t = Number(timestampHeader);
   if (!Number.isFinite(t)) return false;
   const now = Math.floor(Date.now() / 1000);
