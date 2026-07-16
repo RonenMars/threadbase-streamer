@@ -27,6 +27,7 @@ Three layers: **core engine** (src/*.ts) → **API layer** (src/api/ + src/index
 Modules with non-obvious behavior:
 
 - `pty-manager.ts` — spawn/resume Claude sessions via node-pty, ring buffer output (64KB cap)
+- `codex-pty-runner.ts` — same for Codex sessions. Blocking startup gates (directory trust, hooks review) become question cards over the `permission` WS transport; a "remember for all projects" answer persists to `~/.threadbase/gate-answers.json` (`services/questions/codexGateAnswers.ts`) and auto-answers future gates. Readiness = `Ready` status-bar marker, with a 500ms quiet-checker + 8s flat fallback (the marker truncates off the 120-col status bar when branch/diff segments are long).
 - `session-store.ts` — in-memory registry of managed (PTY) + discovered (process) sessions. All session state mutations go through it.
 - `conversation-cache.ts` — SQLite cache of conversation metadata, message tails, projects, and cache_metadata; updated incrementally by `ConversationWatcher` (chokidar). Backs `/api/conversations`, `/api/sessions`, and `/project-chats`. Runs SQLite migrations on open (`db/sqlite-migrate.ts` + `db/migrations/*.sql`, tracked in `schema_migrations`).
 - `services/conversations/conversationWatcher.ts` — chokidar-backed JSONL tail + directory watcher. Emits per-line events (cache + WS broadcast) and per-file dirty events (cache invalidation).

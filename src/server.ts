@@ -130,9 +130,12 @@ const WS_CLOSE_UNAUTHORIZED = 4401;
 const REFRESH_TTL_MS = 2000;
 
 // Session start blocks for the PTY to reach waiting_input/idle before
-// responding. Must exceed pty-manager's PROMPT_MARKER_FALLBACK_MS (10s) with
-// margin for slow boots; past this we fall back to the async 202 shape.
-const START_READY_TIMEOUT_MS = 15_000;
+// responding; past this we fall back to the async 202 shape. Must stay BELOW
+// the mobile client's start-request fetch timeout (15s) — at the old 15s value
+// the client aborted first ("fetch canceled") and its retry double-spawned
+// sessions. Ready normally lands well under this: Claude's quiet-checker and
+// Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
+const START_READY_TIMEOUT_MS = 10_000;
 
 // Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
 // runs in /api/conversations and /project-chats.
@@ -679,6 +682,43 @@ export class StreamerServer {
             if (this.ptyManager.hasSession(msg.sessionId)) {
               const lines = await this.ptyManager.getOutputLines(msg.sessionId, 200);
               ws.send(JSON.stringify({ type: "terminal_replay", sessionId: msg.sessionId, lines }));
+            }
+            // A gate/question can open before the client finishes subscribing
+            // (Codex's startup gates fire within ~500ms of spawn) — broadcast()
+            // only reaches already-subscribed sockets, so a card that opened in
+            // that window is otherwise lost forever. Replay pending state the
+            // same way terminal_replay does above.
+            const pendingGate = this.pendingPermission.get(msg.sessionId);
+            if (pendingGate) {
+              this.log.info(`[ws.replay_permission] ${msg.sessionId.slice(0, 8)}`, {
+                event: "ws.replay_permission",
+                sessionId: msg.sessionId,
+              });
+              ws.send(
+                JSON.stringify({
+                  type: "permission",
+                  sessionId: msg.sessionId,
+                  ...(pendingGate.prompt ? { prompt: pendingGate.prompt } : {}),
+                  ...(pendingGate.detail ? { detail: pendingGate.detail } : {}),
+                  options: pendingGate.options,
+                  ...(pendingGate.cursor !== undefined ? { cursor: pendingGate.cursor } : {}),
+                }),
+              );
+            }
+            const pendingQuestion = this.pendingQuestions.get(msg.sessionId);
+            if (pendingQuestion) {
+              this.log.info(`[ws.replay_question] ${msg.sessionId.slice(0, 8)}`, {
+                event: "ws.replay_question",
+                sessionId: msg.sessionId,
+              });
+              ws.send(
+                JSON.stringify({
+                  type: "question",
+                  sessionId: msg.sessionId,
+                  toolUseId: pendingQuestion.toolUseId,
+                  questions: pendingQuestion.questions,
+                }),
+              );
             }
           }
           if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
@@ -2755,6 +2795,11 @@ export class StreamerServer {
       const answerKeys = sanitizeAnswerKeys(o.answerKeys);
       return answerKeys === undefined ? { index: o.index, label: o.label } : { ...o, answerKeys };
     });
+    const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
+    this.log.info(
+      `[ws.broadcast_permission] ${sessionId.slice(0, 8)} subscribers=${subscriberCount}`,
+      { event: "ws.broadcast_permission", sessionId, subscriberCount },
+    );
     this.wsHub.broadcast({
       type: "permission",
       sessionId,
