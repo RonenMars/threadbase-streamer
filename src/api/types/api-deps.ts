@@ -66,10 +66,8 @@ export type ApiDeps = {
   handlePairExchange: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleBrowse: (url: URL, res: ServerResponse) => Promise<void>;
   handleMkdir: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
-  // WebSocket lifecycle delegates. `preAuthed` is true when the upgrade carried
-  // a valid ?key= (backward-compat path); false connections must complete a
-  // first-message { type: "auth", token } handshake (M1).
-  handleWsOpen: (ws: WebSocket, preAuthed: boolean) => void;
+  // WebSocket lifecycle delegates
+  handleWsOpen: (ws: WebSocket) => void;
   handleWsMessage: (ws: WebSocket, raw: unknown) => void;
   handleWsClose: (ws: WebSocket) => void;
   // Multi-agent mode. Null when MULTI_AGENT_FLOW is OFF.

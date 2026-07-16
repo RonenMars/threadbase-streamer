@@ -886,3 +886,34 @@ The ESM/CJS bundles build fine — only declaration generation fails.
 **Fix:** Keep `"ignoreDeprecations": "6.0"` in `tsconfig.json`'s `compilerOptions`. `main` already has it (added in the TS 6.0 bump, #119). Do not remove it.
 
 **TypeScript 7.0 heads-up:** `ignoreDeprecations: "6.0"` stops working in TS 7.0, so this recurs on that upgrade. The real fix then is to move DTS generation off tsup's worker (which is what injects `baseUrl`) — e.g. a separate `tsc --emitDeclarationOnly` pass — rather than touching our tsconfig.
+
+---
+
+## Host machine grinds to a halt, PowerShell windows flash every few seconds
+
+**When:** A Windows machine that has ever run this project under PM2 (not this repo's own Task Scheduler-based deploy) becomes severely slow — high CPU/disk I/O, Defender constantly scanning, and a console/PowerShell window briefly flashing every second or so.
+
+**Cause:** Not a bug in this repo. On one dev machine, a PM2 process named `threadbase-streamer` was pointed at a **stale global npm install under the old, pre-rename package scope** — `C:\Program Files\nodejs\node_modules\@threadbase\streamer\dist\cli.cjs` (note: no `-sh`). That scope never held a working install (its `node_modules` had gone missing, and `@threadbase/streamer` 404s on the public npm registry — this repo has only ever published as `@threadbase-sh/streamer`). Every PM2 launch attempt hit `MODULE_NOT_FOUND` and crashed instantly; PM2's default restart-on-crash has no backoff, so it respawned as fast as it could crash — **22,832,283 restarts** over ~2.5 months (`pm2 describe threadbase-streamer` showed the counter; `pm2 list` showed status `stopped` because it had exceeded PM2's internal crash-loop detection).
+
+Two side effects compounded the damage:
+- The per-app error log (`~/.pm2/logs/threadbase-streamer-error.log`) grew to **18.8 GB** — the same `MODULE_NOT_FOUND` stack trace written millions of times.
+- The **PM2 daemon's own log** (`~/.pm2/pm2.log`, separate from the per-app log) grew to **9 GB** over the same period, mirroring every `starting → online → exited` cycle. This is easy to miss if you only clean up the per-app log.
+
+This PM2-managed install is entirely separate from this repo's supported deploy/update path: production instances on Windows run via **Task Scheduler** (`Threadbase` + `Threadbase-Updater` tasks, see "Prod/dev coordination" in `CLAUDE.md`), pointing at `~/.threadbase/cli.js`. That path was healthy the whole time — the hourly `Threadbase-Updater` task only touches `~/.threadbase/`, never `Program Files\nodejs\node_modules`. The auto-updater did not cause and could not have caught this.
+
+**Fix (host-side, once per affected machine):**
+```powershell
+pm2 stop threadbase-streamer; pm2 delete threadbase-streamer
+pm2 save --force                                          # persist the now-empty process list so it doesn't resurrect on next login
+Remove-Item 'C:\Users\<user>\.pm2\logs\threadbase-streamer-error.log' -Force
+Remove-Item 'C:\Users\<user>\.pm2\pm2.log' -Force          # don't forget the daemon log, not just the per-app one
+Remove-Item 'C:\Program Files\nodejs\node_modules\@threadbase' -Recurse -Force   # empty leftover scope dir, if present
+```
+
+Check `pm2 list` and `Get-CimInstance Win32_StartupCommand | Where-Object Command -match 'pm2'` afterward — PM2 itself (via `pm2-windows-startup`) still resurrects on login, it will just start with zero registered processes.
+
+**Prevention:** This repo does not use PM2 anywhere in its build, deploy, or update tooling, and should not gain a dependency on it. If you ever do supervise a Threadbase process with PM2 for local experimentation, always set crash-loop protection so a bad start fails loud instead of eating the disk:
+```js
+{ max_restarts: 10, min_uptime: 5000, restart_delay: 2000 }
+```
+and install `pm2-logrotate` so no single log can grow unbounded.
