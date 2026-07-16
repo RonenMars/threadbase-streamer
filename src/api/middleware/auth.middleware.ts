@@ -8,13 +8,7 @@ function isLocalRequest(remoteAddr: string | undefined): boolean {
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
 
-// /ws is authenticated at the WebSocket layer, not here (M1): the upgrade is
-// accepted without a key so a client can send its { type: "auth", token }
-// handshake as the first message, keeping the key out of the URL (and proxy
-// logs). A valid ?key= still authenticates — server-side WS handling revalidates
-// it — so older tb-mobile builds are unaffected.
-// Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L40
-const PUBLIC_PATHS = new Set(["/healthz", "/ws"]);
+const PUBLIC_PATHS = new Set(["/healthz"]);
 // Localhost-only unauthenticated paths (menubar logs viewer).
 const LOCAL_ONLY_PATHS = new Set(["/api/logs", "/api/logs/meta"]);
 // /api/__update uses HMAC signature auth instead of Bearer; skip the

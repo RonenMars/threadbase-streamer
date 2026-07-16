@@ -2,8 +2,6 @@ import { existsSync, mkdtempSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "http";
-import WebSocket from "ws";
-import { LiveSessionManager } from "../src/live-session-manager";
 import { StreamerServer } from "../src/server";
 
 // The /api/auth/rotate tests below rotate the API key, which calls setApiKey() →
@@ -69,7 +67,6 @@ describe("security hardening", () => {
   });
 
   // ── H1: localNoAuth startup warning ────────────────────────────────────────
-  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L17
 
   describe("localNoAuth startup warning", () => {
     it("emits a warning to stderr when localNoAuth is true", async () => {
@@ -106,7 +103,6 @@ describe("security hardening", () => {
   });
 
   // ── H2: POST /api/auth/rotate ───────────────────────────────────────────────
-  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L26
 
   describe("POST /api/auth/rotate", () => {
     it("requires authentication", async () => {
@@ -223,7 +219,6 @@ describe("security hardening", () => {
   });
 
   // ── M2: CORS origin allowlist ───────────────────────────────────────────────
-  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L51
 
   describe("CORS origin allowlist", () => {
     it("sets ACAO for an allowed origin", async () => {
@@ -274,7 +269,6 @@ describe("security hardening", () => {
   });
 
   // ── M3: Rate limiting ───────────────────────────────────────────────────────
-  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L58
 
   describe("rate limiting", () => {
     it("POST /api/sessions/start returns 429 after 10 requests per minute", async () => {
@@ -293,142 +287,5 @@ describe("security hardening", () => {
       }
       expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
     });
-  });
-
-  // ── L1: hold_session ownership ────────────────────────────────────────────
-  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L85
-
-  describe("hold_session ownership", () => {
-    const FAKE_SESSION = "l1-fake-session-id";
-
-    function openWs(): Promise<WebSocket> {
-      return new Promise((resolve, reject) => {
-        const ws = new WebSocket(`ws://localhost:${port}/ws?key=${API_KEY}`);
-        ws.on("open", () => resolve(ws));
-        ws.on("error", reject);
-      });
-    }
-    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-    afterEach(() => {
-      vi.restoreAllMocks();
-    });
-
-    it("lets the subscribing client hold its own session (putOnHold is called)", async () => {
-      // Pretend the fake id is a live PTY so the grace timer reaches putOnHold.
-      vi.spyOn(LiveSessionManager.prototype, "hasSession").mockReturnValue(true);
-      vi.spyOn(LiveSessionManager.prototype, "getOutputLines").mockResolvedValue([]);
-      const putOnHold = vi
-        .spyOn(LiveSessionManager.prototype, "putOnHold")
-        .mockImplementation(() => {});
-
-      const ws = await openWs();
-      ws.send(JSON.stringify({ type: "subscribe_session", sessionId: FAKE_SESSION }));
-      await delay(50);
-      ws.send(JSON.stringify({ type: "hold_session", sessionId: FAKE_SESSION }));
-      await delay(150);
-
-      expect(putOnHold).toHaveBeenCalledWith(FAKE_SESSION);
-      ws.close();
-    });
-
-    it("ignores hold_session from a client that never subscribed (putOnHold NOT called)", async () => {
-      vi.spyOn(LiveSessionManager.prototype, "hasSession").mockReturnValue(true);
-      const putOnHold = vi
-        .spyOn(LiveSessionManager.prototype, "putOnHold")
-        .mockImplementation(() => {});
-
-      const ws = await openWs();
-      // No subscribe_session — this client does not own FAKE_SESSION.
-      ws.send(JSON.stringify({ type: "hold_session", sessionId: FAKE_SESSION }));
-      await delay(150);
-
-      expect(putOnHold).not.toHaveBeenCalled();
-      ws.close();
-    });
-  });
-
-  // ── M1: WebSocket auth (?key= backward compat + first-message handshake) ────
-  // Plan: https://github.com/RonenMars/threadbase-streamer/blob/a251353bfa417bd48ce3f15086bc336a2c622629/docs/plans/2026-06-24-security-hardening.md#L40
-
-  describe("WebSocket authentication", () => {
-    function connectWs(url: string) {
-      const ws = new WebSocket(url);
-      const messages: Array<Record<string, unknown>> = [];
-      let closeCode: number | undefined;
-      ws.on("message", (d) => {
-        try {
-          messages.push(JSON.parse(d.toString()));
-        } catch {
-          /* ignore non-JSON */
-        }
-      });
-      ws.on("close", (code: number) => {
-        closeCode = code;
-      });
-      return { ws, messages, getCloseCode: () => closeCode };
-    }
-
-    async function waitFor(pred: () => boolean, timeoutMs = 4000): Promise<boolean> {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (pred()) return true;
-        await new Promise((r) => setTimeout(r, 25));
-      }
-      return pred();
-    }
-
-    it("authenticates a WebSocket via ?key= (backward compat)", async () => {
-      const c = connectWs(`ws://localhost:${port}/ws?key=${API_KEY}`);
-      await new Promise<void>((r) => c.ws.on("open", () => r()));
-      const gotList = await waitFor(() => c.messages.some((m) => m.type === "session_list"));
-      expect(gotList).toBe(true);
-      c.ws.close();
-    });
-
-    it("authenticates a keyless WebSocket via a first-message auth handshake", async () => {
-      const c = connectWs(`ws://localhost:${port}/ws`);
-      await new Promise<void>((r) => c.ws.on("open", () => r()));
-      c.ws.send(JSON.stringify({ type: "auth", token: API_KEY }));
-      const gotList = await waitFor(() => c.messages.some((m) => m.type === "session_list"));
-      expect(gotList).toBe(true);
-      c.ws.close();
-    });
-
-    it("closes a keyless WebSocket that sends an invalid auth token", async () => {
-      const c = connectWs(`ws://localhost:${port}/ws`);
-      await new Promise<void>((r) => c.ws.on("open", () => r()));
-      c.ws.send(JSON.stringify({ type: "auth", token: "tb_wrong_key_00000000000000000000" }));
-      const closed = await waitFor(() => c.getCloseCode() !== undefined);
-      expect(closed).toBe(true);
-      expect(c.getCloseCode()).toBe(4401);
-      expect(c.messages.some((m) => m.type === "session_list")).toBe(false);
-    });
-
-    it("closes a keyless WebSocket that never authenticates within the timeout", async () => {
-      // Dedicated fast-booting server with a short auth window so the test
-      // doesn't wait the full 5s default.
-      const p = await getRandomPort();
-      const shortServer = new StreamerServer({
-        apiKey: API_KEY,
-        localNoAuth: false,
-        verbose: false,
-        disableDb: true,
-        cacheDir: mkdtempSync(join(tmpdir(), "tb-sec-ws-")),
-        scanProfiles: [],
-        wsAuthTimeoutMs: 300,
-      });
-      await shortServer.listen(p);
-      try {
-        const c = connectWs(`ws://localhost:${p}/ws`);
-        await new Promise<void>((r) => c.ws.on("open", () => r()));
-        const closed = await waitFor(() => c.getCloseCode() !== undefined, 3000);
-        expect(closed).toBe(true);
-        expect(c.getCloseCode()).toBe(4401);
-        expect(c.messages.some((m) => m.type === "session_list")).toBe(false);
-      } finally {
-        await shortServer.close();
-      }
-    }, 30000);
   });
 });
