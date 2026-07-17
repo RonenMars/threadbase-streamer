@@ -2489,7 +2489,15 @@ export class StreamerServer {
     const projectPath: string = jsonlCwd ?? (conv as any)?.projectPath;
     if (!projectPath) {
       if (!conv && !jsonlPath) {
-        json(res, 404, { error: "Conversation not found" });
+        // The cache can keep a "tailed ghost" row (JSONL deleted out-of-band,
+        // e.g. bulk branch/worktree cleanup) so its history stays viewable via
+        // GET /:id — see pruneGhostFiles(). It can never be resumed though, so
+        // give a distinct, non-retryable reason instead of a generic 404 that
+        // sends mobile into a retry loop.
+        json(res, 404, {
+          error: "Conversation history file is missing; it can no longer be resumed",
+          code: "history_file_missing",
+        });
         return;
       }
       json(res, 400, { error: "Could not determine project path" });
