@@ -912,15 +912,10 @@ export class StreamerServer {
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
           // Watch the active profile dirs (or ~/.claude/projects as fallback) so
           // new JSONL files created after startup are discovered and the scanner
-          // and cache are invalidated without a restart.
-          if (this.scanProfiles && this.scanProfiles.length > 0) {
-            for (const profile of this.scanProfiles) {
-              if (profile.enabled) {
-                this.fileWatcher.watchDirectory(join(profile.configDir, "projects"));
-              }
-            }
-          } else {
-            this.fileWatcher.watchDirectory(join(homedir(), ".claude", "projects"));
+          // and cache are invalidated without a restart. projectsDirs() is the
+          // shared source of truth with findJsonlPath's degraded-mode discovery.
+          for (const dir of this.projectsDirs()) {
+            this.fileWatcher.watchDirectory(dir);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -1683,21 +1678,37 @@ export class StreamerServer {
     return scanner;
   }
 
+  /**
+   * The projects dirs disk discovery should walk — the single source of truth
+   * for "where do this server's JSONLs live", mirroring the warm-up watcher
+   * (see listen()). Derived from the enabled scanProfiles' configDirs, or the
+   * real ~/.claude/projects when no profiles are configured. An all-disabled
+   * profile set intentionally yields [] (nothing to discover), matching the
+   * watcher — it does NOT fall back to home in that case.
+   */
+  private projectsDirs(): string[] {
+    if (this.scanProfiles && this.scanProfiles.length > 0) {
+      return this.scanProfiles.filter((p) => p.enabled).map((p) => join(p.configDir, "projects"));
+    }
+    return [join(homedir(), ".claude", "projects")];
+  }
+
   private findJsonlPath(uuid: string): string | null {
-    const projectsDir = join(homedir(), ".claude", "projects");
-    if (!existsSync(projectsDir)) return null;
     const filename = `${uuid}.jsonl`;
-    for (const dir of readdirSync(projectsDir)) {
-      const fp = join(projectsDir, dir, filename);
-      if (existsSync(fp)) return fp;
-      const projectDir = join(projectsDir, dir);
-      try {
-        for (const sub of readdirSync(projectDir)) {
-          const subagentPath = join(projectDir, sub, "subagents", filename);
-          if (existsSync(subagentPath)) return subagentPath;
+    for (const projectsDir of this.projectsDirs()) {
+      if (!existsSync(projectsDir)) continue;
+      for (const dir of readdirSync(projectsDir)) {
+        const fp = join(projectsDir, dir, filename);
+        if (existsSync(fp)) return fp;
+        const projectDir = join(projectsDir, dir);
+        try {
+          for (const sub of readdirSync(projectDir)) {
+            const subagentPath = join(projectDir, sub, "subagents", filename);
+            if (existsSync(subagentPath)) return subagentPath;
+          }
+        } catch {
+          // Not a directory or no access
         }
-      } catch {
-        // Not a directory or no access
       }
     }
     return null;
