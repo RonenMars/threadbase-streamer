@@ -100,6 +100,8 @@ import type {
   DiscoveredProcess,
   PermissionOption,
   ServerConfig,
+  ServerWarmingUpResponse,
+  ServerWarmupState,
   SessionActivity,
   SessionResponse,
   SessionSortKey,
@@ -269,7 +271,8 @@ export class StreamerServer {
   // listener-level 'error' handler demotes EADDRINUSE to debug during this
   // window so the self-healing kickstart-relaunch race doesn't spam warn.
   private binding = false;
-  private cacheReady = false;
+  private activeWarmups = new Map<number, ServerWarmupState>([[0, "startup"]]);
+  private nextWarmupId = 1;
   // Every fire-and-forget task that runs a scan and then writes to this.cache
   // in an async continuation (startup warm-up, background count refresh, …).
   // close() awaits all of them before closing this.cache, so a scan's post-scan
@@ -713,11 +716,11 @@ export class StreamerServer {
         this.wsHub.addClient(ws);
         const sessions = this.sessionStore.list(this.ptyAttachedIds());
         ws.send(JSON.stringify({ type: "session_list", sessions }));
-        if (this.cacheReady) {
+        if (!this.currentWarmupState()) {
           ws.send(JSON.stringify({ type: "cache_ready" }));
         }
         // Re-surface a pending cache-integrity alert to every connecting client
-        // (covers the pre-cacheReady startup window and every reconnect).
+        // (covers the startup warm-up window and every reconnect).
         const alertMsg = this.cacheMonitor?.wsMessage();
         if (alertMsg) this.wsHub.unicast(ws, alertMsg);
       },
@@ -983,6 +986,44 @@ export class StreamerServer {
     return typeof addr === "object" && addr ? addr.port : 0;
   }
 
+  private currentWarmupState(): ServerWarmupState | null {
+    let current: ServerWarmupState | null = null;
+    for (const state of this.activeWarmups.values()) current = state;
+    return current;
+  }
+
+  private beginWarmup(state: ServerWarmupState): number {
+    const id = this.nextWarmupId++;
+    this.activeWarmups.set(id, state);
+    return id;
+  }
+
+  private finishWarmup(id: number): void {
+    if (!this.activeWarmups.delete(id) || this.activeWarmups.size > 0) return;
+    this.wsHub.broadcast({ type: "cache_ready" });
+  }
+
+  private async withWarmup<T>(state: ServerWarmupState, operation: () => Promise<T>): Promise<T> {
+    const id = this.beginWarmup(state);
+    try {
+      return await operation();
+    } finally {
+      this.finishWarmup(id);
+    }
+  }
+
+  private rejectIfWarmingUp(res: ServerResponse): boolean {
+    const warmupState = this.currentWarmupState();
+    if (!warmupState) return false;
+    const body: ServerWarmingUpResponse = {
+      error: "Server is warming up",
+      code: "SERVER_WARMING_UP",
+      warmupState,
+    };
+    json(res, 503, body);
+    return true;
+  }
+
   async listen(port: number, opts?: { awaitReady?: boolean }): Promise<void> {
     // DB is still used for upload records and other non-session purposes.
     // Session state is no longer persisted to DB.
@@ -1057,6 +1098,11 @@ export class StreamerServer {
             async () => {
               const scanner = await this.rescanForRefresh();
               return [...scanner.getMetadataCache().values()] as never;
+            },
+            (operation) => {
+              const reset = this.withWarmup("cache_reset", operation);
+              this.trackCacheWrite(reset);
+              return reset;
             },
           );
           // Watch the active profile dirs (or ~/.claude/projects as fallback) so
@@ -1218,8 +1264,7 @@ export class StreamerServer {
             });
           })
           .finally(() => {
-            this.cacheReady = true;
-            this.wsHub.broadcast({ type: "cache_ready" });
+            this.finishWarmup(0);
             resolveWarm();
           });
       }
@@ -1519,6 +1564,8 @@ export class StreamerServer {
   }
 
   private async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
+    if (this.rejectIfWarmingUp(res)) return;
+
     const limit = intParam(url, "limit", 50);
     const offset = intParam(url, "offset", 0);
     const sort = (url.searchParams.get("sort") ?? "recent") as SortOrder;
@@ -1536,7 +1583,7 @@ export class StreamerServer {
     // and drop only the rows whose files no longer exist. Live-tailed rows are
     // never blanket-deleted, so an active conversation can't flicker out.
     if (bustCache && this.cache) {
-      const scanner = await this.rescanForRefresh();
+      const scanner = await this.withWarmup("conversation_refresh", () => this.rescanForRefresh());
       const metas = [...scanner.getMetadataCache().values()];
       try {
         this.cache.upsertFromScannerMeta(metas as any[]);
@@ -1632,6 +1679,8 @@ export class StreamerServer {
   }
 
   private async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
+    if (this.rejectIfWarmingUp(res)) return;
+
     const project = url.searchParams.get("project") ?? undefined;
     const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
@@ -1669,7 +1718,7 @@ export class StreamerServer {
   private refreshCountInBackground(): void {
     // Tracked so close() awaits this scan→cache-write before closing cache.db.
     this.trackCacheWrite(
-      (async () => {
+      this.withWarmup("conversation_refresh", async () => {
         try {
           const scanner = await this.getFreshScanner();
           if (this.cache) {
@@ -1681,15 +1730,17 @@ export class StreamerServer {
             { event: "count.refresh_failed" },
           );
         }
-      })(),
+      }),
     );
   }
 
   private handleSessionsCount(res: ServerResponse): void {
+    if (this.rejectIfWarmingUp(res)) return;
     json(res, 200, { total: this.sessionStore.list(this.ptyAttachedIds()).length });
   }
 
   private handleGetRecentSessions(url: URL, res: ServerResponse): void {
+    if (this.rejectIfWarmingUp(res)) return;
     const limit = intParam(url, "limit", 20);
     if (!this.cache) {
       json(res, 200, { sessions: [], total: 0 });
@@ -2293,6 +2344,8 @@ export class StreamerServer {
     res: ServerResponse,
     ifNoneMatch?: string,
   ): Promise<void> {
+    if (this.rejectIfWarmingUp(res)) return;
+
     // Try the scanner first (has full content including tool_use blocks).
     // Fall back to the cache tail only when the scanner can't find the file —
     // e.g. a conversation that existed in a previous run but whose JSONL was deleted.
@@ -2751,6 +2804,8 @@ export class StreamerServer {
   }
 
   private async handleListSessions(url: URL, res: ServerResponse): Promise<void> {
+    if (this.rejectIfWarmingUp(res)) return;
+
     const now = Date.now();
 
     if (!this.discoveryCache || now - this.discoveryCache.fetchedAt >= DISCOVERY_TTL_MS) {
@@ -2797,6 +2852,7 @@ export class StreamerServer {
   }
 
   private handleGetSession(sessionId: string, res: ServerResponse): void {
+    if (this.rejectIfWarmingUp(res)) return;
     const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
     if (session) {
       if (!existsSync(session.projectPath)) {
