@@ -52,11 +52,6 @@ $port         = if ($env:THREADBASE_PORT) { $env:THREADBASE_PORT } else { '8766'
 $healthUrl    = if ($env:THREADBASE_HEALTH_URL) { $env:THREADBASE_HEALTH_URL } else { 'http://localhost:8766/healthz' }
 $keepReleases = 5
 
-$menubarDir          = Join-Path $repoRoot 'vendor\menubar'
-$menubarInstalledSha = Join-Path $installDir 'menubar-installed-sha'
-$menubarFetchLog     = Join-Path $installDir 'logs\menubar-fetch.log'
-$menubarLaunchLog    = Join-Path $env:TEMP    'threadbase-menubar.log'
-
 function Write-Log  { param($m) Write-Host "▶ $m" -ForegroundColor Blue }
 function Write-Warn { param($m) Write-Host "! $m" -ForegroundColor Yellow }
 function Write-Err  { param($m) Write-Host "✗ $m" -ForegroundColor Red }
@@ -65,130 +60,93 @@ function Write-Ok   { param($m) Write-Host "✓ $m" -ForegroundColor Green }
 # Dot-source the global-shim installer (Install-GlobalShim function).
 . (Join-Path $PSScriptRoot 'lib\install-shim.ps1')
 
-# Dot-source the menubar release fetcher.
-. (Join-Path $PSScriptRoot 'lib\fetch-menubar.ps1')
-
 # Forward CLI params into the env vars the helper reads, so the same code path
 # works for both interactive and non-interactive invocations.
 if ($InstallShim) { $env:TB_INSTALL_SHIM = $InstallShim }
 if ($PathUpdate)  { $env:TB_PATH_UPDATE  = $PathUpdate }
 
-function Ensure-MenubarDeployed {
-  if (-not (Test-Path (Join-Path $menubarDir 'package.json'))) {
-    Write-Log "initializing vendor/menubar submodule"
-    Invoke-Native git @('submodule', 'update', '--init', '--recursive', 'vendor/menubar')
-  }
+function Read-YamlKey {
+  param([Parameter(Mandatory)] [string] $Key)
+  $yaml = Join-Path $installDir 'server.yaml'
+  if (-not (Test-Path $yaml)) { return '' }
+  $line = Select-String -Path $yaml -Pattern "^$([regex]::Escape($Key)):" | Select-Object -First 1
+  if (-not $line) { return '' }
+  return ($line.Line -replace "^$([regex]::Escape($Key)):\s*", '').Trim()
+}
 
-  $currentSha = (& git -C $menubarDir rev-parse HEAD).Trim()
-
-  $installedSha = if (Test-Path $menubarInstalledSha) { (Get-Content $menubarInstalledSha -Raw).Trim() } else { '' }
-  $installedExe = Join-Path $env:LOCALAPPDATA 'Programs\Threadbase Menubar\Threadbase Menubar.exe'
-
-  # Idempotent skip: same SHA + installed binary still present.
-  if (($currentSha -eq $installedSha) -and (Test-Path $installedExe)) {
-    Write-Log "menubar is up-to-date ($currentSha)"
-    $running = Get-Process 'Threadbase Menubar' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $running) {
-      Start-MenubarInstalled -ExePath $installedExe
+function Write-YamlKey {
+  param([Parameter(Mandatory)] [string] $Key, [Parameter(Mandatory)] [string] $Value)
+  $yaml = Join-Path $installDir 'server.yaml'
+  if (Test-Path $yaml) {
+    $content = Get-Content $yaml
+    if ($content -match "^$([regex]::Escape($Key)):") {
+      $content = $content | ForEach-Object {
+        if ($_ -match "^$([regex]::Escape($Key)):") { "${Key}: $Value" } else { $_ }
+      }
+      Set-Content -Path $yaml -Value $content -Encoding Ascii
     } else {
-      Write-Ok "menubar already running (PID $($running.Id))"
+      Add-Content -Path $yaml -Value "${Key}: $Value" -Encoding Ascii
     }
-    return
-  }
-
-  Write-Log "menubar needs install (installed: $(if ($installedSha) { $installedSha } else { 'none' }), current: $currentSha)"
-
-  # Stop any running instance (installed or in-tree electron) before swapping.
-  Write-Log "stopping running menubar"
-  Get-Process 'Threadbase Menubar' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  Start-Sleep -Seconds 1
-
-  # Try to fetch the matching pre-built NSIS installer from GitHub Releases.
-  if (-not (Test-Path (Split-Path $menubarFetchLog -Parent))) {
-    New-Item -ItemType Directory -Force -Path (Split-Path $menubarFetchLog -Parent) | Out-Null
-  }
-  Set-Content -Path $menubarFetchLog -Value '' -NoNewline -Encoding Ascii
-
-  Write-Log "fetching menubar release for $currentSha from GitHub"
-  $tmpDir = Join-Path $installDir '.menubar-download'
-  if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
-  $result = Get-MenubarAsset -Sha $currentSha -AssetPattern '*-x64.exe' -OutDir $tmpDir -LogPath $menubarFetchLog
-
-  if ($result.Status -eq 'ok') {
-    Write-Ok "menubar release downloaded: $($result.Path)"
-    Write-Log "installing menubar (silent NSIS, /S)"
-    # /S: silent. NSIS installs to %LOCALAPPDATA%\Programs\Threadbase Menubar\ by default.
-    $proc = Start-Process -FilePath $result.Path -ArgumentList '/S' -Wait -PassThru -NoNewWindow
-    if ($proc.ExitCode -ne 0) {
-      Write-Warn "menubar installer exited with code $($proc.ExitCode) — falling back to in-tree electron"
-    } elseif (-not (Test-Path $installedExe)) {
-      Write-Warn "installer ran but $installedExe not found — falling back to in-tree electron"
-    } else {
-      Set-Content -Path $menubarInstalledSha -Value $currentSha -NoNewline -Encoding Ascii
-      Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
-      Start-MenubarInstalled -ExePath $installedExe
-      return
-    }
-  } elseif ($result.Status -eq 'miss') {
-    Write-Log "no matching menubar release for $currentSha — running in-tree electron"
   } else {
-    Write-Warn "menubar release fetch failed — see $menubarFetchLog"
-    Write-MenubarFetchError -LogPath $menubarFetchLog
-    Write-Warn "falling back to in-tree electron run…"
-  }
-
-  if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue }
-
-  # In-tree fallback: build dist/ and launch electron.exe against vendor/menubar.
-  Write-Log "building menubar (npm install + tsc)"
-  Push-Location $menubarDir
-  try {
-    if (-not (Test-Path node_modules)) { Invoke-Native npm @('install', '--silent') }
-    Invoke-Native npm @('run', 'build')
-  } finally {
-    Pop-Location
-  }
-
-  $electronExe = Join-Path $menubarDir 'node_modules\electron\dist\electron.exe'
-  if (-not (Test-Path $electronExe)) {
-    Write-Warn "electron.exe not found at $electronExe — skipping menubar launch"
-    return
-  }
-
-  Write-Log "launching menubar via in-tree electron"
-  $proc = Start-Process -FilePath $electronExe `
-    -ArgumentList "." `
-    -WorkingDirectory $menubarDir `
-    -Environment @{
-      THREADBASE_PORT = '8766'
-      USERPROFILE     = $env:USERPROFILE
-      APPDATA         = $env:APPDATA
-      TEMP            = $env:TEMP
-      SystemRoot      = $env:SystemRoot
-      PATH            = $env:PATH
-    } `
-    -RedirectStandardOutput $menubarLaunchLog `
-    -PassThru
-  Start-Sleep -Seconds 3
-  $alive = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
-  if ($alive) {
-    Write-Ok "menubar running (in-tree, PID $($proc.Id))"
-  } else {
-    Write-Warn "menubar exited immediately — check $menubarLaunchLog"
+    if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Force -Path $installDir | Out-Null }
+    Set-Content -Path $yaml -Value "${Key}: $Value" -Encoding Ascii
   }
 }
 
-function Start-MenubarInstalled {
-  param([Parameter(Mandatory)] [string] $ExePath)
-  Write-Log "launching $ExePath"
-  $proc = Start-Process -FilePath $ExePath -PassThru
-  Start-Sleep -Seconds 3
-  $alive = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
-  if ($alive) {
-    Write-Ok "menubar running (PID $($proc.Id))"
-  } else {
-    Write-Warn "menubar exited immediately"
+# Before deploying, warn if the published npm release of @threadbase-sh/streamer
+# is NEWER than the local package.json (this checkout is behind the registry).
+# Offers to `git pull origin main` and redeploy the newer tree.
+#
+# Skipped silently when: not interactive (Task Scheduler/CI), the npm registry
+# is unreachable (offline), or local is equal-to/ahead-of the published version.
+# A persisted decision in server.yaml (deploy_version_prompt: always_yes /
+# always_no) auto-answers the prompt.
+function Invoke-VersionCheck {
+  if (-not [Environment]::UserInteractive) { return }
+  if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { return }
+
+  $localVer = (node -p "require('$($repoRoot -replace '\\','/')/package.json').version" 2>$null)
+  if (-not $localVer) { return }
+  $localVer = $localVer.Trim()
+
+  $publishedVer = (npm view '@threadbase-sh/streamer' version --registry https://registry.npmjs.org/ 2>$null)
+  if (-not $publishedVer) { return }
+  $publishedVer = $publishedVer.Trim()
+
+  $behind = (node -e "try { const s = require('$($repoRoot -replace '\\','/')/node_modules/semver'); process.stdout.write(s.gt(process.argv[2], process.argv[1]) ? '1' : '0'); } catch { process.stdout.write('0'); }" $localVer $publishedVer 2>$null)
+  if ($behind -ne '1') { return }
+
+  Write-Warn "a newer streamer is published on npm: $publishedVer (local: $localVer)"
+
+  $decision = ''
+  switch (Read-YamlKey 'deploy_version_prompt') {
+    'always_yes' { $decision = 'y'; Write-Log 'deploy_version_prompt=always_yes — updating' }
+    'always_no'  { $decision = 'n'; Write-Log 'deploy_version_prompt=always_no — deploying local as-is' }
+  }
+
+  if (-not $decision) {
+    $ans = Read-Host '  Update to the published version before deploying? [(y)es / (n)o / (A)lways yes / (N)ever]'
+    switch -CaseSensitive ($ans) {
+      { $_ -in 'y','Y','yes' } { $decision = 'y' }
+      'A' { $decision = 'y'; Write-YamlKey 'deploy_version_prompt' 'always_yes'; Write-Ok 'saved: always update' }
+      'N' { $decision = 'n'; Write-YamlKey 'deploy_version_prompt' 'always_no';  Write-Ok 'saved: never update' }
+      default { $decision = 'n' }
+    }
+  }
+
+  if ($decision -ne 'y') { Write-Log 'deploying local version as-is'; return }
+
+  $act = Read-Host '  git pull origin main and update automatically, or abort this deploy? [(p)ull / (a)bort]'
+  switch -CaseSensitive ($act) {
+    { $_ -in 'p','P','pull' } {
+      Write-Log 'pulling origin main'
+      Push-Location $repoRoot
+      try { Invoke-Native git @('pull', 'origin', 'main') }
+      catch { Write-Err 'git pull failed — aborting deploy'; exit 1 }
+      finally { Pop-Location }
+      Write-Ok 'pulled; continuing deploy on updated tree'
+    }
+    default { Write-Err 'aborting deploy at user request'; exit 1 }
   }
 }
 
@@ -479,6 +437,7 @@ function Invoke-CheckBrowseRoot {
 }
 
 function Invoke-Deploy {
+  Invoke-VersionCheck
   Invoke-PredeployCheck
   Invoke-CheckBrowseRoot
 
@@ -569,8 +528,6 @@ function Invoke-Deploy {
       Sort-Object LastWriteTime -Descending |
       Select-Object -Skip $keepReleases |
       Remove-Item -Force
-
-    Ensure-MenubarDeployed
 
     # Install (or refresh) the global `threadbase-streamer.cmd` shim. Non-fatal:
     # deploy is already healthy at this point.

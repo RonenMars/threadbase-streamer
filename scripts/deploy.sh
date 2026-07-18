@@ -5,8 +5,6 @@
 #   scripts/deploy.sh                       # build + deploy current HEAD
 #   scripts/deploy.sh --force               # deploy even if working tree is dirty / not on main
 #   scripts/deploy.sh --clear-logs          # clear stdout/stderr logs after deploy (default: preserve)
-#   scripts/deploy.sh --publish-menubar     # also upload the menubar .dmg to GitHub Releases
-#                                           #   (requires ~/.threadbase/menubar-signing.env + gh auth)
 #   scripts/deploy.sh --install-shim=<m>    # m = standard|user-local|custom|skip; non-interactive choice
 #                                           #   for the global `threadbase-streamer` shim. Default: prompt.
 #   scripts/deploy.sh --path-update=<m>     # m = print|auto|skip; how to handle PATH not containing the
@@ -17,7 +15,6 @@
 #   scripts/deploy.sh healthcheck           # probe /healthz on the running server
 #   scripts/deploy.sh restart               # kickstart + healthcheck (auto-clears EADDRINUSE once)
 #   scripts/deploy.sh free-port             # kill stale threadbase listener on $PORT
-#   scripts/deploy.sh menubar [--publish]   # build + install the menubar .app only
 #
 # Layout:
 #   ~/.threadbase/cli.js                     -> symlink into releases/
@@ -45,237 +42,104 @@ ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 # shellcheck source=lib/install-shim.sh
 . "$REPO_ROOT/scripts/lib/install-shim.sh"
 
-# Menubar release fetcher (downloads pre-built artifacts from
-# RonenMars/threadbase-menubar by submodule commit SHA).
-# shellcheck source=lib/fetch-menubar.sh
-. "$REPO_ROOT/scripts/lib/fetch-menubar.sh"
-
-MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
-
-MENUBAR_SIGNING_ENV="$INSTALL_DIR/menubar-signing.env"
-MENUBAR_INSTALLED_SHA_FILE="$INSTALL_DIR/menubar-installed-sha"
-MENUBAR_RELEASES_DIR="$INSTALL_DIR/releases/menubar"
-MENUBAR_FETCH_LOG="$INSTALL_DIR/logs/menubar-fetch.log"
-MENUBAR_KEEP_DMGS=5
-
-# Install the pre-built menubar .app to /Applications/Threadbase Menubar.app,
-# archive the .dmg under ~/.threadbase/releases/menubar/, and launch the
-# installed app. Idempotent — compares ~/.threadbase/menubar-installed-sha
-# against the pinned submodule HEAD and skips when up-to-date.
-#
-# Default flow: download the matching artifact from RonenMars/threadbase-menubar
-# GitHub Releases (matched by submodule commit SHA). On miss or fetch error,
-# falls back to a local electron-builder build.
-#
-# Local-build fallback sources ~/.threadbase/menubar-signing.env if present
-# (sets APPLE_TEAM_ID + App Store Connect API key vars), switching
-# electron-builder into the Developer ID + notarisation path. Absent → ad-hoc.
-ensure_menubar_deployed() {
-  # When called with `force_build`, skip the GitHub release download path and
-  # always build locally. Used by --publish-menubar so we produce a fresh
-  # signed artifact to upload (a downloaded .dmg has nothing new to publish).
-  local force_build=0
-  [[ "${1:-}" == "force_build" ]] && force_build=1
-
-  if [[ ! -f "$MENUBAR_DIR/package.json" ]]; then
-    log "initializing vendor/menubar submodule"
-    git submodule update --init --recursive vendor/menubar
-  fi
-
-  local current_sha
-  current_sha="$(cd "$MENUBAR_DIR" && git rev-parse HEAD)"
-
-  local installed_sha=""
-  [[ -f "$MENUBAR_INSTALLED_SHA_FILE" ]] && installed_sha="$(cat "$MENUBAR_INSTALLED_SHA_FILE")"
-
-  local installed_app="/Applications/Threadbase Menubar.app"
-  [[ ! -d "$installed_app" ]] && installed_app="$HOME/Applications/Threadbase Menubar.app"
-  if [[ "$current_sha" == "$installed_sha" ]] && [[ -d "$installed_app" ]]; then
-    log "menubar is up-to-date ($current_sha)"
-    if ! pgrep -f "Threadbase Menubar" >/dev/null 2>&1; then
-      log "launching installed menubar"
-      open "$installed_app" || warn "could not launch menubar"
-    else
-      ok "menubar already running"
-    fi
-    return
-  fi
-
-  log "menubar needs install (installed: ${installed_sha:-none}, current: ${current_sha})"
-
-  # Stop any running instance before we overwrite /Applications/.
-  if pgrep -f "Threadbase Menubar" >/dev/null 2>&1; then
-    log "stopping running menubar"
-    pkill -f "Threadbase Menubar" 2>/dev/null || true
-    sleep 0.5
-  fi
-
-  # Try fetching a pre-built signed .dmg from GitHub Releases first, unless
-  # the caller explicitly asked for a local build (e.g. --publish-menubar).
-  mkdir -p "$(dirname "$MENUBAR_FETCH_LOG")"
-  : > "$MENUBAR_FETCH_LOG"
-
-  local dmg=""
-  local rc=99
-  if (( ! force_build )); then
-    log "fetching menubar release for $current_sha from GitHub"
-    local fetched
-    fetched="$(fetch_menubar_asset "$current_sha" "*-universal.dmg" \
-      "$MENUBAR_DIR/release" "$MENUBAR_FETCH_LOG")" && rc=0 || rc=$?
-
-    if [[ $rc -eq 0 ]] && [[ -n "$fetched" ]]; then
-      dmg="$fetched"
-      ok "menubar release downloaded: $dmg"
-    fi
-  else
-    log "force_build requested — skipping release download"
-  fi
-
-  if [[ -z "$dmg" ]]; then
-    if (( force_build )); then
-      :  # caller requested local build; no fallback messaging needed
-    elif [[ $rc -eq 2 ]]; then
-      log "no matching menubar release for $current_sha — building locally"
-    else
-      warn "menubar release fetch failed — see $MENUBAR_FETCH_LOG"
-      menubar_print_fetch_error "$MENUBAR_FETCH_LOG"
-      warn "falling back to local build…"
-    fi
-
-    # Source signing config if present. Absent is fine — electron-builder falls
-    # back to ad-hoc signing and the notarize.cjs hook no-ops.
-    if [[ -f "$MENUBAR_SIGNING_ENV" ]]; then
-      log "sourcing menubar signing config from $MENUBAR_SIGNING_ENV"
-      set -a
-      # shellcheck disable=SC1090
-      source "$MENUBAR_SIGNING_ENV"
-      set +a
-    else
-      warn "no signing config at $MENUBAR_SIGNING_ENV — building ad-hoc (local-only)"
-    fi
-
-    log "building menubar .dmg (this takes 1–3 minutes; longer first time)"
-    ( cd "$MENUBAR_DIR" && npm ci --silent && npm run package:mac )
-
-    # Locate the produced .dmg.
-    dmg="$(ls -t "$MENUBAR_DIR/release/"*.dmg 2>/dev/null | head -1 || true)"
-    if [[ -z "$dmg" ]]; then
-      err "electron-builder produced no .dmg"
-      return 1
-    fi
-    ok "menubar built: $dmg"
-  fi
-
-  # Install the .app from the .dmg to /Applications/ (or ~/Applications/ as
-  # fallback if the system path is read-only).
-  local install_root="/Applications"
-  if [[ ! -w "$install_root" ]]; then
-    install_root="$HOME/Applications"
-    mkdir -p "$install_root"
-    warn "/Applications not writable — installing to $install_root"
-  fi
-  local target="$install_root/Threadbase Menubar.app"
-
-  log "mounting $dmg"
-  local mount_output mount_point
-  mount_output="$(hdiutil attach -nobrowse -readonly "$dmg" 2>&1)"
-  mount_point="$(printf '%s\n' "$mount_output" | awk -F'\t' '/\/Volumes\//{print $NF; exit}')"
-  if [[ -z "$mount_point" ]] || [[ ! -d "$mount_point/Threadbase Menubar.app" ]]; then
-    err "could not locate Threadbase Menubar.app inside $dmg"
-    printf '%s\n' "$mount_output" >&2
-    return 1
-  fi
-
-  log "installing to $target"
-  rm -rf "$target"
-  cp -R "$mount_point/Threadbase Menubar.app" "$target"
-  hdiutil detach "$mount_point" -quiet || warn "hdiutil detach $mount_point failed"
-
-  # Force LaunchServices to forget any stale registry entries pointing at old
-  # .app locations (e.g. a developer's release/mac-arm64/) and pick up the
-  # newly-installed bundle. Without this, `open -a "Threadbase Menubar"` may
-  # silently launch the wrong copy.
-  local lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
-  [[ -x "$lsregister" ]] && "$lsregister" -f "$target" >/dev/null 2>&1 || true
-
-  # Archive the .dmg under ~/.threadbase/releases/menubar/ for offline reinstall.
-  mkdir -p "$MENUBAR_RELEASES_DIR"
-  local short_sha archived
-  short_sha="${current_sha:0:7}"
-  archived="$MENUBAR_RELEASES_DIR/Threadbase-Menubar-${short_sha}.dmg"
-  cp "$dmg" "$archived"
-  ok "archived $archived"
-
-  printf '%s' "$current_sha" > "$MENUBAR_INSTALLED_SHA_FILE"
-
-  log "launching $target"
-  # Use direct path so we definitely launch the freshly-installed copy, not
-  # whatever LaunchServices has cached for "Threadbase Menubar".
-  open "$target" || warn "could not launch menubar"
-
-  # Garbage-collect old archived .dmgs.
-  ls -t "$MENUBAR_RELEASES_DIR"/Threadbase-Menubar-*.dmg 2>/dev/null \
-    | tail -n +$((MENUBAR_KEEP_DMGS + 1)) | xargs -r rm -f || true
-
-  ok "menubar deployed: $current_sha"
+# Read a single scalar key from server.yaml (returns empty if unset/missing).
+read_yaml_key() {
+  local key="$1" yaml="$INSTALL_DIR/server.yaml"
+  [[ -f "$yaml" ]] || return 0
+  grep -E "^${key}:" "$yaml" \
+    | sed "s/^${key}:[[:space:]]*//" | sed 's/[[:space:]]*$//' | head -1
 }
 
-# Upload the most recently archived menubar .dmg to a GitHub Release on the
-# threadbase-menubar repo. Tag format: v<package version>+<short submodule sha>,
-# marked --prerelease to signal "tip-of-main build", not a tagged release.
-#
-# Refuses to upload unsigned builds — detected via APPLE_TEAM_ID env, which is
-# only set when ~/.threadbase/menubar-signing.env was sourced. Idempotent: if
-# the tag already exists with the .dmg asset, skips. If the tag exists without
-# the asset (previous upload failed), uploads it.
-publish_menubar() {
-  if ! command -v gh >/dev/null 2>&1; then
-    err "gh CLI not installed — cannot publish (brew install gh)"
-    return 1
-  fi
-  if ! gh auth status >/dev/null 2>&1; then
-    err "gh CLI not authenticated — run 'gh auth login' first"
-    return 1
-  fi
-  if [[ -z "${APPLE_TEAM_ID:-}" ]]; then
-    err "refusing to publish unsigned build — source $MENUBAR_SIGNING_ENV first"
-    return 1
-  fi
-
-  local current_sha short_sha pkg_version dmg tag
-  current_sha="$(cd "$MENUBAR_DIR" && git rev-parse HEAD)"
-  short_sha="${current_sha:0:7}"
-  pkg_version="$(cd "$MENUBAR_DIR" && node -p "require('./package.json').version")"
-  dmg="$MENUBAR_RELEASES_DIR/Threadbase-Menubar-${short_sha}.dmg"
-  tag="v${pkg_version}+${short_sha}"
-
-  if [[ ! -f "$dmg" ]]; then
-    err "expected $dmg to exist — run ensure_menubar_deployed first"
-    return 1
-  fi
-
-  log "publishing $tag to threadbase-menubar GitHub Releases"
-
-  # Check whether the release already exists.
-  if gh release view "$tag" --repo RonenMars/threadbase-menubar >/dev/null 2>&1; then
-    # If the .dmg asset is already attached, nothing to do.
-    if gh release view "$tag" --repo RonenMars/threadbase-menubar --json assets \
-         --jq '.assets[].name' 2>/dev/null | grep -qx "$(basename "$dmg")"; then
-      ok "release $tag already has $(basename "$dmg") attached — skipping"
-      return 0
-    fi
-    log "release $tag exists but asset missing — uploading"
-    gh release upload "$tag" "$dmg" --repo RonenMars/threadbase-menubar --clobber
+# Upsert a single scalar key in server.yaml (replace in place, else append).
+write_yaml_key() {
+  local key="$1" value="$2" yaml="$INSTALL_DIR/server.yaml" tmp
+  tmp="$(mktemp)"
+  if [[ -f "$yaml" ]] && grep -q "^${key}:" "$yaml"; then
+    awk -v k="$key" -v v="$value" '$0 ~ "^"k":" {print k": "v; next} {print}' "$yaml" > "$tmp"
+    mv "$tmp" "$yaml"
+  elif [[ -f "$yaml" ]]; then
+    printf '%s: %s\n' "$key" "$value" >> "$yaml"
+    rm -f "$tmp"
   else
-    log "creating release $tag"
-    gh release create "$tag" "$dmg" \
-      --repo RonenMars/threadbase-menubar \
-      --prerelease \
-      --title "$tag" \
-      --notes "Auto-published by tb-streamer/scripts/deploy.sh from submodule SHA $current_sha"
+    mkdir -p "$INSTALL_DIR"
+    printf '%s: %s\n' "$key" "$value" > "$yaml"
+    chmod 600 "$yaml"
+    rm -f "$tmp"
+  fi
+}
+
+# Before deploying, warn if the published npm release of @threadbase-sh/streamer
+# is NEWER than the local package.json (i.e. this checkout is behind the
+# registry). Offers to `git pull origin main` and redeploy the newer tree.
+#
+# Skipped silently when:
+#   - stdin is not a TTY (launchd/--prod/CI — never block on input)
+#   - the npm registry is unreachable (offline / npm down)
+#   - local is equal-to or ahead-of the published version
+#
+# A persisted decision in server.yaml (`deploy_version_prompt: always_yes` /
+# `always_no`) auto-answers the prompt without asking.
+cmd_version_check() {
+  [[ -t 0 ]] || return 0                         # non-interactive → skip
+  command -v npm >/dev/null 2>&1 || return 0
+
+  local local_ver published_ver
+  local_ver="$(node -p 'require("'"$REPO_ROOT"'/package.json").version' 2>/dev/null)" || return 0
+  [[ -n "$local_ver" ]] || return 0
+
+  # `npm view` with a hard timeout so an offline/slow registry can't hang the
+  # deploy. Any failure or empty result → treat as "cannot check" and skip.
+  published_ver="$(npm view @threadbase-sh/streamer version --registry https://registry.npmjs.org/ 2>/dev/null)" || return 0
+  [[ -n "$published_ver" ]] || return 0
+
+  # Only prompt when published > local (behind). Uses the installed `semver`
+  # dep; on any comparison error, fall back to "differ" being non-blocking.
+  local behind
+  behind="$(node -e '
+    try {
+      const semver = require("'"$REPO_ROOT"'/node_modules/semver");
+      process.stdout.write(semver.gt(process.argv[2], process.argv[1]) ? "1" : "0");
+    } catch { process.stdout.write("0"); }
+  ' "$local_ver" "$published_ver" 2>/dev/null)" || return 0
+  [[ "$behind" == "1" ]] || return 0
+
+  warn "a newer streamer is published on npm: $published_ver (local: $local_ver)"
+
+  # Honor a persisted decision if present.
+  local saved decision=""
+  saved="$(read_yaml_key deploy_version_prompt)"
+  case "$saved" in
+    always_yes) decision="y"; log "deploy_version_prompt=always_yes — updating" ;;
+    always_no)  decision="n"; log "deploy_version_prompt=always_no — deploying local as-is" ;;
+  esac
+
+  if [[ -z "$decision" ]]; then
+    printf '  Update to the published version before deploying? [(y)es / (n)o / (A)lways yes / (N)ever] '
+    local ans; read -r ans
+    case "$ans" in
+      y|Y|yes)   decision="y" ;;
+      A)         decision="y"; write_yaml_key deploy_version_prompt always_yes; ok "saved: always update" ;;
+      N)         decision="n"; write_yaml_key deploy_version_prompt always_no;  ok "saved: never update" ;;
+      *)         decision="n" ;;   # default No
+    esac
   fi
 
-  ok "published $tag"
+  [[ "$decision" == "y" ]] || { log "deploying local version as-is"; return 0; }
+
+  # Confirm the actual update action: pull origin/main then continue, or abort.
+  printf '  git pull origin main and update automatically, or abort this deploy? [(p)ull / (a)bort] '
+  local act; read -r act
+  case "$act" in
+    p|P|pull)
+      log "pulling origin main"
+      ( cd "$REPO_ROOT" && git pull origin main ) || { err "git pull failed — aborting deploy"; exit 1; }
+      ok "pulled; continuing deploy on updated tree"
+      ;;
+    *)
+      err "aborting deploy at user request"
+      exit 1
+      ;;
+  esac
 }
 
 cmd_check_browse_root() {
@@ -879,36 +743,18 @@ activate_release() {
 }
 
 cmd_deploy() {
-  local force="" publish_menubar_flag=0 clear_logs_flag=0
+  local force="" clear_logs_flag=0
   for arg in "$@"; do
     case "$arg" in
       --force)                 force="--force" ;;
       --clear-logs)            clear_logs_flag=1 ;;
-      --publish-menubar)       publish_menubar_flag=1 ;;
       --install-shim=*)        export TB_INSTALL_SHIM="${arg#--install-shim=}" ;;
       --path-update=*)         export TB_PATH_UPDATE="${arg#--path-update=}" ;;
       *) err "unknown deploy flag: $arg"; exit 2 ;;
     esac
   done
 
-  # If publishing was requested, fail fast before any expensive work if the
-  # signing config or gh CLI are missing — otherwise the user spends 5 minutes
-  # building a .dmg only to hit the publish-time refusal.
-  if (( publish_menubar_flag )); then
-    if [[ ! -f "$MENUBAR_SIGNING_ENV" ]]; then
-      err "--publish-menubar requires $MENUBAR_SIGNING_ENV (Developer ID + ASC API key)"
-      exit 1
-    fi
-    if ! command -v gh >/dev/null 2>&1; then
-      err "--publish-menubar requires gh CLI (brew install gh)"
-      exit 1
-    fi
-    if ! gh auth status >/dev/null 2>&1; then
-      err "--publish-menubar requires gh auth — run 'gh auth login' first"
-      exit 1
-    fi
-  fi
-
+  cmd_version_check
   cmd_predeploy_check "$force"
   cmd_check_browse_root
 
@@ -1005,13 +851,6 @@ cmd_deploy() {
   log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
 
-  if (( publish_menubar_flag )); then
-    ensure_menubar_deployed force_build
-    publish_menubar
-  else
-    ensure_menubar_deployed
-  fi
-
   # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal:
   # deploy is already healthy at this point; only the convenience shim is at stake.
   install_global_shim "$ACTIVE_LINK" || warn "global shim install failed (deploy itself is OK)"
@@ -1025,7 +864,7 @@ case "${1:-deploy}" in
     shift
     cmd_deploy "$@"
     ;;
-  --force|--publish-menubar|--install-shim=*|--path-update=*)
+  --force|--install-shim=*|--path-update=*)
     cmd_deploy "$@"
     ;;
   "")
@@ -1038,25 +877,9 @@ case "${1:-deploy}" in
   restart)      cmd_kickstart_and_healthcheck ;;
   nightly-install)   install_nightly_restart_job ;;
   nightly-uninstall) uninstall_nightly_restart_job ;;
-  menubar)
-    shift
-    mb_publish=0
-    for arg in "$@"; do
-      case "$arg" in
-        --publish-menubar|--publish) mb_publish=1 ;;
-        *) err "unknown menubar flag: $arg"; exit 2 ;;
-      esac
-    done
-    if (( mb_publish )); then
-      ensure_menubar_deployed force_build
-      publish_menubar
-    else
-      ensure_menubar_deployed
-    fi
-    ;;
   *)
     err "unknown command: $1"
-    echo "usage: $0 [deploy [--force] [--publish-menubar] | menubar [--publish] | rollback | status | healthcheck | restart | free-port | nightly-install | nightly-uninstall]" >&2
+    echo "usage: $0 [deploy [--force] | rollback | status | healthcheck | restart | free-port | nightly-install | nightly-uninstall]" >&2
     exit 2
     ;;
 esac

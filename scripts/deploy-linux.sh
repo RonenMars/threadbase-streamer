@@ -43,104 +43,98 @@ ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 # shellcheck source=lib/install-shim.sh
 . "$REPO_ROOT/scripts/lib/install-shim.sh"
 
-# Menubar release fetcher (downloads pre-built artifacts by submodule SHA).
-# shellcheck source=lib/fetch-menubar.sh
-. "$REPO_ROOT/scripts/lib/fetch-menubar.sh"
+# Read a single scalar key from server.yaml (returns empty if unset/missing).
+read_yaml_key() {
+  local key="$1" yaml="$INSTALL_DIR/server.yaml"
+  [[ -f "$yaml" ]] || return 0
+  grep -E "^${key}:" "$yaml" \
+    | sed "s/^${key}:[[:space:]]*//" | sed 's/[[:space:]]*$//' | head -1
+}
 
-MENUBAR_DIR="$REPO_ROOT/vendor/menubar"
-MENUBAR_INSTALLED_SHA_FILE="$INSTALL_DIR/menubar-installed-sha"
-MENUBAR_APPIMAGE="$HOME/.local/bin/threadbase-menubar.AppImage"
-MENUBAR_FETCH_LOG="$INSTALL_DIR/logs/menubar-fetch.log"
-MENUBAR_LAUNCH_LOG="$INSTALL_DIR/logs/menubar.log"
-
-# Install the menubar AppImage by downloading the matching pre-built release
-# from RonenMars/threadbase-menubar. Falls back to launching electron in-place
-# from vendor/menubar/ if the download fails or no matching release exists.
-ensure_menubar_deployed() {
-  if [[ ! -f "$MENUBAR_DIR/package.json" ]]; then
-    log "initializing vendor/menubar submodule"
-    git submodule update --init --recursive vendor/menubar
-  fi
-
-  local current_sha
-  current_sha="$(cd "$MENUBAR_DIR" && git rev-parse HEAD)"
-
-  local installed_sha=""
-  [[ -f "$MENUBAR_INSTALLED_SHA_FILE" ]] && installed_sha="$(cat "$MENUBAR_INSTALLED_SHA_FILE")"
-
-  # Idempotent skip: same SHA + installed AppImage still present.
-  if [[ "$current_sha" == "$installed_sha" ]] && [[ -x "$MENUBAR_APPIMAGE" ]]; then
-    log "menubar is up-to-date ($current_sha)"
-    if ! pgrep -f "threadbase-menubar.AppImage" >/dev/null 2>&1; then
-      _menubar_launch_appimage
-    else
-      ok "menubar already running"
-    fi
-    return
-  fi
-
-  log "menubar needs install (installed: ${installed_sha:-none}, current: ${current_sha})"
-
-  # Stop any running instance — either AppImage or in-tree electron.
-  if pgrep -f "threadbase-menubar.AppImage\|vendor/menubar" >/dev/null 2>&1; then
-    log "stopping running menubar"
-    pkill -f "threadbase-menubar.AppImage" 2>/dev/null || true
-    pkill -f "vendor/menubar" 2>/dev/null || true
-    sleep 0.5
-  fi
-
-  mkdir -p "$(dirname "$MENUBAR_FETCH_LOG")" "$(dirname "$MENUBAR_LAUNCH_LOG")"
-  : > "$MENUBAR_FETCH_LOG"
-
-  log "fetching menubar release for $current_sha from GitHub"
-  local fetched rc=99 tmp_dir="$INSTALL_DIR/.menubar-download"
-  rm -rf "$tmp_dir"
-  fetched="$(fetch_menubar_asset "$current_sha" "*-x86_64.AppImage" \
-    "$tmp_dir" "$MENUBAR_FETCH_LOG")" && rc=0 || rc=$?
-
-  if [[ $rc -eq 0 ]] && [[ -n "$fetched" ]]; then
-    mkdir -p "$(dirname "$MENUBAR_APPIMAGE")"
-    mv -f "$fetched" "$MENUBAR_APPIMAGE"
-    chmod +x "$MENUBAR_APPIMAGE"
-    rm -rf "$tmp_dir"
-    printf '%s' "$current_sha" > "$MENUBAR_INSTALLED_SHA_FILE"
-    ok "menubar installed: $MENUBAR_APPIMAGE"
-    _menubar_launch_appimage
-    return
-  fi
-
-  rm -rf "$tmp_dir"
-
-  if [[ $rc -eq 2 ]]; then
-    log "no matching menubar release for $current_sha — running in-tree electron"
+# Upsert a single scalar key in server.yaml (replace in place, else append).
+write_yaml_key() {
+  local key="$1" value="$2" yaml="$INSTALL_DIR/server.yaml" tmp
+  tmp="$(mktemp)"
+  if [[ -f "$yaml" ]] && grep -q "^${key}:" "$yaml"; then
+    awk -v k="$key" -v v="$value" '$0 ~ "^"k":" {print k": "v; next} {print}' "$yaml" > "$tmp"
+    mv "$tmp" "$yaml"
+  elif [[ -f "$yaml" ]]; then
+    printf '%s: %s\n' "$key" "$value" >> "$yaml"
+    rm -f "$tmp"
   else
-    warn "menubar release fetch failed — see $MENUBAR_FETCH_LOG"
-    menubar_print_fetch_error "$MENUBAR_FETCH_LOG"
-    warn "falling back to in-tree electron run…"
-  fi
-
-  log "building menubar (npm install + tsc)"
-  ( cd "$MENUBAR_DIR" && npm install --silent && npm run build )
-
-  log "launching menubar via npx electron"
-  ( cd "$MENUBAR_DIR" && nohup npx electron . </dev/null >>"$MENUBAR_LAUNCH_LOG" 2>&1 & disown )
-  sleep 1
-  if pgrep -f "vendor/menubar" >/dev/null 2>&1; then
-    ok "menubar running (in-tree)"
-  else
-    warn "menubar exited immediately — check $MENUBAR_LAUNCH_LOG"
+    mkdir -p "$INSTALL_DIR"
+    printf '%s: %s\n' "$key" "$value" > "$yaml"
+    chmod 600 "$yaml"
+    rm -f "$tmp"
   fi
 }
 
-_menubar_launch_appimage() {
-  log "launching $MENUBAR_APPIMAGE"
-  nohup "$MENUBAR_APPIMAGE" </dev/null >>"$MENUBAR_LAUNCH_LOG" 2>&1 & disown
-  sleep 1
-  if pgrep -f "threadbase-menubar.AppImage" >/dev/null 2>&1; then
-    ok "menubar running"
-  else
-    warn "menubar exited immediately — check $MENUBAR_LAUNCH_LOG"
+# Before deploying, warn if the published npm release of @threadbase-sh/streamer
+# is NEWER than the local package.json (i.e. this checkout is behind the
+# registry). Offers to `git pull origin main` and redeploy the newer tree.
+#
+# Skipped silently when:
+#   - stdin is not a TTY (systemd/CI — never block on input)
+#   - the npm registry is unreachable (offline / npm down)
+#   - local is equal-to or ahead-of the published version
+#
+# A persisted decision in server.yaml (`deploy_version_prompt: always_yes` /
+# `always_no`) auto-answers the prompt without asking.
+cmd_version_check() {
+  [[ -t 0 ]] || return 0                         # non-interactive → skip
+  command -v npm >/dev/null 2>&1 || return 0
+
+  local local_ver published_ver
+  local_ver="$(node -p 'require("'"$REPO_ROOT"'/package.json").version' 2>/dev/null)" || return 0
+  [[ -n "$local_ver" ]] || return 0
+
+  published_ver="$(npm view @threadbase-sh/streamer version --registry https://registry.npmjs.org/ 2>/dev/null)" || return 0
+  [[ -n "$published_ver" ]] || return 0
+
+  local behind
+  behind="$(node -e '
+    try {
+      const semver = require("'"$REPO_ROOT"'/node_modules/semver");
+      process.stdout.write(semver.gt(process.argv[2], process.argv[1]) ? "1" : "0");
+    } catch { process.stdout.write("0"); }
+  ' "$local_ver" "$published_ver" 2>/dev/null)" || return 0
+  [[ "$behind" == "1" ]] || return 0
+
+  warn "a newer streamer is published on npm: $published_ver (local: $local_ver)"
+
+  local saved decision=""
+  saved="$(read_yaml_key deploy_version_prompt)"
+  case "$saved" in
+    always_yes) decision="y"; log "deploy_version_prompt=always_yes — updating" ;;
+    always_no)  decision="n"; log "deploy_version_prompt=always_no — deploying local as-is" ;;
+  esac
+
+  if [[ -z "$decision" ]]; then
+    printf '  Update to the published version before deploying? [(y)es / (n)o / (A)lways yes / (N)ever] '
+    local ans; read -r ans
+    case "$ans" in
+      y|Y|yes)   decision="y" ;;
+      A)         decision="y"; write_yaml_key deploy_version_prompt always_yes; ok "saved: always update" ;;
+      N)         decision="n"; write_yaml_key deploy_version_prompt always_no;  ok "saved: never update" ;;
+      *)         decision="n" ;;
+    esac
   fi
+
+  [[ "$decision" == "y" ]] || { log "deploying local version as-is"; return 0; }
+
+  printf '  git pull origin main and update automatically, or abort this deploy? [(p)ull / (a)bort] '
+  local act; read -r act
+  case "$act" in
+    p|P|pull)
+      log "pulling origin main"
+      ( cd "$REPO_ROOT" && git pull origin main ) || { err "git pull failed — aborting deploy"; exit 1; }
+      ok "pulled; continuing deploy on updated tree"
+      ;;
+    *)
+      err "aborting deploy at user request"
+      exit 1
+      ;;
+  esac
 }
 
 cmd_check_browse_root() {
@@ -365,6 +359,7 @@ cmd_deploy() {
     esac
   done
 
+  cmd_version_check
   cmd_predeploy_check "$force"
   cmd_check_browse_root
 
@@ -433,8 +428,6 @@ cmd_deploy() {
 
   log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
-
-  ensure_menubar_deployed
 
   # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal.
   install_global_shim "$ACTIVE_LINK" || warn "global shim install failed (deploy itself is OK)"
