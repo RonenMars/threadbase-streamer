@@ -64,16 +64,6 @@ The streamer currently forwards a `hasImages` boolean per message, which is suff
 
 ---
 
-## Feature: SHA256 integrity check on downloaded menubar artifacts
-
-The deploy downloads `*-universal.dmg` / `*-x86_64.AppImage` / `*-x64.exe` from GitHub Releases and executes them (NSIS `/S`, mount-and-copy, `chmod +x`) with TLS-only assurance. GitHub allows re-uploading release assets — a compromised release would propagate to every deploy. The streamer's own auto-update path (`src/updater`) already verifies SHA256 against a manifest; the menubar fetch does not.
-
-**Approach:** publish a `checksums.txt` (or `<artifact>.sha256`) alongside the menubar release assets in `RonenMars/threadbase-menubar`'s release workflow. Update `scripts/lib/fetch-menubar.{sh,ps1}` to download the checksum file before the artifact and verify before executing. Mirror the manifest-driven verification used by the streamer updater so both flows share a single integrity story.
-
-**Why not now:** threat model today is low — single-maintainer repo, releases are CI-signed, no external contributors. Revisit when the menubar repo accepts outside PRs that touch the release workflow, or when a security review flags it.
-
----
-
 ## Feature: Windows `prod logs` (Task Scheduler redirection)
 
 `tb-streamer prod logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. On Windows, `src/lifecycle/task-scheduler.ts:65-69`'s `getLogPaths()` throws a clear message because `launch.cmd` does not currently redirect stdout/stderr to a file — Task Scheduler has no native redirection.
