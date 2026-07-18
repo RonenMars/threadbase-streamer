@@ -44,7 +44,7 @@ export async function runProdStart(): Promise<CommandResult> {
   } else {
     const specPath = process.platform === "darwin" ? darwinPlistPath() : "";
     try {
-      sup.bootstrapAgent(specPath);
+      sup.bootstrapAgent(specPath, { afterBootout: false });
     } catch {
       // Agent was never installed (no plist / unregistered task) — bootstrap
       // can't conjure a service definition. Point the user at the installer.
@@ -235,7 +235,7 @@ export function registerProdCommands(program: Command): void {
       const specPath = process.platform === "darwin" ? darwinPlistPath() : "";
       if (opts.clearLogs === true) clearSupervisorLogs();
       sup.bootoutAgent();
-      sup.bootstrapAgent(specPath);
+      sup.bootstrapAgent(specPath, { afterBootout: true });
       const what =
         process.platform === "darwin"
           ? `agent restarted from ${specPath}`

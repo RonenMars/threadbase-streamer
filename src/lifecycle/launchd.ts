@@ -71,7 +71,12 @@ export function bootoutAgent(timeoutMs = 2000): void {
 // ("Input/output error") instead of 0. Catch that specific case so callers
 // like `prod restart` can race-recover gracefully. Other failures (bad
 // plist, permission denied, etc.) still throw with stderr attached.
-export function bootstrapAgent(plistPath: string): void {
+//
+// The `afterBootout` flag controls tolerance for exit 5 + empty stderr:
+// callers that just ran bootoutAgent() pass `true` — the "already loaded"
+// race is benign there. Callers bootstrapping cold (no prior bootout) should
+// leave it false/absent so a stale agent isn't silently treated as success.
+export function bootstrapAgent(plistPath: string, opts?: { afterBootout?: boolean }): void {
   try {
     execFileSync("launchctl", ["bootstrap", uidScope(), plistPath], {
       stdio: ["ignore", "ignore", "pipe"],
@@ -85,10 +90,11 @@ export function bootstrapAgent(plistPath: string): void {
     // Exit 5 + "already" in stderr → service is already loaded with the
     // intended plist. Treat as success; the goal state matches the actual.
     if (e.status === 5 && /already|loaded|in progress/i.test(stderr)) return;
-    // Exit 5 with empty stderr (newer launchctl versions) → most often the
-    // same "already loaded" case. If isAgentLoaded() confirms the service
-    // is up, accept it; otherwise rethrow with whatever diagnostic we have.
-    if (e.status === 5 && stderr === "" && isAgentLoaded()) return;
+    // Exit 5 with empty stderr (newer launchctl versions) → only accept when
+    // the caller just ran bootoutAgent and the loaded state is from a race.
+    // Without the flag, exit 5 + empty stderr could hide a real failure when
+    // a stale agent is still loaded.
+    if (e.status === 5 && stderr === "" && opts?.afterBootout && isAgentLoaded()) return;
     if (stderr) (e as Error).message = `launchctl bootstrap failed: ${stderr}`;
     throw e;
   }
