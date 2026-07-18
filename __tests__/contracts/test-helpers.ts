@@ -5,6 +5,7 @@ import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../../src/server";
+import type { ServerConfig } from "../../src/types";
 
 // ─── Fixture Profiles ─────────────────────────────────────────────
 // Point scanner at the contract fixtures instead of ~/.claude.
@@ -38,9 +39,9 @@ export async function getRandomPort(): Promise<number> {
   });
 }
 
-export async function createTestServer(fixtureDir: string) {
-  const port = await getRandomPort();
-  const cacheDir = mkdtempSync(join(tmpdir(), "tb-test-cache-"));
+export async function createTestServer(fixtureDir: string, overrides: Partial<ServerConfig> = {}) {
+  const port = overrides.port ?? (await getRandomPort());
+  const cacheDir = overrides.cacheDir ?? mkdtempSync(join(tmpdir(), "tb-test-cache-"));
   const server = new StreamerServer({
     port,
     apiKey: TEST_API_KEY,
@@ -54,6 +55,7 @@ export async function createTestServer(fixtureDir: string) {
     // unscoped by scanProfiles, and codexRoots defaults to ~/.codex/sessions.
     scannerPersistent: false,
     codexRoots: [],
+    ...overrides,
   });
   await server.listen(port, { awaitReady: true });
   const baseUrl = `http://localhost:${port}`;

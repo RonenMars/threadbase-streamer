@@ -27,6 +27,14 @@ const FIXTURE_PROFILES = [
   },
 ];
 
+// Isolate every server in this file from real host data: without this, a
+// scanProfiles fixture alone still lets the scanner glob the developer's
+// actual ~/.codex/sessions (codexRoots defaults there) and read/write the
+// scanner package's shared persistent index at
+// ~/.config/threadbase-scanner/index.db (unscoped by scanProfiles). Spread
+// first in each StreamerServer config so a test-specific override still wins.
+const HOST_ISOLATION = { codexRoots: [] as string[], scannerPersistent: false };
+
 // Use a random available port for each test
 async function getRandomPort(): Promise<number> {
   return new Promise((resolve) => {
@@ -52,6 +60,7 @@ describe("StreamerServer", () => {
     baseUrl = `http://localhost:${port}`;
     cacheDir = mkdtempSync(join(tmpdir(), "threadbase-server-test-"));
     server = new StreamerServer({
+      ...HOST_ISOLATION,
       port,
       apiKey: API_KEY,
       localNoAuth: false,
@@ -238,6 +247,7 @@ describe("StreamerServer", () => {
       previousBrowseRootEnv = process.env.THREADBASE_BROWSE_ROOT;
       process.env.THREADBASE_BROWSE_ROOT = browseRoot;
       server = new StreamerServer({
+        ...HOST_ISOLATION,
         port,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -386,6 +396,7 @@ describe("StreamerServer", () => {
       previousBrowseRootEnv = process.env.THREADBASE_BROWSE_ROOT;
       process.env.THREADBASE_BROWSE_ROOT = browseRoot;
       boundServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: boundPort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -1210,6 +1221,7 @@ describe("StreamerServer", () => {
     it("does NOT arm a grace timer on disconnect when grace is 0", async () => {
       const p = await getRandomPort();
       const srv = new StreamerServer({
+        ...HOST_ISOLATION,
         port: p,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -1231,6 +1243,7 @@ describe("StreamerServer", () => {
     it("still arms a grace timer on disconnect when grace is positive", async () => {
       const p = await getRandomPort();
       const srv = new StreamerServer({
+        ...HOST_ISOLATION,
         port: p,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -1255,6 +1268,7 @@ describe("StreamerServer", () => {
     it("holds immediately on an explicit hold_session even when grace is 0", async () => {
       const p = await getRandomPort();
       const srv = new StreamerServer({
+        ...HOST_ISOLATION,
         port: p,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -1549,6 +1563,7 @@ describe("StreamerServer", () => {
     beforeEach(async () => {
       localPort = await getRandomPort();
       localServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: localPort,
         apiKey: API_KEY,
         localNoAuth: true,
@@ -1664,6 +1679,7 @@ describe("StreamerServer", () => {
 
       growPort = await getRandomPort();
       growServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: growPort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -1771,6 +1787,7 @@ describe("StreamerServer", () => {
     ): Promise<{ text: string; body: any }> {
       const port = await getRandomPort();
       const pageServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -1855,6 +1872,7 @@ describe("StreamerServer", () => {
 
       etagPort = await getRandomPort();
       etagServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: etagPort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2010,6 +2028,7 @@ describe("StreamerServer", () => {
 
       refreshPort = await getRandomPort();
       refreshServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: refreshPort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2139,6 +2158,7 @@ describe("StreamerServer", () => {
 
       availPort = await getRandomPort();
       availServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: availPort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2269,6 +2289,7 @@ describe("StreamerServer", () => {
 
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: reusePort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2306,6 +2327,7 @@ describe("StreamerServer", () => {
 
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: reusePort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2357,6 +2379,7 @@ describe("StreamerServer", () => {
 
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: reusePort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2405,6 +2428,7 @@ describe("StreamerServer", () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-drift-profile-"));
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: reusePort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2471,6 +2495,7 @@ describe("StreamerServer", () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-sf-profile-"));
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: reusePort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2532,6 +2557,7 @@ describe("StreamerServer", () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-live-profile-"));
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: reusePort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2577,6 +2603,7 @@ describe("StreamerServer", () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-ttl-profile-"));
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: reusePort,
         apiKey: API_KEY,
         localNoAuth: false,
@@ -2660,6 +2687,7 @@ describe("StreamerServer", () => {
 
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
         port: reusePort,
         apiKey: API_KEY,
         localNoAuth: false,
