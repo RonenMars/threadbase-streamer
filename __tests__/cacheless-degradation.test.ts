@@ -61,6 +61,11 @@ describe("conversation API without SQLite (degraded mode)", () => {
       disableDb: true,
       cacheDir: join(blocker, "cache"),
       scanProfiles: FIXTURE_PROFILES,
+      // Isolate from the host: without this the scanner falls back to the real
+      // ~/.codex/sessions and the "from disk" assertions read the developer's
+      // actual Codex history instead of the fixtures (green on CI, where that
+      // dir is empty; flaky locally). [] disables codex scanning entirely.
+      codexRoots: [],
     });
     await server.listen(port, { awaitReady: true });
   });
