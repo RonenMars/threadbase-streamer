@@ -74,6 +74,7 @@ import {
   isProviderResumable,
 } from "./providers";
 import { seal } from "./seal";
+import { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import {
   findSearchTarget,
@@ -225,6 +226,7 @@ export class StreamerServer {
   // Reverse map for cleanup on close
   private wsToClientId = new Map<WebSocket, string>();
   private cache: ConversationCache | null = null;
+  private cacheMonitor: CacheIntegrityMonitor | null = null;
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
   private sessionsRepo: SessionsRepository | null = null;
@@ -439,6 +441,12 @@ export class StreamerServer {
         });
       },
       onFileDeleted: (filePath) => {
+        // While an alert is pending, freeze: queue the deletion instead of
+        // invalidating the row, so an rm -rf mid-freeze can't drain the cache.
+        if (this.cacheMonitor?.pending) {
+          this.cacheMonitor.deferUnlink(filePath);
+          return;
+        }
         const id = this.cache?.invalidateByFilePath(filePath);
         if (id)
           this.log.info(`Cache row invalidated after JSONL delete: ${id}`, {
@@ -446,6 +454,8 @@ export class StreamerServer {
             filePath,
             event: "cache.invalidate_on_unlink",
           });
+        // Feed the storm detector — a burst of unlinks re-triggers detection.
+        this.cacheMonitor?.recordUnlink(filePath);
       },
     });
 
@@ -578,6 +588,7 @@ export class StreamerServer {
       sessionStore: this.sessionStore,
       wsHub: this.wsHub,
       cache: () => this.cache,
+      cacheMonitor: () => this.cacheMonitor,
       projectsRepo: () => this.projectsRepo,
       conversationsRepo: () => this.conversationsRepo,
       sessionsRepo: () => this.sessionsRepo,
@@ -617,6 +628,10 @@ export class StreamerServer {
         if (this.cacheReady) {
           ws.send(JSON.stringify({ type: "cache_ready" }));
         }
+        // Re-surface a pending cache-integrity alert to every connecting client
+        // (covers the pre-cacheReady startup window and every reconnect).
+        const alertMsg = this.cacheMonitor?.wsMessage();
+        if (alertMsg) this.wsHub.unicast(ws, alertMsg);
       },
       handleWsMessage: async (ws, raw) => {
         try {
@@ -910,6 +925,18 @@ export class StreamerServer {
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
+          // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
+          // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
+          this.cacheMonitor = new CacheIntegrityMonitor(
+            this.cache,
+            this.wsHub,
+            this.log,
+            this.cacheDir,
+            async () => {
+              const scanner = await this.rescanForRefresh();
+              return [...scanner.getMetadataCache().values()] as never;
+            },
+          );
           // Watch the active profile dirs (or ~/.claude/projects as fallback) so
           // new JSONL files created after startup are discovered and the scanner
           // and cache are invalidated without a restart. projectsDirs() is the
@@ -1035,11 +1062,22 @@ export class StreamerServer {
                 },
               );
             }
-            const pruned = this.cache.pruneGhostFiles();
-            this.log.info(`Startup ghost prune: removed ${pruned.length} stale cache rows`, {
-              count: pruned.length,
-              event: "cache.prune_ghosts",
-            });
+            // Detect cache/disk drift before the routine ghost prune. If a
+            // pending alert is raised, freeze — skip pruneGhostFiles until a
+            // human resolves it; otherwise prune exactly as before.
+            await this.cacheMonitor?.runDetection();
+            if (this.cacheMonitor?.pending) {
+              this.log.warn("Startup ghost prune skipped — cache integrity alert pending", {
+                fingerprint: this.cacheMonitor.pending.fingerprint,
+                event: "cache.prune_ghosts_frozen",
+              });
+            } else {
+              const pruned = this.cache.pruneGhostFiles();
+              this.log.info(`Startup ghost prune: removed ${pruned.length} stale cache rows`, {
+                count: pruned.length,
+                event: "cache.prune_ghosts",
+              });
+            }
           })
           .catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
@@ -1370,10 +1408,15 @@ export class StreamerServer {
       const metas = [...scanner.getMetadataCache().values()];
       try {
         this.cache.upsertFromScannerMeta(metas as any[]);
-        const livePaths = new Set(
-          metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
-        );
-        this.cache.reconcileDeletions(livePaths);
+        // Additions/updates are always safe. But while a cache-integrity alert
+        // is pending, freeze the removal half — reconcileDeletions must not
+        // drop rows until a human resolves the alert.
+        if (!this.cacheMonitor?.pending) {
+          const livePaths = new Set(
+            metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
+          );
+          this.cache.reconcileDeletions(livePaths);
+        }
       } catch (err) {
         this.log.warn(
           `refresh reconcile failed: ${err instanceof Error ? err.message : String(err)}`,

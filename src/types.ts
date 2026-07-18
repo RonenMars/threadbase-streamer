@@ -178,7 +178,23 @@ export type WSMessage =
       reason: string;
     }
   | { type: "cache_ready" }
-  | { type: "scan_progress"; scanned: number; total: number };
+  | { type: "scan_progress"; scanned: number; total: number }
+  // Cache-integrity drift alert (server-level, no sessionId). Broadcast on
+  // raise/severity-change and unicast to a client on WS open while pending.
+  // Old clients ignore unknown types. See cacheIntegrityMonitor.ts.
+  | {
+      type: "cache_alert";
+      fingerprint: string;
+      severity: "high" | "low";
+      missingCount: number;
+      totalRows: number;
+      detectedAt: string;
+      sample: { id: string; title?: string }[]; // first 20
+    }
+  | { type: "cache_alert_resolved"; fingerprint: string; action: CacheAlertResolveAction };
+
+/** The four cache-integrity resolution actions (POST /api/cache/alert/resolve). */
+export type CacheAlertResolveAction = "prune_all" | "prune_selected" | "ignore" | "reset_rescan";
 
 // ─── REST Response Shapes ──────────────────────────────────────────
 
