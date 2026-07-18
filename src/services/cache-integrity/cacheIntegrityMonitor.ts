@@ -245,6 +245,11 @@ export class CacheIntegrityMonitor {
     if (pending.fingerprint !== fingerprint) {
       return { conflict: true, currentFingerprint: pending.fingerprint };
     }
+    // Claim the alert synchronously — before the first `await` below (backup is
+    // async). A concurrent same-fingerprint resolve then sees no pending alert
+    // and no-ops with `alreadyResolved`, upholding the spec's "first resolver
+    // wins, second harmlessly no-ops" invariant across the await points.
+    this._pending = null;
 
     switch (action) {
       case "prune_all": {
@@ -280,8 +285,8 @@ export class CacheIntegrityMonitor {
           }
           return true;
         });
-        // Re-run detection on the remainder; a still-missing set raises a new alert.
-        this._pending = null;
+        // Re-run detection on the remainder; a still-missing set raises a new
+        // alert. (_pending was already cleared at the top of resolve.)
         this.persist();
         await this.runDetection();
         this.broadcastResolved(fingerprint, action);

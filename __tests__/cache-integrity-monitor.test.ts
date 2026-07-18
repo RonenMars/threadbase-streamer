@@ -263,6 +263,22 @@ describe("resolve idempotency", () => {
     expect(res).toMatchObject({ conflict: true, currentFingerprint: m.pending?.fingerprint });
   });
 
+  it("two concurrent same-fingerprint resolves: first wins, second no-ops", async () => {
+    const files = seed(30);
+    for (let i = 0; i < 20; i++) rmSync(files[i].filePath);
+    const m = monitor();
+    await m.runDetection();
+    const fp = m.pending?.fingerprint as string;
+
+    // Fire both without awaiting between them — the second must observe the
+    // alert already claimed (cleared synchronously at the top of resolve).
+    const [a, b] = await Promise.all([m.resolve(fp, "prune_all"), m.resolve(fp, "prune_all")]);
+    const results = [a, b];
+    expect(results.filter((r) => "ok" in r)).toHaveLength(1);
+    expect(results.filter((r) => "alreadyResolved" in r)).toHaveLength(1);
+    expect(m.pending).toBeNull();
+  });
+
   it("prune_all re-verifies against disk (skips reappeared files)", async () => {
     const files = seed(30);
     for (let i = 0; i < 20; i++) rmSync(files[i].filePath);
