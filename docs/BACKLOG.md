@@ -150,3 +150,27 @@ This was acceptable before ProjectChat, but now breaks the discriminated-union c
 **Suggested fix:** First replace fixed sleeps with a deterministic condition or event. If needed, make session ids unique and guarantee server/socket/timer teardown with scoped spies. Avoid a blanket retry or a Vitest configuration change unless evidence rules out test-level isolation.
 
 **Done when:** The smallest verified fix has zero failures across at least 10 consecutive runs of both the focused file and full `npm test`, followed by `npm run lint`.
+
+---
+
+## Server tests leak host data via the default `codexRoots`
+
+**Symptom:** A test that boots a real `StreamerServer` and reads conversations "from disk" passes on CI but is host-dependent locally — it silently scans the developer's real `~/.codex/sessions`. Concretely, `__tests__/cacheless-degradation.test.ts` failed on a machine with 189 real Codex rollouts (`expected 0 to be greater than 0` on the "serves conversation detail from disk" assertion, when one real conversation served zero messages); it was green on CI because the runner's home has no `~/.codex/sessions`. Fixed for that one test in `fix/degraded-disk-scan-profiles`, but the trap remains for any future server test.
+
+**Root cause:** `ServerConfig.codexRoots` defaults to `[join(homedir(), ".codex", "sessions")]` (`src/server.ts:269`). A test can scope Claude JSONLs to fixtures via `scanProfiles`, but unless it *also* passes `codexRoots: []` the scanner still globs the real host Codex directory. `scanProfiles` and `codexRoots` are two independent inputs and only the first is obviously "the fixtures knob", so the second is easy to forget. Five test files already work around it (`server.test.ts`, `codex-scan.test.ts`, `server-shutdown.test.ts`, `contracts/test-helpers.ts`, `e2e/api-e2e.test.ts` all pass `codexRoots: []`), which is evidence the footgun is real and recurring rather than a one-off.
+
+**Suggested fix:** Introduce a single test helper that constructs a host-isolated `StreamerServer` — defaulting `codexRoots: []`, `disableDb: true`, and a temp `cacheDir`/`scanProfiles` — and migrate the existing ad-hoc boots to it. Then a new server test is isolated by construction instead of by remembering the knob. Alternatively (weaker), lint/grep guard: fail CI if a `new StreamerServer(` in `__tests__/` sets `scanProfiles` without `codexRoots`. The helper is preferable because it also centralizes the temp-dir + teardown boilerplate these tests repeat.
+
+**Done when:** A server-boot test written without thinking about Codex reads zero host data by default, and `grep -rL "codexRoots" __tests__` over files that `new StreamerServer` with `scanProfiles` returns nothing (or the guard passes).
+
+---
+
+## Degraded-mode `findJsonlPath` ignores `scanProfiles` (hardcodes `~/.claude/projects`)
+
+**Symptom:** When the SQLite cache is unavailable (degraded mode), resolving a conversation's JSONL by UUID for the detail/tail read always walks `~/.claude/projects`, regardless of the server's configured `scanProfiles`. Not currently user-visible in production (prod uses the real home dir, which is correct), but it is a genuine isolation gap: a server configured to a non-default profile root serves detail reads from the wrong directory in degraded mode, and tests can't isolate this path. Latent — surfaced while investigating the `codexRoots` leak above, not independently reported.
+
+**Root cause:** `findJsonlPath(uuid)` (`src/server.ts:1686`) hardcodes `const projectsDir = join(homedir(), ".claude", "projects")` and walks its children, ignoring `this.scanProfiles` entirely. Every other disk-discovery site derives the projects dir from the profiles (warm-up watcher at `src/server.ts:916-923`, the scanner scans via `profiles: this.scanProfiles`), so `findJsonlPath` is the one place that diverges. It's called from three sites (the two conversation-detail lookups and the session-file resolver around `src/server.ts:1802`, `:1907`, `:2485`). Note: the *live-session* watcher `watchForJsonl` (`src/server.ts:3135`) also hardcodes home, but that is correct — a live Claude Code PTY always writes under the real `~/.claude/projects`, so it is intentionally not profile-scoped and out of scope for this entry.
+
+**Suggested fix:** Add a single private `projectsDirs()` helper returning the same set the warm-up watcher uses — enabled `scanProfiles` mapped to `join(profile.configDir, "projects")`, else the `~/.claude/projects` fallback — and rewrite `findJsonlPath` to walk each of those dirs (preserving the existing per-dir + `subagents/` sub-walk). That makes profile scoping the single source of truth for disk discovery. A degraded-mode detail-read test with a fixture profile then resolves only fixture JSONLs. Leave `watchForJsonl` alone.
+
+**Done when:** `findJsonlPath` resolves JSONLs from the configured `scanProfiles` roots (verified by a degraded-mode detail-read test pointed at a fixture profile that has no `~/.claude/projects` counterpart), and the live-session `watchForJsonl` path is untouched.
