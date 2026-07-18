@@ -75,16 +75,6 @@ In practice `prod restart` calls `bootoutAgent` first (which now polls), so the 
 
 ---
 
-## `_menubar_resolve_asset_url` swallows GitHub API errors as a "no match"
-
-**Symptom:** `npm run deploy` logs *"no matching menubar release for $sha — building locally"* even when a release exists, because a transient GitHub API failure (rate-limited tag-ref resolution, intermittent 5xx) silently dropped the match. User can't tell network from genuinely-missing-release without re-running.
-
-**Root cause:** `scripts/lib/fetch-menubar.sh:67-79` runs an inline node script whose `releaseSha()` catches all errors and returns `""`, which the bash layer treats as "no match" (`return 2` → local-build fallback). The PowerShell equivalent appends per-tag errors to the log file; the bash side does not.
-
-**Suggested fix:** Mirror the PowerShell behaviour — accept a `LOG_PATH` env var in the bash helper and append individual tag-ref failures so the local-build fallback is diagnosable after the fact.
-
----
-
 ## Quick Access Recents tapping historical conversations shows "No terminal output"
 
 **Symptom:** In tb-mobile, tapping a recent conversation from the Quick Access chips at the top of the home screen briefly shows a "No terminal output" screen before redirecting to the conversation detail view. Reported 2026-06-09 with screenshots in `.threadbase-uploads/05509314-a6f6-40c2-b509-19664a2b38e4/IMG_5645.heic` and `IMG_5642.heic`.

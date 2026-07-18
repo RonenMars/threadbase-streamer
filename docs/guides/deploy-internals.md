@@ -34,6 +34,7 @@ A machine can have the Homebrew install **or** the `scripts/deploy.sh` install, 
 
 ## Menubar install
 
-Each deploy tries to download a prebuilt menubar release matching the `vendor/menubar` submodule's commit SHA, and only builds it locally as a fallback (no matching release, or a fetch error). Installed sentinel: `~/.threadbase/menubar-installed-sha`. Force a local build with `--publish-menubar`.
+Deploy no longer touches the menubar — `npm run deploy` / `scripts/deploy.sh` install and restart only the streamer.
+Install or update the menubar separately via the `deploy-menubar` skill (`.claude/skills/deploy-menubar`), which checks out the submodule, installs deps, compiles, and launches the Electron app.
 
 During install/update the streamer is briefly down (a few seconds); the menubar shows "disconnected" until its next 5s health poll. If that gap exceeds ~10s, something's wrong with the restart step — check `~/.threadbase/logs/updater.{log,err}`.

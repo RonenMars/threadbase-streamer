@@ -630,7 +630,7 @@ If you also see `node-pty` complain (it didn't in this incident, but it's the ot
 
 ## Menubar packaging
 
-The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applications/Threadbase Menubar.app`. `scripts/deploy.sh` builds via electron-builder, mounts the produced `.dmg`, and copies the app into place. Several gotchas emerged during the initial rollout — collected here.
+The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applications/Threadbase Menubar.app`. It is installed via the `deploy-menubar` skill (`.claude/skills/deploy-menubar`), which builds via electron-builder, mounts the produced `.dmg`, and copies the app into place — `scripts/deploy.sh` no longer touches the menubar. Several gotchas emerged during the initial rollout — collected here.
 
 ### `npm run package:mac` aborts with `CSSMERR_TP_CERT_REVOKED`
 
@@ -646,9 +646,9 @@ The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applica
 
 ### `open -a "Threadbase Menubar"` launches the wrong `.app`
 
-**When:** After `scripts/deploy.sh menubar` reports success, the running process is from `vendor/menubar/release/mac-arm64/...` instead of `/Applications/Threadbase Menubar.app`.
+**When:** After installing the menubar (via the `deploy-menubar` skill or a manual `package:mac:dir` build), the running process is from `vendor/menubar/release/mac-arm64/...` instead of `/Applications/Threadbase Menubar.app`.
 **Cause:** macOS LaunchServices caches a registry of `.app` bundles by ID, and `open -a "<name>"` resolves through that registry. If the cache was populated by a previous `package:mac:dir` run (which left a `.app` under `release/`), it can win over the freshly-installed copy.
-**Fix:** `ensure_menubar_deployed` in `scripts/deploy.sh` calls `lsregister -f "$target"` after copying the new bundle into place to refresh the registry, then uses direct-path `open "$target"` (not `open -a`). If you debug by hand, do the same: `lsregister -f /Applications/Threadbase\ Menubar.app && open /Applications/Threadbase\ Menubar.app`.
+**Fix:** after copying the new bundle into place, refresh the registry and launch by direct path (not `open -a`): `lsregister -f /Applications/Threadbase\ Menubar.app && open /Applications/Threadbase\ Menubar.app`.
 
 ### Tray icon is invisible on a dark menu bar
 
@@ -656,33 +656,16 @@ The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applica
 **Cause:** the tray PNGs are state-coloured rounded squares (dark green / near-black / dark red) on a transparent background. Against macOS Dark-mode menu bars, the dark-green / near-black variants have very low contrast — the icon is rendered but easy to miss.
 **Fix:** confirm the icon is actually there before assuming it's broken. Check the right side of the menu bar carefully, or hide a few icons with Bartender / Hidden Bar to make space. Long-term fix is to switch to template-image style (monochrome glyph that auto-tints to match menu bar appearance) — tracked but not implemented.
 
-### `--publish-menubar` refuses to upload
-
-**When:** Running `scripts/deploy.sh --publish-menubar` errors with one of:
-- `--publish-menubar requires ~/.threadbase/menubar-signing.env`
-- `--publish-menubar requires gh CLI`
-- `--publish-menubar requires gh auth — run 'gh auth login' first`
-- `refusing to publish unsigned build — source ~/.threadbase/menubar-signing.env first`
-
-**Cause:** the publish flow has hard preconditions: signing config + `gh` CLI + `gh auth`. The flag fails fast before doing any work to avoid spending 5 minutes building a `.dmg` only to refuse the upload.
-**Fix:** this is by design. The intended workflow (per the project's two-Mac split) is to run `--publish-menubar` only on the build machine that has the Developer ID cert + App Store Connect API key. On a work Mac without the cert, run plain `scripts/deploy.sh` (or `scripts/deploy.sh menubar`) — that builds and installs locally without publishing.
-
 ### `git submodule update --init` resets `vendor/menubar` to an older SHA
 
-**When:** Running parts of `scripts/deploy.sh` in a way that triggers the submodule-init code path *before* the parent's submodule pointer has been bumped.
+**When:** Running the submodule-init step (e.g. via the `deploy-menubar` skill) *before* the parent's submodule pointer has been bumped.
 **Cause:** `git submodule update --init` is destructive. If the parent repo's pinned SHA is older than the working tree of the submodule, the working tree is reset to the pinned SHA — wiping uncommitted submodule work.
-**Fix:** when iterating on the menubar in tandem with deploy-script changes:
+**Fix:** when iterating on the menubar:
 1. Always commit and push the submodule first
 2. Bump the submodule pointer in the parent (`git add vendor/menubar`) and commit
-3. Only then re-run anything in `scripts/deploy.sh` that might call `git submodule update`
+3. Only then re-run anything that might call `git submodule update`
 
 If you've already lost work, it's not gone if you pushed: `git -C vendor/menubar fetch origin main && git -C vendor/menubar reset --hard origin/main`.
-
-### `npm ci` fails inside `ensure_menubar_deployed`
-
-**When:** Deploy fails at `cd vendor/menubar && npm ci`.
-**Cause:** `package-lock.json` is out of sync with `package.json`. Common after manually editing dependencies without re-running `npm install`.
-**Fix:** run `cd vendor/menubar && npm install` to regenerate the lockfile, commit it, push the submodule, bump the parent pointer, then retry deploy. The script intentionally uses `npm ci` (strict) rather than `npm install` (loose) so that locked dependency versions are guaranteed at deploy time.
 
 ## Auto-update
 
