@@ -71,7 +71,7 @@ describe("GET /api/conversations/:id anchored and after windows", () => {
         { id: "anchored", label: "Anchored", configDir: profileDir, enabled: true, emoji: "⚓" },
       ],
     });
-    await server.listen(port);
+    await server.listen(port, { awaitReady: true });
   });
 
   afterAll(async () => {
@@ -280,7 +280,7 @@ describe("GET /api/conversations/:id anchored paged-reader parity", () => {
     const original = proto.getConversationPage;
     proto.getConversationPage = getConversationPage;
     try {
-      await pageServer.listen(port);
+      await pageServer.listen(port, { awaitReady: true });
       const res = await fetch(
         `http://localhost:${port}/api/conversations/${convId}?msg_limit=120&anchor_index=150`,
         { headers: { Authorization: `Bearer ${API_KEY}` } },
