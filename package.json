@@ -53,6 +53,7 @@
     "test": "vitest run",
     "test:verbose": "vitest run --reporter=verbose",
     "test:watch": "vitest",
+    "test:smoke": "vitest run __tests__/canonicalize-project-path.test.ts __tests__/dates.test.ts __tests__/debounce.test.ts __tests__/schemas.test.ts __tests__/version.test.ts __tests__/question-types.test.ts",
     "lint": "tsc --noEmit && npx biome check .",
     "lint:changed": "bash scripts/lint-changed.sh",
     "format": "npx biome format --write .",

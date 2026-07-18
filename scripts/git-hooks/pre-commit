@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
-# Lints staged files with biome before allowing a commit.
-# Installed repo-wide via `git config core.hooksPath scripts/git-hooks` (see
-# package.json's "prepare" script), so this applies to the main checkout and
-# every .worktrees/* worktree alike.
+# Lints staged files with biome, then runs the smoke-test suite, before
+# allowing a commit. Installed repo-wide via `git config core.hooksPath
+# scripts/git-hooks` (see package.json's "prepare" script), so this applies
+# to the main checkout and every .worktrees/* worktree alike.
+#
+# Skipped entirely when run by Claude Code (CLAUDECODE=1) — the agent already
+# runs lint/tests as part of its own workflow, so re-checking here is
+# redundant and this hook must never be the reason an agent's commit hangs.
+#
+# The smoke-test step alone can be skipped with SKIP_SMOKE_TESTS=1; lint
+# always runs.
 set -euo pipefail
+
+if [ -n "${CLAUDECODE:-}" ]; then
+  exit 0
+fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 "$repo_root/scripts/lint-changed.sh"
+
+if [ -n "${SKIP_SMOKE_TESTS:-}" ]; then
+  echo "pre-commit: SKIP_SMOKE_TESTS set, skipping smoke tests"
+else
+  (cd "$repo_root" && npm run --silent test:smoke)
+fi
