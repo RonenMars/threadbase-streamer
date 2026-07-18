@@ -357,6 +357,19 @@ Verify with `curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization:
 
 ## Launchd plist (macOS)
 
+### Multiple Threadbase agents detected / EADDRINUSE on port 8766 at startup
+
+**When:** Starting `tb-streamer serve` or running `tb-streamer prod doctor` shows a warning about conflicting Threadbase streamer agents, or the server crashes immediately with `EADDRINUSE` on port 8766.
+**Cause:** Two different install methods (Homebrew and `scripts/deploy.sh`) each register their own launchd agent. Homebrew uses `homebrew.mxcl.tb-streamer`; the deploy script uses `com.ronen.threadbase`. Running both binds port 8766 twice.
+**Fix:** Keep only one. The streamer detects conflicts and prints actionable commands:
+
+- **To remove Homebrew agent:** `brew services stop tb-streamer && brew uninstall tb-streamer`
+- **To remove deploy.sh agent:** `launchctl bootout gui/$(id -u)/com.ronen.threadbase`
+
+Legacy variants (`com.threadbase.streamer*`) are also detected. Run `tb-streamer prod doctor` to see all loaded Threadbase agents.
+
+---
+
 ### `launchctl kickstart` fails with `could not find service`
 
 **When:** Running `launchctl kickstart "gui/$(id -u)/com.ronen.threadbase"` after a fresh deploy.
