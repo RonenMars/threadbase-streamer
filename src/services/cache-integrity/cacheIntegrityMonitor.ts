@@ -58,6 +58,7 @@ export class CacheIntegrityMonitor {
     // Injected so reset_rescan can rebuild from disk truth without the monitor
     // depending on the whole server. Returns the metas a fresh scan surfaced.
     private readonly rescan?: () => Promise<ScannerMeta[]>,
+    private readonly runDuringReset?: <T>(operation: () => Promise<T>) => Promise<T>,
   ) {
     const state = loadAlertState();
     this._pending = state.pending ?? null;
@@ -307,18 +308,20 @@ export class CacheIntegrityMonitor {
 
       case "reset_rescan": {
         const backupPath = await this.ensureBackup(pending);
-        this.cache.clearAll();
-        if (this.rescan) {
-          try {
+        const reset = async () => {
+          this.cache.clearAll();
+          if (this.rescan) {
             const metas = await this.rescan();
             this.cache.upsertFromScannerMeta(metas);
-          } catch (err) {
-            this.log.error("cache-integrity reset rescan failed", {
-              event: "cache_integrity.reset_rescan_failed",
-              error: err instanceof Error ? err.message : String(err),
-            });
           }
-        }
+        };
+        const resetPromise = this.runDuringReset ? this.runDuringReset(reset) : reset();
+        void resetPromise.catch((err) => {
+          this.log.error("cache-integrity reset rescan failed", {
+            event: "cache_integrity.reset_rescan_failed",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
         this.clearPending();
         this.broadcastResolved(fingerprint, action);
         return { ok: true, action, backupPath };
