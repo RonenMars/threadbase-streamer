@@ -75,16 +75,6 @@ In practice `prod restart` calls `bootoutAgent` first (which now polls), so the 
 
 ---
 
-## `_menubar_resolve_asset_url` swallows GitHub API errors as a "no match"
-
-**Symptom:** `npm run deploy` logs *"no matching menubar release for $sha — building locally"* even when a release exists, because a transient GitHub API failure (rate-limited tag-ref resolution, intermittent 5xx) silently dropped the match. User can't tell network from genuinely-missing-release without re-running.
-
-**Root cause:** `scripts/lib/fetch-menubar.sh:67-79` runs an inline node script whose `releaseSha()` catches all errors and returns `""`, which the bash layer treats as "no match" (`return 2` → local-build fallback). The PowerShell equivalent appends per-tag errors to the log file; the bash side does not.
-
-**Suggested fix:** Mirror the PowerShell behaviour — accept a `LOG_PATH` env var in the bash helper and append individual tag-ref failures so the local-build fallback is diagnosable after the fact.
-
----
-
 ## Quick Access Recents tapping historical conversations shows "No terminal output"
 
 **Symptom:** In tb-mobile, tapping a recent conversation from the Quick Access chips at the top of the home screen briefly shows a "No terminal output" screen before redirecting to the conversation detail view. Reported 2026-06-09 with screenshots in `.threadbase-uploads/05509314-a6f6-40c2-b509-19664a2b38e4/IMG_5645.heic` and `IMG_5642.heic`.
@@ -146,3 +136,17 @@ This was acceptable before ProjectChat, but now breaks the discriminated-union c
 **Alternative (streamer-side, breaking change):** Deprecate `/api/sessions/recents` entirely and have mobile migrate to `/project-chats`. This is the long-term direction but risks breaking older mobile builds. Safer to fix mobile first, then deprecate the legacy endpoint in a future release.
 
 **Workaround for users today:** Pull-to-refresh the conversation list, then open the conversation from the "history" section instead of the Recents chips.
+
+---
+
+## `server.test.ts` grace-timer flake blocks CI
+
+**Symptom:** The `ptyGracePeriodMs = 0 disables auto-hold` block in `__tests__/server.test.ts` fails intermittently despite no changes to that test. All five PRs merged on 2026-07-16 (#209–#213) had a red Test gate because of it. CI deterministically misses the `putOnHold("disable-grace-sess")` call in `holds immediately on an explicit hold_session even when grace is 0`; a full local file run instead intermittently fails `still arms a grace timer on disconnect when grace is positive`. Either test passes in isolation.
+
+**Likely cause:** The tests run under Vitest's single-fork configuration and use process-global prototype spies, shared session id `disable-grace-sess`, fresh WebSocket servers, and fixed 50 ms waits for WebSocket round trips. The root cause could be an insufficient fixed wait, cross-test teardown/state leakage, or both. SQLite locking is unlikely for this block because it uses `disableDb: true`.
+
+**Reproduction:** Use the Node version from `.nvmrc` and current dependencies, then run `npx vitest run __tests__/server.test.ts` repeatedly. Also run `npm test` to match CI's full-suite ordering. Record the baseline failure rate and which assertion fails before changing anything.
+
+**Suggested fix:** First replace fixed sleeps with a deterministic condition or event. If needed, make session ids unique and guarantee server/socket/timer teardown with scoped spies. Avoid a blanket retry or a Vitest configuration change unless evidence rules out test-level isolation.
+
+**Done when:** The smallest verified fix has zero failures across at least 10 consecutive runs of both the focused file and full `npm test`, followed by `npm run lint`.
