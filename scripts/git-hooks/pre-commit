@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Lints staged files with biome before allowing a commit.
+# Installed repo-wide via `git config core.hooksPath scripts/git-hooks` (see
+# package.json's "prepare" script), so this applies to the main checkout and
+# every .worktrees/* worktree alike.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+"$repo_root/scripts/lint-changed.sh"
