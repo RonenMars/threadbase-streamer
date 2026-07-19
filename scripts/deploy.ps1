@@ -52,10 +52,22 @@ $port         = if ($env:THREADBASE_PORT) { $env:THREADBASE_PORT } else { '8766'
 $healthUrl    = if ($env:THREADBASE_HEALTH_URL) { $env:THREADBASE_HEALTH_URL } else { 'http://localhost:8766/healthz' }
 $keepReleases = 5
 
-function Write-Log  { param($m) Write-Host "▶ $m" -ForegroundColor Blue }
-function Write-Warn { param($m) Write-Host "! $m" -ForegroundColor Yellow }
-function Write-Err  { param($m) Write-Host "✗ $m" -ForegroundColor Red }
-function Write-Ok   { param($m) Write-Host "✓ $m" -ForegroundColor Green }
+# Leveled, timestamped logging. Every line carries an ISO-8601 local timestamp
+# and a level word so captured deploy output is self-describing and lines up
+# with ~/.threadbase/update.log. Set LOG_LEVEL=debug to surface debug lines
+# (default: info).
+$script:LogLevel = if ($env:LOG_LEVEL) { $env:LOG_LEVEL } else { 'info' }
+function _LogTs { (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz') }
+function _LogLine {
+  param($Level, $Symbol, $Color, $Message)
+  Write-Host ("{0} {1,-5} {2} {3}" -f (_LogTs), $Level, $Symbol, $Message) -ForegroundColor $Color
+}
+function Write-Dbg  { param($m) if ($script:LogLevel -eq 'debug') { _LogLine 'DEBUG' '·' 'DarkGray' $m } }
+function Write-Info { param($m) _LogLine 'INFO'  '▶' 'Blue'   $m }
+function Write-Log  { param($m) Write-Info $m }   # backward-compatible alias
+function Write-Ok   { param($m) _LogLine 'INFO'  '✓' 'Green'  $m }
+function Write-Warn { param($m) _LogLine 'WARN'  '!' 'Yellow' $m }
+function Write-Err  { param($m) _LogLine 'ERROR' '✗' 'Red'    $m }
 
 # Dot-source the global-shim installer (Install-GlobalShim function).
 . (Join-Path $PSScriptRoot 'lib\install-shim.ps1')
@@ -254,6 +266,7 @@ function Invoke-KillStalePort {
   # netstat -ano lists listening sockets; parse the owning PID and kill it so the
   # new task can bind cleanly (Stop-ScheduledTask doesn't kill orphaned node processes).
   $lines = netstat -ano 2>$null | Select-String ":$Port\s"
+  Write-Dbg "Invoke-KillStalePort: $(@($lines).Count) listener line(s) matched on port $Port"
   foreach ($line in $lines) {
     $parts = ($line.ToString().Trim() -split '\s+')
     $pidStr = $parts[-1]
@@ -351,6 +364,7 @@ function Invoke-Activate {
   $src = Join-Path $installDir $relPath
   $tmp = "$activeFile.new"
 
+  Write-Dbg "Invoke-Activate: copying $src -> $activeFile"
   Copy-Item -Path $src -Destination $tmp -Force
   Move-Item -Path $tmp -Destination $activeFile -Force
 
@@ -360,6 +374,7 @@ function Invoke-Activate {
   $versionFile = Join-Path $installDir 'version.txt'
   if (Test-Path $sidecar) {
     Copy-Item -Path $sidecar -Destination $versionFile -Force
+    Write-Dbg "Invoke-Activate: version.txt <- $((Get-Content $versionFile -Raw).Trim()) (from sidecar)"
   } else {
     # Rolling back to a release that pre-dates version.txt stamping.
     Set-Content -Path $versionFile -Value "unknown+$RelFilename" -Encoding ASCII

@@ -18,9 +18,25 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.threadbase}"
 ACTIVE_LINK="$INSTALL_DIR/current/dist/cli.cjs"
 UPDATE_YAML="$INSTALL_DIR/update.yaml"
 
-log() { printf '\033[1;34m[auto-update]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[auto-update]\033[0m %s\n' "$*" >&2; }
-err() { printf '\033[1;31m[auto-update]\033[0m %s\n' "$*" >&2; }
+# Leveled, timestamped logging tagged [auto-update]. Every line carries an
+# ISO-8601 local timestamp and a level word. LOG_LEVEL=debug surfaces debug
+# lines (default: info). Colors are suppressed for non-TTY/NO_COLOR output.
+LOG_LEVEL="${LOG_LEVEL:-info}"
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then _log_color=1; else _log_color=0; fi
+_log_ts()   { date '+%Y-%m-%dT%H:%M:%S%z'; }
+_log_emit() { # <level> <ansi> <stream:1|2> <msg...>
+  local level="$1" ansi="$2" stream="$3"; shift 3
+  local prefix="" suffix=""
+  if [ "$_log_color" = 1 ]; then prefix="\033[${ansi}m"; suffix="\033[0m"; fi
+  local line
+  line="$(printf '%s %-5s %b[auto-update]%b %s' "$(_log_ts)" "$level" "$prefix" "$suffix" "$*")"
+  if [ "$stream" = 2 ]; then printf '%s\n' "$line" >&2; else printf '%s\n' "$line"; fi
+}
+debug() { [ "$LOG_LEVEL" = debug ] && _log_emit DEBUG '1;90' 2 "$@"; return 0; }
+info()  { _log_emit INFO  '1;34' 1 "$@"; }
+log()   { info "$@"; }
+warn()  { _log_emit WARN  '1;33' 2 "$@"; }
+err()   { _log_emit ERROR '1;31' 2 "$@"; }
 
 read_yaml_field() {
   local key="$1" default="${2:-}"

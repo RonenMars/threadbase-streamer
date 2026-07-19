@@ -12,13 +12,20 @@
 # Re-run any time; the symlink is replaced atomically.
 set -e
 
+# POSIX-safe timestamped, leveled logging (this script is #!/bin/sh). Every line
+# carries an ISO-8601 local timestamp and a level word.
+_log_ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
+info() { printf '%s %-5s [install-tb] %s\n' "$(_log_ts)" INFO  "$*"; }
+warn() { printf '%s %-5s [install-tb] %s\n' "$(_log_ts)" WARN  "$*" >&2; }
+err()  { printf '%s %-5s [install-tb] %s\n' "$(_log_ts)" ERROR "$*" >&2; }
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SHIM_SRC="$REPO_ROOT/bin/tb"
 INSTALL_DIR="${TB_INSTALL_DIR:-$HOME/.local/bin}"
 INSTALL_PATH="$INSTALL_DIR/tb"
 
 if [ ! -f "$SHIM_SRC" ]; then
-  echo "install-tb: shim source missing at $SHIM_SRC" >&2
+  err "shim source missing at $SHIM_SRC"
   exit 1
 fi
 
@@ -26,15 +33,14 @@ mkdir -p "$INSTALL_DIR"
 chmod +x "$SHIM_SRC"
 ln -sf "$SHIM_SRC" "$INSTALL_PATH"
 
-echo "Installed: $INSTALL_PATH -> $SHIM_SRC"
+info "installed: $INSTALL_PATH -> $SHIM_SRC"
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*)
     ;;
   *)
-    echo
-    echo "warning: $INSTALL_DIR is not on your PATH."
-    echo "Add this to your shell rc (~/.zshrc, ~/.bashrc):"
-    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+    warn "$INSTALL_DIR is not on your PATH."
+    warn "add this to your shell rc (~/.zshrc, ~/.bashrc):"
+    warn "  export PATH=\"$INSTALL_DIR:\$PATH\""
     ;;
 esac

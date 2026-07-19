@@ -34,10 +34,30 @@ PORT="${THREADBASE_PORT:-8766}"
 HEALTH_URL="${THREADBASE_HEALTH_URL:-http://localhost:$PORT/healthz}"
 KEEP_RELEASES=5
 
-log()  { printf '\033[1;34m▶\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
-err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
-ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
+# --- logging -----------------------------------------------------------------
+# Leveled, timestamped logging. Every line carries an ISO-8601 local timestamp
+# and a level word so redirected prod logs (launchd/systemd/Task Scheduler) are
+# self-describing and line up with ~/.threadbase/update.log. LOG_LEVEL=debug
+# surfaces debug lines (default: info). Colors are suppressed when stdout is not
+# a TTY (logs captured to a file) or when NO_COLOR is set, so redirected logs
+# stay free of escape codes.
+LOG_LEVEL="${LOG_LEVEL:-info}"
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then _log_color=1; else _log_color=0; fi
+_log_ts()   { date '+%Y-%m-%dT%H:%M:%S%z'; }
+_log_emit() { # <level> <ansi> <symbol> <stream:1|2> <msg...>
+  local level="$1" ansi="$2" symbol="$3" stream="$4"; shift 4
+  local prefix="" suffix=""
+  if [ "$_log_color" = 1 ]; then prefix="\033[${ansi}m"; suffix="\033[0m"; fi
+  local line
+  line="$(printf '%b%s %-5s %s%b %s' "$prefix" "$(_log_ts)" "$level" "$symbol" "$suffix" "$*")"
+  if [ "$stream" = 2 ]; then printf '%s\n' "$line" >&2; else printf '%s\n' "$line"; fi
+}
+debug() { [ "$LOG_LEVEL" = debug ] && _log_emit DEBUG '1;90' '·' 2 "$@"; return 0; }
+info()  { _log_emit INFO  '1;34' '▶' 1 "$@"; }
+log()   { info "$@"; }                       # backward-compatible alias
+ok()    { _log_emit INFO  '1;32' '✓' 1 "$@"; }
+warn()  { _log_emit WARN  '1;33' '!' 2 "$@"; }
+err()   { _log_emit ERROR '1;31' '✗' 2 "$@"; }
 
 # Global-shim installer (creates `threadbase-streamer` on PATH).
 # shellcheck source=lib/install-shim.sh

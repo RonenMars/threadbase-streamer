@@ -34,9 +34,20 @@ function Read-YamlField {
   return $Default
 }
 
-function Write-Log { Write-Host "[auto-update] $args" -ForegroundColor Cyan }
-function Write-Warn { Write-Host "[auto-update] $args" -ForegroundColor Yellow }
-function Write-Err { Write-Host "[auto-update] $args" -ForegroundColor Red }
+# Leveled, timestamped logging tagged [auto-update]. Every line carries an
+# ISO-8601 local timestamp and a level word. Set LOG_LEVEL=debug to surface
+# debug lines (default: info).
+$script:LogLevel = if ($env:LOG_LEVEL) { $env:LOG_LEVEL } else { 'info' }
+function _LogTs { (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz') }
+function _LogLine {
+  param($Level, $Color, $Message)
+  Write-Host ("{0} {1,-5} [auto-update] {2}" -f (_LogTs), $Level, $Message) -ForegroundColor $Color
+}
+function Write-Dbg  { if ($script:LogLevel -eq 'debug') { _LogLine 'DEBUG' 'DarkGray' "$args" } }
+function Write-Info { _LogLine 'INFO'  'Cyan'   "$args" }
+function Write-Log  { _LogLine 'INFO'  'Cyan'   "$args" }
+function Write-Warn { _LogLine 'WARN'  'Yellow' "$args" }
+function Write-Err  { _LogLine 'ERROR' 'Red'    "$args" }
 
 if ($Command -eq "uninstall") {
   $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
