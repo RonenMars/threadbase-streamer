@@ -643,18 +643,32 @@ report_startup_warnings() {
 }
 
 cmd_healthcheck() {
+  # Expected version = the just-activated stamp in version.txt. Asserting the
+  # served /healthz version against it catches a stale process still bound to
+  # the port (answering with the OLD version) instead of reporting a healthy
+  # deploy. The old process can briefly answer before the new one binds, so a
+  # mismatch is retried until the deadline rather than failed on first sight.
+  local expected=""
+  if [[ -f "$INSTALL_DIR/version.txt" ]]; then
+    expected="$(tr -d '[:space:]' < "$INSTALL_DIR/version.txt")"
+  fi
   local deadline=$((SECONDS + 15))
-  local last_status=""
+  local last_status="" last_failure="server did not respond"
   while (( SECONDS < deadline )); do
     if last_status="$(curl -fsS --max-time 2 "$HEALTH_URL" 2>/dev/null)"; then
-      ok "healthcheck passed: $last_status"
-      print_service_pid_info "$LAUNCHD_LABEL" "after kickstart: "
-      report_startup_warnings
-      return 0
+      local served
+      served="$(printf '%s' "$last_status" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+      if [[ -z "$expected" || "$served" == "$expected" ]]; then
+        ok "healthcheck passed: $last_status"
+        print_service_pid_info "$LAUNCHD_LABEL" "after kickstart: "
+        report_startup_warnings
+        return 0
+      fi
+      last_failure="version mismatch: served '$served', expected '$expected' (stale process on port $PORT?)"
     fi
     sleep 0.5
   done
-  err "healthcheck failed after 15s ($HEALTH_URL)"
+  err "healthcheck failed after 15s ($HEALTH_URL): $last_failure"
   warn "last 20 lines of stderr log:"
   tail -n 20 "$(streamer_stderr_log)" 2>/dev/null || true
   return 1

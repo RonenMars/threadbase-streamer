@@ -379,11 +379,20 @@ program
           );
           break;
         case "installed":
-          log.info(
-            `Installed ${result.installed} (was ${result.previous}). Restart: ${result.restart.method}.`,
-            undefined,
-            "console",
-          );
+          if (result.restart.method.startsWith("failed:")) {
+            log.error(
+              `Installed ${result.installed} on disk, but the running service was not updated. Restart: ${result.restart.method}.`,
+              undefined,
+              "console",
+            );
+            process.exitCode = 1;
+          } else {
+            log.info(
+              `Installed ${result.installed} (was ${result.previous}). Restart: ${result.restart.method}.`,
+              undefined,
+              "console",
+            );
+          }
           if (result.pruned.length > 0) {
             log.info(`Pruned old releases: ${result.pruned.join(", ")}`, undefined, "console");
           }
