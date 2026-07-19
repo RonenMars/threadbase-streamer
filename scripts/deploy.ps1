@@ -278,17 +278,33 @@ function Invoke-Kickstart {
 }
 
 function Invoke-Healthcheck {
+  param([string]$ExpectedVersion = '')
+  # Default the expected version to the just-activated stamp so a stale process
+  # still bound to the port (answering /healthz with the OLD version) is caught
+  # instead of being reported as a healthy deploy.
+  if (-not $ExpectedVersion) {
+    $versionFile = Join-Path $installDir 'version.txt'
+    if (Test-Path $versionFile) { $ExpectedVersion = (Get-Content $versionFile -Raw).Trim() }
+  }
   $deadline = (Get-Date).AddSeconds(15)
+  $lastFailure = 'server did not respond'
   while ((Get-Date) -lt $deadline) {
     try {
       $resp = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 2 -ErrorAction Stop
-      Write-Ok "healthcheck passed: $resp"
-      return
+      $served = "$($resp.version)"
+      if (-not $ExpectedVersion -or $served -eq $ExpectedVersion) {
+        Write-Ok "healthcheck passed: $($resp | ConvertTo-Json -Compress)"
+        return
+      }
+      # The old process can briefly answer before the new one binds — keep
+      # polling until the served version flips, then fail loudly if it never does.
+      $lastFailure = "version mismatch: served '$served', expected '$ExpectedVersion' (stale process on port $port?)"
     } catch {
-      Start-Sleep -Milliseconds 500
+      $lastFailure = "no response: $($_.Exception.Message)"
     }
+    Start-Sleep -Milliseconds 500
   }
-  Write-Err "healthcheck failed after 15s ($healthUrl)"
+  Write-Err "healthcheck failed after 15s ($healthUrl): $lastFailure"
   Write-Warn "last 20 lines of stderr log:"
   $errLog = Join-Path $env:TEMP 'threadbase.err'
   if (Test-Path $errLog) { Get-Content $errLog -Tail 20 }
@@ -521,7 +537,7 @@ function Invoke-Deploy {
     Write-Log "restarting scheduled task '$taskName'"
     Invoke-Kickstart
 
-    Invoke-Healthcheck
+    Invoke-Healthcheck -ExpectedVersion $versionLine
 
     Write-Log "garbage-collecting old releases (keeping last $keepReleases)"
     Get-ChildItem $releasesDir -Filter 'cli.*.cjs' |
