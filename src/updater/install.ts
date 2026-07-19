@@ -8,6 +8,7 @@ import { fetchLatestRelease, fetchReleaseByTag } from "./github-releases";
 import { pickArtifact } from "./manifest";
 import { DOWNLOAD_DIR, downloadPath, releaseDir } from "./paths";
 import { restartService, stopService } from "./restart";
+import { waitForRestartHealth } from "./restart-health";
 import { stampVersionTxt } from "./stamp-version";
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "./swap";
 import { unpackTarball } from "./unpack";
@@ -144,7 +145,7 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
   // atomic symlink rename and don't need this — stopService is a no-op
   // there.
   if (process.platform === "win32") {
-    await stopService().catch(() => {
+    await stopService({ port: opts.runningServer?.port }).catch(() => {
       /* best effort — swap may still succeed if the streamer wasn't running */
     });
   }
@@ -157,10 +158,16 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
   try {
     const r = await restartService();
     restartMethod = r.method;
+    if (opts.runningServer && r.method !== "none") {
+      await waitForRestartHealth({
+        port: opts.runningServer.port,
+        expectedVersion: targetVersion,
+      });
+    }
   } catch (err) {
-    // Restart failure is recoverable — log via return value rather than throw.
-    // The new release is on disk and `current` is repointed; next service
-    // start picks it up.
+    // The release is on disk, but a command success is not enough: the process
+    // serving /healthz must report the target version. Surface failure loudly
+    // while leaving the new release ready for the next successful service start.
     restartMethod = `failed: ${err instanceof Error ? err.message : String(err)}`;
   }
 
@@ -171,8 +178,9 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
     pruned,
     restart: { method: restartMethod },
   };
+  const outcome = restartMethod.startsWith("failed:") ? "failed" : "installed";
   appendUpdateLog(
-    `[installed] ${installed.previous} → ${installed.installed} restart=${installed.restart.method}${pruned.length > 0 ? ` pruned=${pruned.length}` : ""}`,
+    `[${outcome}] ${installed.previous} → ${installed.installed} restart=${installed.restart.method}${pruned.length > 0 ? ` pruned=${pruned.length}` : ""}`,
   );
   return installed;
 }

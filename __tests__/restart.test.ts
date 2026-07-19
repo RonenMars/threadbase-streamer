@@ -259,10 +259,17 @@ describe("stopService", () => {
   it("on Windows runs schtasks /End", async () => {
     const restore = spoofPlatform("win32");
     try {
-      execFileMock.mockResolvedValueOnce({ stdout: "ended", stderr: "" });
+      execFileMock
+        .mockResolvedValueOnce({ stdout: "ended", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" });
       const r = await stopService();
       expect(r.method).toBe("schtasks-end");
-      expect(execFileMock).toHaveBeenCalledWith("schtasks.exe", ["/End", "/TN", "Threadbase"]);
+      expect(execFileMock).toHaveBeenNthCalledWith(1, "schtasks.exe", [
+        "/End",
+        "/TN",
+        "Threadbase",
+      ]);
+      expect(execFileMock).toHaveBeenNthCalledWith(2, "netstat.exe", ["-ano", "-p", "tcp"]);
     } finally {
       restore();
     }
@@ -271,10 +278,35 @@ describe("stopService", () => {
   it("on Windows tolerates schtasks /End failing (task may already be stopped)", async () => {
     const restore = spoofPlatform("win32");
     try {
-      execFileMock.mockRejectedValueOnce(new Error("task is not running"));
+      execFileMock
+        .mockRejectedValueOnce(new Error("task is not running"))
+        .mockResolvedValueOnce({ stdout: "", stderr: "" });
       const r = await stopService();
       expect(r.method).toBe("schtasks-end");
       expect(r.stderr).toMatch(/task is not running/);
+    } finally {
+      restore();
+    }
+  });
+
+  it("on Windows kills the process tree listening on the configured port", async () => {
+    const restore = spoofPlatform("win32");
+    try {
+      execFileMock
+        .mockResolvedValueOnce({ stdout: "ended", stderr: "" })
+        .mockResolvedValueOnce({
+          stdout:
+            "  TCP    127.0.0.1:9999    0.0.0.0:0    LISTENING    1234\r\n" +
+            "  TCP    [::1]:9999        [::]:0       LISTENING    1234\r\n" +
+            "  TCP    127.0.0.1:8766    0.0.0.0:0    LISTENING    5678\r\n",
+          stderr: "",
+        })
+        .mockResolvedValueOnce({ stdout: "SUCCESS", stderr: "" });
+
+      await stopService({ port: 9999 });
+
+      expect(execFileMock).toHaveBeenNthCalledWith(3, "taskkill.exe", ["/PID", "1234", "/T", "/F"]);
+      expect(execFileMock).toHaveBeenCalledTimes(3);
     } finally {
       restore();
     }

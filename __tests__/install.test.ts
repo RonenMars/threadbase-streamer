@@ -82,6 +82,10 @@ vi.mock("../src/updater/restart", () => ({
   stopService: vi.fn(async () => ({ method: "noop", stdout: "", stderr: "" })),
 }));
 
+vi.mock("../src/updater/restart-health", () => ({
+  waitForRestartHealth: vi.fn(async () => undefined),
+}));
+
 vi.mock("../src/updater/active-sessions", () => ({
   countActiveSessions: vi.fn(async () => ({ kind: "count", count: 0 })),
 }));
@@ -95,6 +99,7 @@ import { isBrewInstall } from "../src/updater/brew-detect";
 import { downloadAndVerify, fetchManifest } from "../src/updater/download";
 import { runInstall } from "../src/updater/install";
 import { restartService, stopService } from "../src/updater/restart";
+import { waitForRestartHealth } from "../src/updater/restart-health";
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "../src/updater/swap";
 import { unpackTarball } from "../src/updater/unpack";
 
@@ -228,6 +233,37 @@ describe("runInstall orchestration", () => {
     }
   });
 
+  it("verifies the live health endpoint reports the installed version", async () => {
+    const r = await runInstall({
+      currentVersion: "1.0.0",
+      config: cfg,
+      runningServer: { port: 4567, apiKey: "tb_x" },
+    });
+    expect(r.kind).toBe("installed");
+    expect(waitForRestartHealth).toHaveBeenCalledWith({
+      port: 4567,
+      expectedVersion: "1.0.1",
+    });
+    const restartOrder = vi.mocked(restartService).mock.invocationCallOrder[0];
+    const healthOrder = vi.mocked(waitForRestartHealth).mock.invocationCallOrder[0];
+    expect(restartOrder).toBeLessThan(healthOrder);
+  });
+
+  it("reports a failed restart when the live process keeps serving the old version", async () => {
+    vi.mocked(waitForRestartHealth).mockRejectedValueOnce(
+      new Error("restart verification failed: running version is 1.0.0, expected 1.0.1"),
+    );
+    const r = await runInstall({
+      currentVersion: "1.0.0",
+      config: cfg,
+      runningServer: { port: 4567, apiKey: "tb_x" },
+    });
+    expect(r.kind).toBe("installed");
+    if (r.kind === "installed") {
+      expect(r.restart.method).toMatch(/^failed: restart verification failed/);
+    }
+  });
+
   it("uses --version pin instead of latest", async () => {
     const r = await runInstall({ currentVersion: "1.0.0", config: cfg, pinnedVersion: "1.0.1" });
     expect(r.kind).toBe("installed");
@@ -242,6 +278,7 @@ describe("runInstall orchestration", () => {
       const r = await runInstall({ currentVersion: "1.0.0", config: cfg });
       expect(r.kind).toBe("installed");
       expect(stopService).toHaveBeenCalled();
+      expect(stopService).toHaveBeenCalledWith({ port: undefined });
       const stopOrder = vi.mocked(stopService).mock.invocationCallOrder[0];
       const swapOrder = vi.mocked(swapCurrent).mock.invocationCallOrder[0];
       expect(stopOrder).toBeLessThan(swapOrder);

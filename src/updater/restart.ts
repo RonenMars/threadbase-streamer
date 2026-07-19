@@ -18,6 +18,8 @@ export interface StopResult {
 export interface RestartOptions {
   /** Override for tests; defaults to platform-appropriate label. */
   serviceLabel?: string;
+  /** Streamer port whose listener must be stopped on Windows. */
+  port?: number;
 }
 
 // launchd label Homebrew registers for `brew services start tb-streamer`.
@@ -127,5 +129,41 @@ export async function stopService(opts: RestartOptions = {}): Promise<StopResult
   const { stdout, stderr } = await execFileP("schtasks.exe", ["/End", "/TN", label]).catch(
     (err) => ({ stdout: "", stderr: String(err) }),
   );
-  return { method: "schtasks-end", stdout, stderr };
+  const listenerResult = await stopWindowsListener(opts.port ?? 8766);
+  return {
+    method: "schtasks-end",
+    stdout: `${stdout}\n${listenerResult.stdout}`,
+    stderr: `${stderr}\n${listenerResult.stderr}`,
+  };
+}
+
+async function stopWindowsListener(port: number): Promise<{ stdout: string; stderr: string }> {
+  let netstat: { stdout: string; stderr: string };
+  try {
+    netstat = await execFileP("netstat.exe", ["-ano", "-p", "tcp"]);
+  } catch (err) {
+    return { stdout: "", stderr: `Could not inspect port ${port}: ${String(err)}` };
+  }
+
+  const pids = new Set<string>();
+  for (const line of netstat.stdout.split(/\r?\n/)) {
+    const columns = line.trim().split(/\s+/);
+    if (columns.length < 5 || columns[0]?.toUpperCase() !== "TCP") continue;
+    const [localAddress, state, pid] = [columns[1], columns[3], columns[4]];
+    if (state?.toUpperCase() !== "LISTENING" || !pid || pid === "0") continue;
+    if (localAddress?.endsWith(`:${port}`)) pids.add(pid);
+  }
+
+  const output: string[] = [];
+  const errors: string[] = [];
+  for (const pid of pids) {
+    try {
+      const result = await execFileP("taskkill.exe", ["/PID", pid, "/T", "/F"]);
+      output.push(result.stdout);
+      if (result.stderr) errors.push(result.stderr);
+    } catch (err) {
+      errors.push(`Could not stop PID ${pid} on port ${port}: ${String(err)}`);
+    }
+  }
+  return { stdout: output.join("\n"), stderr: errors.join("\n") };
 }
