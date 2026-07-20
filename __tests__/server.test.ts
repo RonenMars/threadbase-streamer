@@ -44,6 +44,18 @@ async function getRandomPort(): Promise<number> {
   return EPHEMERAL_PORT;
 }
 
+// Poll for an async condition instead of guessing a fixed delay. A WebSocket
+// subscribe/close round-trip takes 200-300ms+ under CPU load (whole-suite
+// runs), so the old fixed 50ms waits raced and made the grace-timer tests flaky.
+async function waitFor(predicate: () => boolean, ms = 3000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error("waitFor timed out");
+}
+
 const API_KEY = "tb_test_key_for_integration_tests";
 
 describe("StreamerServer", () => {
@@ -1224,17 +1236,6 @@ describe("StreamerServer", () => {
         lastOutput: "",
       }) as any;
 
-    // Poll for a condition instead of sleeping a fixed interval: a WS message
-    // round-trip has no fixed upper bound, so a flat 50 ms wait fails under
-    // load (parallel test files on a busy machine).
-    async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
-      const deadline = Date.now() + timeoutMs;
-      while (!cond()) {
-        if (Date.now() > deadline) return;
-        await new Promise((r) => setTimeout(r, 5));
-      }
-    }
-
     async function subscribeAndClose(srv: StreamerServer): Promise<void> {
       const ws = new WebSocket(`ws://localhost:${srv.port}/ws?key=${API_KEY}`);
       await new Promise<void>((r) => ws.on("open", () => r()));
@@ -1318,6 +1319,7 @@ describe("StreamerServer", () => {
         const ws = new WebSocket(`ws://localhost:${srv.port}/ws?key=${API_KEY}`);
         await new Promise<void>((r) => ws.on("open", () => r()));
         ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
+        // Wait for the server to process hold_session rather than guessing.
         await waitFor(() => holdSpy.mock.calls.length > 0);
         expect(holdSpy).toHaveBeenCalledWith(SID);
         ws.close();
