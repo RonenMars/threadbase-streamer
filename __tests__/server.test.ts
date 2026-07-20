@@ -2281,6 +2281,7 @@ describe("StreamerServer", () => {
         scanProfiles: FIXTURE_PROFILES,
       });
       await reuseServer.listen(reusePort);
+      reusePort = reuseServer.port;
 
       try {
         for (const path of [
@@ -2314,6 +2315,7 @@ describe("StreamerServer", () => {
         scanProfiles: FIXTURE_PROFILES,
       });
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       let releaseScan!: () => void;
       let markScanStarted!: () => void;
@@ -2361,6 +2363,7 @@ describe("StreamerServer", () => {
         scanProfiles: FIXTURE_PROFILES,
       });
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       const monitor = (reuseServer as unknown as { cacheMonitor: object }).cacheMonitor;
       Reflect.set(monitor, "_pending", {
