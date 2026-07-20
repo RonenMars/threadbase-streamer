@@ -283,6 +283,8 @@ export interface ServerConfig {
   directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)
   defaultSystemPrompt?: string; // prepended to every PTY session's --system-prompt; overrides the built-in default
   defaultPermissionMode?: "acceptEdits" | "manual"; // Claude Code --permission-mode for spawned PTY sessions (default "acceptEdits")
+  defaultModel?: string; // Claude Code --model for spawned PTY sessions (default "sonnet")
+  defaultEffort?: "low" | "medium" | "high" | "xhigh" | "max"; // Claude Code --effort for spawned PTY sessions (default "low")
 }
 
 // ─── PTY Manager ───────────────────────────────────────────────────
@@ -322,6 +324,8 @@ export interface StartSessionOptions {
   projectName?: string;
   branch?: string;
   permissionMode?: "acceptEdits" | "manual";
+  model?: string;
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 export interface StartFreshSessionOptions {
@@ -329,6 +333,8 @@ export interface StartFreshSessionOptions {
   projectName?: string;
   systemPrompt?: string;
   permissionMode?: "acceptEdits" | "manual";
+  model?: string;
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
 }
 
 // ─── Session Runner ────────────────────────────────────────────────
