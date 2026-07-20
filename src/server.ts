@@ -75,6 +75,7 @@ import {
 } from "./providers";
 import { seal } from "./seal";
 import { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
+import { setCacheMetadata } from "./services/cache/cacheMetadata";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import {
   findSearchTarget,
@@ -82,6 +83,8 @@ import {
 } from "./services/conversations/findSearchTarget";
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
+import { refreshConversationCache } from "./services/conversations/refreshConversationCache";
+import { shouldRefreshProjectsFromHdd } from "./services/conversations/shouldRefreshProjectsFromHdd";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
 import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
 import {
@@ -1127,6 +1130,20 @@ export class StreamerServer {
                 count: pruned.length,
                 event: "cache.prune_ghosts",
               });
+              if (this.projectsRepo && this.conversationsRepo && this.cacheMetadataRepo) {
+                refreshConversationCache({
+                  cache: this.cache,
+                  projectsRepo: this.projectsRepo,
+                  conversationsRepo: this.conversationsRepo,
+                  cacheMetadataRepo: this.cacheMetadataRepo,
+                });
+              } else if (this.cacheMetadataRepo) {
+                setCacheMetadata(
+                  this.cacheMetadataRepo,
+                  "conversations_last_indexed_at",
+                  new Date().toISOString(),
+                );
+              }
             }
           })
           .catch((err) => {
@@ -1435,6 +1452,65 @@ export class StreamerServer {
     return this.checkRateLimit(this.sessionInputAttempts, sessionId, 500, 60_000);
   }
 
+  /** Project roots watched for conversation JSONLs (profiles or ~/.claude/projects). */
+  private projectsDirsForFreshnessCheck(): string[] {
+    if (this.scanProfiles && this.scanProfiles.length > 0) {
+      return this.scanProfiles.filter((p) => p.enabled).map((p) => join(p.configDir, "projects"));
+    }
+    return [join(homedir(), ".claude", "projects")];
+  }
+
+  /**
+   * Full-glob scan + cache upsert/delete reconcile. Used by ?refresh=1 and by
+   * the automatic freshness path when the directory watcher marked the scanner
+   * stale or shouldRefreshProjectsFromHdd detected disk drift.
+   */
+  private async reconcileConversationsCacheFromDisk(): Promise<void> {
+    if (!this.cache) return;
+    const scanner = await this.withWarmup("conversation_refresh", () => this.rescanForRefresh());
+    const metas = [...scanner.getMetadataCache().values()];
+    try {
+      this.cache.upsertFromScannerMeta(metas as any[]);
+      // Additions/updates are always safe. But while a cache-integrity alert
+      // is pending, freeze the removal half — reconcileDeletions must not
+      // drop rows until a human resolves the alert.
+      if (!this.cacheMonitor?.pending) {
+        const livePaths = new Set(
+          metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
+        );
+        this.cache.reconcileDeletions(livePaths);
+      }
+      if (this.projectsRepo && this.conversationsRepo && this.cacheMetadataRepo) {
+        refreshConversationCache({
+          cache: this.cache,
+          projectsRepo: this.projectsRepo,
+          conversationsRepo: this.conversationsRepo,
+          cacheMetadataRepo: this.cacheMetadataRepo,
+        });
+      } else if (this.cacheMetadataRepo) {
+        setCacheMetadata(
+          this.cacheMetadataRepo,
+          "conversations_last_indexed_at",
+          new Date().toISOString(),
+        );
+      }
+    } catch (err) {
+      this.log.warn(
+        `refresh reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+        { event: "conversations.reconcile_failed" },
+      );
+    }
+  }
+
+  private shouldAutoReconcileConversationList(): boolean {
+    if (!this.cache) return false;
+    if (this.scannerStale) return true;
+    if (!this.conversationsRepo || !this.cacheMetadataRepo) return false;
+    return shouldRefreshProjectsFromHdd(this.conversationsRepo, this.cacheMetadataRepo, {
+      projectsDirs: this.projectsDirsForFreshnessCheck(),
+    });
+  }
+
   private async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
     if (this.rejectIfWarmingUp(res)) return;
 
@@ -1445,35 +1521,11 @@ export class StreamerServer {
     const providerFilter = url.searchParams.get("provider") ?? undefined;
     const bustCache = url.searchParams.get("refresh") === "1";
 
-    // refresh=1 is a RECONCILE, not a wipe. The old path did
-    // cache.invalidate() (deletes every row, including live-tailed ones) +
-    // scanner=null (discards the warm scanner and forces a cold cache
-    // rebuild). Instead: run one fresh full-glob scan (fullRescan bypasses the
-    // scanner's dir-mtime gate — an explicit user refresh is the "check for
-    // real" signal), then reconcile the cache from disk truth: upsert what
-    // exists (newest-wins, so a concurrent live line still takes precedence),
-    // and drop only the rows whose files no longer exist. Live-tailed rows are
-    // never blanket-deleted, so an active conversation can't flicker out.
-    if (bustCache && this.cache) {
-      const scanner = await this.withWarmup("conversation_refresh", () => this.rescanForRefresh());
-      const metas = [...scanner.getMetadataCache().values()];
-      try {
-        this.cache.upsertFromScannerMeta(metas as any[]);
-        // Additions/updates are always safe. But while a cache-integrity alert
-        // is pending, freeze the removal half — reconcileDeletions must not
-        // drop rows until a human resolves the alert.
-        if (!this.cacheMonitor?.pending) {
-          const livePaths = new Set(
-            metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
-          );
-          this.cache.reconcileDeletions(livePaths);
-        }
-      } catch (err) {
-        this.log.warn(
-          `refresh reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
-          { event: "conversations.reconcile_failed" },
-        );
-      }
+    // Reconcile (not wipe): fullRescan bypasses the scanner dir-mtime gate, then
+    // upsert what exists and drop rows whose files are gone. Triggered by
+    // explicit ?refresh=1, directory-watcher scannerStale, or HDD freshness drift.
+    if (this.cache && (bustCache || this.shouldAutoReconcileConversationList())) {
+      await this.reconcileConversationsCacheFromDisk();
     }
 
     if (this.cache) {
