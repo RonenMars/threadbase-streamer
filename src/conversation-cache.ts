@@ -244,6 +244,7 @@ export class ConversationCache {
     getIdByFilePath: Database.Statement;
     getProviderByFilePath: Database.Statement;
     allFilePaths: Database.Statement;
+    allFilePathsWithTitle: Database.Statement;
     allFileStats: Database.Statement;
     allScannerStatCacheRows: Database.Statement;
     updateScannerCache: Database.Statement;
@@ -380,6 +381,7 @@ export class ConversationCache {
         "SELECT provider FROM conversation_meta WHERE file_path = ?",
       ),
       allFilePaths: db.prepare("SELECT id, file_path FROM conversation_meta"),
+      allFilePathsWithTitle: db.prepare("SELECT id, file_path, title FROM conversation_meta"),
       allFileStats: db.prepare(
         "SELECT file_path, mtime_ms, file_size FROM conversation_meta WHERE mtime_ms IS NOT NULL AND file_size IS NOT NULL",
       ),
@@ -1593,5 +1595,76 @@ export class ConversationCache {
       }
     }
     return removed;
+  }
+
+  /**
+   * Read-only: list cached rows whose `file_path` no longer exists on disk.
+   * Unlike pruneGhostFiles/reconcileDeletions this mutates nothing — it just
+   * reports drift for the CacheIntegrityMonitor to classify. `tailed` flags
+   * rows that still have cached history (which pruneGhostFiles would keep).
+   */
+  listMissingFiles(
+    exists: (filePath: string) => boolean = existsSync,
+  ): { id: string; filePath: string; title: string | null; tailed: boolean }[] {
+    const rows = this.stmts.allFilePathsWithTitle.all() as {
+      id: string;
+      file_path: string;
+      title: string | null;
+    }[];
+    const missing: { id: string; filePath: string; title: string | null; tailed: boolean }[] = [];
+    for (const row of rows) {
+      if (exists(row.file_path)) continue;
+      missing.push({
+        id: row.id,
+        filePath: row.file_path,
+        title: row.title,
+        tailed: !!this.stmts.hasTail.get(row.id),
+      });
+    }
+    return missing;
+  }
+
+  /**
+   * Drop the given conversation ids outright — main row, tail, and message
+   * index — regardless of whether they have a tail. Used by the cache-integrity
+   * resolution actions (prune_all / prune_selected). Returns the count dropped.
+   */
+  dropRowsById(ids: string[]): number {
+    if (ids.length === 0) return 0;
+    const drop = this.db.transaction((toDrop: string[]) => {
+      let n = 0;
+      for (const id of toDrop) {
+        this.stmts.deleteTailById.run(id);
+        this.stmts.deleteMessageIndex.run(id);
+        n += this.stmts.deleteById.run(id).changes;
+      }
+      return n;
+    });
+    const dropped = drop(ids);
+    if (this.fileIndexLoaded) {
+      for (const id of ids) {
+        for (const [fp, cid] of this.fileIndex) {
+          if (cid === id) {
+            this.fileIndex.delete(fp);
+            break;
+          }
+        }
+      }
+    }
+    return dropped;
+  }
+
+  /**
+   * Wipe all cached conversation state — meta, tails, and message index — and
+   * reset the in-memory file index. Only called by the `reset_rescan`
+   * resolution action, which repopulates from a fresh disk scan afterward.
+   */
+  clearAll(): void {
+    this.db.transaction(() => {
+      this.stmts.deleteTailAll.run();
+      this.stmts.deleteAll.run();
+      this.db.exec("DELETE FROM conversation_message_index");
+    })();
+    this.fileIndex = new Map();
   }
 }
