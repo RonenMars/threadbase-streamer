@@ -8,7 +8,6 @@ import {
   utimesSync,
   writeFileSync,
 } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import WebSocket from "ws";
@@ -35,16 +34,14 @@ const FIXTURE_PROFILES = [
 // first in each StreamerServer config so a test-specific override still wins.
 const HOST_ISOLATION = { codexRoots: [] as string[], scannerPersistent: false };
 
-// Use a random available port for each test
+// Ask the kernel for an ephemeral port at bind time. Probing for a free port
+// up front and releasing it is a TOCTOU race: test files run in parallel, so
+// another server can take the port between the probe's close() and our
+// listen(), producing a flaky EADDRINUSE. Callers pass 0 to listen() and read
+// the real port back off `srv.port`.
+const EPHEMERAL_PORT = 0;
 async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
+  return EPHEMERAL_PORT;
 }
 
 const API_KEY = "tb_test_key_for_integration_tests";
@@ -57,7 +54,6 @@ describe("StreamerServer", () => {
 
   beforeEach(async () => {
     port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     cacheDir = mkdtempSync(join(tmpdir(), "threadbase-server-test-"));
     server = new StreamerServer({
       ...HOST_ISOLATION,
@@ -70,6 +66,8 @@ describe("StreamerServer", () => {
       scanProfiles: FIXTURE_PROFILES,
     });
     await server.listen(port);
+    port = server.port;
+    baseUrl = `http://localhost:${port}`;
   });
 
   afterEach(async () => {
@@ -258,6 +256,7 @@ describe("StreamerServer", () => {
         scanProfiles: FIXTURE_PROFILES,
       });
       await server.listen(port);
+      port = server.port;
     });
 
     afterEach(() => {
@@ -389,7 +388,6 @@ describe("StreamerServer", () => {
 
     beforeEach(async () => {
       boundPort = await getRandomPort();
-      boundBaseUrl = `http://localhost:${boundPort}`;
       browseRoot = mkdtempSync(join(tmpdir(), "threadbase-browse-test-"));
       mkdirSync(join(browseRoot, "project"));
       codexRoot = mkdtempSync(join(tmpdir(), "threadbase-codex-root-"));
@@ -408,6 +406,8 @@ describe("StreamerServer", () => {
         codexRoots: [codexRoot],
       });
       await boundServer.listen(boundPort);
+      boundPort = boundServer.port;
+      boundBaseUrl = `http://localhost:${boundPort}`;
     });
 
     afterEach(async () => {
@@ -1206,16 +1206,30 @@ describe("StreamerServer", () => {
         lastOutput: "",
       }) as any;
 
-    async function subscribeAndClose(srv: StreamerServer, srvPort: number): Promise<void> {
-      const ws = new WebSocket(`ws://localhost:${srvPort}/ws?key=${API_KEY}`);
+    // Poll for a condition instead of sleeping a fixed interval: a WS message
+    // round-trip has no fixed upper bound, so a flat 50 ms wait fails under
+    // load (parallel test files on a busy machine).
+    async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (!cond()) {
+        if (Date.now() > deadline) return;
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    }
+
+    async function subscribeAndClose(srv: StreamerServer): Promise<void> {
+      const ws = new WebSocket(`ws://localhost:${srv.port}/ws?key=${API_KEY}`);
       await new Promise<void>((r) => ws.on("open", () => r()));
       ws.send(JSON.stringify({ type: "subscribe_session", sessionId: SID }));
-      // let the server register the subscriber before we disconnect
-      await new Promise((r) => setTimeout(r, 50));
+      // wait for the server to register the subscriber before we disconnect
+      await waitFor(() => (srv as any).sessionSubscribers.has(SID));
       expect((srv as any).sessionSubscribers.has(SID)).toBe(true);
       ws.close();
-      // let handleWsClose run
-      await new Promise((r) => setTimeout(r, 50));
+      // wait for handleWsClose to run. It removes this ws from the session's
+      // subscriber set (the set itself is left in place either way), so an
+      // emptied set is the signal that the close path has completed —
+      // regardless of whether a grace timer was armed.
+      await waitFor(() => ((srv as any).sessionSubscribers.get(SID)?.size ?? 0) === 0);
     }
 
     it("does NOT arm a grace timer on disconnect when grace is 0", async () => {
@@ -1233,7 +1247,7 @@ describe("StreamerServer", () => {
       });
       await srv.listen(p);
       try {
-        await subscribeAndClose(srv, p);
+        await subscribeAndClose(srv);
         expect((srv as any).ptyGraceTimers.has(SID)).toBe(false);
       } finally {
         await srv.close();
@@ -1255,7 +1269,7 @@ describe("StreamerServer", () => {
       });
       await srv.listen(p);
       try {
-        await subscribeAndClose(srv, p);
+        await subscribeAndClose(srv);
         expect((srv as any).ptyGraceTimers.has(SID)).toBe(true);
         // clean up the armed timer so it can't fire after teardown
         const t = (srv as any).ptyGraceTimers.get(SID);
@@ -1283,10 +1297,10 @@ describe("StreamerServer", () => {
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
       vi.spyOn((srv as any).sessionStore, "get").mockReturnValue(mkSession("waiting_input"));
       try {
-        const ws = new WebSocket(`ws://localhost:${p}/ws?key=${API_KEY}`);
+        const ws = new WebSocket(`ws://localhost:${srv.port}/ws?key=${API_KEY}`);
         await new Promise<void>((r) => ws.on("open", () => r()));
         ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
-        await new Promise((r) => setTimeout(r, 50));
+        await waitFor(() => holdSpy.mock.calls.length > 0);
         expect(holdSpy).toHaveBeenCalledWith(SID);
         ws.close();
       } finally {
@@ -1571,6 +1585,7 @@ describe("StreamerServer", () => {
         scanProfiles: FIXTURE_PROFILES,
       });
       await localServer.listen(localPort);
+      localPort = localServer.port;
     });
 
     afterEach(async () => {
@@ -1691,6 +1706,7 @@ describe("StreamerServer", () => {
         ],
       });
       await growServer.listen(growPort);
+      growPort = growServer.port;
     });
 
     afterEach(async () => {
@@ -1812,7 +1828,7 @@ describe("StreamerServer", () => {
       try {
         await pageServer.listen(port);
         const res = await fetch(
-          `http://localhost:${port}/api/conversations/${convId}?msg_limit=37&before_index=211`,
+          `http://localhost:${pageServer.port}/api/conversations/${convId}?msg_limit=37&before_index=211`,
           { headers: { Authorization: `Bearer ${API_KEY}` } },
         );
         expect(res.status).toBe(200);
@@ -1884,6 +1900,7 @@ describe("StreamerServer", () => {
         ],
       });
       await etagServer.listen(etagPort);
+      etagPort = etagServer.port;
     });
 
     afterEach(async () => {
@@ -2043,6 +2060,7 @@ describe("StreamerServer", () => {
         codexRoots: [],
       });
       await refreshServer.listen(refreshPort);
+      refreshPort = refreshServer.port;
     });
 
     afterEach(async () => {
@@ -2170,6 +2188,7 @@ describe("StreamerServer", () => {
         ],
       });
       await availServer.listen(availPort, { awaitReady: true });
+      availPort = availServer.port;
     });
 
     afterEach(async () => {
@@ -2302,6 +2321,7 @@ describe("StreamerServer", () => {
         ],
       });
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       expect(scanCalls).toContainEqual({ persistent: false, hasStatCache: true });
     });
@@ -2340,6 +2360,7 @@ describe("StreamerServer", () => {
       });
       // awaitReady → warm-up scan finishes (and is adopted) before we continue.
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       // Spy AFTER warm-up so the count is scoped to post-warm-up scans only.
       // (The prototype spy is process-global, so baselining here avoids
@@ -2392,6 +2413,7 @@ describe("StreamerServer", () => {
       });
       // awaitReady → warm-up scan finishes and is adopted before we continue.
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       // Spy AFTER warm-up so the count is scoped to the request below — a full
       // rescan on the detail path while stale would show up here as scan() calls.
@@ -2440,6 +2462,7 @@ describe("StreamerServer", () => {
         ],
       });
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       const srv = reuseServer as unknown as {
         scannerStale: boolean;
@@ -2507,6 +2530,7 @@ describe("StreamerServer", () => {
         ],
       });
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       const srv = reuseServer as unknown as {
         isConversationSnapshotStale: (conv: unknown) => boolean;
@@ -2569,6 +2593,7 @@ describe("StreamerServer", () => {
         ],
       });
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       const srv = reuseServer as unknown as {
         isConversationSnapshotStale: (conv: unknown) => boolean;
@@ -2615,6 +2640,7 @@ describe("StreamerServer", () => {
         ],
       });
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       const srv = reuseServer as unknown as {
         isConversationSnapshotStale: (conv: unknown) => boolean;
@@ -2701,6 +2727,7 @@ describe("StreamerServer", () => {
       });
       // awaitReady → warm-up scan populates the cache with the one conversation.
       await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
 
       // Spy AFTER warm-up: the background reconcile fires a scan() (fire-and-
       // forget), but the request must RESOLVE before that scan finishes. Gate
