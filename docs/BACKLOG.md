@@ -43,15 +43,9 @@ The comment in `runProdLogs` (*"Removing the inode would leave the daemon writin
 
 ---
 
-## `bootstrapAgent` false-positive on exit-5 + empty stderr
+## `bootstrapAgent` false-positive on exit-5 + empty stderr — FIXED
 
-**Symptom:** Rare — `tb-streamer prod restart` reports success even though the new build is not actually loaded (the old / stale agent is). Hard to spot without `prod doctor`.
-
-**Root cause:** `src/lifecycle/launchd.ts:67-68` accepts `exit 5 + empty stderr` as success whenever `isAgentLoaded()` returns true. But `isAgentLoaded()` only confirms *something* with label `LAUNCHD_LABEL` is loaded — it does not check that the plist on disk matches what's running. If a stale incarnation is loaded and `launchctl bootstrap` fails with exit 5 / empty stderr for an unrelated reason (e.g. malformed new plist on a newer launchctl), this branch swallows the failure.
-
-In practice `prod restart` calls `bootoutAgent` first (which now polls), so the loaded state is empty by the time `bootstrapAgent` runs and this branch is unreachable on the happy path. The regression risk exists for any standalone caller.
-
-**Suggested fix:** Tighten the empty-stderr fallback to require that bootout was *just* run (caller-provided flag), or fall through to throw in the standalone case. At minimum, downgrade the comment from "most often the same case" to acknowledge the false-positive risk and recommend `prod doctor` for verification.
+**Status:** Fixed — `bootstrapAgent` now requires `opts.afterBootout: true` to tolerate exit 5 + empty stderr. Callers that just ran `bootoutAgent()` pass the flag; standalone callers without the flag will throw on exit 5 + empty stderr. Tests added in `__tests__/lifecycle/launchd.test.ts`.
 
 ---
 

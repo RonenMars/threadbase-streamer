@@ -10,8 +10,12 @@ export interface Supervisor {
    * Re-load the supervised service from its on-disk definition.
    * macOS: `launchctl bootstrap gui/<uid> <plist>` — `specPath` is the plist path.
    * Windows: `Enable-ScheduledTask` — `specPath` is ignored (the task is already registered).
+   *
+   * @param opts.afterBootout - If true, tolerate exit 5 + empty stderr when
+   *   isAgentLoaded() is true. Set this when calling bootstrap immediately
+   *   after bootoutAgent() where the "already loaded" race is benign.
    */
-  bootstrapAgent(specPath: string): void;
+  bootstrapAgent(specPath: string, opts?: { afterBootout?: boolean }): void;
   /** Restart the service (stop+start). */
   kickstartAgent(): void;
   /** PID of the running supervised service, or null. */
