@@ -47,6 +47,18 @@ async function getRandomPort(): Promise<number> {
   });
 }
 
+// Poll for an async condition instead of guessing a fixed delay. A WebSocket
+// subscribe/close round-trip takes 200-300ms+ under CPU load (whole-suite
+// runs), so the old fixed 50ms waits raced and made the grace-timer tests flaky.
+async function waitFor(predicate: () => boolean, ms = 3000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error("waitFor timed out");
+}
+
 const API_KEY = "tb_test_key_for_integration_tests";
 
 describe("StreamerServer", () => {
@@ -1206,16 +1218,23 @@ describe("StreamerServer", () => {
         lastOutput: "",
       }) as any;
 
+    // The SID subscriber set is non-empty once addSessionSubscriber has run,
+    // and back to empty once handleWsClose has processed the disconnect (which
+    // is where the grace-timer arming decision is made synchronously).
+    const subscriberCount = (srv: StreamerServer) =>
+      (srv as any).sessionSubscribers.get(SID)?.size ?? 0;
+
     async function subscribeAndClose(srv: StreamerServer, srvPort: number): Promise<void> {
       const ws = new WebSocket(`ws://localhost:${srvPort}/ws?key=${API_KEY}`);
       await new Promise<void>((r) => ws.on("open", () => r()));
       ws.send(JSON.stringify({ type: "subscribe_session", sessionId: SID }));
-      // let the server register the subscriber before we disconnect
-      await new Promise((r) => setTimeout(r, 50));
+      // Wait for the server to register the subscriber before we disconnect.
+      await waitFor(() => subscriberCount(srv) > 0);
       expect((srv as any).sessionSubscribers.has(SID)).toBe(true);
       ws.close();
-      // let handleWsClose run
-      await new Promise((r) => setTimeout(r, 50));
+      // Wait for handleWsClose to process the disconnect (subscriber removed),
+      // which also makes its grace-timer arming decision in the same handler.
+      await waitFor(() => subscriberCount(srv) === 0);
     }
 
     it("does NOT arm a grace timer on disconnect when grace is 0", async () => {
@@ -1286,7 +1305,8 @@ describe("StreamerServer", () => {
         const ws = new WebSocket(`ws://localhost:${p}/ws?key=${API_KEY}`);
         await new Promise<void>((r) => ws.on("open", () => r()));
         ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
-        await new Promise((r) => setTimeout(r, 50));
+        // Wait for the server to process hold_session rather than guessing.
+        await waitFor(() => holdSpy.mock.calls.length > 0);
         expect(holdSpy).toHaveBeenCalledWith(SID);
         ws.close();
       } finally {
