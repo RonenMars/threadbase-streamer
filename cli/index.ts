@@ -118,6 +118,20 @@ program
     const isProdInvocation = opts.prod === true || process.ppid === 1;
     if (!isProdInvocation) appendDevSessionMarker();
 
+    // On macOS, check for conflicting Threadbase streamer agents (Homebrew vs
+    // deploy.sh). If a conflict is detected, warn and let the user resolve it
+    // — the port-in-use check downstream will still catch EADDRINUSE, but
+    // surfacing the root cause upfront is clearer.
+    if (process.platform === "darwin") {
+      const { detectConflictingAgents, formatConflictMessage } = await import(
+        "../src/lifecycle/conflict-check"
+      );
+      const conflicts = detectConflictingAgents();
+      if (conflicts.length > 0) {
+        log.warn(formatConflictMessage(conflicts), undefined, "console");
+      }
+    }
+
     // First-run interactive prompt for permission mode. Only fires for a human
     // dev invocation (never under --prod/launchd, which must never block on
     // stdin) on a real TTY, when the mode isn't already pinned by --flag or a

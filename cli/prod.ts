@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { Command } from "commander";
 import { Command as CommanderCommand } from "commander";
+import { detectConflictingAgents } from "../src/lifecycle/conflict-check";
 import { TASK_NAME } from "../src/lifecycle/constants";
 import { darwinPlistPath } from "../src/lifecycle/launchd";
 import { clearMarker, readMarker } from "../src/lifecycle/marker";
@@ -104,6 +105,20 @@ export async function runProdDoctor(opts: { fix: boolean }): Promise<DoctorRepor
 
   if (!getSupervisor().isAgentLoaded()) {
     findings.push("launchd agent is not loaded — prod is fully down");
+  }
+
+  // Detect conflicting Threadbase streamer agents (Homebrew vs deploy.sh)
+  const conflicts = detectConflictingAgents();
+  for (const c of conflicts) {
+    if (c.resolution === "uninstall-homebrew") {
+      findings.push(
+        `conflicting agent: ${c.label} — run: brew services stop tb-streamer && brew uninstall tb-streamer`,
+      );
+    } else {
+      findings.push(
+        `conflicting agent: ${c.label} — run: launchctl bootout gui/$(id -u)/${c.label}`,
+      );
+    }
   }
 
   return { findings, repairs };
