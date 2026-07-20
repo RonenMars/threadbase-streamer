@@ -51,6 +51,7 @@ describe("PTYManager — AskUserQuestion screen menu open → close", () => {
 
     expect(opened).toHaveLength(1);
     expect(opened[0][0].question).toBe("Which area are you focused on?");
+    mgr.dispose();
   });
 
   it("treats an AskUserQuestion menu as a question even when an OSC-777 notify fired (footer wins)", async () => {
@@ -84,6 +85,7 @@ describe("PTYManager — AskUserQuestion screen menu open → close", () => {
         (g as { options: { label: string }[] }).options.some((o) => o.label === "macOS / Chrome"),
     );
     expect(gateWithMenuOptions).toBeUndefined();
+    mgr.dispose();
   });
 
   it("fires onLiveQuestionGone once the menu is answered and the prompt marker returns", async () => {
@@ -108,6 +110,7 @@ describe("PTYManager — AskUserQuestion screen menu open → close", () => {
     await settle();
 
     expect(goneCount).toBe(1);
+    mgr.dispose();
   });
 
   it("does not fire onLiveQuestionGone if no menu was ever shown", async () => {
@@ -124,6 +127,7 @@ describe("PTYManager — AskUserQuestion screen menu open → close", () => {
     await settle();
 
     expect(goneCount).toBe(0);
+    mgr.dispose();
   });
 });
 
@@ -148,5 +152,6 @@ describe("PTYManager — AskUserQuestion submit confirmation surfaces as a card"
     expect(opened).toHaveLength(1);
     expect(opened[0][0].question).toBe("Ready to submit your answers?");
     expect(opened[0][0].options.map((o) => o.label)).toEqual(["Submit answers", "Cancel"]);
+    mgr.dispose();
   });
 });
