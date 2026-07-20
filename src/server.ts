@@ -216,6 +216,8 @@ export class StreamerServer {
   private ptyGracePeriodMs: number;
   private defaultSystemPrompt: string;
   private defaultPermissionMode: "acceptEdits" | "manual";
+  private defaultModel: string;
+  private defaultEffort: "low" | "medium" | "high" | "xhigh" | "max";
   // Map of sessionId → grace timer; fires to kill PTY after WS disconnect
   private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Map of sessionId → set of subscribed WS clients
@@ -271,6 +273,8 @@ export class StreamerServer {
     this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.defaultPermissionMode =
       config.defaultPermissionMode ?? loadDefaultPermissionMode() ?? "acceptEdits";
+    this.defaultModel = config.defaultModel ?? "sonnet";
+    this.defaultEffort = config.defaultEffort ?? "low";
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
     this.directoryDebounceMs =
@@ -2527,6 +2531,8 @@ export class StreamerServer {
       projectName: body.projectName,
       branch: body.branch,
       permissionMode: this.defaultPermissionMode,
+      model: this.defaultModel,
+      effort: this.defaultEffort,
     });
 
     this.sessionStore.addManaged(session);
@@ -2943,6 +2949,8 @@ export class StreamerServer {
       projectName,
       branch,
       permissionMode: this.defaultPermissionMode,
+      model: this.defaultModel,
+      effort: this.defaultEffort,
     });
 
     this.sessionStore.addManaged(session);
@@ -3025,6 +3033,8 @@ export class StreamerServer {
         projectName: body.projectName,
         systemPrompt: systemPromptParts.join("\n"),
         permissionMode: this.defaultPermissionMode,
+        model: this.defaultModel,
+        effort: this.defaultEffort,
       });
 
       this.sessionStore.addManaged(session);

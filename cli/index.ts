@@ -47,6 +47,14 @@ program
     "Claude Code permission mode for spawned sessions: acceptEdits (auto-approve file edits, default) or manual (prompt for everything). Falls back to default_permission_mode: in ~/.threadbase/server.yaml, or a first-run interactive prompt on a human TTY invocation (skip with THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true).",
   )
   .option(
+    "--default-model <model>",
+    "Claude Code --model for spawned sessions (alias like 'sonnet'/'opus' or a full model name). Default: sonnet.",
+  )
+  .option(
+    "--default-effort <level>",
+    "Claude Code --effort for spawned sessions: low, medium, high, xhigh, or max. Default: low.",
+  )
+  .option(
     "--pty-grace-period-ms <ms>",
     "Ms to keep a PTY alive after the last WebSocket subscriber disconnects before auto-holding it (default 270000, 4.5 min). 0 disables auto-hold entirely (an explicit hold_session still works). Falls back to pty_grace_period_ms: in ~/.threadbase/server.yaml.",
   )
@@ -86,6 +94,15 @@ program
     ) {
       log.error(
         `Invalid --default-permission-mode: ${opts.defaultPermissionMode}`,
+        undefined,
+        "console",
+      );
+      process.exit(1);
+    }
+    const validEfforts = ["low", "medium", "high", "xhigh", "max"];
+    if (opts.defaultEffort !== undefined && !validEfforts.includes(opts.defaultEffort)) {
+      log.error(
+        `Invalid --default-effort: ${opts.defaultEffort} (expected one of ${validEfforts.join(", ")})`,
         undefined,
         "console",
       );
@@ -188,6 +205,8 @@ program
       browseRoot: opts.browseRoot,
       publicUrl: opts.publicUrl,
       defaultPermissionMode: resolvedDefaultPermissionMode,
+      defaultModel: opts.defaultModel,
+      defaultEffort: opts.defaultEffort,
       ptyGracePeriodMs,
     });
 
