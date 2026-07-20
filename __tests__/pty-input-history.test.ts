@@ -51,6 +51,7 @@ describe("PTYManager — user message input history", () => {
     expect(typeof history[0].ts).toBe("number");
     expect(events.map((e) => e.text)).toEqual(["hello world"]);
     expect(events[0].ts).toBe(history[0].ts);
+    mgr.dispose();
   });
 
   it("caps inputHistory at 50 entries, dropping oldest", async () => {
@@ -67,6 +68,7 @@ describe("PTYManager — user message input history", () => {
     expect(history).toHaveLength(50);
     expect(history[0].text).toBe("msg-5");
     expect(history[49].text).toBe("msg-54");
+    mgr.dispose();
   });
 
   it("does not record sendKeys (raw keystrokes are not messages)", async () => {
@@ -80,6 +82,7 @@ describe("PTYManager — user message input history", () => {
 
     expect(mgr.getInputHistory(session.id)).toHaveLength(0);
     expect(events).toHaveLength(0);
+    mgr.dispose();
   });
 
   it("records queued input once flushed on ready", async () => {
@@ -98,6 +101,7 @@ describe("PTYManager — user message input history", () => {
 
     expect(mgr.getInputHistory(session.id).map((m) => m.text)).toEqual(["queued message"]);
     expect(events).toEqual(["queued message"]);
+    mgr.dispose();
   });
 
   it("returns an empty history for an unknown session", () => {

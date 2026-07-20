@@ -69,6 +69,7 @@ describe("PTYManager — ready detection", () => {
 
     expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
     expect(ready).toHaveLength(1);
+    mgr.dispose();
   });
 
   it("detects ❯ marker when ╭ is absent (MCP splash variant)", async () => {
@@ -86,6 +87,7 @@ describe("PTYManager — ready detection", () => {
     expect(MCP_SPLASH_BOOT.includes("╭")).toBe(false);
     expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
     expect(ready).toHaveLength(1);
+    mgr.dispose();
   });
 
   it("flushes queued input once ❯ marker fires", async () => {
@@ -112,6 +114,7 @@ describe("PTYManager — ready detection", () => {
 
       vi.advanceTimersByTime(20);
       expect(proc.write).toHaveBeenCalledWith("\r");
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -142,6 +145,7 @@ describe("PTYManager — ready detection", () => {
       expect(proc.write).toHaveBeenCalledWith("\x1b[200~hello\x1b[201~");
       vi.advanceTimersByTime(20);
       expect(proc.write).toHaveBeenCalledWith("\r");
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -182,6 +186,7 @@ describe("PTYManager — ready detection", () => {
       vi.advanceTimersByTime(20);
       expect(proc.write).toHaveBeenCalledTimes(2);
       expect(proc.write).toHaveBeenLastCalledWith("\r");
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -220,6 +225,7 @@ describe("PTYManager — ready detection", () => {
       vi.advanceTimersByTime(16);
       expect(proc.write).toHaveBeenCalledTimes(2);
       expect(proc.write).toHaveBeenLastCalledWith("\r");
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -248,6 +254,7 @@ describe("PTYManager — ready detection", () => {
       }
       expect(proc.write).toHaveBeenCalledTimes(2);
       expect(proc.write).toHaveBeenLastCalledWith("\r");
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -266,6 +273,7 @@ describe("PTYManager — ready detection", () => {
     // onReady should only have fired once — pendingReady was cleared after
     // the first match.
     expect(ready).toHaveLength(1);
+    mgr.dispose();
   });
 
   it("flushes queued input via quiet-timeout when the PTY goes silent (no marker, no further chunk)", async () => {
@@ -298,6 +306,7 @@ describe("PTYManager — ready detection", () => {
       expect(proc.write).toHaveBeenCalledWith("\x1b[200~hello\x1b[201~");
       vi.advanceTimersByTime(20);
       expect(proc.write).toHaveBeenCalledWith("\r");
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -325,6 +334,7 @@ describe("PTYManager — ready detection", () => {
       // Now let it actually go quiet — the debounce should fire from here.
       vi.advanceTimersByTime(500);
       expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -366,6 +376,7 @@ describe("PTYManager — resume input queueing", () => {
       expect(proc.write).toHaveBeenCalledWith("\r");
       // onReady fires exactly once, after the marker — not at spawn.
       expect(ready).toHaveLength(1);
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -398,6 +409,7 @@ describe("PTYManager — resume input queueing", () => {
       expect(proc.write.mock.calls[1][0]).toBe("\r");
       expect(proc.write.mock.calls[2][0]).toBe("\x1b[200~second\x1b[201~");
       expect(proc.write.mock.calls[3][0]).toBe("\r");
+      mgr.dispose();
     } finally {
       vi.useRealTimers();
     }
@@ -428,6 +440,7 @@ describe("PTYManager — spawn permission flags", () => {
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
     expect(args).toContain("--session-id");
     expect(args).not.toContain("--dangerously-skip-permissions");
+    mgr.dispose();
   });
 
   it("resume (start) spawns with --permission-mode acceptEdits, not --dangerously-skip-permissions", async () => {
@@ -442,6 +455,7 @@ describe("PTYManager — spawn permission flags", () => {
     expect(args).toContain("--permission-mode");
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("acceptEdits");
     expect(args).not.toContain("--dangerously-skip-permissions");
+    mgr.dispose();
   });
 
   it("startFresh honors an explicit permissionMode override", async () => {
@@ -454,6 +468,7 @@ describe("PTYManager — spawn permission flags", () => {
     const args = spawnArgs();
 
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("manual");
+    mgr.dispose();
   });
 
   it("resume (start) honors an explicit permissionMode override", async () => {
@@ -467,5 +482,6 @@ describe("PTYManager — spawn permission flags", () => {
     const args = spawnArgs();
 
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("manual");
+    mgr.dispose();
   });
 });

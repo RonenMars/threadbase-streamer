@@ -52,6 +52,7 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
       { index: 1, label: "Yes", answerKeys: "y\r" },
       { index: 2, label: "No", answerKeys: "n\r" },
     ]);
+    mgr.dispose();
   });
 
   it("does not re-broadcast the same prompt on a repaint (de-dupe by content)", async () => {
@@ -68,6 +69,7 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
     await settle();
 
     expect(gates.filter((g) => g && g.options.length === 2)).toHaveLength(1);
+    mgr.dispose();
   });
 
   it("clears the card (permission null) once Claude's prompt marker returns", async () => {
@@ -85,6 +87,7 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
     await settle();
 
     expect(gates[gates.length - 1]).toBeNull();
+    mgr.dispose();
   });
 
   it("ignores a real permission gate here (OSC-777 path owns it)", async () => {
@@ -103,5 +106,6 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
 
     const gate = gates.find((g) => g && g.options.length > 0);
     expect(gate?.options.every((o) => o.answerKeys === undefined)).toBe(true);
+    mgr.dispose();
   });
 });

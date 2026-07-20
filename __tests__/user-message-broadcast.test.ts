@@ -69,6 +69,7 @@ describe("user_message broadcast + terminal_replay userMessages", () => {
     expect(typeof (msgs[0] as any).ts).toBe("number");
 
     hub.dispose();
+    mgr.dispose();
   });
 
   it("includes userMessages in the terminal_replay payload sourced from input history", async () => {
@@ -92,5 +93,6 @@ describe("user_message broadcast + terminal_replay userMessages", () => {
 
     expect(replay.type).toBe("terminal_replay");
     expect(userMessages.map((m) => m.text)).toEqual(["first", "second"]);
+    mgr.dispose();
   });
 });

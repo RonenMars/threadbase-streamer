@@ -60,6 +60,7 @@ describe("PTYManager.getOutputLines()", () => {
     const lines = await mgr.getOutputLines(session.id, 3);
     expect(lines.length).toBe(3);
     expect(lines).toEqual(["line3", "line4", "line5"]);
+    mgr.dispose();
   });
 
   it("renders absolute cursor positioning in screen order, not byte order", async () => {
@@ -81,6 +82,7 @@ describe("PTYManager.getOutputLines()", () => {
 
     const lines = await mgr.getOutputLines(session.id, 3);
     expect(lines).toEqual(["first", "second", "third"]);
+    mgr.dispose();
   });
 
   it("clears the screen on ESC[2J so stale rows do not leak into the replay", async () => {
@@ -101,6 +103,7 @@ describe("PTYManager.getOutputLines()", () => {
     const lines = await mgr.getOutputLines(session.id, 40);
     expect(lines).toContain("fresh-line");
     expect(lines).not.toContain("stale-line");
+    mgr.dispose();
   });
 
   it("caps at maxLines — never returns more than requested", async () => {
@@ -119,6 +122,7 @@ describe("PTYManager.getOutputLines()", () => {
 
     const lines = await mgr.getOutputLines(session.id, 200);
     expect(lines.length).toBeLessThanOrEqual(200);
+    mgr.dispose();
   });
 });
 
@@ -141,6 +145,7 @@ describe("PTYManager onReady callback", () => {
 
     expect(onReady).not.toHaveBeenCalled();
     expect(session.status).toBe("running");
+    mgr.dispose();
   });
 
   it("does NOT fire onReady after startFresh() — server fires it after rekeySession", async () => {
@@ -151,6 +156,7 @@ describe("PTYManager onReady callback", () => {
 
     expect(onReady).not.toHaveBeenCalled();
     expect(session.status).toBe("running");
+    mgr.dispose();
   });
 
   it("generates a UUID id in startFresh()", async () => {
@@ -162,6 +168,7 @@ describe("PTYManager onReady callback", () => {
     });
 
     expect(session.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    mgr.dispose();
   });
 
   it("does not fire onReady when callback is omitted", async () => {
@@ -170,6 +177,7 @@ describe("PTYManager onReady callback", () => {
     await expect(
       mgr.start("uuid-no-cb", { projectPath: "/tmp/test", projectName: "test" }),
     ).resolves.not.toThrow();
+    mgr.dispose();
   });
 });
 

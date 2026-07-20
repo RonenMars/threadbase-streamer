@@ -73,6 +73,7 @@ describe("CRITICAL #3 — concurrent resume must not double-spawn a PTY", () => 
     // Exactly one live PTY process should exist for the session. The current
     // code spawns two (and leaks the first).
     expect(spawnedProcs).toHaveLength(1);
+    mgr.dispose();
   });
 
   it("a second concurrent resume returns the same session — no orphan to corrupt the buffer", async () => {
@@ -96,5 +97,6 @@ describe("CRITICAL #3 — concurrent resume must not double-spawn a PTY", () => 
     spawnedProcs[0]._emit("data", "REAL-OUTPUT");
     await settle();
     expect(mgr.getOutput("conv-1")).toContain("REAL-OUTPUT");
+    mgr.dispose();
   });
 });
