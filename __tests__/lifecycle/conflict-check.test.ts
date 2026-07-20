@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(),
@@ -18,6 +18,16 @@ describe("conflict-check", () => {
   });
 
   describe("detectConflictingAgents", () => {
+    // The detector short-circuits to [] off macOS, so these tests must run as
+    // darwin regardless of the host platform (CI runs on Linux).
+    const realPlatform = process.platform;
+    beforeEach(() => {
+      Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+    });
+    afterEach(() => {
+      Object.defineProperty(process, "platform", { value: realPlatform, configurable: true });
+    });
+
     it("returns empty array on non-darwin platforms", () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32", configurable: true });
