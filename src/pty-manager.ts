@@ -915,6 +915,20 @@ export class PTYManager implements SessionRunner {
 
     if (this.pendingReady.has(sessionId)) {
       this.markReady(sessionId, session, "quiet:timeout");
+    } else {
+      // handleOutput() only checks the triggering chunk for a prompt marker,
+      // but Claude's TUI does differential repaints and doesn't always
+      // retransmit the box border once it's already drawn — so a
+      // mid-conversation return to idle can go undetected forever if the last
+      // chunk didn't happen to carry it. Re-derive readiness from the actual
+      // rendered screen instead of waiting for a chunk that may never come.
+      this.recheckReadyFromScreen(sessionId).catch((err) => {
+        this.log.warn("[pty.ready] screen recheck failed", {
+          event: "pty.ready_recheck_failed",
+          sessionId,
+          err,
+        });
+      });
     }
 
     this.detectLivePrompts(sessionId, "", session.lastOutput).catch((err) => {
@@ -924,6 +938,21 @@ export class PTYManager implements SessionRunner {
         err,
       });
     });
+  }
+
+  // Re-check the rendered screen (not just the last chunk) for a prompt
+  // marker. Only meaningful once pendingReady is already clear — the boot
+  // fallback above covers the first prompt after spawn/resume. Scoped to a
+  // full viewport (PTY_ROWS), not just the last few lines: "on screen" means
+  // whatever a user attached to this PTY would currently see.
+  private async recheckReadyFromScreen(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (session?.status !== "running") return;
+    const lines = await this.getOutputLines(sessionId, PTY_ROWS);
+    const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => lines.some((l) => l.includes(m)));
+    if (matchedMarker && session.status === "running") {
+      this.markReady(sessionId, session, `quiet:screen-marker:${matchedMarker}`);
+    }
   }
 
   // Transition a session from "running" to "waiting_input", clear pendingReady,
