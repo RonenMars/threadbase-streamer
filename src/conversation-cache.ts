@@ -18,6 +18,7 @@ import {
   isAgentFile,
   isAgentLine,
 } from "./services/conversations/isAgentConversation";
+import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
 import { fileIdentity, type LineSpan, splitCompleteLines } from "./utils/fileIdentity";
 
 export interface ConversationCacheOptions {
@@ -297,8 +298,19 @@ export class ConversationCache {
       ),
       // Batch equivalent of updateMeta: bumps message_count by N in one write
       // (used by updateFromLines so a burst of appended lines is one UPDATE).
+      // last_activity/last_message only move FORWARD: a batch whose newest line
+      // predates the stored last_activity (interleaved writers appending an older
+      // line) must not drag the metadata backward. message_count and updated_at
+      // still advance — a real message was appended and the row did change.
       updateMetaBatch: db.prepare(
-        "UPDATE conversation_meta SET message_count = message_count + @inc, last_activity = @last_activity, last_message = @last_message, updated_at = @updated_at WHERE id = @id",
+        `UPDATE conversation_meta SET
+           message_count = message_count + @inc,
+           last_activity = CASE WHEN @last_activity > IFNULL(last_activity, -1)
+                                THEN @last_activity ELSE last_activity END,
+           last_message  = CASE WHEN @last_activity > IFNULL(last_activity, -1)
+                                THEN @last_message ELSE last_message END,
+           updated_at    = @updated_at
+         WHERE id = @id`,
       ),
       insertSkeleton: db.prepare(
         "INSERT OR IGNORE INTO conversation_meta (id, file_path, message_count, updated_at) VALUES (?, ?, 1, ?)",
@@ -927,7 +939,9 @@ export class ConversationCache {
     if (this.fileIndexLoaded) return;
     const rows = this.stmts.allFilePaths.all() as Array<{ id: string; file_path: string }>;
     for (const row of rows) {
-      this.fileIndex.set(row.file_path, row.id);
+      // Key by the canonical path so a native-separator lookup (chokidar) hits
+      // the same entry a forward-slash scanner row wrote (P1.a).
+      this.fileIndex.set(canonicalizeFilePath(row.file_path), row.id);
     }
     this.fileIndexLoaded = true;
   }
@@ -951,19 +965,23 @@ export class ConversationCache {
 
     this.ensureFileIndex();
 
+    // Canonicalize so a native-separator path (chokidar) keys the same cache row
+    // as the scanner's forward-slash file_path (P1.a).
+    const key = canonicalizeFilePath(filePath);
+
     // Skip lines that carry neither a message nor project context — there's
     // nothing for us to record.
     if (!isMessage && !line.cwd && !line.slug) return;
 
-    let convId = this.fileIndex.get(filePath);
+    let convId = this.fileIndex.get(key);
     if (!convId) {
       const pseudoId =
-        filePath
+        key
           .split(/[/\\]/)
           .pop()
-          ?.replace(/\.jsonl$/, "") ?? filePath;
-      this.stmts.insertSkeleton.run(pseudoId, filePath, 0);
-      this.fileIndex.set(filePath, pseudoId);
+          ?.replace(/\.jsonl$/, "") ?? key;
+      this.stmts.insertSkeleton.run(pseudoId, key, 0);
+      this.fileIndex.set(key, pseudoId);
       convId = pseudoId;
     }
 
@@ -1017,7 +1035,8 @@ export class ConversationCache {
    * updateFromLine in order: the agent filter short-circuits the whole batch,
    * project context is backfilled last-wins, message_count increases by the
    * number of surviving message lines, and last_activity/last_message reflect
-   * the final message line.
+   * the newest message line by timestamp (a monotonic guard keeps them from
+   * moving backward when an interleaved writer appends an older line — P0.3).
    */
   updateFromLines(filePath: string, rawLines: string[]): void {
     // Classify all lines first (outside the transaction). A single watched
@@ -1077,8 +1096,15 @@ export class ConversationCache {
       const contentBlocks = normalizeContent(line.message?.content ?? line.content);
       const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
       msgCount += 1;
-      lastActivityMs = activityMs;
-      lastMessage = JSON.stringify({ role, timestamp, text });
+      // last_activity/last_message track the NEWEST message by timestamp, not the
+      // last line in byte order. Interleaved writers can append an older line
+      // after a newer one; taking byte-order-last would move last_activity
+      // backward and corrupt list ordering / staleness comparisons. The tail
+      // below stays in byte order (unsorted) by design.
+      if (lastActivityMs === null || activityMs > lastActivityMs) {
+        lastActivityMs = activityMs;
+        lastMessage = JSON.stringify({ role, timestamp, text });
+      }
       newTail.push({ role, timestamp, text, content: contentBlocks });
     }
 
@@ -1087,15 +1113,19 @@ export class ConversationCache {
 
     this.ensureFileIndex();
 
-    let convId = this.fileIndex.get(filePath);
+    // Canonicalize so a native-separator path (chokidar) keys the same cache row
+    // as the scanner's forward-slash file_path (P1.a).
+    const key = canonicalizeFilePath(filePath);
+
+    let convId = this.fileIndex.get(key);
     if (!convId) {
       const pseudoId =
-        filePath
+        key
           .split(/[/\\]/)
           .pop()
-          ?.replace(/\.jsonl$/, "") ?? filePath;
-      this.stmts.insertSkeleton.run(pseudoId, filePath, 0);
-      this.fileIndex.set(filePath, pseudoId);
+          ?.replace(/\.jsonl$/, "") ?? key;
+      this.stmts.insertSkeleton.run(pseudoId, key, 0);
+      this.fileIndex.set(key, pseudoId);
       convId = pseudoId;
     }
     const id = convId;
@@ -1152,6 +1182,10 @@ export class ConversationCache {
             ?.replace(/\.jsonl$/, "") ||
           m.id;
         const lastActivityMs = m.timestamp ? new Date(m.timestamp).getTime() : null;
+        // Store the canonical (forward-slash) path so live-tail / directory-event
+        // lookups by native separators hit this row (P1.a). statSync keeps the
+        // original path — the stat is a file-identity read, not a key.
+        const canonicalPath = canonicalizeFilePath(m.filePath);
         let mtimeMs: number | null = null;
         let fileSize: number | null = null;
         try {
@@ -1173,7 +1207,7 @@ export class ConversationCache {
         const scannerMetaJson = JSON.stringify(m);
         this.stmts.upsertFull.run({
           id,
-          file_path: m.filePath,
+          file_path: canonicalPath,
           project_path: m.projectPath ?? null,
           project_name: m.projectName ?? null,
           title: m.title ?? m.projectName ?? null,
@@ -1192,7 +1226,7 @@ export class ConversationCache {
           scanner_meta_json: scannerMetaJson,
         });
         this.stmts.updateScannerCache.run(mtimeMs, fileSize, scannerMetaJson, id);
-        if (this.fileIndexLoaded) this.fileIndex.set(m.filePath, id);
+        if (this.fileIndexLoaded) this.fileIndex.set(canonicalPath, id);
         upsertedIds.push(id);
       }
     });
@@ -1204,11 +1238,14 @@ export class ConversationCache {
   // by updateFromLine when a previously-cached file turns out to be an agent
   // JSONL.
   deleteByFilePath(filePath: string): boolean {
-    const row = this.stmts.getIdByFilePath.get(filePath) as { id: string } | undefined;
+    // Canonicalize so a native-separator path matches the forward-slash file_path
+    // and fileIndex key (P1.a).
+    const key = canonicalizeFilePath(filePath);
+    const row = this.stmts.getIdByFilePath.get(key) as { id: string } | undefined;
     if (!row) return false;
     this.stmts.deleteTailById.run(row.id);
     const result = this.stmts.deleteById.run(row.id);
-    this.fileIndex.delete(filePath);
+    this.fileIndex.delete(key);
     return result.changes > 0;
   }
 
@@ -1359,6 +1396,17 @@ export class ConversationCache {
     return map;
   }
 
+  /**
+   * Conversation id for a JSONL path, or null when no row exists yet. Resolves
+   * by file_path (NOT conversationIdForFile) so codex rollout files — named
+   * rollout-<ts>-<uuid>.jsonl, whose stem is not the row id — resolve correctly.
+   */
+  getIdByFilePath(filePath: string): string | null {
+    const key = canonicalizeFilePath(filePath);
+    const row = this.stmts.getIdByFilePath.get(key) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
   getMetaById(id: string): ConversationListItem | null {
     const row = this.stmts.getFullById.get(id) as MetaRow | undefined;
     if (!row) return null;
@@ -1477,22 +1525,27 @@ export class ConversationCache {
   /**
    * Drop the cached row for a file. Two callers with opposite intent:
    *  - a directory-watch "change" event (the file was appended to) — pass
-   *    `skipIfTailed: true`. A cached tail means the row is being actively
-   *    maintained from the file's real content by the live-tail
-   *    (updateFromLines) or warm-up path, fresher than any scanner-derived
-   *    view. Both watchers fire on the same append with no ordering guarantee;
-   *    without this guard the invalidate can land after the tail write and wipe
-   *    the just-cached row, flickering the conversation out of
-   *    /api/conversations on nearly every message (CRITICAL #2). The debounced
-   *    rescan still re-derives metadata, so skipping the eager drop loses
-   *    nothing.
+   *    `skipIfTailed: true`, which NEVER deletes (upsert-or-leave). A change
+   *    event fires on every external append; deleting here flickers the
+   *    conversation out of /api/conversations — whether it's a live-tailed row
+   *    the updateFromLines/warm-up path just wrote (CRITICAL #2; both watchers
+   *    fire on the same append with no ordering guarantee) OR a refresh-created
+   *    untailed row (a ?refresh=1 upsert never populates a tail, so the old
+   *    "delete when untailed" behavior made it vanish on its next append with no
+   *    client action). The live-tail path owns the row's content and the
+   *    debounced rescan re-derives metadata, so leaving the row loses nothing.
    *  - a genuine unlink (the file is gone) — leave `skipIfTailed` false so the
    *    row is always removed, otherwise a deleted session ghosts in the cache.
    */
   invalidateByFilePath(filePath: string, opts?: { skipIfTailed?: boolean }): string | null {
-    const row = this.stmts.getIdByFilePath.get(filePath) as { id: string } | undefined;
+    // Canonicalize so a native-separator path (chokidar) matches the
+    // forward-slash file_path a scanner upsert wrote (P1.a).
+    const key = canonicalizeFilePath(filePath);
+    const row = this.stmts.getIdByFilePath.get(key) as { id: string } | undefined;
     if (!row) return null;
-    if (opts?.skipIfTailed && this.stmts.hasTail.get(row.id)) return null;
+    // Change path: never delete (upsert-or-leave). Only the unlink path (no opts)
+    // removes the row.
+    if (opts?.skipIfTailed) return null;
     this.invalidate(row.id);
     return row.id;
   }
