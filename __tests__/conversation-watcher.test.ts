@@ -301,4 +301,38 @@ describe("ConversationWatcher — poke (dead-handle self-heal)", () => {
     expect(w.poke("/proj/not-watched.jsonl")).toBe(false);
     w.dispose();
   });
+
+  // P1.a: watch() keys the map by the canonical (forward-slash) path so a
+  // directory event delivering the SAME file with native backslashes (chokidar
+  // on Windows) still resolves to the entry. Without this the poke self-heal is
+  // dead on Windows — the exact "watch keyed with the scanner posix path while
+  // the directory event delivers native" mismatch.
+  it("poke matches across separator styles (native dir-event path vs posix watch key)", async () => {
+    const onNewLines = vi.fn();
+    const w = new ConversationWatcher({ onNewLines });
+    w.watch("C:/Users/dev/proj/conv.jsonl");
+
+    fileBytes = "line-1\n";
+    // Directory watcher fires with the native form of the same file.
+    expect(w.poke("C:\\Users\\dev\\proj\\conv.jsonl")).toBe(true);
+    await flush();
+
+    expect(onNewLines).toHaveBeenCalledTimes(1);
+    expect(onNewLines.mock.calls[0][1]).toEqual(["line-1"]);
+    // The emitted path stays the ORIGINAL watch path — the offset index's stat
+    // identity depends on it, so only the map key is canonicalized.
+    expect(onNewLines.mock.calls[0][0]).toBe("C:/Users/dev/proj/conv.jsonl");
+    w.dispose();
+  });
+
+  it("unwatch matches across separator styles (P1.a)", () => {
+    const w = new ConversationWatcher();
+    w.watch("C:\\Users\\dev\\proj\\x.jsonl");
+    // A directory event / cleanup delivers the posix form; unwatch must find it.
+    w.unwatch("C:/Users/dev/proj/x.jsonl");
+    // The entry is gone regardless of which separator style is used to poke it.
+    expect(w.poke("C:\\Users\\dev\\proj\\x.jsonl")).toBe(false);
+    expect(w.poke("C:/Users/dev/proj/x.jsonl")).toBe(false);
+    w.dispose();
+  });
 });

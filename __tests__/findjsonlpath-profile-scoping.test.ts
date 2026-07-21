@@ -11,7 +11,7 @@
  * lived only under a custom profile root, so resume fell back to the scanner's
  * projectPath (or 400'd) instead of the JSONL's authoritative cwd.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,10 +72,16 @@ describe("findJsonlPath honors scanProfiles (degraded-mode resume)", () => {
     configDir = join(tmpBase, "profile");
     const projectDir = join(configDir, "projects", "-encoded-project-dir");
     mkdirSync(projectDir, { recursive: true });
+    const profileJsonl = join(projectDir, `${PROFILE_UUID}.jsonl`);
     writeFileSync(
-      join(projectDir, `${PROFILE_UUID}.jsonl`),
+      profileJsonl,
       `${JSON.stringify({ cwd: PROFILE_CWD, type: "user", message: "hi" })}\n`,
     );
+    // Age the JSONL beyond the resume busy-window so the collision probe treats
+    // this conversation as idle (resumable), not actively owned — this test
+    // exercises cwd resolution, not the busy check.
+    const idle = new Date(Date.now() - 30 * 60_000);
+    utimesSync(profileJsonl, idle, idle);
 
     // Point HOME at an EMPTY dir with no projects/ — so the OLD hardcoded
     // ~/.claude/projects would resolve to nothing and findJsonlPath would miss

@@ -178,12 +178,24 @@ async function getProcessInfoWindows(
 
 // ─── Shared Helpers ────────────────────────────────────────────────
 
-function extractResumeId(args: string): string | null {
-  const match = args.match(/--resume\s+(\S+)/);
-  return match?.[1] ?? null;
+// Pull the conversation id out of a command line. Handles the forms Claude Code
+// accepts — `--resume <id>`, `--resume=<id>`, and the `-r` short flag — and
+// refuses a value that is itself a flag: `claude --resume --model opus` has no
+// id, and capturing "--model" would surface a session under a garbage id.
+export function extractResumeId(args: string): string | null {
+  const eq = args.match(/(?:--resume|-r)=(\S+)/);
+  if (eq?.[1] && !eq[1].startsWith("-")) return eq[1];
+  const spaced = args.match(/(?:--resume|-r)\s+(\S+)/);
+  const candidate = spaced?.[1];
+  if (!candidate || candidate.startsWith("-")) return null;
+  return candidate;
 }
 
 async function readGitBranch(dir: string): Promise<string> {
+  // An empty cwd would make execFile inherit OUR working directory, so an
+  // unreadable process reported the streamer's own branch as if it were its own
+  // (observed live). No directory, no answer.
+  if (!dir) return "";
   try {
     return (
       await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, timeout: 3000 })
