@@ -198,6 +198,14 @@ export type CacheAlertResolveAction = "prune_all" | "prune_selected" | "ignore" 
 
 // ─── REST Response Shapes ──────────────────────────────────────────
 
+export type ServerWarmupState = "startup" | "cache_reset" | "conversation_refresh";
+
+export interface ServerWarmingUpResponse {
+  error: "Server is warming up";
+  code: "SERVER_WARMING_UP";
+  warmupState: ServerWarmupState;
+}
+
 export interface SessionResponse {
   id: string; // JSONL UUID
   conversationId: string; // alias for id — mobile uses this to build deep-link URLs

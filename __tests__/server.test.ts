@@ -69,7 +69,7 @@ describe("StreamerServer", () => {
       cacheDir,
       scanProfiles: FIXTURE_PROFILES,
     });
-    await server.listen(port);
+    await server.listen(port, { awaitReady: true });
   });
 
   afterEach(async () => {
@@ -257,7 +257,7 @@ describe("StreamerServer", () => {
         browseRoot,
         scanProfiles: FIXTURE_PROFILES,
       });
-      await server.listen(port);
+      await server.listen(port, { awaitReady: true });
     });
 
     afterEach(() => {
@@ -450,6 +450,17 @@ describe("StreamerServer", () => {
       );
     }
 
+    async function waitForBoundFetchReady(): Promise<void> {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const response = await fetch(`${boundBaseUrl}/api/conversations/count`, {
+          headers: { Authorization: `Bearer ${API_KEY}` },
+        });
+        if (response.status !== 503) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error("Bound server did not finish startup warm-up");
+    }
+
     it("binds a matching-cwd rollout file to boundConversationId, leaving id/conversationId unchanged", async () => {
       const liveSessionId = "059fd3ce-ad78-4980-b441-1cfa05edaec9";
       const codexSessionId = "codex-persisted-id-abc123";
@@ -484,6 +495,7 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
       expect(startRes.status).toBe(200);
+      await waitForBoundFetchReady();
 
       // watchForCodexRollout's first synchronous tryWire() call already runs
       // inline before handleStartSession returns, so no poll wait is needed
@@ -591,6 +603,7 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
       expect(startRes.status).toBe(200);
+      await waitForBoundFetchReady();
 
       // Placeholder id (what mobile used to request) must resolve via boundConversationId.
       const byPlaceholder = await fetch(
@@ -763,6 +776,7 @@ describe("StreamerServer", () => {
           body: JSON.stringify({ path: "project", provider: "codex-cli" }),
         });
         expect(startRes.status).toBe(200);
+        await waitForBoundFetchReady();
 
         const byBound = await fetch(
           `${boundBaseUrl}/api/conversations/${codexSessionId}?msg_limit=80`,
@@ -816,6 +830,7 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
       expect(startRes.status).toBe(200);
+      await waitForBoundFetchReady();
 
       const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
@@ -862,6 +877,7 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
       expect(startRes.status).toBe(200);
+      await waitForBoundFetchReady();
 
       const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
@@ -924,6 +940,7 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
       expect(startRes.status).toBe(200);
+      await waitForBoundFetchReady();
 
       const detailRes = await fetch(`${boundBaseUrl}/api/sessions/${liveSessionId}`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
@@ -1015,6 +1032,7 @@ describe("StreamerServer", () => {
         body: JSON.stringify({ path: "project", provider: "codex-cli" }),
       });
       expect(startRes.status).toBe(200);
+      await waitForBoundFetchReady();
 
       // tryWire() runs synchronously during start: it replays chat-bearing
       // lines as Claude-shaped conversation_event frames and broadcasts
@@ -1231,7 +1249,7 @@ describe("StreamerServer", () => {
         scanProfiles: FIXTURE_PROFILES,
         ptyGracePeriodMs: 0,
       });
-      await srv.listen(p);
+      await srv.listen(p, { awaitReady: true });
       try {
         await subscribeAndClose(srv, p);
         expect((srv as any).ptyGraceTimers.has(SID)).toBe(false);
@@ -1253,7 +1271,7 @@ describe("StreamerServer", () => {
         scanProfiles: FIXTURE_PROFILES,
         ptyGracePeriodMs: 60_000,
       });
-      await srv.listen(p);
+      await srv.listen(p, { awaitReady: true });
       try {
         await subscribeAndClose(srv, p);
         expect((srv as any).ptyGraceTimers.has(SID)).toBe(true);
@@ -1278,7 +1296,7 @@ describe("StreamerServer", () => {
         scanProfiles: FIXTURE_PROFILES,
         ptyGracePeriodMs: 0,
       });
-      await srv.listen(p);
+      await srv.listen(p, { awaitReady: true });
       const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
       vi.spyOn((srv as any).sessionStore, "get").mockReturnValue(mkSession("waiting_input"));
@@ -1570,7 +1588,7 @@ describe("StreamerServer", () => {
         verbose: false,
         scanProfiles: FIXTURE_PROFILES,
       });
-      await localServer.listen(localPort);
+      await localServer.listen(localPort, { awaitReady: true });
     });
 
     afterEach(async () => {
@@ -1690,7 +1708,7 @@ describe("StreamerServer", () => {
           { id: "grow", label: "Grow", configDir: profileDir, enabled: true, emoji: "🌱" },
         ],
       });
-      await growServer.listen(growPort);
+      await growServer.listen(growPort, { awaitReady: true });
     });
 
     afterEach(async () => {
@@ -1810,7 +1828,7 @@ describe("StreamerServer", () => {
       const original = proto.getConversationPage;
       proto.getConversationPage = getConversationPage;
       try {
-        await pageServer.listen(port);
+        await pageServer.listen(port, { awaitReady: true });
         const res = await fetch(
           `http://localhost:${port}/api/conversations/${convId}?msg_limit=37&before_index=211`,
           { headers: { Authorization: `Bearer ${API_KEY}` } },
@@ -1883,7 +1901,7 @@ describe("StreamerServer", () => {
           { id: "etag", label: "ETag", configDir: profileDir, enabled: true, emoji: "🏷️" },
         ],
       });
-      await etagServer.listen(etagPort);
+      await etagServer.listen(etagPort, { awaitReady: true });
     });
 
     afterEach(async () => {
@@ -2042,7 +2060,7 @@ describe("StreamerServer", () => {
         // ~/.codex/sessions history (the default codexRoots).
         codexRoots: [],
       });
-      await refreshServer.listen(refreshPort);
+      await refreshServer.listen(refreshPort, { awaitReady: true });
     });
 
     afterEach(async () => {
@@ -2226,6 +2244,7 @@ describe("StreamerServer", () => {
     let reuseServer: StreamerServer;
     let profileDir: string;
     let isolatedScannerDb: string | null = null;
+    let isolatedConfigDir: string | null = null;
     const convId = "reuse-session-4444";
     const auth = { Authorization: `Bearer ${API_KEY}` };
 
@@ -2236,7 +2255,159 @@ describe("StreamerServer", () => {
         rmSync(isolatedScannerDb, { force: true });
         isolatedScannerDb = null;
       }
+      if (isolatedConfigDir) {
+        delete process.env.THREADBASE_CONFIG_DIR;
+        rmSync(isolatedConfigDir, { recursive: true, force: true });
+        isolatedConfigDir = null;
+      }
       vi.restoreAllMocks();
+    });
+
+    it("returns an explicit startup warm-up status from session and conversation fetches", async () => {
+      let releaseScan!: () => void;
+      const scanPending = new Promise<void>((resolve) => {
+        releaseScan = resolve;
+      });
+      vi.spyOn(ConversationScanner.prototype, "scan").mockReturnValueOnce(scanPending as never);
+
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-warmup-status-cache-")),
+        scanProfiles: FIXTURE_PROFILES,
+      });
+      await reuseServer.listen(reusePort);
+      reusePort = reuseServer.port;
+
+      try {
+        for (const path of [
+          "/api/sessions?limit=50",
+          "/api/sessions/not-yet-indexed",
+          "/api/conversations/count",
+          "/api/conversations?limit=50&offset=0",
+          "/api/conversations/not-yet-indexed?msg_limit=80",
+        ]) {
+          const res = await fetch(`http://localhost:${reusePort}${path}`, { headers: auth });
+          expect(res.status, path).toBe(503);
+          await expect(res.json()).resolves.toMatchObject({
+            code: "SERVER_WARMING_UP",
+            warmupState: "startup",
+          });
+        }
+      } finally {
+        releaseScan();
+      }
+    });
+
+    it("returns conversation_refresh while an explicit conversation refresh is running", async () => {
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-refresh-status-cache-")),
+        scanProfiles: FIXTURE_PROFILES,
+        ...HOST_ISOLATION,
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
+
+      let releaseScan!: () => void;
+      let markScanStarted!: () => void;
+      const scanPending = new Promise<void>((resolve) => {
+        releaseScan = resolve;
+      });
+      const scanStarted = new Promise<void>((resolve) => {
+        markScanStarted = resolve;
+      });
+      vi.spyOn(ConversationScanner.prototype, "scan").mockImplementationOnce((async () => {
+        markScanStarted();
+        await scanPending;
+      }) as never);
+
+      const refresh = fetch(
+        `http://localhost:${reusePort}/api/conversations?refresh=1&limit=50&offset=0`,
+        { headers: auth },
+      );
+      await scanStarted;
+
+      const duringRefresh = await fetch(`http://localhost:${reusePort}/api/sessions/count`, {
+        headers: auth,
+      });
+      expect(duringRefresh.status).toBe(503);
+      await expect(duringRefresh.json()).resolves.toMatchObject({
+        code: "SERVER_WARMING_UP",
+        warmupState: "conversation_refresh",
+      });
+
+      releaseScan();
+      expect((await refresh).status).toBe(200);
+    });
+
+    it("acknowledges reset_rescan while fetches report cache_reset", async () => {
+      isolatedConfigDir = mkdtempSync(join(tmpdir(), "threadbase-reset-status-config-"));
+      process.env.THREADBASE_CONFIG_DIR = isolatedConfigDir;
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-reset-status-cache-")),
+        scanProfiles: FIXTURE_PROFILES,
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
+
+      const monitor = (reuseServer as unknown as { cacheMonitor: object }).cacheMonitor;
+      Reflect.set(monitor, "_pending", {
+        fingerprint: "sha256:test-reset",
+        severity: "low",
+        detectedAt: new Date().toISOString(),
+        missingCount: 0,
+        totalRows: 0,
+        backupPath: join(isolatedConfigDir, "already-backed-up.db"),
+        missing: [],
+      });
+
+      let releaseScan!: () => void;
+      let markScanStarted!: () => void;
+      const scanPending = new Promise<void>((resolve) => {
+        releaseScan = resolve;
+      });
+      const scanStarted = new Promise<void>((resolve) => {
+        markScanStarted = resolve;
+      });
+      vi.spyOn(ConversationScanner.prototype, "scan").mockImplementationOnce((async () => {
+        markScanStarted();
+        await scanPending;
+      }) as never);
+
+      const resolved = await fetch(`http://localhost:${reusePort}/api/cache/alert/resolve`, {
+        method: "POST",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprint: "sha256:test-reset", action: "reset_rescan" }),
+      });
+      expect(resolved.status).toBe(200);
+      await scanStarted;
+
+      const duringReset = await fetch(`http://localhost:${reusePort}/api/conversations/count`, {
+        headers: auth,
+      });
+      expect(duringReset.status).toBe(503);
+      await expect(duringReset.json()).resolves.toMatchObject({
+        code: "SERVER_WARMING_UP",
+        warmupState: "cache_reset",
+      });
+
+      releaseScan();
     });
 
     it("uses a non-persistent scanner for startup warm-up when a persisted stat cache exists", async () => {
