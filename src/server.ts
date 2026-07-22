@@ -1813,8 +1813,12 @@ export class StreamerServer {
   // path — refresh=1 returns the cached total synchronously and this catches up.
   private refreshCountInBackground(): void {
     // Tracked so close() awaits this scan→cache-write before closing cache.db.
+    // NOT wrapped in withWarmup: this is fire-and-forget (nothing awaits the gate
+    // to learn when it finishes), so gating would only reject concurrent readers
+    // with 503 for the scan's duration — the same warmup-lock stall the list path
+    // avoids. The cached total is already served synchronously before this runs.
     this.trackCacheWrite(
-      this.withWarmup("conversation_refresh", async () => {
+      (async () => {
         try {
           const scanner = await this.getFreshScanner();
           if (this.cache) {
@@ -1826,7 +1830,7 @@ export class StreamerServer {
             { event: "count.refresh_failed" },
           );
         }
-      }),
+      })(),
     );
   }
 
