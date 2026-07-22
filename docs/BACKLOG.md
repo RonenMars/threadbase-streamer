@@ -58,7 +58,7 @@ existing projects; in-place appends rely on the watcher → `scannerStale` path.
 
 ## Log truncation races with the still-running streamer fd
 
-**Status (2026-07-22):** Open — **next streamer action** (no PR yet).
+**Status:** Fixed on `fix/log-truncation-sparse-nuls` — `prod logs --clear` kickstarts after truncate; deploy `--clear-logs` bootouts before truncate then re-bootstraps. Partial truncate failures report both outcomes.
 
 **Symptom:** After `npm run deploy` or `tb-streamer prod logs --clear`, `~/.threadbase/logs/stdout.log` / `stderr.log` can appear to contain NUL bytes from offset 0..N when `tail`ed, instead of being empty. Subsequent log lines are appended far past the visible end of the file.
 
@@ -89,6 +89,8 @@ The comment in `runProdLogs` (*"Removing the inode would leave the daemon writin
 ---
 
 ## `--clear` truncate failure leaves stdout cleared but stderr not
+
+**Status:** Fixed on `fix/log-truncation-sparse-nuls` — best-effort both files; combined cleared/failed message.
 
 **Symptom:** `tb-streamer prod logs --clear` reports `failed to truncate <stderr>: EACCES` (or similar) but `stdout.log` has already been wiped. Recovery requires re-running after fixing perms with stdout already empty.
 
