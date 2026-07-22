@@ -4,6 +4,8 @@ Planned features and deferred work. Not blocking. No fixed dates — these get p
 
 For bugs (work that fixes broken behavior rather than adding new behavior) see [BACKLOG.md](BACKLOG.md).
 
+**Next new streamer PRs (2026-07-22):** see BACKLOG — log truncation, then `bootoutAgent` busy-wait. Prefer merging open product PRs (#237/#240/#241/#252/#253) first.
+
 ---
 
 ## Feature: migrate `GET /api/search` to the HTTP QUERY method
@@ -33,6 +35,8 @@ Today the streamer's API key lives at `~/.threadbase/server.yaml` as plaintext `
 ---
 
 ## Feature: forward `thinkingSignature` in the messages mapper
+
+**Status (2026-07-22):** ✅ DONE — already mapped as `signature` on `main`.
 
 The scanner exposes `thinkingSignature` per message but the streamer's mapper (`src/server.ts`) does not forward it. Add it next to `thinking` / `thinkingContent`. UI work in [`threadbase-mobile`](https://github.com/RonenMars/threadbase-mobile) is then a small follow-up to show a "redacted reasoning" placeholder when the signature is present but the content is empty.
 
@@ -74,6 +78,8 @@ The streamer currently forwards a `hasImages` boolean per message, which is suff
 
 ## Feature: structured prompt cards (permission gates + AskUserQuestion) for Codex sessions
 
+**Status (2026-07-22):** 🟡 Partial — Codex trust/hooks startup gates exist; general approvals/AskUserQuestion cards still open (no PR for the remainder).
+
 Claude Code live sessions get a native `QuestionCard` UI in `tb-mobile` for permission gates and `AskUserQuestion` menus, detected server-side from the rendered PTY screen (`src/services/questions/*`, orchestrated in `src/pty-manager.ts`). Codex sessions (added in [PR #159](https://github.com/RonenMars/threadbase-streamer/pull/159)) don't get this — `CodexPtyRunner` never emits the `permission`/`question` WebSocket events, so any Codex-side approval or choice prompt only shows as raw terminal text.
 
 **Approach:** see [docs/plans/2026-07-04-codex-structured-prompts-followup.md](plans/2026-07-04-codex-structured-prompts-followup.md) for the full scoping — which existing detector files are reusable vs. Claude-only, and the open questions (Codex's `--ask-for-approval` on-screen shape is unverified) that need a live probe before implementation starts. The mobile-side rendering pipeline is already provider-agnostic; all follow-up work is server-side.
@@ -81,6 +87,8 @@ Claude Code live sessions get a native `QuestionCard` UI in `tb-mobile` for perm
 ---
 
 ## Improvement: fully incremental warm-up (delta-only cache reconcile)
+
+**Status (2026-07-22):** 🟡 Partial — related warm-up status API in flight ([PR #234](https://github.com/RonenMars/threadbase-streamer/pull/234)); full delta-only reconcile still open.
 
 Every `listen()` fires a background warm-up scan (`src/server.ts:836`) that reconciles the SQLite cache from disk. The scan itself is already cursor-incremental at the scanner layer (persistent index at `~/.config/threadbase-scanner/index.db`: dir watermarks gate discovery, per-file byte cursors make unchanged files stat-only and appended files O(Δ) — same Filebeat pattern as the offset index). Three streamer-side pieces are not delta-only yet:
 
