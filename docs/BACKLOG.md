@@ -6,6 +6,12 @@ For planned features (work that adds new behavior rather than fixing broken beha
 
 ---
 
+## Upload filenames with spaces break `@path` references — FIXED
+
+**Status:** Fixed on `fix/upload-filename-sanitize` — `sanitizeFilename` replaces spaces and shell-problematic characters (`@ " ' \` $ \\`) with underscores so Claude Code `@path` refs stay a single token. Mobile also escapes spaces in `buildPayload` for legacy uploads (tb-mobile `fix/multi-attachment-send`).
+
+---
+
 ## Stale conversation history vs. fresh resume
 
 **Status:** Fixed on `fix/stale-conversation-history` — `GET /api/conversations`
@@ -60,6 +66,8 @@ The comment in `runProdLogs` (*"Removing the inode would leave the daemon writin
 ---
 
 ## Quick Access Recents tapping historical conversations shows "No terminal output"
+
+**Status:** Superseded on modern tb-mobile — Recents/Popular were removed with `/project-chats`; Favorites pin `type: "conversation"` and route to `/conversation/[id]`. Legacy `/api/sessions/recents` remains for older clients only.
 
 **Symptom:** In tb-mobile, tapping a recent conversation from the Quick Access chips at the top of the home screen briefly shows a "No terminal output" screen before redirecting to the conversation detail view. Reported 2026-06-09 with screenshots in `.threadbase-uploads/05509314-a6f6-40c2-b509-19664a2b38e4/IMG_5645.heic` and `IMG_5642.heic`.
 
