@@ -194,17 +194,13 @@ export async function runProdLogs(
         truncate(f);
         cleared.push(f);
       } catch (err) {
-        failures.push(
-          `${f}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        failures.push(`${f}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     try {
       kickstart();
     } catch (err) {
-      failures.push(
-        `kickstart after clear: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      failures.push(`kickstart after clear: ${err instanceof Error ? err.message : String(err)}`);
     }
     if (failures.length > 0 && cleared.length === 0) {
       return {
