@@ -97,6 +97,12 @@ describe("cache-integrity alert wiring", () => {
       disableDb: true,
       cacheDir,
       scanProfiles: [{ id: "test", label: "Test", configDir: scanDir, enabled: true, emoji: "🧪" }],
+      // Without these the scanner opens its own persistent SQLite index, which
+      // both leaks real host conversations in and needs a native better-sqlite3
+      // build that is not guaranteed on every dev machine. Every other server
+      // fixture in the suite disables them.
+      codexRoots: [],
+      scannerPersistent: false,
     });
     await server.listen(port);
 
