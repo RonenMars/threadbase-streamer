@@ -101,6 +101,66 @@ describe("launchd wrappers", () => {
     );
   });
 
+  describe("bootstrapAgent exit-5 handling", () => {
+    const makeExitError = (status: number, stderr: string) => {
+      const err = new Error(`launchctl exit ${status}`) as NodeJS.ErrnoException & {
+        status: number;
+        stderr: Buffer;
+      };
+      err.status = status;
+      err.stderr = Buffer.from(stderr);
+      return err;
+    };
+
+    it("exit 5 + 'already loaded' stderr → success regardless of afterBootout flag", () => {
+      vi.mocked(execFileSync).mockImplementation((_cmd, args) => {
+        if ((args as string[])[0] === "print") throw new Error("not loaded");
+        if ((args as string[])[0] === "bootstrap") {
+          throw makeExitError(5, "already loaded");
+        }
+        return Buffer.from("");
+      });
+      expect(() => bootstrapAgent("/path/to/plist")).not.toThrow();
+      expect(() => bootstrapAgent("/path/to/plist", { afterBootout: false })).not.toThrow();
+      expect(() => bootstrapAgent("/path/to/plist", { afterBootout: true })).not.toThrow();
+    });
+
+    it("exit 5 + empty stderr + isAgentLoaded + afterBootout:true → success", () => {
+      vi.mocked(execFileSync).mockImplementation((_cmd, args) => {
+        if ((args as string[])[0] === "print") throw new Error("not loaded");
+        if ((args as string[])[0] === "bootstrap") {
+          throw makeExitError(5, "");
+        }
+        // isAgentLoaded list call succeeds → agent is loaded
+        return Buffer.from("");
+      });
+      expect(() => bootstrapAgent("/path/to/plist", { afterBootout: true })).not.toThrow();
+    });
+
+    it("exit 5 + empty stderr + isAgentLoaded + afterBootout:false → throws", () => {
+      vi.mocked(execFileSync).mockImplementation((_cmd, args) => {
+        if ((args as string[])[0] === "print") throw new Error("not loaded");
+        if ((args as string[])[0] === "bootstrap") {
+          throw makeExitError(5, "");
+        }
+        // isAgentLoaded list call succeeds → agent is loaded
+        return Buffer.from("");
+      });
+      expect(() => bootstrapAgent("/path/to/plist", { afterBootout: false })).toThrow();
+    });
+
+    it("exit 5 + empty stderr + isAgentLoaded + no opts → throws", () => {
+      vi.mocked(execFileSync).mockImplementation((_cmd, args) => {
+        if ((args as string[])[0] === "print") throw new Error("not loaded");
+        if ((args as string[])[0] === "bootstrap") {
+          throw makeExitError(5, "");
+        }
+        return Buffer.from("");
+      });
+      expect(() => bootstrapAgent("/path/to/plist")).toThrow();
+    });
+  });
+
   it("kickstartAgent uses -k flag", () => {
     vi.mocked(execFileSync).mockImplementation((_cmd, args) => {
       if ((args as string[])[0] === "print") throw new Error("not loaded");
