@@ -1,4 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync } from "fs";
 import { createServer } from "http";
+import { tmpdir } from "os";
+import { join } from "path";
 import { vi } from "vitest";
 
 vi.mock("../src/process-discovery", () => ({
@@ -31,16 +34,30 @@ const CONV_ID = "aaaaaaaa-1111-4222-8333-444444444444";
 describe("POST /api/sessions/:id/adopt — unknown working directory", () => {
   let server: StreamerServer;
   let baseUrl: string;
+  let tmpBase: string;
 
   beforeEach(async () => {
+    // Scope the JSONL lookup to an empty fixture root: adopt falls back to the
+    // conversation's JSONL to resolve a missing cwd, and this suite covers the
+    // case where that resolution genuinely fails (no JSONL on disk).
+    tmpBase = mkdtempSync(join(tmpdir(), "threadbase-adopt-no-path-"));
+    mkdirSync(join(tmpBase, "projects"), { recursive: true });
+
     const port = await getRandomPort();
     baseUrl = `http://localhost:${port}`;
-    server = new StreamerServer({ port, apiKey: API_KEY, localNoAuth: false, verbose: false });
+    server = new StreamerServer({
+      port,
+      apiKey: API_KEY,
+      localNoAuth: false,
+      verbose: false,
+      scanProfiles: [{ id: "test", label: "Test", configDir: tmpBase, enabled: true, emoji: "🧪" }],
+    });
     await server.listen(port);
   });
 
   afterEach(async () => {
     await server.close();
+    rmSync(tmpBase, { recursive: true, force: true });
   });
 
   it("refuses with ADOPT_NO_PROJECT_PATH and does NOT kill the process", async () => {
