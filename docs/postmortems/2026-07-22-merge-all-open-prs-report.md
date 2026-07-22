@@ -334,3 +334,29 @@ Name-diff against the branch's own baseline: **0 new failures.** The single diff
 2. **The dependabot verification gap is closed** and Part 4's caveat about it is wrong. The `package.json` ranges are identical on `main` and this branch — dependabot only moved lockfile pins — and because `npm install` (not `ci`) was used, npm resolved to the newest matching versions. The installed tree is `hono 4.12.31`, `tsx 4.23.1`, `semantic-release 25.0.8`: exactly the merged lockfile. The bumps were exercised in every run.
 3. **A branded `CanonicalPath` type** remains the only mechanism that would catch this class at authoring time. Not attempted here: it touches every cache signature taking a path, which is too much blast radius for a branch already carrying 14 PRs of merge risk.
 4. Scanner **#46** and the `listenForTest(server)` helper, both unchanged from the list above.
+
+---
+
+# Log — #253 rebase onto latest `main` (2026-07-22)
+
+Kept as a running log rather than a summary, because the most useful part is the wrong turn in the middle.
+
+**Starting state.** `feat/live-external-sessions` at `acef47f`, 3 behind / 7 ahead of `origin/main`. `main` had gained two further scanner bumps beyond the one this branch was built on: `10ca086` (v0.11.2) and `591e197` (v0.11.3).
+
+**Rebase.** `git rebase origin/main` replayed all 7 commits with **zero conflicts** — the incoming commits touch only `package.json`/`package-lock.json`. New tip `8c84704`; 0 behind / 7 ahead.
+
+**Dependency drift.** The rebase moved the required range to `@threadbase-sh/scanner@^0.11.3` while `node_modules` still held `0.11.0`. Testing without syncing would have measured the wrong tree, so `npm install --ignore-scripts` was run first. Checked while there: **scanner 0.11.3 still pins `better-sqlite3@^11.10.0`**, so #46 has not landed and the nested-binding class is unchanged.
+
+**The wrong turn — 173 failures.** The suite then reported `26 files / 173 tests failed`, against a branch baseline of 35. The instinct is to suspect the rebase or the two new scanner versions. Both were wrong.
+
+The dominant error was `Could not locate the bindings file` pointing at `node_modules/better-sqlite3` — the **top-level** package, not the nested one this report has discussed throughout. That distinction is the whole diagnosis: the top-level `better-sqlite3@12.11.1` has a Node 24 prebuild and has worked all along. It broke because **`npm install --ignore-scripts` suppressed `prebuild-install`**, so when npm reinstalled the package during the scanner bump, the prebuilt binary was never fetched. A flag added to route around the *nested* build failure had removed the *top-level* binding.
+
+`npm rebuild better-sqlite3` restored it — succeeding for the top-level 12.11.1 and failing only on the nested 11.10.0, exactly as expected.
+
+**After the fix.** `34 failed / 1001 passed / 21 skipped`. Name-diff against the `main` baseline: **0 new failures**, and one that previously failed now passes (`tags ite with type=conversation…`). `tsc` and lint clean. Force-pushed with `--force-with-lease` (`acef47f...8c84704`).
+
+**What to carry forward.**
+
+- **`--ignore-scripts` is not a free safety flag.** It was introduced here to survive the nested native build, and it silently disabled the prebuild download for a package that was working. Prefer `npm install` followed by `npm rebuild better-sqlite3`, which repairs the top-level binding and fails only on the nested one.
+- **A 5× jump in failures is an environment signal, not a code signal.** Seven commits that rebased without a single conflict, against incoming commits touching only lockfiles, cannot plausibly break 138 additional tests. Read the *first* error before forming a theory about the diff.
+- **Distinguish top-level from nested `better-sqlite3` in every report of this error.** They have different versions, different causes and different fixes, and the error text looks identical apart from the path.
