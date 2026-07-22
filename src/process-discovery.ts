@@ -40,6 +40,15 @@ export function tokenizeCommandLine(commandLine: string): string[] {
   return tokens;
 }
 
+// A command line is just text and may carry a path in either separator form,
+// so `path.basename` cannot be used here — it honours only the host's
+// separator and would leave a Windows path intact when parsed on POSIX. The
+// script-path regex above is separator-agnostic for the same reason.
+function exeBaseName(token: string): string {
+  const cut = Math.max(token.lastIndexOf("/"), token.lastIndexOf("\\"));
+  return cut === -1 ? token : token.slice(cut + 1);
+}
+
 /**
  * Whether a command line is a Claude Code CLI process.
  *
@@ -53,7 +62,7 @@ export function looksLikeClaudeProcess(commandLine: string): boolean {
   const tokens = tokenizeCommandLine(commandLine);
   if (tokens.length === 0) return false;
 
-  const exe = basename(tokens[0]).toLowerCase();
+  const exe = exeBaseName(tokens[0]).toLowerCase();
   if (exe === "claude" || exe === "claude.exe") return true;
 
   if (JS_RUNTIMES.has(exe)) {
