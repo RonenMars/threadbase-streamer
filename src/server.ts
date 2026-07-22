@@ -3359,6 +3359,26 @@ export class StreamerServer {
       return;
     }
 
+    // Refuse BEFORE killing anything if we could not resolve where the process
+    // is running. Adopt is destructive-then-restorative, so every reason it
+    // cannot restore has to be checked first: Windows exposes no process CWD
+    // (neither CIM nor wmic carries it), and spawning the replacement with an
+    // empty cwd fails outright. Killing first and discovering this after would
+    // destroy the user's session with nothing to put back in its place.
+    if (!projectPath) {
+      this.log.warn("adopt: refusing, working directory unknown", {
+        event: "adopt.no_project_path",
+        sessionId,
+        pid: discSession.pid,
+      });
+      json(res, 400, {
+        error:
+          "Cannot take over this session: its working directory could not be determined on this platform",
+        code: "ADOPT_NO_PROJECT_PATH",
+      });
+      return;
+    }
+
     // Kill the external process and WAIT for it to actually go. SIGTERM is
     // asynchronous: spawning `claude --resume` on the same conversation before
     // the old process is gone leaves two agents appending to one JSONL — the
