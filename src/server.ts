@@ -1261,19 +1261,20 @@ export class StreamerServer {
                 count: pruned.length,
                 event: "cache.prune_ghosts",
               });
-            if (this.projectsRepo && this.conversationsRepo && this.cacheMetadataRepo) {
-              refreshConversationCache({
-                cache: this.cache,
-                projectsRepo: this.projectsRepo,
-                conversationsRepo: this.conversationsRepo,
-                cacheMetadataRepo: this.cacheMetadataRepo,
-              });
-            } else if (this.cacheMetadataRepo) {
-              setCacheMetadata(
-                this.cacheMetadataRepo,
-                "conversations_last_indexed_at",
-                new Date().toISOString(),
-              );
+              if (this.projectsRepo && this.conversationsRepo && this.cacheMetadataRepo) {
+                refreshConversationCache({
+                  cache: this.cache,
+                  projectsRepo: this.projectsRepo,
+                  conversationsRepo: this.conversationsRepo,
+                  cacheMetadataRepo: this.cacheMetadataRepo,
+                });
+              } else if (this.cacheMetadataRepo) {
+                setCacheMetadata(
+                  this.cacheMetadataRepo,
+                  "conversations_last_indexed_at",
+                  new Date().toISOString(),
+                );
+              }
             }
           })
           .catch((err) => {
@@ -1659,7 +1660,17 @@ export class StreamerServer {
     // upsert what exists and drop rows whose files are gone. Triggered by
     // explicit ?refresh=1, directory-watcher scannerStale, or HDD freshness drift.
     if (this.cache && (bustCache || this.shouldAutoReconcileConversationList())) {
-      await this.reconcileConversationsCacheFromDisk();
+      // An explicit ?refresh=1 has nothing to serve while it rebuilds, so it
+      // gates on the warm-up state and the client shows "building history".
+      // The automatic freshness path must NOT gate, or every JSONL append
+      // flips the server into SERVER_WARMING_UP and the client flickers.
+      if (bustCache) {
+        await this.withWarmup("conversation_refresh", () =>
+          this.reconcileConversationsCacheFromDisk(),
+        );
+      } else {
+        await this.reconcileConversationsCacheFromDisk();
+      }
     }
 
     if (this.cache) {
