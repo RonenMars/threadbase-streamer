@@ -54,15 +54,11 @@ export function bootoutAgent(timeoutMs = 2000): void {
     // already unloaded — fine
   }
   const deadline = Date.now() + timeoutMs;
+  // Park the thread for 50 ms between polls. A busy-wait pegs a core for
+  // the whole deadline; Atomics.wait yields without forking `sleep`.
+  const park = new Int32Array(new SharedArrayBuffer(4));
   while (isAgentLoaded() && Date.now() < deadline) {
-    // Busy-wait in 50 ms ticks. Sleeping via spawnSync('sleep', …) is
-    // expensive; Atomics.wait would need a SharedArrayBuffer. A tight
-    // loop with a syscall per iteration matches what launchctl does
-    // internally and is bounded by the deadline.
-    const wake = Date.now() + 50;
-    while (Date.now() < wake) {
-      /* spin */
-    }
+    Atomics.wait(park, 0, 0, 50);
   }
 }
 

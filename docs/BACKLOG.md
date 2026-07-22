@@ -72,7 +72,7 @@ The comment in `runProdLogs` (*"Removing the inode would leave the daemon writin
 
 ## Busy-wait CPU spin in `bootoutAgent`
 
-**Status (2026-07-22):** Open — **next streamer action** after log truncation (XS).
+**Status:** Fixed on `fix/bootout-agent-busy-wait` — poll wait uses `Atomics.wait` (50 ms) instead of a busy-spin.
 
 **Symptom:** `tb-streamer prod restart` (and the dev-takeover path) pegs a full CPU core for up to 2 seconds while launchd tears down the agent.
 
