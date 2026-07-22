@@ -28,9 +28,12 @@ describe("GET /api/sessions — discovery TTL cache", () => {
   beforeEach(async () => {
     vi.mocked(discoverClaudeProcesses).mockClear();
     const port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     server = new StreamerServer({ port, apiKey: API_KEY, localNoAuth: false, verbose: false });
-    await server.listen(port);
+    // awaitReady is required now that /api/sessions rejects with 503 while a
+    // warm-up is in flight: without it both fetches below land inside the
+    // warm-up window, get rejected, and discovery is never reached.
+    await server.listen(port, { awaitReady: true });
+    baseUrl = `http://localhost:${server.port}`;
   });
 
   afterEach(async () => {
