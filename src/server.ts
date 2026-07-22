@@ -107,7 +107,12 @@ import type {
 } from "./types";
 
 import { saveUploadFile } from "./uploads";
-import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
+import {
+  canonicalizeFilePath,
+  canonicalLivePathSet,
+  joinStatCacheByNativePath,
+  toNativeFilePath,
+} from "./utils/canonicalizeFilePath";
 import { isCodexInjectedContext, toClientConversationLines } from "./utils/codexConversationLine";
 import { computeConversationEtag } from "./utils/conversationEtag";
 import { debounce } from "./utils/debounce";
@@ -1497,10 +1502,9 @@ export class StreamerServer {
       const metas = [...scanner.getMetadataCache().values()];
       try {
         this.cache.upsertFromScannerMeta(metas as any[]);
-        const livePaths = new Set(
-          metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
-        );
-        this.cache.reconcileDeletions(livePaths);
+        // Canonical, because reconcileDeletions compares against
+        // conversation_meta.file_path while the scanner's filePath is native.
+        this.cache.reconcileDeletions(canonicalLivePathSet(metas));
       } catch (err) {
         this.log.warn(
           `refresh reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1685,23 +1689,26 @@ export class StreamerServer {
     previousScanner: ConversationScanner | null,
   ): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> | undefined {
     if (!this.cache) return undefined;
+    // The scanner looks statCache entries up by its own ConversationMeta
+    // .filePath, which is native-separator. Cache rows are canonical. So every
+    // join below compares canonical forms, but the returned map is always keyed
+    // native — otherwise the scanner misses every entry on Windows and silently
+    // re-parses every conversation on each rescan.
     if (!previousScanner) {
       const persisted = this.cache.getScannerStatCache();
-      return persisted.size > 0 ? persisted : undefined;
+      if (persisted.size === 0) return undefined;
+      const nativeKeyed = new Map<string, { stat: FileStatEntry; meta: ConversationMeta }>();
+      for (const [canonicalPath, entry] of persisted) {
+        nativeKeyed.set(toNativeFilePath(canonicalPath), entry);
+      }
+      return nativeKeyed;
     }
     const dbStats = this.cache.getFileStats();
     if (dbStats.size === 0) return undefined;
-    const metaByPath = new Map<string, ConversationMeta>();
-    if (previousScanner) {
-      for (const meta of previousScanner.getMetadataCache().values()) {
-        if (meta.filePath) metaByPath.set(meta.filePath, meta);
-      }
-    }
-    const statCache = new Map<string, { stat: FileStatEntry; meta: ConversationMeta }>();
-    for (const [filePath, stat] of dbStats) {
-      const meta = metaByPath.get(filePath);
-      if (meta) statCache.set(filePath, { stat, meta });
-    }
+    const statCache = joinStatCacheByNativePath(
+      previousScanner.getMetadataCache().values(),
+      dbStats,
+    );
     return statCache.size > 0 ? statCache : undefined;
   }
 
