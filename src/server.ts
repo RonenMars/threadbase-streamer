@@ -264,6 +264,10 @@ export class StreamerServer {
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
   // a single rescan after the current one completes instead of restarting it.
   private scannerStale = false;
+  // Single-flight guard for the background disk reconcile: a burst of list
+  // polls during active session writes shares one rescan instead of queueing
+  // a full rescan per request.
+  private conversationReconcileInFlight: Promise<void> | null = null;
   // Single-flight + TTL guard around scanner.refreshFile (see refreshFileGuarded).
   // A live file's mtime is always newer than the snapshot, so an unguarded
   // refresh fires on every request and re-parses the whole file from byte 0.
@@ -1633,6 +1637,19 @@ export class StreamerServer {
     }
   }
 
+  // Reconcile the cache from disk without blocking the caller. Single-flighted
+  // so a burst of list polls during active session writes shares one rescan
+  // rather than queueing a full rescan each; tracked so close() awaits the
+  // in-flight cache write before shutting the DB.
+  private startBackgroundConversationReconcile(): void {
+    if (this.conversationReconcileInFlight) return;
+    const task = this.reconcileConversationsCacheFromDisk().finally(() => {
+      this.conversationReconcileInFlight = null;
+    });
+    this.conversationReconcileInFlight = task;
+    this.trackCacheWrite(task);
+  }
+
   private shouldAutoReconcileConversationList(): boolean {
     if (!this.cache) return false;
     if (this.scannerStale) return true;
@@ -1655,8 +1672,22 @@ export class StreamerServer {
     // Reconcile (not wipe): fullRescan bypasses the scanner dir-mtime gate, then
     // upsert what exists and drop rows whose files are gone. Triggered by
     // explicit ?refresh=1, directory-watcher scannerStale, or HDD freshness drift.
+    //
+    // Never block the response on a routine reconcile. A full rescan takes
+    // seconds on a large history, and active sessions trip scannerStale on
+    // every JSONL append — so awaiting here stalls the list on every write.
+    // Serve what is cached now and revalidate on disk in the background; the
+    // next poll sees the fresh data (stale-while-revalidate). Block only when
+    // there is nothing to serve (cold cache) or the caller asked for fresh data
+    // explicitly with ?refresh=1.
     if (this.cache && (bustCache || this.shouldAutoReconcileConversationList())) {
-      await this.reconcileConversationsCacheFromDisk();
+      const canServeStale =
+        !bustCache && this.cache.listConversations({ limit: 0, offset: 0 }).total > 0;
+      if (canServeStale) {
+        this.startBackgroundConversationReconcile();
+      } else {
+        await this.reconcileConversationsCacheFromDisk();
+      }
     }
 
     if (this.cache) {

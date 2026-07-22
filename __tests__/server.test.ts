@@ -2216,6 +2216,24 @@ describe("StreamerServer", () => {
       };
     };
 
+    // The auto-reconcile is stale-while-revalidate: the first cached list after
+    // a disk change serves stale and kicks a background rescan, so the fresh
+    // data appears on a later poll rather than the triggering request. Poll
+    // until the predicate holds (mirrors how the polling mobile client sees it).
+    const listCachedUntil = async (
+      pred: (r: { conversations: Array<{ id: string; preview?: string }> }) => boolean,
+      timeoutMs = 4000,
+    ) => {
+      const deadline = Date.now() + timeoutMs;
+      let last = await listCached();
+      while (!pred(last)) {
+        if (Date.now() > deadline) return last;
+        await new Promise((r) => setTimeout(r, 50));
+        last = await listCached();
+      }
+      return last;
+    };
+
     beforeEach(async () => {
       profileDir = mkdtempSync(join(tmpdir(), "threadbase-auto-refresh-"));
       scannerDb = join(profileDir, "scanner.db");
@@ -2265,7 +2283,8 @@ describe("StreamerServer", () => {
       const future = new Date(Date.now() + 60_000);
       utimesSync(projDir, future, future);
 
-      const after = await listCached();
+      // Background revalidation, so poll until the new conversation lands.
+      const after = await listCachedUntil((r) => r.conversations.some((c) => c.id === "auto-c"));
       expect(after.conversations.map((c) => c.id).sort()).toEqual(["auto-a", "auto-b", "auto-c"]);
     });
 
@@ -2279,9 +2298,53 @@ describe("StreamerServer", () => {
       // Simulate directory-watcher dirty bit without waiting on chokidar.
       (autoServer as unknown as { scannerStale: boolean }).scannerStale = true;
 
-      const after = await listCached();
+      const after = await listCachedUntil((r) =>
+        Boolean(r.conversations.find((c) => c.id === "auto-a")?.preview?.includes("externally")),
+      );
       const a = after.conversations.find((c) => c.id === "auto-a");
       expect(a?.preview).toContain("alpha continued externally");
+    });
+
+    it("serves the cached list immediately while a routine reconcile runs in the background", async () => {
+      // Prime the cache so there is something stale to serve.
+      await listCached();
+
+      // Make the rescan slow, and prove the request does NOT wait for it: a
+      // blocking reconcile would take the full delay; stale-while-revalidate
+      // returns at once with the cached rows.
+      let releaseScan!: () => void;
+      const scanGate = new Promise<void>((r) => {
+        releaseScan = r;
+      });
+      const orig = (autoServer as unknown as { rescanForRefresh: () => Promise<unknown> })
+        .rescanForRefresh;
+      const spy = vi
+        .spyOn(
+          autoServer as unknown as { rescanForRefresh: () => Promise<unknown> },
+          "rescanForRefresh",
+        )
+        .mockImplementation(async function (this: unknown, ...args: unknown[]) {
+          await scanGate;
+          return (orig as (...a: unknown[]) => Promise<unknown>).apply(this, args);
+        });
+
+      writeConv("auto-slow", "delta", "2026-06-07T12:00:00.000Z");
+      (autoServer as unknown as { scannerStale: boolean }).scannerStale = true;
+
+      const t0 = Date.now();
+      const res = await listCached();
+      const elapsed = Date.now() - t0;
+
+      // Returned promptly with the stale rows, without the new one, while the
+      // (gated) rescan is still running.
+      expect(elapsed).toBeLessThan(1000);
+      expect(res.conversations.map((c) => c.id)).not.toContain("auto-slow");
+
+      // Let the background rescan finish; the next polls converge on fresh data.
+      releaseScan();
+      const after = await listCachedUntil((r) => r.conversations.some((c) => c.id === "auto-slow"));
+      expect(after.conversations.map((c) => c.id)).toContain("auto-slow");
+      spy.mockRestore();
     });
   });
 
