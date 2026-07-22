@@ -1,5 +1,5 @@
-import { SessionStore } from "../src/session-store";
 import { extractResumeId } from "../src/process-discovery";
+import { SessionStore } from "../src/session-store";
 import type { DiscoveredProcess, ManagedSession } from "../src/types";
 
 // P3: ownership / processLiveness are ADDITIVE. They must never become new
