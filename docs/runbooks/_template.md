@@ -11,7 +11,8 @@ A runbook is **not** a postmortem. A postmortem records what happened at a point
 3. **Order by risk, not by identifier.** Group the mechanical work together and the dangerous work together; say which must go first and why.
 4. **Point at existing analysis, do not restate it.** Link the postmortem section that documents each conflict. Restating invites the two copies to drift.
 5. **Record the traps that produce green signals.** Those are the only ones a careful operator still walks into.
-6. **Say who should run it.** Match the operator to the failure mode of each phase, not to the apparent difficulty.
+6. **Say who should run it.** Match the operator — model and reasoning effort — to the failure mode of each phase, not to the apparent difficulty.
+7. **Name the stop points, and the non-stop points.** A runbook an agent can execute needs both: where it must hand back control, and the reversible majority where asking would just be noise. A stop list without a do-not-stop list gets ignored wholesale.
 
 ---
 
@@ -26,11 +27,11 @@ A runbook is **not** a postmortem. A postmortem records what happened at a point
 
 <Only split by phase if the phases genuinely differ in failure mode. If uniform, say so in a sentence.>
 
-| Phase | Character of the work | Recommended |
-|---|---|---|
-| | | |
+| Phase | Character of the work | Model | Effort |
+|---|---|---|---|
+| | | | |
 
-<Explain the split in terms of what failure looks like, not command difficulty. Name any model that should not be used, and why.>
+<Explain the split in terms of what failure looks like, not command difficulty. Name any model that should not be used, and why. Include a **reasoning effort** per phase, and justify both ends: why not lower (what gets skipped when the operator is in a hurry) and why not higher (what extra deliberation would not buy). Effort is worth raising specifically where the failure is *absence* — something missing that no error reports.>
 
 **Operating constraints:**
 
@@ -55,6 +56,16 @@ Found this way, <date>: <list what the sweep actually caught, so the next reader
 ## The per-item loop
 
 <Numbered, one item at a time. Include the verification gate and what to do when it is red. Flag any step that cannot be satisfied for a subset of items, and what to substitute.>
+
+## Stop and wait for approval
+
+<Hard stops for an agent running this unattended. Two lists, both necessary:>
+
+<**Always stop before** — irreversible or outward-facing actions: writes to shared branches, commits, force-pushes, closing others' work, anything published. For each, say what evidence to present at the stop.>
+
+<**Stop and ask when the situation is not the one this document describes** — a conflict not documented, a check that comes back wrong, CI red after one re-run, a blocker the pre-flight did not predict, or a claim that cannot be proven mechanically. These are the stops that matter most: the first list is obvious, this one is what stops an agent confidently doing the wrong thing.>
+
+<**Do not stop for these** — the reversible majority. Naming them explicitly is what keeps the stop list credible; an agent that asks about everything gets waved through on everything.>
 
 ## Order
 

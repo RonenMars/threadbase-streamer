@@ -9,12 +9,14 @@ The integration branch proves the PRs *can* coexist. It does not land them. Each
 
 Not uniform across the work: two of the five groups are mechanical, and two contain traps that are invisible unless the operator reads code that git reported as clean.
 
-| Groups | Character of the work | Recommended |
-|---|---|---|
-| 1, 2, 5 — independents, dependabot, docs | Rebase, check CI, squash. No documented conflicts. The docs group has one predictable textual conflict in `BACKLOG.md`. | **Sonnet 5** (`claude-sonnet-5`) |
-| 3, 4 — the cache cluster and the live-sessions pair | Six documented conflicts, two silent-drop traps, one stacked-pair `--onto` rebase, and resolutions where the *ordering* of two blocks is a correctness decision. | **Opus 4.8** (`claude-opus-4-8`) |
+| Groups | Character of the work | Model | Effort |
+|---|---|---|---|
+| 1, 2, 5 — independents, dependabot, docs | Rebase, check CI, squash. No documented conflicts. The docs group has one predictable textual conflict in `BACKLOG.md`. | **Sonnet 5** (`claude-sonnet-5`) | **medium** |
+| 3, 4 — the cache cluster and the live-sessions pair | Six documented conflicts, two silent-drop traps, one stacked-pair `--onto` rebase, and resolutions where the *ordering* of two blocks is a correctness decision. | **Opus 4.8** (`claude-opus-4-8`) | **high**, raised to **xhigh** for the two trap merges (#237, #253) |
 
-The split is not about difficulty of the git commands — it is about what failure looks like. In Groups 3 and 4 the dangerous outcome is a **clean auto-merge, a green `tsc`, and silently deleted safety code**. Nothing prompts the operator to look; they have to already know to open the extracted method and check. That judgment, plus resisting the pull to accept a green signal, is where the stronger model earns its cost.
+**On effort.** Not `low` even for Group 1: the cheap groups still end in an irreversible squash to `main`, and `low` is where "CI is green, ship it" wins over checking *which commit* CI tested — a mistake this session made once already. Not `max` anywhere either; the hard part here is noticing that something is absent, which more deliberation per step does not buy. The one place to spend extra is the two merges where git reports success and code has gone missing — that is a "read this specific method and compare against a list" task, and `xhigh` buys the patience to actually do it rather than assume.
+
+The model split is not about difficulty of the git commands — it is about what failure looks like. In Groups 3 and 4 the dangerous outcome is a **clean auto-merge, a green `tsc`, and silently deleted safety code**. Nothing prompts the operator to look; they have to already know to open the extracted method and check. That judgment, plus resisting the pull to accept a green signal, is where the stronger model earns its cost.
 
 Do not use Haiku for any group. Every group ends in a squash-merge to `main`, and steps 3, 4 and 6 require deciding whether a green signal is trustworthy — this session produced three separate misattributed "flakes" and two wrong root-cause calls before the evidence was checked properly.
 
@@ -64,6 +66,28 @@ Run this for one PR at a time. Never two in parallel — each merge advances `ma
 6. Wait for CI green. If red on a flake, re-run **once**; if still red, stop and report. Check what else is running on the box before calling anything a flake.
 7. `gh pr merge <N> --squash --delete-branch`. Conventional title, no AI attribution.
 8. If the merged PR was the base of a stacked PR, immediately `--onto` rebase the child (see "Stacked pairs").
+
+## Stop and wait for approval
+
+If Claude Code is running this, these are hard stops. Present the evidence and wait — do not proceed on inference, and do not batch several past a stop.
+
+**Always stop before:**
+
+1. **Any squash-merge to `main`** (step 7). It is the only irreversible step in the loop and it changes a shared branch. Show: the PR number, the squash title, CI state, and — for Groups 3 and 4 — the result of the trap check from step 3.
+2. **Any commit.** Repo rule, no exceptions: show `git diff --staged` and the exact message, then wait. This holds even when the instruction was "just commit it".
+3. **Any force-push** (step 5), including `--force-with-lease`. State what is being rewritten and why the rewrite is safe. Never plain `--force`; never force-push `main`.
+4. **Closing a PR** (#245, #251). Closing is a judgment about someone's work, not a mechanical step.
+
+**Stop and ask when the situation is not the one this runbook describes:**
+
+5. **A conflict that Part 1 does not document.** The documented resolutions were reasoned once and verified; a novel conflict means reality diverged from this plan. Report the files and hunks rather than improvising.
+6. **A trap check that comes back missing** — `withWarmup`, the pending-alert freeze, or `canonicalLivePathSet` absent after the merge. That means the resolution was wrong, and the correct fix may not be "add it back".
+7. **CI red after exactly one re-run.** One re-run for a suspected flake, then stop. Before calling anything a flake, check what else is running on the machine — concurrent test suites on this box produced three misattributed flakes in one session.
+8. **Pre-flight finds a blocker not listed here** (anything beyond #234's orphaned base and #259's `Lint`). A new `CONFLICTING` or a new red check means the branch set moved.
+9. **A verification claim that cannot be proven mechanically.** If you cannot show that a merge is contained or a resolution is lossless — no tree-hash match, no clean reverse-apply — say so plainly rather than asserting it. Three separate containment checks gave wrong answers in this session; the honest report is "I could not verify this", not a confident yes.
+10. **The suite regresses by a large multiple.** A 5× jump after a conflict-free rebase is an environment fault, not the diff. Diagnose and report before touching code.
+
+**Do not stop for these** — they are reversible and asking for each one turns an 18-PR sequence into an interrogation: fetching, rebasing, resolving a conflict that Part 1 documents, running tests or lint, reading files, creating a worktree, or copying `node_modules`.
 
 ## Order
 
