@@ -3351,7 +3351,8 @@ export class StreamerServer {
       return;
     }
 
-    const { projectPath, projectName, branch } = discSession;
+    const { branch } = discSession;
+    let { projectPath, projectName } = discSession;
     const convId = discSession.id;
 
     if (discSession.pid == null) {
@@ -3359,11 +3360,26 @@ export class StreamerServer {
       return;
     }
 
+    // Windows exposes no process CWD (neither CIM nor wmic carries it), so
+    // discovery reports an empty projectPath rather than fabricating one. Fall
+    // back to the conversation's own JSONL — the same authoritative source
+    // handleResume uses, since it is the file Claude looks up by filename when
+    // processing --resume. Every session reaching adopt has a conversation id
+    // (SessionStore drops discovered processes without one), so this resolves
+    // in the normal case on every platform.
+    if (!projectPath) {
+      const jsonlPath = this.findJsonlPath(convId);
+      const jsonlCwd = jsonlPath ? await this.readCwdFromJsonl(jsonlPath) : null;
+      if (jsonlCwd) {
+        projectPath = jsonlCwd;
+        projectName = projectName || basename(jsonlCwd);
+      }
+    }
+
     // Refuse BEFORE killing anything if we could not resolve where the process
     // is running. Adopt is destructive-then-restorative, so every reason it
-    // cannot restore has to be checked first: Windows exposes no process CWD
-    // (neither CIM nor wmic carries it), and spawning the replacement with an
-    // empty cwd fails outright. Killing first and discovering this after would
+    // cannot restore has to be checked first: spawning the replacement with an
+    // empty cwd fails outright, and killing first then discovering this would
     // destroy the user's session with nothing to put back in its place.
     if (!projectPath) {
       this.log.warn("adopt: refusing, working directory unknown", {
@@ -3375,6 +3391,27 @@ export class StreamerServer {
         error:
           "Cannot take over this session: its working directory could not be determined on this platform",
         code: "ADOPT_NO_PROJECT_PATH",
+      });
+      return;
+    }
+
+    // Same reasoning one step further: a conversation whose project directory
+    // was deleted (or whose worktree was removed) cannot be respawned there, so
+    // refuse while the external session is still alive rather than killing it
+    // and failing on spawn.
+    const availability = classifyResumability(projectPath);
+    if (!availability.resumable) {
+      this.log.warn("adopt: refusing, project directory no longer exists", {
+        event: "adopt.project_path_missing",
+        sessionId,
+        pid: discSession.pid,
+        projectPath,
+        reason: availability.unavailable_reason,
+      });
+      json(res, 400, {
+        error: "Cannot take over this session: its project directory no longer exists",
+        code: "ADOPT_PROJECT_PATH_MISSING",
+        reason: availability.unavailable_reason,
       });
       return;
     }
