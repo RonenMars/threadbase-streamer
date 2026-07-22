@@ -2237,8 +2237,14 @@ describe("StreamerServer", () => {
           { id: "auto", label: "Auto", configDir: profileDir, enabled: true, emoji: "🔄" },
         ],
         codexRoots: [],
+        // The scanner otherwise opens its own persistent SQLite index, which
+        // needs a native better-sqlite3 build that is not guaranteed locally.
+        scannerPersistent: false,
       });
-      await autoServer.listen(autoPort);
+      // getRandomPort() returns the ephemeral 0, so the real port has to be
+      // read back after binding or every fetch below targets localhost:0.
+      await autoServer.listen(autoPort, { awaitReady: true });
+      autoPort = autoServer.port;
       // Seed cache + conversations_last_indexed_at via the explicit reconcile path.
       await listForced();
     });
