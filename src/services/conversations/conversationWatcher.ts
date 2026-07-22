@@ -1,6 +1,7 @@
 import chokidar, { type FSWatcher } from "chokidar";
 import { statSync } from "fs";
 import { open, stat } from "fs/promises";
+import { canonicalizeFilePath } from "../../utils/canonicalizeFilePath";
 import { type LineSpan, splitCompleteLines } from "../../utils/fileIdentity";
 
 export interface ConversationWatcherEvents {
@@ -31,6 +32,13 @@ export interface ConversationWatcherEvents {
   onConversationChanged?: (filePath: string) => void | Promise<void>;
   /** Fires when a tailed file is deleted (per-file watcher unlink event). */
   onFileDeleted?: (filePath: string) => void;
+  /**
+   * Fires when a tailed file shrank below our read offset (in-place truncation
+   * or replacement by a shorter file). The tail has already reset to byte 0;
+   * the consumer must discard any byte-offset index built for the old content,
+   * which no longer describes this file.
+   */
+  onTruncated?: (filePath: string) => void;
   /** Reported errors per file. */
   onError?: (filePath: string, error: Error) => void;
 }
@@ -38,6 +46,11 @@ export interface ConversationWatcherEvents {
 interface WatchedFile {
   watcher: FSWatcher;
   offset: number;
+  // The original (un-canonicalized) path passed to watch(). The `files` map is
+  // keyed by the canonical path (so mixed-separator poke/unwatch match), but FS
+  // reads and emitted callback paths use this original so the offset index's
+  // stat identity is unchanged (P1.a).
+  path: string;
   // Async-read re-entrancy guard: `reading` is set while a readNewLines is in
   // flight; `pending` records that a change arrived during that read so the
   // in-flight loop re-runs once more after it finishes.
@@ -64,6 +77,7 @@ export class ConversationWatcher {
   private onNewLineSpans: ConversationWatcherEvents["onNewLineSpans"];
   private onConversationChanged: ConversationWatcherEvents["onConversationChanged"];
   private onFileDeleted: ConversationWatcherEvents["onFileDeleted"];
+  private onTruncated: ConversationWatcherEvents["onTruncated"];
   private onError: ConversationWatcherEvents["onError"];
 
   constructor(events: ConversationWatcherEvents = {}) {
@@ -72,11 +86,19 @@ export class ConversationWatcher {
     this.onNewLineSpans = events.onNewLineSpans;
     this.onConversationChanged = events.onConversationChanged;
     this.onFileDeleted = events.onFileDeleted;
+    this.onTruncated = events.onTruncated;
     this.onError = events.onError;
   }
 
   watch(filePath: string): void {
-    if (this.files.has(filePath)) return;
+    // Key the map by the canonical (forward-slash) path so a native-separator
+    // path from a directory event (chokidar on Windows) resolves to the entry a
+    // scanner-posix path registered — otherwise poke()/unwatch() miss and the
+    // tail self-heal is dead (P1.a). FS reads and emitted callback paths keep the
+    // original path (`entry.path`); its stat identity is what the offset index
+    // relies on, so it must not be normalized.
+    const key = canonicalizeFilePath(filePath);
+    if (this.files.has(key)) return;
 
     let offset: number;
     try {
@@ -91,10 +113,10 @@ export class ConversationWatcher {
     });
 
     watcher.on("change", () => {
-      void this.readNewLines(filePath);
+      void this.readNewLines(key);
     });
     watcher.on("add", () => {
-      void this.readNewLines(filePath);
+      void this.readNewLines(key);
     });
     watcher.on("unlink", () => this.onFileDeleted?.(filePath));
     watcher.on("error", (err) => {
@@ -102,14 +124,15 @@ export class ConversationWatcher {
       this.onError?.(filePath, error);
     });
 
-    this.files.set(filePath, { watcher, offset, reading: false, pending: false });
+    this.files.set(key, { watcher, offset, reading: false, pending: false, path: filePath });
   }
 
   unwatch(filePath: string): void {
-    const entry = this.files.get(filePath);
+    const key = canonicalizeFilePath(filePath);
+    const entry = this.files.get(key);
     if (!entry) return;
     void entry.watcher.close();
-    this.files.delete(filePath);
+    this.files.delete(key);
   }
 
   /**
@@ -121,8 +144,11 @@ export class ConversationWatcher {
    * event is a cheap stat + no-op. Returns false for untailed paths.
    */
   poke(filePath: string): boolean {
-    if (!this.files.has(filePath)) return false;
-    void this.readNewLines(filePath);
+    // Canonicalize so a directory event's native-separator path matches the entry
+    // watch() keyed by the (possibly posix) scanner path (P1.a).
+    const key = canonicalizeFilePath(filePath);
+    if (!this.files.has(key)) return false;
+    void this.readNewLines(key);
     return true;
   }
 
@@ -164,9 +190,12 @@ export class ConversationWatcher {
     for (const [dir] of this.directories) this.unwatchDirectory(dir);
   }
 
-  private async readNewLines(filePath: string): Promise<void> {
-    const entry = this.files.get(filePath);
+  private async readNewLines(key: string): Promise<void> {
+    const entry = this.files.get(key);
     if (!entry) return;
+    // Map is keyed by the canonical path; FS reads and emitted callbacks use the
+    // original path so the offset index's stat identity is unchanged (P1.a).
+    const filePath = entry.path;
 
     // Coalesce: if a read is already running, flag that another change arrived;
     // the in-flight loop will pick up the freshly-appended bytes before exiting.
@@ -181,7 +210,16 @@ export class ConversationWatcher {
       // without re-entering — preserves offset correctness under async I/O.
       for (;;) {
         const st = await stat(filePath);
-        // size <= offset also covers truncation/rotation, exactly as before.
+        // Truncated or replaced by a SHORTER file: our offset now points past
+        // EOF. Leaving it there makes the tail silently stall until the file
+        // grows back past the stale offset and then resume mid-line, splicing
+        // the new file's content onto the old conversation. Reset to the start
+        // and tell the caller so it can drop the byte-offset index it built for
+        // the previous generation of this file.
+        if (st.size < entry.offset) {
+          entry.offset = 0;
+          this.onTruncated?.(filePath);
+        }
         if (st.size <= entry.offset) break;
 
         const readFrom = entry.offset;
@@ -203,7 +241,7 @@ export class ConversationWatcher {
         entry.offset = readFrom + consumed;
 
         // The watcher may have been closed while we awaited; don't emit then.
-        if (!this.files.has(filePath)) return;
+        if (!this.files.has(key)) return;
 
         const lines = spans.map((s) => s.text);
         // The spans callback (offset index) fires alongside the text callbacks
@@ -235,9 +273,9 @@ export class ConversationWatcher {
       // before consuming it (e.g. an error broke out of the loop), the pending
       // bytes would otherwise sit unread until the next write. Re-arm once so
       // they're picked up — guarded by files.has so a disposed watcher stays put.
-      if (entry.pending && this.files.has(filePath)) {
+      if (entry.pending && this.files.has(key)) {
         entry.pending = false;
-        void this.readNewLines(filePath);
+        void this.readNewLines(key);
       }
     }
   }

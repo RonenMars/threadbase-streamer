@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
+import { canonicalizeFilePath } from "../src/utils/canonicalizeFilePath";
 
 let dbDir: string;
 let cache: ConversationCache;
@@ -1016,6 +1017,40 @@ describe("invalidateByFilePath()", () => {
     expect(removed).toBeNull();
     expect(cache.hasConversation("abc-123")).toBe(true);
   });
+
+  // P1.a: chokidar delivers native backslash paths on Windows while the scanner
+  // stores forward slashes. Without canonicalization the getIdByFilePath lookup
+  // misses the scanner row and the unlink delete silently no-ops.
+  it("matches a forward-slash scanner row when invalidated with native separators (P1.a)", () => {
+    cache.upsertFromScannerMeta([
+      {
+        ...BASE_META,
+        id: "win-1",
+        sessionId: "win-1",
+        filePath: "C:/Users/dev/.claude/projects/proj/win-1.jsonl",
+      },
+    ] as any);
+    expect(cache.hasConversation("win-1")).toBe(true);
+
+    // A chokidar unlink event delivers the SAME file with native backslashes.
+    const removed = cache.invalidateByFilePath(
+      "C:\\Users\\dev\\.claude\\projects\\proj\\win-1.jsonl",
+    );
+    expect(removed).toBe("win-1");
+    expect(cache.hasConversation("win-1")).toBe(false);
+  });
+
+  // P1.b: a ?refresh=1 upsert creates a row with NO cached tail. The next
+  // external append's directory-change event previously deleted it (flicker-out).
+  // The change path (skipIfTailed) must now never delete — tailed OR untailed.
+  it("keeps an UNTAILED refresh-created row on the change path (P1.b)", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.getConversationTail("abc-123")).toBeNull(); // no tail
+
+    const removed = cache.invalidateByFilePath(BASE_META.filePath, { skipIfTailed: true });
+    expect(removed).toBeNull();
+    expect(cache.hasConversation("abc-123")).toBe(true);
+  });
 });
 
 describe("pruneGhostFiles()", () => {
@@ -1110,8 +1145,11 @@ describe("getFileStats()", () => {
     ] as any);
 
     const stats = cache.getFileStats();
-    expect(stats.has(filePath)).toBe(true);
-    const entry = stats.get(filePath);
+    // file_path is stored canonicalized (forward slashes); on Windows the native
+    // join() path above must be canonicalized to hit the same key (P1.a). No-op
+    // on POSIX.
+    expect(stats.has(canonicalizeFilePath(filePath))).toBe(true);
+    const entry = stats.get(canonicalizeFilePath(filePath));
     expect(entry?.mtimeMs).toBe(s.mtimeMs);
     expect(entry?.size).toBe(s.size);
   });
@@ -1126,7 +1164,9 @@ describe("getFileStats()", () => {
     ] as any);
 
     const stats = cache.getFileStats();
-    expect(stats.has(filePath)).toBe(true);
+    // file_path is stored canonicalized; canonicalize the native join() path to
+    // match on Windows (no-op on POSIX).
+    expect(stats.has(canonicalizeFilePath(filePath))).toBe(true);
     expect(stats.has("/nonexistent/path.jsonl")).toBe(false);
     expect(stats.size).toBe(1);
   });
@@ -1147,7 +1187,9 @@ describe("getFileStats()", () => {
     ] as any);
 
     const statCache = cache.getScannerStatCache();
-    const entry = statCache.get(filePath);
+    // file_path is stored canonicalized; canonicalize the native join() path to
+    // match on Windows (no-op on POSIX).
+    const entry = statCache.get(canonicalizeFilePath(filePath));
     expect(entry?.stat.mtimeMs).toBe(s.mtimeMs);
     expect(entry?.stat.size).toBe(s.size);
     expect(entry?.meta.id).toBe("scanner-meta");
@@ -1327,5 +1369,60 @@ describe("updateFromLines() — batched write", () => {
       a.close();
       b.close();
     }
+  });
+
+  // P0.3: last_activity/last_message are assigned from the newest line by
+  // timestamp, guarded so an interleaved writer's older append can't drag the
+  // metadata backward (which corrupts list ordering + staleness comparisons).
+  it("does not move last_activity/last_message backward on an out-of-order later batch", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+
+    // A newer message lands first.
+    cache.updateFromLines(BASE_META.filePath, [msgLine(1, "2024-01-01T12:00:00.000Z")]);
+    expect(cache.getMetaById("abc-123")?.lastActivity).toBe("2024-01-01T12:00:00.000Z");
+
+    // A later batch carries an OLDER line (interleaved writer). It counts toward
+    // message_count but must NOT overwrite last_activity/last_message.
+    cache.updateFromLines(BASE_META.filePath, [msgLine(0, "2024-01-01T09:00:00.000Z")]);
+
+    const meta = cache.getMetaById("abc-123");
+    expect(meta?.lastActivity).toBe("2024-01-01T12:00:00.000Z");
+    expect(meta?.lastMessage).toContain("msg 1");
+    // Every physical message line still counts: 2 (scanner) + 1 + 1.
+    expect(meta?.messageCount).toBe(4);
+  });
+
+  it("takes the newest line within a single out-of-order batch (not byte-order-last)", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    // Within one batch, the LAST line in byte order is older than an earlier one.
+    cache.updateFromLines(BASE_META.filePath, [
+      msgLine(3, "2024-01-01T15:00:00.000Z"),
+      msgLine(2, "2024-01-01T11:00:00.000Z"),
+    ]);
+    const meta = cache.getMetaById("abc-123");
+    expect(meta?.lastActivity).toBe("2024-01-01T15:00:00.000Z");
+    expect(meta?.lastMessage).toContain("msg 3");
+  });
+
+  // P1.a: the live tail is seeded with a native path (join()) while the scanner
+  // row stores forward slashes. Without canonicalizing the fileIndex key the
+  // append misses the scanner row and mints a duplicate skeleton conversation.
+  it("appends to the scanner row when tailed with native separators (P1.a)", () => {
+    // A codex rollout file: the filename stem is NOT the row id, so a missed
+    // fileIndex lookup mints a second skeleton row instead of silently
+    // colliding back onto the right id.
+    const posixPath = "C:/Users/dev/.codex/sessions/rollout-2024-01-01T10-00-00-win-2.jsonl";
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "win-2", sessionId: "win-2", filePath: posixPath },
+    ] as any);
+
+    // chokidar/join() deliver the SAME file with native backslashes.
+    cache.updateFromLines(posixPath.replace(/\//g, "\\"), [msgLine(1, "2024-01-01T12:00:00.000Z")]);
+
+    const meta = cache.getMetaById("win-2");
+    expect(meta?.messageCount).toBe(3); // 2 (scanner) + 1
+    expect(meta?.lastActivity).toBe("2024-01-01T12:00:00.000Z");
+    // No duplicate skeleton row was minted for the native-separator path.
+    expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(1);
   });
 });

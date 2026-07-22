@@ -201,6 +201,9 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     conversationId: s.id,
     provider: s.provider ?? CLAUDE_CODE_PROVIDER,
     status: s.status,
+    // We spawned it, so `status` is the authoritative signal — no inferred
+    // `activity` is attached for managed sessions.
+    ownership: "managed",
     projectPath: s.projectPath,
     projectName: s.projectName,
     branch: s.branch,
@@ -235,7 +238,14 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
     id: conversationId,
     conversationId,
     provider: CLAUDE_CODE_PROVIDER,
+    // Stays "idle" deliberately: we cannot see this process's prompt state, and
+    // reporting `running` would route mobile to the destructive Overtake screen.
+    // Liveness travels in the additive fields below instead.
     status: "idle",
+    ownership: "external",
+    // Discovery just enumerated this PID, so it was alive moments ago. We never
+    // report "gone" here — a vanished process simply stops being listed.
+    processLiveness: "alive",
     projectPath: d.projectPath,
     projectName: d.projectName,
     branch: d.branch,

@@ -14,7 +14,7 @@ import WebSocket from "ws";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
 import { PTYManager } from "../src/pty-manager";
-import { StreamerServer } from "../src/server";
+import { GRACE_MAX_DEFERS, StreamerServer } from "../src/server";
 
 const FIXTURE_PROFILES = [
   {
@@ -1173,34 +1173,59 @@ describe("StreamerServer", () => {
         lastOutput: "",
       }) as any;
 
-    it("does NOT hold a running session, and re-arms the timer", async () => {
+    it("does NOT hold a running session before the defer cap, and re-arms the timer", () => {
+      vi.useFakeTimers();
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
       vi.spyOn((server as any).sessionStore, "get").mockReturnValue(mkSession("running"));
       const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
       const armSpy = vi.spyOn(server as any, "startGraceTimer");
 
       (server as any).startGraceTimer(SID, 10);
-      await new Promise((r) => setTimeout(r, 40));
+      // Fire twice — both below the cap, so it defers and re-arms without holding.
+      vi.advanceTimersByTime(20);
 
       expect(holdSpy).not.toHaveBeenCalled();
       // re-armed: startGraceTimer called again (beyond the initial invocation)
       expect(armSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      // defer count is tracked and still under the cap
+      expect((server as any).ptyGraceDeferCounts.get(SID)).toBeLessThanOrEqual(GRACE_MAX_DEFERS);
 
       // stop the re-armed timer so it doesn't fire after restore
       const t = (server as any).ptyGraceTimers.get(SID);
       if (t) clearTimeout(t);
+      (server as any).ptyGraceDeferCounts.delete(SID);
+      vi.useRealTimers();
       vi.restoreAllMocks();
     });
 
-    it("holds a waiting_input session when the grace timer fires", async () => {
+    it("holds a running session anyway once GRACE_MAX_DEFERS is exceeded", () => {
+      vi.useFakeTimers();
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      vi.spyOn((server as any).sessionStore, "get").mockReturnValue(mkSession("running"));
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+
+      (server as any).startGraceTimer(SID, 10);
+      // GRACE_MAX_DEFERS defers, then one more fire that exceeds the cap and holds.
+      vi.advanceTimersByTime(10 * (GRACE_MAX_DEFERS + 1));
+
+      expect(holdSpy).toHaveBeenCalledWith(SID);
+      // count is cleared once it holds
+      expect((server as any).ptyGraceDeferCounts.has(SID)).toBe(false);
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it("holds a waiting_input session when the grace timer fires", () => {
+      vi.useFakeTimers();
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
       vi.spyOn((server as any).sessionStore, "get").mockReturnValue(mkSession("waiting_input"));
       const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
 
       (server as any).startGraceTimer(SID, 10);
-      await new Promise((r) => setTimeout(r, 40));
+      vi.advanceTimersByTime(10);
 
       expect(holdSpy).toHaveBeenCalledWith(SID);
+      vi.useRealTimers();
       vi.restoreAllMocks();
     });
   });
