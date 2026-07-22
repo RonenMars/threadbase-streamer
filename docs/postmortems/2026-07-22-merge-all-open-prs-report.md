@@ -270,3 +270,67 @@ Raw counts are meaningless here; the branch adds ~125 tests. What matters is the
 4. Re-install dependencies and re-run once to actually exercise #224/#226/#227 — the one verification gap that remains open.
 5. Add a shared `listenForTest(server)` helper that binds and returns the real port, to end the readback class described in Part 5.
 6. Recommended landing order, one at a time, each rebased onto the `main` the previous merge produced: **#255 → #232 → #234 → #237 → #240 → #241 → #242 → #252 → #253 → #254**, with the dependabot bumps anywhere. #234 after #232, #254 after #253 — and #254's rebase needs `git rebase --onto main feat/live-external-sessions fix/adopt-resolve-cwd-from-jsonl`, because squashing #253 produces a commit git cannot match against the originals.
+
+---
+
+# Addendum — work after the report was first written
+
+Everything above describes the branch at `eab26e3`. Four things happened after that and the numbers in Part 4 are no longer current.
+
+## A1. The remaining 28 failures were also test bugs — and one was a product bug
+
+Part 5 established that 10 "environmental" failures were fixtures missing `scannerPersistent: false`. The same question was then put to the 28 failures that survived, which the report had written off as pre-existing on `main`. **They were the same class**, with one exception that mattered.
+
+Five files (`conversation-anchored-page`, `conversation-search-target`, `codex-api`, `codex-scan`, `version`) were fixed the same way and are now **PR #260 against `main`** — deliberately cut as a fresh `main`-based branch rather than a PR from this one, which is 46 commits ahead and would have carried all 14 merged PRs into the diff. On `main` those fixes take the suite from **35 failures to 7**; the residual 7 are the `refresh=1` reconcile group that #237 fixes.
+
+The exception: `offset-index-detail` did not recover from isolation alone. Applying only the isolation fix to `main` made it pass 3/3 while the same fix on this branch still failed 3/3 — which localised the cause to a merged PR rather than the host. **#253 had silently disabled the offset index for every conversation on Windows.**
+
+## A2. The #253 path-canonicalization bug class
+
+#253 established a canonical forward-slash form for `conversation_meta.file_path`, but the scanner emits **native** paths. This was measured, not assumed:
+
+```
+scanner filePath => "C:\Users\PC\AppData\Local\Temp\probe-Iutkvz\projects\-tmp-probe\probe-conv.jsonl"
+```
+
+Anywhere a scanner-derived path is joined against a cache-derived one without normalising, the join silently fails — an empty map, a `false`, a fallback, never an exception — and is structurally invisible to a Linux-only CI matrix, where the two forms are identical strings.
+
+Three sites were found:
+
+| Site | Effect | Fix |
+|---|---|---|
+| `isIndexableFile` | Lookup used a raw path → **offset index disabled for every conversation**. Correctness. | `5c56dc9` |
+| `buildStatCache` | Returned a canonically-keyed map to `scanner.scan({ statCache })`, which looks up by native path → every lookup missed → full re-parse on every rescan. | `acef47f` |
+| `reconcileDeletions` caller | `livePaths` native vs rows canonical → membership test never matched. | `acef47f` |
+
+The third was checked specifically for data loss and there is none: the only thing preventing mass deletion was `if (exists(row.file_path)) continue`, and `existsSync` was verified to accept forward-slash Windows paths. A race backstop had quietly become the primary guard.
+
+The fix (`acef47f`) is a boundary, not a patch: `canonicalizeFilePath`, `toNativeFilePath`, `canonicalLivePathSet` and `joinStatCacheByNativePath` now own every conversion in one module, under the rule **normalize for the comparison, emit in the consumer's form**. The module's own docstring previously claimed "the scanner populates `conversation_meta.file_path` with forward slashes" — the exact inverse of measured behaviour, and the mental model that produced the bug. It was corrected, and the rule is now documented in `CLAUDE.md` beside the existing `canonicalizeProjectPath` entry, whose absence for *file* paths is what let this through.
+
+**Known gap in that work:** the 11 new tests in `__tests__/scanner-path-boundary.test.ts` pin the helper contracts but do **not** verify `server.ts` calls them — with the helpers present and `server.ts` reverted to the broken inline logic, all 11 still pass. Covering the wiring needs a test that drives `buildStatCache`, whose only route is constructing a `StreamerServer`; that opens a real database connection in this environment and produced a 21-second flake, so it was removed rather than shipped flaky.
+
+## A3. The same extraction trap, a third time
+
+Merging #253's new commits back into this branch produced exactly one conflict — and exactly the S1 shape from Part 2. HEAD carried #237's **extracted** `reconcileConversationsCacheFromDisk()`; #253 still had the old **inline** block, now carrying the `canonicalLivePathSet` fix. Taking HEAD's side is correct and would have discarded the fix with no marker, no error and a clean `tsc`. The extracted method was read afterwards and was indeed still building `livePaths` natively; the fix was applied there by hand.
+
+That is now three occurrences of one pattern on this branch: #237's method losing `withWarmup` and the integrity freeze, and now this. **After resolving any conflict where one side extracted code into a method, read the method** — the conflict markers only ever show the call site.
+
+## A4. Current state
+
+The branch was renamed from `integration-dev/v1.0.0-07d0812-2026-07-22` to **`integration-dev/v1.0.0-2026-07-22`** (old remote deleted after verifying the old tip was a strict ancestor of the new one).
+
+| Run | Tests |
+|---|---|
+| Part 4's final figure (`eab26e3`) | 28 failed / 1051 passed / 21 skipped |
+| After merging #253's fixes (`af92487`) | **29 failed / 1061 passed / 21 skipped** |
+
+Name-diff against the branch's own baseline: **0 new failures.** The single difference is `release-precheck`, which passes 5/5 in isolation.
+
+**On that flake — three different files have now flaked under full parallel load** (`release-precheck`, `codex-pty-runner`, and `release-precheck` again), each passing in isolation. That is a property of this suite on this host worth its own investigation; it also means a single red run here should be re-checked in isolation before it is believed.
+
+## A5. Follow-ups still open
+
+1. **#245 should be closed, not merged.** Verified against `main`: all four of its changes are present via `171ee42`. One detail is worth salvaging first — #245's `waitFor` **throws** on timeout while `main`'s silently returns, so on `main` a genuine timeout surfaces as a confusing downstream assertion failure instead of naming its cause.
+2. **The dependabot verification gap is closed** and Part 4's caveat about it is wrong. The `package.json` ranges are identical on `main` and this branch — dependabot only moved lockfile pins — and because `npm install` (not `ci`) was used, npm resolved to the newest matching versions. The installed tree is `hono 4.12.31`, `tsx 4.23.1`, `semantic-release 25.0.8`: exactly the merged lockfile. The bumps were exercised in every run.
+3. **A branded `CanonicalPath` type** remains the only mechanism that would catch this class at authoring time. Not attempted here: it touches every cache signature taking a path, which is too much blast radius for a branch already carrying 14 PRs of merge risk.
+4. Scanner **#46** and the `listenForTest(server)` helper, both unchanged from the list above.
