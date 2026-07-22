@@ -397,6 +397,24 @@ The integration branch proves the PRs *can* coexist. It does not land them. Each
 
 That leaves **18 PRs to land**.
 
+## Pre-flight — run this before landing anything
+
+Sweep every open PR for mergeability and red checks first. Two blockers were sitting in the set when it looked ready, and neither was visible from the integration branch being green:
+
+```
+gh pr list --state open --limit 50 --json number,headRefName -q '.[]|"\(.number) \(.headRefName)"' |
+  sort -n | while read n b; do
+    gh pr view $n --json mergeable,mergeStateStatus,statusCheckRollup \
+      -q '"\(.mergeable)|\(.mergeStateStatus)|\([.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(","))"'
+  done
+```
+
+**Run it twice.** GitHub computes mergeability lazily; the first `gh pr view` only *triggers* the computation and returns `UNKNOWN`. A bulk `gh pr list --json mergeable` never resolves at all. This is why the first sweep reported `UNKNOWN` for 13 PRs and the second returned real values.
+
+Expect most PRs to read `BEHIND` — that is normal and is handled by step 1 of the loop. What you are looking for is `CONFLICTING` / `DIRTY`, or a non-empty failing-checks column.
+
+Found this way, 2026-07-22: **#234** `CONFLICTING` (orphaned stacked base — see "Stacked pairs") and **#259** failing `Lint` on `cli/prod.ts format` (its own defect, fixed at source in `801b80f`). `#245` also reads `CONFLICTING`, which is moot — it is being closed.
+
 ## The per-PR loop
 
 Run this for one PR at a time. Never two in parallel — each merge advances `main` and stales the next.
@@ -463,7 +481,11 @@ Two separate rebases are needed for a child, and they are not interchangeable:
 - **After the parent squash-merges**, GitHub retargets the child to `main`, but the branch still carries the parent's individual commits, which the squash collapsed into one commit git cannot match. Replay only the child's own work:
   `git rebase --onto main <parent-branch> <child-branch>`
 
-A stacked PR also gets **no CI in this repo**: `ci.yml` triggers on `pull_request: branches: [main]`, so a PR based on a feature branch reports Snyk and nothing else until its base becomes `main`. Treat a green badge on one as meaningless.
+**Diagnosing an orphaned child.** #234 sat at `CONFLICTING` / `DIRTY` because #232 had been rebased at some earlier point and #234 still carried the *pre-rebase copies* of #232's two commits. The tell is the merge-base: `git merge-base <parent> <child>` pointed at `0b1b599`, far behind the parent's actual history, and `git merge-base --is-ancestor <old-sha> <parent>` returned false for each copy. The `<old-parent-tip>` argument to `--onto` is then the last of those orphaned copies, not the parent's current tip. Resolved with `git rebase --onto origin/feat/cache-integrity-alert 7d7e8a7 feat/cache-warmup-status`.
+
+A stacked PR also gets **no CI in this repo**: `ci.yml` triggers on `pull_request: branches: [main]`, so a PR based on a feature branch reports Snyk and nothing else until its base becomes `main`. Treat a green badge on one as meaningless — and note the consequence for the loop above: **step 6 cannot be satisfied for a stacked PR.** Verify it locally instead (`tsc`, lint, the suites its files touch), which means its worktree needs `node_modules`. Compare any failures against the pre-rebase tip before blaming the rebase; #234 showed 12 failures after its rebase and exactly the same 12 before it.
+
+**Re-merging a rebased branch into the integration branch replays its original conflicts**, because the rebase gave its commits new SHAs. If the branch's content did not change, resolve to HEAD and then prove it: `git write-tree` after resolving should equal `git rev-parse HEAD^{tree}` from before the merge. An identical hash means the merge added nothing and the resolution was correct — cheaper and more reliable than re-reading every hunk.
 
 ## Moving target
 
