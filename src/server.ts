@@ -1603,7 +1603,11 @@ export class StreamerServer {
    */
   private async reconcileConversationsCacheFromDisk(): Promise<void> {
     if (!this.cache) return;
-    const scanner = await this.withWarmup("conversation_refresh", () => this.rescanForRefresh());
+    // No warm-up gate here: the caller decides. The cold-start path wraps this
+    // in withWarmup (nothing to serve, so 503 while building is correct); the
+    // routine background path must NOT gate, or every JSONL append flips the
+    // server into SERVER_WARMING_UP and the client flickers.
+    const scanner = await this.rescanForRefresh();
     const metas = [...scanner.getMetadataCache().values()];
     try {
       this.cache.upsertFromScannerMeta(metas as any[]);
@@ -1686,7 +1690,12 @@ export class StreamerServer {
       if (canServeStale) {
         this.startBackgroundConversationReconcile();
       } else {
-        await this.reconcileConversationsCacheFromDisk();
+        // Cold cache (or explicit refresh): nothing to serve, so gate with the
+        // warm-up state — the client shows the one-time "building history"
+        // screen instead of an empty list — and await the build.
+        await this.withWarmup("conversation_refresh", () =>
+          this.reconcileConversationsCacheFromDisk(),
+        );
       }
     }
 
