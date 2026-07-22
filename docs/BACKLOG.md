@@ -45,6 +45,8 @@ The comment in `runProdLogs` (*"Removing the inode would leave the daemon writin
 
 ## Busy-wait CPU spin in `bootoutAgent`
 
+**Status:** Fixed on `fix/bootout-agent-busy-wait` — poll wait uses `Atomics.wait` (50 ms) instead of a busy-spin.
+
 **Symptom:** `tb-streamer prod restart` (and the dev-takeover path) pegs a full CPU core for up to 2 seconds while launchd tears down the agent.
 
 **Root cause:** `src/lifecycle/launchd.ts:33-43` polls `isAgentLoaded()` (which spawns `launchctl print`) on a 50 ms cadence — but the inter-poll wait is a tight `while (Date.now() < wake) { /* spin */ }` loop, not a sleep. With the default 2 s deadline that's up to 40 iterations of 50 ms hot-spinning. The justification comment (*"Atomics.wait would need a SharedArrayBuffer; spawnSync('sleep') is expensive"*) is misleading — `execFileSync("sleep", ["0.05"])` is ~1 ms of fork/exec overhead, dramatically cheaper than 50 ms of pegged CPU.
