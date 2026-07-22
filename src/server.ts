@@ -1813,8 +1813,12 @@ export class StreamerServer {
   // path — refresh=1 returns the cached total synchronously and this catches up.
   private refreshCountInBackground(): void {
     // Tracked so close() awaits this scan→cache-write before closing cache.db.
+    // NOT wrapped in withWarmup: this is fire-and-forget (nothing awaits the gate
+    // to learn when it finishes), so gating would only reject concurrent readers
+    // with 503 for the scan's duration — the same warmup-lock stall the list path
+    // avoids. The cached total is already served synchronously before this runs.
     this.trackCacheWrite(
-      this.withWarmup("conversation_refresh", async () => {
+      (async () => {
         try {
           const scanner = await this.getFreshScanner();
           if (this.cache) {
@@ -1826,7 +1830,7 @@ export class StreamerServer {
             { event: "count.refresh_failed" },
           );
         }
-      }),
+      })(),
     );
   }
 
@@ -2472,6 +2476,7 @@ export class StreamerServer {
               id,
               profile_id: cachedMeta?.account ?? undefined,
               project_name: cachedMeta?.projectName ?? undefined,
+              session_name: cachedMeta?.title ?? undefined,
               project_path: cachedMeta?.projectPath ?? undefined,
               file_path: cachedMeta?.filePath ?? undefined,
               last_updated_at: cachedMeta?.lastActivity ?? undefined,
@@ -2749,6 +2754,7 @@ export class StreamerServer {
         id,
         profile_id: conv.account,
         project_name: conv.projectName,
+        session_name: conv.sessionName || undefined,
         project_path: conv.projectPath,
         file_path: conv.filePath,
         last_updated_at: metaLastUpdatedAt,
