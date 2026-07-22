@@ -1,7 +1,7 @@
 # Report: merging every open PR into one verification branch (round 2)
 
 **Date:** 2026-07-22
-**Branch:** `integration-dev/v1.0.0-07d0812-2026-07-22`, cut from `origin/main` at `07d0812` (`chore: bump @threadbase-sh/scanner to v0.11.1 (#256)`)
+**Branch:** `integration-dev/v1.0.0-2026-07-22`, cut from `origin/main` at `07d0812` (`chore: bump @threadbase-sh/scanner to v0.11.1 (#256)`)
 **Worktree:** `tb-new/worktrees/streamer-merge-all-prs` — deliberately *not* `.claude/worktrees/` (see Obstacle 1)
 **Scope:** All 14 open PRs except #223 and #251.
 **Result:** `tsc --noEmit` clean, `npm run lint` exit 0, full suite **28 failed / 1051 passed / 21 skipped** against a `main` baseline of **35 failed / 919 passed / 21 skipped** — **zero new failures, and 7 tests that fail on `main` now pass.** All 28 remaining failures are shared with the baseline.
