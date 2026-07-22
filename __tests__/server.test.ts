@@ -2357,6 +2357,7 @@ describe("StreamerServer", () => {
         disableDb: true,
         cacheDir: mkdtempSync(join(tmpdir(), "threadbase-refresh-status-cache-")),
         scanProfiles: FIXTURE_PROFILES,
+        ...HOST_ISOLATION,
       });
       await reuseServer.listen(reusePort, { awaitReady: true });
       reusePort = reuseServer.port;
