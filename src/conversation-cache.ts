@@ -570,7 +570,11 @@ export class ConversationCache {
     // meta row's id and an id lookup silently misses. A file with no meta row
     // at all is NOT indexable — provider unknown means indexing is unsafe; a
     // later request backfills once the meta row exists.
-    const row = this.stmts.getProviderByFilePath.get(filePath) as
+    // file_path is stored canonicalized (forward slashes), so the lookup key
+    // must be canonicalized too. Passing a native Windows path here matches no
+    // row, which reads as "not indexable" and silently disables the offset
+    // index for every conversation.
+    const row = this.stmts.getProviderByFilePath.get(canonicalizeFilePath(filePath)) as
       | { provider: string | null }
       | undefined;
     if (!row) return false;
