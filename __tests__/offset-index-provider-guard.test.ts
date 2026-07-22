@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
+import { canonicalizeFilePath } from "../src/utils/canonicalizeFilePath";
 import { fileIdentity, splitCompleteLines } from "../src/utils/fileIdentity";
 
 // Regression guard for the post-1.28.0 hotfix: the offset index parses with the
@@ -44,7 +45,7 @@ function seedMeta(id: string, filePath: string, provider: string): void {
     .prepare(
       "INSERT INTO conversation_meta (id, file_path, provider, message_count, updated_at) VALUES (?, ?, ?, 5, 1)",
     )
-    .run(id, filePath, provider);
+    .run(id, canonicalizeFilePath(filePath), provider);
 }
 
 beforeEach(() => {
