@@ -360,3 +360,22 @@ The dominant error was `Could not locate the bindings file` pointing at `node_mo
 - **`--ignore-scripts` is not a free safety flag.** It was introduced here to survive the nested native build, and it silently disabled the prebuild download for a package that was working. Prefer `npm install` followed by `npm rebuild better-sqlite3`, which repairs the top-level binding and fails only on the nested one.
 - **A 5× jump in failures is an environment signal, not a code signal.** Seven commits that rebased without a single conflict, against incoming commits touching only lockfiles, cannot plausibly break 138 additional tests. Read the *first* error before forming a theory about the diff.
 - **Distinguish top-level from nested `better-sqlite3` in every report of this error.** They have different versions, different causes and different fixes, and the error text looks identical apart from the path.
+
+---
+
+# Log — #260 merged in, branch goes fully green (2026-07-22)
+
+**Why it was missing.** #260's five test-isolation fixes were authored on `fix/test-isolation-remaining` and then cherry-picked onto a fresh `main`-based branch for review, so they never travelled back here. A patch-id audit (not SHA reachability — the PR branches had been rebased, which makes `git log --not` report their commits as unique) confirmed neither commit was present.
+
+**Merge.** `origin/test/isolate-scanner-fixtures` merged with zero conflicts, six test files.
+
+**Result: the suite is fully green for the first time.**
+
+| Run | Tests |
+|---|---|
+| Before the merge | 29 failed / 1061 passed / 21 skipped |
+| After | **0 failed / 1089 passed / 22 skipped** — `vitest` exit 0 |
+
+The 22nd skip is #260's symlink case, guarded by a capability probe on a host without the privilege.
+
+**The flake explanation, at last.** The run immediately after the merge showed 2 failures (`release-precheck`, `codex-pty-runner`); a clean re-run showed none. Inspecting the process table explained every "parallel-load flake" recorded in this report: a concurrent session was running three `jest` suites in `threadbase-mobile` and a `pr346` worktree, alongside the supervised prod streamer on port 8766. The contention was never this suite's own parallelism. **Before recording a flake, check what else is running on the box** — three separate entries in this document were misattributed to vitest's own concurrency.
