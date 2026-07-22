@@ -66,6 +66,10 @@ describe("GET /api/conversations/:id served from the offset index", () => {
       scanProfiles: [
         { id: "offset", label: "Offset", configDir: profileDir, enabled: true, emoji: "📏" },
       ],
+      // Without these the scanner opens its own persistent SQLite index, which
+      // leaks real host conversations in and needs a native better-sqlite3 build.
+      codexRoots: [],
+      scannerPersistent: false,
     });
     await server.listen(port);
   });
