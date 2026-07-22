@@ -865,12 +865,20 @@ cmd_deploy() {
 
   # Truncate logs in place only when --clear-logs is passed (opt-in — logs
   # are preserved by default so history isn't silently lost on every deploy).
-  # Truncating (not unlinking) preserves the inode launchd already has open
-  # via the plist's StandardOut/ErrorPath.
+  # Boot out first so no open writer holds an offset past the truncate; then
+  # re-bootstrap and kickstart so fds reopen at 0. Truncating while the daemon
+  # still holds StandardOut/ErrorPath creates sparse NUL-filled gaps.
   if (( clear_logs_flag )); then
     log "clearing logs (--clear-logs)"
+    local plist_path="$HOME/Library/LaunchAgents/$LAUNCHD_LABEL.plist"
+    if launchctl list "$LAUNCHD_LABEL" >/dev/null 2>&1; then
+      launchctl bootout "gui/$(id -u)/$LAUNCHD_LABEL" 2>/dev/null || true
+    fi
     : > "$INSTALL_DIR/logs/stdout.log" 2>/dev/null || true
     : > "$INSTALL_DIR/logs/stderr.log" 2>/dev/null || true
+    if [[ -f "$plist_path" ]]; then
+      launchctl bootstrap "gui/$(id -u)" "$plist_path" 2>/dev/null || true
+    fi
   fi
 
   log "kickstarting $LAUNCHD_LABEL"
