@@ -50,8 +50,12 @@ describe("API E2E tests", () => {
       const { status, body } = await get(baseUrl, "/api/conversations?limit=100", headers);
       expect(status).toBe(200);
       expect(body.total).toBe(3);
+      // The cache stores (and therefore returns) the canonical forward-slash
+      // form of file_path so native-separator lookups hit the row, so compare
+      // separator-insensitively — on Windows FIXTURE_DIR is backslash-joined.
+      const canonical = (p: string) => p.replace(/\\/g, "/");
       for (const convo of body.conversations) {
-        expect(convo.filePath).toContain(FIXTURE_DIR);
+        expect(canonical(convo.filePath)).toContain(canonical(FIXTURE_DIR));
       }
     });
 
