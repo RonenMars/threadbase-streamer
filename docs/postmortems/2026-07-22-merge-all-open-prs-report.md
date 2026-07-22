@@ -476,7 +476,7 @@ These bumps are lockfile-only and conflict with nothing, so being behind is chea
 The integration branch carries changes that belong to no individual PR and therefore **cannot be landed by merging PRs**. They are consequences of combining the branches:
 
 - `b972dcd` — import order in `src/server.ts`, only wrong once #232's and #237's import blocks are combined. Biome sorts `./services/cache/cacheMetadata` **before** `./services/cache-integrity/cacheIntegrityMonitor`; the 2026-07-20 report's rule for this is wrong.
-- `e2ac107` — formatting in `cli/prod.ts` after #259's edits meet the existing ones.
+- ~~`e2ac107` — formatting in `cli/prod.ts` after #259's edits meet the existing ones.~~ **Wrong — this was #259's own defect, not merge glue.** Biome reports #259's copy of `cli/prod.ts` unformatted in isolation on that branch, and its `Lint` job was already red for it. Fixed at source on #259 (`801b80f`). Listing it here would have sent whoever lands #259 into a red Lint job with no idea it had been diagnosed. **Before filing something as merge-only glue, check whether the source branch fails on it alone.**
 - Six merge commits carrying conflict resolutions (9–80 lines each), the largest being #237's.
 
 Expect to re-derive equivalents while landing. If `npm run lint` fails after a merge with nothing obviously wrong, this is why — run `npx biome check --write <file>` on the file the merge touched.
