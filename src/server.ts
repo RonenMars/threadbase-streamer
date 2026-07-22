@@ -74,8 +74,8 @@ import {
   isProviderResumable,
 } from "./providers";
 import { seal } from "./seal";
-import { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import { setCacheMetadata } from "./services/cache/cacheMetadata";
+import { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import {
   findSearchTarget,
