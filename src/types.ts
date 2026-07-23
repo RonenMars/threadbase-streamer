@@ -138,6 +138,16 @@ export type WSMessage =
   // (offset-index seq) of lines[i], or null for a non-message line. Additive —
   // old clients ignore it.
   | { type: "conversation_events"; sessionId: string; lines: string[]; seqs?: (number | null)[] }
+  // A conversation's cached row advanced. Emitted after the cache write for a
+  // live external (non-PTY) tail so list rows can refresh without polling
+  // ?refresh=1. Additive — old clients ignore it.
+  | {
+      type: "conversation_updated";
+      conversationId: string;
+      messageCount: number;
+      lastActivity: string;
+      ownership: "external" | "managed";
+    }
   // Structured interactive prompt (AskUserQuestion). Old clients ignore it.
   | { type: "question"; sessionId: string; toolUseId: string; questions: AskQuestion[] }
   | { type: "question_cancelled"; sessionId: string; toolUseId: string }
@@ -178,9 +188,33 @@ export type WSMessage =
       reason: string;
     }
   | { type: "cache_ready" }
-  | { type: "scan_progress"; scanned: number; total: number };
+  | { type: "scan_progress"; scanned: number; total: number }
+  // Cache-integrity drift alert (server-level, no sessionId). Broadcast on
+  // raise/severity-change and unicast to a client on WS open while pending.
+  // Old clients ignore unknown types. See cacheIntegrityMonitor.ts.
+  | {
+      type: "cache_alert";
+      fingerprint: string;
+      severity: "high" | "low";
+      missingCount: number;
+      totalRows: number;
+      detectedAt: string;
+      sample: { id: string; title?: string }[]; // first 20
+    }
+  | { type: "cache_alert_resolved"; fingerprint: string; action: CacheAlertResolveAction };
+
+/** The four cache-integrity resolution actions (POST /api/cache/alert/resolve). */
+export type CacheAlertResolveAction = "prune_all" | "prune_selected" | "ignore" | "reset_rescan";
 
 // ─── REST Response Shapes ──────────────────────────────────────────
+
+export type ServerWarmupState = "startup" | "cache_reset" | "conversation_refresh";
+
+export interface ServerWarmingUpResponse {
+  error: "Server is warming up";
+  code: "SERVER_WARMING_UP";
+  warmupState: ServerWarmupState;
+}
 
 export interface SessionResponse {
   id: string; // JSONL UUID
@@ -213,6 +247,38 @@ export interface SessionResponse {
   resumedFromConversationId?: string;
   /** See `ManagedSession.boundConversationId` — never repurposes `conversationId`. */
   boundConversationId?: string;
+  /**
+   * Who owns the underlying process. Additive — older clients ignore it, and it
+   * deliberately does NOT introduce a new `status` value: `VALID_STATUSES`
+   * rejects unknown values in `?status=` and the store drops sessions outside
+   * the requested set, so a new status string would make these sessions vanish
+   * from already-shipped apps.
+   *   managed    — this streamer spawned and holds the PTY
+   *   external   — a process we discovered but do not own (read-only)
+   *   historical — a cached conversation, no process known
+   */
+  ownership?: SessionOwnership;
+  /**
+   * Whether the process is believed to be running. Only ever "alive" when
+   * discovery actually saw it; never guessed from file activity.
+   */
+  processLiveness?: ProcessLiveness;
+  /**
+   * INFERRED from JSONL writes, never authoritative: "active_writing" means the
+   * transcript grew recently, which cannot distinguish a generating agent from
+   * one blocked on a permission gate (gates are screen-only). Absent for
+   * sessions we own — their `status` is the authoritative signal.
+   */
+  activity?: SessionActivity;
+}
+
+export type SessionOwnership = "managed" | "external" | "historical";
+export type ProcessLiveness = "alive" | "gone" | "unknown";
+
+export interface SessionActivity {
+  state: "active_writing" | "quiet";
+  lastEventAt: string;
+  source: "jsonl";
 }
 
 export interface ConversationListResponse {

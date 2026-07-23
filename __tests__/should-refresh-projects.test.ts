@@ -109,4 +109,47 @@ describe("shouldRefreshProjectsFromHdd", () => {
       shouldRefreshProjectsFromHdd(conversationsRepo, cacheMetadataRepo, { projectsDir }),
     ).toBe(true);
   });
+
+  it("returns true when a child project dir mtime is newer than last indexed (parent unchanged)", () => {
+    cache.upsertFromScannerMeta([
+      META_WITH_PATH("c1", "2024-01-01T00:00:00.000Z", "/proj/a") as never,
+    ]);
+    conversationsRepo.updateConversationProjectId({ conversationId: "c1", projectId: "p1" });
+
+    const childDir = join(projectsDir, "-existing-project");
+    mkdirSync(childDir, { recursive: true });
+    writeFileSync(join(childDir, "new.jsonl"), "{}\n");
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    setIndexedAt(oneHourAgo.toISOString());
+    // Parent stays old; only the child project directory is new (new JSONL).
+    touchDir(projectsDir, oneHourAgo);
+    touchDir(childDir, new Date());
+
+    expect(
+      shouldRefreshProjectsFromHdd(conversationsRepo, cacheMetadataRepo, { projectsDir }),
+    ).toBe(true);
+  });
+
+  it("returns false when child dirs are older than last indexed even if a nested file is newer", () => {
+    cache.upsertFromScannerMeta([
+      META_WITH_PATH("c1", "2024-01-01T00:00:00.000Z", "/proj/a") as never,
+    ]);
+    conversationsRepo.updateConversationProjectId({ conversationId: "c1", projectId: "p1" });
+
+    const childDir = join(projectsDir, "-existing-project");
+    mkdirSync(childDir, { recursive: true });
+    const jsonl = join(childDir, "c1.jsonl");
+    writeFileSync(jsonl, "{}\n");
+
+    setIndexedAt(new Date().toISOString());
+    touchDir(projectsDir, new Date(Date.now() - 60_000));
+    touchDir(childDir, new Date(Date.now() - 60_000));
+    // Append-style growth: file mtime newer, directory mtimes unchanged.
+    utimesSync(jsonl, new Date(), new Date());
+
+    expect(
+      shouldRefreshProjectsFromHdd(conversationsRepo, cacheMetadataRepo, { projectsDir }),
+    ).toBe(false);
+  });
 });

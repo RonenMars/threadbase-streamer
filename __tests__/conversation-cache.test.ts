@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
+import { canonicalizeFilePath } from "../src/utils/canonicalizeFilePath";
 
 let dbDir: string;
 let cache: ConversationCache;
@@ -349,6 +350,127 @@ describe("reconcileDeletions() — refresh=1's remove-what-vanished half", () =>
 
     expect(removed).not.toContain("gone-456");
     expect(cache.hasConversation("gone-456")).toBe(true);
+  });
+});
+
+describe("listMissingFiles() — read-only drift report", () => {
+  const OTHER_META = {
+    ...BASE_META,
+    id: "gone-456",
+    sessionId: "gone-456",
+    filePath: "/home/.claude/projects/proj/gone-456.jsonl",
+    title: "Gone Conversation",
+  };
+
+  it("reports only rows whose file is missing, flags tailed rows, mutates nothing", () => {
+    cache.upsertFromScannerMeta([BASE_META as any, OTHER_META as any]);
+    // gone-456 went live (has a tail) but its file was then deleted.
+    cache.updateFromLines(OTHER_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "was live, now deleted" }],
+      }),
+    ]);
+
+    const exists = (fp: string) => fp === BASE_META.filePath; // gone-456 gone
+    const missing = cache.listMissingFiles(exists);
+
+    expect(missing).toEqual([
+      {
+        id: "gone-456",
+        filePath: OTHER_META.filePath,
+        title: "Gone Conversation",
+        tailed: true,
+      },
+    ]);
+    // Read-only: both rows still present.
+    expect(cache.hasConversation("abc-123")).toBe(true);
+    expect(cache.hasConversation("gone-456")).toBe(true);
+  });
+
+  it("returns empty when every file exists", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.listMissingFiles(() => true)).toEqual([]);
+  });
+});
+
+describe("dropRowsById() — outright removal for integrity resolution", () => {
+  it("drops main row, tail, and message index, and cleans fileIndex", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "give me a tail" }],
+      }),
+    ]);
+    cache.appendMessageIndexRows([
+      {
+        conversation_id: "abc-123",
+        message_index: 0,
+        byte_offset: 0,
+        byte_length: 10,
+        uuid: null,
+        role: "user",
+        ts: null,
+      },
+    ]);
+    expect(cache.getConversationTail("abc-123")).not.toBeNull();
+    expect(cache.getIndexedMessageCount("abc-123")).toBe(1);
+
+    const dropped = cache.dropRowsById(["abc-123"]);
+
+    expect(dropped).toBe(1);
+    expect(cache.hasConversation("abc-123")).toBe(false);
+    expect(cache.getConversationTail("abc-123")).toBeNull();
+    expect(cache.getIndexedMessageCount("abc-123")).toBe(0);
+    // fileIndex cleaned: re-upserting the same path works cleanly.
+    const ids = cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(ids).toContain("abc-123");
+    expect(cache.hasConversation("abc-123")).toBe(true);
+  });
+
+  it("returns 0 for an empty id list", () => {
+    expect(cache.dropRowsById([])).toBe(0);
+  });
+});
+
+describe("clearAll() — full wipe for reset_rescan", () => {
+  it("empties meta, tail, and message index, and stays usable afterward", () => {
+    cache.upsertFromScannerMeta([
+      BASE_META as any,
+      { ...BASE_META, id: "id-2", sessionId: "id-2", filePath: "/p/id-2.jsonl" } as any,
+    ]);
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "tail" }],
+      }),
+    ]);
+    cache.appendMessageIndexRows([
+      {
+        conversation_id: "abc-123",
+        message_index: 0,
+        byte_offset: 0,
+        byte_length: 10,
+        uuid: null,
+        role: "user",
+        ts: null,
+      },
+    ]);
+
+    cache.clearAll();
+
+    expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(0);
+    expect(cache.getConversationTail("abc-123")).toBeNull();
+    expect(cache.getIndexedMessageCount("abc-123")).toBe(0);
+
+    // A subsequent upsert works cleanly on the wiped cache.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.hasConversation("abc-123")).toBe(true);
+    expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(1);
   });
 });
 
@@ -895,6 +1017,40 @@ describe("invalidateByFilePath()", () => {
     expect(removed).toBeNull();
     expect(cache.hasConversation("abc-123")).toBe(true);
   });
+
+  // P1.a: chokidar delivers native backslash paths on Windows while the scanner
+  // stores forward slashes. Without canonicalization the getIdByFilePath lookup
+  // misses the scanner row and the unlink delete silently no-ops.
+  it("matches a forward-slash scanner row when invalidated with native separators (P1.a)", () => {
+    cache.upsertFromScannerMeta([
+      {
+        ...BASE_META,
+        id: "win-1",
+        sessionId: "win-1",
+        filePath: "C:/Users/dev/.claude/projects/proj/win-1.jsonl",
+      },
+    ] as any);
+    expect(cache.hasConversation("win-1")).toBe(true);
+
+    // A chokidar unlink event delivers the SAME file with native backslashes.
+    const removed = cache.invalidateByFilePath(
+      "C:\\Users\\dev\\.claude\\projects\\proj\\win-1.jsonl",
+    );
+    expect(removed).toBe("win-1");
+    expect(cache.hasConversation("win-1")).toBe(false);
+  });
+
+  // P1.b: a ?refresh=1 upsert creates a row with NO cached tail. The next
+  // external append's directory-change event previously deleted it (flicker-out).
+  // The change path (skipIfTailed) must now never delete — tailed OR untailed.
+  it("keeps an UNTAILED refresh-created row on the change path (P1.b)", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.getConversationTail("abc-123")).toBeNull(); // no tail
+
+    const removed = cache.invalidateByFilePath(BASE_META.filePath, { skipIfTailed: true });
+    expect(removed).toBeNull();
+    expect(cache.hasConversation("abc-123")).toBe(true);
+  });
 });
 
 describe("pruneGhostFiles()", () => {
@@ -989,8 +1145,11 @@ describe("getFileStats()", () => {
     ] as any);
 
     const stats = cache.getFileStats();
-    expect(stats.has(filePath)).toBe(true);
-    const entry = stats.get(filePath);
+    // file_path is stored canonicalized (forward slashes); on Windows the native
+    // join() path above must be canonicalized to hit the same key (P1.a). No-op
+    // on POSIX.
+    expect(stats.has(canonicalizeFilePath(filePath))).toBe(true);
+    const entry = stats.get(canonicalizeFilePath(filePath));
     expect(entry?.mtimeMs).toBe(s.mtimeMs);
     expect(entry?.size).toBe(s.size);
   });
@@ -1005,7 +1164,9 @@ describe("getFileStats()", () => {
     ] as any);
 
     const stats = cache.getFileStats();
-    expect(stats.has(filePath)).toBe(true);
+    // file_path is stored canonicalized; canonicalize the native join() path to
+    // match on Windows (no-op on POSIX).
+    expect(stats.has(canonicalizeFilePath(filePath))).toBe(true);
     expect(stats.has("/nonexistent/path.jsonl")).toBe(false);
     expect(stats.size).toBe(1);
   });
@@ -1026,7 +1187,9 @@ describe("getFileStats()", () => {
     ] as any);
 
     const statCache = cache.getScannerStatCache();
-    const entry = statCache.get(filePath);
+    // file_path is stored canonicalized; canonicalize the native join() path to
+    // match on Windows (no-op on POSIX).
+    const entry = statCache.get(canonicalizeFilePath(filePath));
     expect(entry?.stat.mtimeMs).toBe(s.mtimeMs);
     expect(entry?.stat.size).toBe(s.size);
     expect(entry?.meta.id).toBe("scanner-meta");
@@ -1206,5 +1369,60 @@ describe("updateFromLines() — batched write", () => {
       a.close();
       b.close();
     }
+  });
+
+  // P0.3: last_activity/last_message are assigned from the newest line by
+  // timestamp, guarded so an interleaved writer's older append can't drag the
+  // metadata backward (which corrupts list ordering + staleness comparisons).
+  it("does not move last_activity/last_message backward on an out-of-order later batch", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+
+    // A newer message lands first.
+    cache.updateFromLines(BASE_META.filePath, [msgLine(1, "2024-01-01T12:00:00.000Z")]);
+    expect(cache.getMetaById("abc-123")?.lastActivity).toBe("2024-01-01T12:00:00.000Z");
+
+    // A later batch carries an OLDER line (interleaved writer). It counts toward
+    // message_count but must NOT overwrite last_activity/last_message.
+    cache.updateFromLines(BASE_META.filePath, [msgLine(0, "2024-01-01T09:00:00.000Z")]);
+
+    const meta = cache.getMetaById("abc-123");
+    expect(meta?.lastActivity).toBe("2024-01-01T12:00:00.000Z");
+    expect(meta?.lastMessage).toContain("msg 1");
+    // Every physical message line still counts: 2 (scanner) + 1 + 1.
+    expect(meta?.messageCount).toBe(4);
+  });
+
+  it("takes the newest line within a single out-of-order batch (not byte-order-last)", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    // Within one batch, the LAST line in byte order is older than an earlier one.
+    cache.updateFromLines(BASE_META.filePath, [
+      msgLine(3, "2024-01-01T15:00:00.000Z"),
+      msgLine(2, "2024-01-01T11:00:00.000Z"),
+    ]);
+    const meta = cache.getMetaById("abc-123");
+    expect(meta?.lastActivity).toBe("2024-01-01T15:00:00.000Z");
+    expect(meta?.lastMessage).toContain("msg 3");
+  });
+
+  // P1.a: the live tail is seeded with a native path (join()) while the scanner
+  // row stores forward slashes. Without canonicalizing the fileIndex key the
+  // append misses the scanner row and mints a duplicate skeleton conversation.
+  it("appends to the scanner row when tailed with native separators (P1.a)", () => {
+    // A codex rollout file: the filename stem is NOT the row id, so a missed
+    // fileIndex lookup mints a second skeleton row instead of silently
+    // colliding back onto the right id.
+    const posixPath = "C:/Users/dev/.codex/sessions/rollout-2024-01-01T10-00-00-win-2.jsonl";
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "win-2", sessionId: "win-2", filePath: posixPath },
+    ] as any);
+
+    // chokidar/join() deliver the SAME file with native backslashes.
+    cache.updateFromLines(posixPath.replace(/\//g, "\\"), [msgLine(1, "2024-01-01T12:00:00.000Z")]);
+
+    const meta = cache.getMetaById("win-2");
+    expect(meta?.messageCount).toBe(3); // 2 (scanner) + 1
+    expect(meta?.lastActivity).toBe("2024-01-01T12:00:00.000Z");
+    // No duplicate skeleton row was minted for the native-separator path.
+    expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(1);
   });
 });

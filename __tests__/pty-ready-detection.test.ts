@@ -312,6 +312,77 @@ describe("PTYManager — ready detection", () => {
     }
   });
 
+  // These two tests deliberately do NOT use fake timers: the new code path
+  // (recheckReadyFromScreen) awaits getOutputLines(), whose xterm-headless
+  // write callback needs a genuine event-loop tick to settle — the same
+  // reason __tests__/pty-shell-prompt-detection.test.ts uses a real `settle`
+  // delay instead of vi.useFakeTimers() for screen-read-dependent assertions.
+
+  it("re-derives waiting_input from the rendered screen when a later chunk doesn't carry the marker", async () => {
+    // Regression: mid-conversation, Claude's TUI can return to an idle prompt
+    // without retransmitting ╭/❯ in the specific chunk that finishes the
+    // reply (differential repaint — the box was already drawn earlier and
+    // doesn't get redrawn just to update a status line). Before this fix,
+    // the quiet-timeout fallback only fired for the FIRST prompt after
+    // spawn/resume (gated on pendingReady), so this case went undetected
+    // forever — status stayed "running" even though Claude was done and
+    // idling for input.
+    const statusChanges: ManagedSession[] = [];
+    const mgr = new PTYManager({ onStatusChange: (s) => statusChanges.push(s) });
+    const session = await spawnFresh(mgr);
+    const proc = getMockProc(mgr, session.id);
+
+    // First prompt: boot marker fires, pendingReady clears.
+    proc._emit("data", TIPS_BANNER_BOOT);
+    expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
+    statusChanges.length = 0;
+
+    // User sends a second message — status flips back to "running".
+    // pendingReady is NOT re-armed for this turn (only spawn/resume does).
+    mgr.sendInput(session.id, "what's next?");
+
+    // Claude replies and finishes, but the final chunk only updates a
+    // status line — no ╭ or ❯ in this chunk's raw text. The box from the
+    // original TIPS_BANNER_BOOT render is still on screen, just not
+    // retransmitted.
+    proc._emit("data", "Sautéed for 3s\r\n────────────\r\n> \r\n");
+    expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
+
+    // No further chunk ever arrives. Waiting past the quiet-detect window
+    // (500ms) plus settle time should re-check the rendered screen (which
+    // still contains the original ╭ box) and flip back to waiting_input.
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
+    mgr.dispose();
+  });
+
+  it("stays running via the screen recheck when no marker is anywhere on screen", async () => {
+    // Sanity check for the same code path: if the marker genuinely isn't on
+    // screen (Claude is still actually working), the recheck must not
+    // false-positive into waiting_input.
+    const statusChanges: ManagedSession[] = [];
+    const mgr = new PTYManager({ onStatusChange: (s) => statusChanges.push(s) });
+    const session = await spawnFresh(mgr);
+    const proc = getMockProc(mgr, session.id);
+
+    proc._emit("data", MCP_SPLASH_BOOT);
+    statusChanges.length = 0;
+    mgr.sendInput(session.id, "keep going");
+
+    // Scroll the boot ❯ marker off the viewport (PTY_ROWS=40) with filler
+    // output before the no-marker "still working" chunk, so the recheck
+    // window (last 40 rendered lines) genuinely contains no marker.
+    proc._emit("data", Array(45).fill("filler line\r\n").join(""));
+    proc._emit("data", "still working on it, no prompt markers here...");
+    expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
+
+    await new Promise((r) => setTimeout(r, 700));
+
+    expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
+    mgr.dispose();
+  });
+
   it("does not fire the quiet-timeout while chunks keep arriving within the debounce window", async () => {
     vi.useFakeTimers();
     try {

@@ -53,6 +53,10 @@ describe("codex conversations — HTTP API", () => {
       cacheDir: join(tmpBase, "cache"),
       scanProfiles: [], // empty → no threadbase scan, only codexRoots
       codexRoots: [codexRoot],
+      // codexRoots stays real — the test needs it. Only the persistent scanner
+      // index is disabled: it needs a native better-sqlite3 build and would
+      // also leak real host conversations into the fixture.
+      scannerPersistent: false,
     });
     await server.listen(port, { awaitReady: true });
   });

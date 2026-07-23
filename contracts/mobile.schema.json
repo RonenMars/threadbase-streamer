@@ -48,6 +48,7 @@
         "id": { "type": "string" },
         "profile_id": { "type": "string" },
         "project_name": { "type": "string" },
+        "session_name": { "type": "string" },
         "project_path": { "type": "string" },
         "file_path": { "type": "string" },
         "last_updated_at": { "type": "string", "format": "date-time" },

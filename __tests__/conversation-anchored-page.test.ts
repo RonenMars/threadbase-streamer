@@ -70,8 +70,12 @@ describe("GET /api/conversations/:id anchored and after windows", () => {
       scanProfiles: [
         { id: "anchored", label: "Anchored", configDir: profileDir, enabled: true, emoji: "⚓" },
       ],
+      // Without these the scanner opens its own persistent SQLite index, which
+      // leaks real host conversations in and needs a native better-sqlite3 build.
+      codexRoots: [],
+      scannerPersistent: false,
     });
-    await server.listen(port);
+    await server.listen(port, { awaitReady: true });
   });
 
   afterAll(async () => {
@@ -273,6 +277,8 @@ describe("GET /api/conversations/:id anchored paged-reader parity", () => {
       scanProfiles: [
         { id: "parity", label: "Parity", configDir: profileDir, enabled: true, emoji: "⚓" },
       ],
+      codexRoots: [],
+      scannerPersistent: false,
     });
     const proto = ConversationScanner.prototype as unknown as {
       getConversationPage?: unknown;
@@ -280,7 +286,7 @@ describe("GET /api/conversations/:id anchored paged-reader parity", () => {
     const original = proto.getConversationPage;
     proto.getConversationPage = getConversationPage;
     try {
-      await pageServer.listen(port);
+      await pageServer.listen(port, { awaitReady: true });
       const res = await fetch(
         `http://localhost:${port}/api/conversations/${convId}?msg_limit=120&anchor_index=150`,
         { headers: { Authorization: `Bearer ${API_KEY}` } },
