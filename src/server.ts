@@ -87,6 +87,7 @@ import { refreshConversationCache } from "./services/conversations/refreshConver
 import { shouldRefreshProjectsFromHdd } from "./services/conversations/shouldRefreshProjectsFromHdd";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
 import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
+import { parseStatusLine } from "./services/questions/parseStatusLine";
 import {
   questionsFromLines,
   shouldBroadcastQuestion,
@@ -2967,12 +2968,28 @@ export class StreamerServer {
     }
   }
 
-  private handleGetSession(sessionId: string, res: ServerResponse): void {
+  private async handleGetSession(sessionId: string, res: ServerResponse): Promise<void> {
     if (this.rejectIfWarmingUp(res)) return;
     const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
     if (session) {
       if (!existsSync(session.projectPath)) {
         session.failureReason = `Project directory not found: ${session.projectPath}`;
+      }
+      // Scrape model/effort/permission-mode off the live PTY's rendered status
+      // line so the client can show them natively instead of parsing terminal
+      // text. Live sessions only, and strictly best-effort: a failed scrape
+      // leaves the fields absent rather than failing the request.
+      if (this.ptyManager.hasSession(sessionId)) {
+        try {
+          const lines = await this.ptyManager.getOutputLines(sessionId, 10);
+          const status = parseStatusLine(lines);
+          // Don't clobber the scanner-provided model with a scraped one.
+          if (session.model == null && status.model) session.model = status.model;
+          if (status.effort) session.effort = status.effort;
+          if (status.permissionMode) session.permissionMode = status.permissionMode;
+        } catch {
+          // PTY raced away between hasSession() and the read — report what we have.
+        }
       }
       json(res, 200, session);
       return;

@@ -43,12 +43,38 @@ export interface PermissionGate {
 // OSC 777 with the notify command from Claude Code. We match the stable core
 // (`]777;notify;Claude Code`) rather than the whole tmux-passthrough wrapper so
 // detection survives both the wrapped and unwrapped forms.
+//
+// The BODY is load-bearing: Claude Code emits OSC 777 for two different events,
+// and only one of them is a gate.
+//
+//   "Claude needs your permission"      → a real gate; options paint later.
+//   "Claude is waiting for your input"  → the turn ENDED; there is no gate.
+//
+// Matching the prefix alone conflated the two, so an end-of-turn notify opened a
+// permission card that could never populate or close: scrapePermissionGate finds
+// no options (correctly — there are none), the caller broadcasts `{options: []}`,
+// and the recovery path needs a prompt marker from a LATER chunk that never
+// arrives because the turn is over. Result: a stuck "Claude needs your
+// permission" card with only Cancel. Anchor on the permission body instead.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching the literal OSC 777 escape
-const OSC_777_RE = /\x1b\]777;notify;Claude Code;[^\x07\x1b]*/;
+const OSC_777_PERMISSION_RE = /\x1b\]777;notify;Claude Code;[^\x07\x1b]*needs your permission/;
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching the literal OSC 777 escape
+const OSC_777_WAITING_RE = /\x1b\]777;notify;Claude Code;[^\x07\x1b]*waiting for your input/;
 
 /** True if a raw PTY chunk contains the Claude Code OSC 777 permission notify. */
 export function hasPermissionOsc(rawData: string): boolean {
-  return OSC_777_RE.test(rawData);
+  return OSC_777_PERMISSION_RE.test(rawData);
+}
+
+/**
+ * True if a raw PTY chunk contains the OSC 777 "waiting for your input" notify —
+ * Claude finished its turn. Not a gate: it is the positive signal that any gate
+ * we were tracking is over, which is what lets a stuck card close without
+ * waiting for a prompt marker that will never come.
+ */
+export function hasWaitingForInputOsc(rawData: string): boolean {
+  return OSC_777_WAITING_RE.test(rawData);
 }
 
 // A rendered option row: optional `❯` cursor, then "N. label". Leading spaces
