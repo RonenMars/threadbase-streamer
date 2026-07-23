@@ -49,6 +49,16 @@ describe("upsertFromScannerMeta()", () => {
     expect(cache.hasConversation("abc-123")).toBe(true);
   });
 
+  it("uses the scanner's sessionName as the title when title is absent", () => {
+    // The scanner emits the derived conversation name as `sessionName`, not
+    // `title` — the cache must map it into the title column so the list shows
+    // the real name instead of falling back to the project path.
+    const { title: _drop, ...noTitle } = BASE_META;
+    cache.upsertFromScannerMeta([{ ...noTitle, sessionName: "Fix the failing login test" } as any]);
+    const result = cache.listConversations({ limit: 10, offset: 0 });
+    expect(result.conversations[0].title).toBe("Fix the failing login test");
+  });
+
   it("inserts multiple rows in batch", () => {
     const metas = [
       { ...BASE_META, id: "id-1", sessionId: "id-1", filePath: "/p/id-1.jsonl" },
