@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   hasPermissionOsc,
+  hasWaitingForInputOsc,
   scrapePermissionGate,
 } from "../src/services/questions/detectPermissionGate";
 
@@ -22,6 +23,39 @@ describe("hasPermissionOsc", () => {
   it("ignores ordinary output", () => {
     expect(hasPermissionOsc("just some terminal text\r\n")).toBe(false);
     expect(hasPermissionOsc("\x1b[2J\x1b[H")).toBe(false);
+  });
+
+  // Regression: Claude Code emits OSC 777 for BOTH a permission gate and the
+  // end of a turn. Matching the prefix alone made the end-of-turn notify open a
+  // permission card that could never populate or close (11 sessions stranded in
+  // the local prod logs). The body must discriminate.
+  it("does NOT treat the end-of-turn notify as a permission gate", () => {
+    expect(
+      hasPermissionOsc("\x1b]777;notify;Claude Code;Claude is waiting for your input\x07"),
+    ).toBe(false);
+    expect(
+      hasPermissionOsc(
+        "\x1bPtmux;\x1b\x1b]777;notify;Claude Code;Claude is waiting for your input\x07\x1b\\",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("hasWaitingForInputOsc", () => {
+  it("detects the end-of-turn notify (bare and tmux-wrapped)", () => {
+    expect(
+      hasWaitingForInputOsc("\x1b]777;notify;Claude Code;Claude is waiting for your input\x07"),
+    ).toBe(true);
+    expect(
+      hasWaitingForInputOsc(
+        "\x1bPtmux;\x1b\x1b]777;notify;Claude Code;Claude is waiting for your input\x07\x1b\\",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not fire on a permission notify or ordinary output", () => {
+    expect(hasWaitingForInputOsc(OSC_777_RAW)).toBe(false);
+    expect(hasWaitingForInputOsc("just some terminal text\r\n")).toBe(false);
   });
 });
 
