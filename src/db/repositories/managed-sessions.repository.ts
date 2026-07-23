@@ -19,20 +19,10 @@ import type { ManagedSession, SessionStatus } from "../../types";
 /** How a persisted status was obtained — never inferred, always recorded. */
 export type StatusSource = "spawn" | "transition" | "exit" | "shutdown" | "probe" | "reconcile";
 
-/**
- * Lifecycle is orthogonal to SessionStatus. `status` answers "what is the agent
- * doing" (running/waiting_input/idle); `lifecycle` answers "does this process
- * still exist and do we own it". Overloading `idle` for both is exactly the
- * ambiguity C1 removes — today it means finished, killed-to-save-resources, and
- * externally-discovered all at once.
- */
-export type SessionLifecycle =
-  | "attached" // this streamer instance owns the PTY and streams its bytes
-  | "detached" // process alive, but this instance does not own its fd
-  | "orphaned" // something is alive at the recorded pid, but identity mismatched
-  | "resumable" // no live process; provider history supports --resume
-  | "completed" // terminal, ended cleanly
-  | "failed"; // terminal, ended badly
+// Canonical definition lives in types.ts — it is a wire type on
+// SessionResponse, not a persistence detail. Re-exported here so reconciler and
+// repository consumers can keep importing it from one place.
+export type { SessionLifecycle } from "../../types";
 
 export interface ManagedSessionRow {
   session_id: string;

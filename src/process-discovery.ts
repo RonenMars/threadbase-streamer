@@ -206,6 +206,31 @@ async function getProcessArgsUnix(pid: number): Promise<string> {
   return (await run("ps", ["-p", String(pid), "-o", "args="])).trim();
 }
 
+/**
+ * Full command line of a single live process, or "" if it cannot be read.
+ *
+ * Used by the boot reconciler's pid-reuse guard: a recorded pid being alive is
+ * never sufficient evidence that the process is still ours, because pids get
+ * recycled. The caller matches its stored token against this before claiming a
+ * surviving session — and treats an unreadable command line as "cannot confirm"
+ * rather than "confirmed", so a failure here can never promote an unrelated
+ * process into a managed session.
+ */
+export async function getProcessArgs(pid: number): Promise<string> {
+  if (!Number.isInteger(pid) || pid < 1) return "";
+  try {
+    if (platform() === "win32") {
+      const info = await getProcessInfoWindows(pid);
+      return info?.args ?? "";
+    }
+    return await getProcessArgsUnix(pid);
+  } catch {
+    // Process vanished between the liveness probe and this call, or ps/wmic is
+    // unavailable. Either way we cannot confirm identity.
+    return "";
+  }
+}
+
 async function getProcessStartTimeUnix(pid: number): Promise<Date> {
   const raw = (await run("ps", ["-p", String(pid), "-o", "lstart="])).trim();
   const d = new Date(raw);

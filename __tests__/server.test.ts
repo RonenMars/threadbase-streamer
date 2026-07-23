@@ -1230,6 +1230,50 @@ describe("StreamerServer", () => {
     });
   });
 
+  // The reconciler's verdicts are useless if they never reach a client. This
+  // covers the overlay that carries them onto session responses.
+  describe("withReconciledLifecycle", () => {
+    const mkResp = (over: Record<string, unknown> = {}) =>
+      ({
+        id: "prev-run-sess",
+        status: "idle",
+        ptyAttached: false,
+        lifecycle: "completed",
+        lifecycleSource: "exit",
+        ...over,
+      }) as any;
+
+    afterEach(() => (server as any).sessionLifecycles.clear());
+
+    it("applies a reconciled verdict to a session this run does not own", () => {
+      (server as any).sessionLifecycles.set("prev-run-sess", "orphaned");
+
+      const [out] = (server as any).withReconciledLifecycle([mkResp()]);
+
+      expect(out.lifecycle).toBe("orphaned");
+      expect(out.lifecycleSource).toBe("reconcile");
+    });
+
+    // A live session's own lifecycle is authoritative — a verdict from boot
+    // must never override what this run currently observes.
+    it("never overrides a session whose PTY is attached here", () => {
+      (server as any).sessionLifecycles.set("prev-run-sess", "orphaned");
+
+      const [out] = (server as any).withReconciledLifecycle([
+        mkResp({ ptyAttached: true, lifecycle: "attached", lifecycleSource: "spawn" }),
+      ]);
+
+      expect(out.lifecycle).toBe("attached");
+      expect(out.lifecycleSource).toBe("spawn");
+    });
+
+    it("leaves sessions with no verdict untouched", () => {
+      const input = mkResp();
+      const [out] = (server as any).withReconciledLifecycle([input]);
+      expect(out).toBe(input);
+    });
+  });
+
   // The registry records this token so the boot reconciler can reject a
   // recycled pid: it must be a string genuinely present in the spawned
   // process's argv, or the guard silently never matches.
