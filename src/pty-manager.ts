@@ -5,7 +5,11 @@ import { basename } from "path";
 import { getLogger, type Logger } from "./logger";
 import { resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
-import { hasPermissionOsc, scrapePermissionGate } from "./services/questions/detectPermissionGate";
+import {
+  hasPermissionOsc,
+  hasWaitingForInputOsc,
+  scrapePermissionGate,
+} from "./services/questions/detectPermissionGate";
 import {
   detectQuestionFromScreen,
   questionContentKey,
@@ -779,6 +783,10 @@ export class PTYManager implements SessionRunner {
     if (!session) return;
 
     const oscPermission = hasPermissionOsc(rawData);
+    // Claude finished its turn. Authoritative "no gate is open" signal — it
+    // arrives even when no further chunk will (the turn is over), so it is the
+    // only thing that can close a gate whose options never painted.
+    const oscWaitingForInput = hasWaitingForInputOsc(rawData);
     // Footer test on the CURRENT chunk — a cheap trigger only. The authoritative
     // test runs on the full rendered screen below (askFooterOnScreen), because
     // the OSC-777 notify and the "Enter to select" footer often arrive in
@@ -799,6 +807,7 @@ export class PTYManager implements SessionRunner {
     // open (so we can detect its close on the next prompt-ready).
     if (
       !oscPermission &&
+      !oscWaitingForInput &&
       !hasAskFooter &&
       !hasShellPromptHint &&
       !this.permissionOpen.has(sessionId) &&
@@ -847,13 +856,16 @@ export class PTYManager implements SessionRunner {
       this.onPermissionChange?.(sessionId, gate ?? { options: [] });
     } else if (this.permissionOpen.has(sessionId) && !askFooterOnScreen) {
       // Gate was open. If options are still on screen, refresh (cursor moved);
-      // if the prompt is ready again and the options are gone, the gate closed.
+      // if the turn ended or the prompt is ready again with the options gone,
+      // the gate closed. The end-of-turn notify is checked FIRST and without a
+      // prompt-marker requirement: it is the last chunk of the turn, so a gate
+      // still waiting on a marker here would never close at all.
       const gate = scrapePermissionGate(lines);
-      if (gate) {
-        this.onPermissionChange?.(sessionId, gate);
-      } else if (hasPromptMarker) {
+      if (oscWaitingForInput || (!gate && hasPromptMarker)) {
         this.permissionOpen.delete(sessionId);
         this.onPermissionChange?.(sessionId, null);
+      } else if (gate) {
+        this.onPermissionChange?.(sessionId, gate);
       }
     }
 
