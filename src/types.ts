@@ -235,6 +235,16 @@ export interface SessionResponse {
   pid?: number;
   sessionName?: string;
   model?: string;
+  /**
+   * Reasoning-effort tier scraped from the live PTY status line (e.g. "high").
+   * Live sessions only — absent for historical/resumable conversations.
+   */
+  effort?: string;
+  /**
+   * Active permission mode from the live PTY status line (e.g. "accept edits on").
+   * Live sessions only.
+   */
+  permissionMode?: string;
   account?: string;
   messageCount?: number;
   preview?: string;
