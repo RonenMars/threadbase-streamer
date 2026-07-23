@@ -92,6 +92,10 @@ export interface ScannerMeta {
   projectPath?: string;
   projectName?: string;
   title?: string;
+  // The scanner emits the derived conversation name as `sessionName`; the cache
+  // stores it in the `title` column. Callers pass the scanner's ConversationMeta
+  // directly, so accept both here and prefer sessionName when title is absent.
+  sessionName?: string;
   model?: string;
   account?: string;
   gitBranch?: string;
@@ -1176,7 +1180,7 @@ export class ConversationCache {
           file_path: m.filePath,
           project_path: m.projectPath ?? null,
           project_name: m.projectName ?? null,
-          title: m.title ?? m.projectName ?? null,
+          title: m.title ?? m.sessionName ?? m.projectName ?? null,
           model: m.model ?? null,
           account: m.account ?? null,
           branch: m.gitBranch ?? null,
