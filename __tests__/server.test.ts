@@ -1322,7 +1322,7 @@ describe("StreamerServer", () => {
       }
     });
 
-    it("holds immediately on an explicit hold_session even when grace is 0", async () => {
+    it("holds immediately on an explicit hold_session when grace is 0", async () => {
       const p = await getRandomPort();
       const srv = new StreamerServer({
         ...HOST_ISOLATION,
@@ -1345,6 +1345,36 @@ describe("StreamerServer", () => {
         ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
         await waitFor(() => holdSpy.mock.calls.length > 0);
         expect(holdSpy).toHaveBeenCalledWith(SID);
+        ws.close();
+      } finally {
+        vi.restoreAllMocks();
+        await srv.close();
+      }
+    });
+
+    it("arms the full grace timer on hold_session instead of holding immediately", async () => {
+      const p = await getRandomPort();
+      const srv = new StreamerServer({
+        ...HOST_ISOLATION,
+        port: p,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-holdgrace-test-")),
+        scanProfiles: FIXTURE_PROFILES,
+        ptyGracePeriodMs: 60_000,
+      });
+      await srv.listen(p, { awaitReady: true });
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+      try {
+        const ws = new WebSocket(`ws://localhost:${srv.port}/ws?key=${API_KEY}`);
+        await new Promise<void>((r) => ws.on("open", () => r()));
+        ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
+        await waitFor(() => (srv as any).ptyGraceTimers.has(SID));
+        expect(holdSpy).not.toHaveBeenCalled();
+        const t = (srv as any).ptyGraceTimers.get(SID);
+        if (t) clearTimeout(t);
         ws.close();
       } finally {
         vi.restoreAllMocks();
