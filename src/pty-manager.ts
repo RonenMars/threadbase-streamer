@@ -2,6 +2,7 @@ import { Terminal } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
+import { buildFlagArgs, buildSettingsJson } from "./claude-flags";
 import { getLogger, type Logger } from "./logger";
 import { resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
@@ -237,16 +238,17 @@ export class PTYManager implements SessionRunner {
 
   // Resume an existing Claude conversation. sessionId is the JSONL UUID.
   //
-  // options.permissionMode defaults to `acceptEdits` rather than
-  // `--dangerously-skip-permissions`/`bypassPermissions`. Both suppress
-  // file-edit prompts, but in an interactive (TUI) launch the skip-permissions
-  // flag renders a blocking "Bypass Permissions mode" warning menu on every
-  // boot that no known ~/.claude.json flag suppressed (as of Claude CLI
-  // v2.1.x) — the session never reaches a usable prompt, so the mobile app
-  // shows an empty/stuck screen. `acceptEdits` auto-approves file edits
-  // without that warning gate, while still prompting for shell commands.
-  // `manual` (prompt for everything) is the only other mode callers may pass;
-  // `bypassPermissions`/`plan`/`dontAsk`/`auto` are not supported here.
+  // options.permissionMode defaults to `acceptEdits` — the safe default that
+  // auto-approves file edits while still prompting for shell commands. All six
+  // Claude CLI modes are accepted (see PERMISSION_MODES in claude-flags.ts).
+  //
+  // On the bypass modes: `bypassPermissions`/`dontAsk` DO trigger a blocking
+  // "Bypass Permissions mode" warning menu at boot ("1. No, exit" /
+  // "2. Yes, I accept") which would strand the PTY and leave mobile on an empty
+  // screen. buildSettingsJson() suppresses it by adding
+  // `skipDangerousModePermissionPrompt` to the `--settings` blob for exactly
+  // those modes — probe-verified on Claude Code v2.1.218. We never pass
+  // `--dangerously-skip-permissions`; bypass is requested via --permission-mode.
   // (The other first-run gates — onboarding/theme, workspace trust,
   // custom-API-key — are cleared by the seeded ~/.claude.json in
   // docker/entrypoint.sh.) startFresh() uses the same default for the same reason.
@@ -274,28 +276,30 @@ export class PTYManager implements SessionRunner {
     const nodePty = await loadPty();
     const projectName = options.projectName ?? basename(options.projectPath);
 
-    const proc = nodePty.spawn(
-      resolveClaudeExe(),
-      [
-        "--permission-mode",
-        options.permissionMode ?? "acceptEdits",
-        "--settings",
-        '{"spinnerTipsEnabled":false}',
-        "--model",
-        options.model ?? "sonnet",
-        "--effort",
-        options.effort ?? "low",
-        "--resume",
-        sessionId,
-      ],
-      {
-        name: "xterm-256color",
-        cols: 120,
-        rows: 40,
-        cwd: options.projectPath,
-        env: buildSpawnEnv(),
-      },
-    );
+    const permissionMode = options.permissionMode ?? "acceptEdits";
+    const args = [
+      "--permission-mode",
+      permissionMode,
+      "--settings",
+      buildSettingsJson(permissionMode),
+      "--model",
+      options.model ?? "sonnet",
+      "--effort",
+      options.effort ?? "low",
+      "--resume",
+      sessionId,
+    ];
+    // Allowlisted per-server flags, then the free-text escape hatch — last so it
+    // can override anything above it.
+    args.push(...buildFlagArgs(options.claudeFlags, options.claudeExtraArgs));
+
+    const proc = nodePty.spawn(resolveClaudeExe(), args, {
+      name: "xterm-256color",
+      cols: 120,
+      rows: 40,
+      cwd: options.projectPath,
+      env: buildSpawnEnv(),
+    });
 
     const session: InternalSession = {
       id: sessionId,
@@ -343,13 +347,13 @@ export class PTYManager implements SessionRunner {
     const projectName = options.projectName ?? basename(options.projectPath);
 
     // `--permission-mode` defaults to acceptEdits for the same reason as start()
-    // above — do not allow bypassPermissions (TUI warning gate). Guarded by
-    // __tests__/pty-ready-detection.test.ts.
+    // above. Guarded by __tests__/pty-ready-detection.test.ts.
+    const permissionMode = options.permissionMode ?? "acceptEdits";
     const args = [
       "--permission-mode",
-      options.permissionMode ?? "acceptEdits",
+      permissionMode,
       "--settings",
-      '{"spinnerTipsEnabled":false}',
+      buildSettingsJson(permissionMode),
       "--model",
       options.model ?? "sonnet",
       "--effort",
@@ -360,6 +364,9 @@ export class PTYManager implements SessionRunner {
     if (options.systemPrompt) {
       args.push("--system-prompt", options.systemPrompt);
     }
+    // Allowlisted per-server flags, then the free-text escape hatch — last so it
+    // can override anything above it.
+    args.push(...buildFlagArgs(options.claudeFlags, options.claudeExtraArgs));
 
     const proc = nodePty.spawn(resolveClaudeExe(), args, {
       name: "xterm-256color",
