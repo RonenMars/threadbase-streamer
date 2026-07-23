@@ -2131,6 +2131,117 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("GET /api/conversations auto-reconcile without refresh=1", () => {
+    let autoServer: StreamerServer;
+    let autoPort: number;
+    let profileDir: string;
+    let projDir: string;
+    let scannerDb: string;
+    const auth = { Authorization: `Bearer ${API_KEY}` };
+
+    const convLine = (convId: string, ts: string, text: string) =>
+      `${JSON.stringify({
+        type: "user",
+        uuid: `u-${convId}-${ts}`,
+        timestamp: ts,
+        sessionId: convId,
+        slug: convId,
+        cwd: "/tmp/auto-refresh-project",
+        message: { role: "user", content: [{ type: "text", text }] },
+      })}\n`;
+
+    const writeConv = (convId: string, text: string, ts = "2026-06-05T08:00:00.000Z") =>
+      writeFileSync(join(projDir, `${convId}.jsonl`), convLine(convId, ts, text));
+
+    const listCached = async () => {
+      const res = await fetch(`http://localhost:${autoPort}/api/conversations`, {
+        headers: auth,
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        conversations: Array<{ id: string; preview?: string; messageCount: number }>;
+      };
+    };
+
+    const listForced = async () => {
+      const res = await fetch(`http://localhost:${autoPort}/api/conversations?refresh=1`, {
+        headers: auth,
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        conversations: Array<{ id: string; preview?: string; messageCount: number }>;
+      };
+    };
+
+    beforeEach(async () => {
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-auto-refresh-"));
+      scannerDb = join(profileDir, "scanner.db");
+      process.env.TB_SCANNER_DB = scannerDb;
+      projDir = join(profileDir, "projects", "-tmp-auto-project");
+      mkdirSync(projDir, { recursive: true });
+      writeConv("auto-a", "alpha");
+      writeConv("auto-b", "beta");
+
+      autoPort = await getRandomPort();
+      autoServer = new StreamerServer({
+        port: autoPort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-auto-cache-")),
+        scanProfiles: [
+          { id: "auto", label: "Auto", configDir: profileDir, enabled: true, emoji: "🔄" },
+        ],
+        codexRoots: [],
+        // The scanner otherwise opens its own persistent SQLite index, which
+        // needs a native better-sqlite3 build that is not guaranteed locally.
+        scannerPersistent: false,
+      });
+      // getRandomPort() returns the ephemeral 0, so the real port has to be
+      // read back after binding or every fetch below targets localhost:0.
+      await autoServer.listen(autoPort, { awaitReady: true });
+      autoPort = autoServer.port;
+      // Seed cache + conversations_last_indexed_at via the explicit reconcile path.
+      await listForced();
+    });
+
+    afterEach(async () => {
+      await autoServer.close();
+      delete process.env.TB_SCANNER_DB;
+      rmSync(profileDir, { recursive: true, force: true });
+    });
+
+    it("surfaces a new JSONL under an existing project without ?refresh=1", async () => {
+      const before = await listCached();
+      expect(before.conversations.map((c) => c.id).sort()).toEqual(["auto-a", "auto-b"]);
+
+      writeConv("auto-c", "gamma", "2026-06-07T10:00:00.000Z");
+      // Child project dir mtime advances on add; parent root may not. Bump the
+      // project dir past conversations_last_indexed_at so the freshness gate fires.
+      const future = new Date(Date.now() + 60_000);
+      utimesSync(projDir, future, future);
+
+      const after = await listCached();
+      expect(after.conversations.map((c) => c.id).sort()).toEqual(["auto-a", "auto-b", "auto-c"]);
+    });
+
+    it("updates preview after external append when scannerStale is set (no ?refresh=1)", async () => {
+      await listCached();
+
+      writeFileSync(
+        join(projDir, "auto-a.jsonl"),
+        convLine("auto-a", "2026-06-07T11:00:00.000Z", "alpha continued externally"),
+      );
+      // Simulate directory-watcher dirty bit without waiting on chokidar.
+      (autoServer as unknown as { scannerStale: boolean }).scannerStale = true;
+
+      const after = await listCached();
+      const a = after.conversations.find((c) => c.id === "auto-a");
+      expect(a?.preview).toContain("alpha continued externally");
+    });
+  });
+
   describe("GET /api/conversations/:id resumability classification", () => {
     let availPort: number;
     let availServer: StreamerServer;
