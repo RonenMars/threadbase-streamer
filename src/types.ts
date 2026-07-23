@@ -1,5 +1,6 @@
 import type { Stage } from "@threadbase-sh/agent-types";
 import type { ProgressDedupeLRU } from "./agent/dedupe";
+import type { ClaudeFlagValues, PermissionMode } from "./claude-flags";
 import type { ProviderName } from "./providers";
 
 // ─── Session Lifecycle ─────────────────────────────────────────────
@@ -358,9 +359,11 @@ export interface ServerConfig {
   tailSize?: number;
   directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)
   defaultSystemPrompt?: string; // prepended to every PTY session's --system-prompt; overrides the built-in default
-  defaultPermissionMode?: "acceptEdits" | "manual"; // Claude Code --permission-mode for spawned PTY sessions (default "acceptEdits")
+  defaultPermissionMode?: PermissionMode; // Claude Code --permission-mode for spawned PTY sessions (default "acceptEdits")
   defaultModel?: string; // Claude Code --model for spawned PTY sessions (default "sonnet")
   defaultEffort?: "low" | "medium" | "high" | "xhigh" | "max"; // Claude Code --effort for spawned PTY sessions (default "low")
+  claudeFlags?: ClaudeFlagValues; // allowlisted Claude CLI flags appended to every spawn (see src/claude-flags.ts)
+  claudeExtraArgs?: string; // free-text argv appended after claudeFlags; unvalidated escape hatch
 }
 
 // ─── PTY Manager ───────────────────────────────────────────────────
@@ -399,18 +402,22 @@ export interface StartSessionOptions {
   projectPath: string;
   projectName?: string;
   branch?: string;
-  permissionMode?: "acceptEdits" | "manual";
+  permissionMode?: PermissionMode;
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  claudeFlags?: ClaudeFlagValues;
+  claudeExtraArgs?: string;
 }
 
 export interface StartFreshSessionOptions {
   projectPath: string;
   projectName?: string;
   systemPrompt?: string;
-  permissionMode?: "acceptEdits" | "manual";
+  permissionMode?: PermissionMode;
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  claudeFlags?: ClaudeFlagValues;
+  claudeExtraArgs?: string;
 }
 
 // ─── Session Runner ────────────────────────────────────────────────

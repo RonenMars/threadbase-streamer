@@ -42,10 +42,14 @@ import {
   loadBrowseRoot,
   loadBrowserCors,
   loadCacheDir,
+  loadClaudeExtraArgs,
+  loadClaudeFlags,
   loadDefaultPermissionMode,
   loadPublicUrl,
   loadTailSize,
   setApiKey,
+  setClaudeExtraArgs,
+  setClaudeFlags,
   validatePublicUrl,
 } from "./auth";
 import {
@@ -54,6 +58,12 @@ import {
   listDirectories,
   resolveBrowsePath,
 } from "./browse";
+import {
+  CLAUDE_FLAGS,
+  type ClaudeFlagValues,
+  type PermissionMode,
+  validateFlagValues,
+} from "./claude-flags";
 import { ConversationCache, type ConversationListItem } from "./conversation-cache";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
@@ -309,9 +319,19 @@ export class StreamerServer {
   private sessionInputAttempts = new Map<string, number[]>();
   private ptyGracePeriodMs: number;
   private defaultSystemPrompt: string;
-  private defaultPermissionMode: "acceptEdits" | "manual";
+  private defaultPermissionMode: PermissionMode;
   private defaultModel: string;
   private defaultEffort: "low" | "medium" | "high" | "xhigh" | "max";
+  // Allowlisted Claude CLI flags + free-text escape hatch, applied to every
+  // spawn. Resolved once at startup (flag → server.yaml), then mutated in place
+  // by PUT /api/config/claude-flags so a change applies to the next session
+  // without a restart.
+  private claudeFlags: ClaudeFlagValues;
+  private claudeExtraArgs: string | undefined;
+  // True when the values came from server.yaml (and so a write persists).
+  // False when they were pinned by a CLI flag, mirroring the api-key rotate
+  // contract: the write still takes effect in memory but won't survive restart.
+  private claudeFlagsPersistable: boolean;
   // Map of sessionId → grace timer; fires to kill PTY after WS disconnect
   private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   // Consecutive grace-timer defers for a still-`running` session (see
@@ -373,6 +393,9 @@ export class StreamerServer {
       config.defaultPermissionMode ?? loadDefaultPermissionMode() ?? "acceptEdits";
     this.defaultModel = config.defaultModel ?? "sonnet";
     this.defaultEffort = config.defaultEffort ?? "low";
+    this.claudeFlagsPersistable = config.claudeFlags === undefined;
+    this.claudeFlags = config.claudeFlags ?? loadClaudeFlags();
+    this.claudeExtraArgs = config.claudeExtraArgs ?? loadClaudeExtraArgs();
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
     this.directoryDebounceMs =
@@ -682,6 +705,8 @@ export class StreamerServer {
       localNoAuth: this.localNoAuth,
       logMenubarRequests: this.logMenubarRequests,
       rotateApiKey: () => this.rotateApiKey(),
+      claudeFlagsConfig: () => this.getClaudeFlagsConfig(),
+      setClaudeFlagsConfig: (values, extraArgs) => this.setClaudeFlagsConfig(values, extraArgs),
       publicUrl: this.publicUrl,
       browseRoot: this.browseRoot,
       browserCors: this.browserCors,
@@ -1551,6 +1576,63 @@ export class StreamerServer {
       persisted,
     });
     return { newKey, persisted };
+  }
+
+  private getClaudeFlagsConfig(): {
+    registry: typeof CLAUDE_FLAGS;
+    values: ClaudeFlagValues;
+    extraArgs: string | null;
+    persisted: boolean;
+  } {
+    return {
+      registry: CLAUDE_FLAGS,
+      values: this.claudeFlags,
+      extraArgs: this.claudeExtraArgs ?? null,
+      persisted: this.claudeFlagsPersistable,
+    };
+  }
+
+  /**
+   * Replace the per-server flag set. Applies to the NEXT spawn — a live PTY
+   * keeps the argv it was started with.
+   *
+   * Mirrors rotateApiKey(): when the values were pinned by a CLI flag we still
+   * apply them in memory but skip the server.yaml write, because the flag would
+   * win again on restart and silently revert them.
+   *
+   * Logged with old→new at info level on purpose: this can disable the
+   * permission prompts entirely, so it needs a forensic trail.
+   */
+  private setClaudeFlagsConfig(
+    values: ClaudeFlagValues,
+    extraArgs: string | undefined,
+  ): { values: ClaudeFlagValues; extraArgs: string | null; persisted: boolean } {
+    const safe = validateFlagValues(values);
+    const previous = { values: this.claudeFlags, extraArgs: this.claudeExtraArgs };
+
+    if (this.claudeFlagsPersistable) {
+      // setClaudeExtraArgs throws on an embedded newline; let it propagate so
+      // the route answers 400 rather than writing a corrupt config line.
+      setClaudeExtraArgs(extraArgs);
+      setClaudeFlags(safe);
+    }
+    this.claudeFlags = safe;
+    this.claudeExtraArgs = extraArgs?.trim() ? extraArgs.trim() : undefined;
+
+    this.log.info("Claude CLI flags updated", {
+      event: "config.claude_flags_updated",
+      persisted: this.claudeFlagsPersistable,
+      previousValues: previous.values,
+      previousExtraArgs: previous.extraArgs ?? null,
+      values: this.claudeFlags,
+      extraArgs: this.claudeExtraArgs ?? null,
+    });
+
+    return {
+      values: this.claudeFlags,
+      extraArgs: this.claudeExtraArgs ?? null,
+      persisted: this.claudeFlagsPersistable,
+    };
   }
 
   private checkRateLimit(
@@ -3131,6 +3213,8 @@ export class StreamerServer {
       projectName: body.projectName,
       branch: body.branch,
       permissionMode: this.defaultPermissionMode,
+      claudeFlags: this.claudeFlags,
+      claudeExtraArgs: this.claudeExtraArgs,
       model: this.defaultModel,
       effort: this.defaultEffort,
     });
@@ -3683,6 +3767,8 @@ export class StreamerServer {
       projectName,
       branch,
       permissionMode: this.defaultPermissionMode,
+      claudeFlags: this.claudeFlags,
+      claudeExtraArgs: this.claudeExtraArgs,
       model: this.defaultModel,
       effort: this.defaultEffort,
     });
@@ -3767,6 +3853,8 @@ export class StreamerServer {
         projectName: body.projectName,
         systemPrompt: systemPromptParts.join("\n"),
         permissionMode: this.defaultPermissionMode,
+        claudeFlags: this.claudeFlags,
+        claudeExtraArgs: this.claudeExtraArgs,
         model: this.defaultModel,
         effort: this.defaultEffort,
       });
