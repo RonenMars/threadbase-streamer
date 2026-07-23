@@ -619,6 +619,12 @@ export class CodexPtyRunner implements SessionRunner {
     return this.sessions.get(sessionId)?.inputHistory ?? [];
   }
 
+  // OS pid of the spawned agent, or null if the session isn't live here.
+  // Mirrors PTYManager.getPid — see there for why the registry records it.
+  getPid(sessionId: string): number | null {
+    return this.sessions.get(sessionId)?.process?.pid ?? null;
+  }
+
   // Record a submitted user message as ground truth and fire onUserMessage.
   // Called from writeSubmit (direct and flush paths) — never from sendKeys.
   private recordUserMessage(session: InternalSession, text: string): void {

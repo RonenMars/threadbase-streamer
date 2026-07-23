@@ -644,6 +644,14 @@ export class PTYManager implements SessionRunner {
     return this.sessions.get(sessionId)?.inputHistory ?? [];
   }
 
+  // OS pid of the spawned agent, or null if the session isn't live here. The
+  // durable registry records this so a later streamer run can probe whether the
+  // process outlived it. Liveness alone is never identity — a recycled pid is
+  // why the registry stores a cmdline alongside it.
+  getPid(sessionId: string): number | null {
+    return this.sessions.get(sessionId)?.process?.pid ?? null;
+  }
+
   // Record a submitted user message as ground truth and fire onUserMessage.
   // Called from writeSubmit (both direct and flush paths) — never from
   // sendKeys, so raw keystrokes aren't logged as messages.
