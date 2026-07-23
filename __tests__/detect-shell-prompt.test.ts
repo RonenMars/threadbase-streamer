@@ -67,6 +67,28 @@ describe("detectShellPrompt — numbered menu", () => {
   it("does not fire for a single numbered line (needs >= 2 options)", () => {
     expect(detectShellPrompt(["1) only one"])).toBeNull();
   });
+
+  it("returns null for a numbered list in prose, with explanatory text between rows", () => {
+    // A chat reply rendered to the PTY scrollback, e.g.:
+    //   1. Does each hold_session create a new timer?
+    //   Not additively — each call replaces the existing timer...
+    //   2. What does the second argument (delayMs) do?
+    //   It's just the setTimeout delay...
+    expect(
+      detectShellPrompt([
+        "1. Does each hold_session create a new timer?",
+        "Not additively — each call replaces the existing timer for that session.",
+        "2. What does the second argument (delayMs) do?",
+        "It's just the setTimeout delay before the grace-timer callback runs.",
+      ]),
+    ).toBeNull();
+  });
+
+  it("returns null when the numbered block doesn't reach the true tail of the screen", () => {
+    expect(
+      detectShellPrompt(["1. apple", "2. banana", "", "Some trailing prose after the list."]),
+    ).toBeNull();
+  });
 });
 
 describe("detectShellPrompt — bare confirmation", () => {
