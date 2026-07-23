@@ -152,6 +152,21 @@ const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 // timer forever and leak. Cap consecutive defers: after this many, hold anyway.
 export const GRACE_MAX_DEFERS = 4;
 
+// Idle reaper. Replaces "kill the PTY because nobody is subscribed" with "kill
+// the PTY because the *agent* has done nothing for a long time" — a socket
+// closing says nothing about whether work is in flight, but silence from the
+// agent itself does. See docs/architecture/2026-07-24-durable-session-runtime.md.
+//
+// 6h is deliberately far above the old 4.5-minute grace period: the reaper is a
+// resource backstop for abandoned sessions, not a session-lifetime policy. A
+// session is only ever eligible while settled (waiting_input/idle) — a `running`
+// PTY is never reaped no matter how long it has been running, because a long
+// silent turn is exactly the work this runtime exists to protect.
+export const IDLE_REAP_AFTER_MS = 6 * 60 * 60 * 1000;
+// How often the sweep runs. Coarse on purpose — reaping 5 minutes late costs
+// nothing, and a frequent timer on an idle server does not earn its wakeups.
+export const IDLE_REAP_SWEEP_MS = 5 * 60 * 1000;
+
 // Upper bound on the process-discovery half of the resume collision probe.
 // Enumerating processes costs one CIM/wmic query per pid on Windows, so a
 // machine with several CLIs open can take seconds — unacceptable on a path the
@@ -339,6 +354,12 @@ export class StreamerServer {
   private ptyGraceDeferCounts = new Map<string, number>();
   // Map of sessionId → set of subscribed WS clients
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
+  // sessionId → wall-clock ms of the last PTY chunk. Written from onOutput for
+  // every provider; read only by the idle reaper. Entries are dropped when the
+  // session leaves the runner (reap/exit/hold).
+  private lastAgentChunkAt = new Map<string, number>();
+  // Periodic sweep that releases PTYs no agent is using. Null until listen().
+  private idleReaperTimer: ReturnType<typeof setInterval> | null = null;
   // Map of clientId → WS socket (populated by the "register" WS handshake)
   private clientIdToWs = new Map<string, WebSocket>();
   // Reverse map for cleanup on close
@@ -581,6 +602,12 @@ export class StreamerServer {
     this.ptyManager = new LiveSessionManager({
       logger: getLogger("pty"),
       onOutput: (sessionId, data) => {
+        // Agent-activity stamp for the idle reaper. Fires for every provider
+        // (both runners call onOutput), so the reaper needs no per-runner
+        // bookkeeping. Distinct from ManagedSession.lastActivityAt, which only
+        // moves on *user* input — an agent grinding through a long task is
+        // active even when nobody has touched it.
+        this.lastAgentChunkAt.set(sessionId, Date.now());
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
       },
       onUserMessage: (sessionId, text, ts) => {
@@ -833,14 +860,19 @@ export class StreamerServer {
           this.clientIdToWs.delete(clientId);
           this.wsToClientId.delete(ws);
         }
-        for (const [sessionId, subscribers] of this.sessionSubscribers) {
+        for (const subscribers of this.sessionSubscribers.values()) {
           subscribers.delete(ws);
-          // ptyGracePeriodMs === 0 disables the automatic hold-on-disconnect
-          // timer; an explicit hold_session message still arms the same grace
-          // timer (see the hold_session handler above).
-          if (subscribers.size === 0 && this.ptyGracePeriodMs > 0) {
-            this.startGraceTimer(sessionId, this.ptyGracePeriodMs);
-          }
+          // Deliberately does NOT arm a kill timer. A socket closing is not a
+          // request to stop the agent: phones sleep, signal drops, Wi-Fi hands
+          // off to cellular. Killing the PTY because nobody is watching means a
+          // long agent task cannot outlive a backgrounded app — the failure this
+          // runtime exists to prevent (see
+          // docs/architecture/2026-07-24-durable-session-runtime.md).
+          //
+          // Unbounded PTY growth is bounded by the idle reaper instead, which
+          // measures agent inactivity rather than subscriber absence. An
+          // explicit hold_session from the client still terminates immediately
+          // (see the hold_session handler above) — that one IS a user intent.
         }
       },
       agentClient,
@@ -961,6 +993,51 @@ export class StreamerServer {
       this.ptyGraceTimers.delete(sessionId);
     }
     this.ptyGraceDeferCounts.delete(sessionId);
+  }
+
+  /**
+   * Release PTYs whose agent has been silent past IDLE_REAP_AFTER_MS.
+   *
+   * This is the bound that lets handleWsClose stop arming kill timers. The
+   * distinction that matters: the old timer measured how long nobody was
+   * *watching*, which is uncorrelated with whether work is in flight. This
+   * measures how long the *agent* has produced nothing, and only ever considers
+   * sessions that are already settled — a `running` PTY is skipped regardless of
+   * age, so a long silent turn is never interrupted.
+   *
+   * Exposed (not private) so tests can drive one sweep deterministically instead
+   * of waiting on the interval.
+   */
+  reapIdleSessions(now: number = Date.now()): string[] {
+    const reaped: string[] = [];
+    for (const session of this.ptyManager.listSessions()) {
+      // Never touch a session mid-turn. This is the whole point.
+      if (session.status === "running") continue;
+
+      // Fall back to startedAt so a session that never produced a chunk is
+      // still eligible eventually — otherwise a PTY that failed to emit
+      // anything would be immortal.
+      const lastActive =
+        this.lastAgentChunkAt.get(session.id) ??
+        session.lastActivityAt?.getTime() ??
+        session.startedAt.getTime();
+
+      if (now - lastActive < IDLE_REAP_AFTER_MS) continue;
+
+      this.log.info(
+        `[reap] releasing idle PTY for ${session.id} (idle ${Math.round((now - lastActive) / 60_000)}m)`,
+        { sessionId: session.id, event: "pty.idle_reap", idleMs: now - lastActive },
+        "pino",
+      );
+      this.ptyManager.putOnHold(session.id);
+      this.lastAgentChunkAt.delete(session.id);
+      this.sessionSubscribers.delete(session.id);
+      reaped.push(session.id);
+
+      const held = this.sessionStore.get(session.id, this.ptyAttachedIds());
+      if (held) this.wsHub.broadcast({ type: "session_update", session: held });
+    }
+    return reaped;
   }
 
   private startGraceTimer(sessionId: string, delayMs: number): void {
@@ -1087,6 +1164,11 @@ export class StreamerServer {
     // healthcheck). On the final attempt we let the error propagate so a
     // genuinely occupied port still surfaces loudly.
     await this.bindWithRetry(port);
+
+    // unref() so an idle server with no other work can still exit — this timer
+    // must never be the reason the process stays alive.
+    this.idleReaperTimer = setInterval(() => this.reapIdleSessions(), IDLE_REAP_SWEEP_MS);
+    this.idleReaperTimer.unref?.();
 
     const warmUp = new Promise<void>((resolveWarm) => {
       {
@@ -1429,6 +1511,11 @@ export class StreamerServer {
   async close(): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
+    if (this.idleReaperTimer) {
+      clearInterval(this.idleReaperTimer);
+      this.idleReaperTimer = null;
+    }
+    this.lastAgentChunkAt.clear();
     this.markScannerStaleDebounced.cancel();
     // Wait for every fire-and-forget scan→cache-write task to finish before
     // tearing anything down. Their post-scan steps write to this.cache
