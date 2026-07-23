@@ -93,7 +93,7 @@ if [[ "$AUTO_UPDATE" != "true" ]]; then
   exit 0
 fi
 
-INTERVAL_MIN="$(read_yaml_field poll_interval_minutes 60)"
+INTERVAL_MIN="$(read_yaml_field poll_interval_minutes 1440)"
 if ! [[ "$INTERVAL_MIN" =~ ^[0-9]+$ ]] || [[ "$INTERVAL_MIN" -lt 1 ]]; then
   err "invalid poll_interval_minutes: $INTERVAL_MIN"
   exit 1
