@@ -74,10 +74,11 @@ import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
 import { handleListProjects } from "./handlers/handleListProjects";
+import { isPidAlive } from "./lifecycle/process-liveness";
 import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
-import { discoverClaudeProcesses } from "./process-discovery";
+import { discoverClaudeProcesses, getProcessArgs } from "./process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
@@ -110,6 +111,7 @@ import {
   RESUME_BUSY_WINDOW_MS,
   resolveResumeBusyWindowMs,
 } from "./services/sessions/conversationBusy";
+import { type ReconcileVerdict, reconcileSessions } from "./services/sessions/reconcileSessions";
 import { SessionStore } from "./session-store";
 import type {
   AskQuestion,
@@ -120,6 +122,7 @@ import type {
   ServerWarmingUpResponse,
   ServerWarmupState,
   SessionActivity,
+  SessionLifecycle,
   SessionResponse,
   SessionSortKey,
   SortOrder as SessionSortOrder,
@@ -361,6 +364,9 @@ export class StreamerServer {
   // every provider; read only by the idle reaper. Entries are dropped when the
   // session leaves the runner (reap/exit/hold).
   private lastAgentChunkAt = new Map<string, number>();
+  // sessionId → lifecycle verdict from boot reconciliation. Only holds sessions
+  // this run did NOT spawn; live ones derive their lifecycle from ptyAttached.
+  private sessionLifecycles = new Map<string, SessionLifecycle>();
   // Periodic sweep that releases PTYs no agent is using. Null until listen().
   private idleReaperTimer: ReturnType<typeof setInterval> | null = null;
   // Map of clientId → WS socket (populated by the "register" WS handshake)
@@ -801,7 +807,9 @@ export class StreamerServer {
       handleMkdir: (req, res) => this.handleMkdir(req, res),
       handleWsOpen: (ws) => {
         this.wsHub.addClient(ws);
-        const sessions = this.sessionStore.list(this.ptyAttachedIds());
+        const sessions = this.withReconciledLifecycle(
+          this.sessionStore.list(this.ptyAttachedIds()),
+        );
         ws.send(JSON.stringify({ type: "session_list", sessions }));
         if (!this.currentWarmupState()) {
           ws.send(JSON.stringify({ type: "cache_ready" }));
@@ -994,13 +1002,37 @@ export class StreamerServer {
     const ws = typeof clientId === "string" ? this.clientIdToWs.get(clientId) : undefined;
     const payload = {
       type: "session_list" as const,
-      sessions: this.sessionStore.list(this.ptyAttachedIds()),
+      sessions: this.withReconciledLifecycle(this.sessionStore.list(this.ptyAttachedIds())),
     };
     if (ws) {
       this.wsHub.unicast(ws, payload);
     } else {
       this.wsHub.broadcast(payload);
     }
+  }
+
+  /**
+   * Overlay boot-reconciliation verdicts onto session responses.
+   *
+   * A session left by a previous run is not in the in-memory store, so
+   * SessionStore cannot classify it — it only ever sees what this run spawned.
+   * Discovery may still surface the process, in which case the reconciler knows
+   * strictly more about it than discovery does: it can tell `detached` (alive
+   * and confirmed ours) from `orphaned` (alive but identity unconfirmed), which
+   * a pid enumeration alone cannot.
+   *
+   * Only applied when the session is NOT live here: a session this run owns has
+   * an authoritative lifecycle already, and a stale verdict must never override
+   * it.
+   */
+  private withReconciledLifecycle(sessions: SessionResponse[]): SessionResponse[] {
+    if (this.sessionLifecycles.size === 0) return sessions;
+    return sessions.map((s) => {
+      if (s.ptyAttached) return s;
+      const verdict = this.sessionLifecycles.get(s.id);
+      if (!verdict) return s;
+      return { ...s, lifecycle: verdict, lifecycleSource: "reconcile" as const };
+    });
   }
 
   private addSessionSubscriber(sessionId: string, ws: WebSocket): void {
@@ -1018,6 +1050,60 @@ export class StreamerServer {
       this.ptyGraceTimers.delete(sessionId);
     }
     this.ptyGraceDeferCounts.delete(sessionId);
+  }
+
+  /**
+   * Classify sessions left behind by previous streamer runs (C1 Phase 3a).
+   *
+   * Agents already outlive the streamer today on the crash and dev-takeover
+   * paths, which exit without reaching ptyManager.dispose() — they are just
+   * invisible when they do, because nothing recorded that they existed. This
+   * turns those rows into an explicit verdict per session.
+   *
+   * Read-only with respect to processes: it probes and classifies, and never
+   * signals anything. `orphaned` is a report, not a cleanup trigger.
+   */
+  private async reconcilePreviousSessions(): Promise<ReconcileVerdict[]> {
+    if (!this.managedSessionsRepo) return [];
+    let verdicts: ReconcileVerdict[] = [];
+    try {
+      const rows = this.managedSessionsRepo.listNonTerminal();
+      if (rows.length === 0) return [];
+
+      verdicts = await reconcileSessions(
+        rows,
+        { isPidAlive, getProcessArgs },
+        this.streamerInstanceId,
+      );
+
+      for (const v of verdicts) {
+        this.sessionLifecycles.set(v.sessionId, v.lifecycle);
+        // Terminal verdicts leave the probe set so the next boot does no work
+        // for them. Non-terminal ones stay: a `detached` process may still be
+        // running, and we want to re-probe it next time.
+        if (v.lifecycle === "completed" || v.lifecycle === "failed") {
+          this.managedSessionsRepo.recordStatus(v.sessionId, "idle", "reconcile", {
+            completedAt: new Date(),
+          });
+        }
+      }
+
+      this.log.info(`[reconcile] classified ${verdicts.length} session(s) from previous runs`, {
+        event: "sessions.reconciled",
+        counts: verdicts.reduce<Record<string, number>>((acc, v) => {
+          acc[v.lifecycle] = (acc[v.lifecycle] ?? 0) + 1;
+          return acc;
+        }, {}),
+      });
+    } catch (err) {
+      // Reconciliation is diagnostic. A failure costs post-restart visibility,
+      // and must never stop the server from starting.
+      this.log.warn("[reconcile] failed to reconcile previous sessions", {
+        event: "sessions.reconcile_failed",
+        err,
+      });
+    }
+    return verdicts;
   }
 
   /**
@@ -1335,6 +1421,10 @@ export class StreamerServer {
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
           this.managedSessionsRepo = new ManagedSessionsRepository(db);
+          // Classify whatever previous runs left behind. Fire-and-forget: it
+          // only populates a diagnostic map, and blocking startup on `ps`
+          // probes would delay the listener for no correctness gain.
+          void this.reconcilePreviousSessions();
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
           // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
@@ -3250,7 +3340,13 @@ export class StreamerServer {
       url.searchParams.has("status");
 
     if (!hasPaginationParams) {
-      json(res, 200, this.withExternalActivity(this.sessionStore.list(this.ptyAttachedIds())));
+      json(
+        res,
+        200,
+        this.withExternalActivity(
+          this.withReconciledLifecycle(this.sessionStore.list(this.ptyAttachedIds())),
+        ),
+      );
       return;
     }
 
@@ -3262,7 +3358,7 @@ export class StreamerServer {
 
     try {
       const page = this.sessionStore.paginate(this.ptyAttachedIds(), parsed.query);
-      page.sessions = this.withExternalActivity(page.sessions);
+      page.sessions = this.withExternalActivity(this.withReconciledLifecycle(page.sessions));
       json(res, 200, page);
     } catch (err) {
       if (err instanceof Error && err.message === "INVALID_CURSOR") {
@@ -3280,6 +3376,12 @@ export class StreamerServer {
       if (!existsSync(session.projectPath)) {
         session.failureReason = `Project directory not found: ${session.projectPath}`;
       }
+      // Apply a boot-reconciliation verdict if one exists for this session and
+      // it isn't live here — the detail screen is where the distinction between
+      // `detached` and `orphaned` actually matters to a user.
+      const reconciled = this.withReconciledLifecycle([session])[0];
+      session.lifecycle = reconciled.lifecycle;
+      session.lifecycleSource = reconciled.lifecycleSource;
       // Scrape model/effort/permission-mode off the live PTY's rendered status
       // line so the client can show them natively instead of parsing terminal
       // text. Live sessions only, and strictly best-effort: a failed scrape
