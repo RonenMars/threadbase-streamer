@@ -93,6 +93,17 @@ export class LiveSessionManager {
     return null;
   }
 
+  // Scans rather than using runnerFor(): the registry records a pid on a
+  // best-effort basis, so an unknown session must return null rather than
+  // throw the way the input-routing methods do.
+  getPid(sessionId: string): number | null {
+    for (const runner of this.runners.values()) {
+      const pid = runner.getPid(sessionId);
+      if (pid != null) return pid;
+    }
+    return null;
+  }
+
   hasSession(sessionId: string): boolean {
     for (const runner of this.runners.values()) {
       if (runner.hasSession(sessionId)) return true;

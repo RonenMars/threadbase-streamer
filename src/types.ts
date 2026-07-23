@@ -439,6 +439,10 @@ export interface SessionRunner {
   // unknown session. Sourced by terminal_replay so a re-subscribing client can
   // reconcile ground-truth ownership without the live user_message stream.
   getInputHistory(sessionId: string): UserMessage[];
+  // OS pid of the live agent process, or null if this runner doesn't own the
+  // session. Recorded in the durable session registry so a later streamer run
+  // can probe whether the process outlived it.
+  getPid(sessionId: string): number | null;
   getSession(sessionId: string): ManagedSession | null;
   hasSession(sessionId: string): boolean;
   listSessions(): ManagedSession[];
