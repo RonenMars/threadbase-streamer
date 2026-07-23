@@ -88,27 +88,38 @@ export function detectShellPrompt(lines: string[]): ShellPrompt | null {
   // Fire when the last line is itself a numbered row (menu just finished
   // printing) OR when a bare "Press enter to confirm"-style footer trails a
   // numbered block (Codex's "Hooks need review" trust dialog paints its options
-  // above a "Press enter to confirm or esc to go back" line). Collect the
-  // contiguous numbered block regardless — its options must not collapse into a
-  // single generic Continue button (the bare-confirmation branch below).
+  // above a "Press enter to confirm or esc to go back" line). The block must be
+  // CONTIGUOUS — a real menu has no prose between rows, unlike a numbered list
+  // in ordinary prose (e.g. an explanation with "1. ..." / "2. ..." points
+  // separated by paragraphs) — and must reach the true tail of the screen, not
+  // a numbered block buried under trailing prose.
   const lastNumberedIdx = (() => {
-    for (let i = last.idx; i >= 0; i--) {
-      if (NUMBERED_RE.test(lines[i])) return i;
+    let i = last.idx;
+    if (!NUMBERED_RE.test(lines[i])) {
+      // Allow exactly one trailing non-numbered footer line (the bare
+      // "Press enter to confirm" case) between the tail and the block.
+      if (i > 0 && (PRESS_ENTER_RE.test(lines[i].trim()) || CONTINUE_RE.test(lines[i].trim()))) {
+        i--;
+      } else {
+        return -1;
+      }
     }
-    return -1;
+    while (i >= 0 && !NUMBERED_RE.test(lines[i]) && lines[i].trim().length === 0) i--;
+    return i >= 0 && NUMBERED_RE.test(lines[i]) ? i : -1;
   })();
   if (lastNumberedIdx >= 0) {
     const options: ShellPromptOption[] = [];
-    for (let i = 0; i <= lastNumberedIdx; i++) {
+    let firstRow = lastNumberedIdx;
+    for (let i = lastNumberedIdx; i >= 0; i--) {
       const m = NUMBERED_RE.exec(lines[i]);
-      if (!m) continue;
+      if (!m) break; // contiguous block ends at the first non-numbered line
       const num = Number.parseInt(m[1], 10);
-      if (!Number.isFinite(num)) continue;
-      options.push({ index: num, label: m[2].trim(), answerKeys: `${num}${ENTER}` });
+      if (!Number.isFinite(num)) break;
+      options.unshift({ index: num, label: m[2].trim(), answerKeys: `${num}${ENTER}` });
+      firstRow = i;
     }
     if (options.length >= 2) {
       // Prompt = nearest non-chrome line above the first numbered row.
-      const firstRow = lines.findIndex((l) => NUMBERED_RE.test(l));
       let prompt = "";
       for (let i = firstRow - 1; i >= 0; i--) {
         const t = lines[i].trim();
