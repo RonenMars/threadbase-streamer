@@ -167,3 +167,20 @@ Expect to re-derive equivalents while landing. If `npm run lint` fails after a m
 ## Definition of done
 
 `main` green, and `integration-dev/v1.0.0-2026-07-22` reduced to nothing but the postmortem file. Any code still unique to the integration branch at that point is a change that was never landed.
+
+## Follow-up PRs opened after this runbook (session-name display)
+
+These are **not** part of the 18-PR landing set above — they are new work opened after, and they target `main` directly (branched off the integration tip only because that was the current local base).
+Land them under the same per-PR loop, but in cross-repo dependency order because the streamer bundles the scanner via npm and mobile reads the streamer's response.
+
+Fix: interactive Claude Code conversations carried no session name (the scanner only read the `slug` field, which the human REPL never writes), so mobile showed the project name everywhere instead of a real title.
+
+| Order | Repo | PR | Branch | What it does |
+|---|---|---|---|---|
+| 1 | tb-scanner | [#53](https://github.com/RonenMars/threadbase-scanner/pull/53) | `fix/session-name-from-first-message` | Derive `sessionName` from the first user message when no `slug`. The data source. |
+| 2 | tb-streamer | [#267](https://github.com/RonenMars/threadbase-streamer/pull/267) | `fix/emit-session-name` | Emit `session_name` in the conversation detail `meta` block. Additive; mobile-compat safe. |
+| 3 | tb-mobile | [#376](https://github.com/RonenMars/threadbase-mobile/pull/376) | `fix/session-name-display` | Read `session_name` in the list, conversation, and live-session views. |
+
+**Dependency note the loop must respect:** the streamer only emits a real name once scanner #53 is released (0.11.6+) and the streamer's `@threadbase-sh/scanner` range is bumped — the streamer PR is the wiring, the scanner PR is the data.
+So the visible effect requires: scanner #53 merged → scanner release → streamer dep bump → streamer #267 merged → mobile #376 merged.
+Each PR is independently safe to land (additive, no behavior removed); the chain only gates when the *name actually appears*, not whether the merges are safe.
