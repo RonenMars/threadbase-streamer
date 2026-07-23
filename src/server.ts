@@ -12,6 +12,7 @@ import {
   type SortOrder,
   search,
 } from "@threadbase-sh/scanner";
+import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
 import {
   createReadStream,
@@ -68,6 +69,7 @@ import { ConversationCache, type ConversationListItem } from "./conversation-cac
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
+import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
@@ -112,6 +114,7 @@ import { SessionStore } from "./session-store";
 import type {
   AskQuestion,
   DiscoveredProcess,
+  ManagedSession,
   PermissionOption,
   ServerConfig,
   ServerWarmingUpResponse,
@@ -369,6 +372,13 @@ export class StreamerServer {
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
   private sessionsRepo: SessionsRepository | null = null;
+  // Durable session registry (C1 Phase 2). Null when the cache DB failed to
+  // open — persistence degrades to today's in-memory-only behaviour rather than
+  // taking the server down with it, so every write goes through `?.`.
+  private managedSessionsRepo: ManagedSessionsRepository | null = null;
+  // Identifies this streamer run. A registry row carrying a different id is a
+  // session that outlived the process that started it.
+  private readonly streamerInstanceId = randomUUID();
   private cacheMetadataRepo: CacheMetadataRepository | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
@@ -641,6 +651,21 @@ export class StreamerServer {
           completedAt: session.completedAt,
           ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
         });
+        // Mirror the transition into the durable registry. Both runners funnel
+        // every status change through this callback, so this is the one place
+        // that needs to know. `exit` vs `transition` is the distinction the
+        // reconciler cares about: a row with a recorded exit needs no probe.
+        this.managedSessionsRepo?.recordStatus(
+          session.id,
+          session.status,
+          session.completedAt != null ? "exit" : "transition",
+          {
+            completedAt: session.completedAt,
+            lastActivityAt: session.lastActivityAt ?? null,
+            promptCount: session.promptCount,
+            failureReason: session.failureReason ?? null,
+          },
+        );
         // Refresh the scanner index at the end of each Claude turn so the
         // conversation is searchable with up-to-date content immediately.
         if (session.status === "waiting_input" || session.status === "idle") {
@@ -996,6 +1021,110 @@ export class StreamerServer {
   }
 
   /**
+   * Pick a token guaranteed to appear in the spawned process's argv, for the
+   * reconciler's pid-reuse guard.
+   *
+   * Claude always passes the session id (`--resume <id>` or `--session-id
+   * <id>`), so it is both present and unique. Codex only does on *resume*
+   * (`codex resume <id>`); a fresh Codex spawn is `codex --cd <path>
+   * --no-alt-screen` with no id at all, because the rollout id does not exist
+   * until the CLI writes it. boundConversationId is what distinguishes the two:
+   * it is set once that rollout has been discovered.
+   */
+  private spawnArgvToken(session: ManagedSession): string {
+    if (session.provider !== CODEX_CLI_PROVIDER) return session.id;
+    return session.boundConversationId ?? session.projectPath;
+  }
+
+  /**
+   * Mirror a freshly-spawned session into the durable registry (C1 Phase 2).
+   *
+   * Called at each addManaged() site rather than inside SessionStore, because
+   * the store is a pure in-memory structure with no DB dependency and adding
+   * one would drag persistence into every unit test that touches it.
+   *
+   * Best-effort by design: a failed registry write must never break session
+   * start. Losing a row costs post-restart *visibility* for that session, which
+   * is strictly better than refusing to run the agent at all.
+   */
+  private recordSessionSpawn(session: ManagedSession): void {
+    if (!this.managedSessionsRepo) return;
+    try {
+      const pid = this.ptyManager.getPid(session.id);
+      this.managedSessionsRepo.recordSpawn({
+        session,
+        pid,
+        // Identity guard against pid reuse: the reconciler requires this token
+        // to appear in the live process's argv before it will claim the pid is
+        // still ours (docs/architecture/2026-07-24-durable-session-runtime.md).
+        //
+        // Reading the real argv here would cost an async `ps` per session start
+        // on a path the user is waiting on, so we record a token we already
+        // know is in it. Claude always carries the session id (`--resume <id>`
+        // on resume, `--session-id <id>` on fresh). A *fresh* Codex spawn does
+        // not — its argv is only `--cd <path> --no-alt-screen`, because the
+        // rollout id doesn't exist yet — so fall back to the project path,
+        // which is present in every spawn path for both providers.
+        //
+        // The fallback is weaker: two sessions in one project share a token, so
+        // it proves "a process of ours in this project" rather than "this exact
+        // session". It still rejects an unrelated recycled pid, which is the
+        // failure being guarded against.
+        //
+        // Note the Codex id is always *set* (a local placeholder) — it is just
+        // not in the process's argv — so the choice keys off the provider, not
+        // off the id being null.
+        cmdline: pid != null ? this.spawnArgvToken(session) : null,
+        streamerInstanceId: this.streamerInstanceId,
+      });
+    } catch (err) {
+      this.log.warn("[registry] failed to record session spawn", {
+        event: "registry.spawn_write_failed",
+        sessionId: session.id,
+        err,
+      });
+    }
+  }
+
+  /**
+   * Stamp every live session as ended-by-shutdown before dispose() kills it.
+   *
+   * PTYManager.dispose() signals each child directly and fires no
+   * onStatusChange, so the registry would otherwise keep rows sitting at
+   * `running` forever and the next boot could not tell a deliberate restart
+   * from a crash. Recording `shutdown` as the status source makes that
+   * distinction explicit rather than inferred.
+   *
+   * Not a `completed_at` write for the agent's own work — the agent did not
+   * finish, we stopped it — but the session is genuinely terminal, so it must
+   * leave the reconciler's probe set.
+   */
+  private recordShutdownState(): void {
+    if (!this.managedSessionsRepo) return;
+    const now = new Date();
+    for (const session of this.ptyManager.listSessions()) {
+      try {
+        // No failureReason: a shutdown is not a failure of the session, and
+        // writing one would make a healthy agent look broken on the next boot.
+        // status_source="shutdown" already carries the reason.
+        this.managedSessionsRepo.recordStatus(session.id, "idle", "shutdown", {
+          completedAt: now,
+          lastActivityAt: session.lastActivityAt ?? null,
+          promptCount: session.promptCount,
+        });
+      } catch (err) {
+        // Shutdown must complete regardless. A lost row costs visibility, not
+        // correctness, and throwing here would strand the rest of teardown.
+        this.log.warn("[registry] failed to record shutdown state", {
+          event: "registry.shutdown_write_failed",
+          sessionId: session.id,
+          err,
+        });
+      }
+    }
+  }
+
+  /**
    * Release PTYs whose agent has been silent past IDLE_REAP_AFTER_MS.
    *
    * This is the bound that lets handleWsClose stop arming kill timers. The
@@ -1205,6 +1334,7 @@ export class StreamerServer {
           this.projectsRepo = new ProjectsRepository(db);
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
+          this.managedSessionsRepo = new ManagedSessionsRepository(db);
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
           // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
@@ -1516,6 +1646,12 @@ export class StreamerServer {
       this.idleReaperTimer = null;
     }
     this.lastAgentChunkAt.clear();
+    // Record why each live session is about to end, BEFORE ptyManager.dispose()
+    // kills it and before cache.close() takes the registry's DB handle away.
+    // dispose() fires no onStatusChange, so without this a clean shutdown looks
+    // identical to a crash on the next boot: rows frozen mid-`running` with no
+    // explanation. See docs/architecture/2026-07-24-durable-session-runtime.md.
+    this.recordShutdownState();
     this.markScannerStaleDebounced.cancel();
     // Wait for every fire-and-forget scan→cache-write task to finish before
     // tearing anything down. Their post-scan steps write to this.cache
@@ -3307,6 +3443,7 @@ export class StreamerServer {
     });
 
     this.sessionStore.addManaged(session);
+    this.recordSessionSpawn(session);
 
     // Watch the conversation's JSONL file for structured events
     void this.watchConversationFile(sessionId);
@@ -3861,6 +3998,7 @@ export class StreamerServer {
     });
 
     this.sessionStore.addManaged(session);
+    this.recordSessionSpawn(session);
     void this.watchConversationFile(session.id);
 
     this.wsHub.broadcast({
@@ -3947,6 +4085,7 @@ export class StreamerServer {
       });
 
       this.sessionStore.addManaged(session);
+      this.recordSessionSpawn(session);
 
       // Block for the PTY to actually reach waiting_input (or fail) so the
       // caller gets a trustworthy status instead of navigating on a guess.

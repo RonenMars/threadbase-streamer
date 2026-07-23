@@ -1230,6 +1230,45 @@ describe("StreamerServer", () => {
     });
   });
 
+  // The registry records this token so the boot reconciler can reject a
+  // recycled pid: it must be a string genuinely present in the spawned
+  // process's argv, or the guard silently never matches.
+  describe("spawnArgvToken", () => {
+    const base = {
+      id: "sess-abc",
+      projectPath: "/work/repo",
+      projectName: "repo",
+      branch: "",
+      status: "running",
+      startedAt: new Date(),
+      completedAt: null,
+      promptCount: 0,
+      lastOutput: "",
+    };
+
+    it("uses the session id for Claude — always in argv via --resume/--session-id", () => {
+      const token = (server as any).spawnArgvToken({ ...base, provider: "claude-code" });
+      expect(token).toBe("sess-abc");
+    });
+
+    it("uses the rollout id for a bound Codex session — `codex resume <id>`", () => {
+      const token = (server as any).spawnArgvToken({
+        ...base,
+        provider: "codex-cli",
+        boundConversationId: "rollout-5",
+      });
+      expect(token).toBe("rollout-5");
+    });
+
+    // A fresh Codex spawn is `codex --cd <path> --no-alt-screen` — the local
+    // placeholder id appears nowhere in argv, so matching on it would never hit.
+    it("falls back to the project path for an unbound fresh Codex session", () => {
+      const token = (server as any).spawnArgvToken({ ...base, provider: "codex-cli" });
+      expect(token).toBe("/work/repo");
+      expect(token).not.toBe("sess-abc");
+    });
+  });
+
   describe("idle reaper", () => {
     // The reaper is the resource bound that replaces kill-on-disconnect. Drive
     // reapIdleSessions() with an explicit `now` rather than the interval, so
