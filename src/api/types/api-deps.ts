@@ -3,6 +3,7 @@ import type { WebSocket } from "ws";
 import type { AgentClient } from "../../agent/agent-client";
 import type { AgentConfig } from "../../agent/agent-config";
 import type { ConversationWriter } from "../../agent/conversation-writer";
+import type { ClaudeFlagValues, FlagDefinition } from "../../claude-flags";
 import type { ConversationCache } from "../../conversation-cache";
 import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";
@@ -18,6 +19,16 @@ export type ApiDeps = {
   localNoAuth: boolean;
   logMenubarRequests: boolean;
   rotateApiKey: () => { newKey: string; persisted: boolean };
+  claudeFlagsConfig: () => {
+    registry: readonly FlagDefinition[];
+    values: ClaudeFlagValues;
+    extraArgs: string | null;
+    persisted: boolean;
+  };
+  setClaudeFlagsConfig: (
+    values: ClaudeFlagValues,
+    extraArgs: string | undefined,
+  ) => { values: ClaudeFlagValues; extraArgs: string | null; persisted: boolean };
   publicUrl: string | null;
   browseRoot: string | null;
   browserCors: string | undefined;

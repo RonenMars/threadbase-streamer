@@ -70,6 +70,10 @@ export const createMiscRoutes = (
       platform: process.platform,
       activeSessions: deps.sessionStore.list(ptyIds).filter((s) => s.status === "running").length,
       publicUrl: deps.publicUrl,
+      // Capability flag: this server serves /api/config/claude-flags. Additive —
+      // older clients ignore it, and clients talking to an older server see it
+      // absent and hide the UI rather than 404ing.
+      claudeFlags: true,
     });
   });
 
