@@ -33,6 +33,8 @@ Option **D + A** together is the cleanest: D fixes the root cause (cache no long
 
 ## Log truncation races with the still-running streamer fd
 
+**Status:** Fixed on `fix/log-truncation-sparse-nuls` — `prod logs --clear` kickstarts after truncate; deploy `--clear-logs` bootouts before truncate then re-bootstraps. Partial truncate failures report both outcomes.
+
 **Symptom:** After `npm run deploy` or `tb-streamer prod logs --clear`, `~/.threadbase/logs/stdout.log` / `stderr.log` can appear to contain NUL bytes from offset 0..N when `tail`ed, instead of being empty. Subsequent log lines are appended far past the visible end of the file.
 
 **Root cause:** Both code paths truncate the log files via `: > file` (`scripts/deploy.sh:823-831`) / `fs.writeFileSync(file, "")` (`cli/prod.ts:123-144`) while the supervised streamer — and launchd itself, holding `StandardOutPath` / `StandardErrorPath` open — still have file descriptors at offset N. POSIX `truncate(2)` sets the inode size to 0 but does **not** reset any open writer's seek offset. The next `write(2)` from the old streamer (final shutdown line before `kickstart -k` swaps it out, or any line if `--clear` runs against a healthy daemon) lands at offset N and the kernel extends the file as sparse — leaving NUL bytes 0..N that `tail` reads as garbage.
@@ -66,6 +68,8 @@ In practice `prod restart` calls `bootoutAgent` first (which now polls), so the 
 ---
 
 ## `--clear` truncate failure leaves stdout cleared but stderr not
+
+**Status:** Fixed on `fix/log-truncation-sparse-nuls` — best-effort both files; combined cleared/failed message.
 
 **Symptom:** `tb-streamer prod logs --clear` reports `failed to truncate <stderr>: EACCES` (or similar) but `stdout.log` has already been wiped. Recovery requires re-running after fixing perms with stdout already empty.
 

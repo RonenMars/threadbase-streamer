@@ -210,33 +210,55 @@ describe("prod commands", () => {
       expect(result.message).toMatch(/no log files/);
     });
 
-    it("--clear truncates both log files in place and skips tail", async () => {
+    it("--clear truncates both log files in place, kickstarts, and skips tail", async () => {
       const spawnTail = vi.fn();
       const truncated: string[] = [];
       const truncate = (file: string) => {
         truncated.push(file);
       };
+      const kickstart = vi.fn();
       const result = await runProdLogs(
         { lines: 50, follow: false, errorsOnly: false, clear: true },
-        { spawnTail, truncate },
+        { spawnTail, truncate, kickstart },
       );
       expect(result.ok).toBe(true);
       expect(spawnTail).not.toHaveBeenCalled();
       expect(truncated).toEqual([stdoutLog, stderrLog]);
+      expect(kickstart).toHaveBeenCalledOnce();
       expect(result.message).toMatch(/cleared:/);
     });
 
-    it("--clear returns ok=false if truncate throws", async () => {
+    it("--clear reports partial success when only one file truncates", async () => {
+      const spawnTail = vi.fn();
+      const truncate = (file: string) => {
+        if (file.endsWith("stderr.log")) throw new Error("EACCES");
+      };
+      const kickstart = vi.fn();
+      const result = await runProdLogs(
+        { lines: 50, follow: false, errorsOnly: false, clear: true },
+        { spawnTail, truncate, kickstart },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/cleared:/);
+      expect(result.message).toMatch(/failed:/);
+      expect(result.message).toMatch(/EACCES/);
+      expect(kickstart).toHaveBeenCalledOnce();
+    });
+
+    it("--clear returns ok=false if truncate throws on both files", async () => {
       const spawnTail = vi.fn();
       const truncate = () => {
         throw new Error("EACCES");
       };
+      const kickstart = vi.fn();
       const result = await runProdLogs(
         { lines: 50, follow: false, errorsOnly: false, clear: true },
-        { spawnTail, truncate },
+        { spawnTail, truncate, kickstart },
       );
       expect(result.ok).toBe(false);
-      expect(result.message).toMatch(/failed to truncate.*EACCES/);
+      expect(result.message).toMatch(/failed to truncate/);
+      expect(result.message).toMatch(/EACCES/);
+      expect(kickstart).toHaveBeenCalledOnce();
     });
   });
 
