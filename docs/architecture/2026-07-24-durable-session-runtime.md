@@ -1,7 +1,7 @@
 # Durable Session Runtime
 
 **Date:** 2026-07-24
-**Status:** Proposed
+**Status:** Implemented (Phases 1, 2, 3a) — Phase 3b deferred, see *Known limits*
 **Scope:** tb-streamer (PTY lifecycle, session persistence, recovery) — contract additions consumed by tb-mobile
 
 ---

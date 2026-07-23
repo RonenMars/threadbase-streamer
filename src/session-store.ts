@@ -201,6 +201,14 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     conversationId: s.id,
     provider: s.provider ?? CLAUDE_CODE_PROVIDER,
     status: s.status,
+    // Lifecycle for a session this run knows about. `attached` while we hold
+    // its PTY; once the PTY is gone the session is terminal from this run's
+    // perspective — `failed` when it recorded a reason, else `completed`.
+    // Sessions left by *previous* runs never reach here: they aren't in the
+    // in-memory store, and the boot reconciler classifies them instead
+    // (docs/architecture/2026-07-24-durable-session-runtime.md).
+    lifecycle: ptyAttached ? "attached" : s.failureReason != null ? "failed" : "completed",
+    lifecycleSource: ptyAttached ? "spawn" : "exit",
     // We spawned it, so `status` is the authoritative signal — no inferred
     // `activity` is attached for managed sessions.
     ownership: "managed",
@@ -246,6 +254,12 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
     // Discovery just enumerated this PID, so it was alive moments ago. We never
     // report "gone" here — a vanished process simply stops being listed.
     processLiveness: "alive",
+    // Alive, but spawned outside this streamer, so we hold no PTY for it. That
+    // is precisely `detached` — and it is strictly more informative than the
+    // `status: "idle"` above, which discovery is forced to report because it
+    // cannot see the process's prompt state.
+    lifecycle: "detached",
+    lifecycleSource: "probe",
     projectPath: d.projectPath,
     projectName: d.projectName,
     branch: d.branch,

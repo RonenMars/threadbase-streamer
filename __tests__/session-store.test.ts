@@ -150,6 +150,67 @@ describe("SessionStore", () => {
     });
   });
 
+  // lifecycle is the process-lifetime axis added by C1, orthogonal to `status`.
+  // It exists because `idle` was overloaded: finished, killed-to-save-resources,
+  // and externally-discovered were indistinguishable.
+  describe("lifecycle", () => {
+    it("reports attached while this run holds the PTY", () => {
+      const session = makeManagedSession();
+      store.addManaged(session);
+
+      const resp = store.get(session.id, new Set([session.id]));
+      expect(resp?.lifecycle).toBe("attached");
+      expect(resp?.ptyAttached).toBe(true);
+    });
+
+    it("reports completed once the PTY is gone with no failure recorded", () => {
+      store.addManaged(makeManagedSession({ status: "idle" }));
+
+      const resp = store.get(UUID_A, noPty);
+      expect(resp?.lifecycle).toBe("completed");
+    });
+
+    it("reports failed when a failure reason was recorded", () => {
+      store.addManaged(makeManagedSession({ status: "idle", failureReason: "binary missing" }));
+
+      const resp = store.get(UUID_A, noPty);
+      expect(resp?.lifecycle).toBe("failed");
+    });
+
+    // An external process is alive but we hold no PTY for it — which is exactly
+    // `detached`, and more informative than the `idle` status discovery is
+    // forced to report because it cannot see the process's prompt state.
+    it("reports an externally discovered process as detached", () => {
+      store.setDiscovered([
+        {
+          pid: 999,
+          projectPath: "/tmp/x",
+          projectName: "x",
+          branch: "",
+          startedAt: new Date(),
+          conversationId: UUID_B,
+        } as never,
+      ]);
+
+      const resp = store.get(UUID_B, noPty);
+      expect(resp?.lifecycle).toBe("detached");
+      expect(resp?.status).toBe("idle");
+    });
+
+    // ptyAttached keeps its old meaning so clients that ignore lifecycle are
+    // unaffected — the additive-change rule while both branches are in flight.
+    it("keeps ptyAttached consistent with lifecycle === attached", () => {
+      const session = makeManagedSession();
+      store.addManaged(session);
+
+      const attached = store.get(session.id, new Set([session.id]));
+      const detached = store.get(session.id, noPty);
+      expect(attached?.ptyAttached).toBe(attached?.lifecycle === "attached");
+      expect(detached?.ptyAttached).toBe(false);
+      expect(detached?.lifecycle).not.toBe("attached");
+    });
+  });
+
   describe("response shape", () => {
     it("includes elapsedMs for managed session", () => {
       const session = makeManagedSession({ startedAt: new Date(Date.now() - 5000) });
