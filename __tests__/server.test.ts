@@ -2123,6 +2123,39 @@ describe("StreamerServer", () => {
       scanSpy.mockRestore();
     });
 
+    it("passes an onProgress callback to the scanner on refresh=1 (live progress, not a dead bar)", async () => {
+      // Capture scan options without invoking the real persistent engine — this
+      // asserts the rescanForRefresh wiring (mechanism), not the scan itself, and
+      // stays green on boxes where the nested better-sqlite3 binding is unbuilt.
+      const scanOptions: Array<Record<string, unknown> | undefined> = [];
+      vi.spyOn(ConversationScanner.prototype, "scan").mockImplementation(async function (
+        this: ConversationScanner,
+        options: unknown,
+      ) {
+        scanOptions.push(options as Record<string, unknown> | undefined);
+        (options as { onProgress?: (s: number, t: number) => void } | undefined)?.onProgress?.(
+          1,
+          1,
+        );
+        return { conversations: [], total: 0, scanned: 0 } as never;
+      } as never);
+
+      const res = await fetch(`http://localhost:${refreshPort}/api/conversations?refresh=1`, {
+        headers: auth,
+      });
+      expect(res.status).toBe(200);
+
+      // The explicit-refresh scan (fullRescan:true) must carry an onProgress so
+      // the client renders scan_progress instead of a frozen bar.
+      const refreshScan = scanOptions.find(
+        (o) => (o as { fullRescan?: boolean } | undefined)?.fullRescan === true,
+      );
+      expect(refreshScan).toBeDefined();
+      expect(typeof (refreshScan as { onProgress?: unknown }).onProgress).toBe("function");
+
+      vi.restoreAllMocks();
+    });
+
     it("returns the full correct list on refresh=1 with nothing changed", async () => {
       const first = await listConversations();
       const firstIds = first.conversations.map((c) => c.id).sort();
