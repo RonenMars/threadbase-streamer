@@ -9,6 +9,14 @@ import {
   loadPublicUrl,
   setDefaultPermissionMode,
 } from "../src/auth";
+import {
+  CLAUDE_FLAGS,
+  type ClaudeFlagValues,
+  findFlag,
+  isPermissionMode,
+  PERMISSION_MODES,
+  validateFlagValues,
+} from "../src/claude-flags";
 import { loadUpdateConfig, UPDATE_CONFIG_PATH } from "../src/config/update-config";
 import { appendDevSessionMarker } from "../src/devLog";
 import { resolveServerUrl } from "../src/lan-url";
@@ -58,6 +66,15 @@ program
     "--pty-grace-period-ms <ms>",
     "Ms to keep a PTY alive after the last WebSocket subscriber disconnects before auto-holding it (default 270000, 4.5 min). 0 disables auto-hold entirely (an explicit hold_session still works). Falls back to pty_grace_period_ms: in ~/.threadbase/server.yaml.",
   )
+  .option(
+    "--claude-flag <id=value>",
+    "Allowlisted Claude CLI flag applied to every spawned session, e.g. --claude-flag permissionMode=bypassPermissions. Repeatable; repeat the same id to build a list (--claude-flag addDir=/a --claude-flag addDir=/b). Overrides claude_flags: in ~/.threadbase/server.yaml and makes the value non-persistable.",
+    (value: string, previous: string[] = []) => [...previous, value],
+  )
+  .option(
+    "--claude-extra-args <args>",
+    "Free-text argv appended verbatim to every spawned Claude session, after the allowlisted flags. Unvalidated escape hatch.",
+  )
   .option("--no-pair-qr", "Skip the pairing QR on startup")
   .option("--replace-prod", "Stop the launchd-supervised prod streamer and bind its port", false)
   .option("--forget", "Clear this repo's remembered dev-vs-prod choice and re-prompt", false)
@@ -87,17 +104,48 @@ program
     if (opts.multiAgentFlow) {
       process.env.MULTI_AGENT_FLOW = "true";
     }
-    if (
-      opts.defaultPermissionMode !== undefined &&
-      opts.defaultPermissionMode !== "acceptEdits" &&
-      opts.defaultPermissionMode !== "manual"
-    ) {
+    if (opts.defaultPermissionMode !== undefined && !isPermissionMode(opts.defaultPermissionMode)) {
       log.error(
-        `Invalid --default-permission-mode: ${opts.defaultPermissionMode}`,
+        `Invalid --default-permission-mode: ${opts.defaultPermissionMode} (expected one of ${PERMISSION_MODES.join(", ")})`,
         undefined,
         "console",
       );
       process.exit(1);
+    }
+    // Repeatable --claude-flag id=value pairs, validated against the registry.
+    // A list-valued flag repeats the id (--claude-flag addDir=/a --claude-flag addDir=/b).
+    let claudeFlags: ClaudeFlagValues | undefined;
+    if (Array.isArray(opts.claudeFlag) && opts.claudeFlag.length > 0) {
+      const raw: Record<string, string | string[] | boolean> = {};
+      for (const entry of opts.claudeFlag as string[]) {
+        const eq = entry.indexOf("=");
+        const id = eq === -1 ? entry : entry.slice(0, eq);
+        const value = eq === -1 ? true : entry.slice(eq + 1);
+        const def = findFlag(id);
+        if (!def) {
+          log.error(
+            `Invalid --claude-flag id: ${id} (expected one of ${CLAUDE_FLAGS.map((f) => f.id).join(", ")})`,
+            undefined,
+            "console",
+          );
+          process.exit(1);
+        }
+        if (def.valueType === "list") {
+          const existing = raw[id];
+          raw[id] = Array.isArray(existing) ? [...existing, String(value)] : [String(value)];
+        } else {
+          raw[id] = value;
+        }
+      }
+      claudeFlags = validateFlagValues(raw);
+      // validateFlagValues drops anything that failed its per-type check, so a
+      // silently-empty result means the user's input never took effect.
+      for (const id of Object.keys(raw)) {
+        if (!(id in claudeFlags)) {
+          log.error(`Invalid value for --claude-flag ${id}`, undefined, "console");
+          process.exit(1);
+        }
+      }
     }
     const validEfforts = ["low", "medium", "high", "xhigh", "max"];
     if (opts.defaultEffort !== undefined && !validEfforts.includes(opts.defaultEffort)) {
@@ -208,6 +256,8 @@ program
       defaultModel: opts.defaultModel,
       defaultEffort: opts.defaultEffort,
       ptyGracePeriodMs,
+      claudeFlags,
+      claudeExtraArgs: opts.claudeExtraArgs,
     });
 
     await server.listen(resolvedPort);

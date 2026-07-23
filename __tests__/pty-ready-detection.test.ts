@@ -488,11 +488,12 @@ describe("PTYManager — resume input queueing", () => {
 });
 
 describe("PTYManager — spawn permission flags", () => {
-  // Regression guard for the prod "Start Session Here" fix: launching with
-  // --dangerously-skip-permissions renders a blocking "Bypass Permissions mode"
-  // warning in the interactive TUI that no config flag suppresses, so the
-  // session never reaches a usable prompt. --permission-mode acceptEdits auto-
-  // approves file edits without that warning gate. See src/pty-manager.ts.
+  // acceptEdits stays the DEFAULT (auto-approves file edits, still prompts for
+  // shell commands), and we never pass --dangerously-skip-permissions: bypass is
+  // requested through --permission-mode instead. All six CLI modes are accepted;
+  // the bypass ones additionally get skipDangerousModePermissionPrompt in the
+  // --settings blob so the blocking boot warning can't strand the PTY.
+  // See src/claude-flags.ts and src/pty-manager.ts.
   function spawnArgs(): string[] {
     const calls = (mockSpawn as any).mock.calls;
     return calls[calls.length - 1][1] as string[];
@@ -553,6 +554,62 @@ describe("PTYManager — spawn permission flags", () => {
     const args = spawnArgs();
 
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("manual");
+    mgr.dispose();
+  });
+
+  it("accepts bypassPermissions and suppresses the boot warning via --settings", async () => {
+    const mgr = new PTYManager();
+    await mgr.startFresh({
+      projectPath: "/tmp/test",
+      projectName: "test",
+      permissionMode: "bypassPermissions",
+    });
+    const args = spawnArgs();
+
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
+    // Without this key the "Bypass Permissions mode" menu blocks the boot and
+    // the session never reaches a prompt.
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+    expect(settings.skipDangerousModePermissionPrompt).toBe(true);
+    expect(args).not.toContain("--dangerously-skip-permissions");
+    mgr.dispose();
+  });
+
+  it("leaves the --settings blob unchanged for non-bypass modes", async () => {
+    const mgr = new PTYManager();
+    await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const settings = JSON.parse(spawnArgs()[spawnArgs().indexOf("--settings") + 1]);
+
+    expect(settings.spinnerTipsEnabled).toBe(false);
+    expect(settings.skipDangerousModePermissionPrompt).toBeUndefined();
+    mgr.dispose();
+  });
+
+  it("appends allowlisted claudeFlags and extra args on both spawn paths", async () => {
+    const mgr = new PTYManager();
+    const flags = { addDir: ["/srv/a"], maxBudgetUsd: "5" };
+
+    await mgr.startFresh({
+      projectPath: "/tmp/test",
+      claudeFlags: flags,
+      claudeExtraArgs: "--bare",
+    });
+    let args = spawnArgs();
+    expect(args).toContain("--add-dir");
+    expect(args[args.indexOf("--add-dir") + 1]).toBe("/srv/a");
+    expect(args[args.indexOf("--max-budget-usd") + 1]).toBe("5");
+    // Extra args land last so the escape hatch can override the allowlist.
+    expect(args[args.length - 1]).toBe("--bare");
+
+    await mgr.start("uuid-flags", {
+      projectPath: "/tmp/test",
+      claudeFlags: flags,
+      claudeExtraArgs: "--bare",
+    });
+    args = spawnArgs();
+    expect(args).toContain("--resume");
+    expect(args[args.indexOf("--add-dir") + 1]).toBe("/srv/a");
+    expect(args[args.length - 1]).toBe("--bare");
     mgr.dispose();
   });
 });

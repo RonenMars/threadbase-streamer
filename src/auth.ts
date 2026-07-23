@@ -2,6 +2,13 @@ import { randomBytes, timingSafeEqual } from "crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import {
+  type ClaudeFlagValues,
+  isPermissionMode,
+  type PermissionMode,
+  validateFlagValues,
+} from "./claude-flags";
+import { getLogger } from "./logger";
 
 // Resolved per call (not frozen at module load) so tests can redirect writes
 // away from the real config via THREADBASE_CONFIG_DIR. Without this, importing
@@ -109,22 +116,29 @@ export function loadPtyGracePeriodMs(): number | undefined {
   return undefined;
 }
 
-export function loadDefaultPermissionMode(): "acceptEdits" | "manual" | undefined {
+export function loadDefaultPermissionMode(): PermissionMode | undefined {
   try {
     const content = readFileSync(configFile(), "utf-8");
     const match = content.match(/default_permission_mode:\s*(\S+)/);
     const value = match?.[1]?.trim();
-    if (value === "acceptEdits" || value === "manual") return value;
+    if (isPermissionMode(value)) return value;
   } catch {
     // File doesn't exist or not readable
   }
   return undefined;
 }
 
-// Persists the first-run prompt's answer so subsequent `serve` invocations
-// don't ask again (loadDefaultPermissionMode() returning a value is the
-// "already configured" signal cli/index.ts checks before prompting).
-export function setDefaultPermissionMode(mode: "acceptEdits" | "manual"): void {
+/**
+ * Write (or delete) a single `key: value` line in server.yaml.
+ *
+ * server.yaml is a flat, regex-parsed file — no YAML library — so every value
+ * must stay on ONE line. Passing `undefined` removes the key rather than
+ * writing a bare `key:` that the readers would then match with an empty value.
+ *
+ * The write is atomic (tmp + rename) and 0600 because this file holds the API
+ * key. Every setter in this module goes through here.
+ */
+function setConfigValue(key: string, value: string | undefined): void {
   const file = configFile();
   mkdirSync(configDir(), { recursive: true });
 
@@ -136,20 +150,94 @@ export function setDefaultPermissionMode(mode: "acceptEdits" | "manual"): void {
     // file does not exist; we'll create it
   }
 
-  const line = `default_permission_mode: ${mode}`;
+  const lineRe = new RegExp(`^${key}:\\s*.*$\\n?`, "m");
   let updated: string;
-  if (/^default_permission_mode:\s*.+$/m.test(content)) {
-    updated = content.replace(/^default_permission_mode:\s*.+$/m, line);
-  } else if (content.length === 0 || content.endsWith("\n")) {
-    updated = `${content}${line}\n`;
+  if (value === undefined) {
+    updated = content.replace(lineRe, "");
   } else {
-    updated = `${content}\n${line}\n`;
+    const line = `${key}: ${value}`;
+    if (lineRe.test(content)) {
+      updated = content.replace(lineRe, `${line}\n`);
+    } else if (content.length === 0 || content.endsWith("\n")) {
+      updated = `${content}${line}\n`;
+    } else {
+      updated = `${content}\n${line}\n`;
+    }
   }
 
   const tmpFile = `${file}.tmp`;
   writeFileSync(tmpFile, updated, { encoding: "utf-8", mode: 0o600 });
   chmodSync(tmpFile, 0o600);
   renameSync(tmpFile, file);
+}
+
+// Persists the first-run prompt's answer so subsequent `serve` invocations
+// don't ask again (loadDefaultPermissionMode() returning a value is the
+// "already configured" signal cli/index.ts checks before prompting).
+export function setDefaultPermissionMode(mode: PermissionMode): void {
+  setConfigValue("default_permission_mode", mode);
+}
+
+/**
+ * Allowlisted Claude CLI flags, stored as ONE line of JSON:
+ *
+ *     claude_flags: {"permissionMode":"bypassPermissions","addDir":["/srv/a b"]}
+ *
+ * JSON rather than a bespoke encoding because JSON.stringify already escapes
+ * colons, quotes and spaces (killing the whole quoting-bug class) and emits no
+ * raw newlines, so the one-line invariant holds by construction. It is also a
+ * valid YAML flow mapping, so the file still parses if a real YAML reader is
+ * ever pointed at it.
+ *
+ * A malformed line yields {} plus a warning rather than throwing: server.yaml is
+ * hand-editable and a typo must never stop the server from booting.
+ */
+export function loadClaudeFlags(): ClaudeFlagValues {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/^claude_flags:\s*(.+)$/m);
+    if (!match?.[1]) return {};
+    return validateFlagValues(JSON.parse(match[1].trim()));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      getLogger("auth").warn(`Ignoring unreadable claude_flags in server.yaml: ${String(err)}`, {
+        event: "config.claude_flags_parse_failed",
+      });
+    }
+    return {};
+  }
+}
+
+export function setClaudeFlags(values: ClaudeFlagValues): void {
+  const safe = validateFlagValues(values);
+  setConfigValue("claude_flags", Object.keys(safe).length === 0 ? undefined : JSON.stringify(safe));
+}
+
+/** Free-text argv appended after the allowlisted flags. Unvalidated by design. */
+export function loadClaudeExtraArgs(): string | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/^claude_extra_args:\s*(.+)$/m);
+    const value = match?.[1]?.trim();
+    return value && value.length > 0 ? value : undefined;
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
+/**
+ * Throws on an embedded newline rather than silently sanitizing: a newline would
+ * corrupt the flat one-line-per-key file, and the caller (the HTTP layer) should
+ * surface that to the user as a validation error instead of quietly rewriting
+ * what they typed.
+ */
+export function setClaudeExtraArgs(text: string | undefined): void {
+  const trimmed = text?.trim();
+  if (trimmed && /[\r\n]/.test(trimmed)) {
+    throw new Error("claude_extra_args must not contain newlines");
+  }
+  setConfigValue("claude_extra_args", trimmed && trimmed.length > 0 ? trimmed : undefined);
 }
 
 export type PublicUrlValidation = { ok: true; normalized: string } | { ok: false; error: string };
