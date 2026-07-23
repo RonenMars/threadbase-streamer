@@ -28,7 +28,7 @@ describe("loadUpdateConfig", () => {
       auto_update: false,
       channel: "stable",
       allow: ["patch", "minor"],
-      poll_interval_minutes: 60,
+      poll_interval_minutes: 1440,
       defer_if_active_sessions: true,
       github_repo: "owner/repo",
       webhook_secret: null,
