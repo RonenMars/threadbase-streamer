@@ -1394,6 +1394,53 @@ describe("StreamerServer", () => {
     });
   });
 
+  // Clients need this to hide actions a provider cannot perform. Before it, the
+  // only capability signal reaching a client was a 501 — a failed action rather
+  // than an absent button.
+  describe("GET /api/providers", () => {
+    it("reports capabilities and compatibility for every provider", async () => {
+      const res = await fetch(`${baseUrl}/api/providers`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.providers.map((p: { name: string }) => p.name).sort()).toEqual([
+        "claude-code",
+        "codex-cli",
+      ]);
+
+      for (const p of body.providers) {
+        expect(typeof p.available).toBe("boolean");
+        expect(p).toHaveProperty("version");
+        expect(p).toHaveProperty("verifiedAgainst");
+        expect(Array.isArray(p.warnings)).toBe(true);
+        // Capabilities are structural, so they are reported even when the CLI
+        // is missing — a client still needs to know what the provider would do.
+        expect(p.capabilities).toMatchObject({
+          freshSessionId: expect.any(String),
+          resume: expect.any(String),
+          liveControl: expect.any(Boolean),
+        });
+      }
+    });
+
+    // Which binary resolved is an implementation detail, and a resolved path
+    // leaks the user's home layout.
+    it("exposes no filesystem paths", async () => {
+      const res = await fetch(`${baseUrl}/api/providers`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+
+      expect(await res.text()).not.toMatch(/\/Users\/|\/home\/|C:\\\\/);
+    });
+
+    it("requires authentication", async () => {
+      const res = await fetch(`${baseUrl}/api/providers`);
+      expect(res.status).toBe(401);
+    });
+  });
+
   describe("GET /api/conversations", () => {
     it("returns paginated conversation list", async () => {
       const res = await fetch(`${baseUrl}/api/conversations?limit=10&offset=0`, {
