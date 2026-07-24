@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'integration/**']
+  # Task branches are developed against, and merged into, the integration
+  # branches rather than main. Without them listed here a PR targeting an
+  # integration branch runs no CI at all — only the Snyk check reports, which
+  # looks green while lint/type/test never executed.
   pull_request:
-    branches: [main]
+    branches: [main, 'integration/**']
 
 jobs:
   # Decide whether to skip the heavy CI work. The required status checks

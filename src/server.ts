@@ -12,6 +12,7 @@ import {
   type SortOrder,
   search,
 } from "@threadbase-sh/scanner";
+import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
 import {
   createReadStream,
@@ -68,14 +69,16 @@ import { ConversationCache, type ConversationListItem } from "./conversation-cac
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
+import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
 import { handleListProjects } from "./handlers/handleListProjects";
+import { isPidAlive } from "./lifecycle/process-liveness";
 import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
-import { discoverClaudeProcesses } from "./process-discovery";
+import { discoverClaudeProcesses, getProcessArgs } from "./process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
@@ -108,15 +111,18 @@ import {
   RESUME_BUSY_WINDOW_MS,
   resolveResumeBusyWindowMs,
 } from "./services/sessions/conversationBusy";
+import { type ReconcileVerdict, reconcileSessions } from "./services/sessions/reconcileSessions";
 import { SessionStore } from "./session-store";
 import type {
   AskQuestion,
   DiscoveredProcess,
+  ManagedSession,
   PermissionOption,
   ServerConfig,
   ServerWarmingUpResponse,
   ServerWarmupState,
   SessionActivity,
+  SessionLifecycle,
   SessionResponse,
   SessionSortKey,
   SortOrder as SessionSortOrder,
@@ -151,6 +157,21 @@ const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 // last line was a status bar with no prompt marker) would re-arm the grace
 // timer forever and leak. Cap consecutive defers: after this many, hold anyway.
 export const GRACE_MAX_DEFERS = 4;
+
+// Idle reaper. Replaces "kill the PTY because nobody is subscribed" with "kill
+// the PTY because the *agent* has done nothing for a long time" — a socket
+// closing says nothing about whether work is in flight, but silence from the
+// agent itself does. See docs/architecture/2026-07-24-durable-session-runtime.md.
+//
+// 6h is deliberately far above the old 4.5-minute grace period: the reaper is a
+// resource backstop for abandoned sessions, not a session-lifetime policy. A
+// session is only ever eligible while settled (waiting_input/idle) — a `running`
+// PTY is never reaped no matter how long it has been running, because a long
+// silent turn is exactly the work this runtime exists to protect.
+export const IDLE_REAP_AFTER_MS = 6 * 60 * 60 * 1000;
+// How often the sweep runs. Coarse on purpose — reaping 5 minutes late costs
+// nothing, and a frequent timer on an idle server does not earn its wakeups.
+export const IDLE_REAP_SWEEP_MS = 5 * 60 * 1000;
 
 // Upper bound on the process-discovery half of the resume collision probe.
 // Enumerating processes costs one CIM/wmic query per pid on Windows, so a
@@ -339,6 +360,15 @@ export class StreamerServer {
   private ptyGraceDeferCounts = new Map<string, number>();
   // Map of sessionId → set of subscribed WS clients
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
+  // sessionId → wall-clock ms of the last PTY chunk. Written from onOutput for
+  // every provider; read only by the idle reaper. Entries are dropped when the
+  // session leaves the runner (reap/exit/hold).
+  private lastAgentChunkAt = new Map<string, number>();
+  // sessionId → lifecycle verdict from boot reconciliation. Only holds sessions
+  // this run did NOT spawn; live ones derive their lifecycle from ptyAttached.
+  private sessionLifecycles = new Map<string, SessionLifecycle>();
+  // Periodic sweep that releases PTYs no agent is using. Null until listen().
+  private idleReaperTimer: ReturnType<typeof setInterval> | null = null;
   // Map of clientId → WS socket (populated by the "register" WS handshake)
   private clientIdToWs = new Map<string, WebSocket>();
   // Reverse map for cleanup on close
@@ -348,6 +378,13 @@ export class StreamerServer {
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
   private sessionsRepo: SessionsRepository | null = null;
+  // Durable session registry (C1 Phase 2). Null when the cache DB failed to
+  // open — persistence degrades to today's in-memory-only behaviour rather than
+  // taking the server down with it, so every write goes through `?.`.
+  private managedSessionsRepo: ManagedSessionsRepository | null = null;
+  // Identifies this streamer run. A registry row carrying a different id is a
+  // session that outlived the process that started it.
+  private readonly streamerInstanceId = randomUUID();
   private cacheMetadataRepo: CacheMetadataRepository | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
@@ -581,6 +618,12 @@ export class StreamerServer {
     this.ptyManager = new LiveSessionManager({
       logger: getLogger("pty"),
       onOutput: (sessionId, data) => {
+        // Agent-activity stamp for the idle reaper. Fires for every provider
+        // (both runners call onOutput), so the reaper needs no per-runner
+        // bookkeeping. Distinct from ManagedSession.lastActivityAt, which only
+        // moves on *user* input — an agent grinding through a long task is
+        // active even when nobody has touched it.
+        this.lastAgentChunkAt.set(sessionId, Date.now());
         this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
       },
       onUserMessage: (sessionId, text, ts) => {
@@ -614,6 +657,21 @@ export class StreamerServer {
           completedAt: session.completedAt,
           ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
         });
+        // Mirror the transition into the durable registry. Both runners funnel
+        // every status change through this callback, so this is the one place
+        // that needs to know. `exit` vs `transition` is the distinction the
+        // reconciler cares about: a row with a recorded exit needs no probe.
+        this.managedSessionsRepo?.recordStatus(
+          session.id,
+          session.status,
+          session.completedAt != null ? "exit" : "transition",
+          {
+            completedAt: session.completedAt,
+            lastActivityAt: session.lastActivityAt ?? null,
+            promptCount: session.promptCount,
+            failureReason: session.failureReason ?? null,
+          },
+        );
         // Refresh the scanner index at the end of each Claude turn so the
         // conversation is searchable with up-to-date content immediately.
         if (session.status === "waiting_input" || session.status === "idle") {
@@ -749,7 +807,9 @@ export class StreamerServer {
       handleMkdir: (req, res) => this.handleMkdir(req, res),
       handleWsOpen: (ws) => {
         this.wsHub.addClient(ws);
-        const sessions = this.sessionStore.list(this.ptyAttachedIds());
+        const sessions = this.withReconciledLifecycle(
+          this.sessionStore.list(this.ptyAttachedIds()),
+        );
         ws.send(JSON.stringify({ type: "session_list", sessions }));
         if (!this.currentWarmupState()) {
           ws.send(JSON.stringify({ type: "cache_ready" }));
@@ -833,14 +893,19 @@ export class StreamerServer {
           this.clientIdToWs.delete(clientId);
           this.wsToClientId.delete(ws);
         }
-        for (const [sessionId, subscribers] of this.sessionSubscribers) {
+        for (const subscribers of this.sessionSubscribers.values()) {
           subscribers.delete(ws);
-          // ptyGracePeriodMs === 0 disables the automatic hold-on-disconnect
-          // timer; an explicit hold_session message still arms the same grace
-          // timer (see the hold_session handler above).
-          if (subscribers.size === 0 && this.ptyGracePeriodMs > 0) {
-            this.startGraceTimer(sessionId, this.ptyGracePeriodMs);
-          }
+          // Deliberately does NOT arm a kill timer. A socket closing is not a
+          // request to stop the agent: phones sleep, signal drops, Wi-Fi hands
+          // off to cellular. Killing the PTY because nobody is watching means a
+          // long agent task cannot outlive a backgrounded app — the failure this
+          // runtime exists to prevent (see
+          // docs/architecture/2026-07-24-durable-session-runtime.md).
+          //
+          // Unbounded PTY growth is bounded by the idle reaper instead, which
+          // measures agent inactivity rather than subscriber absence. An
+          // explicit hold_session from the client still terminates immediately
+          // (see the hold_session handler above) — that one IS a user intent.
         }
       },
       agentClient,
@@ -937,13 +1002,37 @@ export class StreamerServer {
     const ws = typeof clientId === "string" ? this.clientIdToWs.get(clientId) : undefined;
     const payload = {
       type: "session_list" as const,
-      sessions: this.sessionStore.list(this.ptyAttachedIds()),
+      sessions: this.withReconciledLifecycle(this.sessionStore.list(this.ptyAttachedIds())),
     };
     if (ws) {
       this.wsHub.unicast(ws, payload);
     } else {
       this.wsHub.broadcast(payload);
     }
+  }
+
+  /**
+   * Overlay boot-reconciliation verdicts onto session responses.
+   *
+   * A session left by a previous run is not in the in-memory store, so
+   * SessionStore cannot classify it — it only ever sees what this run spawned.
+   * Discovery may still surface the process, in which case the reconciler knows
+   * strictly more about it than discovery does: it can tell `detached` (alive
+   * and confirmed ours) from `orphaned` (alive but identity unconfirmed), which
+   * a pid enumeration alone cannot.
+   *
+   * Only applied when the session is NOT live here: a session this run owns has
+   * an authoritative lifecycle already, and a stale verdict must never override
+   * it.
+   */
+  private withReconciledLifecycle(sessions: SessionResponse[]): SessionResponse[] {
+    if (this.sessionLifecycles.size === 0) return sessions;
+    return sessions.map((s) => {
+      if (s.ptyAttached) return s;
+      const verdict = this.sessionLifecycles.get(s.id);
+      if (!verdict) return s;
+      return { ...s, lifecycle: verdict, lifecycleSource: "reconcile" as const };
+    });
   }
 
   private addSessionSubscriber(sessionId: string, ws: WebSocket): void {
@@ -961,6 +1050,209 @@ export class StreamerServer {
       this.ptyGraceTimers.delete(sessionId);
     }
     this.ptyGraceDeferCounts.delete(sessionId);
+  }
+
+  /**
+   * Classify sessions left behind by previous streamer runs (C1 Phase 3a).
+   *
+   * Agents already outlive the streamer today on the crash and dev-takeover
+   * paths, which exit without reaching ptyManager.dispose() — they are just
+   * invisible when they do, because nothing recorded that they existed. This
+   * turns those rows into an explicit verdict per session.
+   *
+   * Read-only with respect to processes: it probes and classifies, and never
+   * signals anything. `orphaned` is a report, not a cleanup trigger.
+   */
+  private async reconcilePreviousSessions(): Promise<ReconcileVerdict[]> {
+    if (!this.managedSessionsRepo) return [];
+    let verdicts: ReconcileVerdict[] = [];
+    try {
+      const rows = this.managedSessionsRepo.listNonTerminal();
+      if (rows.length === 0) return [];
+
+      verdicts = await reconcileSessions(
+        rows,
+        { isPidAlive, getProcessArgs },
+        this.streamerInstanceId,
+      );
+
+      for (const v of verdicts) {
+        this.sessionLifecycles.set(v.sessionId, v.lifecycle);
+        // Terminal verdicts leave the probe set so the next boot does no work
+        // for them. Non-terminal ones stay: a `detached` process may still be
+        // running, and we want to re-probe it next time.
+        if (v.lifecycle === "completed" || v.lifecycle === "failed") {
+          this.managedSessionsRepo.recordStatus(v.sessionId, "idle", "reconcile", {
+            completedAt: new Date(),
+          });
+        }
+      }
+
+      this.log.info(`[reconcile] classified ${verdicts.length} session(s) from previous runs`, {
+        event: "sessions.reconciled",
+        counts: verdicts.reduce<Record<string, number>>((acc, v) => {
+          acc[v.lifecycle] = (acc[v.lifecycle] ?? 0) + 1;
+          return acc;
+        }, {}),
+      });
+    } catch (err) {
+      // Reconciliation is diagnostic. A failure costs post-restart visibility,
+      // and must never stop the server from starting.
+      this.log.warn("[reconcile] failed to reconcile previous sessions", {
+        event: "sessions.reconcile_failed",
+        err,
+      });
+    }
+    return verdicts;
+  }
+
+  /**
+   * Pick a token guaranteed to appear in the spawned process's argv, for the
+   * reconciler's pid-reuse guard.
+   *
+   * Claude always passes the session id (`--resume <id>` or `--session-id
+   * <id>`), so it is both present and unique. Codex only does on *resume*
+   * (`codex resume <id>`); a fresh Codex spawn is `codex --cd <path>
+   * --no-alt-screen` with no id at all, because the rollout id does not exist
+   * until the CLI writes it. boundConversationId is what distinguishes the two:
+   * it is set once that rollout has been discovered.
+   */
+  private spawnArgvToken(session: ManagedSession): string {
+    if (session.provider !== CODEX_CLI_PROVIDER) return session.id;
+    return session.boundConversationId ?? session.projectPath;
+  }
+
+  /**
+   * Mirror a freshly-spawned session into the durable registry (C1 Phase 2).
+   *
+   * Called at each addManaged() site rather than inside SessionStore, because
+   * the store is a pure in-memory structure with no DB dependency and adding
+   * one would drag persistence into every unit test that touches it.
+   *
+   * Best-effort by design: a failed registry write must never break session
+   * start. Losing a row costs post-restart *visibility* for that session, which
+   * is strictly better than refusing to run the agent at all.
+   */
+  private recordSessionSpawn(session: ManagedSession): void {
+    if (!this.managedSessionsRepo) return;
+    try {
+      const pid = this.ptyManager.getPid(session.id);
+      this.managedSessionsRepo.recordSpawn({
+        session,
+        pid,
+        // Identity guard against pid reuse: the reconciler requires this token
+        // to appear in the live process's argv before it will claim the pid is
+        // still ours (docs/architecture/2026-07-24-durable-session-runtime.md).
+        //
+        // Reading the real argv here would cost an async `ps` per session start
+        // on a path the user is waiting on, so we record a token we already
+        // know is in it. Claude always carries the session id (`--resume <id>`
+        // on resume, `--session-id <id>` on fresh). A *fresh* Codex spawn does
+        // not — its argv is only `--cd <path> --no-alt-screen`, because the
+        // rollout id doesn't exist yet — so fall back to the project path,
+        // which is present in every spawn path for both providers.
+        //
+        // The fallback is weaker: two sessions in one project share a token, so
+        // it proves "a process of ours in this project" rather than "this exact
+        // session". It still rejects an unrelated recycled pid, which is the
+        // failure being guarded against.
+        //
+        // Note the Codex id is always *set* (a local placeholder) — it is just
+        // not in the process's argv — so the choice keys off the provider, not
+        // off the id being null.
+        cmdline: pid != null ? this.spawnArgvToken(session) : null,
+        streamerInstanceId: this.streamerInstanceId,
+      });
+    } catch (err) {
+      this.log.warn("[registry] failed to record session spawn", {
+        event: "registry.spawn_write_failed",
+        sessionId: session.id,
+        err,
+      });
+    }
+  }
+
+  /**
+   * Stamp every live session as ended-by-shutdown before dispose() kills it.
+   *
+   * PTYManager.dispose() signals each child directly and fires no
+   * onStatusChange, so the registry would otherwise keep rows sitting at
+   * `running` forever and the next boot could not tell a deliberate restart
+   * from a crash. Recording `shutdown` as the status source makes that
+   * distinction explicit rather than inferred.
+   *
+   * Not a `completed_at` write for the agent's own work — the agent did not
+   * finish, we stopped it — but the session is genuinely terminal, so it must
+   * leave the reconciler's probe set.
+   */
+  private recordShutdownState(): void {
+    if (!this.managedSessionsRepo) return;
+    const now = new Date();
+    for (const session of this.ptyManager.listSessions()) {
+      try {
+        // No failureReason: a shutdown is not a failure of the session, and
+        // writing one would make a healthy agent look broken on the next boot.
+        // status_source="shutdown" already carries the reason.
+        this.managedSessionsRepo.recordStatus(session.id, "idle", "shutdown", {
+          completedAt: now,
+          lastActivityAt: session.lastActivityAt ?? null,
+          promptCount: session.promptCount,
+        });
+      } catch (err) {
+        // Shutdown must complete regardless. A lost row costs visibility, not
+        // correctness, and throwing here would strand the rest of teardown.
+        this.log.warn("[registry] failed to record shutdown state", {
+          event: "registry.shutdown_write_failed",
+          sessionId: session.id,
+          err,
+        });
+      }
+    }
+  }
+
+  /**
+   * Release PTYs whose agent has been silent past IDLE_REAP_AFTER_MS.
+   *
+   * This is the bound that lets handleWsClose stop arming kill timers. The
+   * distinction that matters: the old timer measured how long nobody was
+   * *watching*, which is uncorrelated with whether work is in flight. This
+   * measures how long the *agent* has produced nothing, and only ever considers
+   * sessions that are already settled — a `running` PTY is skipped regardless of
+   * age, so a long silent turn is never interrupted.
+   *
+   * Exposed (not private) so tests can drive one sweep deterministically instead
+   * of waiting on the interval.
+   */
+  reapIdleSessions(now: number = Date.now()): string[] {
+    const reaped: string[] = [];
+    for (const session of this.ptyManager.listSessions()) {
+      // Never touch a session mid-turn. This is the whole point.
+      if (session.status === "running") continue;
+
+      // Fall back to startedAt so a session that never produced a chunk is
+      // still eligible eventually — otherwise a PTY that failed to emit
+      // anything would be immortal.
+      const lastActive =
+        this.lastAgentChunkAt.get(session.id) ??
+        session.lastActivityAt?.getTime() ??
+        session.startedAt.getTime();
+
+      if (now - lastActive < IDLE_REAP_AFTER_MS) continue;
+
+      this.log.info(
+        `[reap] releasing idle PTY for ${session.id} (idle ${Math.round((now - lastActive) / 60_000)}m)`,
+        { sessionId: session.id, event: "pty.idle_reap", idleMs: now - lastActive },
+        "pino",
+      );
+      this.ptyManager.putOnHold(session.id);
+      this.lastAgentChunkAt.delete(session.id);
+      this.sessionSubscribers.delete(session.id);
+      reaped.push(session.id);
+
+      const held = this.sessionStore.get(session.id, this.ptyAttachedIds());
+      if (held) this.wsHub.broadcast({ type: "session_update", session: held });
+    }
+    return reaped;
   }
 
   private startGraceTimer(sessionId: string, delayMs: number): void {
@@ -1088,6 +1380,11 @@ export class StreamerServer {
     // genuinely occupied port still surfaces loudly.
     await this.bindWithRetry(port);
 
+    // unref() so an idle server with no other work can still exit — this timer
+    // must never be the reason the process stays alive.
+    this.idleReaperTimer = setInterval(() => this.reapIdleSessions(), IDLE_REAP_SWEEP_MS);
+    this.idleReaperTimer.unref?.();
+
     const warmUp = new Promise<void>((resolveWarm) => {
       {
         this.log.info(`Streamer server listening on port ${port}`, {
@@ -1123,6 +1420,11 @@ export class StreamerServer {
           this.projectsRepo = new ProjectsRepository(db);
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
+          this.managedSessionsRepo = new ManagedSessionsRepository(db);
+          // Classify whatever previous runs left behind. Fire-and-forget: it
+          // only populates a diagnostic map, and blocking startup on `ps`
+          // probes would delay the listener for no correctness gain.
+          void this.reconcilePreviousSessions();
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
           // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
@@ -1429,6 +1731,17 @@ export class StreamerServer {
   async close(): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
+    if (this.idleReaperTimer) {
+      clearInterval(this.idleReaperTimer);
+      this.idleReaperTimer = null;
+    }
+    this.lastAgentChunkAt.clear();
+    // Record why each live session is about to end, BEFORE ptyManager.dispose()
+    // kills it and before cache.close() takes the registry's DB handle away.
+    // dispose() fires no onStatusChange, so without this a clean shutdown looks
+    // identical to a crash on the next boot: rows frozen mid-`running` with no
+    // explanation. See docs/architecture/2026-07-24-durable-session-runtime.md.
+    this.recordShutdownState();
     this.markScannerStaleDebounced.cancel();
     // Wait for every fire-and-forget scan→cache-write task to finish before
     // tearing anything down. Their post-scan steps write to this.cache
@@ -3027,7 +3340,13 @@ export class StreamerServer {
       url.searchParams.has("status");
 
     if (!hasPaginationParams) {
-      json(res, 200, this.withExternalActivity(this.sessionStore.list(this.ptyAttachedIds())));
+      json(
+        res,
+        200,
+        this.withExternalActivity(
+          this.withReconciledLifecycle(this.sessionStore.list(this.ptyAttachedIds())),
+        ),
+      );
       return;
     }
 
@@ -3039,7 +3358,7 @@ export class StreamerServer {
 
     try {
       const page = this.sessionStore.paginate(this.ptyAttachedIds(), parsed.query);
-      page.sessions = this.withExternalActivity(page.sessions);
+      page.sessions = this.withExternalActivity(this.withReconciledLifecycle(page.sessions));
       json(res, 200, page);
     } catch (err) {
       if (err instanceof Error && err.message === "INVALID_CURSOR") {
@@ -3057,6 +3376,12 @@ export class StreamerServer {
       if (!existsSync(session.projectPath)) {
         session.failureReason = `Project directory not found: ${session.projectPath}`;
       }
+      // Apply a boot-reconciliation verdict if one exists for this session and
+      // it isn't live here — the detail screen is where the distinction between
+      // `detached` and `orphaned` actually matters to a user.
+      const reconciled = this.withReconciledLifecycle([session])[0];
+      session.lifecycle = reconciled.lifecycle;
+      session.lifecycleSource = reconciled.lifecycleSource;
       // Scrape model/effort/permission-mode off the live PTY's rendered status
       // line so the client can show them natively instead of parsing terminal
       // text. Live sessions only, and strictly best-effort: a failed scrape
@@ -3220,6 +3545,7 @@ export class StreamerServer {
     });
 
     this.sessionStore.addManaged(session);
+    this.recordSessionSpawn(session);
 
     // Watch the conversation's JSONL file for structured events
     void this.watchConversationFile(sessionId);
@@ -3774,6 +4100,7 @@ export class StreamerServer {
     });
 
     this.sessionStore.addManaged(session);
+    this.recordSessionSpawn(session);
     void this.watchConversationFile(session.id);
 
     this.wsHub.broadcast({
@@ -3860,6 +4187,7 @@ export class StreamerServer {
       });
 
       this.sessionStore.addManaged(session);
+      this.recordSessionSpawn(session);
 
       // Block for the PTY to actually reach waiting_input (or fail) so the
       // caller gets a trustworthy status instead of navigating on a guess.
