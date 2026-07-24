@@ -1394,6 +1394,54 @@ describe("StreamerServer", () => {
     });
   });
 
+  // /api/search previously returned hasMore:false, offset:0 and total equal to
+  // the truncated result count — all hardcoded, and all wrong once a query
+  // matched more than `limit`.
+  describe("GET /api/search", () => {
+    it("reports real pagination fields and query timing", async () => {
+      const res = await fetch(`${baseUrl}/api/search?q=test&limit=1`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body).toHaveProperty("hasMore");
+      expect(body).toHaveProperty("total");
+      expect(body).toHaveProperty("offset");
+      expect(typeof body.tookMs).toBe("number");
+      // total is the count BEFORE slicing, so it can exceed the page size.
+      expect(body.total).toBeGreaterThanOrEqual(body.conversations.length);
+    });
+
+    it("honours offset", async () => {
+      const res = await fetch(`${baseUrl}/api/search?q=test&limit=5&offset=3`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect((await res.json()).offset).toBe(3);
+    });
+
+    // A mistyped filter must not silently return results for a query the
+    // client did not mean.
+    it.each([
+      ["unknown provider", "q=test&provider=gpt-cli"],
+      ["unparseable date", "q=test&since=last-tuesday"],
+      ["inverted range", "q=test&since=2026-07-10T00:00:00Z&until=2026-07-01T00:00:00Z"],
+    ])("rejects an invalid query (%s)", async (_name, qs) => {
+      const res = await fetch(`${baseUrl}/api/search?${qs}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBeTruthy();
+    });
+
+    it("still requires a query", async () => {
+      const res = await fetch(`${baseUrl}/api/search`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(400);
+    });
+  });
+
   describe("GET /api/conversations", () => {
     it("returns paginated conversation list", async () => {
       const res = await fetch(`${baseUrl}/api/conversations?limit=10&offset=0`, {
