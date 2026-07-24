@@ -80,6 +80,10 @@ function sanitizeFilename(name: string): string {
     .replace(/^\.+/, "")
     .split("")
     .filter((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127)
-    .join("");
+    .join("")
+    // Replace spaces and other shell-problematic characters with underscores.
+    // Mobile sends paths as @path references; Claude Code's parser splits on
+    // whitespace, so "My Photo.jpg" becomes "@/path/My" + "Photo.jpg" (broken).
+    .replace(/[\s@"'`$\\]/g, "_");
   return cleaned;
 }
