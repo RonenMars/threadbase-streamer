@@ -1878,6 +1878,77 @@ describe("StreamerServer", () => {
     });
   });
 
+  // Project ids cannot be reconstructed: a fresh scan invents new ones, breaking
+  // every deep link and per-project setting that referenced the old ones.
+  describe("backup export/restore (U11)", () => {
+    const post = (body: unknown) =>
+      fetch(`${baseUrl}/api/backup/restore`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    it("exports metadata with a manifest and no secrets", async () => {
+      const res = await fetch(`${baseUrl}/api/backup/export`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.manifest.formatVersion).toBe(1);
+      expect(body.manifest.includesSecrets).toBe(false);
+      expect(Array.isArray(body.projects)).toBe(true);
+      expect(JSON.stringify(body)).not.toContain(API_KEY);
+    });
+
+    // The default is a dry run: a restore that silently rewrites project
+    // identity is one nobody can review.
+    it("returns a plan without applying by default", async () => {
+      const res = await post({
+        archive: {
+          manifest: {
+            formatVersion: 1,
+            createdAt: "2026-07-24T00:00:00.000Z",
+            streamerVersion: "1.0.0",
+            sourceHost: "other",
+            includesSecrets: false,
+            counts: { projects: 1 },
+          },
+          projects: [
+            {
+              id: "restored-1",
+              path: "/restored/repo",
+              name: "repo",
+              createdAt: "2026-07-01T00:00:00.000Z",
+              updatedAt: "2026-07-01T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.applied).toBe(false);
+      expect(body.summary.create).toBe(1);
+    });
+
+    it("rejects an unsupported format version rather than guessing", async () => {
+      const res = await post({
+        archive: { manifest: { formatVersion: 99 }, projects: [] },
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("UNSUPPORTED_VERSION");
+    });
+
+    it("rejects a malformed archive", async () => {
+      expect((await post({ archive: "nonsense" })).status).toBe(400);
+    });
+
+    it("requires authentication", async () => {
+      expect((await fetch(`${baseUrl}/api/backup/export`)).status).toBe(401);
+    });
+  });
+
   describe("GET /api/conversations", () => {
     it("returns paginated conversation list", async () => {
       const res = await fetch(`${baseUrl}/api/conversations?limit=10&offset=0`, {
