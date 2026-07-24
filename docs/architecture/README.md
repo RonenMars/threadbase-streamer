@@ -13,6 +13,7 @@ Architecture documents for **@threadbase-sh/streamer** — problem framing, alte
 | 2026-05-02 | [quick-access-endpoints](2026-05-02-quick-access-endpoints.md) | Server-side recents + popular endpoints for the mobile Quick Access strip. |
 | 2026-05-02 | [sessions-ws-push](2026-05-02-sessions-ws-push.md) | Replace HTTP polling for `/api/sessions/{id}/output` with WebSocket push to remove the blank-terminal flash. |
 | 2026-06-11 | [scanner-conversation-memory](2026-06-11-scanner-conversation-memory.md) | Analysis of the scanner conversation-LRU resident-memory cost; decision to ship as-is (non-issue under current usage) and instrument before optimizing. |
+| 2026-07-24 | [provider-compatibility](2026-07-24-provider-compatibility.md) | Provider adapter interface, capability declarations, and schema-tolerant parsing that reports unknown events instead of silently dropping them. |
 
 ## Conventions
 

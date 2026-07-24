@@ -9,6 +9,8 @@
  * `event_msg` copies of each turn and `developer` role payloads).
  */
 
+import type { NormalizeResult } from "../services/providers/capabilities";
+
 type CodexContentBlock = {
   type?: string;
   text?: string;
@@ -35,11 +37,20 @@ function extractCodexText(content: unknown): string {
     .trim();
 }
 
+// Rollout envelope types this adapter understands. Anything outside this set is
+// reported as `unknown` rather than dropped — a Codex release that renames or
+// adds an envelope must be visible, not silently render an empty conversation.
+// See docs/architecture/2026-07-24-provider-compatibility.md.
+const KNOWN_CODEX_TYPES = new Set(["response_item", "event_msg", "session_meta", "turn_context"]);
+
 /**
- * Returns a Claude-shaped JSONL line, or null when the input is not a
- * user/assistant chat message that clients should render.
+ * Classify one Codex rollout line (C2).
+ *
+ * Distinguishes "recognized, deliberately not rendered" (`ignored`) from "this
+ * adapter has never seen this shape" (`unknown`). Both were `null` before, which
+ * is why provider schema drift used to surface as an empty screen with no error.
  */
-export function normalizeCodexLineToClaudeShape(line: string): string | null {
+export function classifyCodexLine(line: string): NormalizeResult {
   let entry: {
     type?: string;
     timestamp?: string;
@@ -53,24 +64,68 @@ export function normalizeCodexLineToClaudeShape(line: string): string | null {
   try {
     entry = JSON.parse(line);
   } catch {
-    return null;
+    return { kind: "unknown", raw: line, reason: "line is not valid JSON" };
   }
 
-  if (entry.type !== "response_item") return null;
+  if (typeof entry.type !== "string" || !KNOWN_CODEX_TYPES.has(entry.type)) {
+    return {
+      kind: "unknown",
+      raw: line,
+      reason: `unrecognized rollout envelope type: ${String(entry.type)}`,
+    };
+  }
+
+  // Recognized envelopes that legitimately carry no renderable chat.
+  // event_msg duplicates each turn; session_meta/turn_context are headers.
+  if (entry.type !== "response_item") {
+    return { kind: "ignored", reason: `${entry.type} carries no chat content` };
+  }
+
   const payload = entry.payload;
-  if (payload?.type !== "message") return null;
+  if (payload?.type !== "message") {
+    return { kind: "ignored", reason: `response_item payload is ${String(payload?.type)}` };
+  }
 
   const role = payload.role;
-  if (role !== "user" && role !== "assistant") return null;
+  if (role !== "user" && role !== "assistant") {
+    // `developer` and friends are known Codex roles we deliberately hide.
+    return { kind: "ignored", reason: `role ${String(role)} is not rendered` };
+  }
 
   const text = extractCodexText(payload.content);
-  if (!text) return null;
+  if (!text) {
+    return { kind: "ignored", reason: "message has no extractable text" };
+  }
 
   // Synthetic Codex context dumps (AGENTS.md / permissions instructions) are
   // written as `role: user` before any real user turn. Hide them from the live
   // overlay so the chat doesn't open with fake user bubbles.
-  if (role === "user" && isCodexInjectedContext(text)) return null;
+  if (role === "user" && isCodexInjectedContext(text)) {
+    return { kind: "ignored", reason: "synthetic injected context" };
+  }
 
+  return { kind: "message", line: buildClaudeShapedLine(entry, payload, role, text) };
+}
+
+/**
+ * Returns a Claude-shaped JSONL line, or null when the input is not a
+ * user/assistant chat message that clients should render.
+ *
+ * Thin wrapper over classifyCodexLine so existing callers keep their signature.
+ * New code should prefer classifyCodexLine, which explains WHY a line produced
+ * nothing.
+ */
+export function normalizeCodexLineToClaudeShape(line: string): string | null {
+  const result = classifyCodexLine(line);
+  return result.kind === "message" ? result.line : null;
+}
+
+function buildClaudeShapedLine(
+  entry: { timestamp?: string },
+  payload: { id?: string },
+  role: "user" | "assistant",
+  text: string,
+): string {
   const timestamp =
     typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString();
   // Prefer payload.id when present; otherwise derive a stable-enough id from
