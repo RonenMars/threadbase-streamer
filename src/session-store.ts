@@ -10,6 +10,7 @@ import type {
   SessionSortKey,
   SortOrder,
 } from "./types";
+import { confidenceForSource } from "./types";
 
 export class SessionStore {
   private managed = new Map<string, ManagedSession>();
@@ -232,6 +233,13 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     ...(s.lastMessageText != null && { lastMessageText: s.lastMessageText }),
     ...(s.lastMessageAt != null && { lastMessageAt: s.lastMessageAt.toISOString() }),
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt.toISOString() }),
+    // C3: how the status was derived, and how far to trust it. Confidence is
+    // derived from the source rather than stored, so the two cannot disagree.
+    ...(s.statusSource != null && {
+      statusSource: s.statusSource,
+      statusConfidence: confidenceForSource(s.statusSource),
+    }),
+    ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt.toISOString() }),
     ...(s.filePath != null && { filePath: s.filePath }),
     ...(s.failureReason != null && { failureReason: s.failureReason }),
     ...(s.resumedFromConversationId != null && {
