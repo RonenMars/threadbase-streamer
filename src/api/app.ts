@@ -10,6 +10,7 @@ import { createBrowseRoutes } from "./routes/browse.routes";
 import { createCacheAlertRoutes } from "./routes/cacheAlert.routes";
 import { createConfigRoutes } from "./routes/config.routes";
 import { createConversationRoutes } from "./routes/conversations.routes";
+import { createDiagnosticsRoutes } from "./routes/diagnostics.routes";
 import { createHealthRoutes } from "./routes/health.routes";
 import { createLogsRoutes } from "./routes/logs.routes";
 import { createMiscRoutes } from "./routes/misc.routes";
@@ -55,6 +56,7 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
   app.onError(errorMiddleware);
 
   app.route("/healthz", createHealthRoutes(deps));
+  app.route("/api/diagnostics", createDiagnosticsRoutes(deps));
   app.route("/", createMiscRoutes(deps));
   app.route("/api/sessions", createSessionRoutes(deps));
   app.route("/api/conversations", createConversationRoutes(deps));
