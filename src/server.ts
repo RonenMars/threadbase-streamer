@@ -104,6 +104,13 @@ import {
 } from "./services/questions/questionBroadcast";
 import { resolveAnswer } from "./services/questions/resolveAnswer";
 import {
+  applyFilters,
+  type ParsedSearchQuery,
+  paginate,
+  parseSearchQuery,
+  SearchQueryError,
+} from "./services/search/searchQuery";
+import {
   conversationBusy,
   RESUME_BUSY_WINDOW_MS,
   resolveResumeBusyWindowMs,
@@ -151,6 +158,12 @@ const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 // last line was a status bar with no prompt marker) would re-arm the grace
 // timer forever and leak. Cap consecutive defers: after this many, hold anyway.
 export const GRACE_MAX_DEFERS = 4;
+
+// Search filters are applied after the scanner returns, so we ask it for more
+// than one page. The multiplier bounds the common case; SEARCH_MAX_SCAN caps a
+// broad query so it cannot pull an unbounded result set into memory.
+const SEARCH_OVERFETCH = 4;
+const SEARCH_MAX_SCAN = 1000;
 
 // Upper bound on the process-discovery half of the resume collision probe.
 // Enumerating processes costs one CIM/wmic query per pid on Windows, so a
@@ -2957,18 +2970,28 @@ export class StreamerServer {
   }
 
   private async handleSearch(url: URL, res: ServerResponse): Promise<void> {
-    const q = url.searchParams.get("q") ?? "";
-    if (!q) {
-      json(res, 400, { error: "Missing query parameter: q" });
-      return;
+    let parsed: ParsedSearchQuery;
+    try {
+      parsed = parseSearchQuery(url.searchParams);
+    } catch (err) {
+      if (err instanceof SearchQueryError) {
+        json(res, 400, { error: err.message, code: err.code });
+        return;
+      }
+      throw err;
     }
+    const { q, limit, offset, filters } = parsed;
+    const startedAt = Date.now();
 
-    const limit = intParam(url, "limit", 50);
     const scanner = await this.getScanner();
     const results = await search(
       q,
       {
-        limit,
+        // Fetch beyond the requested page: filters below are applied AFTER the
+        // scanner returns, so slicing at `limit` here would drop results that a
+        // later page should contain. Bounded so a broad query cannot pull an
+        // unbounded set into memory.
+        limit: Math.min(offset + limit * SEARCH_OVERFETCH, SEARCH_MAX_SCAN),
         include: "conversations",
         ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
         ...this.codexScanOpts(),
@@ -2993,12 +3016,26 @@ export class StreamerServer {
       firstMessage: r.meta.firstMessage ?? undefined,
       lastMessage: r.meta.lastMessage ?? undefined,
       provider: r.meta.provider ?? CLAUDE_CODE_PROVIDER,
+      // The scanner already computes relevance and match snippets; the previous
+      // adapter discarded both, so results arrived in an unexplained order with
+      // no indication of WHY anything matched.
+      score: r.score,
+      matches: Array.isArray(r.matches)
+        ? r.matches.map((m: { field: string; snippet: string }) => ({
+            field: m.field,
+            snippet: m.snippet,
+          }))
+        : [],
     }));
+
+    const page = paginate(applyFilters(adapted, filters), offset, limit);
     json(res, 200, {
-      conversations: adapted,
-      hasMore: false,
-      offset: 0,
-      total: adapted.length,
+      conversations: page.items,
+      hasMore: page.hasMore,
+      offset: page.offset,
+      total: page.total,
+      // Query timing, so a slow search is diagnosable rather than merely felt.
+      tookMs: Date.now() - startedAt,
     });
   }
 
