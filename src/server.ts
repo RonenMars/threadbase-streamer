@@ -111,6 +111,7 @@ import {
   RESUME_BUSY_WINDOW_MS,
   resolveResumeBusyWindowMs,
 } from "./services/sessions/conversationBusy";
+import { IdempotencyStore, readIdempotencyKey } from "./services/sessions/idempotency";
 import { type ReconcileVerdict, reconcileSessions } from "./services/sessions/reconcileSessions";
 import { SessionStore } from "./session-store";
 import type {
@@ -364,6 +365,9 @@ export class StreamerServer {
   // every provider; read only by the idle reaper. Entries are dropped when the
   // session leaves the runner (reap/exit/hold).
   private lastAgentChunkAt = new Map<string, number>();
+  // Recently accepted input idempotency keys (C4). A retried POST replays its
+  // original outcome instead of submitting the prompt to the agent twice.
+  private idempotency = new IdempotencyStore();
   // sessionId → lifecycle verdict from boot reconciliation. Only holds sessions
   // this run did NOT spawn; live ones derive their lifecycle from ptyAttached.
   private sessionLifecycles = new Map<string, SessionLifecycle>();
@@ -1246,6 +1250,7 @@ export class StreamerServer {
       );
       this.ptyManager.putOnHold(session.id);
       this.lastAgentChunkAt.delete(session.id);
+      this.idempotency.clear(session.id);
       this.sessionSubscribers.delete(session.id);
       reaped.push(session.id);
 
@@ -3644,6 +3649,30 @@ export class StreamerServer {
     const body = await readBody(req);
     const { input, keys } = body;
 
+    // Idempotency (C4). A retry — flaky network, double-tap, client resend on
+    // timeout — must not submit the same prompt to the agent twice. Checked
+    // before ANY write so a replay never reaches the PTY.
+    let idempotencyKey: string | undefined;
+    try {
+      idempotencyKey = readIdempotencyKey(body as Record<string, unknown>);
+    } catch (err) {
+      // A client that sent a malformed key believes it has retry protection;
+      // proceeding without it silently would be worse than rejecting.
+      json(res, 400, { error: err instanceof Error ? err.message : "Invalid idempotencyKey" });
+      return;
+    }
+    if (idempotencyKey) {
+      const replayed = this.idempotency.get(sessionId, idempotencyKey);
+      if (replayed) {
+        this.log.info(`[input.replay] ${sessionId.slice(0, 8)} duplicate idempotencyKey`, {
+          event: "input.idempotent_replay",
+          sessionId,
+        });
+        json(res, replayed.status, replayed.body);
+        return;
+      }
+    }
+
     if (typeof keys === "string") {
       // Raw key bytes (e.g. arrow navigation for interactive prompts).
       // These bypass bracketed-paste wrapping — caller is responsible for
@@ -3654,7 +3683,9 @@ export class StreamerServer {
         if (updated) {
           this.wsHub.broadcast({ type: "session_update", session: updated });
         }
-        json(res, 200, { ok: true });
+        const result = { status: 200, body: { ok: true } };
+        if (idempotencyKey) this.idempotency.set(sessionId, idempotencyKey, result);
+        json(res, result.status, result.body);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to send keys";
         json(res, 400, { error: message });
@@ -3698,7 +3729,11 @@ export class StreamerServer {
             });
           });
       }
-      json(res, 200, { ok: true });
+      const result = { status: 200, body: { ok: true } };
+      // Record only on success: a failed write must stay retryable, otherwise a
+      // transient error would be replayed as a permanent one.
+      if (idempotencyKey) this.idempotency.set(sessionId, idempotencyKey, result);
+      json(res, result.status, result.body);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send input";
       json(res, 400, { error: message });
