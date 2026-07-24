@@ -41,10 +41,11 @@ export function bootoutAgent(): void {
   psSafe(`Disable-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction SilentlyContinue | Out-Null`);
 }
 
-export function bootstrapAgent(_specPath: string): void {
+export function bootstrapAgent(_specPath: string, _opts?: { afterBootout?: boolean }): void {
   // _specPath is the plist path on macOS; ignored on Windows because the task
   // is already registered by scripts\deploy.ps1 setup. The caller is asking
-  // us to re-enable + start it.
+  // us to re-enable + start it. _opts.afterBootout is macOS-specific (exit 5
+  // race tolerance) and has no effect here.
   ps(`Enable-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction Stop | Out-Null`);
   ps(`Start-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction Stop`);
 }
