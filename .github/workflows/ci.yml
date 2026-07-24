@@ -124,6 +124,60 @@ jobs:
           name: dist
           path: dist/
 
+  # Cross-platform smoke (C10). Every other job runs ubuntu-only, yet the repo
+  # ships Windows and macOS deploy scripts, has Windows-specific process
+  # discovery (wmic/CIM), and depends on node-pty — a native addon whose
+  # prebuilds differ per platform. A regression there is invisible to a
+  # Linux-only matrix until a user hits it.
+  #
+  # Deliberately NOT reusing the run-ci composite action: its cache key has no
+  # OS component, so sharing it would let a Linux node_modules (with Linux
+  # node-pty binaries) restore onto Windows. Separate keys, own steps.
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: [gate, lint]
+    # Informational while the platforms are being qualified: a genuine
+    # cross-platform failure should surface loudly without blocking every merge
+    # before the baseline is known green. Flip to required once it has proven
+    # stable — tracked in docs/testing/cross-platform-ci.md.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up Node
+        if: needs.gate.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        if: needs.gate.outputs.skip != 'true'
+        run: npm ci --ignore-scripts=false
+        shell: bash
+
+      # The smoke suite is the platform-sensitive subset: native ABI, path
+      # handling, and process discovery. Running the full suite on three
+      # platforms would triple CI time for coverage that is mostly
+      # platform-independent.
+      - name: Smoke tests
+        if: needs.gate.outputs.skip != 'true'
+        run: npm run test:smoke
+        shell: bash
+
+      # node-pty is the dependency most likely to break per-platform, and a
+      # failure here is the one a Linux-only matrix can never catch.
+      - name: Verify native addon loads
+        if: needs.gate.outputs.skip != 'true'
+        run: node -e "require('node-pty'); console.log('node-pty loaded on ' + process.platform)"
+        shell: bash
+
   test:
     name: Test (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
