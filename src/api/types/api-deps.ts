@@ -7,6 +7,7 @@ import type { ClaudeFlagValues, FlagDefinition } from "../../claude-flags";
 import type { ConversationCache } from "../../conversation-cache";
 import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";
+import type { DevicesRepository } from "../../db/repositories/devices.repository";
 import type { ProjectsRepository } from "../../db/repositories/projects.repository";
 import type { PushRepository } from "../../db/repositories/push.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
@@ -40,6 +41,8 @@ export type ApiDeps = {
   cacheMonitor: () => CacheIntegrityMonitor | null;
   /** Push registration + delivery state (C7). Null when the cache DB is unavailable. */
   pushRepo: () => PushRepository | null;
+  /** Paired-device registry (C5). Null when the cache DB is unavailable. */
+  devicesRepo: () => DevicesRepository | null;
   projectsRepo: () => ProjectsRepository | null;
   conversationsRepo: () => ConversationsRepository | null;
   sessionsRepo: () => SessionsRepository | null;
