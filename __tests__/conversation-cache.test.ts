@@ -352,6 +352,127 @@ describe("reconcileDeletions() — refresh=1's remove-what-vanished half", () =>
   });
 });
 
+describe("listMissingFiles() — read-only drift report", () => {
+  const OTHER_META = {
+    ...BASE_META,
+    id: "gone-456",
+    sessionId: "gone-456",
+    filePath: "/home/.claude/projects/proj/gone-456.jsonl",
+    title: "Gone Conversation",
+  };
+
+  it("reports only rows whose file is missing, flags tailed rows, mutates nothing", () => {
+    cache.upsertFromScannerMeta([BASE_META as any, OTHER_META as any]);
+    // gone-456 went live (has a tail) but its file was then deleted.
+    cache.updateFromLines(OTHER_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "was live, now deleted" }],
+      }),
+    ]);
+
+    const exists = (fp: string) => fp === BASE_META.filePath; // gone-456 gone
+    const missing = cache.listMissingFiles(exists);
+
+    expect(missing).toEqual([
+      {
+        id: "gone-456",
+        filePath: OTHER_META.filePath,
+        title: "Gone Conversation",
+        tailed: true,
+      },
+    ]);
+    // Read-only: both rows still present.
+    expect(cache.hasConversation("abc-123")).toBe(true);
+    expect(cache.hasConversation("gone-456")).toBe(true);
+  });
+
+  it("returns empty when every file exists", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.listMissingFiles(() => true)).toEqual([]);
+  });
+});
+
+describe("dropRowsById() — outright removal for integrity resolution", () => {
+  it("drops main row, tail, and message index, and cleans fileIndex", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "give me a tail" }],
+      }),
+    ]);
+    cache.appendMessageIndexRows([
+      {
+        conversation_id: "abc-123",
+        message_index: 0,
+        byte_offset: 0,
+        byte_length: 10,
+        uuid: null,
+        role: "user",
+        ts: null,
+      },
+    ]);
+    expect(cache.getConversationTail("abc-123")).not.toBeNull();
+    expect(cache.getIndexedMessageCount("abc-123")).toBe(1);
+
+    const dropped = cache.dropRowsById(["abc-123"]);
+
+    expect(dropped).toBe(1);
+    expect(cache.hasConversation("abc-123")).toBe(false);
+    expect(cache.getConversationTail("abc-123")).toBeNull();
+    expect(cache.getIndexedMessageCount("abc-123")).toBe(0);
+    // fileIndex cleaned: re-upserting the same path works cleanly.
+    const ids = cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(ids).toContain("abc-123");
+    expect(cache.hasConversation("abc-123")).toBe(true);
+  });
+
+  it("returns 0 for an empty id list", () => {
+    expect(cache.dropRowsById([])).toBe(0);
+  });
+});
+
+describe("clearAll() — full wipe for reset_rescan", () => {
+  it("empties meta, tail, and message index, and stays usable afterward", () => {
+    cache.upsertFromScannerMeta([
+      BASE_META as any,
+      { ...BASE_META, id: "id-2", sessionId: "id-2", filePath: "/p/id-2.jsonl" } as any,
+    ]);
+    cache.updateFromLines(BASE_META.filePath, [
+      JSON.stringify({
+        role: "user",
+        timestamp: "2024-01-01T10:05:00.000Z",
+        content: [{ type: "text", text: "tail" }],
+      }),
+    ]);
+    cache.appendMessageIndexRows([
+      {
+        conversation_id: "abc-123",
+        message_index: 0,
+        byte_offset: 0,
+        byte_length: 10,
+        uuid: null,
+        role: "user",
+        ts: null,
+      },
+    ]);
+
+    cache.clearAll();
+
+    expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(0);
+    expect(cache.getConversationTail("abc-123")).toBeNull();
+    expect(cache.getIndexedMessageCount("abc-123")).toBe(0);
+
+    // A subsequent upsert works cleanly on the wiped cache.
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.hasConversation("abc-123")).toBe(true);
+    expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(1);
+  });
+});
+
 describe("updateFromLine()", () => {
   beforeEach(() => {
     cache.upsertFromScannerMeta([BASE_META as any]);
