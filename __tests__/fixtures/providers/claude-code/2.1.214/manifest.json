@@ -1,0 +1,9 @@
+{
+  "provider": "claude-code",
+  "providerVersion": "2.1.214",
+  "capturedAt": "2026-07-24",
+  "source": "real session capture, sanitized",
+  "sanitized": true,
+  "notes": "Free-text payloads (text/content/stdout/stderr/command) replaced with [redacted] and paths normalized. The fixture pins the SHAPE of Claude's JSONL envelopes, not their content. providerVersion is asserted against the `version` field carried by the lines themselves.",
+  "envelopeTypes": ["user", "assistant", "attachment", "last-prompt", "mode", "permission-mode"]
+}
