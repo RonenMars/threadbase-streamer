@@ -22,6 +22,7 @@ import type {
   SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
+  StatusSource,
   UserMessage,
 } from "./types";
 import { debounce } from "./utils/debounce";
@@ -308,6 +309,8 @@ export class PTYManager implements SessionRunner {
       projectName,
       branch: options.branch ?? "",
       status: "running",
+      statusSource: "spawn",
+      statusUpdatedAt: new Date(),
       startedAt: new Date(),
       completedAt: null,
       promptCount: 0,
@@ -383,6 +386,8 @@ export class PTYManager implements SessionRunner {
       projectName,
       branch: "",
       status: "running",
+      statusSource: "spawn",
+      statusUpdatedAt: new Date(),
       startedAt: new Date(),
       completedAt: null,
       promptCount: 0,
@@ -418,6 +423,9 @@ export class PTYManager implements SessionRunner {
     }
     if (session.status === "waiting_input") {
       session.status = "running";
+      // Observed by construction: we are the ones writing the input.
+      session.statusSource = "user-input";
+      session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
     }
     this.log.info(
@@ -460,6 +468,9 @@ export class PTYManager implements SessionRunner {
     }
     if (session.status === "waiting_input") {
       session.status = "running";
+      // Observed by construction: we are the ones writing the input.
+      session.statusSource = "user-input";
+      session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
     }
     this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
@@ -600,6 +611,8 @@ export class PTYManager implements SessionRunner {
       // already dead
     }
     session.status = "idle";
+    session.statusSource = "shutdown";
+    session.statusUpdatedAt = new Date();
     session.completedAt = new Date();
     session.screen.dispose();
     this.sessions.delete(sessionId);
@@ -746,7 +759,7 @@ export class PTYManager implements SessionRunner {
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => stripped.includes(m));
 
     if (session.status === "running" && matchedMarker) {
-      this.markReady(sessionId, session, `marker:${matchedMarker}`);
+      this.markReady(sessionId, session, "prompt-marker", `marker:${matchedMarker}`);
     } else if (
       session.status === "running" &&
       this.pendingReady.has(sessionId) &&
@@ -754,7 +767,7 @@ export class PTYManager implements SessionRunner {
     ) {
       // Fallback: PTY has produced output for >=10s but neither marker fired.
       // Treat the session as ready so queued input doesn't sit forever.
-      this.markReady(sessionId, session, "fallback:timeout");
+      this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
     }
 
     this.onOutput?.(sessionId, data);
@@ -941,7 +954,7 @@ export class PTYManager implements SessionRunner {
     if (session?.status !== "running") return;
 
     if (this.pendingReady.has(sessionId)) {
-      this.markReady(sessionId, session, "quiet:timeout");
+      this.markReady(sessionId, session, "quiet-fallback", "quiet:timeout");
     } else {
       // handleOutput() only checks the triggering chunk for a prompt marker,
       // but Claude's TUI does differential repaints and doesn't always
@@ -978,15 +991,25 @@ export class PTYManager implements SessionRunner {
     const lines = await this.getOutputLines(sessionId, PTY_ROWS);
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => lines.some((l) => l.includes(m)));
     if (matchedMarker && session.status === "running") {
-      this.markReady(sessionId, session, `quiet:screen-marker:${matchedMarker}`);
+      this.markReady(sessionId, session, "screen-marker", `quiet:screen-marker:${matchedMarker}`);
     }
   }
 
   // Transition a session from "running" to "waiting_input", clear pendingReady,
   // and flush any queued input. Idempotent: callers can invoke at any chunk.
-  private markReady(sessionId: string, session: InternalSession, reason: string): void {
+  private markReady(
+    sessionId: string,
+    session: InternalSession,
+    source: StatusSource,
+    reason: string,
+  ): void {
     session.lastActivityAt = new Date();
     session.status = "waiting_input";
+    // C3: record HOW we concluded this, not just that we did. A
+    // `timeout-fallback` here means no marker ever appeared and we assumed —
+    // previously indistinguishable on the wire from an observed marker.
+    session.statusSource = source;
+    session.statusUpdatedAt = new Date();
     // Log retained on purpose: `reason=fallback:timeout` would be the only
     // signal that Claude's TUI introduced a new boot variant our markers miss.
     const elapsedMs = Date.now() - (this.firstChunkAt.get(sessionId) ?? Date.now());
@@ -1010,6 +1033,8 @@ export class PTYManager implements SessionRunner {
 
     session.completedAt = new Date();
     session.status = "idle";
+    session.statusSource = "process-exit";
+    session.statusUpdatedAt = new Date();
 
     // Instant exit with no output — diagnose the most likely cause.
     const elapsedMs = session.completedAt.getTime() - session.startedAt.getTime();
@@ -1050,6 +1075,8 @@ function toPublicSession(s: InternalSession): ManagedSession {
     lastOutput: s.lastOutput,
     ...(s.failureReason != null && { failureReason: s.failureReason }),
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt }),
+    ...(s.statusSource != null && { statusSource: s.statusSource }),
+    ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
   };
 }
