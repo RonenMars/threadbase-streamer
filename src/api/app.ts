@@ -16,6 +16,7 @@ import { createMiscRoutes } from "./routes/misc.routes";
 import { createPairRoutes } from "./routes/pair.routes";
 import { createProgressRoutes } from "./routes/progress.routes";
 import { createProjectRoutes } from "./routes/projects.routes";
+import { createProviderRoutes } from "./routes/providers.routes";
 import { createScannerRoutes } from "./routes/scanner.routes";
 import { createSessionRoutes } from "./routes/sessions.routes";
 import { createWsRoutes } from "./routes/ws.routes";
@@ -60,6 +61,7 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
   app.route("/api/cache/alert", createCacheAlertRoutes(deps));
   app.route("/api/config", createConfigRoutes(deps));
   app.route("/api/projects", createProjectRoutes(deps));
+  app.route("/api/providers", createProviderRoutes());
   app.route("/api/pair", createPairRoutes(deps));
   app.route("/api", createBrowseRoutes(deps));
   app.route("/", createScannerRoutes(deps));
