@@ -1394,6 +1394,49 @@ describe("StreamerServer", () => {
     });
   });
 
+  // /healthz answers only "is the process up". When a session will not start,
+  // this is what tells the user why — and it is designed to be pasted into a
+  // bug report, so it must never carry secrets or home paths.
+  describe("GET /api/diagnostics", () => {
+    it("reports every subsystem with a stable remediation code", async () => {
+      const res = await fetch(`${baseUrl}/api/diagnostics`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.contractVersion).toBe(1);
+      expect(typeof body.generatedAt).toBe("string");
+      expect(["ok", "degraded", "failed", "unknown"]).toContain(body.overall);
+
+      const ids = body.checks.map((c: { id: string }) => c.id);
+      expect(ids).toContain("streamer");
+      expect(ids).toContain("cache");
+      expect(ids).toContain("pty");
+
+      for (const c of body.checks) {
+        expect(typeof c.summary).toBe("string");
+        expect(typeof c.remediation).toBe("string");
+      }
+    });
+
+    it("leaks no home paths, usernames, or credentials", async () => {
+      const res = await fetch(`${baseUrl}/api/diagnostics`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const text = await res.text();
+
+      expect(text).not.toContain(API_KEY);
+      expect(text).not.toMatch(/\/Users\/[a-z]/i);
+      expect(text).not.toMatch(/\/home\/[a-z]/i);
+      expect(text).not.toMatch(/sk-ant-|ghp_/);
+    });
+
+    it("requires authentication", async () => {
+      expect((await fetch(`${baseUrl}/api/diagnostics`)).status).toBe(401);
+    });
+  });
+
   describe("GET /api/conversations", () => {
     it("returns paginated conversation list", async () => {
       const res = await fetch(`${baseUrl}/api/conversations?limit=10&offset=0`, {
