@@ -16,6 +16,7 @@ Architecture documents for **@threadbase-sh/streamer** — problem framing, alte
 | 2026-07-24 | [durable-session-runtime](2026-07-24-durable-session-runtime.md) | Decoupling agent PTY lifetime from WebSocket subscribers and streamer uptime. Measures why restart survival needs the PTY master fd to outlive the streamer, and scopes accordingly. |
 | 2026-07-24 | [session-state-confidence](2026-07-24-session-state-confidence.md) | Surfacing how each session status was derived and how far to trust it, so a timer-driven guess is never reported as an observation. |
 | 2026-07-24 | [provider-compatibility](2026-07-24-provider-compatibility.md) | Provider adapter interface, capability declarations, and schema-tolerant parsing that reports unknown events instead of silently dropping them. |
+| 2026-07-24 | [device-identity-and-capabilities](2026-07-24-device-identity-and-capabilities.md) | Per-device identity and scoped capabilities, replacing one shared API key that gave every paired device full authority with no revocation or attribution. |
 
 ## Conventions
 
