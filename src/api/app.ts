@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { WebSocket } from "ws";
 import { getLogger } from "../logger";
+import type { Principal } from "../services/security/capabilities";
 import { authMiddleware } from "./middleware/auth.middleware";
 import { corsMiddleware } from "./middleware/cors.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
@@ -10,6 +11,7 @@ import { createBrowseRoutes } from "./routes/browse.routes";
 import { createCacheAlertRoutes } from "./routes/cacheAlert.routes";
 import { createConfigRoutes } from "./routes/config.routes";
 import { createConversationRoutes } from "./routes/conversations.routes";
+import { createDeviceRoutes } from "./routes/devices.routes";
 import { createHealthRoutes } from "./routes/health.routes";
 import { createLogsRoutes } from "./routes/logs.routes";
 import { createMiscRoutes } from "./routes/misc.routes";
@@ -27,6 +29,8 @@ export type AppEnv = {
     requestId?: string;
     validatedBody?: unknown;
     validatedQuery?: unknown;
+    /** Who is making this request (C5). Set by authMiddleware. */
+    principal?: Principal;
   };
 };
 
@@ -60,6 +64,7 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
   app.route("/api/cache/alert", createCacheAlertRoutes(deps));
   app.route("/api/config", createConfigRoutes(deps));
   app.route("/api/projects", createProjectRoutes(deps));
+  app.route("/api/devices", createDeviceRoutes(deps));
   app.route("/api/pair", createPairRoutes(deps));
   app.route("/api", createBrowseRoutes(deps));
   app.route("/", createScannerRoutes(deps));

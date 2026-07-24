@@ -68,6 +68,7 @@ import { ConversationCache, type ConversationListItem } from "./conversation-cac
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
+import { DevicesRepository } from "./db/repositories/devices.repository";
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
@@ -349,6 +350,9 @@ export class StreamerServer {
   private conversationsRepo: ConversationsRepository | null = null;
   private sessionsRepo: SessionsRepository | null = null;
   private cacheMetadataRepo: CacheMetadataRepository | null = null;
+  // Paired-device registry (C5). Null when the cache DB failed to open — auth
+  // then falls back to the shared API key alone, which is the pre-C5 behaviour.
+  private devicesRepo: DevicesRepository | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
     fetchedAt: number;
@@ -715,6 +719,7 @@ export class StreamerServer {
       wsHub: this.wsHub,
       cache: () => this.cache,
       cacheMonitor: () => this.cacheMonitor,
+      devicesRepo: () => this.devicesRepo,
       projectsRepo: () => this.projectsRepo,
       conversationsRepo: () => this.conversationsRepo,
       sessionsRepo: () => this.sessionsRepo,
@@ -1124,6 +1129,7 @@ export class StreamerServer {
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
+          this.devicesRepo = new DevicesRepository(db);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
           // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
           this.cacheMonitor = new CacheIntegrityMonitor(
@@ -1550,12 +1556,37 @@ export class StreamerServer {
       ts,
     });
 
+    // Mint a per-device credential alongside the shared key (C5). The sealed
+    // apiKey is still returned so an existing client keeps working unchanged;
+    // a client that understands deviceToken can use the narrower credential and
+    // become individually revocable.
+    //
+    // Best-effort: a registry failure must not break pairing, which would lock
+    // the user out of their own server. Losing the row costs revocability for
+    // that device, not access.
+    let device: { deviceId: string; deviceToken: string; capabilities: string[] } | null = null;
+    try {
+      const name = typeof body?.deviceName === "string" ? body.deviceName.slice(0, 100) : null;
+      const preset = body?.readOnly === true ? "read-only" : "full";
+      device = this.devicesRepo?.register({ publicKey: clientPublicKey, name, preset }) ?? null;
+    } catch (err) {
+      this.log.warn("[pair] device registration failed; pairing continues", {
+        event: "pair.device_register_failed",
+        err,
+      });
+    }
+
     json(res, 200, {
       ciphertext: sealed.ciphertext,
       nonce: sealed.nonce,
       ephemeralPublicKey: sealed.ephemeralPublicKey,
       publicUrl: this.publicUrl,
       machineName: hostname(),
+      ...(device && {
+        deviceId: device.deviceId,
+        deviceToken: device.deviceToken,
+        capabilities: device.capabilities,
+      }),
     });
   }
 

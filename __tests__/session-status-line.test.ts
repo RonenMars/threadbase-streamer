@@ -5,8 +5,8 @@
 // This covers the wiring (route → handler → parseStatusLine) that the parser's
 // own unit tests can't: an async handler reached through the real Hono app.
 
-import { createServer } from "http";
 import { mkdtempSync, rmSync } from "fs";
+import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 

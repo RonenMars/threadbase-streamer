@@ -61,7 +61,11 @@ export interface Principal {
 }
 
 export function legacyPrincipal(): Principal {
-  return { kind: "legacy", capabilities: [...FULL_CAPABILITIES] };
+  // The shared API key is the OWNER's credential — it is what pairs new devices
+  // and rotates the key itself. It therefore holds `admin` in addition to the
+  // full preset. Devices are the things that get scoped; the key that mints
+  // them cannot be, or the owner could no longer administer their own server.
+  return { kind: "legacy", capabilities: [...FULL_CAPABILITIES, "admin"] };
 }
 
 export function hasCapability(principal: Principal, required: Capability): boolean {
@@ -90,7 +94,34 @@ const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]
   ["/api/push", "notifications"],
   ["/api/devices", "admin"],
   ["/api/config", "admin"],
-  ["/api/rotate-key", "admin"],
+  ["/api/auth/rotate", "admin"],
+  ["/api/backup", "admin"],
+  // Server identity and capability discovery. A read-only device must be able
+  // to see WHICH server it is talking to and what it supports, or it cannot
+  // render anything at all.
+  ["/api/info", "history:read"],
+  ["/api/profiles", "history:read"],
+  ["/api/diagnostics", "history:read"],
+  ["/api/cache/alert", "history:read"],
+  // Client log shipping: any authenticated client may report its own errors.
+  // Gating this behind a capability would silence diagnostics from exactly the
+  // devices most likely to be misbehaving.
+  ["/api/__client-log", "history:read"],
+  // Logs viewer is localhost-only and already bypasses this middleware; the
+  // mapping exists so a remote request is classified rather than denied as
+  // unclassified.
+  ["/api/logs", "admin"],
+  // Pairing routes other than the public exchange (e.g. minting a token).
+  ["/api/pair", "admin"],
+  // The live WebSocket. Subscribing is a read — terminal output, session
+  // updates, conversation events. Control still flows through the HTTP input
+  // routes, which carry their own capability check, so a read-only device can
+  // watch a session stream without being able to drive it.
+  ["/ws", "history:read"],
+  // Progress webhook (multi-agent). Authenticated by HMAC in the handler and
+  // already skipped by the middleware; classified so a stray request is denied
+  // by rule rather than as "unclassified".
+  ["/internal/sessions", "admin"],
 ];
 
 export function requiredCapability(path: string, method: string): Capability | null {

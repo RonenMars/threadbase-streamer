@@ -1394,6 +1394,35 @@ describe("StreamerServer", () => {
     });
   });
 
+  // Revoking a device previously meant rotating the shared API key, which
+  // de-authenticated every other device at the same time.
+  describe("device management (U10)", () => {
+    it("lists paired devices without ever returning a credential", async () => {
+      const res = await fetch(`${baseUrl}/api/devices`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.available).toBe(true);
+      expect(Array.isArray(body.devices)).toBe(true);
+      // A management surface has no reason to hand back a token or its hash.
+      expect(JSON.stringify(body)).not.toMatch(/token|hash/i);
+    });
+
+    it("404s revoking a device that does not exist", async () => {
+      const res = await fetch(`${baseUrl}/api/devices/no-such-device/revoke`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("requires authentication", async () => {
+      expect((await fetch(`${baseUrl}/api/devices`)).status).toBe(401);
+    });
+  });
+
   describe("GET /api/conversations", () => {
     it("returns paginated conversation list", async () => {
       const res = await fetch(`${baseUrl}/api/conversations?limit=10&offset=0`, {
