@@ -17,6 +17,7 @@ import type {
   SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
+  StatusSource,
   UserMessage,
 } from "./types";
 import { debounce } from "./utils/debounce";
@@ -270,6 +271,8 @@ export class CodexPtyRunner implements SessionRunner {
       projectName,
       branch: options.branch ?? "",
       status: "running",
+      statusSource: "spawn",
+      statusUpdatedAt: new Date(),
       startedAt: new Date(),
       completedAt: null,
       promptCount: 0,
@@ -331,6 +334,8 @@ export class CodexPtyRunner implements SessionRunner {
       projectName,
       branch: "",
       status: "running",
+      statusSource: "spawn",
+      statusUpdatedAt: new Date(),
       startedAt: new Date(),
       completedAt: null,
       promptCount: 0,
@@ -366,7 +371,7 @@ export class CodexPtyRunner implements SessionRunner {
       this.readyFallbackTimers.delete(sessionId);
       const session = this.sessions.get(sessionId);
       if (session?.status === "running" && this.pendingReady.has(sessionId)) {
-        this.markReady(sessionId, session, "fallback:timeout");
+        this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
       }
     }, CODEX_READY_FALLBACK_MS);
     timer.unref?.();
@@ -382,6 +387,8 @@ export class CodexPtyRunner implements SessionRunner {
     }
     if (session.status === "waiting_input") {
       session.status = "running";
+      session.statusSource = "user-input";
+      session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
     }
     const gate = this.openGate.get(sessionId);
@@ -456,6 +463,8 @@ export class CodexPtyRunner implements SessionRunner {
     }
     if (session.status === "waiting_input") {
       session.status = "running";
+      session.statusSource = "user-input";
+      session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
     }
     this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
@@ -569,6 +578,8 @@ export class CodexPtyRunner implements SessionRunner {
       // already dead
     }
     session.status = "idle";
+    session.statusSource = "shutdown";
+    session.statusUpdatedAt = new Date();
     session.completedAt = new Date();
     session.screen.dispose();
     this.sessions.delete(sessionId);
@@ -758,9 +769,9 @@ export class CodexPtyRunner implements SessionRunner {
     if (session.status !== "running" || !this.pendingReady.has(sessionId)) return;
     const lastNonBlank = [...lines].reverse().find((l) => l.trim() !== "") ?? "";
     if (lastNonBlank.includes(CODEX_PROMPT_READY_TEXT)) {
-      this.markReady(sessionId, session, `marker:${CODEX_PROMPT_READY_TEXT}`);
+      this.markReady(sessionId, session, "prompt-marker", `marker:${CODEX_PROMPT_READY_TEXT}`);
     } else if (trigger === "quiet") {
-      this.markReady(sessionId, session, "quiet:timeout");
+      this.markReady(sessionId, session, "quiet-fallback", "quiet:timeout");
     }
   }
 
@@ -800,9 +811,18 @@ export class CodexPtyRunner implements SessionRunner {
     this.onPermissionChange?.(sessionId, card);
   }
 
-  private markReady(sessionId: string, session: InternalSession, reason: string): void {
+  private markReady(
+    sessionId: string,
+    session: InternalSession,
+    source: StatusSource,
+    reason: string,
+  ): void {
     session.lastActivityAt = new Date();
     session.status = "waiting_input";
+    // C3: same vocabulary as the Claude runner — a status reached by a timer
+    // must be distinguishable from one reached by observing a marker.
+    session.statusSource = source;
+    session.statusUpdatedAt = new Date();
     // `reason=quiet:timeout`/`fallback:timeout` in volume would mean the
     // status-bar marker regressed (e.g. a Codex TUI redesign) — keep logged.
     this.log.info(`[codex.ready] ${sessionId.slice(0, 8)} ${reason}`, {
@@ -824,6 +844,8 @@ export class CodexPtyRunner implements SessionRunner {
 
     session.completedAt = new Date();
     session.status = "idle";
+    session.statusSource = "process-exit";
+    session.statusUpdatedAt = new Date();
 
     // Instant exit with no output — diagnose the most likely cause.
     const elapsedMs = session.completedAt.getTime() - session.startedAt.getTime();
@@ -857,6 +879,8 @@ function toPublicSession(s: InternalSession): ManagedSession {
     lastOutput: s.lastOutput,
     ...(s.failureReason != null && { failureReason: s.failureReason }),
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt }),
+    ...(s.statusSource != null && { statusSource: s.statusSource }),
+    ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
   };
 }

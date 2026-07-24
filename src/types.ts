@@ -20,6 +20,41 @@ export type SessionLifecycle =
   | "completed" // terminal, ended cleanly
   | "failed"; // terminal, ended badly
 
+/**
+ * How a SessionStatus was derived (C3).
+ * See docs/architecture/2026-07-24-session-state-confidence.md.
+ *
+ * The runners already compute this at every transition — it was written to a log
+ * line and discarded, so a status reached by a timer expiring was indistinguishable
+ * on the wire from one reached by observing a prompt marker.
+ */
+export type StatusSource =
+  | "spawn" // initial state when the process started
+  | "prompt-marker" // a provider prompt marker appeared in the stream
+  | "screen-marker" // marker found by re-reading the rendered screen
+  | "user-input" // we wrote input, so it is running by construction
+  | "process-exit" // the process exited; status follows from that
+  | "timeout-fallback" // NO marker appeared; a timer elapsed and we assumed
+  | "quiet-fallback" // the PTY fell silent during boot; we assumed
+  | "shutdown"; // the streamer terminated it
+
+/**
+ * How much to trust the status.
+ *
+ * `observed` — something in the stream or the process told us.
+ * `inferred` — a timer expired and we picked the most likely state.
+ *
+ * Deliberately two buckets rather than a numeric score: a percentage would imply
+ * a calibration we have no data to support. The point is that a guess must never
+ * be presented as an observation.
+ */
+export type StatusConfidence = "observed" | "inferred";
+
+/** Confidence implied by each source. Inference is exactly the timer-driven paths. */
+export function confidenceForSource(source: StatusSource): StatusConfidence {
+  return source === "timeout-fallback" || source === "quiet-fallback" ? "inferred" : "observed";
+}
+
 export interface ManagedSession {
   id: string; // JSONL UUID — the .jsonl filename under ~/.claude/projects/
   provider?: ProviderName;
@@ -43,6 +78,12 @@ export interface ManagedSession {
   lastMessageText?: string;
   lastMessageAt?: Date;
   lastActivityAt?: Date;
+  /**
+   * How `status` was derived, and when (C3). Confidence is derived from the
+   * source via confidenceForSource — storing both would let them disagree.
+   */
+  statusSource?: StatusSource;
+  statusUpdatedAt?: Date;
   filePath?: string;
   resumedFromConversationId?: string;
 
@@ -257,6 +298,15 @@ export interface SessionResponse {
    * Additive and optional — `ptyAttached` keeps its meaning (=== "attached"),
    * so a client that ignores this behaves exactly as it did before.
    */
+  /**
+   * How `status` was derived and how far to trust it (C3). Additive: `status`
+   * keeps its exact meaning, so a client ignoring these behaves as before.
+   * An `inferred` confidence means a timer expired and we assumed — not that
+   * anything in the stream confirmed the state.
+   */
+  statusSource?: StatusSource;
+  statusConfidence?: StatusConfidence;
+  statusUpdatedAt?: string; // ISO 8601
   lifecycle?: SessionLifecycle;
   /** How `lifecycle` was determined, so stale values are visible not implied. */
   lifecycleSource?: "spawn" | "exit" | "probe" | "reconcile";
