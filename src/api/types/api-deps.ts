@@ -8,6 +8,7 @@ import type { ConversationCache } from "../../conversation-cache";
 import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";
 import type { ProjectsRepository } from "../../db/repositories/projects.repository";
+import type { PushRepository } from "../../db/repositories/push.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
@@ -37,6 +38,8 @@ export type ApiDeps = {
   wsHub: WSHub;
   cache: () => ConversationCache | null;
   cacheMonitor: () => CacheIntegrityMonitor | null;
+  /** Push registration + delivery state (C7). Null when the cache DB is unavailable. */
+  pushRepo: () => PushRepository | null;
   projectsRepo: () => ProjectsRepository | null;
   conversationsRepo: () => ConversationsRepository | null;
   sessionsRepo: () => SessionsRepository | null;

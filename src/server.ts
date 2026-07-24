@@ -71,6 +71,7 @@ import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.reposit
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
 import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
 import { ProjectsRepository } from "./db/repositories/projects.repository";
+import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
 import { handleListProjects } from "./handlers/handleListProjects";
@@ -390,6 +391,9 @@ export class StreamerServer {
   // session that outlived the process that started it.
   private readonly streamerInstanceId = randomUUID();
   private cacheMetadataRepo: CacheMetadataRepository | null = null;
+  // Push registration + delivery state (C7). Null when the cache DB failed to
+  // open — registration then degrades to a no-op rather than 500ing.
+  private pushRepo: PushRepository | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
     fetchedAt: number;
@@ -777,6 +781,7 @@ export class StreamerServer {
       wsHub: this.wsHub,
       cache: () => this.cache,
       cacheMonitor: () => this.cacheMonitor,
+      pushRepo: () => this.pushRepo,
       projectsRepo: () => this.projectsRepo,
       conversationsRepo: () => this.conversationsRepo,
       sessionsRepo: () => this.sessionsRepo,
@@ -1431,6 +1436,7 @@ export class StreamerServer {
           // probes would delay the listener for no correctness gain.
           void this.reconcilePreviousSessions();
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
+          this.pushRepo = new PushRepository(db);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
           // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
           this.cacheMonitor = new CacheIntegrityMonitor(

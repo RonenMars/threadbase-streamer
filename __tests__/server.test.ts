@@ -1655,6 +1655,61 @@ describe("StreamerServer", () => {
     });
   });
 
+  // Registration used to be a no-op returning { ok: true }: mobile registered,
+  // got success, and nothing was stored — so nothing could ever be delivered.
+  describe("push registration", () => {
+    it("persists a registration and reports its health", async () => {
+      const reg = await fetch(`${baseUrl}/api/push/register`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "ExponentPushToken[abc]", platform: "ios" }),
+      });
+      expect(reg.status).toBe(200);
+
+      const health = await fetch(`${baseUrl}/api/push/health`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await health.json();
+
+      expect(body.available).toBe(true);
+      // "never-delivered" is the honest state: registered, nothing sent yet.
+      expect(body.tokens[0]).toMatchObject({ platform: "ios", state: "never-delivered" });
+    });
+
+    // A push token is a delivery credential; a health endpoint has no reason
+    // to echo one back.
+    it("never returns the token itself", async () => {
+      await fetch(`${baseUrl}/api/push/register`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "ExponentPushToken[secret-value]", platform: "android" }),
+      });
+
+      const res = await fetch(`${baseUrl}/api/push/health`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(await res.text()).not.toContain("secret-value");
+    });
+
+    it.each([
+      ["missing token", { platform: "ios" }],
+      ["empty token", { token: "", platform: "ios" }],
+      ["bad platform", { token: "t", platform: "windows" }],
+    ])("rejects an invalid registration (%s)", async (_name, payload) => {
+      const res = await fetch(`${baseUrl}/api/push/register`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("requires authentication", async () => {
+      const res = await fetch(`${baseUrl}/api/push/health`);
+      expect(res.status).toBe(401);
+    });
+  });
+
   describe("GET /api/conversations", () => {
     it("returns paginated conversation list", async () => {
       const res = await fetch(`${baseUrl}/api/conversations?limit=10&offset=0`, {

@@ -57,7 +57,7 @@ type ClientLogEntry = {
 export const createMiscRoutes = (
   deps: Pick<
     ApiDeps,
-    "publicUrl" | "sessionStore" | "ptyAttachedIds" | "rotateApiKey" | "localNoAuth"
+    "publicUrl" | "sessionStore" | "ptyAttachedIds" | "rotateApiKey" | "localNoAuth" | "pushRepo"
   >,
 ) => {
   const app = new Hono<AppEnv>();
@@ -100,7 +100,51 @@ export const createMiscRoutes = (
     });
   });
 
-  app.post("/api/push/register", (c) => c.json({ ok: true }));
+  // Push registration (C7). This was a no-op returning { ok: true }: mobile
+  // registered, got success, and nothing was stored — so no notification could
+  // ever be delivered and no failure could be observed. The client had no way
+  // to discover that its "successful" registration meant nothing.
+  app.post("/api/push/register", async (c) => {
+    // Read the raw Node request like the sibling routes do — Hono's c.req.json()
+    // does not see a body on this server's request plumbing.
+    const body = (await readJsonBody(c.env.incoming).catch(() => null)) as {
+      token?: unknown;
+      platform?: unknown;
+      deviceId?: unknown;
+    } | null;
+    const token = body?.token;
+    const platform = body?.platform;
+
+    if (typeof token !== "string" || token.length === 0) {
+      return c.json({ error: "Missing token" }, 400);
+    }
+    if (platform !== "ios" && platform !== "android") {
+      return c.json({ error: "platform must be 'ios' or 'android'" }, 400);
+    }
+
+    const repo = deps.pushRepo();
+    if (!repo) {
+      // Report honestly rather than claiming success we cannot back — the exact
+      // failure mode this endpoint used to have.
+      return c.json({ error: "Push registration is unavailable", code: "STORE_UNAVAILABLE" }, 503);
+    }
+
+    repo.register({
+      token,
+      platform,
+      deviceId: typeof body?.deviceId === "string" ? body.deviceId : null,
+    });
+    return c.json({ ok: true });
+  });
+
+  // Delivery health for every registered token. Never echoes a token back — it
+  // is a delivery credential, and this endpoint exists to explain state, not to
+  // hand out secrets.
+  app.get("/api/push/health", (c) => {
+    const repo = deps.pushRepo();
+    if (!repo) return c.json({ tokens: [], available: false });
+    return c.json({ tokens: repo.listHealth(), available: true });
+  });
 
   // Webhook for auto-update. Triggered by the release CI (or any caller that
   // knows webhook_secret) to make this server pull the new release without
