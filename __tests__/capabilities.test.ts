@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "fs";
+import { join } from "path";
 import { describe, expect, it } from "vitest";
 import {
   type Capability,
@@ -101,14 +103,66 @@ describe("hasCapability", () => {
     expect(hasCapability(readOnly, "admin")).toBe(false);
   });
 
-  // The shared API key predates device identity. It keeps full authority so no
-  // already-paired device breaks — the compatibility path that makes this
-  // shippable without a coordinated mobile release.
-  it("gives the legacy shared key the full preset but not admin", () => {
+  // The shared API key predates device identity and is the OWNER's credential:
+  // it pairs new devices and rotates itself, so it must hold admin. Devices are
+  // the things that get scoped; the key that mints them cannot be, or the owner
+  // could no longer administer their own server.
+  it("gives the legacy shared key full authority including admin", () => {
     const legacy = legacyPrincipal();
     expect(legacy.kind).toBe("legacy");
     expect(legacy.deviceId).toBeUndefined();
     expect(hasCapability(legacy, "session:control")).toBe(true);
-    expect(hasCapability(legacy, "admin")).toBe(false);
+    expect(hasCapability(legacy, "admin")).toBe(true);
+  });
+
+  // A device, by contrast, never gets admin from a preset — that is the whole
+  // point of scoping.
+  it("never grants admin through a device preset", () => {
+    for (const preset of ["full", "read-only"] as const) {
+      expect(capabilitiesForPreset(preset)).not.toContain("admin");
+    }
+  });
+});
+
+/**
+ * The fail-closed guarantee.
+ *
+ * authMiddleware lets an UNCLASSIFIED path fall through to the router, so an
+ * unknown route still 404s rather than 403ing (a 403 would tell an
+ * authenticated caller that a path it cannot name might exist). That is only
+ * safe if every route the app actually mounts is classified — which is what
+ * this test enforces. A new endpoint added without a mapping fails here.
+ */
+describe("every mounted route is classified", () => {
+  const ROUTES_DIR = join(__dirname, "..", "src", "api", "routes");
+
+  // Paths the middleware deliberately serves without a capability check.
+  const EXEMPT = [
+    "/healthz",
+    "/api/pair/exchange", // public: the pairing handshake itself
+    "/api/__update", // HMAC-signed webhook
+    "/internal/sessions", // HMAC-signed progress webhook
+    "/api/logs", // localhost-only, bypassed earlier in the middleware
+  ];
+
+  it("maps a capability for every /api and /ws path in the route files", () => {
+    const mounted = new Set<string>();
+    for (const file of readdirSync(ROUTES_DIR)) {
+      const src = readFileSync(join(ROUTES_DIR, file), "utf8");
+      for (const m of src.matchAll(/"(\/(?:api|internal|ws)[^"]*)"/g)) {
+        // Strip Hono param/regex segments — only the static prefix matters for
+        // longest-prefix classification.
+        const path = m[1].split("/:")[0].split("{")[0];
+        if (path.length > 1) mounted.add(path);
+      }
+    }
+
+    expect(mounted.size).toBeGreaterThan(5);
+
+    const unclassified = [...mounted].filter(
+      (p) => !EXEMPT.some((e) => p.startsWith(e)) && requiredCapability(p, "GET") === null,
+    );
+
+    expect(unclassified, `unclassified routes: ${unclassified.join(", ")}`).toEqual([]);
   });
 });
