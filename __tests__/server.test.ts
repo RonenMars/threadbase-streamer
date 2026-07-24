@@ -1549,6 +1549,112 @@ describe("StreamerServer", () => {
     });
   });
 
+  // A retry must not submit the same prompt to the agent twice. The rate
+  // limiter does not cover this: 500/min targets floods, and a genuine retry
+  // (flaky network, double-tap, client resend on timeout) sits well inside it.
+  describe("POST /api/sessions/:id/input idempotency", () => {
+    const SID = "idem-sess";
+
+    it("submits once and replays the result for a repeated key", async () => {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      const sendInput = vi.spyOn(PTYManager.prototype, "sendInput").mockReturnValue(1);
+      try {
+        const post = () =>
+          fetch(`${baseUrl}/api/sessions/${SID}/input`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ input: "hello", idempotencyKey: "retry-1" }),
+          });
+
+        const first = await post();
+        const second = await post();
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(200);
+        expect(await second.json()).toEqual(await first.json());
+        // The point: the agent saw the prompt exactly once.
+        expect(sendInput).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("submits both when the keys differ", async () => {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      const sendInput = vi.spyOn(PTYManager.prototype, "sendInput").mockReturnValue(1);
+      try {
+        for (const key of ["a-1", "a-2"]) {
+          await fetch(`${baseUrl}/api/sessions/${SID}-distinct/input`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ input: "hello", idempotencyKey: key }),
+          });
+        }
+        expect(sendInput).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    // Optional field — existing clients keep working with no retry protection.
+    it("still accepts input with no key at all", async () => {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      const sendInput = vi.spyOn(PTYManager.prototype, "sendInput").mockReturnValue(1);
+      try {
+        const res = await fetch(`${baseUrl}/api/sessions/${SID}-nokey/input`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ input: "hello" }),
+        });
+        expect(res.status).toBe(200);
+        expect(sendInput).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    // A client sending a malformed key believes it has protection it lacks.
+    it("rejects a malformed key rather than silently ignoring it", async () => {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      const sendInput = vi.spyOn(PTYManager.prototype, "sendInput").mockReturnValue(1);
+      try {
+        const res = await fetch(`${baseUrl}/api/sessions/${SID}-bad/input`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ input: "hello", idempotencyKey: "" }),
+        });
+        expect(res.status).toBe(400);
+        expect(sendInput).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    // A transient failure must stay retryable — recording it would replay a
+    // temporary error as a permanent one.
+    it("does not record a failed write", async () => {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      const sendInput = vi.spyOn(PTYManager.prototype, "sendInput").mockImplementation(() => {
+        throw new Error("Session not found: x");
+      });
+      try {
+        const post = () =>
+          fetch(`${baseUrl}/api/sessions/${SID}-fail/input`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ input: "hello", idempotencyKey: "fail-1" }),
+          });
+
+        expect((await post()).status).toBe(400);
+        expect((await post()).status).toBe(400);
+        // Retried for real, not replayed from the cache.
+        expect(sendInput).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+  });
+
   describe("GET /api/conversations", () => {
     it("returns paginated conversation list", async () => {
       const res = await fetch(`${baseUrl}/api/conversations?limit=10&offset=0`, {
