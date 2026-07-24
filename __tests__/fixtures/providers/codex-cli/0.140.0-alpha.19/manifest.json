@@ -1,0 +1,9 @@
+{
+  "provider": "codex-cli",
+  "providerVersion": "0.140.0-alpha.19",
+  "capturedAt": "2026-06-18",
+  "source": "real rollout capture (pre-existing fixture, promoted to versioned layout)",
+  "sanitized": false,
+  "notes": "Unmodified copy of __tests__/fixtures/codex-rollout.jsonl. providerVersion is asserted against the `cli_version` recorded in the capture's own session_meta line. This capture contains no turn_context line — the adapter recognizes that envelope, but no fixture exercises it yet.",
+  "envelopeTypes": ["session_meta", "response_item", "event_msg"]
+}
