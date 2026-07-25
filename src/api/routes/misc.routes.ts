@@ -4,10 +4,27 @@ import { Hono } from "hono";
 import type { IncomingMessage } from "http";
 import { hostname } from "os";
 import { loadUpdateConfig } from "../../config/update-config";
+import {
+  DEFAULT_PUSH_TOKEN_KIND,
+  isPushTokenKind,
+  PUSH_TOKEN_KINDS,
+} from "../../db/repositories/push.repository";
 import { getLogger } from "../../logger";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
+
+/**
+ * Accept a finite timestamp, reject anything else.
+ *
+ * These arrive as JSON from a client, so a string, a NaN, or an Infinity is
+ * reachable. Storing one would make a renewal deadline that never fires (or
+ * fires immediately), so a bad value becomes "absent" rather than a poisoned
+ * schedule.
+ */
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -111,6 +128,12 @@ export const createMiscRoutes = (
       token?: unknown;
       platform?: unknown;
       deviceId?: unknown;
+      kind?: unknown;
+      activityId?: unknown;
+      sessionId?: unknown;
+      expiresAt?: unknown;
+      staleDate?: unknown;
+      startedAt?: unknown;
     } | null;
     const token = body?.token;
     const platform = body?.platform;
@@ -120,6 +143,31 @@ export const createMiscRoutes = (
     }
     if (platform !== "ios" && platform !== "android") {
       return c.json({ error: "platform must be 'ios' or 'android'" }, 400);
+    }
+
+    // Omitted kind means a client that predates Live Activities, which can only
+    // be registering an Expo relay token. Released clients cannot be
+    // force-updated, so this default is what keeps them working.
+    const kind = body?.kind === undefined ? DEFAULT_PUSH_TOKEN_KIND : body.kind;
+    if (!isPushTokenKind(kind)) {
+      // Reject rather than silently coercing to Expo: an ActivityKit token
+      // stored as Expo is rejected by the relay at send time with nothing at
+      // registration time to explain why.
+      return c.json(
+        { error: `kind must be one of ${PUSH_TOKEN_KINDS.join(", ")}`, code: "INVALID_KIND" },
+        400,
+      );
+    }
+    // A per-activity token without its activity id cannot be targeted for an
+    // update or an end, so it would be stored and never usable.
+    if (kind === "liveactivity_update" && typeof body?.activityId !== "string") {
+      return c.json(
+        {
+          error: "activityId is required for kind 'liveactivity_update'",
+          code: "MISSING_ACTIVITY",
+        },
+        400,
+      );
     }
 
     const repo = deps.pushRepo();
@@ -133,6 +181,12 @@ export const createMiscRoutes = (
       token,
       platform,
       deviceId: typeof body?.deviceId === "string" ? body.deviceId : null,
+      kind,
+      activityId: typeof body?.activityId === "string" ? body.activityId : null,
+      sessionId: typeof body?.sessionId === "string" ? body.sessionId : null,
+      expiresAt: numberOrNull(body?.expiresAt),
+      staleDate: numberOrNull(body?.staleDate),
+      startedAt: numberOrNull(body?.startedAt),
     });
     return c.json({ ok: true });
   });
