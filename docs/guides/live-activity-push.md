@@ -31,9 +31,9 @@ No key, key id, or team id is committed, and neither the key nor any device toke
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `APNS_KEY` | Yes | — | **Contents** of the p8 signing key (PEM). Not a path. Live Activity push stays off when unset. |
-| `APNS_KEY_ID` | No | `BX4B6855WV` | Key id of the p8 above. |
-| `APNS_TEAM_ID` | No | `GUW6BN8X57` | Apple Developer team id. |
-| `APNS_BUNDLE_ID` | No | `com.ronenmars.threadbase` | App bundle id. The APNs topic is this plus `.push-type.liveactivity`. |
+| `APNS_KEY_ID` | With `APNS_KEY` | derived from the key filename under launchd | Key id of the p8 above. The shim reads it from `AuthKey_<keyId>.p8`, so it normally needs no setting. |
+| `APNS_TEAM_ID` | With `APNS_KEY` | — | Apple Developer team id. |
+| `APNS_BUNDLE_ID` | With `APNS_KEY` | — | App bundle id. The APNs topic is this plus `.push-type.liveactivity`. |
 | `APNS_HOST` | No | `api.sandbox.push.apple.com` | Set to `api.push.apple.com` for production. |
 
 The default host is **sandbox**, because the app's `aps-environment` is still `development`.
@@ -45,8 +45,33 @@ The signing key lives in 1Password, not on disk.
 The operator exports it before starting the server:
 
 ```bash
-export APNS_KEY="$(op read 'op://Personal/Threadbase-p8-file-Notifications-APNs/AuthKey_BX4B6855WV.p8')"
+export APNS_KEY="$(op read 'op://<vault>/<item>/AuthKey_<keyId>.p8')"
+export APNS_KEY_ID="<keyId>"
+export APNS_TEAM_ID="<teamId>"
+export APNS_BUNDLE_ID="<bundleId>"
 ```
+
+None of the identifiers have defaults in the source.
+Baking one deployment's Apple account into the package would make it silently sign for the wrong team when someone else deploys it, and the APNs rejection that follows names none of that.
+If `APNS_KEY` is set but an identifier is missing, the feature stays off and the log says which variable is absent.
+
+### The supervised prod instance
+
+launchd cannot read a file into an environment variable, and the plist is the wrong place for the key: it is world-readable (0644) and `scripts/deploy.sh` regenerates it on every deploy, so an embedded secret would be both exposed and silently wiped.
+
+Instead, drop the key into the install dir and the launchd shim loads it at spawn time:
+
+```bash
+mv ~/Downloads/AuthKey_<keyId>.p8 ~/.threadbase/ && chmod 600 ~/.threadbase/AuthKey_<keyId>.p8
+```
+
+The shim globs `~/.threadbase/AuthKey_<keyId>.p8` rather than matching one hardcoded filename, and **derives `APNS_KEY_ID` from the filename** — Apple embeds the key id there.
+That makes a rotation a drop-in: replace the file, restart, no code or config change.
+It also removes a failure mode, since the key and the id it is announced under can never disagree; a mismatch is rejected by Apple as a bare `InvalidProviderToken` that says nothing about the cause.
+
+An explicit `APNS_KEY` or `APNS_KEY_ID` in the environment still wins.
+With several `AuthKey_*.p8` files present the newest by mtime is used and the ambiguity is logged — remove stale keys after a rotation.
+Only the path and key id are logged, never the key contents.
 
 The key must be **Team Scoped (All Topics)**.
 A key scoped to the bundle id alone cannot sign the `.push-type.liveactivity` topic.

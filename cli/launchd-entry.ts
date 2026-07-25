@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { activeLink, installDir } from "../src/lifecycle/constants";
 import { clearMarker, readMarker } from "../src/lifecycle/marker";
@@ -43,12 +43,63 @@ export function decideShimAction(): ShimAction {
 }
 
 /**
- * Default APNs auth-key filename, matching Apple's own download name.
+ * Apple's own download filename for an APNs auth key: `AuthKey_<keyId>.p8`.
  *
- * The key id is embedded in the filename by Apple, so this is the shape the file
- * already has when it comes out of the Developer portal or 1Password.
+ * The key id is embedded in the name, which is what lets a rotation be a
+ * drop-in: discovering the file yields both the key and its id, so the two can
+ * never disagree.
  */
-const APNS_KEY_FILENAME = "AuthKey_BX4B6855WV.p8";
+const APNS_KEY_FILE_PATTERN = /^AuthKey_([A-Z0-9]{10})\.p8$/;
+
+/**
+ * Find the APNs auth key in the install dir.
+ *
+ * Globbed rather than hardcoded to a single filename: rotating the key means
+ * dropping in `AuthKey_<newId>.p8`, and a hardcoded name would leave prod
+ * silently unable to find it. Returns null when no key is installed, which is
+ * the ordinary state.
+ *
+ * With several keys present the newest by mtime wins, on the assumption that a
+ * freshly rotated key is the intended one — and the ambiguity is logged, because
+ * silently picking one of two credentials is exactly the sort of thing that
+ * wastes an afternoon.
+ */
+export function findApnsKeyFile(
+  dir: string = installDir(),
+): { path: string; keyId: string } | null {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    // No install dir yet (fresh machine) is not an error worth logging.
+    return null;
+  }
+
+  const matches = entries
+    .map((name) => ({ name, m: APNS_KEY_FILE_PATTERN.exec(name) }))
+    .filter((e): e is { name: string; m: RegExpExecArray } => e.m !== null)
+    .map((e) => {
+      const path = join(dir, e.name);
+      let mtimeMs = 0;
+      try {
+        mtimeMs = statSync(path).mtimeMs;
+      } catch {
+        // Unreadable stat leaves it last rather than dropping it — the read
+        // below reports the real problem with a clearer message.
+      }
+      return { path, keyId: e.m[1], mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    log.warn(
+      `found ${matches.length} APNs key files in ${dir}, using the newest ` +
+        `(${matches[0].keyId}); remove the stale ones to make this unambiguous`,
+    );
+  }
+  return { path: matches[0].path, keyId: matches[0].keyId };
+}
 
 /**
  * Load the APNs signing key into the environment for the spawned server.
@@ -59,32 +110,39 @@ const APNS_KEY_FILENAME = "AuthKey_BX4B6855WV.p8";
  * and silently wiped. Reading it here keeps the key in a 0600 file under the
  * install dir, out of version control, and surviving deploys.
  *
+ * The key id is derived from the filename and exported alongside the key, so a
+ * rotation cannot leave the JWT claiming an id that does not match the key it
+ * signed with — APNs rejects that with a bare `InvalidProviderToken` that says
+ * nothing about the cause.
+ *
  * An already-set APNS_KEY wins, so an operator can still override per-invocation.
  * A missing file is not an error — Live Activity push is optional, and the
  * server logs its own "disabled" line.
  */
-export function loadApnsKeyIntoEnv(
-  env: NodeJS.ProcessEnv,
-  keyPath: string = join(installDir(), APNS_KEY_FILENAME),
-): void {
+export function loadApnsKeyIntoEnv(env: NodeJS.ProcessEnv, keyFileDir?: string): void {
   if (env.APNS_KEY) return;
-  if (!existsSync(keyPath)) return;
+
+  const found = findApnsKeyFile(keyFileDir);
+  if (!found) return;
 
   try {
-    const pem = readFileSync(keyPath, "utf-8").trim();
+    const pem = readFileSync(found.path, "utf-8").trim();
     if (pem.length === 0) {
       // An empty file is a misconfiguration worth naming: it looks installed but
       // signing would fail with an opaque APNs error instead.
-      log.warn(`APNs key file is empty, Live Activity push stays disabled: ${keyPath}`);
+      log.warn(`APNs key file is empty, Live Activity push stays disabled: ${found.path}`);
       return;
     }
     env.APNS_KEY = pem;
-    // Path only, never the contents.
-    log.info(`loaded APNs key for Live Activity push from ${keyPath}`);
+    // An explicit APNS_KEY_ID still wins; otherwise the filename is the source
+    // of truth, which keeps key and id in lockstep across a rotation.
+    if (!env.APNS_KEY_ID) env.APNS_KEY_ID = found.keyId;
+    // Path and key id only — both non-secret. Never the contents.
+    log.info(`loaded APNs key ${found.keyId} for Live Activity push from ${found.path}`);
   } catch (err) {
     // Never fatal: a push credential must not stop the server from starting.
     log.warn(
-      `could not read APNs key at ${keyPath}, Live Activity push stays disabled: ${
+      `could not read APNs key at ${found.path}, Live Activity push stays disabled: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
