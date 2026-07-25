@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { activeLink } from "../src/lifecycle/constants";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { activeLink, installDir } from "../src/lifecycle/constants";
 import { clearMarker, readMarker } from "../src/lifecycle/marker";
 import { isPidAlive } from "../src/lifecycle/process-liveness";
 import { getLogger } from "../src/logger";
@@ -41,6 +42,55 @@ export function decideShimAction(): ShimAction {
   return { kind: "exit", reason: "dev-alive" };
 }
 
+/**
+ * Default APNs auth-key filename, matching Apple's own download name.
+ *
+ * The key id is embedded in the filename by Apple, so this is the shape the file
+ * already has when it comes out of the Developer portal or 1Password.
+ */
+const APNS_KEY_FILENAME = "AuthKey_BX4B6855WV.p8";
+
+/**
+ * Load the APNs signing key into the environment for the spawned server.
+ *
+ * launchd cannot read a file into an env var, and the plist is the wrong place
+ * for the key itself: it is world-readable (0644) and `scripts/deploy.sh`
+ * regenerates it on every deploy, so an embedded secret would be both exposed
+ * and silently wiped. Reading it here keeps the key in a 0600 file under the
+ * install dir, out of version control, and surviving deploys.
+ *
+ * An already-set APNS_KEY wins, so an operator can still override per-invocation.
+ * A missing file is not an error — Live Activity push is optional, and the
+ * server logs its own "disabled" line.
+ */
+export function loadApnsKeyIntoEnv(
+  env: NodeJS.ProcessEnv,
+  keyPath: string = join(installDir(), APNS_KEY_FILENAME),
+): void {
+  if (env.APNS_KEY) return;
+  if (!existsSync(keyPath)) return;
+
+  try {
+    const pem = readFileSync(keyPath, "utf-8").trim();
+    if (pem.length === 0) {
+      // An empty file is a misconfiguration worth naming: it looks installed but
+      // signing would fail with an opaque APNs error instead.
+      log.warn(`APNs key file is empty, Live Activity push stays disabled: ${keyPath}`);
+      return;
+    }
+    env.APNS_KEY = pem;
+    // Path only, never the contents.
+    log.info(`loaded APNs key for Live Activity push from ${keyPath}`);
+  } catch (err) {
+    // Never fatal: a push credential must not stop the server from starting.
+    log.warn(
+      `could not read APNs key at ${keyPath}, Live Activity push stays disabled: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+}
+
 function main(): void {
   const action = decideShimAction();
   if (action.kind === "exit") {
@@ -68,9 +118,14 @@ function main(): void {
   // Forward all argv (launchd passes "serve --port 8766 --verbose" or whatever
   // the plist declares) straight to the real binary.
   const args = process.argv.slice(2);
+  // launchd cannot read a file into an env var, so the key is loaded here rather
+  // than declared in the plist (which is world-readable and regenerated on every
+  // deploy).
+  const env = { ...process.env };
+  loadApnsKeyIntoEnv(env);
   const result = spawnSync(process.execPath, [target, ...args], {
     stdio: "inherit",
-    env: process.env,
+    env,
   });
   if (result.error) {
     log.error(`failed to spawn ${target}: ${result.error.message}`);
