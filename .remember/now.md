@@ -1,0 +1,3 @@
+
+## 23:56 | docs/live-activities-prompt
+Implemented three stacked PRs (#292–294) adding Live Activity push infrastructure: PR 1 extends `push_tokens` schema with `kind`/`activity_id`/expiry; PR 2 adds APNs sender (ES256 JWT, HTTP/2); PR 3 adds 8-hour renewal scheduler with elapsed-time continuity. Tests & lint pass locally (1482 tests, 1 pre-existing flake); CI Lint blocked by two inherited errors on base branch unrelated to this work. Mobile contract file and initial push-to-start path still absent.
