@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/lifecycle/marker");
 vi.mock("../src/lifecycle/process-liveness");
 
-import { decideShimAction, findApnsKeyFile, loadApnsKeyIntoEnv } from "../cli/launchd-entry";
+import {
+  decideShimAction,
+  findApnsKeyFile,
+  loadApnsKeyIntoEnv,
+  loadInstallDirEnv,
+} from "../cli/launchd-entry";
 import { clearMarker, readMarker } from "../src/lifecycle/marker";
 import { isPidAlive } from "../src/lifecycle/process-liveness";
 
@@ -200,5 +205,85 @@ describe("findApnsKeyFile", () => {
 
   it("returns null when nothing matches", () => {
     expect(findApnsKeyFile(dir)).toBeNull();
+  });
+});
+
+describe("loadInstallDirEnv", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "tb-envfile-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // The gap this closes: dotenv/config in cli/index.ts reads .env from cwd,
+  // which is / under launchd, so a supervised instance never sees it.
+  it("loads KEY=value lines from the install dir", () => {
+    writeFileSync(join(dir, ".env"), "APNS_TEAM_ID=TEAM123456\nAPNS_BUNDLE_ID=com.example.app\n");
+    const env: NodeJS.ProcessEnv = {};
+
+    loadInstallDirEnv(env, dir);
+
+    expect(env.APNS_TEAM_ID).toBe("TEAM123456");
+    expect(env.APNS_BUNDLE_ID).toBe("com.example.app");
+  });
+
+  it("ignores comments and blank lines", () => {
+    writeFileSync(join(dir, ".env"), "# a comment\n\n  \nAPNS_TEAM_ID=T1\n");
+    const env: NodeJS.ProcessEnv = {};
+
+    loadInstallDirEnv(env, dir);
+
+    expect(env.APNS_TEAM_ID).toBe("T1");
+    expect(Object.keys(env)).toEqual(["APNS_TEAM_ID"]);
+  });
+
+  // An explicit export must beat the file, matching dotenv's own precedence.
+  it("does not override an already-set variable", () => {
+    writeFileSync(join(dir, ".env"), "APNS_TEAM_ID=FROMFILE\n");
+    const env: NodeJS.ProcessEnv = { APNS_TEAM_ID: "FROMSHELL" };
+
+    loadInstallDirEnv(env, dir);
+
+    expect(env.APNS_TEAM_ID).toBe("FROMSHELL");
+  });
+
+  it("strips one layer of matching quotes", () => {
+    writeFileSync(join(dir, ".env"), `A="quoted value"\nB='single'\nC=bare\n`);
+    const env: NodeJS.ProcessEnv = {};
+
+    loadInstallDirEnv(env, dir);
+
+    expect(env.A).toBe("quoted value");
+    expect(env.B).toBe("single");
+    expect(env.C).toBe("bare");
+  });
+
+  it("keeps '=' inside a value", () => {
+    writeFileSync(join(dir, ".env"), "TOKEN=abc=def==\n");
+    const env: NodeJS.ProcessEnv = {};
+
+    loadInstallDirEnv(env, dir);
+
+    expect(env.TOKEN).toBe("abc=def==");
+  });
+
+  it("skips malformed lines without throwing", () => {
+    writeFileSync(join(dir, ".env"), "no_equals_here\n=novalue\nGOOD=yes\n");
+    const env: NodeJS.ProcessEnv = {};
+
+    expect(() => loadInstallDirEnv(env, dir)).not.toThrow();
+    expect(env.GOOD).toBe("yes");
+  });
+
+  // A missing .env is the ordinary state and must not be an error.
+  it("is a no-op when no .env exists", () => {
+    const env: NodeJS.ProcessEnv = {};
+
+    expect(() => loadInstallDirEnv(env, dir)).not.toThrow();
+    expect(Object.keys(env)).toEqual([]);
   });
 });

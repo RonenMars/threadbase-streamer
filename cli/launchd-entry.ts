@@ -43,6 +43,59 @@ export function decideShimAction(): ShimAction {
 }
 
 /**
+ * Load `<installDir>/.env` into the environment for the spawned server.
+ *
+ * `cli/index.ts` already imports `dotenv/config`, but that reads `.env` from the
+ * process cwd — which is the repo root for a hand-run `serve`, and `/` under
+ * launchd. So a supervised instance would never see it. Reading from the install
+ * dir instead gives prod a config file it can actually find, and one that
+ * survives a deploy (unlike the plist, which is regenerated every time).
+ *
+ * Deliberately minimal rather than a dotenv call: this runs before the bundle's
+ * dependencies are relevant, and the format needed here is `KEY=value` lines.
+ * Existing environment entries always win, so an explicit export still overrides
+ * the file.
+ */
+export function loadInstallDirEnv(env: NodeJS.ProcessEnv, dir: string = installDir()): void {
+  const envPath = join(dir, ".env");
+  if (!existsSync(envPath)) return;
+
+  let raw: string;
+  try {
+    raw = readFileSync(envPath, "utf-8");
+  } catch (err) {
+    log.warn(`could not read ${envPath}: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  const loaded: string[] = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
+
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    // Strip one layer of matching quotes, so a value containing '#' or spaces
+    // can be quoted the way a shell would expect.
+    if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0]) {
+      value = value.slice(1, -1);
+    }
+    // An already-set variable wins: an explicit export must override the file.
+    if (env[key] !== undefined) continue;
+    env[key] = value;
+    loaded.push(key);
+  }
+
+  if (loaded.length > 0) {
+    // Names only. A .env may hold secrets, so values are never logged.
+    log.info(`loaded ${loaded.length} env var(s) from ${envPath}: ${loaded.join(", ")}`);
+  }
+}
+
+/**
  * Apple's own download filename for an APNs auth key: `AuthKey_<keyId>.p8`.
  *
  * The key id is embedded in the name, which is what lets a rotation be a
@@ -176,10 +229,12 @@ function main(): void {
   // Forward all argv (launchd passes "serve --port 8766 --verbose" or whatever
   // the plist declares) straight to the real binary.
   const args = process.argv.slice(2);
-  // launchd cannot read a file into an env var, so the key is loaded here rather
+  // launchd cannot read a file into an env var, so config is loaded here rather
   // than declared in the plist (which is world-readable and regenerated on every
-  // deploy).
+  // deploy). `.env` first, so a key or identifier declared there is in place
+  // before the key-file lookup decides what is still missing.
   const env = { ...process.env };
+  loadInstallDirEnv(env);
   loadApnsKeyIntoEnv(env);
   const result = spawnSync(process.execPath, [target, ...args], {
     stdio: "inherit",
