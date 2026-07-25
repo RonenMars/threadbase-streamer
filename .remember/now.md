@@ -1,3 +1,7 @@
 
-## 23:56 | docs/live-activities-prompt
-Implemented three stacked PRs (#292–294) adding Live Activity push infrastructure: PR 1 extends `push_tokens` schema with `kind`/`activity_id`/expiry; PR 2 adds APNs sender (ES256 JWT, HTTP/2); PR 3 adds 8-hour renewal scheduler with elapsed-time continuity. Tests & lint pass locally (1482 tests, 1 pre-existing flake); CI Lint blocked by two inherited errors on base branch unrelated to this work. Mobile contract file and initial push-to-start path still absent.
+## 00:02 | docs/live-activities-prompt
+Analyzed APNS_KEY env var loading; determined dotenv unused in codebase; recommended `~/.threadbase/AuthKey_BX4B6855WV.p8` + export pattern; user placed key file and requested monitoring (prod instance on 8766 left running, planned throwaway test instance on spare port).
+## 00:13 | integration/missing-prs-2026-07-23
+Fixed OSC 777 conflation bug stranding 11 sessions on phantom permission gates; added model/effort/permissionMode to GET /api/sessions/:id; deployed prod w/ OSC discriminator + status-line parser + per-server flags; mobile: counter-line filtering + thinking skeleton + docs corrections (4 PRs cherry-picked to integration-merge-354-355-376).
+## 00:23 | docs/live-activities-prompt
+Implemented live-activity push end-to-end (3 PRs: token schema + kind, APNs sender w/ ES256 JWT, 8h renewal scheduler); verified against real APNs infra (BadDeviceToken confirms signing); wired APNS_KEY from ~/.threadbase/ into launchd entry; added *.p8 to .gitignore; pre-existing CI lint gate blocks merge (#292/#293/#294 stacked, locally green).

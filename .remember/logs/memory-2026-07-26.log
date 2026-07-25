@@ -1,0 +1,94 @@
+00:02:16 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:02:28 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:02:28 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:02:28 [extract] session 11b58c01-17d9-4ee4-870c-2abac3b5e5ce
+00:02:28 [extract] 20 exchanges (8 human)
+00:02:29 [haiku] calling (branch: docs/live-activities-prompt)
+00:02:36 [tokens] tokens: 2+21316cache→91out ($0.046361)
+00:02:36 [write] appended: ## 00:02 | docs/live-activities-prompt
+00:02:36 [write] position → 848
+00:02:52 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:03:03 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:03:16 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:03:23 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:03:35 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:03:48 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:04:45 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:04:53 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:04:54 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:04:54 [extract] session 11b58c01-17d9-4ee4-870c-2abac3b5e5ce
+00:04:54 [extract] 18 exchanges (1 human)
+00:04:54 [extract] 1 human msgs < 3, skip
+00:04:59 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:04:59 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:04:59 [cooldown] 5s < 120s, skip
+00:05:04 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:04 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:04 [cooldown] 10s < 120s, skip
+00:05:10 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:10 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:10 [cooldown] 16s < 120s, skip
+00:05:16 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:17 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:17 [cooldown] 23s < 120s, skip
+00:05:21 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:21 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:21 [cooldown] 27s < 120s, skip
+00:05:38 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:38 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:38 [cooldown] 44s < 120s, skip
+00:05:44 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:45 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:45 [cooldown] 51s < 120s, skip
+00:05:49 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:50 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:50 [cooldown] 56s < 120s, skip
+00:05:53 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:53 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:05:53 [cooldown] 59s < 120s, skip
+00:06:16 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:06:17 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:06:17 [cooldown] 83s < 120s, skip
+00:06:42 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:06:42 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:06:42 [cooldown] 108s < 120s, skip
+00:07:07 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:07:07 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:07:07 [extract] session 11b58c01-17d9-4ee4-870c-2abac3b5e5ce
+00:07:07 [extract] 36 exchanges (1 human)
+00:07:07 [extract] 1 human msgs < 3, skip
+00:12:44 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:12:45 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:12:45 [extract] session 11b58c01-17d9-4ee4-870c-2abac3b5e5ce
+00:12:45 [extract] 38 exchanges (1 human)
+00:12:45 [extract] 1 human msgs < 3, skip
+00:13:54 [hook] session-start: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.6 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:13:56 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.6 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:13:56 [force] bypassing cooldown + min msgs
+00:13:56 [extract] session 849e5455-6c7b-405e-b065-1c53c8989466
+00:13:56 [hook] run-consolidation: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.6 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:13:56 [consolidation] start
+00:13:56 [extract] 712 exchanges (40 human)
+00:13:58 [haiku] calling (branch: integration/missing-prs-2026-07-23)
+00:14:21 [tokens] tokens: 2+21316cache→111out ($0.130079)
+00:14:21 [write] appended: ## 00:13 | integration/missing-prs-2026-07-23
+00:14:22 [write] position → 2397
+00:14:27 [consolidation] tokens: 2+21316cache→1006out ($0.046870)
+00:14:28 [consolidation] done: 1 files consolidated
+00:17:28 [hook] session-start: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.6 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:18:33 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:18:33 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:18:34 [extract] session 11b58c01-17d9-4ee4-870c-2abac3b5e5ce
+00:18:34 [extract] 285 exchanges (14 human)
+00:18:34 [haiku] calling (branch: docs/live-activities-prompt)
+00:18:43 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:20:34 [haiku] ERROR: call-haiku error: claude timed out after 120s
+00:23:52 [hook] post-tool: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:23:52 [hook] save-session: PROJECT_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer-worktrees/docs-live-activities-prompt PIPELINE_DIR=/Users/ronenmars/.claude/plugins/cache/claude-plugins-official/remember/0.8.3 PYTHON=python3 REMEMBER_DIR=/Users/ronenmars/dev/ai-tools/tb-streamer/.remember
+00:23:52 [extract] session 11b58c01-17d9-4ee4-870c-2abac3b5e5ce
+00:23:52 [extract] 289 exchanges (14 human)
+00:23:52 [haiku] calling (branch: docs/live-activities-prompt)
+00:24:46 [tokens] tokens: 0+0cache→0out ($0.074502)
+00:24:46 [write] appended: ## 00:23 | docs/live-activities-prompt
+00:24:46 [write] position → 1010
+00:24:46 [git-backup] removed per-slug .gitignore (legacy bootstrap artifact)
