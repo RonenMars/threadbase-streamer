@@ -100,3 +100,34 @@ One rejected token never stops the others: a single dead device would otherwise 
 
 `GET /api/push/health` reports per-token state, including `expired` as distinct from `failing`.
 It never echoes a token back.
+
+## Renewal past the 8-hour cap
+
+iOS ends a Live Activity roughly 8 hours after it starts, so a long session loses its surface mid-session unless the activity is replaced.
+A renewal fires 30 minutes before each activity's `staleDate`: it sends an `end` for the old activity and asks the device to start a replacement.
+
+**The original `startedAt` is carried through unchanged.**
+This is the single most important property of the renewal path.
+iOS renders its own ticking elapsed timer from that value, so a renewal that stamps a fresh start makes the user's visible timer reset to zero — a regression that is completely invisible server-side and only shows up on someone's Lock Screen.
+`push_tokens.started_at` persists the original precisely so a restart cannot lose it, and the renewal prefers it over the session's own `startedAt` (which a resume can move forward).
+
+### Why not Temporal
+
+The repo depends on `@temporalio/client`, but it is reachable only under `MULTI_AGENT_FLOW`, where the PTY path this feature observes does not run.
+Wiring renewal through Temporal would make Live Activities require a Temporal server in the default configuration.
+
+Instead each activity's deadline is persisted (`push_tokens.stale_date`) and timers are re-armed on boot.
+An in-process `setTimeout` alone is insufficient — it dies with the process, and a restart inside an 8-hour window would silently drop every pending renewal.
+
+### Restart and idempotency
+
+- Deadlines are read from the DB on every tick, so an activity registered after boot needs no re-arming.
+- Firing is gated by `claimRenewal()`, a conditional `UPDATE ... WHERE renewed_at IS NULL`. It succeeds exactly once per row, so a timer re-armed after a restart mid-window cannot double-send.
+- Timers sleep in bounded hops (max 1 hour) rather than one long sleep, which avoids `setTimeout`'s 2^31 ms overflow and limits drift across a laptop suspend.
+- The timer is `unref`'d, so a pending renewal never holds the process open at shutdown.
+
+### What is not renewed
+
+A session that ended inside the renewal window is **not** resurrected.
+The scheduler re-checks the live session store at fire time rather than trusting the stored row, and a session that is gone or no longer `running`/`waiting_input` has its token expired instead.
+A device that never registered a push-to-start token still gets the `end`; the replacement simply cannot be started remotely, and the next foreground WebSocket update recreates it.
