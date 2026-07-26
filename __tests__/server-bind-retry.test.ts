@@ -38,6 +38,11 @@ function makeServer(port: number): StreamerServer {
     disableDb: true,
     cacheDir,
     scanProfiles: [],
+    // This test only exercises the bind path (~20ms). Without this, listen()
+    // starts a full scan of the machine's real ~/.claude/projects and close()
+    // awaits it — measured at 34s under a loaded full-suite run, which is what
+    // made this file flake against the 15s timeout.
+    skipStartupWarmup: true,
   });
 }
 
@@ -95,10 +100,12 @@ describe("StreamerServer bind retry logging", () => {
     const second = makeServer(port);
     const bindPromise = second.listen(port); // EADDRINUSE, then retries
 
-    // Release the port mid-window so the second instance binds within budget.
-    setTimeout(() => {
-      void first.close();
-    }, 600);
+    // Free the port once a retry has actually been logged, rather than on a fixed
+    // timer. The old 600ms guess raced the retry budget: if close() had not
+    // finished when the attempts ran out, an expected recovery became an
+    // exhaustion.
+    await vi.waitFor(() => expect(counter.debugRetries).toBeGreaterThanOrEqual(1));
+    await first.close();
 
     await expect(bindPromise).resolves.toBeUndefined();
 

@@ -447,6 +447,20 @@ export interface ServerConfig {
   // see each other's — and any real serve instance's — indexed conversations.
   // Default true (real serve usage keeps the persistent index).
   scannerPersistent?: boolean;
+  // Skip the startup cache warm-up scan (default false — real servers warm up).
+  //
+  // A test hook, and specifically a flake fix. `listen()` kicks off a full scan
+  // of every conversation on the machine, and `close()` awaits it so a post-scan
+  // cache write can't hit a closed database. On a loaded machine that scan takes
+  // tens of seconds against a developer's real ~/.claude/projects, so any test
+  // that constructs a server pays it twice (listen + close) and can overrun the
+  // vitest timeout — measured at 34s for a single close() during a full-suite
+  // run. Tests that never read conversation data should set this.
+  //
+  // The cache and repositories are still opened; only the scan and its
+  // dependent cache writes are skipped, so /api/conversations serves an empty
+  // cache rather than throwing.
+  skipStartupWarmup?: boolean;
   ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes); 0 disables the auto-hold timer (explicit hold_session still works)
   cacheDir?: string;
   tailSize?: number;
