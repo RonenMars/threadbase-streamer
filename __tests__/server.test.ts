@@ -1754,6 +1754,7 @@ describe("StreamerServer", () => {
     it("requires authentication", async () => {
       const res = await fetch(`${baseUrl}/api/providers`);
       expect(res.status).toBe(401);
+      expect(res.status).toBe(401);
     });
   });
 
