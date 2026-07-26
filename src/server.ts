@@ -86,6 +86,7 @@ import { pruneAgentConversations } from "./services/conversations/pruneAgentConv
 import { refreshConversationCache } from "./services/conversations/refreshConversationCache";
 import { shouldRefreshProjectsFromHdd } from "./services/conversations/shouldRefreshProjectsFromHdd";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
+import { permissionContentKey } from "./services/questions/detectPermissionGate";
 import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
 import { parseStatusLine } from "./services/questions/parseStatusLine";
 import {
@@ -250,6 +251,11 @@ export class StreamerServer {
     string,
     { prompt?: string; detail?: string; options: PermissionOption[]; cursor?: number }
   >();
+  // Content key (prompt + detail + options + cursor) of the permission gate
+  // currently broadcast for a session — mirrors pendingQuestionKey so a PTY
+  // repaint of the same gate doesn't re-broadcast on every tick. Cleared
+  // alongside pendingPermission.
+  private pendingPermissionKey = new Map<string, string>();
   private scanner: ConversationScanner | null = null;
   // Set when better-sqlite3 is unusable (e.g. node ABI mismatch made
   // ConversationCache.open throw), or when config.scannerPersistent is false
@@ -628,6 +634,7 @@ export class StreamerServer {
           }
           // A gone PTY can never have an open gate; clear silently.
           this.pendingPermission.delete(session.id);
+          this.pendingPermissionKey.delete(session.id);
           this.contendedSessions.delete(session.id);
           // Remember that WE owned this conversation up to now, so a resume that
           // follows a hold isn't mistaken for a collision with someone else
@@ -3384,10 +3391,14 @@ export class StreamerServer {
     if (gate === null) {
       if (!this.pendingPermission.has(sessionId)) return;
       this.pendingPermission.delete(sessionId);
+      this.pendingPermissionKey.delete(sessionId);
       this.wsHub.broadcast({ type: "permission_cancelled", sessionId });
       return;
     }
+    const key = permissionContentKey(gate);
+    if (this.pendingPermissionKey.get(sessionId) === key) return; // unchanged repaint
     this.pendingPermission.set(sessionId, gate);
+    this.pendingPermissionKey.set(sessionId, key);
     const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
     this.log.info(
       `[ws.broadcast_permission] ${sessionId.slice(0, 8)} subscribers=${subscriberCount}`,

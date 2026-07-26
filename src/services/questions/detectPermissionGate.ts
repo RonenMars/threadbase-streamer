@@ -40,6 +40,22 @@ export interface PermissionGate {
   cursor?: number;
 }
 
+/**
+ * Stable content key for de-duping repeated broadcasts of the same gate across
+ * PTY repaint ticks. Includes cursor — moving the on-screen selection is a
+ * real update the client needs, so it must produce a new key.
+ */
+export function permissionContentKey(gate: {
+  prompt?: string;
+  detail?: string;
+  options: PermissionOption[];
+  cursor?: number;
+}): string {
+  return `${gate.prompt ?? ""}::${gate.detail ?? ""}::${gate.options
+    .map((o) => `${o.index}.${o.label}`)
+    .join(",")}::${gate.cursor ?? ""}`;
+}
+
 // OSC 777 with the notify command from Claude Code. We match the stable core
 // (`]777;notify;Claude Code`) rather than the whole tmux-passthrough wrapper so
 // detection survives both the wrapped and unwrapped forms.
