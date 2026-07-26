@@ -347,6 +347,8 @@ export class StreamerServer {
   private dbPool: Awaited<ReturnType<typeof createPool>> | null = null;
   private dbInstanceId: string | null = null;
   private disableDb = false;
+  // Skip the startup warm-up scan (test hook; see ServerConfig.skipStartupWarmup).
+  private skipStartupWarmup: boolean;
   private browseRoot: string | null = null;
   private publicUrl: string | null = null;
   private browserCors: string | undefined;
@@ -446,6 +448,7 @@ export class StreamerServer {
     }
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
+    this.skipStartupWarmup = config.skipStartupWarmup ?? false;
     this.scannerPersistenceDisabled = config.scannerPersistent === false;
     this.scanProfiles = config.scanProfiles;
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
@@ -1511,6 +1514,19 @@ export class StreamerServer {
           // The scanner's persistent index uses the same better-sqlite3 module;
           // fall back to in-memory scans so requests keep working from disk.
           this.scannerPersistenceDisabled = true;
+        }
+        // Opt out of the warm-up scan entirely (test hook). The cache and
+        // repositories above are already open, so conversation endpoints serve an
+        // empty cache instead of throwing; only the scan and its dependent cache
+        // writes are skipped. Must still finish the warm-up bookkeeping, or
+        // close() would await a promise that never settles.
+        if (this.skipStartupWarmup) {
+          this.log.debug?.("startup warm-up scan skipped (skipStartupWarmup)", {
+            event: "cache.warmup_skipped",
+          });
+          this.finishWarmup(0);
+          resolveWarm();
+          return;
         }
         // Use a dedicated scanner for warm-up, independent of this.scanner, so
         // that onConversationChanged invalidations during the scan cannot cause
