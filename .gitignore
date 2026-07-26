@@ -34,3 +34,6 @@ menubar-signing.env
 *.p12
 *.pem
 releases/
+
+# Local session memory / scratch — never shared across checkouts.
+.remember/
