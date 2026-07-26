@@ -25,7 +25,7 @@ import {
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
-import { homedir } from "os";
+import { homedir, hostname } from "os";
 import { basename, dirname, join } from "path";
 import { createInterface } from "readline";
 import type { WebSocket } from "ws";
@@ -101,6 +101,13 @@ import { pruneAgentConversations } from "./services/conversations/pruneAgentConv
 import { refreshConversationCache } from "./services/conversations/refreshConversationCache";
 import { shouldRefreshProjectsFromHdd } from "./services/conversations/shouldRefreshProjectsFromHdd";
 import { deriveProjectChatTitle } from "./services/projectChats/deriveProjectChatTitle";
+import {
+  ApnsClient,
+  describeMissingApnsCredentials,
+  readApnsCredentialsFromEnv,
+} from "./services/push/apnsClient";
+import { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
+import { LiveActivitySender } from "./services/push/liveActivitySender";
 import { permissionContentKey } from "./services/questions/detectPermissionGate";
 import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
 import { parseStatusLine } from "./services/questions/parseStatusLine";
@@ -405,6 +412,11 @@ export class StreamerServer {
   // Paired-device registry (C5). Null when the cache DB failed to open — auth
   // then falls back to the shared API key alone, which is the pre-C5 behaviour.
   private devicesRepo: DevicesRepository | null = null;
+  // Live Activity push (Feature 12). Null when APNS_KEY is unset — the ordinary
+  // case on a dev machine and in CI, where the feature is simply off. Missing an
+  // optional push credential must never stop the server from booting.
+  private apnsClient: ApnsClient | null = null;
+  private liveActivityNotifier: LiveActivityNotifier | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
     fetchedAt: number;
@@ -739,6 +751,10 @@ export class StreamerServer {
         if (resp) {
           this.wsHub.broadcast({ type: "session_update", session: resp });
         }
+        // Push the transition to any iOS Live Activity watching this session.
+        // Fire-and-forget: the notifier logs its own failures, and a push must
+        // never delay or fail a session transition. No-op when APNs is off.
+        void this.liveActivityNotifier?.onStatusChange(session);
         this.sessionStatusBus.emit(`status:${session.id}`, session.status);
       },
     });
@@ -1071,6 +1087,39 @@ export class StreamerServer {
       this.ptyGraceTimers.delete(sessionId);
     }
     this.ptyGraceDeferCounts.delete(sessionId);
+  }
+
+  /**
+   * Bring up Live Activity push, if credentials are present (Feature 12).
+   *
+   * APNS_KEY absent is the ordinary case on a dev machine and in CI, so this
+   * logs once at info and leaves the feature off rather than failing: the server
+   * must not refuse to boot over a missing optional push credential.
+   *
+   * The key is read from the environment as PEM contents and never from a path
+   * on disk; neither it nor any device token is ever logged.
+   */
+  private initLiveActivityPush(pushRepo: PushRepository): void {
+    const creds = readApnsCredentialsFromEnv();
+    if (!creds) {
+      const why = describeMissingApnsCredentials();
+      if (why) this.log.info(why, { event: "live_activity.disabled" });
+      return;
+    }
+
+    this.apnsClient = new ApnsClient(creds);
+    const sender = new LiveActivitySender(this.apnsClient, pushRepo);
+    // Identifies this streamer to mobile, which shows several servers at once.
+    // Matches the id used for DB-persisted session scoping.
+    const serverId = process.env.THREADBASE_INSTANCE_ID ?? hostname();
+    this.liveActivityNotifier = new LiveActivityNotifier(sender, serverId, hostname());
+    // Host is logged (it selects sandbox vs production, a routine source of
+    // "why is nothing arriving") but no credential material is.
+    this.log.info("Live Activity push enabled", {
+      event: "live_activity.enabled",
+      host: creds.host,
+      topic: `${creds.bundleId}.push-type.liveactivity`,
+    });
   }
 
   /**
@@ -1451,6 +1500,7 @@ export class StreamerServer {
           this.pushRepo = new PushRepository(db);
 
           this.devicesRepo = new DevicesRepository(db);
+          this.initLiveActivityPush(this.pushRepo);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
           // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
           this.cacheMonitor = new CacheIntegrityMonitor(
@@ -1790,6 +1840,9 @@ export class StreamerServer {
     this.externalTails.clear();
     this.wsHub.dispose();
     this.pairTokens.dispose();
+    // The APNs HTTP/2 session is long-lived by design, so it keeps the event
+    // loop alive until closed explicitly.
+    this.apnsClient?.close();
     if (this.dbPool) {
       await this.dbPool.end();
     }
@@ -1880,7 +1933,6 @@ export class StreamerServer {
       return;
     }
 
-    const { hostname } = require("os");
     const ts = new Date().toISOString();
     this.log.info(`[pair] token exchanged from ${ip} at ${ts}`, {
       event: "pair.token_exchanged",
