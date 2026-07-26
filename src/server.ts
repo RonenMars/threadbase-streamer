@@ -69,8 +69,8 @@ import { ConversationCache, type ConversationListItem } from "./conversation-cac
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
-import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
 import { DevicesRepository } from "./db/repositories/devices.repository";
+import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
