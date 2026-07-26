@@ -16,7 +16,15 @@ fi
 
 # --staged covers what's about to be committed (working-tree diff); falls back
 # to --changed (committed-but-unmerged diff vs main) when nothing is staged.
+#
+# Biome exits non-zero when every provided path is outside `files.includes`
+# (e.g. a pure .gitignore commit). Skip in that case — there's nothing to lint.
 if ! git diff --cached --quiet; then
+  if ! git diff --cached --name-only --diff-filter=ACMR |
+    grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|json|css)$|^biome\.jsonc?$'; then
+    echo "lint-changed: no lintable staged files, skipping biome"
+    exit 0
+  fi
   exec npx biome check --staged .
 else
   exec npx biome check --changed --since=main .
