@@ -569,7 +569,7 @@ describe("StreamerServer", () => {
       ];
       writeFileSync(
         join(dateDir, `rollout-2026-01-01T00-00-00-${codexSessionId}.jsonl`),
-        lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+        `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`,
       );
 
       const codexStartFreshSpy = vi
@@ -711,7 +711,7 @@ describe("StreamerServer", () => {
       ];
       writeFileSync(
         join(dateDir, `rollout-2026-01-01T00-00-00-${codexSessionId}.jsonl`),
-        lines.map((l) => JSON.stringify(l)).join("\n") + "\n",
+        `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`,
       );
 
       const poisonPage = {
@@ -1003,7 +1003,7 @@ describe("StreamerServer", () => {
       mkdirSync(dateDir, { recursive: true });
       writeFileSync(
         join(dateDir, `rollout-2026-01-01T00-00-00-${codexSessionId}.jsonl`),
-        [
+        `${[
           JSON.stringify({
             timestamp: now.toISOString(),
             type: "session_meta",
@@ -1023,7 +1023,7 @@ describe("StreamerServer", () => {
               content: [{ type: "input_text", text: "wire-test question" }],
             },
           }),
-        ].join("\n") + "\n",
+        ].join("\n")}\n`,
       );
 
       const startRes = await fetch(`${boundBaseUrl}/api/sessions/start`, {
