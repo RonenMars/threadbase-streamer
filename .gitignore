@@ -26,11 +26,14 @@ scripts/remote-access/tui/tui
 #   sourced by scripts/deploy.sh during a signed menubar build. Lives at
 #   ~/.threadbase/menubar-signing.env in normal use; only here in case a
 #   developer copies it into the repo root for testing.
-# - *.p12 / *.pem: signing certs and private keys (Apple Developer ID,
-#   Cloudflare client certs, anything else). Never belongs in version control.
+# - *.p12 / *.pem / *.p8: signing certs and private keys (Apple Developer ID,
+#   APNs auth keys, Cloudflare client certs, anything else). Never belongs in
+#   version control. An APNs .p8 is Team Scoped (All Topics) and covers both
+#   Sandbox and Production, so a leaked one can push to real users as this app.
 # - releases/: matches ~/.threadbase/releases/ if the install dir is ever
 #   symlinked into the repo root for inspection.
 menubar-signing.env
 *.p12
 *.pem
+*.p8
 releases/

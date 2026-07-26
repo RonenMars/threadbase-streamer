@@ -76,9 +76,9 @@ running / waiting_input ──(grace timer / hold_session msg)──► idle  (P
 | `THREADBASE_SKIP_PERMISSION_MODE_PROMPT` | Set to `true` to disable the `serve` first-run interactive permission-mode prompt (see below); falls straight through to `acceptEdits`. |
 | `THREADBASE_ALLOW_BROWSER_CORS` | Enables browser CORS (off by default; no web page can make authenticated requests without it). Set to `1`/`true`/`yes`/`on` to allow the localhost dev origins, or to a comma-separated origin list (e.g. `https://app.example.com`) to allow those on top of the dev defaults. Overrides `browser_cors:` in server.yaml when set. Mobile is unaffected (no `Origin` header). |
 | `APNS_KEY` | **Contents** of the APNs p8 signing key (PEM), not a path. Enables iOS Live Activity push when set; the feature stays off (one info log, server boots normally) when unset. Never logged. See [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md). |
-| `APNS_KEY_ID` | Key id of the p8 in `APNS_KEY`. Default `BX4B6855WV`. |
-| `APNS_TEAM_ID` | Apple Developer team id. Default `GUW6BN8X57`. |
-| `APNS_BUNDLE_ID` | App bundle id; the APNs topic is this plus `.push-type.liveactivity`. Default `com.ronenmars.threadbase`. |
+| `APNS_KEY_ID` | Key id of the p8 in `APNS_KEY`. Required when `APNS_KEY` is set; under launchd it is derived from the `AuthKey_<keyId>.p8` filename. |
+| `APNS_TEAM_ID` | Apple Developer team id. Required when `APNS_KEY` is set; no default, so one deployment's Apple account is never baked into the source. |
+| `APNS_BUNDLE_ID` | App bundle id; the APNs topic is this plus `.push-type.liveactivity`. Required when `APNS_KEY` is set. |
 | `APNS_HOST` | APNs host. Defaults to sandbox (`api.sandbox.push.apple.com`) because the app's `aps-environment` is still `development`; set `api.push.apple.com` for production. |
 
 ## iOS Live Activity push

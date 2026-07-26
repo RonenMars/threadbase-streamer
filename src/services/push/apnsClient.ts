@@ -87,8 +87,15 @@ function base64url(input: Buffer | string): string {
  * off" and skip sending — the server must not fail to boot because an optional
  * push credential is missing.
  *
- * Non-secret identifiers have defaults (key id BX4B6855WV, team GUW6BN8X57,
- * bundle com.ronenmars.threadbase). The key itself never does.
+ * Every identifier comes from the environment with no default. Baking one
+ * deployment's Apple account into the source would make this package silently
+ * sign for the wrong team when someone else deploys it, and the resulting APNs
+ * rejection names none of that. Only the host has a default, because sandbox
+ * versus production is a deployment choice rather than an account identity.
+ *
+ * Returns null (rather than throwing) when the key is present but an identifier
+ * is missing, so a half-configured environment disables the feature instead of
+ * taking the server down. `describeMissingApnsCredentials` explains which one.
  */
 export function readApnsCredentialsFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -96,9 +103,11 @@ export function readApnsCredentialsFromEnv(
   const key = env.APNS_KEY;
   if (!key || key.trim().length === 0) return null;
 
-  const keyId = env.APNS_KEY_ID ?? "BX4B6855WV";
-  const teamId = env.APNS_TEAM_ID ?? "GUW6BN8X57";
-  const bundleId = env.APNS_BUNDLE_ID ?? "com.ronenmars.threadbase";
+  const keyId = env.APNS_KEY_ID?.trim();
+  const teamId = env.APNS_TEAM_ID?.trim();
+  const bundleId = env.APNS_BUNDLE_ID?.trim();
+  if (!keyId || !teamId || !bundleId) return null;
+
   const host = env.APNS_HOST ?? APNS_HOST_SANDBOX;
 
   return { key, keyId, teamId, bundleId, host };
@@ -113,10 +122,31 @@ export function readApnsCredentialsFromEnv(
 export function describeMissingApnsCredentials(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  if (env.APNS_KEY && env.APNS_KEY.trim().length > 0) return null;
+  if (!env.APNS_KEY || env.APNS_KEY.trim().length === 0) {
+    return (
+      "APNS_KEY is not set, so Live Activity push is disabled. " +
+      "Set it to the p8 key contents (not a path) to enable it."
+    );
+  }
+
+  // A key with no identifiers is the harder case to diagnose: it looks
+  // configured, and APNs answers a mismatch with a bare InvalidProviderToken
+  // that names nothing. Say exactly which variable is absent.
+  const missing = (
+    [
+      ["APNS_KEY_ID", env.APNS_KEY_ID],
+      ["APNS_TEAM_ID", env.APNS_TEAM_ID],
+      ["APNS_BUNDLE_ID", env.APNS_BUNDLE_ID],
+    ] as const
+  )
+    .filter(([, value]) => !value || value.trim().length === 0)
+    .map(([name]) => name);
+
+  if (missing.length === 0) return null;
   return (
-    "APNS_KEY is not set, so Live Activity push is disabled. " +
-    "Set it to the p8 key contents (not a path) to enable it."
+    `APNS_KEY is set but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not, ` +
+    "so Live Activity push is disabled. Under launchd, APNS_KEY_ID is derived from the " +
+    "AuthKey_<keyId>.p8 filename; the team and bundle ids must be set explicitly."
   );
 }
 
