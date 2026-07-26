@@ -107,6 +107,7 @@ import {
   readApnsCredentialsFromEnv,
 } from "./services/push/apnsClient";
 import { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
+import { LiveActivityRenewalScheduler } from "./services/push/liveActivityRenewal";
 import { LiveActivitySender } from "./services/push/liveActivitySender";
 import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
 import { parseStatusLine } from "./services/questions/parseStatusLine";
@@ -425,6 +426,7 @@ export class StreamerServer {
   // optional push credential must never stop the server from booting.
   private apnsClient: ApnsClient | null = null;
   private liveActivityNotifier: LiveActivityNotifier | null = null;
+  private liveActivityRenewal: LiveActivityRenewalScheduler | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
     fetchedAt: number;
@@ -1122,6 +1124,17 @@ export class StreamerServer {
     // Matches the id used for DB-persisted session scoping.
     const serverId = process.env.THREADBASE_INSTANCE_ID ?? hostname();
     this.liveActivityNotifier = new LiveActivityNotifier(sender, serverId, hostname());
+    // Re-arms pending renewals from the DB. Started here rather than lazily
+    // because the deadlines were persisted precisely so a restart inside an
+    // 8-hour window does not drop them.
+    this.liveActivityRenewal = new LiveActivityRenewalScheduler({
+      repo: pushRepo,
+      sender,
+      sessionStore: this.sessionStore,
+      serverId,
+      serverLabel: hostname(),
+    });
+    this.liveActivityRenewal.start();
     // Host is logged (it selects sandbox vs production, a routine source of
     // "why is nothing arriving") but no credential material is.
     this.log.info("Live Activity push enabled", {
@@ -1863,6 +1876,7 @@ export class StreamerServer {
     this.pairTokens.dispose();
     // The APNs HTTP/2 session is long-lived by design, so it keeps the event
     // loop alive until closed explicitly.
+    this.liveActivityRenewal?.stop();
     this.apnsClient?.close();
     if (this.dbPool) {
       await this.dbPool.end();

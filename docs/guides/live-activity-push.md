@@ -31,9 +31,9 @@ No key, key id, or team id is committed, and neither the key nor any device toke
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `APNS_KEY` | Yes | — | **Contents** of the p8 signing key (PEM). Not a path. Live Activity push stays off when unset. |
-| `APNS_KEY_ID` | No | `BX4B6855WV` | Key id of the p8 above. |
-| `APNS_TEAM_ID` | No | `GUW6BN8X57` | Apple Developer team id. |
-| `APNS_BUNDLE_ID` | No | `com.ronenmars.threadbase` | App bundle id. The APNs topic is this plus `.push-type.liveactivity`. |
+| `APNS_KEY_ID` | With `APNS_KEY` | derived from the key filename under launchd | Key id of the p8 above. The shim reads it from `AuthKey_<keyId>.p8`, so it normally needs no setting. |
+| `APNS_TEAM_ID` | With `APNS_KEY` | — | Apple Developer team id. |
+| `APNS_BUNDLE_ID` | With `APNS_KEY` | — | App bundle id. The APNs topic is this plus `.push-type.liveactivity`. |
 | `APNS_HOST` | No | `api.sandbox.push.apple.com` | Set to `api.push.apple.com` for production. |
 
 The default host is **sandbox**, because the app's `aps-environment` is still `development`.
@@ -45,8 +45,33 @@ The signing key lives in 1Password, not on disk.
 The operator exports it before starting the server:
 
 ```bash
-export APNS_KEY="$(op read 'op://Personal/Threadbase-p8-file-Notifications-APNs/AuthKey_BX4B6855WV.p8')"
+export APNS_KEY="$(op read 'op://<vault>/<item>/AuthKey_<keyId>.p8')"
+export APNS_KEY_ID="<keyId>"
+export APNS_TEAM_ID="<teamId>"
+export APNS_BUNDLE_ID="<bundleId>"
 ```
+
+None of the identifiers have defaults in the source.
+Baking one deployment's Apple account into the package would make it silently sign for the wrong team when someone else deploys it, and the APNs rejection that follows names none of that.
+If `APNS_KEY` is set but an identifier is missing, the feature stays off and the log says which variable is absent.
+
+### The supervised prod instance
+
+launchd cannot read a file into an environment variable, and the plist is the wrong place for the key: it is world-readable (0644) and `scripts/deploy.sh` regenerates it on every deploy, so an embedded secret would be both exposed and silently wiped.
+
+Instead, drop the key into the install dir and the launchd shim loads it at spawn time:
+
+```bash
+mv ~/Downloads/AuthKey_<keyId>.p8 ~/.threadbase/ && chmod 600 ~/.threadbase/AuthKey_<keyId>.p8
+```
+
+The shim globs `~/.threadbase/AuthKey_<keyId>.p8` rather than matching one hardcoded filename, and **derives `APNS_KEY_ID` from the filename** — Apple embeds the key id there.
+That makes a rotation a drop-in: replace the file, restart, no code or config change.
+It also removes a failure mode, since the key and the id it is announced under can never disagree; a mismatch is rejected by Apple as a bare `InvalidProviderToken` that says nothing about the cause.
+
+An explicit `APNS_KEY` or `APNS_KEY_ID` in the environment still wins.
+With several `AuthKey_*.p8` files present the newest by mtime is used and the ambiguity is logged — remove stale keys after a rotation.
+Only the path and key id are logged, never the key contents.
 
 The key must be **Team Scoped (All Topics)**.
 A key scoped to the bundle id alone cannot sign the `.push-type.liveactivity` topic.
@@ -100,3 +125,34 @@ One rejected token never stops the others: a single dead device would otherwise 
 
 `GET /api/push/health` reports per-token state, including `expired` as distinct from `failing`.
 It never echoes a token back.
+
+## Renewal past the 8-hour cap
+
+iOS ends a Live Activity roughly 8 hours after it starts, so a long session loses its surface mid-session unless the activity is replaced.
+A renewal fires 30 minutes before each activity's `staleDate`: it sends an `end` for the old activity and asks the device to start a replacement.
+
+**The original `startedAt` is carried through unchanged.**
+This is the single most important property of the renewal path.
+iOS renders its own ticking elapsed timer from that value, so a renewal that stamps a fresh start makes the user's visible timer reset to zero — a regression that is completely invisible server-side and only shows up on someone's Lock Screen.
+`push_tokens.started_at` persists the original precisely so a restart cannot lose it, and the renewal prefers it over the session's own `startedAt` (which a resume can move forward).
+
+### Why not Temporal
+
+The repo depends on `@temporalio/client`, but it is reachable only under `MULTI_AGENT_FLOW`, where the PTY path this feature observes does not run.
+Wiring renewal through Temporal would make Live Activities require a Temporal server in the default configuration.
+
+Instead each activity's deadline is persisted (`push_tokens.stale_date`) and timers are re-armed on boot.
+An in-process `setTimeout` alone is insufficient — it dies with the process, and a restart inside an 8-hour window would silently drop every pending renewal.
+
+### Restart and idempotency
+
+- Deadlines are read from the DB on every tick, so an activity registered after boot needs no re-arming.
+- Firing is gated by `claimRenewal()`, a conditional `UPDATE ... WHERE renewed_at IS NULL`. It succeeds exactly once per row, so a timer re-armed after a restart mid-window cannot double-send.
+- Timers sleep in bounded hops (max 1 hour) rather than one long sleep, which avoids `setTimeout`'s 2^31 ms overflow and limits drift across a laptop suspend.
+- The timer is `unref`'d, so a pending renewal never holds the process open at shutdown.
+
+### What is not renewed
+
+A session that ended inside the renewal window is **not** resurrected.
+The scheduler re-checks the live session store at fire time rather than trusting the stored row, and a session that is gone or no longer `running`/`waiting_input` has its token expired instead.
+A device that never registered a push-to-start token still gets the `end`; the replacement simply cannot be started remotely, and the next foreground WebSocket update recreates it.

@@ -86,7 +86,36 @@ export class LiveActivitySender {
     priority?: 5 | 10;
   }): Promise<LiveActivitySendOutcome> {
     const now = args.now ?? Date.now();
-    const tokens = this.repo.listForSession("liveactivity_update", args.sessionId, now);
+    return this.sendToTokens({
+      tokens: this.repo.listForSession("liveactivity_update", args.sessionId, now),
+      sessionId: args.sessionId,
+      event: args.event,
+      contentState: args.contentState,
+      now,
+      priority: args.priority,
+    });
+  }
+
+  /**
+   * Push to an explicit token list.
+   *
+   * Renewal needs this: a replacement activity does not exist yet, so it is
+   * started via the app-wide push-to-start token rather than any per-session
+   * lookup. Shares one fan-out body with `send()` so failure handling cannot
+   * drift between the two paths.
+   */
+  async sendToTokens(args: {
+    tokens: PushTokenRow[];
+    sessionId: string;
+    event: LiveActivityEvent;
+    contentState: LiveActivityContentState;
+    now?: number;
+    priority?: 5 | 10;
+    /** Overrides the row's own cap — renewal sets the replacement's window. */
+    staleDate?: number | null;
+  }): Promise<LiveActivitySendOutcome> {
+    const now = args.now ?? Date.now();
+    const tokens = args.tokens;
     const outcome: LiveActivitySendOutcome = {
       attempted: tokens.length,
       succeeded: 0,
@@ -95,7 +124,9 @@ export class LiveActivitySender {
     if (tokens.length === 0) return outcome;
 
     const results = await Promise.all(
-      tokens.map((row) => this.sendToToken(row, args.event, args.contentState, now, args.priority)),
+      tokens.map((row) =>
+        this.sendToToken(row, args.event, args.contentState, now, args.priority, args.staleDate),
+      ),
     );
 
     for (const { row, result, error } of results) {
@@ -170,11 +201,12 @@ export class LiveActivitySender {
     contentState: LiveActivityContentState,
     now: number,
     priority?: 5 | 10,
+    staleDateOverride?: number | null,
   ): Promise<{ row: PushTokenRow; result?: ApnsSendResult; error?: unknown }> {
     // A stale-date is only meaningful for an update; an `end` is terminal.
     const staleDate =
       event === "update"
-        ? (row.stale_date ?? contentState.startedAt + ACTIVITY_MAX_LIFETIME_MS)
+        ? (staleDateOverride ?? row.stale_date ?? contentState.startedAt + ACTIVITY_MAX_LIFETIME_MS)
         : null;
     try {
       const result = await this.apns.send({
