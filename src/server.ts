@@ -357,6 +357,8 @@ export class StreamerServer {
   private sessionInputAttempts = new Map<string, number[]>();
   private ptyGracePeriodMs: number;
   private defaultSystemPrompt: string;
+  // See ServerConfig.codexSystemPromptEnabled.
+  private codexSystemPromptEnabled: boolean;
   private defaultPermissionMode: PermissionMode;
   private defaultModel: string;
   private defaultEffort: "low" | "medium" | "high" | "xhigh" | "max";
@@ -459,6 +461,7 @@ export class StreamerServer {
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.codexSystemPromptEnabled = config.codexSystemPromptEnabled ?? false;
     this.defaultPermissionMode =
       config.defaultPermissionMode ?? loadDefaultPermissionMode() ?? "acceptEdits";
     this.defaultModel = config.defaultModel ?? "sonnet";
@@ -4319,12 +4322,18 @@ export class StreamerServer {
       typeof clientPrompt === "string" ? clientPrompt : null,
     ].filter(Boolean);
 
+    // Codex has no --system-prompt flag — sending one is a positional
+    // [PROMPT] arg that Codex treats as the opening turn, not a system-level
+    // instruction. Gate it behind codexSystemPromptEnabled so a fresh Codex
+    // session never gets an uninvited first message unless opted in.
+    const includeSystemPrompt = provider !== CODEX_CLI_PROVIDER || this.codexSystemPromptEnabled;
+
     try {
       const session = await this.ptyManager.startFresh({
         provider,
         projectPath: resolvedPath,
         projectName: body.projectName,
-        systemPrompt: systemPromptParts.join("\n"),
+        ...(includeSystemPrompt && { systemPrompt: systemPromptParts.join("\n") }),
         permissionMode: this.defaultPermissionMode,
         claudeFlags: this.claudeFlags,
         claudeExtraArgs: this.claudeExtraArgs,

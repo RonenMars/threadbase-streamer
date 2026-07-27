@@ -376,6 +376,99 @@ describe("StreamerServer", () => {
       claudeStartFreshSpy.mockRestore();
       codexStartFreshSpy.mockRestore();
     });
+
+    it("omits systemPrompt for a fresh codex-cli session by default", async () => {
+      const sessionId = "049fd3ce-ad78-4980-b441-1cfa05edaec9";
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (server as any).sessionStatusBus.emit(`status:${sessionId}`, "waiting_input");
+          });
+          return {
+            id: sessionId,
+            provider: "codex-cli",
+            projectPath: join(browseRoot, "project"),
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
+        });
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+
+      expect(res.status).toBe(200);
+      const [callArgs] = codexStartFreshSpy.mock.calls[0];
+      expect(callArgs).not.toHaveProperty("systemPrompt");
+
+      codexStartFreshSpy.mockRestore();
+    });
+
+    it("sends systemPrompt for a fresh codex-cli session when codexSystemPromptEnabled is on", async () => {
+      await server.close();
+      server = new StreamerServer({
+        ...HOST_ISOLATION,
+        port,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir,
+        browseRoot,
+        scanProfiles: FIXTURE_PROFILES,
+        codexSystemPromptEnabled: true,
+      });
+      await server.listen(port, { awaitReady: true });
+      port = server.port;
+
+      const sessionId = "049fd3ce-ad78-4980-b441-1cfa05edaeca";
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (server as any).sessionStatusBus.emit(`status:${sessionId}`, "waiting_input");
+          });
+          return {
+            id: sessionId,
+            provider: "codex-cli",
+            projectPath: join(browseRoot, "project"),
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
+        });
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(codexStartFreshSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ systemPrompt: expect.any(String) }),
+      );
+
+      codexStartFreshSpy.mockRestore();
+    });
   });
 
   describe("Codex rollout-file binding", () => {
