@@ -465,6 +465,12 @@ export interface ServerConfig {
   tailSize?: number;
   directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)
   defaultSystemPrompt?: string; // prepended to every PTY session's --system-prompt; overrides the built-in default
+  // Codex has no --system-prompt flag — the only injection point is the
+  // positional [PROMPT] argument, which Codex treats as the opening turn
+  // rather than a system-level instruction. Off by default so a fresh Codex
+  // session never gets an uninvited first message; enable to send the built
+  // system prompt (+ browse-root boundary + client prompt) that way anyway.
+  codexSystemPromptEnabled?: boolean;
   defaultPermissionMode?: PermissionMode; // Claude Code --permission-mode for spawned PTY sessions (default "acceptEdits")
   defaultModel?: string; // Claude Code --model for spawned PTY sessions (default "sonnet")
   defaultEffort?: "low" | "medium" | "high" | "xhigh" | "max"; // Claude Code --effort for spawned PTY sessions (default "low")
