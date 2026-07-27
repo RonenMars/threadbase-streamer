@@ -51,19 +51,19 @@ For each provider (`claude-code`, `codex`), the job:
    - Read the JSONL the CLI wrote into the scratch directory.
 4. **Structural diff.** Run `collectKeySets()` (new helper) over the probe's JSONL: group lines by their discriminator field (e.g. `type` for Codex, envelope shape for Claude) and record the set of keys seen per group. Compare against `collectKeySets()` run over the baseline fixture at `__tests__/fixtures/providers/<provider>/<VERIFIED_AGAINST[provider].captured[0]>/`.
 5. **Branch on outcome:**
-   - **PASS** — probe reached `waiting_input` cleanly, and the key-sets match exactly (no added/removed/changed keys per envelope type). Open a GitHub issue via a fixed template: old version → new version, "structural diff: none, probe passed." Notify Telegram: `✅ <provider> <old> → <new>: verified, issue #NNN opened.`
+   - **PASS** — probe reached `waiting_input` cleanly, and the key-sets match exactly (no added/removed/changed keys per envelope type). No notification, no issue — nothing needs a human's attention, so nothing is raised. The only trace is the workflow run itself in the Actions history.
    - **FAIL** — probe never reached `waiting_input` (crash, timeout, gate never resolved), or the key-set diff is non-empty. Open a GitHub issue via a fixed template containing: old/new version, the concrete key diff (added/removed keys per envelope type) or the failure point with a raw terminal/JSONL excerpt, and a link to the workflow run. Notify Telegram: `⚠️ <provider> <old> → <new>: structural change detected, issue #NNN opened — needs review.`
 
-**No PRs, no commits, from this job — ever.** Both branches only open a GitHub issue and send a Telegram message. A human decides when and how to act on the issue (typically: manually bump `VERIFIED_AGAINST.captured` and refresh the fixture in a normal reviewed PR).
+**No PRs, no commits, from this job — ever.** The only repo-visible side effect, and only on FAIL, is opening a GitHub issue. A human decides when and how to act on it (typically: manually bump `VERIFIED_AGAINST.captured` and refresh the fixture in a normal reviewed PR).
 
-Both issue templates are fixed text with interpolated facts (versions, diff, excerpt) — no LLM call anywhere in this pipeline.
+The issue template is fixed text with interpolated facts (versions, diff, excerpt) — no LLM call anywhere in this pipeline.
 
 ### Component 2 — Telegram notification
 
 - A new, dedicated Telegram bot (created and owned by the user; not the bot backing the existing `TELEGRAM_BOT_TOKEN` convention used elsewhere).
 - New repo secrets: `PROVIDER_WATCH_TELEGRAM_BOT_TOKEN`, `PROVIDER_WATCH_TELEGRAM_CHAT_ID`.
 - Delivery is a plain HTTP POST to `https://api.telegram.org/bot<token>/sendMessage` — no `semantic-release` plugin involved; `semantic-release` only runs on tb-streamer's own release push and has no hook for an external, scheduled check like this.
-- Fires only from the daily job (either branch). Never fires from server startup.
+- Fires only on FAIL, only from the daily job. A PASS is silent (see Component 1). Startup never notifies via Telegram.
 
 ### Component 3 — Server startup (existing mechanism, new surfacing)
 
@@ -86,27 +86,27 @@ GET  /api/update/status
        current: string, latest: string | null, activeSessions: number }
 
 POST /api/update/start
-  -> { jobId: string }
-  Begins the flow (see below). Returns immediately; does not block on completion.
+  Body: {} to begin, or { jobId, hardKill: true } to escalate an existing
+  stuck job. Returns { jobId } either way. Idempotent on a stuck jobId: calling
+  it again without hardKill while state === "stuck" is a no-op that just
+  returns the existing jobId — only hardKill:true advances a stuck job.
 
 GET  /api/update/progress?jobId=<id>
   -> { state: "holding" | "stuck" | "installing" | "restarting" | "done" | "failed",
        stuckSessions?: string[] }
   Mobile polls this to drive its own UI through the flow.
-
-POST /api/update/force-kill?jobId=<id>
-  Only valid when progress reports state === "stuck". Escalates to a hard kill
-  of the sessions that didn't hold, then proceeds with the install.
 ```
+
+One endpoint drives the whole flow instead of a separate force-kill route — folding "continue this job, forcing through stuck sessions" into the same `start` call keeps there being exactly one place that knows how to advance a job, rather than splitting that logic across two handlers that'd each need their own jobId lookup.
 
 **Flow, driven by `POST /api/update/start`:**
 
 1. **Check** (`GET /api/update/status`, called by mobile before showing the prompt). Reports install kind, current/latest version, and current active-session count — this is the data behind Component 3's banner and the "informing of consequences" step.
-2. **Inform + approve.** Mobile shows the banner/prompt with the session count so the user understands sessions will be interrupted, and only calls `POST /api/update/start` on explicit tap-through. This is the sole consent gate — once called, the flow proceeds through active sessions rather than deferring (matching `update --force` semantics), because the user already saw the count and approved.
+2. **Inform + approve.** Mobile shows the banner/prompt with the session count so the user understands sessions will be interrupted, and only calls `POST /api/update/start` (empty body) on explicit tap-through. This is the sole consent gate — once called, the flow proceeds through active sessions rather than deferring (matching `update --force` semantics), because the user already saw the count and approved.
 3. **Graceful hold.** For every currently-running session, the server calls the existing `PTYManager.putOnHold()` — the same mechanism the `hold_session` WS message and the grace-timer already use (SIGINT + screen disposal, history intact, session resumable afterward). This is not a new kill path; it reuses the one safety property the app already relies on elsewhere.
 4. **Bounded wait.** The flow waits up to a fixed timeout (exact value TBD at implementation time, ballpark 10–15s) for every held session to reach `on_hold`. Sessions that settle within the window proceed normally.
-5. **Stuck escalation.** Any session still not `on_hold` when the timeout elapses stops the flow there: `GET /api/update/progress` reports `state: "stuck"` with the list of stuck session ids, and mobile must show a second, explicit approval ("N sessions aren't responding — force-close them?") before calling `POST /api/update/force-kill`. No silent hard-kill, and no silent indefinite wait — the flow always surfaces the stuck state and asks again rather than picking a default on the user's behalf.
-6. **Install.** Once sessions are held (or hard-killed on escalation), the flow calls `runInstall({ force: true, runningServer: {...}, ... })` — the same `src/updater/install.ts` entry point the CLI `update` command and the existing webhook already use. No new download/swap/restart logic; this only adds a new, consent-gated caller of the existing installer.
+5. **Stuck escalation.** Any session still not `on_hold` when the timeout elapses stops the flow there: `GET /api/update/progress` reports `state: "stuck"` with the list of stuck session ids. Mobile must show a second, explicit approval ("N sessions aren't responding — force-close them?") before calling `POST /api/update/start` again with `{ jobId, hardKill: true }`. No silent hard-kill, and no silent indefinite wait — the flow always surfaces the stuck state and asks again rather than picking a default on the user's behalf.
+6. **Install.** Once sessions are held (or hard-killed via the `hardKill` escalation), the flow calls `runInstall({ force: true, runningServer: {...}, ... })` — the same `src/updater/install.ts` entry point the CLI `update` command and the existing webhook already use. No new download/swap/restart logic; this only adds a new, consent-gated caller of the existing installer.
 7. **Restart + report.** `runInstall` already handles the platform-specific restart (`restartService()`, `waitForRestartHealth()`) and Windows' `stopService()`-before-swap ordering. `GET /api/update/progress` reflects `installing` → `restarting` → `done`/`failed` so mobile can show real progress instead of a blind spinner.
 
 **Reused, not rebuilt:** `runInstall()`, `PTYManager.putOnHold()`, `isBrewInstall()`, `restartService()`/`waitForRestartHealth()`, the entire download/verify/swap/prune pipeline. This component adds a new Bearer-authed, consent-gated entry point in front of that existing machinery — it does not duplicate any of it.
@@ -142,13 +142,14 @@ POST /api/update/force-kill?jobId=<id>
 | Key-set diff, clean | Probe output with identical envelope key-sets to the baseline fixture yields PASS |
 | Key-set diff, drift | A synthetic probe output with an added/removed key yields FAIL with the specific diff reported |
 | Probe failure | A probe that never reaches `waiting_input` (simulated timeout) yields FAIL with a failure-point excerpt, not a false PASS |
-| No repo writes | Neither branch creates a commit, branch, or PR — verified by asserting the job's GitHub API calls are issue-creation only |
-| Telegram delivery | Both branches produce exactly one Telegram message with the expected content shape |
+| No repo writes | Neither branch creates a commit, branch, or PR — the only GitHub API call the job ever makes is issue-creation, and only on FAIL |
+| Silent PASS | A PASS produces zero GitHub API calls and zero Telegram messages |
+| Telegram delivery | FAIL produces exactly one Telegram message with the expected content shape |
 | Startup unaffected | Server startup behavior (log line, `/api/providers` warning) is unchanged by this work except for the new mobile-facing field |
 | Homebrew refusal | `GET /api/update/status` reports `installKind: "homebrew"` and `POST /api/update/start` refuses with a message pointing at `brew upgrade`, matching `runInstall()`'s existing behavior |
 | Consent gate | `POST /api/update/start` is never called by mobile without the user first seeing `GET /api/update/status`'s active-session count (an integration/UX assertion on the mobile side, not just the server) |
 | Graceful hold reused | The update flow's hold step calls the same `PTYManager.putOnHold()` path as the existing `hold_session` WS message — no parallel kill mechanism introduced |
-| Stuck escalation | A session that never reaches `on_hold` within the timeout produces `state: "stuck"` with its id listed, and `POST /api/update/force-kill` is rejected unless progress currently reports `stuck` |
+| Stuck escalation | A session that never reaches `on_hold` within the timeout produces `state: "stuck"` with its id listed, and `POST /api/update/start` with `hardKill: true` is rejected unless progress currently reports `stuck` |
 | Install reuse | The flow's install step calls the existing `runInstall()` with `force: true` — no duplicated download/verify/swap/restart logic |
 
 ## Implementation order
@@ -158,8 +159,7 @@ POST /api/update/force-kill?jobId=<id>
 3. GitHub Actions workflow wiring the probe + diff + issue creation, gated behind `workflow_dispatch` first for manual validation before enabling `schedule:`.
 4. Telegram notification step.
 5. `GET /api/update/status` — read-only, install-kind + version + active-session reporting. Safe to ship alone; nothing calls it yet.
-6. `POST /api/update/start` + `GET /api/update/progress` + the hold → wait → escalate → install → restart state machine, built on the existing `runInstall()`/`PTYManager.putOnHold()`/`restartService()` primitives.
-7. `POST /api/update/force-kill` escalation path.
-8. Mobile-facing startup surfacing (wire shape + copy) and wiring the update button to steps 5–7 — coordinated with tb-mobile per the existing backward-compatibility rules.
+6. `POST /api/update/start` + `GET /api/update/progress` + the hold → wait → escalate (via `hardKill`) → install → restart state machine, built on the existing `runInstall()`/`PTYManager.putOnHold()`/`restartService()` primitives.
+7. Mobile-facing startup surfacing (wire shape + copy) and wiring the update button to steps 5–6 — coordinated with tb-mobile per the existing backward-compatibility rules.
 
-Each step is independently revertible; steps 5–8 are additive endpoints/fields only and touch no existing mobile contract until step 8, which should follow the existing `docs/compatibility/tb-mobile.md` process.
+Each step is independently revertible; steps 5–7 are additive endpoints/fields only and touch no existing mobile contract until step 7, which should follow the existing `docs/compatibility/tb-mobile.md` process.
