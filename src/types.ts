@@ -174,7 +174,11 @@ export interface UserMessage {
 }
 
 export type WSMessage =
-  | { type: "terminal_output"; sessionId: string; data: string }
+  // `seq` is a per-session monotonically increasing chunk counter (starts at
+  // 1). Additive — old clients ignore it. Lets a client detect a stale chunk
+  // delivered after a reconnect/replay race (seq not > its last-seen seq for
+  // this session) instead of trusting raw WS arrival order.
+  | { type: "terminal_output"; sessionId: string; data: string; seq?: number }
   | {
       type: "session_update";
       session?: SessionResponse;
@@ -222,7 +226,16 @@ export type WSMessage =
   // client can positively identify user-owned output instead of parsing the
   // `❯ <text>` transcript line heuristically. Additive; old clients ignore it.
   | { type: "user_message"; sessionId: string; text: string; ts: number }
-  | { type: "terminal_replay"; sessionId: string; lines: string[]; userMessages?: UserMessage[] }
+  // `seq` is the sender's last-emitted terminal_output seq at replay time (or
+  // absent if no chunk has been emitted yet), so a resubscribing client can
+  // baseline lastSeq before trusting subsequent terminal_output chunks.
+  | {
+      type: "terminal_replay";
+      sessionId: string;
+      lines: string[];
+      userMessages?: UserMessage[];
+      seq?: number;
+    }
   | { type: "session_ready"; session: SessionResponse }
   // Multi-agent additive variants. Old clients ignore unknown types.
   | {

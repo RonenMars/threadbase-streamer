@@ -396,6 +396,11 @@ export class StreamerServer {
   // every provider; read only by the idle reaper. Entries are dropped when the
   // session leaves the runner (reap/exit/hold).
   private lastAgentChunkAt = new Map<string, number>();
+  // sessionId → last terminal_output seq broadcast (starts at 1, per session).
+  // Stamped on every terminal_output/terminal_replay so a client can detect a
+  // stale chunk delivered after a reconnect race instead of trusting raw WS
+  // arrival order. Entries dropped alongside lastAgentChunkAt.
+  private terminalSeq = new Map<string, number>();
   // Recently accepted input idempotency keys (C4). A retried POST replays its
   // original outcome instead of submitting the prompt to the agent twice.
   private idempotency = new IdempotencyStore();
@@ -672,7 +677,9 @@ export class StreamerServer {
         // moves on *user* input — an agent grinding through a long task is
         // active even when nobody has touched it.
         this.lastAgentChunkAt.set(sessionId, Date.now());
-        this.wsHub.broadcast({ type: "terminal_output", sessionId, data });
+        const seq = (this.terminalSeq.get(sessionId) ?? 0) + 1;
+        this.terminalSeq.set(sessionId, seq);
+        this.wsHub.broadcast({ type: "terminal_output", sessionId, data, seq });
       },
       onUserMessage: (sessionId, text, ts) => {
         this.wsHub.broadcast({ type: "user_message", sessionId, text, ts });
@@ -894,6 +901,7 @@ export class StreamerServer {
                   sessionId: msg.sessionId,
                   lines,
                   userMessages,
+                  seq: this.terminalSeq.get(msg.sessionId),
                 }),
               );
             }
@@ -1345,6 +1353,7 @@ export class StreamerServer {
       );
       this.ptyManager.putOnHold(session.id);
       this.lastAgentChunkAt.delete(session.id);
+      this.terminalSeq.delete(session.id);
       this.idempotency.clear(session.id);
       this.sessionSubscribers.delete(session.id);
       reaped.push(session.id);
@@ -1852,6 +1861,7 @@ export class StreamerServer {
       this.idleReaperTimer = null;
     }
     this.lastAgentChunkAt.clear();
+    this.terminalSeq.clear();
     // Record why each live session is about to end, BEFORE ptyManager.dispose()
     // kills it and before cache.close() takes the registry's DB handle away.
     // dispose() fires no onStatusChange, so without this a clean shutdown looks
