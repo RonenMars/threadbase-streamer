@@ -37,6 +37,13 @@ export interface LiveActivityContentState {
   startedAt: number;
   lastOutput: string;
   serverLabel?: string;
+  /**
+   * User-visible session title, derived from the first user message.
+   *
+   * Absent until the first message is submitted (a session between spawn and
+   * that point has no title yet); mobile falls back to `projectName` when unset.
+   */
+  sessionName?: string;
 }
 
 /**

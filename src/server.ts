@@ -710,6 +710,10 @@ export class StreamerServer {
         if (resp) this.wsHub.broadcast({ type: "session_ready", session: resp });
       },
       onStatusChange: (session) => {
+        // Captured before the update below overwrites it — the Live Activity
+        // notifier needs the pre-transition status to tell a genuine
+        // waiting_input↔running edge apart from a same-status re-emit.
+        const previousStatus = this.sessionStore.getManaged(session.id)?.status;
         this.sessionStore.updateManaged(session.id, {
           status: session.status,
           completedAt: session.completedAt,
@@ -783,7 +787,7 @@ export class StreamerServer {
         // Push the transition to any iOS Live Activity watching this session.
         // Fire-and-forget: the notifier logs its own failures, and a push must
         // never delay or fail a session transition. No-op when APNs is off.
-        void this.liveActivityNotifier?.onStatusChange(session);
+        void this.liveActivityNotifier?.onStatusChange(session, previousStatus);
         this.sessionStatusBus.emit(`status:${session.id}`, session.status);
       },
     });

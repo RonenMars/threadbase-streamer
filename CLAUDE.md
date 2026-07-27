@@ -89,6 +89,8 @@ Three token kinds now arrive from one device and are not interchangeable: `expo`
 
 The content-state shape is a **contract shared with tb-mobile** (decoded by a Swift `Codable` struct). An ActivityKit decode failure is silent — the surface just stops updating — so changing a field name or type requires a coordinated tb-mobile change. `startedAt` is epoch **milliseconds** and iOS renders its own ticking timer from it: never send a computed elapsed value, and carry the original value through a renewal or the user's timer visibly resets to zero.
 
+`LiveActivityNotifier` is **per-turn, not per-session**: a push fires on the `waiting_input → running` edge (turn starts) and the matching `running → waiting_input` edge (turn — including sub-agents — ends), not on every status transition. A fresh session's first `running` has no prior `waiting_input`, so booting/idling never opens an activity. `sessionName` (derived from the first user message, `src/utils/deriveSessionName.ts`) is included in content-state and mobile should fall back to `projectName` when it's unset.
+
 Full contract, env vars, failure handling: [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md).
 
 ## Multi-agent mode
