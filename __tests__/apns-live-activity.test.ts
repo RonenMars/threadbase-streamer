@@ -85,8 +85,15 @@ function runningState(overrides: Partial<ManagedSession> = {}) {
 }
 
 /** Read the aps envelope off a captured payload, failing loudly if absent. */
-function apsOf(payload: unknown): { event: string; "content-state": { status: string } } {
-  const aps = (payload as { aps?: { event: string; "content-state": { status: string } } })?.aps;
+function apsOf(payload: unknown): {
+  event: string;
+  "content-state": { status: string; sessionName?: string };
+} {
+  const aps = (
+    payload as {
+      aps?: { event: string; "content-state": { status: string; sessionName?: string } };
+    }
+  )?.aps;
   if (!aps) throw new Error("expected an aps envelope on the sent payload");
   return aps;
 }
@@ -515,7 +522,7 @@ describe("send outcomes", () => {
 });
 
 describe("notifier", () => {
-  it("pushes on a status change and skips an unchanged status", async () => {
+  it("does not push on a fresh session's first running (no prior waiting_input)", async () => {
     repo.register({
       token: "tok-a",
       platform: "ios",
@@ -532,19 +539,47 @@ describe("notifier", () => {
     );
     const notifier = new LiveActivityNotifier(sender, "srv-1");
 
-    await notifier.onStatusChange(session({ status: "running" }));
-    // Live Activity pushes are rate-limited by iOS, so an unchanged status is
-    // budget spent for no visible change.
-    await notifier.onStatusChange(session({ status: "running" }));
-    await notifier.onStatusChange(session({ status: "waiting_input" }));
+    // Session boot: spawn sets status "running" directly, with no prior
+    // waiting_input — this must not open an activity.
+    await notifier.onStatusChange(session({ status: "running" }), undefined);
+    // Boot completes (Claude reaches its first prompt) — also not a turn end,
+    // since no turn was ever opened.
+    await notifier.onStatusChange(session({ status: "waiting_input" }), "running");
 
-    const events = client.send.mock.calls.map(
-      (c) => (c[0].payload as { aps: { event: string; "content-state": { status: string } } }).aps,
+    expect(client.send).not.toHaveBeenCalled();
+  });
+
+  it("pushes a start on the user-input edge and an end on turn completion", async () => {
+    repo.register({
+      token: "tok-a",
+      platform: "ios",
+      kind: "liveactivity_update",
+      activityId: "act-a",
+      sessionId: "sess-1",
+      startedAt: 1_700_000_000_000,
+    });
+    const { client } = fakeApns(() => okResult);
+    const { LiveActivityNotifier } = await import("../src/services/push/liveActivityNotifier");
+    const sender = new LiveActivitySender(
+      client as unknown as import("../src/services/push/apnsClient").ApnsClient,
+      repo,
     );
+    const notifier = new LiveActivityNotifier(sender, "srv-1");
+
+    // A turn begins: waiting_input -> running.
+    await notifier.onStatusChange(session({ status: "running" }), "waiting_input");
+    // A same-status re-emit mid-turn (e.g. lastOutput refresh) must not
+    // re-push — iOS rate-limits Live Activity pushes.
+    await notifier.onStatusChange(session({ status: "running" }), "running");
+    // Turn ends: running -> waiting_input.
+    await notifier.onStatusChange(session({ status: "waiting_input" }), "running");
+
+    const events = client.send.mock.calls.map((c) => apsOf(c[0].payload));
+    expect(events.map((e) => e.event)).toEqual(["update", "end"]);
     expect(events.map((e) => e["content-state"].status)).toEqual(["running", "waiting_input"]);
   });
 
-  it("ends the activity when the session goes idle", async () => {
+  it("re-opens on the next turn after a prior turn ended", async () => {
     repo.register({
       token: "tok-a",
       platform: "ios",
@@ -561,11 +596,107 @@ describe("notifier", () => {
     );
     const notifier = new LiveActivityNotifier(sender, "srv-1");
 
-    await notifier.onStatusChange(session({ status: "running" }));
-    await notifier.onStatusChange(session({ status: "idle", completedAt: new Date() }));
+    await notifier.onStatusChange(session({ status: "running" }), "waiting_input");
+    await notifier.onStatusChange(session({ status: "waiting_input" }), "running");
+    // Ending a turn expires its per-activity token (the activity itself ended
+    // on-device); a second turn's activity is a distinct one, with its own
+    // token registered once mobile creates it.
+    repo.register({
+      token: "tok-b",
+      platform: "ios",
+      kind: "liveactivity_update",
+      activityId: "act-b",
+      sessionId: "sess-1",
+      startedAt: 1_700_000_000_000,
+    });
+    await notifier.onStatusChange(session({ status: "running" }), "waiting_input");
+
+    const events = client.send.mock.calls.map((c) => apsOf(c[0].payload).event);
+    expect(events).toEqual(["update", "end", "update"]);
+  });
+
+  it("sends the session name once it becomes available on an already-open turn", async () => {
+    repo.register({
+      token: "tok-a",
+      platform: "ios",
+      kind: "liveactivity_update",
+      activityId: "act-a",
+      sessionId: "sess-1",
+      startedAt: 1_700_000_000_000,
+    });
+    const { client } = fakeApns(() => okResult);
+    const { LiveActivityNotifier } = await import("../src/services/push/liveActivityNotifier");
+    const sender = new LiveActivitySender(
+      client as unknown as import("../src/services/push/apnsClient").ApnsClient,
+      repo,
+    );
+    const notifier = new LiveActivityNotifier(sender, "srv-1");
+
+    // Turn opens before the title has been derived.
+    await notifier.onStatusChange(session({ status: "running" }), "waiting_input");
+    // A same-status re-emit races in with the name now available.
+    await notifier.onStatusChange(
+      session({ status: "running", sessionName: "fix the bug" }),
+      "running",
+    );
+    // The same name landing again on a later re-emit must not re-push.
+    await notifier.onStatusChange(
+      session({ status: "running", sessionName: "fix the bug" }),
+      "running",
+    );
+
+    const events = client.send.mock.calls.map((c) => apsOf(c[0].payload));
+    expect(events).toHaveLength(2);
+    expect(events[0]["content-state"].sessionName).toBeUndefined();
+    expect(events[1]["content-state"].sessionName).toBe("fix the bug");
+  });
+
+  it("ends the activity when the session goes idle mid-turn", async () => {
+    repo.register({
+      token: "tok-a",
+      platform: "ios",
+      kind: "liveactivity_update",
+      activityId: "act-a",
+      sessionId: "sess-1",
+      startedAt: 1_700_000_000_000,
+    });
+    const { client } = fakeApns(() => okResult);
+    const { LiveActivityNotifier } = await import("../src/services/push/liveActivityNotifier");
+    const sender = new LiveActivitySender(
+      client as unknown as import("../src/services/push/apnsClient").ApnsClient,
+      repo,
+    );
+    const notifier = new LiveActivityNotifier(sender, "srv-1");
+
+    await notifier.onStatusChange(session({ status: "running" }), "waiting_input");
+    await notifier.onStatusChange(session({ status: "idle", completedAt: new Date() }), "running");
 
     const lastCall = client.send.mock.calls.at(-1);
     expect(apsOf(lastCall?.[0].payload).event).toBe("end");
     expect(repo.listForSession("liveactivity_update", "sess-1")).toEqual([]);
+  });
+
+  it("does not push an end for idle when no turn was open", async () => {
+    repo.register({
+      token: "tok-a",
+      platform: "ios",
+      kind: "liveactivity_update",
+      activityId: "act-a",
+      sessionId: "sess-1",
+      startedAt: 1_700_000_000_000,
+    });
+    const { client } = fakeApns(() => okResult);
+    const { LiveActivityNotifier } = await import("../src/services/push/liveActivityNotifier");
+    const sender = new LiveActivitySender(
+      client as unknown as import("../src/services/push/apnsClient").ApnsClient,
+      repo,
+    );
+    const notifier = new LiveActivityNotifier(sender, "srv-1");
+
+    // Session boots and dies without ever receiving a user prompt.
+    await notifier.onStatusChange(session({ status: "running" }), undefined);
+    await notifier.onStatusChange(session({ status: "idle", completedAt: new Date() }), "running");
+
+    expect(client.send).not.toHaveBeenCalled();
   });
 });
