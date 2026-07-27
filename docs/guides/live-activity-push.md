@@ -93,6 +93,7 @@ This shape is shared with tb-mobile, which decodes it into a Swift `Codable` str
   startedAt: number   // epoch MILLISECONDS
   lastOutput: string  // truncated to 90 chars
   serverLabel?: string
+  sessionName?: string  // user-visible title; see below
 }
 ```
 
@@ -103,13 +104,21 @@ Two constraints are easy to get wrong and fail silently, because an ActivityKit 
 
 The whole payload must stay under APNs' 4 KB limit, which is what `lastOutput`'s 90-character bound is for.
 
+**`sessionName`** is a user-visible title, derived server-side from the first line of the session's first user message (mirrors `@threadbase-sh/scanner`'s own `deriveSessionNameFromFirstMessage`, capped at 80 chars — see `src/utils/deriveSessionName.ts`). It is absent from the very first push of a turn if the title hasn't been derived yet (a race that resolves within the same turn — see below) and absent for good on a session that somehow never received a user message. Mobile should fall back to `projectName` when `sessionName` is unset, the same fallback already used elsewhere in this codebase (see `deriveProjectChatTitle`).
+
 ## What triggers a send
 
-`onStatusChange` in `server.ts` is the single funnel every status transition passes through, for both the Claude and Codex runners, so hooking there covers every path.
+`onStatusChange` in `server.ts` is the single funnel every status transition passes through, for both the Claude and Codex runners, so hooking there covers every path. The notifier is **per-turn**, not per-session: it tracks whether a turn is currently open per session id, keyed off the specific status *edge*, not the status alone.
 
-- `running` ↔ `waiting_input` sends an `update`.
-- Any non-renderable status (session ended) sends an `end` and expires the session's activity tokens locally, which is what stops a later renewal from resurrecting a finished session.
-- An unchanged status sends nothing. Live Activity pushes are rate-limited by iOS, so re-pushing the same status spends budget for no visible change.
+- **`waiting_input → running`** (the user sent a prompt) opens a turn and sends an `update`. This is the first push of a Live Activity's *content* — the Activity itself is still created client-side (foreground or a local trigger); the server cannot create one remotely today (see the push-to-start caveat below).
+- **`running → waiting_input`** (the response — including any sub-agents, which are invisible to this signal since they run entirely inside the same `running` span — finished) closes the turn and sends an `end`.
+- A session's **very first `running`** (right after spawn, before any prompt) has no prior `waiting_input`, so it opens nothing — this is what keeps a freshly booted or idling session from showing a Live Activity before the user has asked for anything.
+- A **same-status re-emit** on an already-open turn (e.g. a `lastOutput` refresh) sends nothing **unless** `sessionName` has just become available and hasn't been sent yet, in which case one `update` carries the name so mobile can retitle the surface mid-turn. This exists because deriving the title races the turn itself — the first message is submitted and the turn opens before the title is necessarily attached to the in-memory session.
+- Any non-renderable status while a turn is open (session ended) sends an `end` and expires the session's activity tokens locally, which is what stops a later renewal from resurrecting a finished session. If no turn was open (a session dies before or between turns), nothing is sent — there is no activity to close.
+
+### Push-to-start is not wired to turn-open (yet)
+
+Apple's ActivityKit push has two channels: the per-activity update token (`update`/`end` only) and the app-wide push-to-start token (`start`), which is the only way to create a new Activity remotely. This document's `update`/`end` flow above is entirely the per-activity channel — the server never attempts to create an Activity, only to update or end one mobile already has. `liveActivityRenewal.ts`'s `startReplacement()` is the one place today that fans out to the push-to-start token, and it currently sends `event: "update"` rather than `event: "start"` on that channel — worth fixing (Apple's push-to-start payload expects `start`), but that is a pre-existing bug distinct from the per-turn retiming described here, tracked separately.
 
 Sends are fire-and-forget: a push must never delay or fail a session transition.
 Failures are logged with session and activity context, never swallowed.
@@ -156,3 +165,11 @@ An in-process `setTimeout` alone is insufficient — it dies with the process, a
 A session that ended inside the renewal window is **not** resurrected.
 The scheduler re-checks the live session store at fire time rather than trusting the stored row, and a session that is gone or no longer `running`/`waiting_input` has its token expired instead.
 A device that never registered a push-to-start token still gets the `end`; the replacement simply cannot be started remotely, and the next foreground WebSocket update recreates it.
+
+## tb-mobile: what's needed to use `sessionName` and the per-turn "Finished" state
+
+The server-side pieces above (per-turn `update`/`end` timing, the new `sessionName` field) are ready to consume. Status of each item mobile needs:
+
+- **Render a distinct "Finished" visual state on the `end` event** — **done**, for the foreground WebSocket path. `services/live-activity.ts`'s reconciler now mirrors `LiveActivityNotifier`'s per-turn open/close edges and renders the carried-through `waiting_input` as "Finished" rather than an ongoing state. See [`live-activity-mobile-finished-state.md`](./live-activity-mobile-finished-state.md) for the full port. The background/push path (ActivityKit decoding the payload directly while the app is suspended) needs no separate mobile code — it already renders from the same `LiveActivityContentState` this document defines — but was not independently verified on-device as part of this change.
+- **Render a title from `sessionName`, falling back to `projectName`.** Not built. Same pattern as `deriveProjectChatTitle` on the server side. Since `sessionName` can arrive on a second `update` shortly after the turn opens (see the race note above), the Activity's title view needs to handle a `nil → non-nil` transition mid-turn, not just read it once at Activity creation.
+- **Create the Activity client-side**, still — the server has no reliable way to create one remotely today. `event: "start"` is a distinct APNs push-to-start concept the renewal path uses for its own 8-hour-cap replacement, not a general "server tells mobile to start now" mechanism; see the push-to-start caveat above. A regular `update` pushed to a session with no registered `liveactivity_update` token is simply a no-op (`LiveActivitySender.send` finds zero tokens and returns early) — it does not create anything.
