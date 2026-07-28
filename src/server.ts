@@ -682,10 +682,20 @@ export class StreamerServer {
         this.lastAgentChunkAt.set(sessionId, Date.now());
         const seq = (this.terminalSeq.get(sessionId) ?? 0) + 1;
         this.terminalSeq.set(sessionId, seq);
-        this.wsHub.broadcast({ type: "terminal_output", sessionId, data, seq });
+        this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], {
+          type: "terminal_output",
+          sessionId,
+          data,
+          seq,
+        });
       },
       onUserMessage: (sessionId, text, ts) => {
-        this.wsHub.broadcast({ type: "user_message", sessionId, text, ts });
+        this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], {
+          type: "user_message",
+          sessionId,
+          text,
+          ts,
+        });
       },
       onPermissionChange: (sessionId, gate) => {
         this.handlePermissionChange(sessionId, gate);
