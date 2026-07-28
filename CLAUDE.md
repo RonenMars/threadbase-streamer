@@ -71,6 +71,7 @@ running / waiting_input ──(grace timer / hold_session msg)──► idle  (P
 | `THREADBASE_INCLUDE_AGENTS` | Show non-interactive Claude runs (agent SDK, hook invocations) in `/api/conversations` + `/project-chats`. Default off. Toggling triggers a one-time prune-or-rescan on next restart. |
 | `THREADBASE_AGENT_ENTRYPOINTS` | JSONL `entrypoint` values treated as agent traffic. Default `sdk-cli,claude-vscode`. |
 | `THREADBASE_DIR_SCAN_DEBOUNCE_MS` | Trailing debounce (ms) before a project-directory change flags the scanner stale; collapses an event storm during active sessions into one rescan. Default `1000`. |
+| `THREADBASE_FEATURE_*` | One var per feature flag (`THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT`, …). Highest-precedence source; see [Feature flags](#feature-flags). Truthy `1/true/yes/on`, falsy `0/false/no/off/""`; unset means "defer to the CLI flag, then server.yaml". |
 | `THREADBASE_CONFIG_DIR` | Overrides the config directory (default `~/.threadbase`) that `server.yaml` — including the `api_key` — is read from and written to. Mainly a test hook: it lets `setApiKey`/`loadOrCreateApiKey` target a throwaway dir so `POST /api/auth/rotate` and `set-key` never clobber the real live config. Unset in production. |
 | `MULTI_AGENT_FLOW` | Routes `POST /api/sessions/start` + `/input` to the multi-agent path instead of PTY. `AGENT_*` tuning vars: see [docs/multi-agent-mode.md](docs/multi-agent-mode.md). |
 | `THREADBASE_SKIP_PERMISSION_MODE_PROMPT` | Set to `true` to disable the `serve` first-run interactive permission-mode prompt (see below); falls straight through to `acceptEdits`. |
@@ -97,9 +98,9 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 
 ## CLI flags vs. `server.yaml`
 
-`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`, `claude_flags`, `claude_extra_args`) from it, but most runtime knobs come exclusively from CLI flags.
+`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`, `claude_flags`, `claude_extra_args`, `feature_flags`) from it, but most runtime knobs come exclusively from CLI flags.
 
-The file is parsed by **single-line regex, not a YAML library** — every value must stay on one line. `claude_flags:` therefore stores one line of JSON (`{"permissionMode":"bypassPermissions"}`), which keeps colons/quotes/spaces escaped for free; a corrupt line is logged and ignored rather than failing the boot. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
+The file is parsed by **single-line regex, not a YAML library** — every value must stay on one line. `claude_flags:` and `feature_flags:` therefore store one line of JSON (`{"permissionMode":"bypassPermissions"}`, `{"codexSystemPrompt":true}`), which keeps colons/quotes/spaces escaped for free; a corrupt line is logged and ignored rather than failing the boot. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
 
 `--default-permission-mode <mode>` (or `default_permission_mode:` in `server.yaml`) controls the Claude Code `--permission-mode` used to spawn every PTY session. All six CLI values are accepted: `acceptEdits` (default — auto-approves file edits, still prompts for shell commands), `manual`, `auto`, `plan`, `bypassPermissions`, `dontAsk`.
 
@@ -123,6 +124,29 @@ For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args a
 | `directoryScanDebounceMs` | `1000` | Trailing debounce (ms) before a directory change flags the scanner stale (env override: `THREADBASE_DIR_SCAN_DEBOUNCE_MS`) |
 | `claudeFlags` | `{}` | Allowlisted Claude CLI flags appended to every spawn. Registry + validation in `src/claude-flags.ts`; persisted as one line of JSON under `claude_flags:` in server.yaml. Set via repeatable `--claude-flag <id=value>` or `PUT /api/config/claude-flags`. |
 | `claudeExtraArgs` | — | Free-text argv appended after `claudeFlags` (and after `--resume`/`--session-id`), so it can override them. Unvalidated escape hatch; persisted under `claude_extra_args:`. Set via `--claude-extra-args`. |
+| `featureFlags` | registry defaults | Server feature flags from the CLI (`--feature <id=bool>`). Merged with the env vars and `feature_flags:` in server.yaml — see [Feature flags](#feature-flags). |
+
+## Feature flags
+
+Booleans that gate **streamer** behaviour we're not ready to make unconditional. Not to be confused with `claudeFlags`, which are CLI arguments handed to a spawned `claude` process. The registry lives in `src/feature-flags.ts`; each entry declares an `id`, a `description` shipped to clients, a `default`, and its env var.
+
+Resolution is **boot-time only** — changing a flag needs a restart, same as `ptyGracePeriodMs`. Precedence, highest first:
+
+1. `ServerConfig.codexSystemPromptEnabled` — legacy explicit override for that one flag; predates the registry and is kept so embedders/tests that set it directly keep working.
+2. `THREADBASE_FEATURE_<ID>` env var. Highest of the real sources so an operator can flip a flag on a supervised instance (launchd/systemd/Task Scheduler) whose argv is fixed.
+3. `--feature <id=bool>` on `serve`, repeatable. Strict: an unknown id or a non-boolean value stops the boot with a message.
+4. `feature_flags: {"codexSystemPrompt":true}` in server.yaml — one line of JSON, same encoding as `claude_flags`. Unknown ids and non-boolean values are dropped with a warning (never coerced, never fatal): a hand-edited typo must cost the flag, not the boot.
+5. The registry `default`.
+
+`resolveFeatureFlags()` returns a **total** map — every registry id present, defaults filled — so callers index it without `?? default` and a newly-added flag can't reach a boolean branch as `undefined` on an older server.yaml.
+
+`GET /api/config/feature-flags` returns `{ registry, values }`. It is **read-only** — there is no PUT, and the absence of a `persisted` field is the signal (contrast `/api/config/claude-flags`). `/api/config` is admin-scoped, so `GET /api/info` carries `featureFlags: true` to let a read-only client discover support without reading values.
+
+Current flags:
+
+| id | Default | Gates |
+|----|---------|-------|
+| `codexSystemPrompt` | off | Sending the built system prompt to fresh Codex sessions. Off because Codex has no `--system-prompt` flag — the prompt lands in the positional `[PROMPT]` argument, which Codex treats as the user's opening turn rather than a system instruction. |
 
 ## Dependencies
 

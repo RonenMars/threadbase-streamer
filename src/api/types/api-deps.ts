@@ -11,6 +11,7 @@ import type { DevicesRepository } from "../../db/repositories/devices.repository
 import type { ProjectsRepository } from "../../db/repositories/projects.repository";
 import type { PushRepository } from "../../db/repositories/push.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
+import type { FeatureFlagDefinition, FeatureFlagValues } from "../../feature-flags";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
 import type { SessionStore } from "../../session-store";
@@ -31,6 +32,10 @@ export type ApiDeps = {
     values: ClaudeFlagValues,
     extraArgs: string | undefined,
   ) => { values: ClaudeFlagValues; extraArgs: string | null; persisted: boolean };
+  featureFlagsConfig: () => {
+    registry: readonly FeatureFlagDefinition[];
+    values: FeatureFlagValues;
+  };
   publicUrl: string | null;
   browseRoot: string | null;
   browserCors: string | undefined;

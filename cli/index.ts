@@ -19,6 +19,7 @@ import {
 } from "../src/claude-flags";
 import { loadUpdateConfig, UPDATE_CONFIG_PATH } from "../src/config/update-config";
 import { appendDevSessionMarker } from "../src/devLog";
+import { type FeatureFlagValues, parseFeatureFlagArgs } from "../src/feature-flags";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
@@ -69,6 +70,11 @@ program
   .option(
     "--claude-flag <id=value>",
     "Allowlisted Claude CLI flag applied to every spawned session, e.g. --claude-flag permissionMode=bypassPermissions. Repeatable; repeat the same id to build a list (--claude-flag addDir=/a --claude-flag addDir=/b). Overrides claude_flags: in ~/.threadbase/server.yaml and makes the value non-persistable.",
+    (value: string, previous: string[] = []) => [...previous, value],
+  )
+  .option(
+    "--feature <id=bool>",
+    "Enable or disable a server feature flag, e.g. --feature codexSystemPrompt=true. Repeatable. Overridden by the flag's THREADBASE_FEATURE_* env var; overrides feature_flags: in ~/.threadbase/server.yaml.",
     (value: string, previous: string[] = []) => [...previous, value],
   )
   .option(
@@ -147,6 +153,18 @@ program
         }
       }
     }
+    // Repeatable --feature id=bool pairs. Strict, unlike the server.yaml path:
+    // a CLI typo should stop the boot with a legible message.
+    let featureFlags: FeatureFlagValues | undefined;
+    if (Array.isArray(opts.feature) && opts.feature.length > 0) {
+      const parsed = parseFeatureFlagArgs(opts.feature as string[]);
+      if (parsed.errors.length > 0) {
+        for (const error of parsed.errors) log.error(`--feature: ${error}`, undefined, "console");
+        process.exit(1);
+      }
+      featureFlags = parsed.values;
+    }
+
     const validEfforts = ["low", "medium", "high", "xhigh", "max"];
     if (opts.defaultEffort !== undefined && !validEfforts.includes(opts.defaultEffort)) {
       log.error(
@@ -257,6 +275,7 @@ program
       defaultEffort: opts.defaultEffort,
       ptyGracePeriodMs,
       claudeFlags,
+      featureFlags,
       claudeExtraArgs: opts.claudeExtraArgs,
     });
 
