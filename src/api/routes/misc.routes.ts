@@ -91,6 +91,10 @@ export const createMiscRoutes = (
       // older clients ignore it, and clients talking to an older server see it
       // absent and hide the UI rather than 404ing.
       claudeFlags: true,
+      // Same contract: this server serves GET /api/config/feature-flags. Lives
+      // here rather than behind /api/config (admin-only) so a read-only client
+      // still learns the server supports flags even if it can't read values.
+      featureFlags: true,
     });
   });
 

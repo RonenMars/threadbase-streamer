@@ -8,6 +8,7 @@ import {
   type PermissionMode,
   validateFlagValues,
 } from "./claude-flags";
+import { type FeatureFlagValues, validateFeatureFlagValues } from "./feature-flags";
 import { getLogger } from "./logger";
 
 // Resolved per call (not frozen at module load) so tests can redirect writes
@@ -238,6 +239,35 @@ export function setClaudeExtraArgs(text: string | undefined): void {
     throw new Error("claude_extra_args must not contain newlines");
   }
   setConfigValue("claude_extra_args", trimmed && trimmed.length > 0 ? trimmed : undefined);
+}
+
+/**
+ * Server feature flags, stored as ONE line of JSON — same encoding and the same
+ * reasons as claude_flags above:
+ *
+ *     feature_flags: {"codexSystemPrompt":true}
+ *
+ * Read-only from this module's perspective: nothing writes this key, because
+ * flags resolve at boot and there is no runtime-mutation endpoint. Add a
+ * setFeatureFlags() alongside a PUT, if one is ever added.
+ *
+ * A malformed line yields {} plus a warning rather than throwing, so a typo in a
+ * hand-edited server.yaml costs the flag, not the boot.
+ */
+export function loadFeatureFlags(): FeatureFlagValues {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/^feature_flags:\s*(.+)$/m);
+    if (!match?.[1]) return {};
+    return validateFeatureFlagValues(JSON.parse(match[1].trim()));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      getLogger("auth").warn(`Ignoring unreadable feature_flags in server.yaml: ${String(err)}`, {
+        event: "config.feature_flags_parse_failed",
+      });
+    }
+    return {};
+  }
 }
 
 export type PublicUrlValidation = { ok: true; normalized: string } | { ok: false; error: string };

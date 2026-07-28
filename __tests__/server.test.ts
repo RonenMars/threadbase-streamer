@@ -13,6 +13,7 @@ import { join } from "path";
 import WebSocket from "ws";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
+import { FEATURE_FLAGS } from "../src/feature-flags";
 import { PTYManager } from "../src/pty-manager";
 import { GRACE_MAX_DEFERS, IDLE_REAP_AFTER_MS, StreamerServer } from "../src/server";
 
@@ -468,6 +469,160 @@ describe("StreamerServer", () => {
       );
 
       codexStartFreshSpy.mockRestore();
+    });
+
+    // Same outcome as the test above, reached through the feature-flag registry
+    // rather than the legacy explicit ServerConfig field.
+    it("sends systemPrompt for a fresh codex-cli session when the feature flag is on", async () => {
+      await server.close();
+      server = new StreamerServer({
+        ...HOST_ISOLATION,
+        port,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir,
+        browseRoot,
+        scanProfiles: FIXTURE_PROFILES,
+        featureFlags: { codexSystemPrompt: true },
+      });
+      await server.listen(port, { awaitReady: true });
+      port = server.port;
+
+      const sessionId = "049fd3ce-ad78-4980-b441-1cfa05edaecb";
+      const codexStartFreshSpy = vi
+        .spyOn(CodexPtyRunner.prototype, "startFresh")
+        .mockImplementationOnce(async () => {
+          setImmediate(() => {
+            (server as any).sessionStatusBus.emit(`status:${sessionId}`, "waiting_input");
+          });
+          return {
+            id: sessionId,
+            provider: "codex-cli",
+            projectPath: join(browseRoot, "project"),
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
+        });
+
+      const res = await fetch(`${baseUrl}/api/sessions/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(codexStartFreshSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ systemPrompt: expect.any(String) }),
+      );
+
+      codexStartFreshSpy.mockRestore();
+    });
+
+    // The legacy field is the highest precedence rung: an embedder that sets it
+    // explicitly must not be overridden by a stray env var in the shell.
+    it("lets the explicit codexSystemPromptEnabled field beat a falsy env var", async () => {
+      const envVar = "THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT";
+      const envBefore = process.env[envVar];
+      process.env[envVar] = "0";
+
+      try {
+        await server.close();
+        server = new StreamerServer({
+          ...HOST_ISOLATION,
+          port,
+          apiKey: API_KEY,
+          localNoAuth: false,
+          verbose: false,
+          disableDb: true,
+          cacheDir,
+          browseRoot,
+          scanProfiles: FIXTURE_PROFILES,
+          codexSystemPromptEnabled: true,
+        });
+        await server.listen(port, { awaitReady: true });
+        port = server.port;
+
+        const sessionId = "049fd3ce-ad78-4980-b441-1cfa05edaecc";
+        const codexStartFreshSpy = vi
+          .spyOn(CodexPtyRunner.prototype, "startFresh")
+          .mockImplementationOnce(async () => {
+            setImmediate(() => {
+              (server as any).sessionStatusBus.emit(`status:${sessionId}`, "waiting_input");
+            });
+            return {
+              id: sessionId,
+              provider: "codex-cli",
+              projectPath: join(browseRoot, "project"),
+              projectName: "project",
+              branch: "",
+              status: "running",
+              startedAt: new Date(),
+              completedAt: null,
+              promptCount: 0,
+              lastOutput: "",
+            };
+          });
+
+        const res = await fetch(`${baseUrl}/api/sessions/start`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ path: "project", provider: "codex-cli" }),
+        });
+
+        expect(res.status).toBe(200);
+        expect(codexStartFreshSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ systemPrompt: expect.any(String) }),
+        );
+
+        codexStartFreshSpy.mockRestore();
+      } finally {
+        if (envBefore === undefined) delete process.env[envVar];
+        else process.env[envVar] = envBefore;
+      }
+    });
+
+    it("exposes resolved flags on GET /api/config/feature-flags", async () => {
+      const res = await fetch(`${baseUrl}/api/config/feature-flags`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        registry: { id: string }[];
+        values: Record<string, boolean>;
+      };
+
+      // The registry ships with the values so a client renders from one round-trip.
+      expect(body.registry.map((f) => f.id)).toEqual(FEATURE_FLAGS.map((f) => f.id));
+      // Total map: exactly the registry's keys, nothing more or less.
+      expect(Object.keys(body.values).sort()).toEqual(FEATURE_FLAGS.map((f) => f.id).sort());
+      expect(body.values.codexSystemPrompt).toBe(false);
+      // Read-only endpoint: no `persisted` field, unlike claude-flags.
+      expect(body).not.toHaveProperty("persisted");
+    });
+
+    it("advertises featureFlags support on GET /api/info", async () => {
+      const res = await fetch(`${baseUrl}/api/info`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+
+      expect(res.status).toBe(200);
+      expect((await res.json()) as { featureFlags?: boolean }).toMatchObject({
+        featureFlags: true,
+      });
     });
   });
 

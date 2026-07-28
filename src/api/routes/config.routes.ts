@@ -14,13 +14,20 @@ function readRawBody(req: IncomingMessage): Promise<string> {
 }
 
 export const createConfigRoutes = (
-  deps: Pick<ApiDeps, "claudeFlagsConfig" | "setClaudeFlagsConfig" | "localNoAuth">,
+  deps: Pick<
+    ApiDeps,
+    "claudeFlagsConfig" | "setClaudeFlagsConfig" | "featureFlagsConfig" | "localNoAuth"
+  >,
 ) => {
   const app = new Hono<AppEnv>();
 
   // The registry ships alongside the values so a client renders the form from
   // one round-trip and can never offer a flag this server doesn't know.
   app.get("/claude-flags", (c) => c.json(deps.claudeFlagsConfig()));
+
+  // Read-only by design: feature flags resolve at boot (env > CLI > server.yaml
+  // > default), so there is no PUT counterpart. Changing one means a restart.
+  app.get("/feature-flags", (c) => c.json(deps.featureFlagsConfig()));
 
   app.put("/claude-flags", async (c) => {
     // Same reasoning as POST /api/auth/rotate: under localNoAuth any process on

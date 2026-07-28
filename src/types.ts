@@ -1,6 +1,7 @@
 import type { Stage } from "@threadbase-sh/agent-types";
 import type { ProgressDedupeLRU } from "./agent/dedupe";
 import type { ClaudeFlagValues, PermissionMode } from "./claude-flags";
+import type { FeatureFlagValues } from "./feature-flags";
 import type { ProviderName } from "./providers";
 
 // ─── Session Lifecycle ─────────────────────────────────────────────
@@ -470,7 +471,16 @@ export interface ServerConfig {
   // rather than a system-level instruction. Off by default so a fresh Codex
   // session never gets an uninvited first message; enable to send the built
   // system prompt (+ browse-root boundary + client prompt) that way anyway.
+  //
+  // LEGACY EXPLICIT OVERRIDE, not a second source of truth: this is the same
+  // bit as featureFlags.codexSystemPrompt (see src/feature-flags.ts) and, when
+  // set, outranks every other source. It predates the flag registry and is kept
+  // so embedders and tests that set it directly keep working.
   codexSystemPromptEnabled?: boolean;
+  // Feature-flag values from the CLI (`--feature <id=bool>`). Outranked by the
+  // matching env var and by codexSystemPromptEnabled above; outranks
+  // feature_flags: in server.yaml. See resolveFeatureFlags().
+  featureFlags?: FeatureFlagValues;
   defaultPermissionMode?: PermissionMode; // Claude Code --permission-mode for spawned PTY sessions (default "acceptEdits")
   defaultModel?: string; // Claude Code --model for spawned PTY sessions (default "sonnet")
   defaultEffort?: "low" | "medium" | "high" | "xhigh" | "max"; // Claude Code --effort for spawned PTY sessions (default "low")

@@ -157,3 +157,45 @@ describe("default_permission_mode", () => {
     expect(loadDefaultPermissionMode()).toBeUndefined();
   });
 });
+
+describe("feature_flags", () => {
+  it("reads a valid one-line JSON value", async () => {
+    const { loadFeatureFlags } = await auth();
+    writeFileSync(configFile, 'feature_flags: {"codexSystemPrompt":true}\n');
+    expect(loadFeatureFlags()).toEqual({ codexSystemPrompt: true });
+  });
+
+  it("returns {} when the key is absent", async () => {
+    const { loadFeatureFlags } = await auth();
+    writeFileSync(configFile, "api_key: tb_deadbeef\n");
+    expect(loadFeatureFlags()).toEqual({});
+  });
+
+  it("returns {} when the file does not exist", async () => {
+    const { loadFeatureFlags } = await auth();
+    expect(loadFeatureFlags()).toEqual({});
+  });
+
+  // server.yaml is hand-editable, so a typo must cost the flag, never the boot.
+  it("returns {} for malformed JSON instead of throwing", async () => {
+    const { loadFeatureFlags } = await auth();
+    writeFileSync(configFile, "feature_flags: {oops\n");
+    expect(() => loadFeatureFlags()).not.toThrow();
+    expect(loadFeatureFlags()).toEqual({});
+  });
+
+  it("drops unknown ids and non-boolean values from disk", async () => {
+    const { loadFeatureFlags } = await auth();
+    writeFileSync(configFile, 'feature_flags: {"bogus":true,"codexSystemPrompt":"yes"}\n');
+    expect(loadFeatureFlags()).toEqual({});
+  });
+
+  it("reads the flag line regardless of surrounding keys", async () => {
+    const { loadFeatureFlags } = await auth();
+    writeFileSync(
+      configFile,
+      'api_key: tb_deadbeef\nfeature_flags: {"codexSystemPrompt":true}\ntail_size: 10\n',
+    );
+    expect(loadFeatureFlags()).toEqual({ codexSystemPrompt: true });
+  });
+});
