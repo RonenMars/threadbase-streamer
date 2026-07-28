@@ -191,6 +191,7 @@ CREATE TABLE IF NOT EXISTS conversation_meta (
 );
 CREATE INDEX IF NOT EXISTS idx_meta_last_activity ON conversation_meta(last_activity DESC);
 CREATE INDEX IF NOT EXISTS idx_meta_project ON conversation_meta(project_path);
+CREATE INDEX IF NOT EXISTS idx_meta_file_path ON conversation_meta(file_path);
 
 CREATE TABLE IF NOT EXISTS conversation_tail (
   conversation_id TEXT PRIMARY KEY REFERENCES conversation_meta(id) ON DELETE CASCADE,

@@ -67,6 +67,25 @@ export class WSHub {
     }
   }
 
+  // Scoped broadcast for high-frequency per-session messages (terminal_output,
+  // user_message). Sending to every connected client for every PTY output
+  // chunk made broadcast() cost scale with connections x active sessions;
+  // this bounds it to only that session's subscribers.
+  broadcastToClients(clients: Iterable<WebSocket>, message: WSMessage): void {
+    const data = JSON.stringify(message);
+    for (const client of clients) {
+      try {
+        if (client.readyState === client.OPEN) {
+          client.send(data);
+        } else {
+          this.clients.delete(client);
+        }
+      } catch {
+        this.clients.delete(client);
+      }
+    }
+  }
+
   unicast(ws: WebSocket, message: WSMessage): void {
     try {
       if (ws.readyState === ws.OPEN) {
