@@ -112,7 +112,7 @@ Three layers: **core engine** (`src/*.ts`) → **API layer** (`src/api/` + `src/
 - `POST /api/sessions/start` / `resume` spawns `claude` in a PTY; output streams to WebSocket clients as `terminal_output`, with a `terminal_replay` snapshot on subscribe.
 - `SessionStore` tracks both PTY-managed sessions and externally-running `claude` processes discovered on disk.
 - A chokidar-backed watcher tails conversation JSONL files into the SQLite cache, so list/search endpoints don't scan the filesystem.
-- When the last WebSocket subscriber disconnects, a grace timer (default 4.5 min) puts the PTY on hold — history stays intact and it's resumable anytime.
+- A WebSocket subscriber disconnecting never stops the agent — sessions outlive a sleeping phone or a dropped connection. A PTY is put on hold (history intact, resumable anytime) only on an explicit `hold_session` message, or by the idle reaper after 6 h of agent silence.
 
 More detail: [docs/how-it-works.md](docs/how-it-works.md) and [docs/architecture/](docs/architecture/README.md).
 

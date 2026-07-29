@@ -48,12 +48,14 @@ running ──(prompt marker ╭ / ❯, or fallback timer)──► waiting_inpu
    └───────────────(user sends input)◄─────────────────────┘
 
 running / waiting_input ──(PTY exit, any code)──────────────► idle
-running / waiting_input ──(grace timer / hold_session msg)──► idle  (PTY killed, history intact)
+waiting_input / idle ──(hold_session msg → grace timer)─────► idle  (PTY killed, history intact)
+waiting_input / idle ──(idle reaper, 6h of agent silence)───► idle  (PTY killed, history intact)
 ```
 
 - **`waiting_input`**: Claude printed a prompt marker (`CLAUDE_PROMPT_MARKERS = ["╭", "❯"]` in `pty-manager.ts`, plus a fallback timeout) — idling for user input.
 - **`idle`**: no live PTY. Reached on process exit or via `PTYManager.putOnHold()` (SIGINT + screen disposal). History intact; resume via `POST /api/sessions/resume` with the same `conversationId`.
-- **Grace/hold**: when the last WebSocket subscriber disconnects, `server.ts` starts a grace timer (`ptyGracePeriodMs`, default 270 000 ms) that calls `putOnHold()`. A client can hold immediately with `{ type: "hold_session", sessionId }` (same path, zero delay).
+- **Grace/hold**: a WebSocket disconnect arms nothing. The only caller of `startGraceTimer` is an explicit `{ type: "hold_session", sessionId }`, which waits `ptyGracePeriodMs` (default 270 000 ms) and then calls `putOnHold()`; a `running` session defers up to `GRACE_MAX_DEFERS` (4) so a turn is never cut mid-response.
+- **Idle reaper**: holds any PTY whose agent has been silent for `IDLE_REAP_AFTER_MS` (6 h), swept every 5 min. Never touches a `running` session. This is the resource bound that replaced kill-on-disconnect.
 - An instant non-zero exit (<2 s, no output) gets a diagnosed `failureReason` (missing project dir, or Claude binary not found).
 - **Mobile mapping**: historical conversations are returned as resumable shapes with `status: "on_hold"` (`conversationToResumableSession` in `server.ts`); mobile treats `idle` and `on_hold` as the same.
 
@@ -85,7 +87,7 @@ Feature flags (`src/feature-flags.ts`) resolve at boot from env → `--feature <
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `ptyGracePeriodMs` | `270000` | Ms to keep the PTY alive after all WebSocket subscribers disconnect (4.5 minutes) |
+| `ptyGracePeriodMs` | `270000` | Ms between an explicit `hold_session` message and the hold (4.5 minutes). Not armed by WebSocket disconnect; `0` means hold immediately, not "never" |
 | `cacheDir` | `~/.threadbase/cache` | Directory for the SQLite conversation cache |
 | `tailSize` | `10` | Tail messages cached per conversation for fast session-list enrichment |
 
