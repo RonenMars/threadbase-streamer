@@ -50,12 +50,14 @@ running ──(prompt marker ╭ / ❯, or fallback timer)──► waiting_inpu
    └───────────────(user sends input)◄─────────────────────┘
 
 running / waiting_input ──(PTY exit, any code)──────────────► idle
-running / waiting_input ──(grace timer / hold_session msg)──► idle  (PTY killed, history intact)
+waiting_input / idle ──(hold_session msg → grace timer)─────► idle  (PTY killed, history intact)
+waiting_input / idle ──(idle reaper, 6h of agent silence)───► idle  (PTY killed, history intact)
 ```
 
 - **`waiting_input`**: Claude printed a prompt marker (`CLAUDE_PROMPT_MARKERS = ["╭", "❯"]` in `pty-manager.ts`, plus a fallback timeout) — idling for user input.
 - **`idle`**: no live PTY. Reached on process exit or via `PTYManager.putOnHold()` (SIGINT + screen disposal). History intact; resume via `POST /api/sessions/resume` with the same `conversationId`.
-- **Grace/hold**: when the last WebSocket subscriber disconnects, `server.ts` starts a grace timer (`ptyGracePeriodMs`, default 270 000 ms) that calls `putOnHold()`. A client can (re)arm the same grace timer early with `{ type: "hold_session", sessionId }` (same path, same delay) — e.g. mobile sends this on app backgrounding so the session keeps running until the timer actually elapses, rather than holding immediately.
+- **Grace/hold**: a WebSocket disconnect arms **nothing** — `handleWsClose` deliberately does not start a kill timer, because a socket closing is not a request to stop the agent (phones sleep, signal drops, Wi-Fi hands off). The *only* caller of `startGraceTimer` is an explicit `{ type: "hold_session", sessionId }` message, which arms `ptyGracePeriodMs` (default 270 000 ms) and then calls `putOnHold()` — e.g. mobile sends this on app backgrounding, so the session keeps running until the timer actually elapses. A `running` session defers the hold and re-arms, up to `GRACE_MAX_DEFERS` (4) consecutive defers, so a turn is never cut mid-response. See [docs/architecture/2026-07-24-durable-session-runtime.md](docs/architecture/2026-07-24-durable-session-runtime.md).
+- **Idle reaper**: the resource bound that replaced kill-on-disconnect. Every `IDLE_REAP_SWEEP_MS` (5 min) the server holds any PTY whose *agent* has been silent for `IDLE_REAP_AFTER_MS` (**6 h** — no output chunk, no user input). It measures agent inactivity, not subscriber absence, and never touches a `running` session however long the turn runs. Both constants are code, not config.
 - **Resume writes to the SAME JSONL.** Claude `--resume` appends to the existing `<conversationId>.jsonl` and keeps the same `sessionId` field (verified against Claude Code v2.1.215) — it does *not* fork a new UUID file. Older comments claimed the opposite; `watchForJsonl`'s mtime fallback only binds a candidate whose filename stem or first-line `sessionId` matches the session id.
 - **Resume is collision-checked.** `POST /api/sessions/resume` runs a pre-flight busy probe (`services/sessions/conversationBusy.ts`) and answers 409 `CONVERSATION_BUSY` when the conversation looks actively owned elsewhere — JSONL mtime within `RESUME_BUSY_WINDOW_MS` (120 000, override with `THREADBASE_RESUME_BUSY_WINDOW_MS`), a discovered process resuming the same id, or (POSIX only) a discovered process in the same project dir. `{ force: true }` in the body always proceeds. It is a one-directional pre-flight guard: nothing stops an external terminal attaching after the streamer holds the PTY.
 - An instant non-zero exit (<2 s, no output) gets a diagnosed `failureReason` (missing project dir, or Claude binary not found).
@@ -114,7 +116,9 @@ The file is parsed by **single-line regex, not a YAML library** — every value 
 
 If none of the flag/env/yaml sources set a mode, `serve` shows a one-time interactive prompt (`src/lifecycle/prompt.ts`'s `interactivePermissionModePrompt`) and persists the answer to `server.yaml` via `setDefaultPermissionMode()` — but only for a human dev invocation on a real TTY (never under `--prod`/launchd, which must never block on stdin). Set `THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true` to skip it and fall through to `acceptEdits`.
 
-`--pty-grace-period-ms <ms>` (or `pty_grace_period_ms:` in `server.yaml`) sets the auto-hold delay: how long a PTY stays alive after its last WebSocket subscriber disconnects before `server.ts` holds it (SIGINT + screen disposal, history intact, resumable). Precedence is flag → yaml → default `270000` (4.5 min). `0` disables the automatic timer — the PTY lives until process exit or an explicit `{ type: "hold_session" }` message, which arms this same delay (so with `0` it still holds immediately; with a positive value the session keeps running for the full delay). Any positive integer is a custom delay in ms.
+`--pty-grace-period-ms <ms>` (or `pty_grace_period_ms:` in `server.yaml`) sets the delay between an explicit `{ type: "hold_session" }` message and the actual hold (SIGINT + screen disposal, history intact, resumable). Precedence is flag → yaml → default `270000` (4.5 min). Since `handleWsClose` no longer arms a timer, this knob governs the explicit hold path *only*.
+
+**`0` does not mean "never".** It means the explicit hold fires with zero delay — i.e. backgrounding the mobile app kills the session instantly. There is no sentinel for "never hold": to effectively disable the hold, set a delay longer than any session you care about (e.g. `604800000`, 7 days). Stay clear of `2147483647` — that is exactly Node's `TIMEOUT_MAX`, and one increment past it makes `setTimeout` overflow and fire at 1 ms, silently inverting the setting into "hold immediately". Note the 6 h idle reaper still applies regardless of this value.
 The value is resolved once at startup, so changing it requires a restart — there is no hot-reload.
 For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args are fixed and don't pass this flag), set `pty_grace_period_ms:` in `server.yaml` and run `tb-streamer prod restart`; the `--pty-grace-period-ms` flag is the path for ad-hoc `serve` runs (an ad-hoc `serve` with the flag would otherwise collide with prod on port 8766).
 
@@ -122,7 +126,7 @@ For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args a
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `ptyGracePeriodMs` | `270000` | Ms to keep the PTY alive after all WebSocket subscribers disconnect (4.5 minutes). `0` disables the auto-hold timer entirely — the PTY stays live until process exit or an explicit `hold_session`. Set via `--pty-grace-period-ms` or `pty_grace_period_ms:` in server.yaml. |
+| `ptyGracePeriodMs` | `270000` | Ms between an explicit `hold_session` message and the hold (4.5 minutes). Not armed by WebSocket disconnect. `0` means hold *immediately*, not "never" — there is no never sentinel; use a very large delay instead (see above). Set via `--pty-grace-period-ms` or `pty_grace_period_ms:` in server.yaml. |
 | `cacheDir` | `~/.threadbase/cache` | Directory for the SQLite conversation cache |
 | `tailSize` | `10` | Tail messages cached per conversation for fast session-list enrichment |
 | `directoryScanDebounceMs` | `1000` | Trailing debounce (ms) before a directory change flags the scanner stale (env override: `THREADBASE_DIR_SCAN_DEBOUNCE_MS`) |
