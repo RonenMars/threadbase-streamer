@@ -74,9 +74,9 @@
 1. `POST /api/sessions/start` → `PTYManager.startFresh()` → spawns `claude` subprocess → `pendingReady` gating → `markReady()` on prompt marker → `session_ready` WS event → user input via `sendInput()` → `pty.input_write` → `pty.input_submit` → `terminal_output` WS broadcast → PTY exit → `session_update(idle)`.
 2. `POST /api/sessions/resume` → `PTYManager.start(sessionId, --resume)` → same prompt-marker path.
 
-**WS subscriber grace timer:**
-- Last subscriber disconnects → `startGraceTimer(sessionId, ptyGracePeriodMs=270s)` → `PTYManager.putOnHold()` → PTY SIGINT → `session_update(idle)`.
-- `hold_session` message → `startGraceTimer(sessionId, 0)` (instant).
+**PTY hold paths** (last subscriber disconnecting arms nothing):
+- `hold_session` message → `startGraceTimer(sessionId, ptyGracePeriodMs=270s)` → `pty.grace_defer` while `running` (max 4) → `pty.grace_kill` → `PTYManager.putOnHold()` → PTY SIGINT → `session_update(idle)`.
+- Idle reaper sweep (5 min) → agent silent 6 h and not `running` → `pty.idle_reap` → `PTYManager.putOnHold()` → `session_update(idle)`.
 
 **Conversation watcher (JSONL tail):**
 - `ConversationWatcher.watch(filePath)` via chokidar → `readNewLines()` on `change`/`add` → `onNewLines` callback → `cache.updateFromLines()` + WS `conversation_events` broadcast.
