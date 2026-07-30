@@ -52,7 +52,7 @@ describe("claude_flags persistence", () => {
   it("preserves other keys in the file", async () => {
     const { loadOrCreateApiKey, setClaudeFlags } = await auth();
     const key = loadOrCreateApiKey();
-    setClaudeFlags({ maxBudgetUsd: "5" });
+    setClaudeFlags({ model: "opus" });
 
     const content = readFileSync(configFile, "utf-8");
     expect(content).toContain(`api_key: ${key}`);
@@ -61,19 +61,19 @@ describe("claude_flags persistence", () => {
 
   it("replaces rather than appends on repeated writes", async () => {
     const { loadClaudeFlags, setClaudeFlags } = await auth();
-    setClaudeFlags({ maxBudgetUsd: "5" });
-    setClaudeFlags({ maxBudgetUsd: "9" });
+    setClaudeFlags({ model: "opus" });
+    setClaudeFlags({ model: "sonnet" });
 
     const lines = readFileSync(configFile, "utf-8")
       .split("\n")
       .filter((l) => l.startsWith("claude_flags:"));
     expect(lines).toHaveLength(1);
-    expect(loadClaudeFlags()).toEqual({ maxBudgetUsd: "9" });
+    expect(loadClaudeFlags()).toEqual({ model: "sonnet" });
   });
 
   it("removes the line entirely when cleared", async () => {
     const { loadClaudeFlags, setClaudeFlags } = await auth();
-    setClaudeFlags({ maxBudgetUsd: "5" });
+    setClaudeFlags({ model: "opus" });
     setClaudeFlags({});
 
     expect(readFileSync(configFile, "utf-8")).not.toContain("claude_flags:");
@@ -90,9 +90,9 @@ describe("claude_flags persistence", () => {
 
   it("drops unknown ids read back from disk", async () => {
     const { loadClaudeFlags } = await auth();
-    writeFileSync(configFile, 'claude_flags: {"bogusFlag":"x","maxBudgetUsd":"5"}\n');
+    writeFileSync(configFile, 'claude_flags: {"bogusFlag":"x","model":"opus"}\n');
 
-    expect(loadClaudeFlags()).toEqual({ maxBudgetUsd: "5" });
+    expect(loadClaudeFlags()).toEqual({ model: "opus" });
   });
 
   it("returns {} when the file does not exist", async () => {
@@ -103,7 +103,7 @@ describe("claude_flags persistence", () => {
   // server.yaml holds the API key, so the atomic write must not widen its mode.
   it("writes with 0600 permissions", async () => {
     const { setClaudeFlags } = await auth();
-    setClaudeFlags({ maxBudgetUsd: "5" });
+    setClaudeFlags({ model: "opus" });
 
     expect(statSync(configFile).mode & 0o777).toBe(0o600);
   });

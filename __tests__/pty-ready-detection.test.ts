@@ -587,7 +587,7 @@ describe("PTYManager — spawn permission flags", () => {
 
   it("appends allowlisted claudeFlags and extra args on both spawn paths", async () => {
     const mgr = new PTYManager();
-    const flags = { addDir: ["/srv/a"], maxBudgetUsd: "5" };
+    const flags = { addDir: ["/srv/a"], allowedTools: ["Read"] };
 
     await mgr.startFresh({
       projectPath: "/tmp/test",
@@ -597,7 +597,7 @@ describe("PTYManager — spawn permission flags", () => {
     let args = spawnArgs();
     expect(args).toContain("--add-dir");
     expect(args[args.indexOf("--add-dir") + 1]).toBe("/srv/a");
-    expect(args[args.indexOf("--max-budget-usd") + 1]).toBe("5");
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe("Read");
     // Extra args land last so the escape hatch can override the allowlist.
     expect(args[args.length - 1]).toBe("--bare");
 
