@@ -5,7 +5,7 @@
 **Companion:** [live-sessions-persistence-plan.md](./live-sessions-persistence-plan.md) — separate feature stream, shares the `ownership` / `lifecycle` vocabulary
 **Scope:** tb-streamer + tb-mobile
 
-Three capabilities: tell the user **where a running session came from**, let them **stop one they don't own**, and let them **take one over** — the last two only behind explicit confirmation.
+Three capabilities: tell the user **where a running session came from**, let them **stop one they don't own**, and let them **take one over** — the last two only after an explicit confirmation in the client. The server enforces that confirmation for `stop`, which no shipped client can reach today, and deliberately does **not** for `adopt`, which every shipped client already calls without one (§5.2).
 
 ---
 
@@ -371,10 +371,15 @@ Both exist because overtake is destructive-then-restorative and nothing stood be
 
 ### 4.2 Server
 
-No new endpoint. `POST /api/sessions/:id/adopt` gains the same gate as stop:
+No new endpoint, and — unlike `stop` — **no `confirm` requirement**. `POST /api/sessions/:id/adopt` works today with no body and is called that way by every shipped mobile build; requiring one would break all of them indefinitely. See §5.2 for why, and why gating `stop` is safe while gating `adopt` is not.
 
-- without `{ "confirm": true }` → `409` / `ADOPT_REQUIRES_CONFIRM` with the same `target` descriptor
-- with it → today's behaviour exactly, including every existing pre-flight refusal (`ADOPT_NO_PROJECT_PATH`, missing project directory), which stay **ahead** of the kill
+What `adopt` does gain is refusals, not a gate:
+
+- `ADOPT_SOURCE_UNSUPPORTED` when the live source is `desktop-app` (§4.4)
+- `ADOPT_REMOTE_CONTROLLED` when the live `remoteControlled` value is true (§4.4)
+- every existing pre-flight refusal unchanged (`ADOPT_NO_PROJECT_PATH`, missing project directory), still **ahead** of the kill
+
+All three fail closed on a path that should not have been open. Confirmation before overtake is the client's responsibility (§4.3).
 
 The `status: "idle"` forcing in `discoveredToResponse` **stays**. Reporting `running` for a discovered process would be a status-semantics change on a field shipped clients switch on, and it is not needed: `processLiveness: "alive"` is already emitted for exactly these sessions and is already typed in mobile's `types/api.ts`. The signal exists; nothing on the server has to change to expose liveness.
 
@@ -439,11 +444,34 @@ Two constraints on this refusal:
 | `ADOPT_REMOTE_CONTROLLED` | New `409` code. Old clients show it as a generic adopt failure, which is correct — the action genuinely did not happen. |
 | Migration `016` | Two nullable columns on `conversation_meta`. An older streamer against the newer DB ignores them. |
 | `409 STOP_REQUIRES_CONFIRM` | Old clients calling `/stop` on an external session get `409` where they used to get `404`. Both are errors; neither client acts on the difference. Strictly more informative. |
-| `409 ADOPT_REQUIRES_CONFIRM` | **Breaking for the existing mobile overtake flow** — today's `adoptSession.mutate()` sends no body and would start failing. Must ship with the mobile change, or land server-side behind a grace period where a missing `confirm` is logged and allowed for one release. |
+| `ADOPT_SOURCE_UNSUPPORTED` / `ADOPT_REMOTE_CONTROLLED` | New `409` codes on a path that previously succeeded **dangerously**. Old clients show a generic adopt failure, which is correct — the action genuinely did not happen, and refusing is the point. |
 | `target` in the `stopping` NDJSON event | Additive field in an existing event. |
 | `status` values | **Unchanged.** No new value; `discoveredToResponse` keeps forcing `idle`. |
 
-The `adopt` row is the only real coordination point in this spec, and it needs a decision at implementation time: **either** ship streamer + mobile together, **or** default `confirm` to true for one release with a deprecation log. Recommendation: ship together — overtake is a low-frequency action and a coordinated pair is cleaner than a temporary permissive default that could outlive its release.
+### 5.2 Why `adopt` gets no server-side `confirm` requirement
+
+An earlier revision of this spec put the same `{ confirm: true }` gate on `adopt` that §3 puts on `stop`, and recommended shipping the streamer and mobile changes together. **That recommendation was wrong**, and the reasoning it rested on does not survive the first line of `docs/compatibility/tb-mobile.md`:
+
+> `tb-mobile` is a released iOS/Android app — users on older app versions connect to whatever streamer version is deployed. The mobile client cannot be force-updated.
+
+Shipping the two repos together synchronises the repos. It does nothing for the installed base. A `confirm` requirement on `adopt` would break overtake for **every already-installed app version, permanently, until each user chooses to update** — not for a window between two merges. "Land it behind a grace period for one release" fails for the same reason: users update on their own schedule, so there is no release after which the old clients are gone.
+
+The asymmetry that resolves it:
+
+| Endpoint | Behaviour today | Adding a `confirm` requirement |
+|---|---|---|
+| `stop` on an **external** session | `404` — `handleStopSession` returns not-found when `ptyManager.getSession()` is null, so **no shipped client can do this at all** | **Safe.** Entirely new capability; there is no working flow to break |
+| `adopt` | Works, and mobile already calls it with no body | **Breaking.** Every shipped client stops working, indefinitely |
+
+So:
+
+- **`stop` keeps the confirm gate** exactly as §3 specifies. Gating a capability that does not yet exist costs nothing.
+- **`adopt` does not gain one.** Confirmation before overtake is a client responsibility (§4.3), and a server-side gate would only additionally guard non-mobile callers — not worth breaking every phone in the field for.
+- **The refusals stay** (§4.4): `ADOPT_SOURCE_UNSUPPORTED` and `ADOPT_REMOTE_CONTROLLED` reject cases that previously succeeded *dangerously*. They fail closed on a path that should never have been open, which is the opposite of breaking a working flow — and an old client rendering them as a generic failure is the correct outcome.
+
+**Consequence, accepted:** a non-mobile caller — `curl`, a script — can still overtake a terminal session with a single unconfirmed request, exactly as today. That is unchanged behaviour behind an authenticated, admin-scoped API, and it is a smaller cost than breaking the installed base. If a server-side gate is ever genuinely needed, the compatible route is to condition it on a client capability signal (an `X-Client-*` header the app starts sending), never on an unconditional requirement.
+
+**Net: this spec has no breaking change.** Every entry in the table above is additive or fails closed on a previously-dangerous path.
 
 ---
 
@@ -456,7 +484,7 @@ The `adopt` row is the only real coordination point in this spec, and it needs a
 | S3 | Ancestry walk loops or runs deep | Hard cap of 4 levels, stop at pid 1 |
 | S4 | `SIGTERM` lands mid-JSONL-write | Provider flushes on `SIGTERM`; no `SIGKILL` escalation (§3.2) |
 | S5 | Stray tap kills a real terminal session | Two-layer: mobile confirms before sending, server refuses without `confirm` |
-| S6 | Old mobile breaks on the adopt confirm gate | §5 — ship coordinated, or one-release permissive default |
+| S6 | A server-side `confirm` requirement on `adopt` breaks every shipped mobile build indefinitely | Not added — `adopt` keeps working with no body; confirmation is client-side. Gating is applied only to `stop`, which no shipped client can reach today (§5.2) |
 | S7 | Windows has no tty signal | Detection there is ancestry-only; more results land on `unknown`, which is correct rather than guessed |
 | S8 | Sources proliferate as new hosts appear | `unknown` absorbs them; adding a value is additive on both sides |
 | S9 | Start-time binding (§2.5) attaches a desktop process to the wrong conversation | Correlate first-record timestamp against process start (measured Δ ≈ 1.2–1.5 s); reject transcripts predating the process; bind **nothing** when two candidates correlate inside the window; report the binding as inferred |
@@ -478,7 +506,7 @@ The `adopt` row is the only real coordination point in this spec, and it needs a
 |---|---|
 | `__tests__/session-source.test.ts` | `resolveSessionSource` decision table across all six values; `entrypoint: "claude-desktop"` wins over ancestry; entrypoint-only path (no process) and ancestry-only path (no conversation); truncated `comm`; unreadable ancestry → `unknown`; depth cap; loop guard |
 | `__tests__/discover-bind-by-cwd.test.ts` | §2.5 binding: argv-less process binds to the transcript whose first record falls just after its start time; **two concurrent sessions in one directory each bind to the correct transcript** (the 11:02 / 11:11 case); rejects a transcript whose first record predates process start; binds nothing when two candidates correlate inside the window; skips agent-entrypoint candidates; binding flagged inferred. **Fixtures must use real leading-dash directory names** (`-Users-…`) — see §2.5's implementation note |
-| `__tests__/adopt-source-refusal.test.ts` | `ADOPT_SOURCE_UNSUPPORTED` for `desktop-app` and `ADOPT_REMOTE_CONTROLLED` for `remoteControlled`, both checked before any signal is sent; refusal reads the **live** value and a stale sticky column never blocks (S13); `unknown` stays overtakeable; plain `terminal` unaffected |
+| `__tests__/adopt-source-refusal.test.ts` | `ADOPT_SOURCE_UNSUPPORTED` for `desktop-app` and `ADOPT_REMOTE_CONTROLLED` for `remoteControlled`, both checked before any signal is sent; refusal reads the **live** value and a stale sticky column never blocks (S13); `unknown` stays overtakeable; plain `terminal` unaffected; **an adopt with no request body still succeeds** — the shipped-client contract §5.2 protects |
 | `__tests__/session-source-persistence.test.ts` | Migration `016` applies once and is idempotent; `source` / `remote_controlled` written only on live observation, never from a scan (S16); sticky `remote_controlled` stays true once set; `NULL` matches neither `?remoteControlled=true` nor `=false` |
 | `__tests__/process-ancestry.test.ts` | `ps -eo pid=,ppid=,tty=,comm=` parsing; CIM `ParentProcessId` parsing; chain walk on synthetic maps |
 | `__tests__/sessions-filter-params.test.ts` | `?ownership=` / `?source=` single and comma-separated; invalid member → `400`; interaction with `?status=` and cursor pagination; bare `GET` still returns the legacy array |
@@ -490,7 +518,7 @@ The `adopt` row is the only real coordination point in this spec, and it needs a
 |---|---|
 | `__tests__/process-discovery.test.ts` | `source` and `ppid` on `DiscoveredProcess`; `parsePsOutput` unchanged by the new sweep |
 | `__tests__/session-store.test.ts` | `source` in `discoveredToResponse` / `managedToResponse`; filtering in `paginate` |
-| `__tests__/server.test.ts` | adopt confirm gate; stop confirm gate; filter params end-to-end |
+| `__tests__/server.test.ts` | stop confirm gate; **adopt still accepts a request with no body** (§5.2); adopt refusals; filter params end-to-end |
 | `__tests__/codex-api.test.ts` | source detection for Codex-provider discovered processes |
 | `__tests__/contracts/mobile-contracts.test.ts` | `source` optional; no new `status` value |
 | `docs/compatibility/tb-mobile.md` | `source` field, both query params, both `409` codes, the `target` descriptor |
@@ -507,17 +535,17 @@ The `adopt` row is the only real coordination point in this spec, and it needs a
 - [ ] **S2b** — bind argv-less discovered processes by cwd + transcript recency (§2.5), so desktop-app sessions appear in `/api/sessions` at all. **Prerequisite for the whole feature** — without it there is nothing to filter or act on
 - [ ] **S3** — `?ownership=`, `?source=` and `?remoteControlled=` in `parseSessionListQuery` + `SessionStore.paginate`
 - [ ] **S4** — stop for external sessions: confirm gate, `SIGTERM` + `waitForProcessExit`, `target` in the NDJSON stream
-- [ ] **S5** — adopt confirm gate (`ADOPT_REQUIRES_CONFIRM`), plus `ADOPT_SOURCE_UNSUPPORTED` for `desktop-app` and `ADOPT_REMOTE_CONTROLLED` for remote-controlled sessions (§4.4); existing pre-flight refusals unchanged and still ahead of the kill
+- [ ] **S5** — adopt refusals only, **no confirm gate** (§5.2): `ADOPT_SOURCE_UNSUPPORTED` for `desktop-app` and `ADOPT_REMOTE_CONTROLLED` for remote-controlled sessions (§4.4); existing pre-flight refusals unchanged and still ahead of the kill
 - [ ] **S6** — `docs/compatibility/tb-mobile.md` update
 
 **Mobile**
 
 - [ ] **M3** — `source` and `remoteControlled` in `types/api.ts`; both shown on session rows and the session screen
 - [ ] **M4** — stop confirmation dialog; `{ confirm: true }`; navigate to the read-only conversation view on `stopped` only
-- [ ] **M5** — route `ownership: 'external' && processLiveness === 'alive'` to a screen offering Overtake + Stop, both behind confirmation; send `{ confirm: true }` on adopt *(ships with S5)*
+- [ ] **M5** — route `ownership: 'external' && processLiveness === 'alive'` to a screen offering Overtake + Stop, both behind confirmation dialogs; send `{ confirm: true }` on **stop** only. Adopt needs no body, so this **no longer has to ship with S5** (§5.2)
 - [ ] **M6** — source filter chips on the sessions list, backed by `?source=` / `?ownership=` / `?remoteControlled=`
 
-Order: S1 → S2 → **S2a → S2b** → S3. S2b gates everything downstream for desktop-app sessions. S5 and M5 ship together (§5). S4 before M4.
+Order: S1 → S2 → **S2a → S2b** → S3. S2b gates everything downstream for desktop-app sessions. S5 and M5 are now independent (§5.2) — neither blocks the other. S4 before M4.
 
 ---
 
