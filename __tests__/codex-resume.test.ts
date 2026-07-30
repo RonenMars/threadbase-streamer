@@ -7,7 +7,6 @@
  * is deterministic across environments.
  */
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -26,15 +25,14 @@ vi.mock("node-pty", () => {
   return { spawn: vi.fn(() => makeMockProcess()) };
 });
 
+// Ask the kernel for an ephemeral port at bind time. Probing for a free port up
+// front and releasing it is a TOCTOU race: another server can take it between
+// the probe's close() and our listen(), producing a flaky EADDRINUSE under
+// full-suite load. Pass 0 to listen() and read the real port back off
+// `server.port`. Same idiom as server.test.ts.
+const EPHEMERAL_PORT = 0;
 async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
+  return EPHEMERAL_PORT;
 }
 
 const API_KEY = "tb_test_codex_resume";
@@ -97,7 +95,7 @@ describe("Codex resume", () => {
     await server.listen(port, { awaitReady: true });
 
     try {
-      const res = await fetch(`http://localhost:${port}/api/sessions/resume`, {
+      const res = await fetch(`http://localhost:${server.port}/api/sessions/resume`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
         body: JSON.stringify({ sessionId: CODEX_SESSION_ID }),
@@ -146,7 +144,7 @@ describe("Codex resume", () => {
 
     try {
       const res = await fetch(
-        `http://localhost:${port}/api/conversations/${CODEX_SESSION_ID}?msg_limit=10`,
+        `http://localhost:${server.port}/api/conversations/${CODEX_SESSION_ID}?msg_limit=10`,
         { headers: { Authorization: `Bearer ${API_KEY}` } },
       );
       const body = await res.json();
