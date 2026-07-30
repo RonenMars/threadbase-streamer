@@ -83,6 +83,8 @@ Setting `port:` in `server.yaml` does nothing — the listening port comes only 
 
 Feature flags (`src/feature-flags.ts`) resolve at boot from env → `--feature <id=bool>` → `feature_flags:` (one line of JSON) → registry default, and are readable at `GET /api/config/feature-flags`. Full detail in CLAUDE.md.
 
+`permissionMode`, `model` and `effort` are claude-flags that the spawn paths pass as explicit positionals, so `buildFlagArgs` skips them (`SPAWN_POSITIONAL_FLAG_IDS`) and `StreamerServer.spawnFlagOverrides()` resolves them instead — flag value over `--default-*` CLI fallback. Skipping an id without reading it there makes the API a silent no-op. Server default is `PUT /api/config/claude-flags`; a live session is retargeted by `PATCH /api/sessions/:id/model` / `:id/effort`, which type Claude's `/model` / `/effort` slash command into the PTY (202, validated as a trust boundary — the value becomes raw terminal bytes). Full detail in CLAUDE.md.
+
 ## ServerConfig options (beyond CLI flags)
 
 | Field | Default | Description |
