@@ -1,19 +1,17 @@
 import { mkdtempSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { resolveAllowedOrigins } from "../src/api/middleware/cors.middleware";
 import { StreamerServer } from "../src/server";
 
+// Ask the kernel for an ephemeral port at bind time. Probing for a free port up
+// front and releasing it is a TOCTOU race: another server can take it between
+// the probe's close() and our listen(), producing a flaky EADDRINUSE under
+// full-suite load. Pass 0 to listen() and read the real port back off
+// `server.port`. Same idiom as server.test.ts.
+const EPHEMERAL_PORT = 0;
 async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
+  return EPHEMERAL_PORT;
 }
 
 describe("resolveAllowedOrigins", () => {
@@ -74,7 +72,7 @@ describe("browser_cors in server.yaml", () => {
     });
     await server.listen(port);
     try {
-      const res = await fetch(`http://localhost:${port}/api/info`, {
+      const res = await fetch(`http://localhost:${server.port}/api/info`, {
         headers: { Authorization: `Bearer ${API_KEY}`, Origin: "http://localhost:8081" },
       });
       expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
@@ -98,7 +96,7 @@ describe("browser_cors in server.yaml", () => {
     });
     await server.listen(port);
     try {
-      const res = await fetch(`http://localhost:${port}/api/info`, {
+      const res = await fetch(`http://localhost:${server.port}/api/info`, {
         headers: { Authorization: `Bearer ${API_KEY}`, Origin: "http://localhost:8081" },
       });
       expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:8081");
