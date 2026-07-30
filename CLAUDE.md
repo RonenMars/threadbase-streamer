@@ -122,9 +122,25 @@ For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args a
 | `cacheDir` | `~/.threadbase/cache` | Directory for the SQLite conversation cache |
 | `tailSize` | `10` | Tail messages cached per conversation for fast session-list enrichment |
 | `directoryScanDebounceMs` | `1000` | Trailing debounce (ms) before a directory change flags the scanner stale (env override: `THREADBASE_DIR_SCAN_DEBOUNCE_MS`) |
-| `claudeFlags` | `{}` | Allowlisted Claude CLI flags appended to every spawn. Registry + validation in `src/claude-flags.ts`; persisted as one line of JSON under `claude_flags:` in server.yaml. Set via repeatable `--claude-flag <id=value>` or `PUT /api/config/claude-flags`. |
+| `claudeFlags` | `{}` | Allowlisted Claude CLI flags appended to every spawn. Registry + validation in `src/claude-flags.ts`; persisted as one line of JSON under `claude_flags:` in server.yaml. Set via repeatable `--claude-flag <id=value>` or `PUT /api/config/claude-flags`. Includes `model` and `effort`, which is how the server default for those is changed at runtime — see below. |
 | `claudeExtraArgs` | — | Free-text argv appended after `claudeFlags` (and after `--resume`/`--session-id`), so it can override them. Unvalidated escape hatch; persisted under `claude_extra_args:`. Set via `--claude-extra-args`. |
 | `featureFlags` | registry defaults | Server feature flags from the CLI (`--feature <id=bool>`). Merged with the env vars and `feature_flags:` in server.yaml — see [Feature flags](#feature-flags). |
+
+## Model & effort
+
+Three claude-flags are **spawn positionals**, not allowlist-appended: `permissionMode`, `model`, `effort`. `buildFlagArgs` deliberately skips them (`SPAWN_POSITIONAL_FLAG_IDS` in `src/claude-flags.ts`) because both PTY spawn paths already pass `--permission-mode`, `--model` and `--effort` explicitly; emitting them twice would put a duplicate flag on the command line. `StreamerServer.spawnFlagOverrides()` is the single place that resolves them, and all three spawn sites (start, resume, adopt) spread it — so `claudeFlags.model` wins over the `--default-model` CLI flag, and likewise for the other two.
+
+Adding a flag id to that skip set without also reading it in `spawnFlagOverrides()` recreates the bug this arrangement fixed: the value round-trips through `GET`/`PUT /api/config/claude-flags` and persists to server.yaml while never reaching argv, so the API looks like it works and silently does nothing. `__tests__/session-settings.test.ts` locks the config → spawn path for all three.
+
+**Server default** — `PUT /api/config/claude-flags` with `{"values":{"model":"opus","effort":"high"}}`. Applies to the next spawn; a live PTY keeps the argv it started with. `--default-model` / `--default-effort` remain the boot fallback beneath it.
+
+**A live session** — `PATCH /api/sessions/:id/model` / `:id/effort`. There is no CLI or IPC channel for retargeting a running session, so these type Claude's interactive `/model <x>` / `/effort <y>` command into the PTY via `sendKeys` (both accept an argument and apply it without opening the picker — verified against Claude Code v2.1.220). Consequences worth knowing:
+
+- The value is a **trust boundary**: it is written as raw bytes into a live terminal, so `MODEL_NAME_RE` and `isEffortLevel` reject anything containing `\r`/`\n`/whitespace rather than escaping it. An unvalidated `\r` would end the slash command and run the remainder as a second, caller-chosen command.
+- Answers **202, not 200** — the TUI applies it on its next render, so there is nothing truthful to echo back. Confirm with `GET /api/sessions/:id`, which scrapes the applied value off the status line.
+- Guarded: 409 `SESSION_BUSY` mid-turn (the composer isn't accepting a slash command, and `sendKeys` has no such check of its own), 409 `SESSION_IDLE` when the session is known but has no live PTY, 501 `UNSUPPORTED_PROVIDER` for Codex (`/effort` has no Codex equivalent).
+- The `SESSION_IDLE` case is a **registry** lookup, not a status check: `putOnHold()` and `handleExit()` both delete the session from the runner's map, so a held session reads as *absent* there rather than as `status: "idle"`. Checking only the runner would 404 a session mobile can still see in its list.
+- `sendKeys` flips `waiting_input → running` and broadcasts a `session_update`; the prompt marker returns the status on its own once Claude re-renders.
 
 ## Feature flags
 
