@@ -359,6 +359,26 @@ auto_resume_on_boot: false
 - `ServerConfig.autoResumeOnBoot?: boolean`, resolved at boot like every other startup setting. Precedence: explicit `ServerConfig` → `server.yaml` → **`false`**.
 - Not a feature flag. Feature flags gate behaviour *we* are unsure about; this is a user preference with a persisted answer, which is the `default_permission_mode` shape, not the `codexSystemPrompt` shape.
 
+**Ride-along: `default_model` and `default_effort` get the same treatment.**
+
+They have no home in `server.yaml` today, so the only way to pin them per-server is `claude_extra_args` — and that is load-bearing config sitting in a slot documented as an unvalidated escape hatch. It silently reverts:
+
+```ts
+// src/server.ts:2153 — setClaudeFlagsConfig()
+setClaudeExtraArgs(extraArgs);   // called UNCONDITIONALLY
+```
+
+```ts
+// src/auth.ts:156 — setConfigValue()
+if (value === undefined) { /* the line is removed from server.yaml */ }
+```
+
+So a `PUT /api/config/claude-flags` that omits `extraArgs` passes `undefined`, the `claude_extra_args:` line is **deleted**, and the next spawn quietly falls back to `--model sonnet --effort low`. There is a forensic trail (`config.claude_flags_updated` logs `previousExtraArgs`) but no user-visible signal — verified in code, not inferred.
+
+The fix is `loadDefaultModel()` / `loadDefaultEffort()` in `src/auth.ts`, mirroring `loadDefaultPermissionMode()` (`src/auth.ts:120-131`) exactly, with the fallback wired where `opts.defaultModel` / `opts.defaultEffort` are read in `cli/index.ts`. Roughly 20 lines, and it: survives any claude-flags write (different key), survives redeploy (`deploy.sh` regenerates the plist, not `server.yaml`), sits beside `default_permission_mode` where it is discoverable, and returns `claude_extra_args` to being an escape hatch.
+
+It rides **PR 11** rather than getting its own, because PR 11 is already building precisely this — a `server.yaml` loader beside `default_permission_mode` — and a parallel mechanism for the same shape would be worse than one shared one. Unlike `auto_resume_on_boot` these need **no prompt**: absent simply means "fall through to the CLI default", so the loaders are plain optional reads.
+
 #### 7b — the first-run question *(PR 11)*
 
 **Where this goes, and why not the installer.** The request was to ask during install. Two of the three install paths cannot reliably ask:
@@ -563,12 +583,29 @@ Run `npm run lint && npm test` under the `.nvmrc` Node version (`better-sqlite3`
 | `__tests__/session-rehydration.test.ts` | `shouldRehydrate` decision table (project missing, too old, agent-exited, Codex unbound); `rowToStubSession` field mapping; cap and ordering; stub invisible to `reapIdleSessions` and `startGraceTimer`; resume overwrites the stub; `selfPtyEndedAt` seeding |
 | `__tests__/boot-token.test.ts` | stability within a process; Linux `boot_id` path; bucketing tolerance |
 | `__tests__/runtime-store.test.ts` | §3.0 — `RuntimeStore.open` runs its own migrations into its own `schema_migrations`; registry survives deleting `cache.db`; a forced cache-open failure leaves persistence working; one-time row copy is idempotent across two boots and does not drop the source table |
-| `__tests__/auto-resume-config.test.ts` | `loadAutoResumeOnBoot` tri-state (absent vs `false`); `setAutoResumeOnBoot` round-trip through `server.yaml`; precedence `ServerConfig` → yaml → `false` |
+| `__tests__/auto-resume-config.test.ts` | `loadAutoResumeOnBoot` tri-state (absent vs `false`); `setAutoResumeOnBoot` round-trip through `server.yaml`; precedence `ServerConfig` → yaml → `false`. Also `loadDefaultModel` / `loadDefaultEffort`: absent falls through to the CLI default, and **a `PUT /api/config/claude-flags` that omits `extraArgs` no longer changes the resolved model or effort** — the silent-revert regression |
 | `__tests__/auto-resume-prompt.test.ts` | **answering `no` writes `auto_resume_on_boot: false`, and a second run does not re-ask** — the property the whole trigger rests on; `yes` writes `true`; asked when the key is absent regardless of whether the file already existed; never under `--prod` or a non-TTY; `THREADBASE_SKIP_AUTO_RESUME_PROMPT` honoured; every non-answer resolves `false`; the discoverability log fires only when the key is absent and the prompt did not run; `THREADBASE_CONFIG_DIR` redirection honoured |
 | `__tests__/auto-resume-on-boot.test.ts` | eligibility rules 1–5; concurrency cap and per-boot ceiling with overflow logged; `force` never passed; busy conversation skipped with a reason; `false` reproduces Phase 1 behaviour exactly |
 | `__tests__/resume-identity.test.ts` | `resumeIdForRow` across both providers, bound and unbound |
 | `__tests__/pty-host-protocol.test.ts` | PR 6 — protocol round-trip over an in-memory transport |
 | `__tests__/pty-host-survival.test.ts` | PRs 7–8 — host outlives the streamer; reconnect adopts the session; replay is byte-accurate. Sibling of `pty-parent-exit-hangup.test.ts` |
+
+### The nightly restart is a free validation harness
+
+This machine already runs the exact failure this plan addresses, on a schedule. `~/Library/LaunchAgents/com.ronen.threadbase-nightly-restart.plist`:
+
+```
+ProgramArguments = /bin/launchctl kickstart -k gui/501/com.ronen.threadbase
+StartCalendarInterval = { Hour = 4, Minute = 0 }
+```
+
+`-k` kills before restarting, so **every live PTY dies at 04:00 daily** and the streamer comes back with an empty `SessionStore`. Three consequences worth having written down:
+
+- **Phase 1 rehydration gets exercised every night against real state**, with real `session_name`, `prompt_count` and project paths — not a synthesized fixture. After PR 1 lands, "were yesterday's sessions listed this morning?" is a daily regression check that costs nothing to run.
+- **Phase 7 auto-resume has concrete daily value here**, not just theoretical value after a crash: 04:00 restart plus `auto_resume_on_boot: true` is the difference between finding your sessions gone and finding them waiting.
+- **`pty_grace_period_ms` beyond about a day is unreachable on this machine.** A 7-day hold value can never be exercised past one night, which is worth knowing before tuning it or writing a test that assumes it.
+
+The job's purpose is undocumented (memory, leaked handles, log rotation are all plausible), so **do not remove or reschedule it to make testing easier** — treat it as a fixed property of the environment and let Phase 7 make it survivable.
 
 ### Do not weaken
 
@@ -590,7 +627,7 @@ Run `npm run lint && npm test` under the `.nvmrc` Node version (`better-sqlite3`
 - [ ] **PR 9** — Phase 6d: version handshake, heartbeat, orphan reaping, `prod doctor` check
 - [ ] **PR 10** — Phase 6e: Windows / ConPTY qualification, `ptyHost` default decision
 - [ ] **PR M1** *(tb-mobile, land with PR 1)* — `isTerminalSession` treats `ownership === 'historical'` as terminal (see §5.1)
-- [ ] **PR 11** — Phase 7a/7b: `auto_resume_on_boot` in `server.yaml`, loader + writer, `ServerConfig` field, first-run TTY prompt, `scripts/deploy.sh` install-time question, skip env var
+- [ ] **PR 11** — Phase 7a/7b: `auto_resume_on_boot` in `server.yaml`, loader + writer, `ServerConfig` field, first-run TTY prompt, `scripts/deploy.sh` install-time question, skip env var. **Ride-along:** `loadDefaultModel()` / `loadDefaultEffort()` in `src/auth.ts` + `cli/index.ts`, closing the `claude_extra_args` silent revert (7a)
 - [ ] **PR 12** — Phase 7c: shared `resumeSession()`, eligibility rules, caps and ceiling, logged skips
 - [ ] **PR M2** *(tb-mobile, optional, after PR 5)* — adopt `interruptedStatus` for the "interrupted mid-response" label
 
