@@ -42,12 +42,12 @@ describe("GET /api/config/claude-flags", () => {
   // The registry ships with the values so a client renders the form from one
   // round-trip and can never offer a flag this server doesn't know about.
   it("returns the registry alongside the current values", async () => {
-    const { app } = makeApp({ values: { maxBudgetUsd: "5" } });
+    const { app } = makeApp({ values: { model: "opus" } });
     const res = await app.request("/api/config/claude-flags");
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.values).toEqual({ maxBudgetUsd: "5" });
+    expect(body.values).toEqual({ model: "opus" });
     expect(body.registry.map((f: { id: string }) => f.id)).toContain("permissionMode");
     expect(body.persisted).toBe(true);
   });

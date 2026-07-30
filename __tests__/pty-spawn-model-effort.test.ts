@@ -79,7 +79,7 @@ describe("PTYManager — model/effort/permission-mode argv", () => {
         model: "opus",
         effort: "high",
         permissionMode: "bypassPermissions",
-        fallbackModel: "sonnet",
+        addDir: ["/srv/extra"],
       },
     });
 
@@ -88,7 +88,7 @@ describe("PTYManager — model/effort/permission-mode argv", () => {
     expect(occurrences(args, "--effort")).toBe(1);
     expect(occurrences(args, "--permission-mode")).toBe(1);
     // A non-positional flag in the same record still comes through the allowlist.
-    expect(flagValue(args, "--fallback-model")).toBe("sonnet");
+    expect(flagValue(args, "--add-dir")).toBe("/srv/extra");
   });
 
   it("applies the same argv on the resume path", async () => {
