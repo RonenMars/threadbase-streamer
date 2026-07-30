@@ -16,12 +16,12 @@ describe("validateFlagValues", () => {
       validateFlagValues({
         permissionMode: "bypassPermissions",
         addDir: ["/a", "/b"],
-        maxBudgetUsd: "5",
+        model: "opus",
       }),
     ).toEqual({
       permissionMode: "bypassPermissions",
       addDir: ["/a", "/b"],
-      maxBudgetUsd: "5",
+      model: "opus",
     });
   });
 
@@ -34,12 +34,12 @@ describe("validateFlagValues", () => {
 
   it("drops values of the wrong type", () => {
     expect(validateFlagValues({ addDir: "/not-an-array" })).toEqual({});
-    expect(validateFlagValues({ maxBudgetUsd: 5 })).toEqual({});
+    expect(validateFlagValues({ model: 5 })).toEqual({});
     expect(validateFlagValues({ permissionMode: "notAMode" })).toEqual({});
   });
 
   it("drops empty strings and empty lists", () => {
-    expect(validateFlagValues({ maxBudgetUsd: "   ", addDir: [] })).toEqual({});
+    expect(validateFlagValues({ model: "   ", addDir: [] })).toEqual({});
   });
 
   it("keeps model and effort", () => {
@@ -65,9 +65,11 @@ describe("buildFlagArgs", () => {
     expect(buildFlagArgs({ addDir: ["/a", "/b"] })).toEqual(["--add-dir", "/a", "/b"]);
   });
 
-  it("emits string flags as flag + value", () => {
-    expect(buildFlagArgs({ maxBudgetUsd: "5" })).toEqual(["--max-budget-usd", "5"]);
-  });
+  // No "emits string flags" case: since --max-budget-usd and --fallback-model
+  // were removed (both --print-only, so both were no-ops here), `model` is the
+  // only string flag left and it is positional, i.e. skipped. The string branch
+  // of buildFlagArgs is now unreachable through the registry — kept as-is so the
+  // next string flag added works without touching it.
 
   // permissionMode is passed as an explicit positional by both PTY spawn paths;
   // emitting it here too would put --permission-mode on the argv twice.
@@ -83,16 +85,19 @@ describe("buildFlagArgs", () => {
     expect(buildFlagArgs({ model: "opus", effort: "high" })).toEqual([]);
   });
 
-  // fallbackModel is a different flag and is NOT positional — regression guard
-  // against widening the skip set too far.
-  it("still emits fallbackModel", () => {
-    expect(buildFlagArgs({ fallbackModel: "sonnet" })).toEqual(["--fallback-model", "sonnet"]);
+  // Regression guard against widening the skip set too far: a non-positional
+  // flag alongside positional ones must still reach argv.
+  it("still emits non-positional flags when positional ones are present", () => {
+    expect(buildFlagArgs({ addDir: ["/a"], model: "opus", effort: "high" })).toEqual([
+      "--add-dir",
+      "/a",
+    ]);
   });
 
   it("appends extra args last so they can override the allowlist", () => {
-    expect(buildFlagArgs({ maxBudgetUsd: "5" }, "--model opus")).toEqual([
-      "--max-budget-usd",
-      "5",
+    expect(buildFlagArgs({ addDir: ["/a"] }, "--model opus")).toEqual([
+      "--add-dir",
+      "/a",
       "--model",
       "opus",
     ]);
