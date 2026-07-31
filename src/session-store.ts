@@ -205,14 +205,21 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     // Lifecycle for a session this run knows about. `attached` while we hold
     // its PTY; once the PTY is gone the session is terminal from this run's
     // perspective — `failed` when it recorded a reason, else `completed`.
-    // Sessions left by *previous* runs never reach here: they aren't in the
-    // in-memory store, and the boot reconciler classifies them instead
-    // (docs/architecture/2026-07-24-durable-session-runtime.md).
-    lifecycle: ptyAttached ? "attached" : s.failureReason != null ? "failed" : "completed",
-    lifecycleSource: ptyAttached ? "spawn" : "exit",
+    // A `rehydrated` stub is the exception: the boot rehydrator seeded it from
+    // the durable registry, so it is a previous run's session with no process
+    // behind it — `resumable`, and `historical` rather than `managed`
+    // (docs/plans/live-sessions-persistence-plan.md §4, Phase 1).
+    lifecycle: ptyAttached
+      ? "attached"
+      : s.rehydrated
+        ? "resumable"
+        : s.failureReason != null
+          ? "failed"
+          : "completed",
+    lifecycleSource: ptyAttached ? "spawn" : s.rehydrated ? "reconcile" : "exit",
     // We spawned it, so `status` is the authoritative signal — no inferred
     // `activity` is attached for managed sessions.
-    ownership: "managed",
+    ownership: s.rehydrated ? "historical" : "managed",
     projectPath: s.projectPath,
     projectName: s.projectName,
     branch: s.branch,

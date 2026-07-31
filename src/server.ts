@@ -143,6 +143,12 @@ import {
 } from "./services/sessions/conversationBusy";
 import { IdempotencyStore, readIdempotencyKey } from "./services/sessions/idempotency";
 import { type ReconcileVerdict, reconcileSessions } from "./services/sessions/reconcileSessions";
+import {
+  REHYDRATE_MAX,
+  REHYDRATE_WINDOW_MS,
+  rowToStubSession,
+  shouldRehydrate,
+} from "./services/sessions/rehydrateSessions";
 import { SessionStore } from "./session-store";
 import type {
   AskQuestion,
@@ -1284,6 +1290,74 @@ export class StreamerServer {
   }
 
   /**
+   * Seed the session list with what previous runs left behind (persistence plan
+   * Phase 1, gaps G1/G2/G8).
+   *
+   * Reconciliation classifies rows and stops there; a verdict is overlaid onto a
+   * SessionResponse that already exists, and after a clean restart none does —
+   * `SessionStore` starts empty. So the user's session did not become
+   * `resumable`, it became *absent*. This is the half that puts it back.
+   *
+   * The seeded stubs hold no PTY and are never handed to `LiveSessionManager`,
+   * so `reapIdleSessions` and `startGraceTimer` — both of which iterate
+   * `ptyManager.listSessions()` — cannot observe them. A later resume calls
+   * `sessionStore.addManaged` with the real session, which overwrites the stub
+   * by id rather than duplicating it.
+   */
+  private rehydratePreviousSessions(verdicts: ReconcileVerdict[]): void {
+    if (!this.featureFlags.sessionRehydration || !this.managedSessionsRepo) return;
+    try {
+      const now = Date.now();
+      // One over the cap, so a clipped result set can be reported rather than
+      // silently read as "that was all of them".
+      const rows = this.managedSessionsRepo.listRecoverable({
+        sinceMs: now - REHYDRATE_WINDOW_MS,
+        limit: REHYDRATE_MAX + 1,
+      });
+      const truncated = rows.length > REHYDRATE_MAX;
+      const candidates = truncated ? rows.slice(0, REHYDRATE_MAX) : rows;
+      if (candidates.length === 0) return;
+
+      const lifecycleByVerdict = new Map(verdicts.map((v) => [v.sessionId, v.lifecycle]));
+      let rehydrated = 0;
+      for (const row of candidates) {
+        // Anything already in the store is live and authoritative; a stub must
+        // never overwrite it.
+        if (this.sessionStore.getManaged(row.session_id)) continue;
+        if (!shouldRehydrate(row, { now, projectExists: existsSync })) continue;
+
+        this.sessionStore.addManaged(rowToStubSession(row));
+        // The reconciler knows strictly more when it produced a verdict for this
+        // row (it probed the pid); `resumable` is the fallback for the clean
+        // restart case, which leaves no row in the probe set at all.
+        this.sessionLifecycles.set(
+          row.session_id,
+          lifecycleByVerdict.get(row.session_id) ?? "resumable",
+        );
+        // Re-seed the "our own PTY ended here" marker, so the very first resume
+        // after a restart doesn't read the JSONL we flushed on the way out as a
+        // FOREIGN owner and answer 409 CONVERSATION_BUSY (plan risk R3).
+        if (row.completed_at != null) this.selfPtyEndedAt.set(row.session_id, row.completed_at);
+        rehydrated++;
+      }
+
+      this.log.info(`[rehydrate] recovered ${rehydrated} session(s) from the registry`, {
+        event: "sessions.rehydrated",
+        rehydrated,
+        skipped: candidates.length - rehydrated,
+        truncated,
+      });
+    } catch (err) {
+      // Same contract as reconciliation: this costs post-restart visibility, and
+      // must never stop the server from starting.
+      this.log.warn("[rehydrate] failed to rehydrate previous sessions", {
+        event: "sessions.rehydrate_failed",
+        err,
+      });
+    }
+  }
+
+  /**
    * Pick a token guaranteed to appear in the spawned process's argv, for the
    * reconciler's pid-reuse guard.
    *
@@ -1703,7 +1777,7 @@ export class StreamerServer {
         // delay the listener for no correctness gain. Runs after the cache block
         // so it sees any rows the legacy copy just brought across, and outside
         // it so a cache failure no longer skips reconciliation.
-        void this.reconcilePreviousSessions();
+        void this.reconcilePreviousSessions().then((v) => this.rehydratePreviousSessions(v));
         // Opt out of the warm-up scan entirely (test hook). The cache and
         // repositories above are already open, so conversation endpoints serve an
         // empty cache instead of throwing; only the scan and its dependent cache
@@ -2551,7 +2625,13 @@ export class StreamerServer {
 
   private handleSessionsCount(res: ServerResponse): void {
     if (this.rejectIfWarmingUp(res)) return;
-    json(res, 200, { total: this.sessionStore.list(this.ptyAttachedIds()).length });
+    // Recovered stubs are excluded: this badge means "sessions this streamer is
+    // running", and a restart must not inflate it with everything it could
+    // offer to resume. The updater's active-session probe reads the same number.
+    const total = this.sessionStore
+      .list(this.ptyAttachedIds())
+      .filter((s) => s.ownership !== "historical").length;
+    json(res, 200, { total });
   }
 
   private handleGetRecentSessions(url: URL, res: ServerResponse): void {

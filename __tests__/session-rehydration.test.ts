@@ -1,0 +1,465 @@
+// Phase 1 of the live-sessions persistence plan: sessions a previous streamer
+// run left behind come back into GET /api/sessions as recoverable stubs.
+//
+// The regression this exists to prevent is subtle: recordShutdownState() stamps
+// completed_at on every live session as the streamer stops, which is exactly
+// what removes the row from the reconciler's probe set — so the sessions most
+// worth recovering were the ones nothing looked at.
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { createServer } from "http";
+import { tmpdir } from "os";
+import { join } from "path";
+import type { ManagedSessionRow } from "../src/db/repositories/managed-sessions.repository";
+import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
+import {
+  REHYDRATE_MAX,
+  REHYDRATE_WINDOW_MS,
+  rowToStubSession,
+  shouldRehydrate,
+} from "../src/services/sessions/rehydrateSessions";
+import { SessionStore } from "../src/session-store";
+
+vi.mock("node-pty", () => {
+  const { EventEmitter } = require("events");
+  function makeMockProcess() {
+    const ee = new EventEmitter();
+    setImmediate(() => ee.emit("data", "╭\n"));
+    return {
+      pid: 99999,
+      onData: (cb: (data: string) => void) => ee.on("data", cb),
+      onExit: (cb: (e: { exitCode: number }) => void) => ee.on("exit", cb),
+      write: vi.fn(),
+      kill: vi.fn(),
+    };
+  }
+  return { spawn: vi.fn(() => makeMockProcess()) };
+});
+
+const NOW = new Date("2026-07-31T12:00:00Z").getTime();
+
+function mkRow(over: Partial<ManagedSessionRow> = {}): ManagedSessionRow {
+  return {
+    session_id: "sess-1",
+    provider: "claude-code",
+    pid: 4242,
+    cmdline: "claude --resume sess-1",
+    project_path: "/repo",
+    project_name: "repo",
+    branch: "main",
+    status: "idle",
+    status_source: "shutdown",
+    status_updated_at: NOW - 60_000,
+    started_at: NOW - 3_600_000,
+    completed_at: NOW - 60_000,
+    last_activity_at: NOW - 120_000,
+    prompt_count: 7,
+    session_name: "long refactor",
+    project_id: "proj-1",
+    bound_conversation_id: null,
+    resumed_from_conversation_id: null,
+    failure_reason: null,
+    streamer_instance_id: "instance-1",
+    ...over,
+  };
+}
+
+const exists = () => true;
+const missing = () => false;
+
+describe("shouldRehydrate", () => {
+  it("recovers a session the streamer itself stopped", () => {
+    expect(shouldRehydrate(mkRow(), { now: NOW, projectExists: exists })).toBe(true);
+  });
+
+  it("skips a row whose project directory is gone", () => {
+    // handleResume would fail to spawn there, so offering it is a wasted tap.
+    expect(shouldRehydrate(mkRow(), { now: NOW, projectExists: missing })).toBe(false);
+  });
+
+  it("skips a row older than the window", () => {
+    const row = mkRow({ status_updated_at: NOW - REHYDRATE_WINDOW_MS - 1 });
+    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(false);
+  });
+
+  it("keeps a row right at the window edge", () => {
+    const row = mkRow({ status_updated_at: NOW - REHYDRATE_WINDOW_MS });
+    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
+  });
+
+  it("skips a session the agent ended on its own", () => {
+    for (const status_source of ["exit", "process-exit"]) {
+      const row = mkRow({ status_source, failure_reason: null });
+      expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(false);
+    }
+  });
+
+  it("still recovers an agent exit that recorded a failure", () => {
+    // That one was cut short, so there is something left to resume.
+    const row = mkRow({ status_source: "exit", failure_reason: "claude binary not found" });
+    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
+  });
+
+  it("recovers a crashed row that never got a shutdown write", () => {
+    const row = mkRow({ status: "running", status_source: "transition", completed_at: null });
+    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
+  });
+});
+
+describe("rowToStubSession", () => {
+  it("carries the metadata a restart used to lose", () => {
+    const s = rowToStubSession(mkRow({ bound_conversation_id: "rollout-9" }));
+    expect(s.id).toBe("sess-1");
+    expect(s.sessionName).toBe("long refactor");
+    expect(s.projectPath).toBe("/repo");
+    expect(s.projectName).toBe("repo");
+    expect(s.branch).toBe("main");
+    expect(s.promptCount).toBe(7);
+    expect(s.projectId).toBe("proj-1");
+    expect(s.boundConversationId).toBe("rollout-9");
+    expect(s.startedAt.getTime()).toBe(NOW - 3_600_000);
+    expect(s.rehydrated).toBe(true);
+  });
+
+  it("reports idle, never a new status value", () => {
+    // A new SessionStatus would be rejected by VALID_STATUSES on ?status= and
+    // dropped by SessionStore.paginate's filter, making recovered sessions
+    // vanish from already-shipped mobile clients.
+    expect(rowToStubSession(mkRow({ status: "running" })).status).toBe("idle");
+  });
+
+  it("keeps the shutdown provenance but not a crashed row's stale source", () => {
+    expect(rowToStubSession(mkRow()).statusSource).toBe("shutdown");
+    // `transition` described a `running` status we are not emitting; copying it
+    // would attach observed confidence to a value derived at boot.
+    const crashed = rowToStubSession(mkRow({ status: "running", status_source: "transition" }));
+    expect(crashed.statusSource).toBeUndefined();
+  });
+});
+
+describe("a rehydrated stub in SessionStore", () => {
+  // The managedToResponse mapping itself lives in session-store.test.ts; this
+  // covers the one property specific to rehydration — a resume must replace the
+  // stub rather than list a second row beside it.
+  it("is replaced, not duplicated, when a real session takes the same id", () => {
+    const store = new SessionStore();
+    store.addManaged(rowToStubSession(mkRow()));
+    store.addManaged({
+      id: "sess-1",
+      projectPath: "/repo",
+      projectName: "repo",
+      branch: "main",
+      status: "running",
+      startedAt: new Date(NOW),
+      completedAt: null,
+      promptCount: 0,
+      lastOutput: "",
+    });
+
+    const list = store.list(new Set(["sess-1"]));
+    expect(list).toHaveLength(1);
+    expect(list[0].ownership).toBe("managed");
+    expect(list[0].lifecycle).toBe("attached");
+  });
+});
+
+// ── boot integration ─────────────────────────────────────────────────────────
+
+async function getRandomPort(): Promise<number> {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.listen(0, () => {
+      const addr = srv.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+const API_KEY = "tb_test_session_rehydration";
+const UUID = "cccccccc-1111-2222-3333-444444444444";
+
+interface SessionListItem {
+  id: string;
+  status: string;
+  ownership?: string;
+  lifecycle?: string;
+  ptyAttached: boolean;
+  promptCount: number;
+  sessionName?: string;
+  projectPath: string;
+}
+
+describe("boot rehydration", () => {
+  let configDir: string;
+  let projectDir: string;
+  let cacheDir: string;
+  let runtimeDir: string;
+  let runtimeDbPath: string;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "tb-rehydrate-cfg-"));
+    projectDir = mkdtempSync(join(tmpdir(), "tb-rehydrate-proj-"));
+    cacheDir = mkdtempSync(join(tmpdir(), "tb-rehydrate-cache-"));
+    runtimeDir = mkdtempSync(join(tmpdir(), "tb-rehydrate-runtime-"));
+    runtimeDbPath = join(runtimeDir, "runtime.db");
+
+    const encoded = projectDir.replace(/[/\\:.]/g, "-");
+    const jsonlDir = join(configDir, "projects", encoded);
+    mkdirSync(jsonlDir, { recursive: true });
+    writeFileSync(
+      join(jsonlDir, `${UUID}.jsonl`),
+      `${JSON.stringify({ sessionId: UUID, cwd: projectDir, type: "user", message: "hi" })}\n`,
+    );
+  });
+
+  afterEach(() => {
+    for (const d of [configDir, projectDir, cacheDir, runtimeDir]) {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * Write the rows a previous streamer run would have left, then close the
+   * database — the honest simulation of a restart is a second process opening
+   * the same file.
+   */
+  function seedRegistry(
+    sessions: { id: string; projectPath: string; name?: string; ageMs?: number }[],
+  ): void {
+    const store = RuntimeStore.open(runtimeDbPath);
+    const repo = new ManagedSessionsRepository(store.getDatabase());
+    for (const s of sessions) {
+      repo.recordSpawn({
+        session: {
+          id: s.id,
+          provider: "claude-code",
+          projectPath: s.projectPath,
+          projectName: "proj",
+          branch: "main",
+          status: "running",
+          startedAt: new Date(Date.now() - 600_000),
+          completedAt: null,
+          promptCount: 4,
+          lastOutput: "",
+          sessionName: s.name ?? "recovered session",
+        },
+        pid: 999_999,
+        cmdline: `claude --resume ${s.id}`,
+        streamerInstanceId: "previous-run",
+      });
+      // What close() writes for every live session on the way out. This is the
+      // write that used to make the session disappear.
+      repo.recordStatus(s.id, "idle", "shutdown", {
+        completedAt: new Date(Date.now() - (s.ageMs ?? 1_000)),
+        promptCount: 4,
+      });
+    }
+    // A shutdown row's status_updated_at is stamped by recordStatus at write
+    // time, so backdate it directly when the test needs an old row.
+    for (const s of sessions) {
+      if (s.ageMs == null) continue;
+      store
+        .getDatabase()
+        .prepare("UPDATE managed_sessions SET status_updated_at = ? WHERE session_id = ?")
+        .run(Date.now() - s.ageMs, s.id);
+    }
+    store.close();
+  }
+
+  async function makeServer(over: Record<string, unknown> = {}) {
+    const { StreamerServer } = await import("../src/server");
+    const port = await getRandomPort();
+    const server = new StreamerServer({
+      port,
+      apiKey: API_KEY,
+      localNoAuth: false,
+      verbose: false,
+      disableDb: true,
+      cacheDir,
+      runtimeDbPath,
+      scanProfiles: [{ id: "test", label: "Test", configDir, enabled: true, emoji: "🧪" }],
+      scannerPersistent: false,
+      codexRoots: [],
+      ...over,
+    });
+    await server.listen(port, { awaitReady: true });
+    return { server, port };
+  }
+
+  function api(port: number, path: string) {
+    return fetch(`http://localhost:${port}${path}`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+  }
+
+  // A bare GET /api/sessions answers the legacy plain array. It can also carry
+  // processes discovered on the host running the suite, so every assertion here
+  // is scoped to the ids this test seeded rather than to the list length.
+  async function listSessions(port: number): Promise<SessionListItem[]> {
+    return (await (await api(port, "/api/sessions")).json()) as SessionListItem[];
+  }
+
+  /** Rehydration is chained off a fire-and-forget reconcile, so poll for it. */
+  async function seededWhenSettled(port: number, expected: number): Promise<SessionListItem[]> {
+    let seeded: SessionListItem[] = [];
+    for (let i = 0; i < 100; i++) {
+      seeded = (await listSessions(port)).filter((s) => s.ownership === "historical");
+      if (seeded.length >= expected) return seeded;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return seeded;
+  }
+
+  it("lists an interrupted session with its metadata, and keeps it out of the count", async () => {
+    seedRegistry([{ id: UUID, projectPath: projectDir, name: "yesterday's work" }]);
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+      const sessions = await listSessions(port);
+      const recovered = sessions.find((s) => s.id === UUID);
+      expect(recovered).toBeDefined();
+      expect(recovered?.status).toBe("idle");
+      expect(recovered?.ownership).toBe("historical");
+      expect(recovered?.lifecycle).toBe("resumable");
+      expect(recovered?.ptyAttached).toBe(false);
+      expect(recovered?.promptCount).toBe(4);
+      expect(recovered?.sessionName).toBe("yesterday's work");
+      expect(recovered?.projectPath).toBe(projectDir);
+
+      // The badge means "sessions this streamer is running" — recovering a
+      // session must not inflate it.
+      const count = (await (await api(port, "/api/sessions/count")).json()) as { total: number };
+      expect(count.total).toBe(sessions.filter((s) => s.ownership !== "historical").length);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("survives ?status= filtering, because it reports an existing status value", async () => {
+    // The reason no new SessionStatus was introduced: paginate() drops anything
+    // outside the requested set, so a novel value would make recovered sessions
+    // vanish from already-shipped clients that filter.
+    seedRegistry([{ id: UUID, projectPath: projectDir }]);
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+
+      const idle = (await (await api(port, "/api/sessions?status=idle")).json()) as {
+        sessions: SessionListItem[];
+      };
+      expect(idle.sessions.map((s) => s.id)).toContain(UUID);
+
+      const running = (await (await api(port, "/api/sessions?status=running")).json()) as {
+        sessions: SessionListItem[];
+      };
+      expect(running.sessions.map((s) => s.id)).not.toContain(UUID);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("does not list a session whose project directory was deleted", async () => {
+    const gone = "dddddddd-1111-2222-3333-444444444444";
+    seedRegistry([
+      { id: UUID, projectPath: projectDir },
+      { id: gone, projectPath: join(tmpdir(), "tb-rehydrate-deleted-worktree") },
+    ]);
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+      const ids = (await listSessions(port)).map((s) => s.id);
+      expect(ids).toContain(UUID);
+      expect(ids).not.toContain(gone);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("does not list a session older than the rehydration window", async () => {
+    seedRegistry([{ id: UUID, projectPath: projectDir, ageMs: REHYDRATE_WINDOW_MS + 60_000 }]);
+    const { server, port } = await makeServer();
+    try {
+      // Nothing to wait for; give the chained rehydration a moment to run.
+      await new Promise((r) => setTimeout(r, 300));
+      expect((await listSessions(port)).map((s) => s.id)).not.toContain(UUID);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("caps the number of recovered sessions", async () => {
+    const seeds = Array.from({ length: REHYDRATE_MAX + 5 }, (_, i) => ({
+      id: `eeeeeeee-1111-2222-3333-${String(i).padStart(12, "0")}`,
+      projectPath: projectDir,
+    }));
+    seedRegistry(seeds);
+    const { server, port } = await makeServer();
+    try {
+      const recovered = await seededWhenSettled(port, REHYDRATE_MAX);
+      expect(recovered).toHaveLength(REHYDRATE_MAX);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("reproduces the old behaviour exactly when the flag is off", async () => {
+    seedRegistry([{ id: UUID, projectPath: projectDir }]);
+    const { server, port } = await makeServer({ featureFlags: { sessionRehydration: false } });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      expect((await listSessions(port)).map((s) => s.id)).not.toContain(UUID);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("keeps stubs out of the idle reaper and the grace timer", async () => {
+    seedRegistry([{ id: UUID, projectPath: projectDir }]);
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+
+      // Both iterate ptyManager.listSessions(), which a stub never enters. Ask
+      // the reaper to sweep far into the future and the grace timer to fire now.
+      const internals = server as unknown as {
+        reapIdleSessions: (now: number) => string[];
+        startGraceTimer: (id: string, delayMs: number) => void;
+      };
+      expect(internals.reapIdleSessions(Date.now() + 30 * 24 * 60 * 60 * 1000)).toEqual([]);
+      internals.startGraceTimer(UUID, 0);
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect((await listSessions(port)).map((s) => s.id)).toContain(UUID);
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("resumes a recovered session without a spurious CONVERSATION_BUSY", async () => {
+    // The JSONL was written moments ago — by us, on the way out. Without the
+    // selfPtyEndedAt seeding this is the single most common resume in the
+    // product and it would 409 (plan risk R3).
+    seedRegistry([{ id: UUID, projectPath: projectDir }]);
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+
+      const res = await fetch(`http://localhost:${port}/api/sessions/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+        body: JSON.stringify({ sessionId: UUID }),
+      });
+      expect(res.status).toBe(201);
+
+      // The stub is replaced by the live session, not listed alongside it.
+      const rows = (await listSessions(port)).filter((s) => s.id === UUID);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].ownership).toBe("managed");
+      expect(rows[0].ptyAttached).toBe(true);
+    } finally {
+      await server.close();
+    }
+  }, 60_000);
+});

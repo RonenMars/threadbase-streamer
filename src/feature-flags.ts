@@ -38,6 +38,15 @@ export const FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     default: false,
     env: "THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT",
   },
+  {
+    id: "sessionRehydration",
+    description:
+      "Seed the session list at boot with sessions a previous streamer run left behind, so a " +
+      "restart leaves them one tap from resuming instead of silently gone. On by default, with " +
+      "a kill switch: it changes what GET /api/sessions contains.",
+    default: true,
+    env: "THREADBASE_FEATURE_SESSION_REHYDRATION",
+  },
 ];
 
 export function findFeatureFlag(id: string): FeatureFlagDefinition | undefined {
