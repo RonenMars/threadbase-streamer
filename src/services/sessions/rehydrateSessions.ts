@@ -1,5 +1,6 @@
 import type { ManagedSessionRow } from "../../db/repositories/managed-sessions.repository";
 import type { ManagedSession, StatusSource } from "../../types";
+import { resumeIdForRow } from "./resumeIdentity";
 
 /**
  * Boot rehydration (persistence plan Phase 1, gaps G1/G2/G8).
@@ -53,8 +54,12 @@ export interface ShouldRehydrateOptions {
  *  - the agent exited on its own without recording a failure — it finished, so
  *    there is nothing to recover. A row that recorded a `failureReason` is
  *    deliberately still offered: that one was cut short.
+ *
+ * Plus a fourth that is not a heuristic but an impossibility: a Codex row that
+ * never bound its rollout id has no id that can resume it at all (G6).
  */
 export function shouldRehydrate(row: ManagedSessionRow, opts: ShouldRehydrateOptions): boolean {
+  if (resumeIdForRow(row) == null) return false;
   if (!opts.projectExists(row.project_path)) return false;
   if (opts.now - row.status_updated_at > REHYDRATE_WINDOW_MS) return false;
   if (AGENT_EXIT_SOURCES.has(row.status_source) && row.failure_reason == null) return false;
