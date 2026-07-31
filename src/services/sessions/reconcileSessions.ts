@@ -2,6 +2,7 @@ import type {
   ManagedSessionRow,
   SessionLifecycle,
 } from "../../db/repositories/managed-sessions.repository";
+import { resumeIdForRow } from "./resumeIdentity";
 
 /**
  * Boot reconciliation (C1 Phase 3a).
@@ -62,6 +63,19 @@ export async function classifySession(
 ): Promise<ReconcileVerdict> {
   const { session_id: sessionId } = row;
 
+  // `resumable` is only an honest verdict when some id can actually resume the
+  // row. A Codex session that died before `watchForCodexRollout` bound its
+  // rollout id has none — `codex resume <placeholder>` fails — so offering it
+  // would spend the user's tap on a guaranteed failure.
+  const resumable = (reason: string): ReconcileVerdict =>
+    resumeIdForRow(row) == null
+      ? {
+          sessionId,
+          lifecycle: "failed",
+          reason: "Codex session ended before its rollout id was known",
+        }
+      : { sessionId, lifecycle: "resumable", reason };
+
   // A row this run created and completed needs no probe.
   if (row.completed_at != null) {
     const clean = probe.endedCleanly?.(row) ?? row.failure_reason == null;
@@ -76,7 +90,7 @@ export async function classifySession(
   // pid capture. Nothing to probe, so fall back to whether the provider can
   // resume it.
   if (row.pid == null) {
-    return { sessionId, lifecycle: "resumable", reason: "no pid recorded" };
+    return resumable("no pid recorded");
   }
 
   // A pid only identifies a process within the boot it was recorded in: pid
@@ -86,11 +100,7 @@ export async function classifySession(
   // project path) we would claim a live process that is not ours. Equality
   // only, and a mismatch is always the harmless verdict.
   if (currentBootToken != null && row.boot_token !== currentBootToken) {
-    return {
-      sessionId,
-      lifecycle: "resumable",
-      reason: "recorded before this machine boot",
-    };
+    return resumable("recorded before this machine boot");
   }
 
   if (!probe.isPidAlive(row.pid)) {
@@ -100,11 +110,7 @@ export async function classifySession(
     if (clean) {
       return { sessionId, lifecycle: "completed", reason: "process gone, history ended cleanly" };
     }
-    return {
-      sessionId,
-      lifecycle: "resumable",
-      reason: "process gone, resumable from provider history",
-    };
+    return resumable("process gone, resumable from provider history");
   }
 
   // Something is alive at that pid. Identity must be confirmed before we claim

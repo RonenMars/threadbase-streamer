@@ -127,6 +127,19 @@ describe("CodexPtyRunner — spawn args", () => {
     const args = spawnArgs();
     expect(args).toEqual(["resume", "abc-123", "--cd", "/tmp/proj", "--no-alt-screen"]);
   });
+
+  it("start (resume) puts resumeId in argv while the session keeps its own id", async () => {
+    const runner = new CodexPtyRunner();
+    const session = await runner.start("placeholder-uuid", {
+      projectPath: "/tmp/proj",
+      projectName: "test",
+      resumeId: "rollout-id",
+    });
+
+    expect(spawnArgs()).toEqual(["resume", "rollout-id", "--cd", "/tmp/proj", "--no-alt-screen"]);
+    // The mobile invariant: only argv changes, never the session's identity.
+    expect(session.id).toBe("placeholder-uuid");
+  });
 });
 
 type GateBroadcast = { prompt?: string; options: PermissionOption[] } | null;
