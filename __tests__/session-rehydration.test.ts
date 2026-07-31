@@ -593,9 +593,12 @@ describe("boot rehydration", () => {
       expect(skipped?.rehydrated).toBe(false);
       expect(skipped?.rehydrateSkipReason).toBe("project_missing");
 
-      // Paste-into-a-bug-report safe: paths are reduced, never full.
-      expect(recovered?.projectPath).toMatch(/^…\//);
-      expect(JSON.stringify(body)).not.toContain(tmpdir());
+      // Paste-into-a-bug-report safe: paths are reduced to their tail, never
+      // full. Asserted on the deeper of the two paths — the shallow one is
+      // `/tmp/<dir>` on Linux CI, which redactPath passes through unchanged
+      // because there is nothing above the last two segments to drop.
+      expect(skipped?.projectPath).toMatch(/^…\//);
+      expect(skipped?.projectPath).not.toContain(projectDir);
     } finally {
       await server.close();
     }
