@@ -490,6 +490,15 @@ export interface ServerConfig {
   // cache rather than throwing.
   skipStartupWarmup?: boolean;
   ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes); 0 disables the auto-hold timer (explicit hold_session still works)
+  /**
+   * Re-start interrupted sessions at boot instead of listing them for the user
+   * to tap (plan Phase 7). A boolean here rather than the tri-state the loader
+   * returns: by the time a ServerConfig is built the "never asked" case has
+   * already resolved to false. Precedence: explicit here → `auto_resume_on_boot`
+   * in server.yaml → false. Never enabled implicitly — it is the one setting
+   * that starts an agent nobody asked for in that moment.
+   */
+  autoResumeOnBoot?: boolean;
   cacheDir?: string;
   // Path to the authoritative session registry. Defaults to runtime.db beside
   // server.yaml (THREADBASE_CONFIG_DIR aware) — never under cacheDir, which a

@@ -79,6 +79,7 @@ waiting_input / idle ──(idle reaper, 6h of agent silence)───► idle  
 | `THREADBASE_RUNTIME_DB` | Overrides the path of the session-registry database (default `runtime.db` inside the config dir). A test hook first: `__tests__/setup/isolate-runtime-db.ts` points every test file at a throwaway file so a suite run never writes sessions into the real `~/.threadbase/runtime.db`. It exists separately from `THREADBASE_CONFIG_DIR` because several auth tests sandbox the config dir by overriding `HOME`, and `THREADBASE_CONFIG_DIR` outranks `homedir()`. Unset in production. |
 | `MULTI_AGENT_FLOW` | Routes `POST /api/sessions/start` + `/input` to the multi-agent path instead of PTY. `AGENT_*` tuning vars: see [docs/multi-agent-mode.md](docs/multi-agent-mode.md). |
 | `THREADBASE_SKIP_PERMISSION_MODE_PROMPT` | Set to `true` to disable the `serve` first-run interactive permission-mode prompt (see below); falls straight through to `acceptEdits`. |
+| `THREADBASE_SKIP_AUTO_RESUME_PROMPT` | Set to `true` to disable the `serve` first-run interactive auto-resume prompt (see [Auto-resume on boot](#auto-resume-on-boot)); resolves to `false` (no auto-resume). |
 | `THREADBASE_ALLOW_BROWSER_CORS` | Enables browser CORS (off by default; no web page can make authenticated requests without it). Set to `1`/`true`/`yes`/`on` to allow the localhost dev origins, or to a comma-separated origin list (e.g. `https://app.example.com`) to allow those on top of the dev defaults. Overrides `browser_cors:` in server.yaml when set. Mobile is unaffected (no `Origin` header). |
 | `APNS_KEY` | **Contents** of the APNs p8 signing key (PEM), not a path. Enables iOS Live Activity push when set; the feature stays off (one info log, server boots normally) when unset. Never logged. See [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md). |
 | `APNS_KEY_ID` | Key id of the p8 in `APNS_KEY`. Required when `APNS_KEY` is set; under launchd it is derived from the `AuthKey_<keyId>.p8` filename. |
@@ -117,6 +118,22 @@ The file is parsed by **single-line regex, not a YAML library** — every value 
 **There is no spend cap.** `--max-budget-usd` was previously offered here as a runaway bound; it is `(only works with --print)` per `claude --help`, and this server never passes `--print`, so it was a silent no-op — it has been removed from the registry (along with `--fallback-model`, inert for the same reason). Nothing bounds the cost of a bypass-mode session today. Treat the auth boundary and the permission mode as the only real controls, and check any flag you add for a `--print`-only note before trusting it.
 
 If none of the flag/env/yaml sources set a mode, `serve` shows a one-time interactive prompt (`src/lifecycle/prompt.ts`'s `interactivePermissionModePrompt`) and persists the answer to `server.yaml` via `setDefaultPermissionMode()` — but only for a human dev invocation on a real TTY (never under `--prod`/launchd, which must never block on stdin). Set `THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true` to skip it and fall through to `acceptEdits`.
+
+## Auto-resume on boot
+
+`auto_resume_on_boot:` in `server.yaml` decides whether sessions a previous run was interrupted mid-flight are **re-started automatically at boot**, or listed for the user to tap. Default `false`. It is the only setting that lets the streamer start an agent nobody asked for in that moment — combined with a bypass permission mode, that is unattended arbitrary code execution — so it is never enabled implicitly.
+
+**The loader is tri-state and that is load-bearing.** `loadAutoResumeOnBoot()` returns `true` / `false` / `undefined`, where `undefined` means the key is *absent* — the user has never been asked — which is what triggers the one-time prompt. A recorded `false` is a real answer and is never re-asked. A malformed value (`yes`, `1`, `TRUE`) reads as `undefined` rather than being coerced, so a typo costs a re-prompt instead of silently enabling unattended starts.
+
+**It is not a feature flag.** Feature flags gate behaviour *we* are unsure about; this is a user preference with a persisted answer, which is the `default_permission_mode` shape.
+
+Where the question is asked, and why not the installer: `npm install -g` has no reliable TTY (`postinstall` output is often hidden or discarded) and Homebrew formulae must be non-interactive by policy. So the prompt lives on the **first interactive `serve`**, beside `interactivePermissionModePrompt` — a path all three install methods reach. `scripts/deploy.sh` additionally asks at install time (`cmd_ask_auto_resume`), since it can, writing the answer before first boot so `serve` finds the key present and stays silent.
+
+All three clauses must hold for `serve` to ask: the key is absent, `THREADBASE_SKIP_AUTO_RESUME_PROMPT !== "true"`, and it is a human TTY invocation (never `--prod`/launchd). Non-TTY, skipped, declined, or any failure all resolve to `false` — there is no path where silence enables it. **Both** answers are persisted, which is what makes the prompt self-terminating: asked at most once per machine.
+
+A `--prod`-only machine never sees a TTY, so the key would stay absent forever and the operator would have no way to learn the setting exists. One boot-time info line covers that, emitted only when the key is absent *and* the prompt did not run.
+
+The resume flow this setting gates is not built yet (plan Phase 7c / PR 12) — today the setting is resolved, persisted and reported, and nothing reads it.
 
 `--pty-grace-period-ms <ms>` (or `pty_grace_period_ms:` in `server.yaml`) sets the delay between an explicit `{ type: "hold_session" }` message and the actual hold (SIGINT + screen disposal, history intact, resumable). Precedence is flag → yaml → default `270000` (4.5 min). Since `handleWsClose` no longer arms a timer, this knob governs the explicit hold path *only*.
 
