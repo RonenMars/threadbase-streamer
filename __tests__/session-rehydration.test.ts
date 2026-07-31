@@ -579,10 +579,18 @@ describe("boot rehydration", () => {
           projectExists: boolean;
           projectPath: string;
           statusSource: string;
+          recordedThisBoot: boolean;
         }[];
       };
 
       const recovered = body.sessions.find((s) => s.sessionId === UUID);
+      // A real boolean, not the string "[redacted]". The field was previously
+      // named `bootTokenMatches`, which redactValue's SECRET_KEY_RE scrubbed
+      // because the key contained "token" — shipping a useless field that no
+      // type check could catch, since the payload is serialized JSON.
+      expect(typeof recovered?.recordedThisBoot).toBe("boolean");
+      expect(JSON.stringify(body)).not.toContain("[redacted]");
+
       expect(recovered?.rehydrated).toBe(true);
       expect(recovered?.rehydrateSkipReason).toBeNull();
       expect(recovered?.projectExists).toBe(true);
