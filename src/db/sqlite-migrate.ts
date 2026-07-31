@@ -10,6 +10,15 @@ function getMigrationsDir(): string {
   return __dirname;
 }
 
+/**
+ * Resolve a migrations directory that sits next to this module in both the
+ * source tree (`src/db/<name>`) and the bundle (`dist/<name>`, populated by the
+ * build's copy step).
+ */
+export function resolveMigrationsDir(name = "migrations"): string {
+  return join(getMigrationsDir(), name);
+}
+
 const SCHEMA_MIGRATIONS_SQL = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id TEXT PRIMARY KEY,
@@ -28,7 +37,7 @@ export function runSqliteMigrations(
 ): SqliteMigrationRunResult {
   db.exec(SCHEMA_MIGRATIONS_SQL);
 
-  const dir = migrationsDir ?? join(getMigrationsDir(), "migrations");
+  const dir = migrationsDir ?? resolveMigrationsDir();
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort();

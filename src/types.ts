@@ -463,6 +463,10 @@ export interface ServerConfig {
   skipStartupWarmup?: boolean;
   ptyGracePeriodMs?: number; // ms to wait after WS disconnect before killing PTY (default 270000, 4.5 minutes); 0 disables the auto-hold timer (explicit hold_session still works)
   cacheDir?: string;
+  // Path to the authoritative session registry. Defaults to runtime.db beside
+  // server.yaml (THREADBASE_CONFIG_DIR aware) — never under cacheDir, which a
+  // reset-and-rescan is allowed to delete.
+  runtimeDbPath?: string;
   tailSize?: number;
   directoryScanDebounceMs?: number; // trailing debounce before flagging the scanner stale on directory events (default 1000)
   defaultSystemPrompt?: string; // prepended to every PTY session's --system-prompt; overrides the built-in default
