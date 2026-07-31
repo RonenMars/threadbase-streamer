@@ -541,6 +541,54 @@ program
     }
   });
 
+program
+  .command("pty-host")
+  .description(
+    "Run the PTY host: owns spawned agent processes so they survive a streamer restart. Started automatically by the streamer; not usually run by hand.",
+  )
+  .requiredOption(
+    "--socket <path>",
+    "Unix socket (POSIX) or named pipe (Windows) to listen on. Must match the streamer's THREADBASE_INSTANCE_ID-derived path.",
+  )
+  .action(async (opts) => {
+    const { SessionHost } = await import("../src/pty-host/host");
+    const { listenForStreamers } = await import("../src/pty-host/socket");
+
+    const host = new SessionHost({ logger: getLogger("pty-host") });
+
+    let server: Awaited<ReturnType<typeof listenForStreamers>>;
+    try {
+      server = await listenForStreamers(opts.socket, {
+        onConnection: (transport) => host.accept(transport),
+      });
+    } catch (err) {
+      // The common cause is another host already listening, which is not an
+      // error worth a stack trace: the streamer's connect-first path handles it.
+      log.error(
+        `pty-host could not listen on ${opts.socket}: ${err instanceof Error ? err.message : String(err)}`,
+        undefined,
+        "console",
+      );
+      process.exit(1);
+    }
+
+    log.info(`pty-host listening on ${opts.socket}`, {
+      event: "pty_host.listening",
+      socket: opts.socket,
+    });
+
+    // Signalled teardown kills the agents on the way out. When the host goes
+    // away there is nothing left holding their fds, so leaving them running
+    // would orphan them with no owner and no reaper.
+    const shutdown = () => {
+      host.dispose();
+      server.close();
+      process.exit(0);
+    };
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+  });
+
 registerProdCommands(program);
 
 program.parse();
