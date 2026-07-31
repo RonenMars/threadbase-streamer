@@ -254,7 +254,10 @@ export class CodexPtyRunner implements SessionRunner {
 
     const proc = nodePty.spawn(
       resolveCodexExe(),
-      ["resume", sessionId, "--cd", options.projectPath, "--no-alt-screen"],
+      // `sessionId` stays the runner's map key — only argv carries the
+      // provider-side id, so a resumed Codex session keeps the placeholder id
+      // its client already navigated to.
+      ["resume", options.resumeId ?? sessionId, "--cd", options.projectPath, "--no-alt-screen"],
       {
         name: "xterm-256color",
         cols: PTY_COLS,

@@ -539,6 +539,15 @@ export interface StartSessionOptions {
   projectPath: string;
   projectName?: string;
   branch?: string;
+  /**
+   * Provider-side id to resume from, when it differs from `sessionId`. Codex
+   * keys a fresh session by a local placeholder UUID and only learns its real
+   * rollout id once it writes the file, so resuming needs the rollout id in
+   * argv while the session keeps the placeholder the client navigated to.
+   * Absent means "resume by the session id", which is what every Claude session
+   * does — PTYManager ignores this field entirely.
+   */
+  resumeId?: string;
   permissionMode?: PermissionMode;
   model?: string;
   effort?: EffortLevel;

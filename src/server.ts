@@ -149,6 +149,7 @@ import {
   rowToStubSession,
   shouldRehydrate,
 } from "./services/sessions/rehydrateSessions";
+import { resumeIdForRow } from "./services/sessions/resumeIdentity";
 import { SessionStore } from "./session-store";
 import type {
   AskQuestion,
@@ -3861,10 +3862,29 @@ export class StreamerServer {
     // up by filename when processing --resume. The scanner index can return a
     // stale or wrong path (e.g. …/tb-mobile/android vs …/tb-mobile), so we
     // read the first cwd field directly, mirroring tb-scanner/src/parser.ts.
-    const jsonlPath = this.findJsonlPath(sessionId);
-    const jsonlCwd = jsonlPath ? await this.readCwdFromJsonl(jsonlPath) : null;
+    let jsonlPath = this.findJsonlPath(sessionId);
+    let conv = await this.findConversationByUuid(sessionId);
 
-    const conv = await this.findConversationByUuid(sessionId);
+    // Nothing resolves for a *fresh Codex* session id: it is a local
+    // placeholder, and Codex indexes its history under the rollout id it
+    // assigned itself. The registry is what remembers which is which, so fall
+    // back to the bound id and resolve path + history from there (G6). The
+    // session keeps the placeholder id the client navigated to — only argv and
+    // these lookups use the bound one.
+    let historyId = sessionId;
+    let registryProvider: string | undefined;
+    if (!jsonlPath && !conv) {
+      const row = this.managedSessionsRepo?.get(sessionId) ?? null;
+      const boundId = row ? resumeIdForRow(row) : null;
+      if (boundId != null && boundId !== sessionId) {
+        historyId = boundId;
+        registryProvider = row?.provider;
+        jsonlPath = this.findJsonlPath(boundId);
+        conv = await this.findConversationByUuid(boundId);
+      }
+    }
+
+    const jsonlCwd = jsonlPath ? await this.readCwdFromJsonl(jsonlPath) : null;
     const projectPath: string = jsonlCwd ?? (conv as any)?.projectPath;
     if (!projectPath) {
       if (!conv && !jsonlPath) {
@@ -3921,7 +3941,9 @@ export class StreamerServer {
       }
     }
     const busy = conversationBusy({
-      conversationId: sessionId,
+      // The id another owner's argv would actually carry — for a placeholder
+      // that is the bound rollout id, not the one the client asked for.
+      conversationId: historyId,
       projectPath,
       jsonlPath,
       discovered,
@@ -3948,8 +3970,13 @@ export class StreamerServer {
     // Same provider-resolution fallback as the conversation-detail path
     // (server.ts ~1685): `conv` (the full Conversation shape) doesn't carry
     // provider, so fall back to the cached metadata, then default to Claude.
-    const cachedConvMeta = this.cache?.getMetaById(sessionId);
-    const provider = coerceProviderForRunner((conv as any)?.provider ?? cachedConvMeta?.provider);
+    // …and, when the fallback above fired, the registry row's own provider as a
+    // last resort: neither lookup is keyed by the placeholder id, so without it
+    // a Codex placeholder would default to Claude and spawn the wrong CLI.
+    const cachedConvMeta = this.cache?.getMetaById(historyId);
+    const provider = coerceProviderForRunner(
+      (conv as any)?.provider ?? cachedConvMeta?.provider ?? registryProvider,
+    );
 
     // We are about to change what is running, so the discovered-process snapshot
     // is now stale — drop it so the next sessions list re-enumerates. Done AFTER
@@ -3962,16 +3989,22 @@ export class StreamerServer {
       projectPath,
       projectName: body.projectName,
       branch: body.branch,
+      // Omitted on every ordinary resume, so argv is unchanged there.
+      ...(historyId !== sessionId && { resumeId: historyId }),
       claudeFlags: this.claudeFlags,
       claudeExtraArgs: this.claudeExtraArgs,
       ...this.spawnFlagOverrides(),
     });
+    // Carry the binding onto the live session before it is recorded:
+    // recordSpawn writes `bound_conversation_id` from this field, so leaving it
+    // unset would upsert the row back to NULL and strand the *next* resume.
+    if (historyId !== sessionId) session.boundConversationId = historyId;
 
     this.sessionStore.addManaged(session);
     this.recordSessionSpawn(session);
 
     // Watch the conversation's JSONL file for structured events
-    void this.watchConversationFile(sessionId);
+    void this.watchConversationFile(sessionId, historyId);
 
     const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
     this.broadcastOrUnicastSessionList(req);
@@ -4745,9 +4778,12 @@ export class StreamerServer {
 
   // ─── File Watcher Wiring ─────────────────────────────────────────
 
-  private async watchConversationFile(sessionId: string): Promise<void> {
+  // `historyId` is the id the provider filed the history under, which for a
+  // fresh Codex session is its rollout id rather than our placeholder. The map
+  // stays keyed by `sessionId` — that is what broadcasts resolve against.
+  private async watchConversationFile(sessionId: string, historyId = sessionId): Promise<void> {
     try {
-      const conversation = await this.findConversationByUuid(sessionId);
+      const conversation = await this.findConversationByUuid(historyId);
       if (conversation?.filePath) {
         this.sessionFileMap.set(sessionId, conversation.filePath);
         this.fileWatcher.watch(conversation.filePath);
@@ -4985,6 +5021,17 @@ export class StreamerServer {
 
           cleanup();
           this.sessionStore.updateManaged(sessionId, { boundConversationId: codexSessionId });
+          // Durably too: after a restart the registry row is the only place
+          // this binding survives, and it is the only id `codex resume` accepts.
+          try {
+            this.managedSessionsRepo?.recordBinding(sessionId, codexSessionId);
+          } catch (err) {
+            this.log.warn("[registry] failed to record Codex rollout binding", {
+              event: "registry.binding_write_failed",
+              sessionId,
+              err,
+            });
+          }
 
           // Wire the bound rollout into the live update path: tail it for
           // structured events and replay anything already written before the
