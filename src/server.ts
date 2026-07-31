@@ -75,7 +75,10 @@ import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
 import { DevicesRepository } from "./db/repositories/devices.repository";
-import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
+import {
+  ManagedSessionsRepository,
+  PROBE_SET_MAX,
+} from "./db/repositories/managed-sessions.repository";
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
@@ -1264,6 +1267,18 @@ export class StreamerServer {
     let verdicts: ReconcileVerdict[] = [];
     try {
       const rows = this.managedSessionsRepo.listNonTerminal();
+      if (rows.length === PROBE_SET_MAX) {
+        // Said out loud rather than absorbed: past the cap this boot classifies
+        // a subset, and the rows it skipped are indistinguishable in the log
+        // from rows that did not exist.
+        this.log.warn(
+          `[reconcile] probe set hit its cap of ${PROBE_SET_MAX} — older rows skipped`,
+          {
+            event: "registry.probe_truncated",
+            limit: PROBE_SET_MAX,
+          },
+        );
+      }
       if (rows.length === 0) return [];
 
       verdicts = await reconcileSessions(
@@ -1301,6 +1316,32 @@ export class StreamerServer {
       });
     }
     return verdicts;
+  }
+
+  /**
+   * Drop finished sessions the registry has held long enough (plan Phase 4).
+   *
+   * The registry is authoritative and never rebuilt from the cache, so nothing
+   * else would ever remove a row: without this it grows for the life of the
+   * install, and every boot pays for rows about sessions from months ago.
+   */
+  private pruneTerminalSessions(): void {
+    if (!this.managedSessionsRepo) return;
+    try {
+      const pruned = this.managedSessionsRepo.pruneTerminal();
+      if (pruned > 0) {
+        this.log.info(`[registry] pruned ${pruned} terminal session row(s)`, {
+          event: "registry.pruned",
+          pruned,
+        });
+      }
+    } catch (err) {
+      // Retention is housekeeping. Failing it costs disk, never correctness.
+      this.log.warn("[registry] failed to prune terminal sessions", {
+        event: "registry.prune_failed",
+        err,
+      });
+    }
   }
 
   /**
@@ -1791,7 +1832,13 @@ export class StreamerServer {
         // delay the listener for no correctness gain. Runs after the cache block
         // so it sees any rows the legacy copy just brought across, and outside
         // it so a cache failure no longer skips reconciliation.
-        void this.reconcilePreviousSessions().then((v) => this.rehydratePreviousSessions(v));
+        void this.reconcilePreviousSessions().then((v) => {
+          this.rehydratePreviousSessions(v);
+          // Last, so retention can never delete a row this boot still wanted:
+          // reconciliation has finished probing and rehydration has finished
+          // seeding by the time anything is removed.
+          this.pruneTerminalSessions();
+        });
         // Opt out of the warm-up scan entirely (test hook). The cache and
         // repositories above are already open, so conversation endpoints serve an
         // empty cache instead of throwing; only the scan and its dependent cache
