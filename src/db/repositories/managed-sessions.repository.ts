@@ -99,6 +99,12 @@ export class ManagedSessionsRepository {
 
     // Narrow status-only write for the hot transition path, so a
     // running↔waiting_input flip doesn't rewrite every column.
+    //
+    // session_name rides along under COALESCE, like failure_reason: it is
+    // derived from the session's FIRST user message, which is strictly after
+    // recordSpawn — the only other writer of the column — so without a second
+    // write path the registry could never hold a name at all, and every
+    // recovered session came back unnamed.
     this.updateStatusStmt = db.prepare(`
       UPDATE managed_sessions
          SET status = @status,
@@ -107,7 +113,8 @@ export class ManagedSessionsRepository {
              completed_at = @completed_at,
              last_activity_at = @last_activity_at,
              prompt_count = @prompt_count,
-             failure_reason = COALESCE(@failure_reason, failure_reason)
+             failure_reason = COALESCE(@failure_reason, failure_reason),
+             session_name = COALESCE(@session_name, session_name)
        WHERE session_id = @session_id
     `);
 
@@ -178,6 +185,8 @@ export class ManagedSessionsRepository {
       lastActivityAt?: Date | null;
       promptCount?: number;
       failureReason?: string | null;
+      /** Null/omitted keeps whatever is stored — it never clears a known name. */
+      sessionName?: string | null;
     } = {},
   ): void {
     this.updateStatusStmt.run({
@@ -189,6 +198,7 @@ export class ManagedSessionsRepository {
       last_activity_at: fields.lastActivityAt?.getTime() ?? null,
       prompt_count: fields.promptCount ?? 0,
       failure_reason: fields.failureReason ?? null,
+      session_name: fields.sessionName ?? null,
     });
   }
 

@@ -796,6 +796,10 @@ export class StreamerServer {
             lastActivityAt: session.lastActivityAt ?? null,
             promptCount: session.promptCount,
             failureReason: session.failureReason ?? null,
+            // Derived from the first user message, so it does not exist yet at
+            // recordSpawn. The input that produces it also flips
+            // waiting_input→running, which lands here.
+            sessionName: session.sessionName ?? null,
           },
         );
         // Refresh the scanner index at the end of each Claude turn so the
