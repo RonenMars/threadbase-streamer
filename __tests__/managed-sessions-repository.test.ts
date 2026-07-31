@@ -145,4 +145,71 @@ describe("ManagedSessionsRepository", () => {
       expect(repo.listNonTerminal()).toEqual([]);
     });
   });
+
+  describe("listRecoverable", () => {
+    const HOUR = 3_600_000;
+
+    /** Spawn a row, then optionally close it the way `source` would. */
+    function seed(id: string, source?: "shutdown" | "exit", agoMs = 0): void {
+      repo.recordSpawn({
+        session: mkSession({ id }),
+        pid: 1,
+        cmdline: "c",
+        streamerInstanceId: "inst-a",
+      });
+      if (source) {
+        repo.recordStatus(id, "idle", source, { completedAt: new Date() });
+      }
+      if (agoMs > 0) {
+        store
+          .getDatabase()
+          .prepare("UPDATE managed_sessions SET status_updated_at = ? WHERE session_id = ?")
+          .run(Date.now() - agoMs, id);
+      }
+    }
+
+    const ids = (rows: { session_id: string }[]) => rows.map((r) => r.session_id).sort();
+
+    it("returns rows we shut down as well as rows still open", () => {
+      // The whole point: recordShutdownState stamps completed_at, which takes a
+      // cleanly-restarted session out of listNonTerminal's probe set.
+      seed("still-open");
+      seed("we-stopped-it", "shutdown");
+
+      expect(ids(repo.listRecoverable({ sinceMs: 0, limit: 10 }))).toEqual([
+        "still-open",
+        "we-stopped-it",
+      ]);
+    });
+
+    it("excludes a session the agent's own process ended", () => {
+      seed("agent-exited", "exit");
+      expect(repo.listRecoverable({ sinceMs: 0, limit: 10 })).toEqual([]);
+    });
+
+    it("honours the since bound", () => {
+      seed("recent", "shutdown");
+      seed("ancient", "shutdown", 48 * HOUR);
+
+      const rows = repo.listRecoverable({ sinceMs: Date.now() - 24 * HOUR, limit: 10 });
+      expect(ids(rows)).toEqual(["recent"]);
+    });
+
+    it("returns the newest first and honours the limit", () => {
+      seed("oldest", "shutdown", 3 * HOUR);
+      seed("middle", "shutdown", 2 * HOUR);
+      seed("newest", "shutdown", 1 * HOUR);
+
+      const rows = repo.listRecoverable({ sinceMs: 0, limit: 10 });
+      expect(rows.map((r) => r.session_id)).toEqual(["newest", "middle", "oldest"]);
+      expect(repo.listRecoverable({ sinceMs: 0, limit: 2 }).map((r) => r.session_id)).toEqual([
+        "newest",
+        "middle",
+      ]);
+    });
+
+    it("is empty on a fresh database", () => {
+      expect(repo.listRecoverable({ sinceMs: 0, limit: 10 })).toEqual([]);
+    });
+  });
 });

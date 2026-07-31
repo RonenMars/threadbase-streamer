@@ -122,6 +122,12 @@ describe("managed-session registry across a streamer restart", () => {
       // Terminal, so the reconciler has nothing to probe — and crucially it can
       // tell this apart from a crash, where no such row would exist.
       expect(second.repo.listNonTerminal()).toEqual([]);
+      // …but it is still RECOVERABLE, and that gap is the whole bug Phase 1
+      // fixes: a clean shutdown used to be indistinguishable from "gone",
+      // because the only read anyone did was listNonTerminal.
+      const [recoverable] = second.repo.listRecoverable({ sinceMs: 0, limit: 10 });
+      expect(recoverable?.session_id).toBe("restart-sess");
+      expect(recoverable?.session_name).toBe("long refactor");
       expect(second.repo.get("restart-sess")?.status_source).toBe("shutdown");
       // A deliberate shutdown is not a session failure.
       expect(second.repo.get("restart-sess")?.failure_reason).toBeNull();

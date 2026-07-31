@@ -166,6 +166,8 @@ Resolution is **boot-time only** — changing a flag needs a restart, same as `p
 
 `resolveFeatureFlags()` returns a **total** map — every registry id present, defaults filled — so callers index it without `?? default` and a newly-added flag can't reach a boolean branch as `undefined` on an older server.yaml.
 
+For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args are fixed and never pass `--feature`), set `THREADBASE_FEATURE_<ID>` in the plist's `EnvironmentVariables` block or `feature_flags:` in `server.yaml`, then run `tb-streamer prod restart`; the `--feature <id=bool>` flag is the path for ad-hoc `serve` runs.
+
 `GET /api/config/feature-flags` returns `{ registry, values }`. It is **read-only** — there is no PUT, and the absence of a `persisted` field is the signal (contrast `/api/config/claude-flags`). `/api/config` is admin-scoped, so `GET /api/info` carries `featureFlags: true` to let a read-only client discover support without reading values.
 
 Current flags:
@@ -173,6 +175,7 @@ Current flags:
 | id | Default | Gates |
 |----|---------|-------|
 | `codexSystemPrompt` | off | Sending the built system prompt to fresh Codex sessions. Off because Codex has no `--system-prompt` flag — the prompt lands in the positional `[PROMPT]` argument, which Codex treats as the user's opening turn rather than a system instruction. |
+| `sessionRehydration` | **on** | Seeding the session list at boot from the durable registry, so sessions a previous run was interrupted mid-flight come back in `GET /api/sessions` as `ownership: "historical"` / `lifecycle: "resumable"` stubs instead of vanishing. On because it is the fix for the restart case, not an experiment — but it changes what `GET /api/sessions` contains for every client, so it ships with a kill switch rather than unconditionally. `GET /api/sessions/count` is unaffected: recovered stubs are filtered out of it. |
 
 ## Dependencies
 
