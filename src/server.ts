@@ -143,6 +143,7 @@ import {
 import {
   AUTO_RESUME_CONCURRENCY,
   AUTO_RESUME_STAGGER_MS,
+  type AutoResumeSkipReason,
   planAutoResume,
 } from "./services/sessions/autoResumeOnBoot";
 import {
@@ -1231,15 +1232,19 @@ export class StreamerServer {
   private broadcastOrUnicastSessionList(req: IncomingMessage): void {
     const clientId = req.headers["x-client-id"];
     const ws = typeof clientId === "string" ? this.clientIdToWs.get(clientId) : undefined;
-    const payload = {
-      type: "session_list" as const,
-      sessions: this.withReconciledLifecycle(this.sessionStore.list(this.ptyAttachedIds())),
-    };
+    const payload = this.sessionListPayload();
     if (ws) {
       this.wsHub.unicast(ws, payload);
     } else {
       this.wsHub.broadcast(payload);
     }
+  }
+
+  private sessionListPayload(): { type: "session_list"; sessions: SessionResponse[] } {
+    return {
+      type: "session_list" as const,
+      sessions: this.withReconciledLifecycle(this.sessionStore.list(this.ptyAttachedIds())),
+    };
   }
 
   /**
@@ -1523,12 +1528,24 @@ export class StreamerServer {
     if (!this.autoResumeOnBoot) return;
 
     const plan = planAutoResume(rows, { now: Date.now(), projectExists: existsSync });
+    const skippedBy: Partial<Record<AutoResumeSkipReason, number>> = {};
     for (const { row, reason } of plan.skipped) {
-      this.log.info(`[auto-resume] skipped ${row.session_id}: ${reason}`, {
+      skippedBy[reason] = (skippedBy[reason] ?? 0) + 1;
+      this.log.debug(`[auto-resume] skipped ${row.session_id}: ${reason}`, {
         event: "sessions.auto_resume_skipped",
         sessionId: row.session_id,
         reason,
       });
+    }
+    if (plan.skipped.length > 0) {
+      this.log.info(
+        `[auto-resume] left ${plan.skipped.length} ineligible session(s) for manual resume`,
+        {
+          event: "sessions.auto_resume_skipped",
+          skipped: plan.skipped.length,
+          skippedBy,
+        },
+      );
     }
     for (const row of plan.overflow) {
       this.log.info(`[auto-resume] left ${row.session_id} for manual resume: ceiling reached`, {
@@ -1595,6 +1612,8 @@ export class StreamerServer {
       started++;
     }
     await Promise.all(inFlight);
+
+    if (resumed > 0) this.wsHub.broadcast(this.sessionListPayload());
 
     this.log.info(`[auto-resume] completed boot recovery: ${resumed} resumed`, {
       event: "sessions.auto_resume_completed",
