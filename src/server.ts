@@ -782,6 +782,13 @@ export class StreamerServer {
           status: session.status,
           completedAt: session.completedAt,
           ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
+          // The runner derives this from the first user message, on its own
+          // copy of the session. Without mirroring it here SessionStore never
+          // learns it, so a fresh live session is served with no sessionName
+          // even though the registry has one — the name only appeared after a
+          // restart rebuilt the row as a stub. Guarded so a runner that has not
+          // derived one yet cannot blank a name set by enrichResumedSessionAsync.
+          ...(session.sessionName != null && { sessionName: session.sessionName }),
         });
         // Mirror the transition into the durable registry. Both runners funnel
         // every status change through this callback, so this is the one place
