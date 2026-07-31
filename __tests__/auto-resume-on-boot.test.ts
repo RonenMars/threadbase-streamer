@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { spawn as mockSpawn } from "node-pty";
 import { tmpdir } from "os";
 import { join } from "path";
+import WebSocket from "ws";
 import type { ManagedSessionRow } from "../src/db/repositories/managed-sessions.repository";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
@@ -179,7 +180,7 @@ describe("auto-resume orchestration", () => {
     expect(server.resumeSession).not.toHaveBeenCalled();
   });
 
-  it("logs each ineligible row with its reason", async () => {
+  it("summarizes ineligible rows at info and keeps per-row reasons at debug", async () => {
     const server = makePolicyServer(true, cacheDir);
     server.resumeSession = vi.fn();
 
@@ -189,15 +190,26 @@ describe("auto-resume orchestration", () => {
         status: "idle",
         status_updated_at: Date.now(),
       }),
+      mkRow({
+        session_id: "aaaaaaaa-1111-4222-8333-555555555555",
+        project_path: projectDir,
+        status_source: "transition",
+        status_updated_at: Date.now(),
+      }),
     ]);
 
     expect(server.resumeSession).not.toHaveBeenCalled();
-    expect(
-      server.log.info.mock.calls.some(
-        ([, fields]) =>
-          fields?.event === "sessions.auto_resume_skipped" && fields?.reason === "not_interrupted",
-      ),
-    ).toBe(true);
+    const infoLogs = server.log.info.mock.calls.filter(
+      ([, fields]) => fields?.event === "sessions.auto_resume_skipped",
+    );
+    expect(infoLogs).toHaveLength(1);
+    expect(infoLogs[0][1]).toMatchObject({
+      skipped: 2,
+      skippedBy: { not_interrupted: 1, not_shutdown: 1 },
+    });
+    expect(server.log.debug.mock.calls.map(([, fields]) => fields?.reason)).toEqual(
+      expect.arrayContaining(["not_interrupted", "not_shutdown"]),
+    );
   });
 
   it("caps concurrency at two, staggers starts, and leaves overflow for the user", async () => {
@@ -340,7 +352,10 @@ describe("boot auto-resume integration", () => {
     }
   });
 
-  async function startServer(autoResumeOnBoot: boolean) {
+  async function startServer(
+    autoResumeOnBoot: boolean,
+    beforeListen?: (server: StreamerServer) => void,
+  ) {
     const server = new StreamerServer({
       port: 0,
       apiKey: API_KEY,
@@ -353,6 +368,7 @@ describe("boot auto-resume integration", () => {
       codexRoots: [],
       autoResumeOnBoot,
     });
+    beforeListen?.(server);
     await server.listen(0, { awaitReady: true });
     return server;
   }
@@ -392,6 +408,55 @@ describe("boot auto-resume integration", () => {
       expect(session?.ptyAttached).toBe(true);
       expect(mockSpawn).toHaveBeenCalledTimes(1);
     } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("broadcasts the complete session list to a client connected before auto-resume", async () => {
+    let releaseReconcile!: (value: []) => void;
+    const reconcileGate = new Promise<[]>((resolve) => {
+      releaseReconcile = resolve;
+    });
+    const server = await startServer(true, (instance) => {
+      (instance as any).reconcilePreviousSessions = vi.fn().mockReturnValue(reconcileGate);
+    });
+    const ws = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`);
+
+    try {
+      const resumedList = new Promise<Array<{ id: string; ownership?: string }>>(
+        (resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("timed out waiting for auto-resume session_list")),
+            10_000,
+          );
+          ws.on("message", (data) => {
+            const message = JSON.parse(data.toString()) as {
+              type: string;
+              sessions?: Array<{ id: string; ownership?: string }>;
+            };
+            if (
+              message.type === "session_list" &&
+              message.sessions?.some(
+                (session) => session.id === sessionId && session.ownership === "managed",
+              )
+            ) {
+              clearTimeout(timeout);
+              resolve(message.sessions);
+            }
+          });
+        },
+      );
+
+      await new Promise<void>((resolve, reject) => {
+        ws.once("open", () => resolve());
+        ws.once("error", reject);
+      });
+      releaseReconcile([]);
+
+      const sessions = await resumedList;
+      expect(sessions.filter((session) => session.id === sessionId)).toHaveLength(1);
+    } finally {
+      ws.terminate();
       await server.close();
     }
   }, 30_000);
