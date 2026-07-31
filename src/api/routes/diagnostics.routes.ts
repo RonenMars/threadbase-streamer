@@ -169,7 +169,13 @@ export const createDiagnosticsRoutes = (deps: ApiDeps) => {
         statusUpdatedAt: new Date(row.status_updated_at).toISOString(),
         // Whether the recorded pid is probeable at all this boot, not whether
         // it is alive — a mismatch means the question was never asked.
-        bootTokenMatches: row.boot_token != null && row.boot_token === bootToken,
+        //
+        // NOT named for the boot token it derives from: `redactValue`'s
+        // SECRET_KEY_RE matches any key containing "token", so `bootTokenMatches`
+        // was scrubbed to the string "[redacted]" and the field shipped useless.
+        // The regex is deliberately over-broad for a payload meant to be pasted
+        // into bug reports, so the field moved rather than the guard.
+        recordedThisBoot: row.boot_token != null && row.boot_token === bootToken,
         // Absent when this boot never classified the row: a clean restart
         // stamps completed_at on the way out, which takes it out of the probe
         // set entirely. That absence is itself the answer.
