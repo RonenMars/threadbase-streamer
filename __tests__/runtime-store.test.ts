@@ -7,6 +7,7 @@ import { ConversationCache } from "../src/conversation-cache";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
 import type { ManagedSession } from "../src/types";
+import { currentBootToken } from "../src/utils/bootToken";
 
 /**
  * Phase 0 of the live-sessions-persistence plan: the managed-session registry
@@ -58,7 +59,10 @@ describe("RuntimeStore", () => {
       id: string;
     }>;
     // Only the runtime tree ran here — none of the cache's 001..014.
-    expect(applied.map((r) => r.id)).toEqual(["001_create_managed_sessions.sql"]);
+    expect(applied.map((r) => r.id)).toEqual([
+      "001_create_managed_sessions.sql",
+      "002_add_managed_session_boot_token.sql",
+    ]);
     store.close();
 
     // And the cache no longer creates the table at all: it moved out of
@@ -70,6 +74,33 @@ describe("RuntimeStore", () => {
       .get();
     expect(table).toBeUndefined();
     cache.close();
+  });
+
+  // Phase 2: the boot marker that makes a stored pid safe to probe.
+  it("adds boot_token on top of 001 and re-opens without re-applying it", () => {
+    const first = openRuntime();
+    const columns = (store: RuntimeStore) =>
+      (
+        store.getDatabase().prepare("PRAGMA table_info(managed_sessions)").all() as Array<{
+          name: string;
+        }>
+      ).map((c) => c.name);
+    expect(columns(first)).toContain("boot_token");
+    new ManagedSessionsRepository(first.getDatabase()).recordSpawn({
+      session: mkSession(),
+      pid: 4242,
+      cmdline: "claude --resume runtime-sess",
+      streamerInstanceId: "instance-a",
+    });
+    first.close();
+
+    // A re-applied ALTER TABLE would throw "duplicate column name".
+    const second = openRuntime();
+    expect(columns(second)).toContain("boot_token");
+    expect(
+      new ManagedSessionsRepository(second.getDatabase()).get("runtime-sess")?.boot_token,
+    ).toBe(currentBootToken());
+    second.close();
   });
 
   it("survives deleting the whole cache directory", () => {

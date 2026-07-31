@@ -228,7 +228,7 @@ One additive `ALTER TABLE` to permanently remove the only case in this area wher
 
 #### Transition window (accepted, one-time)
 
-Every row already in `managed_sessions` when `015` applies has `boot_token = NULL`, which the branch above treats as a mismatch. So on the **first boot after the migration**, every pre-existing non-terminal row classifies `resumable` without a probe — including an agent that genuinely survived a crash minutes earlier and should have been `detached`.
+Every row already in `managed_sessions` when `002` applies has `boot_token = NULL`, which the branch above treats as a mismatch. So on the **first boot after the migration**, every pre-existing non-terminal row classifies `resumable` without a probe — including an agent that genuinely survived a crash minutes earlier and should have been `detached`.
 
 This is accepted rather than mitigated. It happens once, it errs toward the safe verdict, and nothing is lost: the user taps resume, and `conversationBusy`'s pre-flight probe answers `409 CONVERSATION_BUSY` if the process really is still live. No process is signalled either way. Backfilling a token would be worse — it would fabricate a boot identity we cannot actually verify.
 
@@ -515,7 +515,7 @@ There is no separate tb-mobile plan document, and the streamer plan is deliberat
 
 ## 6. Migration and rollback
 
-**Migration.** One additive `ALTER TABLE` (`015`), applied once via `schema_migrations`. No backfill, no data rewrite, no table altered other than `managed_sessions`. An older streamer running against a newer database is unaffected: `ManagedSessionRow` reads named fields, so an extra column is inert.
+**Migration.** One additive `ALTER TABLE` (`002`), applied once via `schema_migrations`. No backfill, no data rewrite, no table altered other than `managed_sessions`. An older streamer running against a newer database is unaffected: `ManagedSessionRow` reads named fields, so an extra column is inert.
 
 **Rollback, per phase:**
 
@@ -582,7 +582,7 @@ Run `npm run lint && npm test` under the `.nvmrc` Node version (`better-sqlite3`
 | `__tests__/session-registry-persistence.test.ts` | a shutdown write stays *recoverable* (the regression that Phase 1 exists to prevent) |
 | `__tests__/codex-resume.test.ts` | resume by placeholder id spawns `codex resume <boundId>`; the returned session keeps `id === placeholder` |
 | `__tests__/codex-pty-runner.test.ts` | `resumeId` reaches argv; absent `resumeId` is byte-identical to today |
-| `__tests__/db/migrations.test.ts` | `015` applies once and is idempotent across two runs |
+| `__tests__/runtime-store.test.ts` | `002` applies once and is idempotent across two opens |
 | `__tests__/server.test.ts` | `/api/sessions` includes recovered stubs; `/api/sessions/count` excludes them; `?status=` filtering unaffected |
 | `__tests__/diagnostics.test.ts` | `/api/diagnostics/sessions` shape, admin scoping, path redaction |
 | `__tests__/feature-flags.test.ts` | `sessionRehydration` (default on) and `ptyHost` (default off) resolve through the full precedence chain |
@@ -630,7 +630,7 @@ The job's purpose is undocumented (memory, leaked handles, log rotation are all 
 
 - [ ] **PR 0** — Phase 0: `RuntimeStore`, `src/db/runtime-migrations/`, registry re-pointed off the cache handle, independent open/close/error paths, build + deploy copy steps, optional one-time row copy
 - [ ] **PR 1** — Phase 1: `rehydrateSessions.ts`, `listRecoverable`, `rehydrated` marker, boot wiring, `handleSessionsCount` filter, `selfPtyEndedAt` seeding, `sessionRehydration` flag
-- [ ] **PR 2** — Phase 2: migration `015`, `bootToken.ts`, `recordSpawn` writes the token, `classifySession` skips pre-reboot probes
+- [ ] **PR 2** — Phase 2: migration `002`, `bootToken.ts`, `recordSpawn` writes the token, `classifySession` skips pre-reboot probes
 - [ ] **PR 3** — Phase 3: `resumeId` on `StartSessionOptions`, `CodexPtyRunner` argv, `resumeIdentity.ts`, `handleResume` registry fallback
 - [ ] **PR 4** — Phase 4: `failure_reason` → `failed`, `pruneTerminal`, `listNonTerminal` cap + truncation log
 - [ ] **PR 5** — Phase 5: `/api/diagnostics/sessions`, log events, `interruptedStatus`, compatibility-doc entry
