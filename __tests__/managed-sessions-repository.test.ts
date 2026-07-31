@@ -212,4 +212,45 @@ describe("ManagedSessionsRepository", () => {
       expect(repo.listRecoverable({ sinceMs: 0, limit: 10 })).toEqual([]);
     });
   });
+
+  describe("session_name across a status write", () => {
+    // The real ordering: a fresh session is recorded at spawn with no name,
+    // because the name is derived from a first user message that has not been
+    // typed yet. Before recordStatus carried the column, that made the registry
+    // permanently unnamed and every recovered session came back nameless.
+    function spawnUnnamed(): void {
+      repo.recordSpawn({
+        session: mkSession({ sessionName: undefined }),
+        pid: 1,
+        cmdline: "claude",
+        streamerInstanceId: "inst-a",
+      });
+    }
+
+    it("persists a name that only exists after spawn", () => {
+      spawnUnnamed();
+      expect(repo.get("sess-1")?.session_name).toBeNull();
+
+      repo.recordStatus("sess-1", "running", "transition", { sessionName: "fix the parser" });
+
+      expect(repo.get("sess-1")?.session_name).toBe("fix the parser");
+    });
+
+    it("does not clear a stored name when a later write omits it", () => {
+      spawnUnnamed();
+      repo.recordStatus("sess-1", "running", "transition", { sessionName: "fix the parser" });
+
+      // Every other recordStatus caller — the reconciler and the shutdown
+      // stamp — passes no name at all. COALESCE is what stops them wiping it.
+      repo.recordStatus("sess-1", "idle", "shutdown", { completedAt: new Date() });
+
+      expect(repo.get("sess-1")?.session_name).toBe("fix the parser");
+    });
+
+    it("leaves the name null when it is still unknown", () => {
+      spawnUnnamed();
+      repo.recordStatus("sess-1", "running", "transition", {});
+      expect(repo.get("sess-1")?.session_name).toBeNull();
+    });
+  });
 });
