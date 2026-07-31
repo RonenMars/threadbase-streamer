@@ -121,6 +121,26 @@ describe("classifySession", () => {
     expect(verdict.lifecycle).toBe("completed");
   });
 
+  it("reports a dead pid carrying a recorded failure as failed, not resumable", async () => {
+    // The bug this replaced: no provider supplies `endedCleanly`, so `?? false`
+    // called every dead session resumable — including diagnosed failures.
+    const verdict = await classifySession(
+      mkRow({ failure_reason: "claude binary not found" }),
+      mkProbe({ isPidAlive: () => false }),
+      INSTANCE,
+    );
+
+    expect(verdict.lifecycle).toBe("failed");
+    expect(verdict.reason).toBe("process gone, failure recorded");
+  });
+
+  it("still reports a dead pid with no recorded failure as resumable", async () => {
+    const verdict = await classifySession(mkRow(), mkProbe({ isPidAlive: () => false }), INSTANCE);
+
+    expect(verdict.lifecycle).toBe("resumable");
+    expect(verdict.reason).toBe("process gone, resumable from provider history");
+  });
+
   it("classifies a recorded clean exit as completed without probing", async () => {
     const isPidAlive = vi.fn(() => true);
     const verdict = await classifySession(

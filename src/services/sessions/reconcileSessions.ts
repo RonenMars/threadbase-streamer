@@ -104,12 +104,20 @@ export async function classifySession(
   }
 
   if (!probe.isPidAlive(row.pid)) {
-    // The process is gone and nothing recorded why. This is the SIGKILL case:
-    // the row can still say `running` because no exit write ever ran.
-    const clean = probe.endedCleanly?.(row) ?? false;
-    if (clean) {
+    // The process is gone. No provider answers `endedCleanly` today, so this
+    // used to fall through `?? false` and call every dead session `resumable`,
+    // including ones that died of a diagnosed failure. Decide on the evidence
+    // the registry already holds instead of on a probe nobody supplies — and
+    // still honour the hook if some future provider can answer it.
+    if (probe.endedCleanly?.(row)) {
       return { sessionId, lifecycle: "completed", reason: "process gone, history ended cleanly" };
     }
+    if (row.failure_reason != null) {
+      return { sessionId, lifecycle: "failed", reason: "process gone, failure recorded" };
+    }
+    // Nothing recorded why — the SIGKILL case, where the row can still say
+    // `running` because no exit write ever ran. Cleanliness is genuinely
+    // unknowable here, and `resumable` is the honest answer.
     return resumable("process gone, resumable from provider history");
   }
 
