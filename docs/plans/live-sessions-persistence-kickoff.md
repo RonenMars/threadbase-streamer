@@ -1,11 +1,23 @@
 # Live sessions persistence — implementation kick-off
 
-**Date:** 2026-07-30
-**For:** the implementation sequence in [live-sessions-persistence-plan.md](./live-sessions-persistence-plan.md). **Start at PR 0.**
+**Date:** 2026-07-30 (status refreshed 2026-07-31)
+**For:** the implementation sequence in [live-sessions-persistence-plan.md](./live-sessions-persistence-plan.md).
+
+## Status
+
+| PR | Phase | State |
+|---|---|---|
+| PR 0 — runtime.db split | 0 | **Merged** — [#309](https://github.com/RonenMars/threadbase-streamer/pull/309), squashed to `b50d16c` |
+| PR 1 — session rehydration | 1 | **Next.** Paste-ready prompt below |
+| PR 2 onwards | 2–7 | Not started |
+
+**Start at the PR 1 prompt.**
 
 ---
 
-## Documents in this worktree
+## Documents
+
+All five live in `docs/plans/` on the integration branch — they merged in [#307](https://github.com/RonenMars/threadbase-streamer/pull/307), so read them from the repo you are working in, not from a separate plan worktree.
 
 | File | What it is |
 |---|---|
@@ -19,88 +31,33 @@
 
 ## Branching
 
-The planning documents live on `plan/live-sessions-persistence` and are **not** a prerequisite for the code. Each implementation PR branches from the current integration branch, in its own worktree:
+Each implementation PR branches from the current integration branch, in its own worktree:
 
 ```bash
-/opt/homebrew/bin/git worktree add -b feat/runtime-db-split \
-  ~/dev/ai-tools/tb-streamer-worktrees/feat-runtime-db-split \
+/opt/homebrew/bin/git worktree add -b feat/session-rehydration \
+  ~/dev/ai-tools/tb-streamer-worktrees/feat-session-rehydration \
   integration/missing-prs-2026-07-23
 ```
 
-**Why not branch off `plan/live-sessions-persistence`:** the docs there are still uncommitted, so a branch cut from that worktree would carry them into the implementation diff. Basing on the integration branch keeps each PR a code-only change that merges in either order relative to the docs PR. If the docs land first, rebase onto the updated integration branch — one PR at a time, rebase, squash-merge.
-
-Every subsequent PR gets its own worktree off the *then-current* integration branch, never off its predecessor, unless the plan explicitly stacks them (only Phase 6a → 6b–6e).
+Every PR gets its own worktree off the *then-current* integration branch, never off its predecessor, unless the plan explicitly stacks them (only Phase 6a → 6b–6e). Because each merge advances the integration branch, a PR opened before an earlier one lands must be rebased before it merges — one PR at a time, rebase, squash-merge.
 
 ---
 
-## Order matters: PR 0 first
+## What PR 0 left behind *(merged — for context, not for doing)*
 
-**PR 0 (Phase 0) moves `managed_sessions` out of `cache.db` into its own `runtime.db`.** Every later phase reads or writes that registry, so it has to move before they are written — otherwise PR 1's `listRecoverable`, PR 2's `boot_token` migration and PR 4's retention all get authored against the cache handle and then re-pointed.
+`managed_sessions` now lives in `~/.threadbase/runtime.db`, opened by `RuntimeStore` (`src/db/runtime-store.ts`) independently of the conversation cache. Facts every later PR depends on:
 
-It is also the only PR that fixes a live defect rather than adding behaviour: today `ManagedSessionsRepository` is constructed inside the `try` block that opens the conversation cache, so a `better-sqlite3` ABI mismatch — the documented, recurring failure this repo ships a preflight and a `npm rebuild` remedy for — silently disables **all** session persistence while the server keeps running. Plan §3.0 has the detail.
+- `ManagedSessionsRepository` is constructed from `runtimeStore.getDatabase()`, not `cache.getDatabase()`. A cache failure no longer nulls it.
+- Migrations for the registry live in `src/db/runtime-migrations/` with their own `schema_migrations` table. **The next registry migration is `002`**; the next *cache* migration is `015` (`010` left that tree, so `src/db/migrations/` now tops out at `014`).
+- `reconcilePreviousSessions()` runs after the cache block and outside its `try`, so it no longer depends on the cache opening.
+- `ApiDeps.runtimeStore: () => RuntimeStore | null` exists and is so far unread — PR 1 and PR 2 are its first consumers.
+- `THREADBASE_RUNTIME_DB` overrides the registry path; `__tests__/setup/isolate-runtime-db.ts` uses it to give every test file its own database. A test that needs to inspect the registry should read that path, not `~/.threadbase/runtime.db`.
 
----
-
-## Paste-ready prompt for PR 0
-
-```
-Implement PR 0 of the live-sessions-persistence plan.
-
-Worktree: create your own, do not work in the repo root:
-  /opt/homebrew/bin/git worktree add -b feat/runtime-db-split \
-    ~/dev/ai-tools/tb-streamer-worktrees/feat-runtime-db-split \
-    integration/missing-prs-2026-07-23
-
-Read first, from the plan worktree at
-~/dev/ai-tools/tb-streamer-worktrees/plan-live-sessions-persistence:
-  docs/plans/live-sessions-persistence-plan.md   (section 3.0 and Phase 0)
-  docs/plans/live-sessions-persistence-audit.md  (section 3, state inventory)
-
-Scope — PR 0 only. No rehydration, no boot_token, no behaviour change.
-  1. src/db/runtime-store.ts — RuntimeStore.open(path): opens the file and runs
-     runSqliteMigrations(db, runtimeMigrationsDir). Reuse the existing runner;
-     it gets its own schema_migrations table inside the new file.
-  2. src/db/runtime-migrations/001_create_managed_sessions.sql — moved from
-     src/db/migrations/010_create_managed_sessions.sql, renumbered. Keep the
-     header comment; it explains why the byte stream is deliberately not stored.
-  3. ManagedSessionsRepository takes the runtime handle, not cache.getDatabase().
-  4. server.ts: open the runtime store INDEPENDENTLY of the cache, in its own
-     try/catch with its own error log. A cache failure must no longer null the
-     registry, and a registry failure must not break /api/conversations.
-  5. close(): close both. recordShutdownState() must still run before either —
-     it is currently ordered against cache.close() alone (server.ts:1915).
-  6. ApiDeps gains runtimeStore: () => RuntimeStore | null, following the
-     existing () => Repo | null pattern.
-  7. Build + deploy: add src/db/runtime-migrations/ to the copy step alongside
-     src/db/migrations/ and src/db/pg-migrations/. A missing migrations folder
-     in a packaged CLI fails at a user's first boot, not at build time.
-  8. Optional one-time row copy on first open of runtime.db: if its table is
-     empty and cache.db has one, copy the rows and LEAVE THE ORIGINAL in place
-     (an older streamer rolled back onto the same machine still reads it).
-
-Path: ~/.threadbase/runtime.db — sibling of server.yaml, deliberately NOT under
-cache/. Honour THREADBASE_CONFIG_DIR the way the rest of the config does.
-
-Hard constraints:
-  - No wire change. No new endpoint, field, or status value. This PR is
-    invisible to any client.
-  - The registry must survive `rm -rf ~/.threadbase/cache`.
-
-Tests in the same PR: new __tests__/runtime-store.test.ts covering its own
-migrations table, survival of a deleted cache.db, a forced cache-open failure
-leaving persistence working, and an idempotent non-destructive row copy across
-two boots. Plus the existing managed-sessions-repository and
-session-registry-persistence tests re-pointed at the new handle.
-
-Done = every Phase 0 acceptance criterion in the plan passes, and
-`npm run lint && npm test` is green under the .nvmrc Node version.
-
-Show me the staged diff and the proposed commit message before committing.
-```
+The original PR 0 prompt has been removed now that it is merged; the diff is the record. See [#309](https://github.com/RonenMars/threadbase-streamer/pull/309).
 
 ---
 
-## Paste-ready prompt for PR 1 *(after PR 0 has merged)*
+## Paste-ready prompt for PR 1
 
 ```
 Implement PR 1 of the live-sessions-persistence plan.
@@ -110,10 +67,12 @@ Worktree: create your own, do not work in the repo root:
     ~/dev/ai-tools/tb-streamer-worktrees/feat-session-rehydration \
     integration/missing-prs-2026-07-23
 
-PR 0 must already be merged — this PR reads the registry through RuntimeStore.
+PR 0 is merged (#309). The registry is ~/.threadbase/runtime.db, opened by
+RuntimeStore (src/db/runtime-store.ts); ManagedSessionsRepository is constructed
+from runtimeStore.getDatabase(), and ApiDeps.runtimeStore already exists.
 
-Read first, in order, from the plan worktree at
-~/dev/ai-tools/tb-streamer-worktrees/plan-live-sessions-persistence:
+Read first, in order, from your own worktree — these docs are on the
+integration branch, there is no separate plan worktree:
   docs/plans/live-sessions-persistence-audit.md   (gaps G1, G2, G8)
   docs/plans/live-sessions-persistence-plan.md    (Phase 1, section 4)
   docs/compatibility/tb-mobile.md
@@ -129,13 +88,17 @@ Scope — PR 1 only. Do not start Phase 2 or later.
      ownership:"historical" + lifecycle:"resumable" + lifecycleSource:"reconcile"
      when it is set.
   4. StreamerServer.rehydratePreviousSessions(verdicts), chained off the
-     existing reconcile at src/server.ts:1581. Also seeds selfPtyEndedAt from
-     each row's completed_at.
-  5. handleSessionsCount (src/server.ts:2457) filters ownership !== "historical".
+     existing `void this.reconcilePreviousSessions()` (src/server.ts:1706, just
+     after the cache try/catch). Also seeds selfPtyEndedAt from each row's
+     completed_at.
+  5. handleSessionsCount (src/server.ts:2552) filters ownership !== "historical".
   6. sessionRehydration feature flag in src/feature-flags.ts, default ON.
 
+Line numbers above are as of b50d16c and drift with every merge — grep for the
+symbol rather than trusting the number.
+
 Hard constraints:
-  - NO new SessionStatus value. VALID_STATUSES (server.ts:5074) plus
+  - NO new SessionStatus value. VALID_STATUSES (server.ts:5264) plus
     SessionStore.paginate's filter would make recovered sessions vanish from
     already-shipped mobile clients.
   - Stubs live only in SessionStore, never in LiveSessionManager. Prove it with
@@ -156,14 +119,14 @@ Show me the staged diff and the proposed commit message before committing.
 
 ## Acceptance checklists
 
-**PR 0**
+**PR 0** — all met, verified in [#309](https://github.com/RonenMars/threadbase-streamer/pull/309)
 
-- [ ] The registry survives `rm -rf ~/.threadbase/cache`
-- [ ] A forced `ConversationCache.open` failure leaves `/api/conversations` degraded **and session persistence working**, each logging its own error
-- [ ] `npm run build` emits `dist/db/runtime-migrations/`, and the deploy payload contains it
-- [ ] Two consecutive boots do not re-copy rows; the source table is not dropped
-- [ ] `recordShutdownState()` still runs before either database closes
-- [ ] No wire change — `__tests__/contracts/*` untouched and green
+- [x] The registry survives `rm -rf ~/.threadbase/cache`
+- [x] A forced `ConversationCache.open` failure leaves `/api/conversations` degraded **and session persistence working**, each logging its own error
+- [x] `npm run build` emits `dist/runtime-migrations/`, and all three deploy scripts copy it
+- [x] Two consecutive boots do not re-copy rows; the source table is not dropped
+- [x] `recordShutdownState()` still runs before either database closes
+- [x] No wire change — `__tests__/contracts/*` untouched and green
 
 **PR 1**
 
@@ -186,11 +149,13 @@ Both: `npm run lint && npm test` green under `.nvmrc` Node.
 
 | Shared surface | Persistence plan | Source spec |
 |---|---|---|
-| `parseSessionListQuery` (`server.ts:5081`) | untouched | adds `?ownership=`, `?source=`, `?remoteControlled=` |
+| `parseSessionListQuery` (`server.ts:5271`) | untouched | adds `?ownership=`, `?source=`, `?remoteControlled=` |
 | `managedToResponse` (`session-store.ts:199`) | emits `ownership: "historical"` for stubs | emits `source` and `remoteControlled` |
-| Migration numbering | `runtime-migrations/002` (or `015` if PR 0 has not landed) | `016` on the cache DB |
+| Migration numbering | `runtime-migrations/002` | `015` on the cache DB — **not** the `016` that spec says |
 
-**Check `src/db/migrations/` and `src/db/runtime-migrations/` at implementation time** rather than trusting either document's number — whichever spec lands second takes the next free one.
+PR 0 changed the migration arithmetic: `010_create_managed_sessions.sql` left `src/db/migrations/`, so that tree now tops out at `014` and the next free cache migration is `015`, not `016`. Registry migrations are numbered independently in `src/db/runtime-migrations/`, where `001` is taken.
+
+**Check both directories at implementation time** rather than trusting any document's number — whichever spec lands second takes the next free one.
 
 ---
 
