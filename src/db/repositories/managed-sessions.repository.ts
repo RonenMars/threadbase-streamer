@@ -59,6 +59,7 @@ export class ManagedSessionsRepository {
   private updateStatusStmt: Database.Statement;
   private getStmt: Database.Statement;
   private listNonTerminalStmt: Database.Statement;
+  private listRecoverableStmt: Database.Statement;
   private deleteStmt: Database.Statement;
 
   constructor(db: Database.Database) {
@@ -118,6 +119,20 @@ export class ManagedSessionsRepository {
       SELECT * FROM managed_sessions
        WHERE completed_at IS NULL
        ORDER BY started_at ASC
+    `);
+
+    // The rehydrator's boot read. Deliberately WIDER than listNonTerminal:
+    // `recordShutdownState` stamps completed_at on every live session as the
+    // streamer stops, so the sessions most worth recovering are exactly the ones
+    // the probe set excludes. `status_source = 'shutdown'` is what distinguishes
+    // "we stopped it" from "the agent finished" — written since C1 Phase 2, read
+    // by nothing until now.
+    this.listRecoverableStmt = db.prepare(`
+      SELECT * FROM managed_sessions
+       WHERE (completed_at IS NULL OR status_source = 'shutdown')
+         AND status_updated_at >= @since
+       ORDER BY status_updated_at DESC
+       LIMIT @limit
     `);
 
     this.deleteStmt = db.prepare("DELETE FROM managed_sessions WHERE session_id = ?");
@@ -184,6 +199,15 @@ export class ManagedSessionsRepository {
   /** Rows with no recorded completion — the reconciler's probe set. */
   listNonTerminal(): ManagedSessionRow[] {
     return this.listNonTerminalStmt.all() as ManagedSessionRow[];
+  }
+
+  /**
+   * Rows a restart could bring back: still open, or closed by our own shutdown,
+   * and touched no longer ago than `sinceMs`. Newest first, capped — the caller
+   * decides which of these actually deserve rehydrating (`shouldRehydrate`).
+   */
+  listRecoverable({ sinceMs, limit }: { sinceMs: number; limit: number }): ManagedSessionRow[] {
+    return this.listRecoverableStmt.all({ since: sinceMs, limit }) as ManagedSessionRow[];
   }
 
   delete(sessionId: string): void {
