@@ -54,6 +54,12 @@ export interface ManagedSessionRow {
   boot_token?: string | null;
 }
 
+/** Most rows the boot reconciler will probe in one pass. */
+export const PROBE_SET_MAX = 200;
+
+/** How long a finished session stays in the registry as history. */
+export const TERMINAL_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 export interface RecordSpawnInput {
   session: ManagedSession;
   pid: number | null;
@@ -67,6 +73,7 @@ export class ManagedSessionsRepository {
   private bindStmt: Database.Statement;
   private getStmt: Database.Statement;
   private listNonTerminalStmt: Database.Statement;
+  private pruneTerminalStmt: Database.Statement;
   private listRecoverableStmt: Database.Statement;
   private deleteStmt: Database.Statement;
 
@@ -137,10 +144,22 @@ export class ManagedSessionsRepository {
 
     // The reconciler's boot read. Terminal rows are kept as history but never
     // re-probed — there is nothing left to discover about them.
+    //
+    // Bounded because every row costs a pid probe, and on Windows a probe is a
+    // CIM query measured in seconds: an unbounded set turns a registry that
+    // accumulated badly into a multi-minute boot. Oldest first, so the rows
+    // most likely to be genuinely stale are the ones examined.
     this.listNonTerminalStmt = db.prepare(`
       SELECT * FROM managed_sessions
        WHERE completed_at IS NULL
        ORDER BY started_at ASC
+       LIMIT @limit
+    `);
+
+    this.pruneTerminalStmt = db.prepare(`
+      DELETE FROM managed_sessions
+       WHERE completed_at IS NOT NULL
+         AND completed_at < @before
     `);
 
     // The rehydrator's boot read. Deliberately WIDER than listNonTerminal:
@@ -241,9 +260,26 @@ export class ManagedSessionsRepository {
     return (this.getStmt.get(sessionId) as ManagedSessionRow | undefined) ?? null;
   }
 
-  /** Rows with no recorded completion — the reconciler's probe set. */
-  listNonTerminal(): ManagedSessionRow[] {
-    return this.listNonTerminalStmt.all() as ManagedSessionRow[];
+  /**
+   * Rows with no recorded completion — the reconciler's probe set.
+   *
+   * Capped. Callers must compare the result length against the limit and say so
+   * when it clips: a silently truncated probe set reads as "we checked
+   * everything" when it did not.
+   */
+  listNonTerminal(limit: number = PROBE_SET_MAX): ManagedSessionRow[] {
+    return this.listNonTerminalStmt.all({ limit }) as ManagedSessionRow[];
+  }
+
+  /**
+   * Delete terminal rows older than `olderThanMs`, returning how many went.
+   *
+   * Only rows carrying a `completed_at` are eligible, so nothing the reconciler
+   * or rehydrator might still want is reachable from here — a row without one
+   * is by definition unfinished business, however old it looks.
+   */
+  pruneTerminal(olderThanMs: number = TERMINAL_RETENTION_MS): number {
+    return this.pruneTerminalStmt.run({ before: Date.now() - olderThanMs }).changes;
   }
 
   /**
