@@ -23,6 +23,32 @@ Or manually:
 rm ~/.threadbase/cache/cache.db*
 ```
 
+### Tool results render as user messages in a client
+
+**When:** A conversation view marks far more messages as "sent by the user" than the user actually typed — tool output, file reads and command results all appear styled as user turns.
+
+**Cause:** `role: "user"` in a Claude Code JSONL does **not** mean "the human typed this". Claude records every tool result as a `user`-role message, because that is how the tool result is fed back to the model. The API surfaces the JSONL faithfully, so `GET /api/conversations/:id` returns them with `role: "user"` too.
+
+The ratio is not marginal. One real conversation (`2b3ad531`, 1292 messages):
+
+| `role` | `is_tool_result` | count |
+|---|---|---|
+| `user` | `true` | **467** |
+| `user` | `false` | **14** |
+| `assistant` | `false` | 811 |
+
+**97% of the `role: "user"` messages were tool results.** A client that styles on `role === "user"` alone mis-marks all 467.
+
+**Fix:** Filter on `is_tool_result` as well — it is returned on every message for exactly this purpose:
+
+```ts
+const isHumanTurn = m.role === "user" && !m.is_tool_result;
+```
+
+**Also worth knowing:** even `is_tool_result: false` user-role entries are not all typed by a human. Claude injects some itself — `[Request interrupted by user]`, skill-preamble blocks (`Base directory for this skill: …`), and `<task-notification>` blocks all land as `user`-role entries with no tool-result flag. There is no field that marks these. The authoritative record of what a human actually submitted is the PTY's own `inputHistory`, recorded in `writeSubmit()` and delivered as `userMessages` on the `terminal_replay` WebSocket message sent when a client subscribes to a live session — not the JSONL. Two caveats: it is capped at `INPUT_HISTORY_MAX` (50, oldest dropped), and it only exists while the PTY is alive, so a resumed or rehydrated session has none.
+
+**Not applicable to the terminal view.** Raw PTY output carries no roles at all — the only signal there is the `❯` glyph Claude paints, which is a rendering heuristic that wrapping and repaints can defeat. Role-based styling only works in the conversation view.
+
 ### `Startup cache warm-up failed: FOREIGN KEY constraint failed`
 
 **When:** Recurring warning in `~/.threadbase/logs/{stdout,stderr}.log` (tail with `tb-streamer prod logs`) at every server start. Logged at level `40` (warn) with `event: cache.warmup_failed`. Streamer continues to serve `/healthz`, the conversation list, and PTY sessions normally — this is non-blocking.
