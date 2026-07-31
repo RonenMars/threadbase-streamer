@@ -76,6 +76,7 @@ import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.reposit
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
 import { DevicesRepository } from "./db/repositories/devices.repository";
 import {
+  type ManagedSessionRow,
   ManagedSessionsRepository,
   PROBE_SET_MAX,
 } from "./db/repositories/managed-sessions.repository";
@@ -139,6 +140,11 @@ import {
   parseSearchQuery,
   SearchQueryError,
 } from "./services/search/searchQuery";
+import {
+  AUTO_RESUME_CONCURRENCY,
+  AUTO_RESUME_STAGGER_MS,
+  planAutoResume,
+} from "./services/sessions/autoResumeOnBoot";
 import {
   type BusySignal,
   conversationBusy,
@@ -434,6 +440,7 @@ export class StreamerServer {
   private disableDb = false;
   // Skip the startup warm-up scan (test hook; see ServerConfig.skipStartupWarmup).
   private skipStartupWarmup: boolean;
+  private autoResumeOnBoot: boolean;
   private browseRoot: string | null = null;
   private publicUrl: string | null = null;
   private browserCors: string | undefined;
@@ -555,6 +562,7 @@ export class StreamerServer {
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
     this.skipStartupWarmup = config.skipStartupWarmup ?? false;
+    this.autoResumeOnBoot = config.autoResumeOnBoot ?? false;
     this.scannerPersistenceDisabled = config.scannerPersistent === false;
     this.scanProfiles = config.scanProfiles;
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
@@ -1410,8 +1418,8 @@ export class StreamerServer {
    * `sessionStore.addManaged` with the real session, which overwrites the stub
    * by id rather than duplicating it.
    */
-  private rehydratePreviousSessions(verdicts: ReconcileVerdict[]): void {
-    if (!this.featureFlags.sessionRehydration || !this.managedSessionsRepo) return;
+  private rehydratePreviousSessions(verdicts: ReconcileVerdict[]): ManagedSessionRow[] {
+    if (!this.managedSessionsRepo) return [];
     try {
       const now = Date.now();
       // One over the cap, so a clipped result set can be reported rather than
@@ -1422,7 +1430,9 @@ export class StreamerServer {
       });
       const truncated = rows.length > REHYDRATE_MAX;
       const candidates = truncated ? rows.slice(0, REHYDRATE_MAX) : rows;
-      if (candidates.length === 0) return;
+      // The auto-resume preference is independent of the Phase 1 feature flag,
+      // but both paths must make decisions from this exact, bounded row set.
+      if (!this.featureFlags.sessionRehydration || candidates.length === 0) return candidates;
 
       const verdictById = new Map(verdicts.map((v) => [v.sessionId, v]));
       let rehydrated = 0;
@@ -1471,6 +1481,7 @@ export class StreamerServer {
         skippedBy,
         truncated,
       });
+      return candidates;
     } catch (err) {
       // Same contract as reconciliation: this costs post-restart visibility, and
       // must never stop the server from starting.
@@ -1478,7 +1489,96 @@ export class StreamerServer {
         event: "sessions.rehydrate_failed",
         err,
       });
+      return [];
     }
+  }
+
+  /** Resume only the recent sessions the user explicitly allowed us to start at boot. */
+  private async autoResumePreviousSessions(rows: ManagedSessionRow[]): Promise<void> {
+    if (!this.autoResumeOnBoot) return;
+
+    const plan = planAutoResume(rows, { now: Date.now(), projectExists: existsSync });
+    for (const { row, reason } of plan.skipped) {
+      this.log.info(`[auto-resume] skipped ${row.session_id}: ${reason}`, {
+        event: "sessions.auto_resume_skipped",
+        sessionId: row.session_id,
+        reason,
+      });
+    }
+    for (const row of plan.overflow) {
+      this.log.info(`[auto-resume] left ${row.session_id} for manual resume: ceiling reached`, {
+        event: "sessions.auto_resume_skipped",
+        sessionId: row.session_id,
+        reason: "ceiling_reached",
+      });
+    }
+
+    let resumed = 0;
+    let failed = 0;
+    const inFlight = new Set<Promise<void>>();
+    let started = 0;
+
+    const resume = async (row: ManagedSessionRow): Promise<void> => {
+      try {
+        const outcome = await this.resumeSession({
+          sessionId: row.session_id,
+          projectName: row.project_name,
+          branch: row.branch,
+        });
+        if (!outcome.ok) {
+          failed++;
+          this.log.info(`[auto-resume] skipped ${row.session_id}: ${outcome.reason}`, {
+            event: "sessions.auto_resume_skipped",
+            sessionId: row.session_id,
+            reason: outcome.reason,
+            ...(outcome.reason === "conversation_busy" && {
+              detectedBy: outcome.detectedBy,
+              lastActivityMs: outcome.lastActivityMs,
+              likelyOwner: outcome.likelyOwner,
+            }),
+          });
+          return;
+        }
+
+        resumed++;
+        this.log.info(`[auto-resume] resumed ${row.session_id}`, {
+          event: "sessions.auto_resume_succeeded",
+          sessionId: row.session_id,
+          alreadyRunning: outcome.alreadyRunning,
+        });
+      } catch (err) {
+        failed++;
+        this.log.warn(`[auto-resume] failed to resume ${row.session_id}`, {
+          event: "sessions.auto_resume_failed",
+          sessionId: row.session_id,
+          err,
+        });
+      }
+    };
+
+    for (const row of plan.attempts) {
+      while (inFlight.size >= AUTO_RESUME_CONCURRENCY) {
+        await Promise.race(inFlight);
+      }
+      if (started > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, AUTO_RESUME_STAGGER_MS));
+      }
+
+      const task = resume(row);
+      inFlight.add(task);
+      void task.then(() => inFlight.delete(task));
+      started++;
+    }
+    await Promise.all(inFlight);
+
+    this.log.info(`[auto-resume] completed boot recovery: ${resumed} resumed`, {
+      event: "sessions.auto_resume_completed",
+      attempted: plan.attempts.length,
+      resumed,
+      failed,
+      ineligible: plan.skipped.length,
+      overflow: plan.overflow.length,
+    });
   }
 
   /**
@@ -1909,11 +2009,12 @@ export class StreamerServer {
         // delay the listener for no correctness gain. Runs after the cache block
         // so it sees any rows the legacy copy just brought across, and outside
         // it so a cache failure no longer skips reconciliation.
-        void this.reconcilePreviousSessions().then((v) => {
-          this.rehydratePreviousSessions(v);
+        void this.reconcilePreviousSessions().then(async (v) => {
+          const recoverableRows = this.rehydratePreviousSessions(v);
+          await this.autoResumePreviousSessions(recoverableRows);
           // Last, so retention can never delete a row this boot still wanted:
-          // reconciliation has finished probing and rehydration has finished
-          // seeding by the time anything is removed.
+          // reconciliation has finished probing, rehydration has finished
+          // seeding, and auto-resume has made its attempts before removal.
           this.pruneTerminalSessions();
         });
         // Opt out of the warm-up scan entirely (test hook). The cache and
