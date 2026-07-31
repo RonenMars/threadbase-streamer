@@ -483,7 +483,20 @@ export function isTerminalSession(session: TerminalSessionShape): boolean {
 }
 ```
 
-A recovered stub carries a real `promptCount` (that is the point — it is why the row is worth showing), so `isTerminalSession` returns false and mobile waits on the WebSocket for output that will never arrive until the user resumes. The result is a spinner on a session that is actually ready to tap.
+A recovered stub carries a real `promptCount` (that is the point — it is why the row is worth showing), so `isTerminalSession` returns false.
+
+**Corrected 2026-07-31, verified against the running streamer.** An earlier version of this paragraph claimed mobile then "waits on the WebSocket for output that will never arrive… the result is a spinner". That does not happen. The stream subscription is gated on `ptyAttached === true` *before* `isTerminalSession` is consulted (`app/session/[id].tsx:562`):
+
+```ts
+const isLiveForStream =
+  session?.ptyAttached === true &&
+  (session?.status === 'waiting_input' || session?.status === 'running') &&
+  !(session != null && isTerminalSession(session))
+```
+
+A stub reports `ptyAttached: false`, so the first clause already fails and no stream is opened. The real symptom is narrower: the session falls through to the `noAttachEmptyPlaceholder && status === 'idle'` branch (`app/session/[id].tsx:1014`) and renders **"Running elsewhere"** — a false claim about a session nobody is running. A wrong label, not a hang.
+
+Recovered sessions therefore render *and resume* on already-shipped clients: `app/session/[id].tsx:579` redirects a stub with a conversation to `/conversation/{id}`, which implements the full resume flow. M1's residual value is the pre-redirect frame and the case where a stub has no `conversationId`.
 
 Historical *conversations* avoid this today only because they arrive through the `ProjectChat` discriminated union's `type: "conversation"` branch. A **session-shaped** historical row is a genuinely new case that this plan introduces.
 
@@ -493,7 +506,7 @@ Fix: treat `ownership === 'historical'` as terminal regardless of `promptCount`.
 
 | PR | Scope | Blocking? |
 |---|---|---|
-| M1 | `isTerminalSession` accepts `ownership === 'historical'` | **Yes** — land alongside streamer PR 1, or recovered sessions show a spinner |
+| M1 | `isTerminalSession` accepts `ownership === 'historical'` | **No** — corrective, not gating. Originally marked blocking on the spinner claim corrected above; streamer PR 1 was never gated on mobile |
 | M2 | Adopt `interruptedStatus` to label "interrupted mid-response" | No — cosmetic, only if Phase 5 ships the field |
 
 There is no separate tb-mobile plan document, and the streamer plan is deliberately shaped so one is not required. M1 is a one-clause change, not a feature.
@@ -626,8 +639,8 @@ The job's purpose is undocumented (memory, leaked handles, log rotation are all 
 - [ ] **PR 8** — Phase 6c: boot reconnect, `lifecycle: "attached"` across restart, byte-accurate replay
 - [ ] **PR 9** — Phase 6d: version handshake, heartbeat, orphan reaping, `prod doctor` check
 - [ ] **PR 10** — Phase 6e: Windows / ConPTY qualification, `ptyHost` default decision
-- [ ] **PR M1** *(tb-mobile, land with PR 1)* — `isTerminalSession` treats `ownership === 'historical'` as terminal (see §5.1)
-- [ ] **PR 11** — Phase 7a/7b: `auto_resume_on_boot` in `server.yaml`, loader + writer, `ServerConfig` field, first-run TTY prompt, `scripts/deploy.sh` install-time question, skip env var. **Ride-along:** `loadDefaultModel()` / `loadDefaultEffort()` in `src/auth.ts` + `cli/index.ts`, closing the `claude_extra_args` silent revert (7a)
+- [x] **PR M1** *(tb-mobile, independent of PR 1)* — `isTerminalSession` treats `ownership === 'historical'` as terminal (see §5.1). Implemented on `fix/historical-session-terminal`. Not a gate on any streamer PR.
+- [ ] **PR 11** — Phase 7a/7b: `auto_resume_on_boot` in `server.yaml`, loader + writer, `ServerConfig` field, first-run TTY prompt, `scripts/deploy.sh` install-time question, skip env var. ~~**Ride-along:** `loadDefaultModel()` / `loadDefaultEffort()` in `src/auth.ts` + `cli/index.ts`, closing the `claude_extra_args` silent revert (7a)~~ — **dropped:** #306 made `model` and `effort` first-class claude-flags with their own persisted key, so PR 11 no longer needs to carry them (see `docs/2026-07-30-session-review-consolidation.md` §8)
 - [ ] **PR 12** — Phase 7c: shared `resumeSession()`, eligibility rules, caps and ceiling, logged skips
 - [ ] **PR M2** *(tb-mobile, optional, after PR 5)* — adopt `interruptedStatus` for the "interrupted mid-response" label
 
