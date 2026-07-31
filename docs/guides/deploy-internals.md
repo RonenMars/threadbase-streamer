@@ -4,7 +4,9 @@ Reference for what the deploy scripts (`scripts/deploy.sh`, `scripts/deploy-linu
 
 ## Migrations
 
-`npm run build` copies both SQLite (`src/db/migrations/`) and Postgres (`src/db/pg-migrations/`) migrations into `dist/`. Deploy only ships the SQLite ones to `~/.threadbase/` — Postgres persistence is dormant in production.
+`npm run build` copies three migration trees into `dist/`: the SQLite conversation cache (`src/db/migrations/`), the SQLite session registry (`src/db/runtime-migrations/`), and Postgres (`src/db/pg-migrations/`). Deploy only ships the two SQLite ones to `~/.threadbase/` — Postgres persistence is dormant in production.
+
+The registry tree is separate because it applies to a separate database file: `~/.threadbase/runtime.db`, which is authoritative and must survive a cache reset, rather than `cache/cache.db`, which is derived and disposable. Each file carries its own `schema_migrations` table.
 
 ## Global commands (`tb-streamer` / `threadbase-streamer`)
 

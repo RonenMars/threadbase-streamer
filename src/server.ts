@@ -79,6 +79,7 @@ import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.re
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
+import { RuntimeStore } from "./db/runtime-store";
 import { recordUpload } from "./db/upload-records";
 import {
   FEATURE_FLAGS,
@@ -442,10 +443,13 @@ export class StreamerServer {
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
   private sessionsRepo: SessionsRepository | null = null;
-  // Durable session registry (C1 Phase 2). Null when the cache DB failed to
-  // open — persistence degrades to today's in-memory-only behaviour rather than
-  // taking the server down with it, so every write goes through `?.`.
+  // Durable session registry (C1 Phase 2). Null when runtime.db failed to open
+  // — persistence degrades to today's in-memory-only behaviour rather than
+  // taking the server down with it, so every write goes through `?.`. Note the
+  // handle is runtime.db, NOT the conversation cache: a cache failure used to
+  // null this repo and silently disable all session persistence.
   private managedSessionsRepo: ManagedSessionsRepository | null = null;
+  private runtimeStore: RuntimeStore | null = null;
   // Identifies this streamer run. A registry row carrying a different id is a
   // session that outlived the process that started it.
   private readonly streamerInstanceId = randomUUID();
@@ -467,6 +471,7 @@ export class StreamerServer {
     fetchedAt: number;
   } | null = null;
   private cacheDir: string;
+  private runtimeDbPath: string;
   private tailSize: number;
   private directoryDebounceMs: number;
   // Trailing-debounced trigger that flags the scanner stale after a quiet
@@ -518,6 +523,11 @@ export class StreamerServer {
     this.claudeFlags = config.claudeFlags ?? loadClaudeFlags();
     this.claudeExtraArgs = config.claudeExtraArgs ?? loadClaudeExtraArgs();
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
+    // Sibling of server.yaml, deliberately NOT under cache/ — see runtime-store.ts.
+    this.runtimeDbPath =
+      config.runtimeDbPath ??
+      process.env.THREADBASE_RUNTIME_DB ??
+      join(process.env.THREADBASE_CONFIG_DIR ?? join(homedir(), ".threadbase"), "runtime.db");
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
     this.directoryDebounceMs =
       parseDirScanDebounceEnv(process.env.THREADBASE_DIR_SCAN_DEBOUNCE_MS) ??
@@ -895,6 +905,7 @@ export class StreamerServer {
       conversationsRepo: () => this.conversationsRepo,
       sessionsRepo: () => this.sessionsRepo,
       cacheMetadataRepo: () => this.cacheMetadataRepo,
+      runtimeStore: () => this.runtimeStore,
       ptyAttachedIds: () => this.ptyAttachedIds(),
       handleListSessions: (url, res) => this.handleListSessions(url, res),
       handleSessionsCount: (res) => this.handleSessionsCount(res),
@@ -1559,6 +1570,28 @@ export class StreamerServer {
           port,
           event: "server.listening",
         });
+        // Opened BEFORE and INDEPENDENTLY of the conversation cache. These two
+        // used to share a handle, so the documented better-sqlite3 ABI mismatch
+        // — which the cache catch below tolerates by design — silently took the
+        // session registry with it: recordSpawn/recordStatus/recordShutdownState
+        // all became no-ops with no separate signal. Each store now fails, and
+        // logs, on its own.
+        try {
+          this.runtimeStore = RuntimeStore.open(this.runtimeDbPath);
+          this.managedSessionsRepo = new ManagedSessionsRepository(this.runtimeStore.getDatabase());
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const abiMismatch =
+            message.includes("NODE_MODULE_VERSION") ||
+            message.includes("was compiled against a different Node.js version");
+          this.log.error(
+            `Runtime store failed to open — session persistence DISABLED; ` +
+              `sessions will not survive a restart.` +
+              (abiMismatch ? ` Fix: npm rebuild better-sqlite3` : "") +
+              ` (${message})`,
+            { error: message, abiMismatch, path: this.runtimeDbPath, event: "runtime.open_failed" },
+          );
+        }
         try {
           this.cache = ConversationCache.open(
             join(this.cacheDir, "cache.db"),
@@ -1588,11 +1621,23 @@ export class StreamerServer {
           this.projectsRepo = new ProjectsRepository(db);
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
-          this.managedSessionsRepo = new ManagedSessionsRepository(db);
-          // Classify whatever previous runs left behind. Fire-and-forget: it
-          // only populates a diagnostic map, and blocking startup on `ps`
-          // probes would delay the listener for no correctness gain.
-          void this.reconcilePreviousSessions();
+          // One-time, non-destructive lift of a pre-split registry out of
+          // cache.db. Never fatal: a failed copy costs one boot of post-restart
+          // visibility, not the cache.
+          try {
+            const copied = this.runtimeStore?.importLegacyManagedSessions(db) ?? 0;
+            if (copied > 0) {
+              this.log.info(`Copied ${copied} managed session row(s) from cache.db to runtime.db`, {
+                copied,
+                event: "runtime.legacy_import",
+              });
+            }
+          } catch (err) {
+            this.log.warn("[registry] legacy managed_sessions copy failed", {
+              event: "runtime.legacy_import_failed",
+              err,
+            });
+          }
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
           this.pushRepo = new PushRepository(db);
           this.devicesRepo = new DevicesRepository(db);
@@ -1653,6 +1698,12 @@ export class StreamerServer {
           // fall back to in-memory scans so requests keep working from disk.
           this.scannerPersistenceDisabled = true;
         }
+        // Classify whatever previous runs left behind. Fire-and-forget: it only
+        // populates a diagnostic map, and blocking startup on `ps` probes would
+        // delay the listener for no correctness gain. Runs after the cache block
+        // so it sees any rows the legacy copy just brought across, and outside
+        // it so a cache failure no longer skips reconciliation.
+        void this.reconcilePreviousSessions();
         // Opt out of the warm-up scan entirely (test hook). The cache and
         // repositories above are already open, so conversation endpoints serve an
         // empty cache instead of throwing; only the scan and its dependent cache
@@ -1922,7 +1973,7 @@ export class StreamerServer {
     this.lastAgentChunkAt.clear();
     this.terminalSeq.clear();
     // Record why each live session is about to end, BEFORE ptyManager.dispose()
-    // kills it and before cache.close() takes the registry's DB handle away.
+    // kills it and before runtimeStore.close() takes the registry's DB handle away.
     // dispose() fires no onStatusChange, so without this a clean shutdown looks
     // identical to a crash on the next boot: rows frozen mid-`running` with no
     // explanation. See docs/architecture/2026-07-24-durable-session-runtime.md.
@@ -1945,6 +1996,7 @@ export class StreamerServer {
     this.allScanners.clear();
     this.scanner = null;
     this.cache?.close();
+    this.runtimeStore?.close();
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.externalTails.clear();

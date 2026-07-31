@@ -2,12 +2,12 @@ import { mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import type { ManagedSession } from "../src/types";
 
 let dbDir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: ManagedSessionsRepository;
 
 const STARTED = new Date("2026-07-24T10:00:00Z");
@@ -31,12 +31,12 @@ function mkSession(over: Partial<ManagedSession> = {}): ManagedSession {
 beforeEach(() => {
   dbDir = join(tmpdir(), `managed-sessions-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dbDir, { recursive: true });
-  cache = ConversationCache.open(join(dbDir, "cache.db"));
-  repo = new ManagedSessionsRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dbDir, "runtime.db"));
+  repo = new ManagedSessionsRepository(store.getDatabase());
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dbDir, { recursive: true, force: true });
 });
 

@@ -1,6 +1,12 @@
 -- Managed-session registry (durable session runtime, C1 Phase 2).
 -- See docs/architecture/2026-07-24-durable-session-runtime.md.
 --
+-- Lives in ~/.threadbase/runtime.db, NOT in the conversation cache. Everything
+-- in cache.db is rebuildable from ~/.claude and ~/.codex; this table is the only
+-- copy of startedAt, promptCount, sessionName, the Codex rollout binding and
+-- status_source. It must survive "delete the cache and restart", and a cache
+-- that fails to open must not take session persistence down with it.
+--
 -- Until now managed session state lived only in SessionStore's in-memory Maps,
 -- so a streamer restart lost startedAt, promptCount, sessionName, projectId,
 -- the Codex placeholder→rollout binding, and failureReason outright. Sessions

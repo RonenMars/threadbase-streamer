@@ -835,13 +835,15 @@ cmd_deploy() {
   cp "$REPO_ROOT/dist/launchd-entry.cjs" "$INSTALL_DIR/launchd-entry.cjs"
   chmod +x "$INSTALL_DIR/launchd-entry.cjs"
   # Copy migrations alongside the CLI so __dirname resolution works at runtime.
-  # - migrations/    — SQLite (ConversationCache.open(); always required)
-  # - pg-migrations/ — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
-  #                   migration runner reads the dir at startup and crashes if absent)
+  # - migrations/         — SQLite cache (ConversationCache.open(); always required)
+  # - runtime-migrations/ — SQLite session registry (RuntimeStore.open(); always required)
+  # - pg-migrations/      — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
+  #                         migration runner reads the dir at startup and crashes if absent)
   # Remove existing dirs first: `cp -r src dst` nests as `dst/src` when dst exists,
   # which previously fed the SQLite loader a stale set of pg-flavored files.
-  rm -rf "$RELEASES_DIR/migrations" "$RELEASES_DIR/pg-migrations"
+  rm -rf "$RELEASES_DIR/migrations" "$RELEASES_DIR/runtime-migrations" "$RELEASES_DIR/pg-migrations"
   cp -r dist/migrations "$RELEASES_DIR/migrations"
+  cp -r dist/runtime-migrations "$RELEASES_DIR/runtime-migrations"
   [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$RELEASES_DIR/pg-migrations"
 
   # Native addons are external to the tsup bundle. Copy them and their transitive
