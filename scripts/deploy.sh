@@ -219,6 +219,37 @@ cmd_check_browse_root() {
   ok "browse_root set to: $input"
 }
 
+# Ask once whether interrupted sessions should be resumed automatically at boot
+# (persistence plan Phase 7b).
+#
+# The streamer asks this itself on a first interactive `serve`, which covers the
+# npm and Homebrew installs. This path can ask too — deploy.sh already prompts
+# for the shim and PATH — so it writes the answer BEFORE first boot and `serve`
+# then finds the key present and stays silent.
+#
+# Only ever asked when the key is absent. Present-and-false is a real answer,
+# and a redeploy must not re-litigate it. No TTY means no question and no write:
+# the key stays absent, the streamer logs its discoverability line, and the
+# effective behaviour is the same `false` it would have been.
+cmd_ask_auto_resume() {
+  [[ -n "$(read_yaml_key auto_resume_on_boot)" ]] && return 0
+  [[ -t 0 ]] || return 0
+
+  printf '\nResume interrupted sessions automatically when the streamer starts?\n'
+  printf '  [n] No — show them in the list and let me tap to resume (default)\n'
+  printf '  [y] Yes — re-attach them automatically on boot\n\n'
+  printf 'Note: yes means agents can start without you present, including after a reboot.\n'
+  printf 'Choice [y/N]: '
+  local ans; read -r ans
+  if [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]; then
+    write_yaml_key auto_resume_on_boot true
+    ok "auto_resume_on_boot: true"
+  else
+    write_yaml_key auto_resume_on_boot false
+    ok "auto_resume_on_boot: false"
+  fi
+}
+
 # Realign better-sqlite3's prebuilt native binary with whatever Node `bash`
 # resolves to at deploy time. Necessary because `bash scripts/deploy.sh` runs
 # in a sub-shell that doesn't load nvm's lazy-init function — `node` falls
@@ -794,6 +825,7 @@ cmd_deploy() {
   cmd_version_check
   cmd_predeploy_check "$force"
   cmd_check_browse_root
+  cmd_ask_auto_resume
 
   cd "$REPO_ROOT"
   ensure_native_modules_match_node

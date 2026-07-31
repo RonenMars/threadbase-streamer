@@ -180,6 +180,38 @@ export function setDefaultPermissionMode(mode: PermissionMode): void {
 }
 
 /**
+ * Whether interrupted sessions are re-started automatically at boot
+ * (persistence plan Phase 7a).
+ *
+ * **Tri-state on purpose.** `undefined` means the key is absent — the user has
+ * never been asked — and is what triggers the one-time prompt. It is not the
+ * same as `false`, which is a real answer and must never be re-asked.
+ * Collapsing the two would either nag on every boot or silently decide for
+ * someone who was never given the choice.
+ *
+ * Not a feature flag: feature flags gate behaviour *we* are unsure about, while
+ * this is a user preference with a persisted answer — the
+ * `default_permission_mode` shape, not the `codexSystemPrompt` shape.
+ */
+export function loadAutoResumeOnBoot(): boolean | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    // Anchored and exact: only a literal `true`/`false` is an answer. A typo
+    // must read as "never asked" and re-prompt, rather than being coerced into
+    // enabling unattended agent starts.
+    const match = content.match(/^auto_resume_on_boot:\s*(true|false)\s*$/m);
+    if (match) return match[1] === "true";
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
+export function setAutoResumeOnBoot(value: boolean): void {
+  setConfigValue("auto_resume_on_boot", String(value));
+}
+
+/**
  * Allowlisted Claude CLI flags, stored as ONE line of JSON:
  *
  *     claude_flags: {"permissionMode":"bypassPermissions","addDir":["/srv/a b"]}
