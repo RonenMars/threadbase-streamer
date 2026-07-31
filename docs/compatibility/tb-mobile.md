@@ -43,6 +43,11 @@ No field is added, renamed or retyped, and no new `SessionStatus` value exists, 
 `GET /api/sessions/count` deliberately excludes them, so the live-session badge keeps counting only sessions this streamer is running.
 The one client-side consequence worth knowing: a recovered session carries a real `promptCount`, which mobile's `isTerminalSession` currently requires to be `0` — until mobile treats `ownership === 'historical'` as terminal, it will wait on the WebSocket for output that only arrives after a resume.
 The server side is gated by the `sessionRehydration` feature flag (default on, `THREADBASE_FEATURE_SESSION_REHYDRATION=0` to disable).
+- Session — new optional field (plan Phase 5): `interruptedStatus` (`"running"` | `"waiting_input"`). Present only on a rehydrated session whose registry row recorded `status_source: "shutdown"` — i.e. one the streamer itself stopped, as opposed to one the agent finished or a crash froze.
+A recovered session's `status` has to report `idle` (it holds no PTY, and a novel `SessionStatus` value would be dropped by `?status=` filtering on already-shipped clients), which erases whether the agent was mid-answer when we stopped it.
+This field carries that one bit separately, so a client can say "interrupted mid-response" instead of "idle".
+Purely additive and safe to ignore: nothing keys off it server-side, and a client that never reads it behaves exactly as it does today.
+Adopting it is tracked as tb-mobile PR M2.
 - Session — optional field `sessionName`: a user-visible title. Previously only populated on a resumed session (from the scanner's own title derivation); now also derived for a fresh live session from its first user message (`deriveSessionName`, first line truncated to 80 chars) as soon as that message is submitted. Absent until then.
 - Conversation list item: `id`, `title`, `projectPath`, `messageCount`, `lastActivity`, `firstMessage`, `lastMessage`, `preview`, `model`
 - Conversation detail: `meta` object + `messages` array + `message_pagination` object

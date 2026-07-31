@@ -42,7 +42,16 @@ export interface ShouldRehydrateOptions {
 }
 
 /**
- * Should this registry row come back as a recovered session?
+ * Why a registry row was not brought back, or `null` when it was.
+ *
+ * A stable code rather than a sentence: it is logged per row and surfaced by
+ * `GET /api/diagnostics/sessions`, where "my session did not come back" has to
+ * be answerable without reading the source.
+ */
+export type RehydrateSkipReason = "codex_unbound" | "project_missing" | "too_old" | "agent_exited";
+
+/**
+ * Should this registry row come back as a recovered session? `null` means yes.
  *
  * Three ways to answer no, all of them "resuming this would waste the user's
  * tap":
@@ -58,12 +67,17 @@ export interface ShouldRehydrateOptions {
  * Plus a fourth that is not a heuristic but an impossibility: a Codex row that
  * never bound its rollout id has no id that can resume it at all (G6).
  */
-export function shouldRehydrate(row: ManagedSessionRow, opts: ShouldRehydrateOptions): boolean {
-  if (resumeIdForRow(row) == null) return false;
-  if (!opts.projectExists(row.project_path)) return false;
-  if (opts.now - row.status_updated_at > REHYDRATE_WINDOW_MS) return false;
-  if (AGENT_EXIT_SOURCES.has(row.status_source) && row.failure_reason == null) return false;
-  return true;
+export function rehydrateSkipReason(
+  row: ManagedSessionRow,
+  opts: ShouldRehydrateOptions,
+): RehydrateSkipReason | null {
+  if (resumeIdForRow(row) == null) return "codex_unbound";
+  if (!opts.projectExists(row.project_path)) return "project_missing";
+  if (opts.now - row.status_updated_at > REHYDRATE_WINDOW_MS) return "too_old";
+  if (AGENT_EXIT_SOURCES.has(row.status_source) && row.failure_reason == null) {
+    return "agent_exited";
+  }
+  return null;
 }
 
 /**
@@ -106,6 +120,14 @@ export function rowToStubSession(row: ManagedSessionRow): ManagedSession {
     ...(row.status_source === "shutdown" && {
       statusSource: "shutdown" satisfies StatusSource,
       statusUpdatedAt: new Date(row.status_updated_at),
+      // `status` above had to flatten to `idle`, which erases whether the agent
+      // was mid-answer when we stopped it. Carried separately so a client can
+      // say "interrupted mid-response" without a novel SessionStatus value.
+      // Gated on the same `shutdown` source: a crashed row's `running` is a
+      // frozen value nobody confirmed, not an observation.
+      ...((row.status === "running" || row.status === "waiting_input") && {
+        interruptedStatus: row.status,
+      }),
     }),
   };
 }

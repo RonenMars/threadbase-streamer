@@ -57,6 +57,9 @@ export interface ManagedSessionRow {
 /** Most rows the boot reconciler will probe in one pass. */
 export const PROBE_SET_MAX = 200;
 
+/** Most rows one diagnostics report will carry. */
+export const DIAGNOSTICS_MAX = 200;
+
 /** How long a finished session stays in the registry as history. */
 export const TERMINAL_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -73,6 +76,7 @@ export class ManagedSessionsRepository {
   private bindStmt: Database.Statement;
   private getStmt: Database.Statement;
   private listNonTerminalStmt: Database.Statement;
+  private listAllStmt: Database.Statement;
   private pruneTerminalStmt: Database.Statement;
   private listRecoverableStmt: Database.Statement;
   private deleteStmt: Database.Statement;
@@ -153,6 +157,15 @@ export class ManagedSessionsRepository {
       SELECT * FROM managed_sessions
        WHERE completed_at IS NULL
        ORDER BY started_at ASC
+       LIMIT @limit
+    `);
+
+    // The diagnostics read. Unlike the two above it filters nothing — the
+    // question it answers is "what does the registry actually hold", and a row
+    // excluded by a WHERE clause is exactly the row someone is looking for.
+    this.listAllStmt = db.prepare(`
+      SELECT * FROM managed_sessions
+       ORDER BY status_updated_at DESC
        LIMIT @limit
     `);
 
@@ -269,6 +282,11 @@ export class ManagedSessionsRepository {
    */
   listNonTerminal(limit: number = PROBE_SET_MAX): ManagedSessionRow[] {
     return this.listNonTerminalStmt.all({ limit }) as ManagedSessionRow[];
+  }
+
+  /** Every row, most recently touched first, for the diagnostics surface. */
+  listAll(limit: number = DIAGNOSTICS_MAX): ManagedSessionRow[] {
+    return this.listAllStmt.all({ limit }) as ManagedSessionRow[];
   }
 
   /**

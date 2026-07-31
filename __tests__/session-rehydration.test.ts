@@ -16,10 +16,11 @@ import { RuntimeStore } from "../src/db/runtime-store";
 import {
   REHYDRATE_MAX,
   REHYDRATE_WINDOW_MS,
+  rehydrateSkipReason,
   rowToStubSession,
-  shouldRehydrate,
 } from "../src/services/sessions/rehydrateSessions";
 import { SessionStore } from "../src/session-store";
+import type { SessionStatus } from "../src/types";
 
 vi.mock("node-pty", () => {
   const { EventEmitter } = require("events");
@@ -68,53 +69,55 @@ function mkRow(over: Partial<ManagedSessionRow> = {}): ManagedSessionRow {
 const exists = () => true;
 const missing = () => false;
 
-describe("shouldRehydrate", () => {
+describe("rehydrateSkipReason", () => {
   it("recovers a session the streamer itself stopped", () => {
-    expect(shouldRehydrate(mkRow(), { now: NOW, projectExists: exists })).toBe(true);
+    expect(rehydrateSkipReason(mkRow(), { now: NOW, projectExists: exists })).toBeNull();
   });
 
   it("skips a row whose project directory is gone", () => {
     // handleResume would fail to spawn there, so offering it is a wasted tap.
-    expect(shouldRehydrate(mkRow(), { now: NOW, projectExists: missing })).toBe(false);
+    expect(rehydrateSkipReason(mkRow(), { now: NOW, projectExists: missing })).toBe(
+      "project_missing",
+    );
   });
 
   it("skips a row older than the window", () => {
     const row = mkRow({ status_updated_at: NOW - REHYDRATE_WINDOW_MS - 1 });
-    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(false);
+    expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBe("too_old");
   });
 
   it("keeps a row right at the window edge", () => {
     const row = mkRow({ status_updated_at: NOW - REHYDRATE_WINDOW_MS });
-    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
+    expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBeNull();
   });
 
   it("skips a session the agent ended on its own", () => {
     for (const status_source of ["exit", "process-exit"]) {
       const row = mkRow({ status_source, failure_reason: null });
-      expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(false);
+      expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBe("agent_exited");
     }
   });
 
   it("still recovers an agent exit that recorded a failure", () => {
     // That one was cut short, so there is something left to resume.
     const row = mkRow({ status_source: "exit", failure_reason: "claude binary not found" });
-    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
+    expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBeNull();
   });
 
   it("skips a Codex row that never bound a rollout id", () => {
     // Nothing can resume it: `codex resume <placeholder>` fails (G6).
     const row = mkRow({ provider: "codex-cli", bound_conversation_id: null });
-    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(false);
+    expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBe("codex_unbound");
   });
 
   it("recovers a Codex row that did bind", () => {
     const row = mkRow({ provider: "codex-cli", bound_conversation_id: "rollout-9" });
-    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
+    expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBeNull();
   });
 
   it("recovers a crashed row that never got a shutdown write", () => {
     const row = mkRow({ status: "running", status_source: "transition", completed_at: null });
-    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
+    expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBeNull();
   });
 });
 
@@ -146,6 +149,26 @@ describe("rowToStubSession", () => {
     // would attach observed confidence to a value derived at boot.
     const crashed = rowToStubSession(mkRow({ status: "running", status_source: "transition" }));
     expect(crashed.statusSource).toBeUndefined();
+  });
+
+  it("carries what the session was doing when we stopped it", () => {
+    // `status` has to flatten to `idle`; this is the one bit that would
+    // otherwise be lost — whether the agent was mid-answer.
+    for (const status of ["running", "waiting_input"] as const) {
+      const s = rowToStubSession(mkRow({ status, status_source: "shutdown" }));
+      expect(s.status).toBe("idle");
+      expect(s.interruptedStatus).toBe(status);
+    }
+  });
+
+  it("sets no interruptedStatus for a crash or a genuinely idle shutdown", () => {
+    // A crashed row's `running` is a frozen value nobody confirmed — reporting
+    // it as an interrupted turn would be an observation we never made.
+    const crashed = rowToStubSession(mkRow({ status: "running", status_source: "transition" }));
+    expect(crashed.interruptedStatus).toBeUndefined();
+
+    const wasIdle = rowToStubSession(mkRow({ status: "idle", status_source: "shutdown" }));
+    expect(wasIdle.interruptedStatus).toBeUndefined();
   });
 });
 
@@ -200,6 +223,7 @@ interface SessionListItem {
   promptCount: number;
   sessionName?: string;
   projectPath: string;
+  interruptedStatus?: string;
 }
 
 describe("boot rehydration", () => {
@@ -237,7 +261,14 @@ describe("boot rehydration", () => {
    * the same file.
    */
   function seedRegistry(
-    sessions: { id: string; projectPath: string; name?: string; ageMs?: number }[],
+    sessions: {
+      id: string;
+      projectPath: string;
+      name?: string;
+      ageMs?: number;
+      /** What the session was doing when the streamer stopped it. */
+      status?: SessionStatus;
+    }[],
   ): void {
     const store = RuntimeStore.open(runtimeDbPath);
     const repo = new ManagedSessionsRepository(store.getDatabase());
@@ -261,8 +292,10 @@ describe("boot rehydration", () => {
         streamerInstanceId: "previous-run",
       });
       // What close() writes for every live session on the way out. This is the
-      // write that used to make the session disappear.
-      repo.recordStatus(s.id, "idle", "shutdown", {
+      // write that used to make the session disappear. It records the session's
+      // live status, not a flattened `idle` — `completed_at` is what makes the
+      // row terminal.
+      repo.recordStatus(s.id, s.status ?? "idle", "shutdown", {
         completedAt: new Date(Date.now() - (s.ageMs ?? 1_000)),
         promptCount: 4,
       });
@@ -473,6 +506,113 @@ describe("boot rehydration", () => {
       await server.close();
     }
   }, 60_000);
+
+  // Phase 5 acceptance: a session interrupted mid-turn says so.
+  it("reports interruptedStatus for a session stopped mid-response", async () => {
+    seedRegistry([{ id: UUID, projectPath: projectDir, status: "running" }]);
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+      const recovered = (await listSessions(port)).find((s) => s.id === UUID);
+
+      // `status` still reports the existing vocabulary, so filtering clients
+      // are untouched; the extra bit rides alongside it.
+      expect(recovered?.status).toBe("idle");
+      expect(recovered?.interruptedStatus).toBe("running");
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("records the live status at shutdown instead of flattening it to idle", async () => {
+    // The write half of interruptedStatus. recordShutdownState() used to write a
+    // hardcoded `idle`, which erased the only signal a stub cannot re-derive —
+    // so the field would have been permanently null.
+    seedRegistry([{ id: UUID, projectPath: projectDir }]);
+    const { server, port } = await makeServer();
+    await seededWhenSettled(port, 1);
+
+    const res = await fetch(`http://localhost:${port}/api/sessions/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({ sessionId: UUID }),
+    });
+    expect(res.status).toBe(201);
+    // The mocked PTY emits a prompt marker, so the session settles here.
+    const live = (await listSessions(port)).find((s) => s.id === UUID);
+    expect(live?.status).toBe("waiting_input");
+
+    await server.close();
+
+    const store = RuntimeStore.open(runtimeDbPath);
+    try {
+      const row = new ManagedSessionsRepository(store.getDatabase()).get(UUID);
+      expect(row?.status_source).toBe("shutdown");
+      expect(row?.status).toBe("waiting_input");
+      // Still terminal — that is completed_at's job, not the status's.
+      expect(row?.completed_at).not.toBeNull();
+    } finally {
+      store.close();
+    }
+  }, 60_000);
+
+  // Phase 5: GET /api/sessions shows the outcome; this shows the reasoning.
+  // The rows worth explaining are exactly the ones absent from the session list.
+  it("explains every registry row over GET /api/diagnostics/sessions", async () => {
+    const GONE = "bbbbbbbb-1111-4222-8333-555555555555";
+    seedRegistry([
+      { id: UUID, projectPath: projectDir },
+      { id: GONE, projectPath: join(projectDir, "deleted-subdir") },
+    ]);
+
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+
+      const res = await api(port, "/api/diagnostics/sessions");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        sessions: {
+          sessionId: string;
+          rehydrated: boolean;
+          rehydrateSkipReason: string | null;
+          projectExists: boolean;
+          projectPath: string;
+          statusSource: string;
+        }[];
+      };
+
+      const recovered = body.sessions.find((s) => s.sessionId === UUID);
+      expect(recovered?.rehydrated).toBe(true);
+      expect(recovered?.rehydrateSkipReason).toBeNull();
+      expect(recovered?.projectExists).toBe(true);
+      expect(recovered?.statusSource).toBe("shutdown");
+
+      // The row that never made it into GET /api/sessions, and why.
+      const skipped = body.sessions.find((s) => s.sessionId === GONE);
+      expect(skipped?.rehydrated).toBe(false);
+      expect(skipped?.rehydrateSkipReason).toBe("project_missing");
+
+      // Paste-into-a-bug-report safe: paths are reduced, never full.
+      expect(recovered?.projectPath).toMatch(/^…\//);
+      expect(JSON.stringify(body)).not.toContain(tmpdir());
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
+  it("answers 503 rather than pretending the registry is empty", async () => {
+    // An unopenable runtime.db is exactly when someone reaches for diagnostics;
+    // an empty list would read as "no sessions" and send them the wrong way.
+    const { server, port } = await makeServer({ runtimeDbPath: join(runtimeDir, "nope", "r.db") });
+    try {
+      const res = await api(port, "/api/diagnostics/sessions");
+      expect(res.status).toBe(503);
+      expect((await res.json()).code).toBe("REGISTRY_UNAVAILABLE");
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
 
   // Phase 4: the registry is authoritative and never rebuilt, so nothing else
   // would ever remove a row — without retention it grows for the life of the
