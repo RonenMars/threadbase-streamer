@@ -167,6 +167,7 @@ import type {
 } from "./types";
 
 import { saveUploadFile } from "./uploads";
+import { currentBootToken } from "./utils/bootToken";
 import {
   canonicalizeFilePath,
   canonicalLivePathSet,
@@ -1293,6 +1294,7 @@ export class StreamerServer {
         rows,
         { isPidAlive, getProcessArgs },
         this.streamerInstanceId,
+        currentBootToken(),
       );
 
       for (const v of verdicts) {

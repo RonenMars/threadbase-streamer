@@ -49,12 +49,16 @@ export interface ReconcileProbe {
  * Classify one registry row against live process state.
  *
  * Exported separately from reconcileSessions so the decision table can be
- * tested without a database.
+ * tested without a database. `currentBootToken` is passed in rather than read
+ * here for the same reason — this stays a pure function of its arguments.
+ * Omitted/null means the caller has no boot identity, which skips the pre-boot
+ * check entirely; the server always supplies one.
  */
 export async function classifySession(
   row: ManagedSessionRow,
   probe: ReconcileProbe,
   currentInstanceId: string,
+  currentBootToken: string | null = null,
 ): Promise<ReconcileVerdict> {
   const { session_id: sessionId } = row;
 
@@ -73,6 +77,20 @@ export async function classifySession(
   // resume it.
   if (row.pid == null) {
     return { sessionId, lifecycle: "resumable", reason: "no pid recorded" };
+  }
+
+  // A pid only identifies a process within the boot it was recorded in: pid
+  // assignment restarts at boot, so probing a pre-reboot pid can hit an
+  // unrelated process that inherited the number — and if its argv happens to
+  // contain the recorded token (for a fresh Codex session that is only the
+  // project path) we would claim a live process that is not ours. Equality
+  // only, and a mismatch is always the harmless verdict.
+  if (currentBootToken != null && row.boot_token !== currentBootToken) {
+    return {
+      sessionId,
+      lifecycle: "resumable",
+      reason: "recorded before this machine boot",
+    };
   }
 
   if (!probe.isPidAlive(row.pid)) {
@@ -122,6 +140,9 @@ export async function reconcileSessions(
   rows: ManagedSessionRow[],
   probe: ReconcileProbe,
   currentInstanceId: string,
+  currentBootToken: string | null = null,
 ): Promise<ReconcileVerdict[]> {
-  return Promise.all(rows.map((row) => classifySession(row, probe, currentInstanceId)));
+  return Promise.all(
+    rows.map((row) => classifySession(row, probe, currentInstanceId, currentBootToken)),
+  );
 }

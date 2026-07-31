@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { ManagedSession, SessionStatus } from "../../types";
+import { currentBootToken } from "../../utils/bootToken";
 
 /**
  * Durable registry of managed sessions (C1 Phase 2).
@@ -45,6 +46,12 @@ export interface ManagedSessionRow {
   resumed_from_conversation_id: string | null;
   failure_reason: string | null;
   streamer_instance_id: string;
+  /**
+   * Which machine boot `pid` was recorded during (migration 002). Optional
+   * because rows written before it exists read back as null/absent, which the
+   * reconciler treats exactly like a mismatch — never like a match.
+   */
+  boot_token?: string | null;
 }
 
 export interface RecordSpawnInput {
@@ -69,13 +76,13 @@ export class ManagedSessionsRepository {
         status, status_source, status_updated_at, started_at, completed_at,
         last_activity_at, prompt_count, session_name, project_id,
         bound_conversation_id, resumed_from_conversation_id, failure_reason,
-        streamer_instance_id
+        streamer_instance_id, boot_token
       ) VALUES (
         @session_id, @provider, @pid, @cmdline, @project_path, @project_name, @branch,
         @status, @status_source, @status_updated_at, @started_at, @completed_at,
         @last_activity_at, @prompt_count, @session_name, @project_id,
         @bound_conversation_id, @resumed_from_conversation_id, @failure_reason,
-        @streamer_instance_id
+        @streamer_instance_id, @boot_token
       )
       ON CONFLICT(session_id) DO UPDATE SET
         pid = excluded.pid,
@@ -94,7 +101,8 @@ export class ManagedSessionsRepository {
         bound_conversation_id = excluded.bound_conversation_id,
         resumed_from_conversation_id = excluded.resumed_from_conversation_id,
         failure_reason = excluded.failure_reason,
-        streamer_instance_id = excluded.streamer_instance_id
+        streamer_instance_id = excluded.streamer_instance_id,
+        boot_token = excluded.boot_token
     `);
 
     // Narrow status-only write for the hot transition path, so a
@@ -168,6 +176,9 @@ export class ManagedSessionsRepository {
       resumed_from_conversation_id: session.resumedFromConversationId ?? null,
       failure_reason: session.failureReason ?? null,
       streamer_instance_id: streamerInstanceId,
+      // Recorded, never backfilled: the pid above is only probeable while this
+      // token still matches the running machine.
+      boot_token: currentBootToken(),
     });
   }
 
