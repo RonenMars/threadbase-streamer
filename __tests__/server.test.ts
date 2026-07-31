@@ -1491,10 +1491,15 @@ describe("StreamerServer", () => {
         ...over,
       }) as any;
 
-    afterEach(() => (server as any).sessionLifecycles.clear());
+    afterEach(() => (server as any).sessionVerdicts.clear());
+
+    // The map holds the whole verdict, not just the lifecycle, so the reason
+    // survives to GET /api/diagnostics/sessions.
+    const setVerdict = (sessionId: string, lifecycle: string) =>
+      (server as any).sessionVerdicts.set(sessionId, { sessionId, lifecycle, reason: "test" });
 
     it("applies a reconciled verdict to a session this run does not own", () => {
-      (server as any).sessionLifecycles.set("prev-run-sess", "orphaned");
+      setVerdict("prev-run-sess", "orphaned");
 
       const [out] = (server as any).withReconciledLifecycle([mkResp()]);
 
@@ -1505,7 +1510,7 @@ describe("StreamerServer", () => {
     // A live session's own lifecycle is authoritative — a verdict from boot
     // must never override what this run currently observes.
     it("never overrides a session whose PTY is attached here", () => {
-      (server as any).sessionLifecycles.set("prev-run-sess", "orphaned");
+      setVerdict("prev-run-sess", "orphaned");
 
       const [out] = (server as any).withReconciledLifecycle([
         mkResp({ ptyAttached: true, lifecycle: "attached", lifecycleSource: "spawn" }),

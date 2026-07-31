@@ -145,12 +145,16 @@ import {
   resolveResumeBusyWindowMs,
 } from "./services/sessions/conversationBusy";
 import { IdempotencyStore, readIdempotencyKey } from "./services/sessions/idempotency";
-import { type ReconcileVerdict, reconcileSessions } from "./services/sessions/reconcileSessions";
+import {
+  PRE_BOOT_REASON,
+  type ReconcileVerdict,
+  reconcileSessions,
+} from "./services/sessions/reconcileSessions";
 import {
   REHYDRATE_MAX,
   REHYDRATE_WINDOW_MS,
+  rehydrateSkipReason,
   rowToStubSession,
-  shouldRehydrate,
 } from "./services/sessions/rehydrateSessions";
 import { resumeIdForRow } from "./services/sessions/resumeIdentity";
 import { SessionStore } from "./session-store";
@@ -163,7 +167,6 @@ import type {
   ServerWarmingUpResponse,
   ServerWarmupState,
   SessionActivity,
-  SessionLifecycle,
   SessionResponse,
   SessionSortKey,
   SortOrder as SessionSortOrder,
@@ -442,7 +445,7 @@ export class StreamerServer {
   private idempotency = new IdempotencyStore();
   // sessionId → lifecycle verdict from boot reconciliation. Only holds sessions
   // this run did NOT spawn; live ones derive their lifecycle from ptyAttached.
-  private sessionLifecycles = new Map<string, SessionLifecycle>();
+  private sessionVerdicts = new Map<string, ReconcileVerdict>();
   // Periodic sweep that releases PTYs no agent is using. Null until listen().
   private idleReaperTimer: ReturnType<typeof setInterval> | null = null;
   // Map of clientId → WS socket (populated by the "register" WS handshake)
@@ -928,6 +931,8 @@ export class StreamerServer {
       sessionsRepo: () => this.sessionsRepo,
       cacheMetadataRepo: () => this.cacheMetadataRepo,
       runtimeStore: () => this.runtimeStore,
+      managedSessionsRepo: () => this.managedSessionsRepo,
+      sessionVerdicts: () => this.sessionVerdicts,
       ptyAttachedIds: () => this.ptyAttachedIds(),
       handleListSessions: (url, res) => this.handleListSessions(url, res),
       handleSessionsCount: (res) => this.handleSessionsCount(res),
@@ -1181,12 +1186,12 @@ export class StreamerServer {
    * it.
    */
   private withReconciledLifecycle(sessions: SessionResponse[]): SessionResponse[] {
-    if (this.sessionLifecycles.size === 0) return sessions;
+    if (this.sessionVerdicts.size === 0) return sessions;
     return sessions.map((s) => {
       if (s.ptyAttached) return s;
-      const verdict = this.sessionLifecycles.get(s.id);
+      const verdict = this.sessionVerdicts.get(s.id);
       if (!verdict) return s;
-      return { ...s, lifecycle: verdict, lifecycleSource: "reconcile" as const };
+      return { ...s, lifecycle: verdict.lifecycle, lifecycleSource: "reconcile" as const };
     });
   }
 
@@ -1289,7 +1294,15 @@ export class StreamerServer {
       );
 
       for (const v of verdicts) {
-        this.sessionLifecycles.set(v.sessionId, v.lifecycle);
+        this.sessionVerdicts.set(v.sessionId, v);
+        // A skipped probe is the one verdict that looks like a decision but is
+        // an abstention — surfaced so "why is this resumable?" has an answer.
+        if (v.reason === PRE_BOOT_REASON) {
+          this.log.info(`[reconcile] ${v.sessionId} predates this machine boot — pid not probed`, {
+            event: "sessions.boot_token_mismatch",
+            sessionId: v.sessionId,
+          });
+        }
         // Terminal verdicts leave the probe set so the next boot does no work
         // for them. Non-terminal ones stay: a `detached` process may still be
         // running, and we want to re-probe it next time.
@@ -1373,21 +1386,38 @@ export class StreamerServer {
       const candidates = truncated ? rows.slice(0, REHYDRATE_MAX) : rows;
       if (candidates.length === 0) return;
 
-      const lifecycleByVerdict = new Map(verdicts.map((v) => [v.sessionId, v.lifecycle]));
+      const verdictById = new Map(verdicts.map((v) => [v.sessionId, v]));
       let rehydrated = 0;
+      const skippedBy: Record<string, number> = {};
       for (const row of candidates) {
         // Anything already in the store is live and authoritative; a stub must
         // never overwrite it.
         if (this.sessionStore.getManaged(row.session_id)) continue;
-        if (!shouldRehydrate(row, { now, projectExists: existsSync })) continue;
+
+        const skip = rehydrateSkipReason(row, { now, projectExists: existsSync });
+        if (skip) {
+          skippedBy[skip] = (skippedBy[skip] ?? 0) + 1;
+          // Per row, not just counted: "my session did not come back" is the
+          // report this has to answer, and it is about one specific session.
+          this.log.info(`[rehydrate] skipped ${row.session_id}: ${skip}`, {
+            event: "sessions.rehydrate_skipped",
+            sessionId: row.session_id,
+            reason: skip,
+          });
+          continue;
+        }
 
         this.sessionStore.addManaged(rowToStubSession(row));
         // The reconciler knows strictly more when it produced a verdict for this
         // row (it probed the pid); `resumable` is the fallback for the clean
         // restart case, which leaves no row in the probe set at all.
-        this.sessionLifecycles.set(
+        this.sessionVerdicts.set(
           row.session_id,
-          lifecycleByVerdict.get(row.session_id) ?? "resumable",
+          verdictById.get(row.session_id) ?? {
+            sessionId: row.session_id,
+            lifecycle: "resumable",
+            reason: "recovered from the registry at boot",
+          },
         );
         // Re-seed the "our own PTY ended here" marker, so the very first resume
         // after a restart doesn't read the JSONL we flushed on the way out as a
@@ -1400,6 +1430,7 @@ export class StreamerServer {
         event: "sessions.rehydrated",
         rehydrated,
         skipped: candidates.length - rehydrated,
+        skippedBy,
         truncated,
       });
     } catch (err) {
@@ -1499,7 +1530,15 @@ export class StreamerServer {
         // No failureReason: a shutdown is not a failure of the session, and
         // writing one would make a healthy agent look broken on the next boot.
         // status_source="shutdown" already carries the reason.
-        this.managedSessionsRepo.recordStatus(session.id, "idle", "shutdown", {
+        //
+        // The session's LIVE status, not a flattened `idle`. `completed_at` and
+        // `status_source` are what make the row terminal; overwriting the status
+        // as well erased the one thing a recovered session cannot re-derive —
+        // whether the agent was mid-answer when we stopped it (Phase 5's
+        // `interruptedStatus`). Nothing keys off this value: the reconciler
+        // reads completed_at/pid/boot_token, the rehydrator reads status_source,
+        // and the stub reports `idle` on the wire regardless.
+        this.managedSessionsRepo.recordStatus(session.id, session.status, "shutdown", {
           completedAt: now,
           lastActivityAt: session.lastActivityAt ?? null,
           promptCount: session.promptCount,

@@ -26,6 +26,14 @@ import { resumeIdForRow } from "./resumeIdentity";
  *     durability feature and one that kills an unrelated user process.
  */
 
+/**
+ * Reason attached to a row whose pid was never probed because it was recorded
+ * under a previous machine boot. Exported so the caller can recognise the
+ * abstention and log it, without matching on a free-text string that could
+ * drift away from the one produced here.
+ */
+export const PRE_BOOT_REASON = "recorded before this machine boot";
+
 /** Result for a single registry row. Pure data — nothing here acts. */
 export interface ReconcileVerdict {
   sessionId: string;
@@ -100,7 +108,7 @@ export async function classifySession(
   // project path) we would claim a live process that is not ours. Equality
   // only, and a mismatch is always the harmless verdict.
   if (currentBootToken != null && row.boot_token !== currentBootToken) {
-    return resumable("recorded before this machine boot");
+    return resumable(PRE_BOOT_REASON);
   }
 
   if (!probe.isPidAlive(row.pid)) {

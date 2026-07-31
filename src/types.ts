@@ -100,6 +100,14 @@ export interface ManagedSession {
   rehydrated?: boolean;
 
   /**
+   * What this session was doing when the streamer stopped it, for a stub whose
+   * `status` had to flatten to `idle`. Only ever set from a registry row whose
+   * `status_source` is `shutdown` — the one source that means "we ended this",
+   * as opposed to the agent finishing or a crash freezing the row mid-turn.
+   */
+  interruptedStatus?: "running" | "waiting_input";
+
+  /**
    * Set once a live session's underlying persisted conversation file is
    * discovered after the fact (currently: fresh Codex sessions, whose
    * rollout id isn't known until the CLI creates its own JSONL). Distinct
@@ -336,6 +344,15 @@ export interface SessionResponse {
   /** How `lifecycle` was determined, so stale values are visible not implied. */
   lifecycleSource?: "spawn" | "exit" | "probe" | "reconcile";
   lifecycleUpdatedAt?: string; // ISO 8601
+  /**
+   * ADDITIVE (plan Phase 5). What a recovered session was doing when the
+   * streamer stopped it, so a client can say "interrupted mid-response" instead
+   * of the `idle` its `status` is forced to report — a stub holds no PTY, and a
+   * novel SessionStatus value would be dropped by `?status=` filtering on
+   * already-shipped clients. Present only on rows whose `status_source` was
+   * `shutdown`; older clients ignore it.
+   */
+  interruptedStatus?: "running" | "waiting_input";
   failureReason?: string;
   pid?: number;
   sessionName?: string;
