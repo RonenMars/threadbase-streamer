@@ -11,6 +11,7 @@ import type { DevicesRepository } from "../../db/repositories/devices.repository
 import type { ProjectsRepository } from "../../db/repositories/projects.repository";
 import type { PushRepository } from "../../db/repositories/push.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
+import type { RuntimeStore } from "../../db/runtime-store";
 import type { FeatureFlagDefinition, FeatureFlagValues } from "../../feature-flags";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
@@ -53,6 +54,8 @@ export type ApiDeps = {
   conversationsRepo: () => ConversationsRepository | null;
   sessionsRepo: () => SessionsRepository | null;
   cacheMetadataRepo: () => CacheMetadataRepository | null;
+  /** Authoritative session registry (~/.threadbase/runtime.db). Null when it failed to open. */
+  runtimeStore: () => RuntimeStore | null;
   ptyAttachedIds: () => Set<string>;
   // Session handler delegates — called by Hono handlers, implemented by StreamerServer
   handleListSessions: (url: URL, res: ServerResponse) => Promise<void>;

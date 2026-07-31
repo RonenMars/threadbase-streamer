@@ -412,10 +412,12 @@ cmd_deploy() {
   printf '%s+%s\n' "$pkg_version" "$sha" > "$RELEASES_DIR/${rel_filename}.version"
 
   # Copy migrations alongside CLI so __dirname resolution works at runtime.
-  # - migrations/    — SQLite (ConversationCache.open(); always required)
-  # - pg-migrations/ — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
-  #                   migration runner reads the dir at startup and crashes if absent)
+  # - migrations/         — SQLite cache (ConversationCache.open(); always required)
+  # - runtime-migrations/ — SQLite session registry (RuntimeStore.open(); always required)
+  # - pg-migrations/      — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
+  #                         migration runner reads the dir at startup and crashes if absent)
   [ -d dist/migrations ] && cp -r dist/migrations "$RELEASES_DIR/migrations"
+  [ -d dist/runtime-migrations ] && cp -r dist/runtime-migrations "$RELEASES_DIR/runtime-migrations"
   [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$RELEASES_DIR/pg-migrations"
 
   # node-pty is external to the tsup bundle (native addon). Copy it from source
