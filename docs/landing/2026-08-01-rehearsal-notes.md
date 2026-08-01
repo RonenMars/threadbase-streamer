@@ -151,6 +151,20 @@ Squash-merging either one on GitHub would land a large slice of Groups C, E and 
 
 `M` = mechanical (a later session can repeat it blind). `J` = judgement call (must be re-made by a human).
 
+> **Read the `ours`/`theirs` in this table as rehearsal-specific.** They record which side won under
+> *this rehearsal's* ordering, in which `#237` landed third. §8 defers `#237` until after `#232`,
+> `#253`, `#234` and `#267`, so under §8's own script the sides move. Re-derive them against the
+> current trunk exactly as you already re-derive the counterparty column: the resolution's **intent**
+> survives reordering, its **side** does not.
+>
+> **A wrong `theirs` imports unlanded content under the wrong PR number; a wrong `ours` deletes
+> landed content. Both are silent, and only the oracle separates them.**
+>
+> Measured in the 2026-08-01 real run, which followed §8's ordering: row 8's judgement call never
+> arose at all (the extraction it collides with was not on `main`), and row 10's `h2–h4 ours` was
+> correct for `h4` and **wrong for `h3`**, where `ours` would have deleted `#267`'s
+> `refreshConversationCache` call. Neither `tsc` nor biome distinguishes those outcomes.
+
 | # | PR / commit | File | What collided | Resolution | M/J |
 |---|---|---|---|---|---|
 | 1 | `#257` | `docs/BACKLOG.md` ×4 | `#257` is a *status-snapshot* doc; `#237`/`#240`/`#241` had already rewritten the same per-item Status lines | hunk 1 both-added at an empty base → **keep both**; hunks 2–4 → **keep the landed fixing PR's status** | M |
@@ -253,6 +267,22 @@ app.route("/api/devices", createDeviceRoutes(deps));
 
 The `createDeviceRoutes` **import stayed**. The type-check passed — an unused import is not a type error. `/api/devices` had simply ceased to exist, with a green `tsc`. The only thing that surfaced it was biome's `lint/correctness/noUnusedImports`.
 
+**Correction — `noUnusedImports` reports, it does not gate.** The sentence above is accurate about *visibility* and overstates its *authority*, and the distinction decides whether you can rely on CI here. Measured during the 2026-08-01 real run, on `#267` with an orphaned `shouldRefreshProjectsFromHdd` import present:
+
+```
+$ npm run lint
+  src/server.ts:87:8  lint/correctness/noUnusedImports  FIXABLE
+  ! This import is unused.
+Found 2 warnings.
+exit=0
+```
+
+Biome scores the rule as a **warning**, so `npm run lint` exits **0** and the `Lint` required check goes green with the orphan still in the tree. It appears in the log output and blocks nothing. In the `#285` case it "surfaced" the dropped route only because a human read the output — had that run been unattended, or the output tailed to the last few lines, the route would have gone in green.
+
+So D7's real conclusion is unchanged but its safety net is weaker than written: **there is no automated gate on a dropped route.** The per-file route diff at the end of this section is not a belt-and-braces check beside a lint gate, it is the *only* gate. Run it.
+
+Anyone treating `Lint` going green as evidence that no import was orphaned is relying on a gate that does not exist.
+
 Later the same resolver dropped `SEARCH_OVERFETCH`/`SEARCH_MAX_SCAN`, `pushRepo` from `ApiDeps`, and a `DevicesRepository` import — those *did* fail `tsc`, but the route did not.
 
 **Two rules follow.** Resolve conflicts hunk-by-hunk, not file-by-file. And after every group, diff the route table against the branch, because a lost route is the failure mode a compiler cannot see:
@@ -354,7 +384,7 @@ The table below carries a **59th row**, `66fff5f`, appended deliberately. It is 
 | `0a5d2f9` | 2026-07-22 | test(cache): isolate alert-wiring fixtures from the persistent scanner index | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `616607c` | 2026-07-22 | test(server): isolate the refresh-status fixture from the persistent scanner index | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `d10f2ce` | 2026-07-22 | test(server): isolate auto-reconcile fixture and read back its real port | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
-| `eab26e3` | 2026-07-22 | docs(postmortems): record the 2026-07-22 all-open-PRs merge verification | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
+| `eab26e3` | 2026-07-22 | docs(postmortems): record the 2026-07-22 all-open-PRs merge verification | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it — **correction (real run): also inherited by `#267`, whose head is a branch commit, so a run that lands `#267` whole gets it early and wave 5's pick is a no-op. Stripped from `#267` on 2026-08-01 so Group D picks it for real; its `carry` verdict has never been exercised.** |
 | `7c6f6ff` | 2026-07-22 | docs(postmortems): update the branch name after the rename | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `6009215` | 2026-07-22 | docs(postmortems): add an addendum covering work after the first draft | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `a689b0c` | 2026-07-22 | docs(postmortems): log the #253 rebase run | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
@@ -363,7 +393,7 @@ The table below carries a **59th row**, `66fff5f`, appended deliberately. It is 
 | `023001b` | 2026-07-22 | docs(postmortems): add a landing runbook for the PR chain | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `1430381` | 2026-07-22 | docs(postmortems): correct the cli/prod.ts attribution in the runbook | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `8326d82` | 2026-07-22 | docs(postmortems): add pre-flight sweep and orphaned-stack diagnosis to the runbook | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
-| `489a450` | 2026-07-23 | docs(runbooks): extract the landing runbook and add a runbook format | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
+| `489a450` | 2026-07-23 | docs(runbooks): extract the landing runbook and add a runbook format | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it — **correction (real run): also inherited by `#267`, whose head is a branch commit, so a run that lands `#267` whole gets it early and wave 5's pick is a no-op. Stripped from `#267` on 2026-08-01 so Group D picks it for real; its `carry` verdict has never been exercised.** |
 | `a496a2f` | 2026-07-23 | docs(runbooks): add effort guidance and agent stop points | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `97969a0` | 2026-07-23 | fix(api): serve the cached conversation list while reconciling in the background | **already-covered** | open PR #266 — landed on the trunk as 4a4a421 |
 | `bfbce64` | 2026-07-23 | fix(api): gate the warm-up only on cold start, not the background reconcile | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
@@ -607,6 +637,35 @@ Re-measured 2026-08-01 at tip `ebe9eb8` (after `#344`): **252** and **104**. The
 
 Written for the next session, with the unknowns resolved. `origin` is still read-only until the final step of each block.
 
+### Step −1 — measure the artifact, never a proxy. Run this before every measurement and every commit.
+
+```bash
+# PRECONDITION: the working tree must be clean before you measure or commit anything.
+test -z "$($G -C <worktree> diff --stat)" || { echo "unstaged changes — stage them first"; exit 1; }
+
+# Every residual number quoted anywhere must come from the COMMIT:
+$G show --stat <sha>            # yes — the artifact
+# NOT:
+$G diff --cached --stat         # no — the index, which may not be what you edited
+$G diff --stat                  # no — the worktree, which may not be what you commit
+```
+
+**Why this is a step and not advice.** On 2026-08-01 the `#267` residual was measured with
+`git diff --cached --stat` while the strip that produced it existed only in the **working tree** —
+the merge had already staged `src/server.ts`, and the edits were never re-staged. Local
+`npm run lint` passed (it reads the worktree) and the pushed commit failed CI with
+`error TS2561: 'projectsDirs' does not exist in type 'ShouldRefreshOptions'`, because the commit
+carried the *unstripped* file. Every residual figure reported in between — "8 files / +199",
+`src/server.ts | +82` — described a tree that was never committed. The true values were
+**4 files / +140** and `src/server.ts | +24`.
+
+`git status` printed ` M src/server.ts` throughout and was simply not in the loop. The index and the
+worktree are both **proxies for the artifact**, and they diverge exactly when a merge stages files
+that you then edit — which is *every* conflict resolution in this document.
+
+The precondition retires the whole class: if `git diff --stat` is empty, worktree, index and commit
+are the same object, and it no longer matters which one you measured.
+
 ```bash
 G=/opt/homebrew/bin/git
 
@@ -719,6 +778,74 @@ $G rebase --onto main origin/pr/<parent>
 **`#237` ordering:** land `#237` **after** `#232`, `#253`, `#234` and `#267`. Its extraction of `reconcileConversationsCacheFromDisk()` collides with all four; landing it last costs one resolution instead of four (§3). `#266` follows `#237`.
 
 **Wave 3 — `#267`.** Only after wave 1+2. Its delta collapses from 75 files to ~8.
+
+**Strip by provenance, not by compilation.** `#267`'s head is a commit *on the integration branch*
+(Correction 2), so its diff carries content from PRs that have not landed. Everything not traceable
+to the PR's own range must be removed before it is pushed, or it lands on `main` under the wrong
+number.
+
+The rule that works is **provenance**:
+
+```bash
+# for each file in the residual, find the commit that introduced it
+git log --format='%h %s' --diff-filter=A -1 refs/landing/pr/<N> -- <file>
+```
+
+Anything tracing to a commit outside the PR's own range gets stripped. Use `npm run lint && npm test`
+**only to confirm you did not overshoot** into something the PR genuinely needs — never as the
+criterion itself.
+
+The reason to state it that way is that the compile-based form was tried first and is incomplete.
+On the 2026-08-01 run, `#267` carried two distinct classes of foreign content:
+
+| Foreign content | Traces to | Caught by |
+|---|---|---|
+| `reconcileConversationsCacheFromDisk`, `shouldAutoReconcileConversationList`, `projectsDirsForFreshnessCheck`, and the `projectsDirs` option on `shouldRefreshProjectsFromHdd` | `#237` | **strip-until-it-fails-to-compile** — worked |
+| `docs/postmortems/2026-07-22-merge-all-open-prs-report.md`, `docs/runbooks/{2026-07-22-land-open-prs,README,_template}.md` — **656 lines** | Group D `eab26e3`, `489a450` | **nothing** — docs have no compile-time consequence |
+
+The docs half surfaced only because the residual measured `+855` where §2 predicted `+667` and
+someone chased the variance. **A criterion keyed on compilation is blind to every file that cannot
+fail to compile** — docs, fixtures, schemas, workflow YAML, migrations that are not yet run.
+
+**That list is observed, not anticipated.** The tb-mobile landing running in parallel on the same
+night hit the identical blind spot from a different direction: its `fee27061` exists solely because
+a replay **reverted `.github/workflows/test.yml` and `package.json`, and resurrected a file `main`
+had deleted**. Workflow YAML, a dependency manifest, and a deletion — none of them capable of
+failing a compile — and all three caught only because someone diffed against `main` by hand
+afterwards. Two independent landings hitting the same class on the same night is the reason this is
+written as a rule rather than a caution.
+
+Two of the categories deserve more weight than the rest:
+
+- **Workflow YAML.** Reverting it silently weakens **the gate everything downstream is verified
+  by**. **Every check that would catch the revert is defined in the file that was reverted, so it
+  does not go red — it goes green with less meaning, and stays that way for every PR after.** That
+  is a categorically worse failure than a loud one, and no runbook in this repo says it anywhere.
+  On this repo the concrete loss is the cross-OS Smoke matrix — the thing `#340` spent an entire PR
+  establishing on `main`, and the only coverage `Smoke (windows-latest)` and `Smoke (macos-latest)`
+  provide. tb-mobile's `fee27061` is a reverted `.github/workflows/test.yml` and nothing else
+  caught it.
+- **Unrun migrations.** A reverted or dropped migration is invisible to `tsc`, to biome, and to the
+  test suite, and stays invisible **until the next boot against a real database** — by which point
+  it is a production failure rather than a CI one. **This is a live instance in this landing, not a
+  hypothetical:** `a60518c` carries `src/db/migrations/014_add_conversation_meta_file_path_index.sql`
+  and §5 records it as the **sole source** of that file. It is a Group D carry scheduled for wave 5;
+  drop it or revert it and every build, lint and test still passes, while the
+  `conversation_meta.file_path` index simply never exists on any deployment.
+
+Both share a property worth naming: **the damage is deferred past the point where anyone is still
+looking at the landing.** Docs drift is embarrassing; these two are the ones that cost an incident,
+and both transfer beyond this repo.
+
+After stripping both classes, `#267`'s residual is **4 files / +199 / −1**, all of it `session_name`.
+
+**Consequence for §5.** `eab26e3` and `489a450` are listed there as Group D **`carry`**, meaning
+nothing else brings them in. That is wrong as stated: both are **inherited by `#267`**, so in a run
+that lets `#267` land whole they arrive early and wave 5's picks of them are no-ops. A no-op
+cherry-pick reads as "already handled" and gets skipped, which is how the row's verdict stops being
+checked. Stripping them from `#267` puts them back on Group D's plate — whether they remain
+correctly classified `carry` depends on whether wave 5 picks them cleanly, which this run will be
+the **first to actually exercise**.
 
 **Wave 4 — Groups B, C, F.** Cherry-pick, do not merge the PRs.
 
