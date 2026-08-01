@@ -44,3 +44,71 @@ describe("resolveCodexExe (macOS fallback)", () => {
     expect(resolveCodexExe()).toBe("codex");
   });
 });
+
+describe("resolveClaudeExe (Windows where.exe filtering)", () => {
+  it("skips an extension-less shim ahead of a real .exe/.cmd match", async () => {
+    vi.resetModules();
+    vi.doMock("os", async () => {
+      const actual = await vi.importActual<typeof import("os")>("os");
+      return { ...actual, platform: () => "win32", homedir: () => "C:\\Users\\test" };
+    });
+    vi.doMock("child_process", () => ({
+      // where.exe lists the npm POSIX shim (no extension — not a valid Win32
+      // image) before the working .cmd shim, matching real-world PATH order.
+      execFileSync: () => "C:\\npm\\claude\r\nC:\\npm\\claude.cmd\r\nC:\\npm\\claude.ps1\r\n",
+    }));
+    const { resolveClaudeExe } = await import("../src/platform");
+    expect(resolveClaudeExe()).toBe("C:\\npm\\claude.cmd");
+  });
+
+  it("falls back to the candidate paths when where.exe only finds non-executable matches", async () => {
+    vi.resetModules();
+    vi.doMock("os", async () => {
+      const actual = await vi.importActual<typeof import("os")>("os");
+      return { ...actual, platform: () => "win32", homedir: () => "C:\\Users\\test" };
+    });
+    vi.doMock("fs", async () => {
+      const actual = await vi.importActual<typeof import("fs")>("fs");
+      return {
+        ...actual,
+        existsSync: (p: string) => p === "C:\\Users\\test\\.local\\bin\\claude.exe",
+      };
+    });
+    vi.doMock("child_process", () => ({
+      execFileSync: () => "C:\\npm\\claude\r\n",
+    }));
+    const { resolveClaudeExe } = await import("../src/platform");
+    expect(resolveClaudeExe()).toBe("C:\\Users\\test\\.local\\bin\\claude.exe");
+  });
+});
+
+describe("clearClaudeExeCache", () => {
+  it("forces the next resolveClaudeExe() call to re-resolve instead of reusing the memoized path", async () => {
+    vi.resetModules();
+    vi.doMock("os", async () => {
+      const actual = await vi.importActual<typeof import("os")>("os");
+      return { ...actual, platform: () => "darwin", homedir: () => "/Users/test" };
+    });
+    let existsResult = "/opt/homebrew/bin/claude";
+    vi.doMock("fs", async () => {
+      const actual = await vi.importActual<typeof import("fs")>("fs");
+      return { ...actual, existsSync: (p: string) => p === existsResult };
+    });
+    vi.doMock("child_process", () => ({
+      execFileSync: () => {
+        throw new Error("which not available in test");
+      },
+    }));
+    const { resolveClaudeExe, clearClaudeExeCache } = await import("../src/platform");
+
+    expect(resolveClaudeExe()).toBe("/opt/homebrew/bin/claude");
+
+    // Binary moved (reinstall) — without invalidation this would keep
+    // returning the now-stale path for the rest of the process lifetime.
+    existsResult = "/usr/local/bin/claude";
+    expect(resolveClaudeExe()).toBe("/opt/homebrew/bin/claude");
+
+    clearClaudeExeCache();
+    expect(resolveClaudeExe()).toBe("/usr/local/bin/claude");
+  });
+});
