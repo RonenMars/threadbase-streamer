@@ -155,6 +155,10 @@ describe("QUERY /api/conversations/:id/search-target", () => {
       scanProfiles: [
         { id: "st", label: "SearchTarget", configDir: profileDir, enabled: true, emoji: "🔎" },
       ],
+      // Without these the scanner opens its own persistent SQLite index, which
+      // leaks real host conversations in and needs a native better-sqlite3 build.
+      codexRoots: [],
+      scannerPersistent: false,
     });
     await server.listen(port);
   });
