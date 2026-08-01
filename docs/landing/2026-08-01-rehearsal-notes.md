@@ -724,4 +724,77 @@ git diff --name-status --diff-filter=A HEAD origin/integration/missing-prs-2026-
 **Do not** resolve conflicts file-by-file (D7).
 **Do not** run `biome check --write` mid-sequence (D8).
 
-**Expected end state:** ~92 commits on `main`, `git diff --stat` against the branch showing only `#302`'s doc, `#223`'s lockfile, and small docs deltas.
+**Expected end state:** ~98 commits on `main`, and `git diff --stat` against the branch showing only `#302`'s doc, `#223`'s lockfile/`package.json`, and small docs deltas. This rehearsal ended at 7 differing files; anything materially larger means a group was dropped, anything materially smaller means the drift in §6 was resolved better than it was here.
+
+
+---
+
+## 9. What §3 and §8 do not tell you
+
+Written last, deliberately. §3 records the resolution that won; §8 records the order to use. Neither says which calls were close, which were reasoned rather than measured, or what was never checked at all. A colleague picking this up should know the following before trusting either section.
+
+### 9.1 The single biggest gap: eleven Group-E commits were resolved by the blanket picker, and §3 names none of them
+
+§3's ledger covers Groups A/A′/B and the hand-resolved parts of C. It does **not** have a row for any Group-E conflict. Eleven of the forty Group-E commits conflicted and were resolved by the same per-file script whose defect §4 `D7` describes and whose worst outcome was `#313`. **`#313` is in this list — it is how that bug got in.** Every other entry carries the same risk and none was individually reviewed:
+
+| Commit | PR | Files decided by a blanket per-file pick |
+|---|---|---|
+| `b50d16c` | `#309` | `src/api/types/api-deps.ts`, `src/server.ts` |
+| `2ed1ba0` | `#311` | `CLAUDE.md`, `__tests__/feature-flags.test.ts`, `src/feature-flags.ts` |
+| `5079256` | `#312` | `docs/2026-07-30-session-review-consolidation.md` |
+| `db00041` | `#313` | `src/pty-manager.ts` — **known casualty, see §6** |
+| `e4731c4` | `#319` | `src/server.ts` |
+| `c81c914` | `#321` | `src/api/routes/diagnostics.routes.ts` |
+| `bd8543e` | `#324` | `src/server.ts` |
+| `091ba1d` | `#327` | `src/server.ts` |
+| `a8cc014` | `#329` | `src/server.ts` |
+| `80a2b40` | `#332` | `__tests__/ci-workflow.test.ts`, `docs/testing/cross-platform-ci.md` |
+| `d2fd362` | `#334` | `LANDING-integration-to-main.md` |
+
+Group F adds two more: `9f85ec5` (`#293`, `src/server.ts`) and `342c61c` (`#296`, `src/server.ts`).
+
+**Seven** of the thirteen decided `src/server.ts` — the file the runbook already names as the main conflict surface: `#309`, `#319`, `#324`, `#327`, `#329` in Group E, plus `#293` and `#296` in Group F. **Treat all thirteen as unreviewed.** `#313` proves the failure is silent under both `tsc` and biome, so re-running the suite is not sufficient to clear them; they need a hunk-level diff against the branch.
+
+### 9.2 §8's recommendation to land `#237` last was never executed
+
+§3 concludes that `#237`'s extraction of `reconcileConversationsCacheFromDisk()` collides with `#232`, `#253`, `#234` and `#267`, and §8 tells you to land `#237` *after* all four. **This rehearsal did the opposite** — it followed the runbook and landed `#237` third (`09126d3`, immediately after the two dependabot bumps), then paid the same three-way reconstruction four times.
+
+The recommendation is **inferred from the four conflicts, not validated by a re-run.** It is well-founded — the four collisions are all against the pre-refactor body, so moving the refactor after them should collapse them to zero — but nobody has executed that order. If the real run adopts it and something unexpected falls out, this is why.
+
+### 9.3 "Any order works" in wave 1 is wrong as written
+
+§8's wave 1 says the nineteen independent PRs have no ancestors among the open set, so "any order works". Ancestry-freedom is not conflict-freedom, and this rehearsal disproved it three times: `#257`, `#258` and `#259` all conflicted on `docs/BACKLOG.md` purely because of the order they were landed in, and *which side is "ours"* depends on that order.
+
+It is still safe, because the rule in §3 ("the fixing PR's status line beats `#257`'s status-snapshot line") is order-independent in outcome. But read the claim as "any order is *recoverable*", not "any order is clean". Landing `#257` — the status-snapshot doc — **last** among the wave removes the conflicts entirely, and is the better order.
+
+### 9.4 Judgement calls where the ledger records only the winner
+
+**`#234`'s `withWarmup` (ledger row 8, marked `J`) — runner-up never tested.** `#234` wraps `rescanForRefresh()` in `withWarmup("conversation_refresh", …)`. `#237` had moved that call into a method shared with the routine background path, where gating it would flip the server into `SERVER_WARMING_UP` on every JSONL append — which the integration branch documents as wrong. I dropped the wrap and kept `#234`'s `rejectIfWarmingUp(res)` at the handler entry, asserting that it delivers the same intent.
+
+**That assertion is untested.** The runner-up resolution — keep `withWarmup` but only on the `bustCache` (explicit `?refresh=1`) branch — is equally consistent with both PRs' intent and was not tried. If `#234`'s warm-up reporting misbehaves after landing, start here.
+
+**`#245`'s content inside `#267`'s squash — never verified.** §2 says dropping `#245` "does not remove its content" from `#267`/`#297`/`#299`/`#304`, because it is their ancestor. That follows from the ancestry, but I never inspected what `#267`'s squash actually carried of `#245`. The claim is sound in principle and unchecked in fact.
+
+**`#267`'s mixed-side resolution — checked, and clean.** Row 10 takes the comment from *theirs* and the code from *ours* in the same file, which can leave a comment describing code that is not there. I checked this one afterwards: the comment ("the on-disk reconcile below … stays inside the freeze too") does match the retained code — `refreshConversationCache` sits inside the `else`. Recorded because it was a real risk, not because it went wrong.
+
+**Group C's "fully contained" evidence is relative to the branch, not `main`.** The `git cherry … +0/−0` results in §5/§2 were measured against `origin/integration/missing-prs-2026-07-23`. That is the right question for "is this PR's content on the branch", but it says nothing about `main`, and it is not evidence that the PR can be closed.
+
+### 9.5 Verification that was specified and never run
+
+The runbook's Verification section asks for these on contract-touching or end-to-end PRs. **Neither was run at any point in this rehearsal:**
+
+```bash
+npm run test:contracts
+npm run test:e2e
+```
+
+`#267` (`session_name`), `#299` (terminal `seq`) and `#282` (provider capabilities) all change the tb-mobile-facing contract, and `docs/compatibility/tb-mobile.md` was touched by several landed commits. Contract drift is the one risk class this rehearsal did nothing about.
+
+Likewise, **the cross-platform smoke matrix was never exercised.** Everything here ran on macOS only. `#340` and `#333` exist precisely to make Windows and macOS failures visible, `#272` is a Windows updater fix, and `#332`/`#337` are Windows ConPTY work — none of it was tested. `__tests__/pty-host-survival.test.ts` is one of the two new failing files, and it is exactly the kind of thing the matrix is for.
+
+### 9.6 Smaller things worth knowing
+
+- **The `#223` TypeScript 7 bump was landed but never compiled under TypeScript 7** (§4 `D10`). It sits on the trunk influencing nothing, because `node_modules` held 6.0.3 throughout.
+- **`__tests__/server.test.ts`'s +162-line residual (§6 row 4) was never diffed hunk-by-hunk.** It is attributed to `D7` on the strength of the pattern, not on an inspection of which tests are missing.
+- **The final trunk was never booted.** `node dist/cli.cjs serve` was not run; the runbook's post-landing "confirm `main` runs" step and the tb-mobile pairing check are both untouched.
+- **Group B's four PRs were recovered from their branch tips on the assumption that the tip is the whole PR.** `gh pr view` confirmed one commit each for `#271`/`#273`/`#274`, and for `#275` that only `d11734c` of its 33 commits is its own. That is measured, not assumed — but it depends on `gh`'s commit list for *closed* PRs being complete, which was not independently checked.

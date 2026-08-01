@@ -16,6 +16,10 @@ discipline to stop when reality diverges from what the rehearsal predicted.
   rehearsal did not record is a signal to stop, not to improvise.
 - Expect this to span sessions. Wave 1 alone is sixteen rebase-and-merge cycles against a
   cross-OS CI matrix.
+- **This run is supervised, not unattended.** The stop rule fires on thirteen known-unreviewed
+  resolutions, eleven of them in Group E, so expect to be asked for a decision that many times
+  before wave 5 completes. "Report after each wave" understates it — Group E alone halts eleven
+  times. Know that going in rather than discovering it at the third stop.
 
 ---
 
@@ -47,24 +51,76 @@ STOP and report, rather than improvising, whenever reality diverges from the reh
 - a PR whose state changed since the audit (merged, closed, newly conflicting)
 - any command in §8 that errors or returns an unexpected count
 
+**Expect the first rule to fire on all of Group E and part of Group F, and treat that as
+correct rather than noise.** §3's ledger covers Groups A/A′/B and the hand-resolved parts of C.
+It has **no rows for Group E at all**. Thirteen commits (eleven in E, two in F — enumerated in
+§9.1) were resolved by a blanket per-file script rather than by hand, so for every one of them
+the ledger is silent by construction. Each needs a human decision, not a wave-through: read the
+hunks, decide, and record it in the run log. `#313` is on that list and is what happens when one
+of them is waved through.
+
 The rehearsal's value is that it makes deviation legible. A deviation means its prediction was
 wrong somewhere, and continuing past it blind is how a silent regression reaches `main`.
 
 ## Named hazards — do not rediscover these the hard way
 
-- **`#313` / `src/pty-manager.ts`.** Apply `#313`, and resolve its conflict IN ITS FAVOUR —
-  keep `recheckReadyFromScreen()`, not the hand-written `markReady` line. The rehearsal made
-  exactly this mistake: it compiled, it linted, and it silently reinstated the bug `#313`
-  exists to fix. Nothing but a per-file diff catches it. §8's wave-5 hazard note has the
-  exact command.
+- **Thirteen conflict resolutions in the rehearsal were never reviewed by a human, and `#313`
+  is the one that is known to have gone wrong.** All thirteen came out of the same blanket
+  per-file script — it picks a whole side of each file rather than resolving hunks — which is
+  the defect §4 `D7` describes. **Neither `tsc` nor biome catches a repeat**: `#313` landed,
+  compiled, linted clean, and silently reinstated the bug it exists to fix. Only a per-file
+  diff against the branch catches it.
+
+  Group E (11): `#309` `#311` `#312` **`#313`** `#319` `#321` `#324` `#327` `#329` `#332` `#334`.
+  Group F (2): `#293` `#296`.
+
+  **Seven of the thirteen decided `src/server.ts`** — the runbook's own hotspot file — namely
+  `#309`, `#319`, `#324`, `#327`, `#329`, plus Group F's `#293` and `#296`. Resolve every one of
+  these by hand, hunk by hunk, and diff the file against the branch afterwards.
+
+  For `#313` specifically the answer is already known: resolve `src/pty-manager.ts` IN `#313`'s
+  FAVOUR — keep `recheckReadyFromScreen()`, not the hand-written `markReady` line. §8's wave-5
+  hazard note has the exact command. For the other twelve the rehearsal has no answer, which is
+  precisely why they are listed here.
 - **`#245` — close it, do not merge it.**
 - **`#223` last, on its own**, after a real `npm install`.
-- **`#237` after `#232`, `#253`, `#234` and `#267`**; `#266` follows `#237`.
+- **`#237` after `#232`, `#253`, `#234` and `#267`**; `#266` follows `#237`. This ordering is
+  **reasoned from four observed collisions, not validated by execution** — the rehearsal did the
+  opposite (landed `#237` third) and paid the same three-way reconstruction four times. It is
+  well-founded, but it is the one instruction in §8 that has never actually been run.
+- **Wave 1's order is not free.** §8 calls the nineteen wave-1 PRs independent, which is true of
+  their *ancestry* and not of their *conflicts*: `#257`, `#258` and `#259` collide on
+  `docs/BACKLOG.md` purely because of the order they land in. **Land `#257` last** in the wave —
+  it is the status-snapshot doc, and putting it after the PRs whose statuses it describes removes
+  the conflicts entirely. If you do hit one, the rule is order-independent: the *fixing* PR's
+  status line beats `#257`'s snapshot line.
 - **Wave 2 children use `rebase --onto main origin/pr/<parent>`**, never a plain rebase.
 - **`#275` and `#276` each introduce a biome import-order error that `#281` fixes.** Land
   `#281` immediately after, or lint is red in between.
 - **Group D is a prerequisite for Group E**, not cleanup. Group E does not type-check without
   `90c1c07`, `20c02fc`, `36db39d` and `a60518c`.
+
+## Untested ground — not the same as a deviation
+
+The stop rule above is about the rehearsal predicting one thing and reality doing another. Some
+things the rehearsal never exercised at all, and a failure there is **new information, not a
+contradicted prediction**. Investigate it on its merits; do not read it as evidence that §8's
+script is wrong.
+
+Never run in the rehearsal:
+
+- **`npm run test:contracts`** and **`npm run test:e2e`** — neither was executed once, despite
+  `#267` (`session_name`), `#299` (terminal `seq`) and `#282` (provider capabilities) all
+  changing the tb-mobile-facing contract. Contract drift is the risk class the rehearsal did
+  nothing about.
+- **The entire cross-OS smoke matrix.** Everything in the rehearsal ran on macOS locally.
+  `Smoke (windows-latest)` and `Smoke (macos-latest)` have never seen this content, and
+  `#272` (Windows updater), `#332` and `#337` (Windows ConPTY) are exactly the changes that
+  matrix exists to check. `__tests__/pty-host-survival.test.ts` is already failing locally.
+- **Booting the result.** The rehearsal's final trunk was never started — `node dist/cli.cjs
+  serve` was not run, and no mobile client was ever paired against it. The post-landing boot
+  check below is therefore a **first run, not a re-run**. Budget for it failing on something
+  the rehearsal could not have seen.
 
 ## Per PR
 
@@ -89,7 +145,9 @@ rehearsal predicted instead.
 
 ## After the last wave
 
-Run §8's closing checks, then confirm `main` builds and boots:
+Run §8's closing checks, then confirm `main` builds and boots. **This is the first time any of
+this is booted** — the rehearsal never started its trunk, so treat a failure here as new
+information rather than a regression:
 
     npm ci && npm run build && npm test
     node dist/index.js --help
