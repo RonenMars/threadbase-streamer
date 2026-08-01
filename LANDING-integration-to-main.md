@@ -2,7 +2,9 @@
 
 ## Context
 
-`integration/missing-prs-2026-07-23` was assembled to test a batch of open PRs together. It has since become a parallel trunk: `main` is **221 commits behind** it, work kept landing on the integration branch instead of on `main`, and two PRs (#303, #295) now target the integration branch rather than `main`.
+`integration/missing-prs-2026-07-23` was assembled to test a batch of open PRs together. It has since become a parallel trunk: `main` is **241 commits behind** it, work kept landing on the integration branch instead of on `main`, and two PRs (#303, #295) now target the integration branch rather than `main`.
+
+> **Updated 2026-08-01.** The gap grew from 221 to 241 because a further 26 PRs (#301–#332) were developed and merged **onto this branch**, not onto `main` — the whole live-sessions-persistence plan, Phases 0 through 7. That is a new stranded group (**Group E**) and it is now the largest single block of unlanded work. The live streamer is deployed from this branch (`1.33.0+80a2b40`), so `main` is not what is running in production.
 
 The goal is to get that work onto `main` without replaying an unreviewable 221-commit history.
 
@@ -16,14 +18,14 @@ The goal is to get that work onto `main` without replaying an unreviewable 221-c
 
 Against `origin/main` and `origin/integration/missing-prs-2026-07-23`:
 
-| Fact | Value | Consequence |
+| Fact | Value (2026-08-01) | Consequence |
 |---|---|---|
-| Commits ahead of `main` | **221** (07-18 → 07-31) | Far too many to review as one PR |
-| Merge commits in range | **63** (51 on the first-parent spine) | History is a **DAG, not linear** — slicing/rebasing is the wrong tool |
-| `main`-only commits | **0** | `main` **is an ancestor** → fast-forward is possible |
-| Same-subject commits | **61 of 221** | Heavy duplication from repeated re-merges |
-| First-parent spine | 124 = 51 merges + **73 direct commits** | 73 commits were made on the branch, not via any PR |
-| PRs the branch integrated | **23**, named in `chore(merge): integrate PR #NNN` commits | The branch documents its own provenance — use it |
+| Commits ahead of `main` | **241** (07-18 → 08-01) | Far too many to review as one PR |
+| Merge commits in range | **63** | History is a **DAG, not linear** — slicing/rebasing is the wrong tool |
+| `main`-only commits | **0** | `main` **is an ancestor** → fast-forward is still possible |
+| Same-subject commits | **61 of 221** (measured before Group E) | Heavy duplication from repeated re-merges |
+| First-parent direct commits | **93** | Made on the branch, not via any PR — but see Group E: 26 of the newest arrived as squash-merged PRs and are *not* triage noise |
+| PRs the branch integrated | **23** via `chore(merge): integrate PR #NNN`, plus **26** squash-merged directly (#301–#332) | The branch documents its own provenance — use it |
 
 ### Contrast with tb-mobile (why the strategy differs)
 
@@ -86,7 +88,48 @@ Same treatment as Group B: fresh PRs from `main`. These are substantial features
 
 **Carry the drift-check spec with `#282`.** `docs/superpowers/specs/2026-07-27-provider-version-drift-check-design.md` landed on this branch via PR #317 (cherry-picked from #303). It is a design doc, so it looks like free-standing content — it is not. It cites `VERIFIED_AGAINST` in `src/services/providers/providerHealth.ts` and the "C2" section of `docs/architecture/2026-07-24-provider-compatibility.md`, both of which arrive with `#282`. Recovered on its own it ships two dangling references; recovered in `#282`'s PR the references resolve on arrival. It has no PR of its own to `main`, so nothing will surface it — this note is the only thing that will.
 
-### Group D — 73 direct commits on the branch spine → triage required
+### Group E — the live-sessions-persistence work (26 PRs, #301–#332) → stranded, but clean
+
+**Added 2026-08-01.** The single largest block of unlanded content, and the one that behaves *least* like the rest of this branch.
+
+`#301` `#305` `#306` `#307` `#308` `#309` `#310` `#311` `#312` `#313` `#314` `#315` `#316` `#317` `#318` `#319` `#320` `#321` `#322` `#323` `#324` `#325` `#326` `#327` `#328` `#329` `#330` `#331` `#332`
+
+Every one was opened against `integration/missing-prs-2026-07-23`, went green on the full CI matrix, and was **squash-merged** — so each is exactly one commit on the spine, with a conventional title and a written rationale. That makes this group qualitatively different from Groups B–D:
+
+- **No duplication.** These were rebased onto the branch tip before merging, one at a time.
+- **No merge-fixup noise.** They are squashes, not merges — they do not appear in the 63-merge DAG count.
+- **They are already reviewed.** Each has a PR body explaining the change and its verification.
+
+**They are therefore the cheapest group to land, not the most expensive.** Cherry-pick each squash commit onto a branch from `main`, in ascending order, one PR at a time. They form a genuine stack — later ones assume earlier ones' types in `src/types.ts`, `src/api/types/api-deps.ts`, `src/db/repositories/managed-sessions.repository.ts` and `src/pty-host/` — so order is not optional.
+
+Dependency notes that matter when re-landing:
+
+| Commit | Depends on |
+|---|---|
+| `#311` rehydration | `#309`'s `runtime.db` split |
+| `#319` Codex resume identity | `#318`'s `boot_token` (`classifySession`'s 4th parameter) |
+| `#321` diagnostics | `#320`'s `PROBE_SET_MAX`, and it renames `shouldRehydrate` → `rehydrateSkipReason` |
+| `#325` pty-host process | `#322`'s protocol module |
+| `#324` `resumeSession()` | touches `handleResume`, which `#319` also changed — land in order or the extraction conflicts |
+
+**Do not treat these as Group-D spine noise.** A blanket "triage every non-merge spine commit" pass would put 22 reviewed, tested, conventional-commit PRs into the same bucket as merge fixups. Filter them out first:
+
+```bash
+G=/opt/homebrew/bin/git
+$G log --first-parent --no-merges --format='%h %s' origin/main..origin/integration/missing-prs-2026-07-23 \
+  | /usr/bin/grep -E '\(#(30[1-9]|31[0-9]|32[0-5])\)$'
+```
+
+**Unfinished work this group depends on** — do not assume the feature is complete on landing:
+
+- The plan is now **complete** on the streamer side: the pty-host is wired behind a default-off `ptyHost` feature flag (#329–#332), and auto-resume reads `auto_resume_on_boot` (#327–#328).
+- **PR M2** (tb-mobile adopting `interruptedStatus`) is optional and not done — the only outstanding plan item, and it lives in the other repo.
+
+Landing this group on `main` is therefore safe — the incomplete parts are unreachable — but the docs it adds to `CLAUDE.md` describe a partially-built feature. Say so in the landing PRs.
+
+### Group D — 86 direct commits on the branch spine → triage required
+
+**Revised 2026-07-31: 73 → 86, but 22 of those are Group E and must be excluded first.** Triage the remainder (~64).
 
 Not attributable to any PR. Expect a mix of:
 
@@ -100,7 +143,7 @@ G=/opt/homebrew/bin/git
 $G log --first-parent --no-merges --format='%h %ad %s' --date=short origin/main..origin/integration/missing-prs-2026-07-23
 ```
 
-Anything titled `chore(merge)`, `fix(merge)`, or resolving conflicts is Group-D noise. Everything else needs a home in Group B/C's PRs or a PR of its own.
+Anything titled `chore(merge)`, `fix(merge)`, or resolving conflicts is Group-D noise. Everything else needs a home in Group B/C's PRs or a PR of its own — **after** excluding the `(#301)`–`(#325)` squashes, which are Group E and are already reviewed.
 
 ### Also — two PRs point at the integration branch (verified individually — they need opposite treatment)
 
@@ -128,7 +171,7 @@ docs/superpowers/specs/2026-07-27-provider-version-drift-check-design.md   ABSEN
 2c32aa6  feat(live-activity): retime pushes to per-turn …                      <- already on branch
 ```
 
-**Resolved — superseded by PR #317.** Re-targeting `#303` to `main` was the original plan, but its spec cites `providerHealth.ts` and the C2 architecture doc, both of which exist only on this branch (they came with `#282` and never reached `main`). On `main` today it would ship dangling references.
+**Resolved — superseded by PR #317, which has since merged (2026-07-31).** Re-targeting `#303` to `main` was the original plan, but its spec cites `providerHealth.ts` and the C2 architecture doc, both of which exist only on this branch (they came with `#282` and never reached `main`). On `main` today it would ship dangling references.
 
 Merging `#303` as-is was also not viable: it is 17 commits behind and reports `CONFLICTING`, on `docs/compatibility/tb-mobile.md` — a conflict caused entirely by staleness, for content this branch already has via `2c32aa6`.
 
@@ -276,6 +319,10 @@ Then pair a tb-mobile client against it and confirm session list, conversation d
 
 Group A is 12 ordinary PR merges — mostly mechanical, and four are dependabot bumps.
 
-The real work is Groups B, C and D: ~11 PRs' worth of stranded content plus 73 spine commits to triage. That is where the estimate should go, and it is the direct cost of having merged PRs into an integration branch instead of `main`.
+Group E is 22 squash commits to cherry-pick in order — more PRs than any other group, but the cheapest per PR: each is one commit, already reviewed, already CI-green, with a written rationale.
+
+The real work remains Groups B, C and D: ~11 PRs' worth of stranded content plus ~64 spine commits to triage once Group E is filtered out. That is where the estimate should go, and it is the direct cost of having merged PRs into an integration branch instead of `main`.
+
+**The cost is still growing.** This runbook was written when the gap was 221 commits; it is 234 now, because a whole 22-PR feature programme was developed on this branch after the runbook existed. The live streamer is deployed from here, which is what keeps making it the path of least resistance. Landing Group A + Group E would cut the gap substantially and is the highest-value next move.
 
 The cheapest way to avoid repeating this: land PRs on `main` and use integration branches only as short-lived, throwaway test vehicles that are never merged into.
