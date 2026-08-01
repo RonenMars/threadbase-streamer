@@ -5,8 +5,7 @@ import { connectToHost, hostSocketPath } from "./socket";
 /**
  * Start a pty-host, or attach to the one already running (plan Phase 6b).
  *
- * Nothing calls this yet — PR 8 wires it into the streamer's boot. It lands
- * here so the spawn semantics can be reviewed next to the host they start.
+ * The streamer calls this at boot when the `ptyHost` feature flag is enabled.
  */
 
 /** How long to wait for a freshly-spawned host to accept a connection. */

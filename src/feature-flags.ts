@@ -47,6 +47,14 @@ export const FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     default: true,
     env: "THREADBASE_FEATURE_SESSION_REHYDRATION",
   },
+  {
+    id: "ptyHost",
+    description:
+      "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +
+      "restarting the agents. Off by default until cross-platform behavior is qualified.",
+    default: false,
+    env: "THREADBASE_FEATURE_PTY_HOST",
+  },
 ];
 
 export function findFeatureFlag(id: string): FeatureFlagDefinition | undefined {

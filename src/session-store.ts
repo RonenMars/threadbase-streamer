@@ -216,8 +216,14 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
         : s.failureReason != null
           ? "failed"
           : "completed",
-    lifecycleSource: ptyAttached ? "spawn" : s.rehydrated ? "reconcile" : "exit",
-    // We spawned it, so `status` is the authoritative signal — no inferred
+    lifecycleSource: ptyAttached
+      ? s.reconciled
+        ? "reconcile"
+        : "spawn"
+      : s.rehydrated
+        ? "reconcile"
+        : "exit",
+    // We own its PTY, so `status` is the authoritative signal — no inferred
     // `activity` is attached for managed sessions.
     ownership: s.rehydrated ? "historical" : "managed",
     projectPath: s.projectPath,
