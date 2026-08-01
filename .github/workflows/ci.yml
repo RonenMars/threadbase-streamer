@@ -137,11 +137,10 @@ jobs:
     name: Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [gate, lint]
-    # Informational while the platforms are being qualified: a genuine
-    # cross-platform failure should surface loudly without blocking every merge
-    # before the baseline is known green. Flip to required once it has proven
-    # stable — tracked in docs/testing/cross-platform-ci.md.
-    continue-on-error: true
+    # No longer advisory. The expanded pty-host set reached the documented
+    # five-clean-run threshold on both platforms on 2026-08-01, so a Windows or
+    # macOS regression now makes the PR visibly unstable instead of reporting a
+    # green check. Evidence and history: docs/testing/cross-platform-ci.md.
     strategy:
       fail-fast: false
       matrix:
