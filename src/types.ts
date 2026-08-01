@@ -215,7 +215,7 @@ export type WSMessage =
       stalledSinceMs?: number;
       reworkAttempt?: number;
     }
-  | { type: "session_list"; sessions: SessionResponse[] }
+  | { type: "session_list"; sessions: readonly SessionResponse[] }
   | { type: "conversation_event"; sessionId: string; line: string }
   // Additive batched variant: one message carries all lines from a single
   // watcher read. Old clients ignore it and rely on conversation_event.
@@ -432,7 +432,8 @@ export type SessionSortKey = "startedAt" | "lastActivityAt" | "projectName" | "s
 export type SortOrder = "asc" | "desc";
 
 export interface SessionListPage {
-  sessions: SessionResponse[];
+  /** Response copies, like `SessionStore.list()` — see the note there. */
+  sessions: readonly Readonly<SessionResponse>[];
   nextCursor: string | null;
   total: number;
 }

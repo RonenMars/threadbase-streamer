@@ -42,6 +42,12 @@ export class SessionStore {
     return this.managed.delete(sessionId);
   }
 
+  /**
+   * The **live** stored record — mutating it mutates the store. Paired with
+   * `get()`, which hands back a throwaway response copy. Prefer
+   * `updateManaged()` for writes; this is for readers that need the internal
+   * shape (Date fields, `rehydrated`, …) rather than the wire shape.
+   */
   getManaged(sessionId: string): ManagedSession | null {
     return this.managed.get(sessionId) ?? null;
   }
@@ -53,6 +59,10 @@ export class SessionStore {
     }
   }
 
+  /**
+   * The **live** stored records — mutating an element mutates the store. Paired
+   * with `list()`, which hands back throwaway response copies.
+   */
   listManaged(): ManagedSession[] {
     return Array.from(this.managed.values());
   }
@@ -60,7 +70,12 @@ export class SessionStore {
   // Build the session list: live PTY sessions (managed) merged with externally
   // discovered Claude processes. Managed sessions keyed by JSONL UUID take
   // priority — discovered processes with the same UUID are skipped.
-  list(ptyAttachedIds: Set<string>): SessionResponse[] {
+  //
+  // Returns freshly constructed response objects, NOT references into the
+  // store — hence `Readonly`: writing to one changes nothing, so the compiler
+  // refuses it. Persist state with `updateManaged()`; to decorate a response,
+  // build a new object (`{ ...s, … }`) as `withReconciledLifecycle` does.
+  list(ptyAttachedIds: Set<string>): readonly Readonly<SessionResponse>[] {
     const results: SessionResponse[] = [];
     const seenIds = new Set<string>();
 
@@ -79,7 +94,10 @@ export class SessionStore {
     return results;
   }
 
-  get(sessionId: string, ptyAttachedIds: Set<string>): SessionResponse | null {
+  // A freshly constructed response object, NOT a reference into the store —
+  // hence `Readonly`, for the same reason as `list()` above. Use `getManaged()`
+  // when you want the live record.
+  get(sessionId: string, ptyAttachedIds: Set<string>): Readonly<SessionResponse> | null {
     const managed = this.managed.get(sessionId);
     if (managed) return managedToResponse(managed, ptyAttachedIds.has(sessionId));
 
