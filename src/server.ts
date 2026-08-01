@@ -104,6 +104,7 @@ import {
   isProviderName,
   isProviderResumable,
 } from "./providers";
+import { connectOrSpawnHost } from "./pty-host/spawn-host";
 import { seal } from "./seal";
 import { setCacheMetadata } from "./services/cache/cacheMetadata";
 import { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
@@ -1322,7 +1323,9 @@ export class StreamerServer {
     if (!this.managedSessionsRepo) return [];
     let verdicts: ReconcileVerdict[] = [];
     try {
-      const rows = this.managedSessionsRepo.listNonTerminal();
+      const rows = this.managedSessionsRepo
+        .listNonTerminal()
+        .filter((row) => !this.ptyManager.hasSession(row.session_id));
       if (rows.length === PROBE_SET_MAX) {
         // Said out loud rather than absorbed: past the cap this boot classifies
         // a subset, and the rows it skipped are indistinguishable in the log
@@ -1616,6 +1619,27 @@ export class StreamerServer {
     return session.boundConversationId ?? session.projectPath;
   }
 
+  /** Restore registry-only metadata after the host mirror has been adopted. */
+  private refreshHostedSessionsFromRegistry(): void {
+    for (const session of this.ptyManager.listSessions()) {
+      const row = this.managedSessionsRepo?.get(session.id);
+      const merged: ManagedSession = {
+        ...session,
+        reconciled: true,
+        ...(row?.project_id != null && { projectId: row.project_id }),
+        ...(row?.session_name != null && { sessionName: row.session_name }),
+        ...(row?.bound_conversation_id != null && {
+          boundConversationId: row.bound_conversation_id,
+        }),
+        ...(row?.resumed_from_conversation_id != null && {
+          resumedFromConversationId: row.resumed_from_conversation_id,
+        }),
+      };
+      this.sessionStore.addManaged(merged);
+      void this.watchConversationFile(session.id, merged.boundConversationId ?? session.id);
+    }
+  }
+
   /**
    * Mirror a freshly-spawned session into the durable registry (C1 Phase 2).
    *
@@ -1726,6 +1750,7 @@ export class StreamerServer {
    * of waiting on the interval.
    */
   reapIdleSessions(now: number = Date.now()): string[] {
+    if (this.ptyManager.isRemote()) return [];
     const reaped: string[] = [];
     for (const session of this.ptyManager.listSessions()) {
       // Never touch a session mid-turn. This is the whole point.
@@ -1857,6 +1882,20 @@ export class StreamerServer {
   }
 
   async listen(port: number, opts?: { awaitReady?: boolean }): Promise<void> {
+    if (this.featureFlags.ptyHost) {
+      const transport = await connectOrSpawnHost({
+        instanceId: process.env.THREADBASE_INSTANCE_ID ?? hostname(),
+      });
+      const sessions = await this.ptyManager.useRemoteRunner(transport);
+      for (const session of sessions) {
+        this.sessionStore.addManaged({ ...session, reconciled: true });
+      }
+      this.log.info(`[pty-host] re-adopted ${sessions.length} live session(s)`, {
+        event: "pty_host.sessions_adopted",
+        sessions: sessions.length,
+      });
+    }
+
     // DB is still used for upload records and other non-session purposes.
     // Session state is no longer persisted to DB.
     const dbConfig = this.disableDb ? null : getDbConfig();
@@ -1886,8 +1925,10 @@ export class StreamerServer {
 
     // unref() so an idle server with no other work can still exit — this timer
     // must never be the reason the process stays alive.
-    this.idleReaperTimer = setInterval(() => this.reapIdleSessions(), IDLE_REAP_SWEEP_MS);
-    this.idleReaperTimer.unref?.();
+    if (!this.ptyManager.isRemote()) {
+      this.idleReaperTimer = setInterval(() => this.reapIdleSessions(), IDLE_REAP_SWEEP_MS);
+      this.idleReaperTimer.unref?.();
+    }
 
     const warmUp = new Promise<void>((resolveWarm) => {
       {
@@ -2023,6 +2064,7 @@ export class StreamerServer {
           // fall back to in-memory scans so requests keep working from disk.
           this.scannerPersistenceDisabled = true;
         }
+        if (this.ptyManager.isRemote()) this.refreshHostedSessionsFromRegistry();
         // Classify whatever previous runs left behind. Fire-and-forget: it only
         // populates a diagnostic map, and blocking startup on `ps` probes would
         // delay the listener for no correctness gain. Runs after the cache block
@@ -2304,12 +2346,12 @@ export class StreamerServer {
     }
     this.lastAgentChunkAt.clear();
     this.terminalSeq.clear();
-    // Record why each live session is about to end, BEFORE ptyManager.dispose()
-    // kills it and before runtimeStore.close() takes the registry's DB handle away.
-    // dispose() fires no onStatusChange, so without this a clean shutdown looks
-    // identical to a crash on the next boot: rows frozen mid-`running` with no
-    // explanation. See docs/architecture/2026-07-24-durable-session-runtime.md.
-    this.recordShutdownState();
+    // An in-process runner is about to kill its children, so record that before
+    // dispose() and before runtimeStore.close() takes the registry handle away.
+    // A remote runner does the opposite: disconnect first so no late host event
+    // can write through a closed handle, and leave its live registry rows alone.
+    if (this.ptyManager.isRemote()) this.ptyManager.dispose();
+    else this.recordShutdownState();
     this.markScannerStaleDebounced.cancel();
     // Wait for every fire-and-forget scan→cache-write task to finish before
     // tearing anything down. Their post-scan steps write to this.cache
@@ -2329,7 +2371,7 @@ export class StreamerServer {
     this.scanner = null;
     this.cache?.close();
     this.runtimeStore?.close();
-    this.ptyManager.dispose();
+    if (!this.ptyManager.isRemote()) this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.externalTails.clear();
     this.wsHub.dispose();

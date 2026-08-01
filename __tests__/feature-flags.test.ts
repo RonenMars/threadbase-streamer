@@ -42,6 +42,12 @@ describe("feature flags registry", () => {
     expect(flag?.default).toBe(true);
   });
 
+  it("keeps ptyHost's env var name stable, and its default OFF", () => {
+    const flag = findFeatureFlag("ptyHost");
+    expect(flag?.env).toBe("THREADBASE_FEATURE_PTY_HOST");
+    expect(flag?.default).toBe(false);
+  });
+
   it("finds a known flag and rejects an unknown one", () => {
     expect(findFeatureFlag(FLAG.id)?.id).toBe(FLAG.id);
     expect(findFeatureFlag("nopeNotAFlag")).toBeUndefined();
@@ -184,6 +190,26 @@ describe("resolveFeatureFlags precedence", () => {
         cli: { [on.id]: true },
         env: { [on.env]: "0" } as NodeJS.ProcessEnv,
       })[on.id],
+    ).toBe(false);
+  });
+
+  it("resolves ptyHost through the whole chain, in both directions", () => {
+    const off = findFeatureFlag("ptyHost");
+    if (!off) throw new Error("ptyHost missing from the registry");
+
+    expect(resolveFeatureFlags({ env: NO_ENV })[off.id]).toBe(false);
+    expect(resolveFeatureFlags({ yaml: { [off.id]: true }, env: NO_ENV })[off.id]).toBe(true);
+    expect(
+      resolveFeatureFlags({ yaml: { [off.id]: false }, cli: { [off.id]: true }, env: NO_ENV })[
+        off.id
+      ],
+    ).toBe(true);
+    expect(
+      resolveFeatureFlags({
+        yaml: { [off.id]: true },
+        cli: { [off.id]: true },
+        env: { [off.env]: "0" } as NodeJS.ProcessEnv,
+      })[off.id],
     ).toBe(false);
   });
 

@@ -194,6 +194,7 @@ Current flags:
 |----|---------|-------|
 | `codexSystemPrompt` | off | Sending the built system prompt to fresh Codex sessions. Off because Codex has no `--system-prompt` flag — the prompt lands in the positional `[PROMPT]` argument, which Codex treats as the user's opening turn rather than a system instruction. |
 | `sessionRehydration` | **on** | Seeding the session list at boot from the durable registry, so sessions a previous run was interrupted mid-flight come back in `GET /api/sessions` as `ownership: "historical"` / `lifecycle: "resumable"` stubs instead of vanishing. On because it is the fix for the restart case, not an experiment — but it changes what `GET /api/sessions` contains for every client, so it ships with a kill switch rather than unconditionally. `GET /api/sessions/count` is unaffected: recovered stubs are filtered out of it. Turning this flag off does not disable `auto_resume_on_boot`; only `auto_resume_on_boot: false` prevents unattended starts. |
+| `ptyHost` | off | Keeping live PTYs in a separate host process so a streamer restart can reconnect without restarting the agents. Host-surviving sessions remain attached and replay from the preserved terminal screen; after a machine reboot the host is gone too, so registry rehydration remains the fallback. |
 
 ## Dependencies
 

@@ -283,6 +283,25 @@ describe("RemoteSessionRunner — events", () => {
     expect(runner.getSession("sess-1")?.status).toBe("waiting_input");
   });
 
+  it("drops an ordinarily exited session before forwarding its final status", async () => {
+    let attachedDuringCallback = true;
+    let runner: RemoteSessionRunner;
+    const connected = await connect(
+      { status: () => statusOf({ session: mkSession(), pid: 1 }) },
+      { onStatusChange: () => (attachedDuringCallback = runner.hasSession("sess-1")) },
+    );
+    runner = connected.runner;
+
+    connected.host.emit({
+      type: "event",
+      event: "status-change",
+      session: mkSession({ status: "idle", completedAt: new Date() }),
+    });
+
+    expect(attachedDuringCallback).toBe(false);
+    expect(runner.hasSession("sess-1")).toBe(false);
+  });
+
   it("drops a session from the mirror on exit", async () => {
     const { host, runner } = await connect({
       status: () => statusOf({ session: mkSession(), pid: 99 }),
