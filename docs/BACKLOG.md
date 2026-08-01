@@ -26,7 +26,7 @@ For planned features (work that adds new behavior rather than fixing broken beha
 | Partial `prod logs --clear` failure messaging | Open |
 | Cache integrity alert management | 🔄 In flight — [PR #232](https://github.com/RonenMars/threadbase-streamer/pull/232) |
 | Explicit warm-up status API | 🔄 In flight — [PR #234](https://github.com/RonenMars/threadbase-streamer/pull/234) |
-| `enrichResumedSessionAsync` writes to a throwaway copy | Open (added 2026-08-01) |
+| `enrichResumedSessionAsync` writes to a throwaway copy | ✅ DONE — [PR #336](https://github.com/RonenMars/threadbase-streamer/pull/336) (merged 2026-08-01) |
 
 **Suggested next-up (new PRs, 2026-07-22):** **(1) Log truncation races** → **(2) `bootoutAgent` busy-wait spin**. Merge the in-flight product PRs (#237, #240, #241, #252, #253) ahead of opening those when possible.
 
@@ -211,9 +211,22 @@ This was acceptable before ProjectChat, but now breaks the discriminated-union c
 
 ---
 
-## `enrichResumedSessionAsync` writes its enrichment to a throwaway copy
+## `enrichResumedSessionAsync` writes its enrichment to a throwaway copy — FIXED
 
-**Status (2026-08-01):** Open. Pre-existing; found while extracting `resumeSession()` in [PR #324](https://github.com/RonenMars/threadbase-streamer/pull/324) and deliberately left out of that refactor.
+**Status (2026-08-01):** ✅ DONE — [PR #336](https://github.com/RonenMars/threadbase-streamer/pull/336). Found while extracting `resumeSession()` in [PR #324](https://github.com/RonenMars/threadbase-streamer/pull/324) and deliberately left out of that refactor so it would get a deliberate fix.
+
+**What shipped**, all three parts in one PR so the guard landed with the instance it catches:
+
+- `SessionStore.get()` returns `Readonly<SessionResponse>`, `list()` returns `readonly Readonly<SessionResponse>[]`. Mutating a response copy is now a **compile error**, so this bug cannot be written again. All four getters carry doc comments naming which side of the copy/reference split they are on.
+- `enrichResumedSessionAsync` writes through `updateManaged()`, and `resumeSession()` reads its response **after** enrichment — which settles the open design question below: the `201` body now carries the enriched shape rather than the pre-enrichment one.
+- `handleGetSession`'s two legitimate mutations build a new object instead.
+
+**Two findings from doing it**, both worth keeping:
+
+1. **The blast radius proved it was a one-off, not a pattern.** `tsc` flagged property mutation in exactly the two functions predicted and nowhere else; the remaining errors were array variance on already-non-mutating helpers. Had it flagged more, each would have been another instance of this bug.
+2. **The naïve port would have been worse than the bug.** Beyond the `Date`-versus-ISO-string mismatch described below, `new Date(<unparseable>)` yields an `Invalid Date` that `managedToResponse` throws on — so a corrupt cached timestamp would have turned a silent no-op into a **500 on `GET /api/sessions/:id`**. The fix reuses the existing `parseIsoDateOrNull` so an unparseable value lands as absent.
+
+The original analysis is kept below: the class it describes is what motivated the `Readonly` guard, and the reasoning is worth having if that guard is ever questioned or relaxed.
 
 **Symptom:** A resumed session never gains most of the metadata the resume path goes to the trouble of computing. `sessionName`, `messageCount`, `account`, `filePath`, `model`, `preview`, `firstMessageText`/`firstMessageAt`, `lastMessageText`/`lastMessageAt`, `projectId` and `resumedFromConversationId` are all resolved and then discarded. Not user-reported — the fields are usually repopulated from the scanner/cache on a later list read, which is why this has stayed invisible.
 
@@ -262,6 +275,8 @@ So the codebase contains a normalised idiom, "get a session, mutate it, done", t
 3. **A doc comment.** Near-zero value alone — this bug was written directly against a store that already behaved this way.
 
 Do (1). It is one signature change, two call sites in `handleGetSession` adjusted, plus the real fix above. Ship it as a single PR so the guard and the instance it catches land together.
+
+**Done in [PR #336](https://github.com/RonenMars/threadbase-streamer/pull/336)** — option (1), as written. The table above is now enforced by the type system rather than by convention: `get()`/`list()` hand back `Readonly`, so writing to a copy no longer compiles. If a future change relaxes that, this section is the reason not to.
 
 ---
 

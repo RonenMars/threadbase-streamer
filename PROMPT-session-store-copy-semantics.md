@@ -1,5 +1,17 @@
 # Prompt — close the SessionStore copy-vs-reference trap
 
+> ## ⚠️ COMPLETE — historical record, do not execute
+>
+> Shipped as **[PR #336](https://github.com/RonenMars/threadbase-streamer/pull/336)** (2026-08-01), option (1) as written: `get()`/`list()` now return `Readonly`, `enrichResumedSessionAsync` writes through `updateManaged()`, and `handleGetSession` builds a new object.
+>
+> Two things it predicted and one it did not:
+>
+> - The "stop and report if `Readonly` breaks more call sites" instruction did its job — `tsc` flagged exactly the two named functions, confirming the bug was a one-off rather than a pattern.
+> - The `Date`-versus-ISO-string trap was real, and **worse than described**: `new Date(<unparseable>)` yields an `Invalid Date` that `managedToResponse` throws on, so a naïve port would have turned a silent no-op into a 500. The fix reuses `parseIsoDateOrNull`.
+> - The open design question was answered rather than deferred: `resumeSession()` now reads its response *after* enrichment, so the `201` carries the enriched shape.
+>
+> Kept because the framing — the class table, the "assert against the store" instruction, the blast-radius check — is what made the resulting PR come out right, and is worth reusing.
+
 Paste everything below the line into a fresh session.
 
 ---
