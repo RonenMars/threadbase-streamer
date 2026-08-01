@@ -100,6 +100,12 @@ export interface ManagedSession {
   rehydrated?: boolean;
 
   /**
+   * This live session was re-adopted from the pty-host during boot rather than
+   * spawned by this streamer process. Internal lifecycle provenance only.
+   */
+  reconciled?: boolean;
+
+  /**
    * What this session was doing when the streamer stopped it, for a stub whose
    * `status` had to flatten to `idle`. Only ever set from a registry row whose
    * `status_source` is `shutdown` — the one source that means "we ended this",
