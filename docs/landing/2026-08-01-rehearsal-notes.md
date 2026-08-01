@@ -647,6 +647,52 @@ objects, prune-proof name, no config change, and nothing else in the repo is aff
 **Everywhere below that names `origin/pr/<N>` — wave 2's `--onto` rebases and wave 4's Group C
 route — read `refs/landing/pr/<N>`.**
 
+### Before EVERY `gh pr merge --delete-branch`: re-point the children first
+
+**This applies to every merge in every wave, not just the stacked ones.** Deleting a branch closes
+every open PR whose **base ref** is that branch — GitHub does not retarget them, it closes them, and
+the PR reports `state: CLOSED` with `mergedAt: null`. The merge itself succeeds, so nothing in the
+merge's own result says anything went wrong.
+
+```bash
+# BEFORE merging PR <N> whose head branch is <head>:
+gh pr list --state open --base "<head>" --json number --jq '.[].number'
+# For every number returned:
+gh pr edit <child> --base main
+# only then:
+gh pr merge <N> --squash --delete-branch
+```
+
+**Ancestry-stacked is harmless; base-ref-stacked is fatal — and §2's dependency table records only
+the former.** The two relations are not the same, and §2 measures the wrong one for this purpose:
+
+- §2 defines "stacked" by ancestry (`git merge-base --is-ancestor` across PR heads), and §8's wave 2
+  prescribes a purely *git* remedy, `git rebase --onto main origin/pr/<parent>`.
+- GitHub defines it by `baseRefName`, PR metadata that appears nowhere in these notes.
+
+`#234` is the proof they differ: §2 lists it as stacked on `#232`, but its base ref is `main`, so
+deleting `#232`'s branch did nothing to it. Of the three wave-2 children only `#254` and `#266` were
+base-ref-stacked, and those are exactly the two that break.
+
+`rebase --onto` is therefore **correct and insufficient** — it fixes the child's *commits* and never
+re-points the *PR*, leaving it aimed at a branch that is about to be deleted.
+
+**This happened.** On 2026-08-01, `gh pr merge 253 --squash --delete-branch` closed `#254`, whose
+base was `#253`'s head branch `feat/live-external-sessions`. Its one commit — `c847033 fix(adopt):
+resolve the working directory from the conversation JSONL`, 191 lines of new test plus 45 lines of
+`src/server.ts` — did not reach `main`, and the wave reported success.
+
+Recovery, if it has already happened: the child's *head* branch survives (`--delete-branch` deletes
+only the merged PR's own head), so nothing is lost. GitHub refuses to reopen a PR whose base ref no
+longer exists, so restore it first:
+
+```bash
+git push origin <parent-pre-merge-sha>:refs/heads/<deleted-base-branch>
+gh pr reopen <child>
+gh pr edit <child> --base main
+git push origin --delete <deleted-base-branch>     # safe once the child points at main
+```
+
 **Wave 1 — independent PRs.** Rebase onto `main`, wait for green, squash-merge, one at a time.
 Order is free *except* `#237` (see below). `docs/BACKLOG.md` conflicts are expected on `#257`/`#258`/`#259`; the fixing PR's status wins.
 
@@ -667,6 +713,8 @@ $G rebase --onto main origin/pr/<parent>
 ```
 #234 (parent #232)    #254 (parent #253)    #266 (parent #237)
 ```
+
+`#254` and `#266` are **base-ref-stacked**, not merely ancestry-stacked — `gh pr edit <child> --base main` them before their parent merges, or merging the parent closes them. See the rule above Wave 1.
 
 **`#237` ordering:** land `#237` **after** `#232`, `#253`, `#234` and `#267`. Its extraction of `reconcileConversationsCacheFromDisk()` collides with all four; landing it last costs one resolution instead of four (§3). `#266` follows `#237`.
 
