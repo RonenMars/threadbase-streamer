@@ -711,6 +711,14 @@ runbook nor D1 anticipated.
 `refs/landing/` sits outside `refs/remotes/`, so no `origin` prune can consider it stale. Same
 objects, prune-proof name, no config change, and nothing else in the repo is affected.
 
+**The oracle's scope, stated once because it was misread three times.** The integration branch is
+**reliable on shape and silent on what the shape displaced**. It shows what a region looks like once
+everything has landed, so it verifies the *form* of a resolution you have already attributed — on the
+real run its ghost-prune block matched the hand-made resolution exactly. It cannot tell you whose
+content a hunk is (it contains every PR), and it cannot tell you what a resolution removed from the
+surrounding context. `#237`'s `h2` matched it perfectly while `h3` still needed a call-site wrap
+restored that the branch's own version obtains from `#266`/`#271` content not yet landed.
+
 **Everywhere below that names `origin/pr/<N>` — wave 2's `--onto` rebases and wave 4's Group C
 route — read `refs/landing/pr/<N>`.**
 
@@ -784,6 +792,39 @@ $G rebase --onto main origin/pr/<parent>
 `#254` and `#266` are **base-ref-stacked**, not merely ancestry-stacked — `gh pr edit <child> --base main` them before their parent merges, or merging the parent closes them. See the rule above Wave 1.
 
 **`#237` ordering:** land `#237` **after** `#232`, `#253`, `#234` and `#267`. Its extraction of `reconcileConversationsCacheFromDisk()` collides with all four; landing it last costs one resolution instead of four (§3). `#266` follows `#237`.
+
+**Executed 2026-08-01 and it works — one conflict instead of four**, but it arrives as one *compound*
+resolution: `src/server.ts` ×3 plus `docs/BACKLOG.md` ×1, in which rows 5, 7 and 8 must all be
+re-made at once, from the opposite side. `#237`'s extracted method as written is the
+**pre-`#232`/`#253`** body — no freeze guard, and a hand-rolled `livePaths` Set instead of
+`canonicalLivePathSet(metas)`. Taking its side wholesale reinstates the POSIX-invisible
+Windows-only regression `CLAUDE.md` documents. Take `#237`'s *structure* and transplant `main`'s body.
+
+#### Verifying a compound resolution — and the limit of the obvious check
+
+The natural completion signal is a **body diff**: the extracted method must equal the inline block it
+replaces, modulo the extraction itself, with every difference named and attributed. Do that — on the
+real run it flagged exactly two differences, both legitimate (`#237`'s own
+`refreshConversationCache` / `setCacheMetadata` additions, verified present in `a0bfa77` and absent
+from `main`'s inline body).
+
+**But a body diff is structurally blind to anything that *wrapped* the block rather than lived inside
+it.** It compares what is IN the method to what was IN the block; a `withWarmup(...)` that used to
+surround the block and now surrounds nothing is invisible to it. That is exactly what went wrong —
+see §9.4 — and only `#234`'s test caught it.
+
+**So pair the body diff with a construct count, before and after.** It is one command and it is the
+whole finding:
+
+```bash
+git show origin/main:src/server.ts | grep -c 'withWarmup("conversation_refresh"'   # 2
+grep -c 'withWarmup("conversation_refresh"' src/server.ts                          # 1  <- the bug
+```
+
+Count anything that **wraps** rather than lives inside: `withWarmup`, warm-up/permission guards,
+`try`/`catch`, transaction or lock scopes, `trackCacheWrite`. A drop with no deliberate reason means
+the extraction ate a wrapper. **Never read the body diff as sufficient on its own** — it is a check on
+content, and an extraction's risk is in the context.
 
 **Wave 3 — `#267`.** Only after wave 1+2. Its delta collapses from 75 files to ~8.
 
@@ -1085,7 +1126,36 @@ It is still safe, because the rule in §3 ("the fixing PR's status line beats `#
 
 **`#234`'s `withWarmup` (ledger row 8, marked `J`) — runner-up never tested.** `#234` wraps `rescanForRefresh()` in `withWarmup("conversation_refresh", …)`. `#237` had moved that call into a method shared with the routine background path, where gating it would flip the server into `SERVER_WARMING_UP` on every JSONL append — which the integration branch documents as wrong. I dropped the wrap and kept `#234`'s `rejectIfWarmingUp(res)` at the handler entry, asserting that it delivers the same intent.
 
-**That assertion is untested.** The runner-up resolution — keep `withWarmup` but only on the `bustCache` (explicit `?refresh=1`) branch — is equally consistent with both PRs' intent and was not tried. If `#234`'s warm-up reporting misbehaves after landing, start here.
+**RESOLVED 2026-08-01 — the assertion was wrong and the untried runner-up is correct.** This item is
+retired, and the answer is the opposite of what was recorded above.
+
+The real run landed `#237` after `#232`/`#253`/`#234`/`#267` per §8, implemented exactly the
+resolution recorded here — extraction with no internal gate, relying on `rejectIfWarmingUp(res)` at
+handler entry — and **`#234`'s own test failed**:
+
+```
+× returns conversation_refresh while an explicit conversation refresh is running
+AssertionError: expected 200 to be 503
+```
+
+`rejectIfWarmingUp(res)` does **not** deliver the same intent. It rejects requests that arrive
+*while* the server is warming up; it does not put the server *into* `conversation_refresh` for the
+duration of an explicit `?refresh=1` rebuild, which is the state `#234` exists to report.
+
+**The correct resolution is the runner-up: `withWarmup` on the `bustCache` branch only**, at the call
+site rather than inside the extracted method — so an explicit refresh gates and the automatic
+freshness path does not. 87/87 of `__tests__/server.test.ts` pass with it. The integration branch
+independently shows the same structure (`await this.withWarmup("conversation_refresh", () =>
+this.reconcileConversationsCacheFromDisk(…))`), though its version also carries `#271`'s
+`onProgress` and `#266`'s `canServeStale`, so follow its shape and not its text.
+
+**How the wrong side got argued for, recorded because the premise is the reusable part.** The case
+made for the no-gate version was that it *"changes nothing about warm-up behaviour relative to what
+is on `main` and green right now"* — `#234` landed the wrap at two call sites, so keeping both and
+adding no internal gate should have been behaviour-preserving. **That premise was never checked, and
+it was false:** one of the two wraps was *inside the very block `#237` extracts*, so the extraction
+deleted it. `grep -c 'withWarmup("conversation_refresh"'` reads **2** on `main` and **1** after the
+extraction. The argument was sound given its premise; nobody verified the premise.
 
 **`#245`'s content inside `#267`'s squash — never verified.** §2 says dropping `#245` "does not remove its content" from `#267`/`#297`/`#299`/`#304`, because it is their ancestor. That follows from the ancestry, but I never inspected what `#267`'s squash actually carried of `#245`. The claim is sound in principle and unchecked in fact.
 
