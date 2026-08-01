@@ -7,7 +7,7 @@
 > **Updated 2026-08-01.** The gap grew from 221 to 241 because a further 26 PRs (#301–#332) were developed and merged **onto this branch**, not onto `main` — the whole live-sessions-persistence plan, Phases 0 through 7. That is a new stranded group (**Group E**) and it is now the largest single block of unlanded work. The live streamer is deployed from this branch (`1.33.0+80a2b40`), so `main` is not what is running in production.
 
 > **Re-audited 2026-08-01, late.** Three things changed and one was previously missed.
-> **(a)** `main` has moved: #224 and #226 merged to it on 07-31 and #340 on 08-01, so `main` is **no longer an ancestor** of this branch — the fast-forward escape hatch at the end of this runbook no longer works.
+> **(a)** `main` has moved: #224 and #226 merged to it on 07-31 and #340 on 08-01, so `main` is **no longer an ancestor** of this branch — the fast-forward escape hatch at the end of this runbook no longer works. Only #340 is new *content*, though; see "The `main`-only divergence is 3 commits but only 1 patch".
 > **(b)** Group E has grown from 26 PRs to **37** — #333–#339 and #341 all merged onto this branch after the group was first written.
 > **(c)** A previously unrecorded block exists: **#292, #293, #294, #296** were squash-merged onto this branch back on 07-26 and belong to no group in this document. They are now **Group F**.
 > **(d)** Sweeping every *open* PR against the same test found **15 more** that no group covered — Group A was derived from the `integrate PR #NNN` commits, and these never went through that path. They are now **Group A′**, and one of them (`#304`) turns out to be the only route to `main` for a Group-D commit.
@@ -28,7 +28,7 @@ Against `origin/main` and `origin/integration/missing-prs-2026-07-23`:
 |---|---|---|
 | Commits ahead of `main` | **249** (07-18 → 08-01) | Far too many to review as one PR |
 | Merge commits in range | **63** | History is a **DAG, not linear** — slicing/rebasing is the wrong tool |
-| `main`-only commits | **3** (`bfdc2c9` #224, `2c1b038` #226, `28da612` #340) | `main` is **no longer an ancestor** → the fast-forward escape hatch is **dead** |
+| `main`-only commits | **3** (`bfdc2c9` #224, `2c1b038` #226, `28da612` #340) — but only **1** by content | `main` is **no longer an ancestor** → the fast-forward escape hatch is **dead**. See the note below: the divergence is 3 commits but 1 patch. |
 | Same-subject commits | **61 of 221** (measured before Group E) | Heavy duplication from repeated re-merges |
 | First-parent spine commits (non-merge) | **101** | Of which **43** are squash-merged PRs (37 Group E, 4 Group F, plus `#298` and the `#269` duplicate) and **58** are direct commits needing triage — see Group D |
 | PRs the branch integrated | **23** via `chore(merge): integrate PR #NNN`, plus **43** squash-merged directly (#269, #292–#298, #301–#341) | The branch documents its own provenance — use it |
@@ -44,6 +44,25 @@ Against `origin/main` and `origin/integration/missing-prs-2026-07-23`:
 | Strategy | Slice the linear history | **Land the original PRs** |
 
 Rebasing 63 merges into a line would explode them into replayed commits and conflict heavily, and the 61 duplicates would carry re-merge noise onto `main`. Slicing is the wrong instrument here.
+
+### The `main`-only divergence is 3 commits but only 1 patch
+
+Worth separating, because the two numbers answer different questions and only one of them is about lost work.
+
+`git cherry origin/integration/missing-prs-2026-07-23` over `main`'s three commits marks two of them `-`, meaning their patches are already on the integration branch:
+
+| `main` commit | PR | On the integration branch? |
+|---|---|---|
+| `bfdc2c9` | `#224` semantic-release 25.0.5 → 25.0.8 | **Yes**, as `93a24ab` — same patch, merged here separately |
+| `2c1b038` | `#226` tsx 4.23.0 → 4.23.1 | **Yes**, as `c46aaf3` |
+| `28da612` | `#340` cross-platform smoke job | **No** — genuinely absent |
+
+So **ancestry is broken by 3 commits, but the only content `main` has that this branch lacks is #340's smoke job.** That matters in two directions:
+
+- **It does not revive the escape hatch.** `--ff-only` compares ancestry, not patches. Three unreachable commits abort it regardless of what their patches duplicate, and rewriting `main` to fix that is a force-push the ruleset forbids.
+- **It does shrink the reconciliation.** Any plan that needs the branch to become a superset of `main` — a squash PR, or re-establishing fast-forwardability — has to carry exactly one real change across, not three. The two dependabot bumps will resolve as no-ops or trivial lockfile conflicts.
+
+Note that #340's `ci.yml` is deliberately *narrower* than this branch's: it omits the expanded `test:smoke` script and `__tests__/ci-workflow.test.ts`, both of which reference `pty-host` files `main` does not have. Reconciling it is a merge in this branch's favour, not a straight take.
 
 ### Hotspot files
 
@@ -353,6 +372,8 @@ $G checkout main && $G merge --ff-only origin/integration/missing-prs-2026-07-23
 ```
 
 That stopped being true on 2026-07-31, when #224 and #226 merged to `main`; #340 added a third. `main` has **3 commits the integration branch does not have**, so `--ff-only` now aborts with "not possible to fast-forward". The only remaining bulk option is an ordinary merge commit, which the `required_linear_history` rule on `main protection` forbids. There is no shortcut left — the staged approach is now the *only* approach.
+
+**Do not read the patch-level finding as a reprieve.** Two of those three commits are patch-duplicates of work this branch already has, so the *content* divergence is one commit — but `--ff-only` tests ancestry, and ancestry is broken by all three. The distinction is useful for costing a reconciliation, not for reviving this hatch.
 
 ---
 
