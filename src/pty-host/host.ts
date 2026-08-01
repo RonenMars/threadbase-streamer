@@ -5,6 +5,7 @@ import type { ManagedSession, StartFreshSessionOptions, StartSessionOptions } fr
 import {
   encodeMessage,
   type HostEvent,
+  type HostHeartbeatState,
   type HostRequest,
   type HostSession,
   type HostTransport,
@@ -37,10 +38,17 @@ export const HOST_IDLE_SWEEP_MS = 5 * 60 * 1000;
 /** Agent silence after which a settled session is released. */
 export const HOST_IDLE_AFTER_MS = 6 * 60 * 60 * 1000;
 
+export const HOST_HEARTBEAT_TIMEOUT_MS = 30_000;
+export const HOST_ORPHAN_SWEEP_MS = 10_000;
+
 export interface SessionHostOptions {
   logger?: Logger;
   idleSweepMs?: number;
   idleAfterMs?: number;
+  onShutdown?: () => void;
+  heartbeatTimeoutMs?: number;
+  orphanSweepMs?: number;
+  onOrphaned?: () => void;
 }
 
 export class SessionHost {
@@ -52,10 +60,20 @@ export class SessionHost {
   private lastAgentChunkAt = new Map<string, number>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private idleAfterMs: number;
+  private onShutdown: (() => void) | undefined;
+  private heartbeatTimeoutMs: number;
+  private heartbeatLeases = new Map<HostTransport, number>();
+  private lastRegistryHeartbeat: (HostHeartbeatState & { at: number }) | null = null;
+  private orphanTimer: ReturnType<typeof setInterval> | null = null;
+  private onOrphaned: (() => void) | undefined;
+  private orphaned = false;
 
   constructor(options: SessionHostOptions = {}) {
     this.log = options.logger ?? getLogger("pty-host");
     this.idleAfterMs = options.idleAfterMs ?? HOST_IDLE_AFTER_MS;
+    this.onShutdown = options.onShutdown;
+    this.heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? HOST_HEARTBEAT_TIMEOUT_MS;
+    this.onOrphaned = options.onOrphaned;
 
     // Every runner callback becomes an event. The detectors run here, so a
     // callback with no event is a feature that silently stops working.
@@ -79,6 +97,11 @@ export class SessionHost {
 
     this.idleTimer = setInterval(() => this.reapIdle(), options.idleSweepMs ?? HOST_IDLE_SWEEP_MS);
     this.idleTimer.unref?.();
+    this.orphanTimer = setInterval(
+      () => this.reapOrphan(),
+      options.orphanSweepMs ?? HOST_ORPHAN_SWEEP_MS,
+    );
+    this.orphanTimer.unref?.();
   }
 
   /**
@@ -92,6 +115,7 @@ export class SessionHost {
     transport.onLine((chunk) => this.handleChunk(transport, chunk));
     return () => {
       this.subscribers.delete(transport);
+      this.heartbeatLeases.delete(transport);
       this.log.info("[pty-host] streamer disconnected; sessions kept", {
         event: "pty_host.streamer_disconnected",
         subscribers: this.subscribers.size,
@@ -123,6 +147,7 @@ export class SessionHost {
     try {
       const result = await this.handle(transport, request);
       transport.send(encodeMessage({ id: request.id, ok: true, result }));
+      if (request.type === "shutdown-host") this.onShutdown?.();
     } catch (err) {
       // A failure is always a response. Staying silent would leave the
       // streamer's promise pending forever — a hung session start rather than
@@ -152,6 +177,15 @@ export class SessionHost {
           protocolVersion: PTY_HOST_PROTOCOL_VERSION,
           sessions: this.runner.listSessions().map((session) => this.toHostSession(session)),
         };
+
+      case "heartbeat":
+        this.heartbeatLeases.set(transport, Date.now());
+        this.lastRegistryHeartbeat = {
+          registryState: request.registryState,
+          referencedSessionIds: [...request.referencedSessionIds],
+          at: Date.now(),
+        };
+        return {};
 
       case "spawn": {
         const session =
@@ -184,6 +218,9 @@ export class SessionHost {
         }
         return {};
       }
+
+      case "shutdown-host":
+        return {};
 
       case "replay": {
         const lines = await this.runner.getOutputLines(request.sessionId, request.maxLines);
@@ -256,6 +293,25 @@ export class SessionHost {
     return this.runner.listSessions().length;
   }
 
+  reapOrphan(now: number = Date.now()): boolean {
+    if (this.orphaned) return false;
+    for (const lastSeen of this.heartbeatLeases.values()) {
+      if (now - lastSeen <= this.heartbeatTimeoutMs) return false;
+    }
+    const registry = this.lastRegistryHeartbeat;
+    if (registry?.registryState !== "known") return false;
+    if (now - registry.at <= this.heartbeatTimeoutMs) return false;
+    if (registry.referencedSessionIds.length > 0) return false;
+    if (this.sessionCount() > 0) return false;
+
+    this.orphaned = true;
+    this.log.info("[pty-host] releasing unreferenced idle host", {
+      event: "pty_host.orphan_reap",
+    });
+    this.onOrphaned?.();
+    return true;
+  }
+
   /**
    * Shut the host down, signalling its children.
    *
@@ -266,7 +322,10 @@ export class SessionHost {
   dispose(): void {
     if (this.idleTimer) clearInterval(this.idleTimer);
     this.idleTimer = null;
+    if (this.orphanTimer) clearInterval(this.orphanTimer);
+    this.orphanTimer = null;
     this.subscribers.clear();
+    this.heartbeatLeases.clear();
     this.runner.dispose();
   }
 }

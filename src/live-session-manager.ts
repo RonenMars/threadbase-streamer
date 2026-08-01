@@ -1,7 +1,7 @@
 import { basename } from "path";
 import { CodexPtyRunner } from "./codex-pty-runner";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
-import type { HostTransport } from "./pty-host/protocol";
+import type { HostHeartbeatState, HostTransport } from "./pty-host/protocol";
 import { RemoteSessionRunner } from "./pty-host/remote-session-runner";
 import { PTYManager } from "./pty-manager";
 import type {
@@ -38,6 +38,10 @@ export class LiveSessionManager {
 
   isRemote(): boolean {
     return this.remoteRunner !== null;
+  }
+
+  startRemoteHeartbeat(getState: () => HostHeartbeatState): void {
+    this.remoteRunner?.startHeartbeat(getState);
   }
 
   async start(

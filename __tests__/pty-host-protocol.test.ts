@@ -41,7 +41,9 @@ function mkSession(over: Partial<ManagedSession> = {}): ManagedSession {
  * records what it was sent, so the runner can be exercised without a socket.
  */
 function mkHost(
-  handlers: Partial<Record<HostRequest["type"], (req: HostRequest) => unknown>> = {},
+  handlers: Partial<
+    Record<HostRequest["type"], (req: HostRequest) => unknown | Promise<unknown>>
+  > = {},
 ) {
   const sent: HostRequest[] = [];
   let onLine: (line: string) => void = () => {};
@@ -54,12 +56,12 @@ function mkHost(
       const handler = handlers[req.type];
       // Deferred: a real transport never answers inside send(), and a runner
       // that only works when it does would deadlock on a real socket.
-      queueMicrotask(() => {
+      queueMicrotask(async () => {
         if (!handler) {
           onLine(encodeMessage({ id: req.id, ok: false, error: `unhandled: ${req.type}` }));
           return;
         }
-        onLine(encodeMessage({ id: req.id, ok: true, result: handler(req) }));
+        onLine(encodeMessage({ id: req.id, ok: true, result: await handler(req) }));
       });
     },
     onLine(handler: (line: string) => void) {
@@ -88,7 +90,9 @@ const statusOf = (...sessions: HostSession[]) => ({
 });
 
 async function connect(
-  handlers: Partial<Record<HostRequest["type"], (req: HostRequest) => unknown>> = {},
+  handlers: Partial<
+    Record<HostRequest["type"], (req: HostRequest) => unknown | Promise<unknown>>
+  > = {},
   options: PTYManagerOptions = {},
 ) {
   const host = mkHost({ subscribe: () => ({}), status: () => statusOf(), ...handlers });
@@ -146,12 +150,61 @@ describe("isHostEvent", () => {
 });
 
 describe("RemoteSessionRunner — connect", () => {
+  it("uses the supervision protocol version rather than accepting a Phase 6c host", () => {
+    expect(PTY_HOST_PROTOCOL_VERSION).toBe(2);
+  });
+
+  it("shuts down an incompatible host before subscribing", async () => {
+    let host: ReturnType<typeof mkHost>;
+    host = mkHost({
+      status: () => ({ protocolVersion: PTY_HOST_PROTOCOL_VERSION + 1, sessions: [] }),
+      ...({
+        "shutdown-host": () => {
+          queueMicrotask(host.drop);
+          return {};
+        },
+      } as Partial<Record<HostRequest["type"], (req: HostRequest) => unknown>>),
+    });
+
+    await expect(RemoteSessionRunner.connect(host.transport)).rejects.toThrow(
+      `pty-host protocol ${PTY_HOST_PROTOCOL_VERSION + 1} is incompatible with streamer protocol ${PTY_HOST_PROTOCOL_VERSION}`,
+    );
+    expect(host.sent.map((request) => request.type)).toEqual(["status", "shutdown-host"]);
+    expect(host.transport.close).toHaveBeenCalledOnce();
+  });
+
+  it("does not hang when an incompatible host never acknowledges shutdown", async () => {
+    vi.useFakeTimers();
+    try {
+      const host = mkHost({
+        status: () => ({ protocolVersion: PTY_HOST_PROTOCOL_VERSION + 1, sessions: [] }),
+        "shutdown-host": () => new Promise(() => {}),
+      });
+      let outcome: string | undefined;
+      void RemoteSessionRunner.connect(host.transport).then(
+        () => {
+          outcome = "resolved";
+        },
+        (error: Error) => {
+          outcome = error.message;
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(outcome).toContain("incompatible with streamer protocol");
+      expect(host.transport.close).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("subscribes and seeds its mirror before answering anything", async () => {
     const { host, runner } = await connect({
       status: () => statusOf({ session: mkSession(), pid: 4242 }),
     });
 
-    expect(host.sent.map((r) => r.type)).toEqual(["subscribe", "status"]);
+    expect(host.sent.map((r) => r.type)).toEqual(["status", "subscribe"]);
     // The point of awaiting status: a runner handed out before this answers a
     // confident, wrong `false` for every session the host is holding.
     expect(runner.hasSession("sess-1")).toBe(true);
@@ -168,6 +221,51 @@ describe("RemoteSessionRunner — connect", () => {
     });
 
     expect(runner.getSession("sess-1")?.startedAt).toBeInstanceOf(Date);
+  });
+
+  it("heartbeats with explicit registry confidence and references", async () => {
+    const { host, runner } = await connect({ heartbeat: () => ({}) });
+    await runner.heartbeat({
+      registryState: "known",
+      referencedSessionIds: ["sess-1"],
+    });
+
+    expect(host.sent.find((request) => request.type === "heartbeat")).toMatchObject({
+      registryState: "known",
+      referencedSessionIds: ["sess-1"],
+    });
+  });
+
+  it("reports a registry-state read failure without throwing", async () => {
+    const warn = vi.fn();
+    const { runner } = await connect({ heartbeat: () => ({}) }, { logger: { warn } as never });
+
+    expect(() =>
+      runner.startHeartbeat(() => {
+        throw new Error("registry unavailable");
+      }),
+    ).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(warn).toHaveBeenCalledWith(
+      "[pty-host] heartbeat failed",
+      expect.objectContaining({ event: "pty_host.heartbeat_failed" }),
+    );
+    runner.dispose();
+  });
+
+  it("times out a heartbeat the host never acknowledges", async () => {
+    const { runner } = await connect({ heartbeat: () => new Promise(() => {}) });
+    const pending = runner.heartbeat({ registryState: "known", referencedSessionIds: [] }, 10);
+    const outcome = await Promise.race([
+      pending.then(
+        () => "resolved",
+        (error: Error) => error.message,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still pending"), 50)),
+    ]);
+
+    expect(outcome).toMatch(/heartbeat timed out/);
   });
 });
 
@@ -428,6 +526,36 @@ describe("RemoteSessionRunner — connection loss", () => {
     host.drop();
 
     await expect(runner.getOutputLines("sess-1", 10)).rejects.toThrow(/connection closed/);
+  });
+
+  it("rejects an in-flight heartbeat when disposed", async () => {
+    const { runner } = await connect({ heartbeat: () => new Promise(() => {}) });
+    const pending = runner.heartbeat({ registryState: "known", referencedSessionIds: [] }, 1_000);
+
+    runner.dispose();
+    const outcome = await Promise.race([
+      pending.then(
+        () => "resolved",
+        (error: Error) => error.message,
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still pending"), 50)),
+    ]);
+
+    expect(outcome).toMatch(/connection closed/);
+  });
+
+  it("does not warn when clean disposal cancels an automatic heartbeat", async () => {
+    const warn = vi.fn();
+    const { runner } = await connect(
+      { heartbeat: () => new Promise(() => {}) },
+      { logger: { warn } as never },
+    );
+    runner.startHeartbeat(() => ({ registryState: "known", referencedSessionIds: [] }));
+
+    runner.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("dispose closes the connection without signalling the agents", async () => {

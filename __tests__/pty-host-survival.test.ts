@@ -13,6 +13,13 @@ import { RuntimeStore } from "../src/db/runtime-store";
 import type { LiveSessionManager } from "../src/live-session-manager";
 import { discoverClaudeProcesses } from "../src/process-discovery";
 import { SessionHost } from "../src/pty-host/host";
+import {
+  encodeMessage,
+  type HostRequest,
+  type HostTransport,
+  PTY_HOST_PROTOCOL_VERSION,
+  type StatusResult,
+} from "../src/pty-host/protocol";
 import { RemoteSessionRunner } from "../src/pty-host/remote-session-runner";
 import { connectToHost, hostSocketPath, listenForStreamers } from "../src/pty-host/socket";
 import * as hostSpawner from "../src/pty-host/spawn-host";
@@ -52,6 +59,44 @@ const CLAUDE_ID = "11111111-2222-4333-8444-555555555555";
 const INSTANCE_ID = "s8";
 
 type RegistrySeed = ManagedSession & { boundConversationId?: string };
+
+function statusTransport(status: StatusResult, onShutdown: () => void = () => {}): HostTransport {
+  let onLine: (line: string) => void = () => {};
+  let onClose: () => void = () => {};
+  let closed = false;
+  return {
+    send(line) {
+      const request = JSON.parse(line) as HostRequest & { type: string };
+      queueMicrotask(() => {
+        if (request.type === "status") {
+          onLine(encodeMessage({ id: request.id, ok: true, result: status }));
+        } else if (request.type === "subscribe") {
+          onLine(encodeMessage({ id: request.id, ok: true, result: {} }));
+        } else if (request.type === "input-history") {
+          onLine(encodeMessage({ id: request.id, ok: true, result: { history: [] } }));
+        } else if (request.type === "heartbeat") {
+          onLine(encodeMessage({ id: request.id, ok: true, result: {} }));
+        } else if (request.type === "shutdown-host") {
+          onLine(encodeMessage({ id: request.id, ok: true, result: {} }));
+          onShutdown();
+        } else {
+          onLine(encodeMessage({ id: request.id, ok: false, error: "unexpected request" }));
+        }
+      });
+    },
+    onLine(handler) {
+      onLine = handler;
+    },
+    onClose(handler) {
+      onClose = handler;
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      onClose();
+    },
+  };
+}
 
 describe("pty-host reconnect on boot", () => {
   let rootDir: string;
@@ -353,5 +398,71 @@ describe("pty-host reconnect on boot", () => {
     });
     expect(ptyManager.isRemote()).toBe(false);
     expect(ptyManager.hasSession(started.id)).toBe(true);
+  });
+
+  it("replaces an incompatible host before adopting sessions", async () => {
+    const adoptedId = "22222222-3333-4444-8555-666666666666";
+    let incompatibleStopped = false;
+    const incompatible = statusTransport(
+      { protocolVersion: PTY_HOST_PROTOCOL_VERSION + 1, sessions: [] },
+      () => {
+        incompatibleStopped = true;
+        incompatible.close();
+      },
+    );
+    const compatible = statusTransport({
+      protocolVersion: PTY_HOST_PROTOCOL_VERSION,
+      sessions: [
+        {
+          pid: 45678,
+          session: {
+            id: adoptedId,
+            provider: "claude-code",
+            projectPath: projectDir,
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          },
+        },
+      ],
+    });
+    vi.spyOn(hostSpawner, "connectOrSpawnHost")
+      .mockResolvedValueOnce(incompatible)
+      .mockResolvedValueOnce(compatible);
+
+    server = await startStreamer({ ptyHost: true, sessionRehydration: false });
+
+    expect(incompatibleStopped).toBe(true);
+    expect((await listSessions(server)).find((row) => row.id === adoptedId)).toMatchObject({
+      ownership: "managed",
+      ptyAttached: true,
+      lifecycle: "attached",
+      lifecycleSource: "reconcile",
+    });
+  });
+
+  it("reports a known empty registry so the disconnected host can reap", async () => {
+    await startHost();
+    server = await startStreamer({ ptyHost: true, sessionRehydration: false });
+
+    await server.close();
+    server = null;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(host?.reapOrphan(Date.now() + 60 * 60 * 1000)).toBe(true);
+  });
+
+  it("reports unknown registry state when runtime.db cannot open", async () => {
+    await startHost();
+    runtimeDbPath = projectDir;
+    server = await startStreamer({ ptyHost: true, sessionRehydration: false });
+
+    await server.close();
+    server = null;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(host?.reapOrphan(Date.now() + 60 * 60 * 1000)).toBe(false);
   });
 });

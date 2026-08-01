@@ -32,8 +32,9 @@ vi.mock("node-pty", () => {
 });
 
 const { HOST_IDLE_AFTER_MS, SessionHost } = await import("../src/pty-host/host");
+const { encodeMessage, PTY_HOST_PROTOCOL_VERSION } = await import("../src/pty-host/protocol");
 const { RemoteSessionRunner } = await import("../src/pty-host/remote-session-runner");
-const { connectToHost, hostSocketPath, listenForStreamers } = await import(
+const { connectToHost, hostSocketPath, listenForStreamers, probePtyHostStatus } = await import(
   "../src/pty-host/socket"
 );
 
@@ -44,13 +45,14 @@ afterEach(() => {
 });
 
 /** A host listening on a real socket in a throwaway config dir. */
-async function startHost(instanceId = `t${Date.now()}${Math.random().toString(36).slice(2, 6)}`) {
+async function startHost(options: ConstructorParameters<typeof SessionHost>[0] = {}) {
+  const instanceId = `t${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
   const configDir = mkdtempSync(join(tmpdir(), "tb-pty-host-"));
   const previous = process.env.THREADBASE_CONFIG_DIR;
   process.env.THREADBASE_CONFIG_DIR = configDir;
 
   const socketPath = hostSocketPath(instanceId);
-  const host = new SessionHost({ idleSweepMs: 1_000_000 });
+  const host = new SessionHost({ idleSweepMs: 1_000_000, ...options });
   const server = await listenForStreamers(socketPath, {
     onConnection: (transport) => host.accept(transport),
   });
@@ -98,6 +100,18 @@ describe("SessionHost over a real socket", () => {
     // connect() awaits status, so an empty mirror here means the round trip
     // actually completed rather than defaulting.
     expect(runner.listSessions()).toEqual([]);
+  });
+
+  it("probes host liveness and status without adopting it", async () => {
+    const { socketPath } = await startHost();
+    const runner = await connectRunner(socketPath);
+    await runner.start("sess-1", { projectPath: tmpdir(), projectName: "p" });
+
+    await expect(probePtyHostStatus(socketPath, 100)).resolves.toEqual({
+      reachable: true,
+      protocolVersion: PTY_HOST_PROTOCOL_VERSION,
+      sessionCount: 1,
+    });
   });
 
   it("spawns a session and reports its pid back through the mirror", async () => {
@@ -153,6 +167,48 @@ describe("SessionHost over a real socket", () => {
     // A dropped response leaves the caller's promise pending forever, which is
     // a hung session start rather than an error it can report.
     await expect(runner.getOutputLines("no-such-session", 10)).rejects.toThrow(/not found/i);
+  });
+
+  it("runs shutdown immediately after writing its acknowledgement", async () => {
+    const order: string[] = [];
+    let receive: (line: string) => void = () => {};
+    const host = new SessionHost({
+      idleSweepMs: 1_000_000,
+      orphanSweepMs: 1_000_000,
+      onShutdown: () => order.push("shutdown"),
+    });
+    cleanups.push(() => host.dispose());
+    host.accept({
+      send: () => order.push("response"),
+      onLine: (handler) => {
+        receive = handler;
+      },
+      onClose: () => {},
+      close: () => {},
+    });
+
+    receive(encodeMessage({ id: 1, type: "shutdown-host" }));
+    await Promise.resolve();
+
+    expect(order).toEqual(["response", "shutdown"]);
+  });
+
+  it("survives a streamer closing before a heartbeat response is flushed", async () => {
+    const { socketPath } = await startHost();
+    const transport = await connectToHost(socketPath);
+    transport.send(
+      encodeMessage({
+        id: 1,
+        type: "heartbeat",
+        registryState: "known",
+        referencedSessionIds: [],
+      }),
+    );
+    transport.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const runner = await connectRunner(socketPath);
+    expect(runner.listSessions()).toEqual([]);
   });
 
   it("keeps its sessions when the streamer disconnects", async () => {
@@ -226,6 +282,82 @@ describe("SessionHost idle reaper", () => {
     // Status is `running` straight out of spawn — with idleAfterMs 0, only the
     // running check can be what spares it.
     expect(host.reapIdle(Date.now() + 1_000_000)).toEqual([]);
+    expect(host.sessionCount()).toBe(1);
+  });
+});
+
+describe("SessionHost heartbeat supervision", () => {
+  async function sendHeartbeat(
+    runner: InstanceType<typeof RemoteSessionRunner>,
+    state: { registryState: "known" | "unknown"; referencedSessionIds: string[] },
+  ): Promise<void> {
+    await runner.heartbeat(state);
+  }
+
+  function reapOrphan(host: InstanceType<typeof SessionHost>, now: number): boolean {
+    return host.reapOrphan(now);
+  }
+
+  it("reaps an empty disconnected host after a known-empty registry heartbeat expires", async () => {
+    let orphaned = 0;
+    const { host, socketPath } = await startHost({
+      heartbeatTimeoutMs: 100,
+      orphanSweepMs: 1_000_000,
+      onOrphaned: () => {
+        orphaned += 1;
+      },
+    });
+    const runner = await connectRunner(socketPath);
+    await sendHeartbeat(runner, { registryState: "known", referencedSessionIds: [] });
+    runner.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(reapOrphan(host, Date.now() + 101)).toBe(true);
+    expect(reapOrphan(host, Date.now() + 202)).toBe(false);
+    expect(orphaned).toBe(1);
+  });
+
+  it("keeps an empty host when registry availability is unknown", async () => {
+    const { host, socketPath } = await startHost({
+      heartbeatTimeoutMs: 100,
+      orphanSweepMs: 1_000_000,
+    });
+    const runner = await connectRunner(socketPath);
+    await sendHeartbeat(runner, { registryState: "unknown", referencedSessionIds: [] });
+    runner.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(reapOrphan(host, Date.now() + 10_000)).toBe(false);
+  });
+
+  it("keeps an empty host while the registry still references a hosted session", async () => {
+    const { host, socketPath } = await startHost({
+      heartbeatTimeoutMs: 100,
+      orphanSweepMs: 1_000_000,
+    });
+    const runner = await connectRunner(socketPath);
+    await sendHeartbeat(runner, {
+      registryState: "known",
+      referencedSessionIds: ["missing-from-host"],
+    });
+    runner.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(reapOrphan(host, Date.now() + 10_000)).toBe(false);
+  });
+
+  it("never reaps a host that still owns a live PTY", async () => {
+    const { host, socketPath } = await startHost({
+      heartbeatTimeoutMs: 100,
+      orphanSweepMs: 1_000_000,
+    });
+    const runner = await connectRunner(socketPath);
+    await runner.start("unregistered", { projectPath: tmpdir(), projectName: "p" });
+    await sendHeartbeat(runner, { registryState: "known", referencedSessionIds: [] });
+    runner.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(reapOrphan(host, Date.now() + 10_000)).toBe(false);
     expect(host.sessionCount()).toBe(1);
   });
 });
