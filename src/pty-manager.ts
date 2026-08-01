@@ -4,7 +4,7 @@ import { existsSync } from "fs";
 import { basename } from "path";
 import { buildFlagArgs, buildSettingsJson } from "./claude-flags";
 import { getLogger, type Logger } from "./logger";
-import { resolveClaudeExe } from "./platform";
+import { clearClaudeExeCache, resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
 import {
   hasPermissionOsc,
@@ -304,13 +304,23 @@ export class PTYManager implements SessionRunner {
     // can override anything above it.
     args.push(...buildFlagArgs(options.claudeFlags, options.claudeExtraArgs));
 
-    const proc = nodePty.spawn(resolveClaudeExe(), args, {
-      name: "xterm-256color",
-      cols: 120,
-      rows: 40,
-      cwd: options.projectPath,
-      env: buildSpawnEnv(),
-    });
+    let proc: ReturnType<typeof nodePty.spawn>;
+    try {
+      proc = nodePty.spawn(resolveClaudeExe(), args, {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+        cwd: options.projectPath,
+        env: buildSpawnEnv(),
+      });
+    } catch (err) {
+      // The cached path resolved to something CreateProcess can't launch
+      // (stale after a reinstall, or a since-fixed bad match) — clear it so
+      // the next start/resume attempt re-resolves instead of repeating the
+      // same failure indefinitely.
+      clearClaudeExeCache();
+      throw err;
+    }
 
     const session: InternalSession = {
       id: sessionId,
@@ -382,13 +392,20 @@ export class PTYManager implements SessionRunner {
     // can override anything above it.
     args.push(...buildFlagArgs(options.claudeFlags, options.claudeExtraArgs));
 
-    const proc = nodePty.spawn(resolveClaudeExe(), args, {
-      name: "xterm-256color",
-      cols: 120,
-      rows: 40,
-      cwd: options.projectPath,
-      env: buildSpawnEnv(),
-    });
+    let proc: ReturnType<typeof nodePty.spawn>;
+    try {
+      proc = nodePty.spawn(resolveClaudeExe(), args, {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+        cwd: options.projectPath,
+        env: buildSpawnEnv(),
+      });
+    } catch (err) {
+      // See the analogous catch in doStart() above.
+      clearClaudeExeCache();
+      throw err;
+    }
 
     const session: InternalSession = {
       id: sessionId,

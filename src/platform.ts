@@ -5,6 +5,21 @@ import { join } from "path";
 
 export const isWindows = platform() === "win32";
 
+// where.exe matches any file literally named after the query, including
+// extension-less POSIX shim scripts that npm installs alongside <name>.cmd /
+// <name>.ps1 for git-bash/WSL. Windows CreateProcess can't execute those
+// (they have no PE header), so picking where.exe's first line unconditionally
+// risks handing node-pty a script instead of a binary — surfacing as
+// "Cannot create process, error code: 193". Restrict matches to extensions
+// CreateProcess can actually launch.
+const WINDOWS_EXECUTABLE_EXTENSIONS = new Set([".exe", ".cmd", ".bat"]);
+
+function isWindowsExecutablePath(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  if (dot < 0) return false;
+  return WINDOWS_EXECUTABLE_EXTENSIONS.has(path.slice(dot).toLowerCase());
+}
+
 // ─── Claude executable resolution ─────────────────────────────────────────────
 // On Windows, Task Scheduler strips PATH to bare system directories, so
 // `claude` alone will not resolve. We try where.exe first, then fall back to
@@ -18,6 +33,14 @@ export const isWindows = platform() === "win32";
 
 let _claudeExe: string | undefined;
 
+// Resolution is memoized for the process lifetime (see below), so a bad
+// resolution otherwise stays bad until restart. Call this after a spawn
+// using the cached path fails, so the next attempt re-resolves instead of
+// repeating the same broken path on every retry/resume.
+export function clearClaudeExeCache(): void {
+  _claudeExe = undefined;
+}
+
 export function resolveClaudeExe(): string {
   if (_claudeExe !== undefined) return _claudeExe;
 
@@ -29,8 +52,9 @@ export function resolveClaudeExe(): string {
         timeout: 3000,
       })
         .trim()
-        .split("\n")[0]
-        .trim();
+        .split("\n")
+        .map((line) => line.trim())
+        .find(isWindowsExecutablePath);
       if (found) {
         _claudeExe = found;
         return _claudeExe;
@@ -91,6 +115,12 @@ export function resolveClaudeExe(): string {
 
 let _codexExe: string | undefined;
 
+// Mirrors clearClaudeExeCache() above — same memoize-then-invalidate-on-
+// spawn-failure rationale, swapped for the `codex` binary.
+export function clearCodexExeCache(): void {
+  _codexExe = undefined;
+}
+
 export function resolveCodexExe(): string {
   if (_codexExe !== undefined) return _codexExe;
 
@@ -102,8 +132,9 @@ export function resolveCodexExe(): string {
         timeout: 3000,
       })
         .trim()
-        .split("\n")[0]
-        .trim();
+        .split("\n")
+        .map((line) => line.trim())
+        .find(isWindowsExecutablePath);
       if (found) {
         _codexExe = found;
         return _codexExe;
