@@ -26,6 +26,7 @@ For planned features (work that adds new behavior rather than fixing broken beha
 | Partial `prod logs --clear` failure messaging | Open |
 | Cache integrity alert management | 🔄 In flight — [PR #232](https://github.com/RonenMars/threadbase-streamer/pull/232) |
 | Explicit warm-up status API | 🔄 In flight — [PR #234](https://github.com/RonenMars/threadbase-streamer/pull/234) |
+| `enrichResumedSessionAsync` writes to a throwaway copy | Open (added 2026-08-01) |
 
 **Suggested next-up (new PRs, 2026-07-22):** **(1) Log truncation races** → **(2) `bootoutAgent` busy-wait spin**. Merge the in-flight product PRs (#237, #240, #241, #252, #253) ahead of opening those when possible.
 
@@ -207,6 +208,60 @@ This was acceptable before ProjectChat, but now breaks the discriminated-union c
 **Suggested fix:** Introduce a single test helper that constructs a host-isolated `StreamerServer` — defaulting `codexRoots: []`, `disableDb: true`, and a temp `cacheDir`/`scanProfiles` — and migrate the existing ad-hoc boots to it. Then a new server test is isolated by construction instead of by remembering the knob. Alternatively (weaker), lint/grep guard: fail CI if a `new StreamerServer(` in `__tests__/` sets `scanProfiles` without `codexRoots`. The helper is preferable because it also centralizes the temp-dir + teardown boilerplate these tests repeat.
 
 **Done when:** A server-boot test written without thinking about Codex reads zero host data by default, and `grep -rL "codexRoots" __tests__` over files that `new StreamerServer` with `scanProfiles` returns nothing (or the guard passes).
+
+---
+
+## `enrichResumedSessionAsync` writes its enrichment to a throwaway copy
+
+**Status (2026-08-01):** Open. Pre-existing; found while extracting `resumeSession()` in [PR #324](https://github.com/RonenMars/threadbase-streamer/pull/324) and deliberately left out of that refactor.
+
+**Symptom:** A resumed session never gains most of the metadata the resume path goes to the trouble of computing. `sessionName`, `messageCount`, `account`, `filePath`, `model`, `preview`, `firstMessageText`/`firstMessageAt`, `lastMessageText`/`lastMessageAt`, `projectId` and `resumedFromConversationId` are all resolved and then discarded. Not user-reported — the fields are usually repopulated from the scanner/cache on a later list read, which is why this has stayed invisible.
+
+**Root cause:** `enrichResumedSessionAsync` (`src/server.ts:4410`) starts with
+
+```ts
+const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+```
+
+but `SessionStore.get()` (`src/session-store.ts:82`) returns `managedToResponse(managed, …)` — a **freshly constructed `SessionResponse` object literal**, not a reference into the store. Every subsequent `session.<field> = …` therefore mutates a local that is dropped when the function returns.
+
+Two things are *not* broken, which is why the bug is easy to miss: the repository writes in the same function (`projectsRepo.upsertProjectByPath`, `conversationsRepo.updateConversationProjectId`) act on real repositories and do persist. And the caller does not read the mutated object either — `resumeSession()` builds its own response before calling this, so nothing observes the lost writes at the call site.
+
+**Suggested fix — not a one-line swap.** The obvious move is `sessionStore.updateManaged(sessionId, {...})` (`src/session-store.ts:34`), which `Object.assign`s into the stored object. But the store holds a `ManagedSession` while this function was written against a `SessionResponse`, and the two disagree on types for the date fields:
+
+| Field | `ManagedSession` (`src/types.ts:78,80`) | `SessionResponse` (`src/types.ts:380`) |
+|---|---|---|
+| `firstMessageAt` | `Date` | `string` (ISO) |
+| `lastMessageAt` | `Date` | `string` (ISO) |
+
+The current code assigns `new Date(...).toISOString()` — correct for the response shape, wrong for the store. Porting it verbatim would put ISO strings where `managedToResponse` later calls `.toISOString()` on them, which throws. Convert to `Date` when writing to the store and let `managedToResponse` do the serialization, exactly as it already does for `startedAt`.
+
+Worth deciding at the same time whether the enrichment should reach the resume response at all. Today `resumeSession()` computes its response *before* calling this, so even a correct fix leaves the 201 body unenriched; a caller that wants the enriched shape must re-read after. Either re-read and return the enriched response, or document that the 201 is intentionally the pre-enrichment shape — the current arrangement is neither.
+
+**Done when:** After a resume, `sessionStore.getManaged(sessionId)` carries the enriched fields (assert `sessionName` and `projectId` specifically), the date fields are `Date` instances rather than strings, and a subsequent `GET /api/sessions/:id` serializes them without throwing. A regression test should fail if the write goes back to a copy — assert against the store, never against the object the function happens to hold.
+
+### The class, not just this instance
+
+Fixing only `enrichResumedSessionAsync` leaves the trap that produced it. `SessionStore` exposes two pairs of getters with **opposite mutation semantics and nothing in the types to tell them apart**:
+
+| Method | Returns | Mutating the result |
+|---|---|---|
+| `getManaged(id)` (`src/session-store.ts:45`) | `this.managed.get(id)` — the **live object** | changes the store |
+| `get(id, ptyAttachedIds)` (`:82`) | `managedToResponse(…)` — a **fresh copy** | changes nothing |
+| `listManaged()` (`:56`) | live references | changes the store |
+| `list(ptyAttachedIds)` (`:63`) | fresh copies | changes nothing |
+
+Worse, mutating a copy is *correct* in one context. `handleGetSession` (`src/server.ts:4132`) does exactly that — decorating the response with `failureReason` and the reconciled `lifecycle` before serving it — and that is the right use of a copy.
+
+So the codebase contains a normalised idiom, "get a session, mutate it, done", that is right when building a response and silently wrong when persisting state. The next person to copy `handleGetSession`'s shape into a persistence context reintroduces this bug, and nothing will object. That is how this one was written in the first place.
+
+**Prevention, in order of strength:**
+
+1. **Type-level (recommended).** Return `Readonly<SessionResponse>` from `get()` and `readonly Readonly<SessionResponse>[]` from `list()`. Every mutation of a copy becomes a compile error — including the one in `enrichResumedSessionAsync`, so the bug could not have been written. The two legitimate sites in `handleGetSession` build their own object instead (`{ ...session, failureReason, lifecycle }`), which reads better anyway. This is the only option that cannot regress.
+2. **Naming.** Rename `get`/`list` to `snapshot`/`snapshotAll` (or `toResponse`) so the copy semantics are visible at the call site. Cheap, but no compile-time guarantee.
+3. **A doc comment.** Near-zero value alone — this bug was written directly against a store that already behaved this way.
+
+Do (1). It is one signature change, two call sites in `handleGetSession` adjusted, plus the real fix above. Ship it as a single PR so the guard and the instance it catches land together.
 
 ---
 
