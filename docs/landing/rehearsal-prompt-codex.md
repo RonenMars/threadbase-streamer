@@ -6,9 +6,26 @@ permission to run `git` and `npm`.
 Companion: [`rehearsal-prompt-claude-code.md`](rehearsal-prompt-claude-code.md) — the same rehearsal
 for Claude Code. Plan being executed: [`../../LANDING-integration-to-main.md`](../../LANDING-integration-to-main.md).
 
-This prompt differs from the Claude Code one only in framing: every path and command is spelled
-out and the permission surface is stated up front, because Codex will not have loaded this repo's
-`CLAUDE.md` conventions.
+This prompt differs from the Claude Code one in two ways. Every path and command is spelled out and
+the permission surface is stated up front, because Codex will not have loaded this repo's
+`CLAUDE.md` conventions. And where the Claude Code prompt can point at skills and MCP servers —
+`integration-branch-pr-audit`, Serena for symbol lookups, the GitHub MCP — Codex has none of that
+layer, so the equivalent guidance is written out as plain instructions instead.
+
+## Before you run this
+
+- **Check out the integration branch and pull first.** The prompt has Codex read
+  `LANDING-integration-to-main.md` from the working tree, so a stale checkout gives it a stale plan
+  — and the section it would be missing is exactly the one that stops it silently skipping Groups
+  C and F.
+- **Substitute the `<today>` placeholders** in the branch and tag names, or tell it to. They appear
+  in `backup/integration-rehearsal-<today>`, `archive/integration-<today>` and
+  `rehearsal/main-<today>`.
+- **Give it a long session.** Groups A and A′ alone are ~19 rebase-and-squash cycles. The prompt
+  checkpoints after every group so an interrupted run resumes cleanly.
+- **Expect stale worktrees.** This repo has accumulated 40+, several on branches that no longer
+  exist upstream. `git worktree list` before starting; they are safe to remove and they make
+  `git branch -D` fail confusingly if left.
 
 ---
 
@@ -33,6 +50,18 @@ ABSOLUTE CONSTRAINTS
 5. The notes file must live OUTSIDE the repo during the run
    (../tb-streamer-landing-rehearsal/REHEARSAL-NOTES.md). Committing it into the rehearsal
    branch would corrupt the final tree comparison.
+
+ENVIRONMENT NOTES
+- There is no working TypeScript language server on this machine (the plugin is enabled but its
+  binary is absent from PATH). Type errors surface ONLY from `npm run lint`, which runs
+  `tsc --noEmit` followed by biome. Do not assume anything else is checking types for you.
+- When a rebase conflict raises a semantic question — did this signature gain a parameter, who
+  calls this renamed symbol — answer it by reading the file and grepping callers before resolving.
+  Guessing from the conflict hunk alone is how a landing goes green and wrong.
+- `gh pr diff` can return HTTP 406 on very large diffs in this repo. Fall back to
+  `git diff <base>...<head>` rather than treating the failure as "no changes".
+- Node version matters: use the version in `.nvmrc`. A newer Node picks up `better-sqlite3`
+  compiled for a different ABI and produces failures unrelated to any landing.
 
 STEP 0 — BACKUP
   /opt/homebrew/bin/git fetch origin --prune

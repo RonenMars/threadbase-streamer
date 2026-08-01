@@ -9,6 +9,22 @@ Why a rehearsal at all: the landing is ~80 units of work against a protected `ma
 runbook is written from static analysis. A local replay costs nothing to get wrong and converts
 every unknown into a written instruction for the session that does it for real.
 
+## Before you run this
+
+- **Check out the integration branch and pull first.** The prompt tells the agent to read
+  `LANDING-integration-to-main.md` from the working tree, so a stale checkout gives it a stale plan
+  — and the section it would be missing is exactly the one that stops it silently skipping Groups
+  C and F.
+- **Substitute the `<today>` placeholders** in the branch and tag names, or tell the agent to.
+  They appear in `backup/integration-rehearsal-<today>`, `archive/integration-<today>` and
+  `rehearsal/main-<today>`.
+- **Give it a long session.** Groups A and A′ alone are ~19 rebase-and-squash cycles. This is not
+  a single-burst task, and the prompt is written to checkpoint after every group so an interrupted
+  run resumes cleanly.
+- **Expect stale worktrees.** This repo has accumulated 40+ of them, several on branches that no
+  longer exist upstream. `git worktree list` before starting; they are safe to remove and they
+  make `git branch -D` fail confusingly if left.
+
 ---
 
 ```
@@ -29,6 +45,44 @@ so this rehearsal is the handoff: the next session will replay it against origin
 - Do NOT commit the notes file into the rehearsal branch. It would pollute the final tree
   comparison. Write it to ../tb-streamer-landing-rehearsal/REHEARSAL-NOTES.md (outside the repo)
   while working; only at the very end commit a copy into the repo on a fresh branch.
+
+## Tooling available to you
+
+Load these when they apply — do not load them all up front.
+
+- `integration-branch-pr-audit` (personal skill) — audits an integration branch against the repo's
+  PRs. This task's exact domain; read it before Group D triage and before the Phase 2 comparison.
+- `repo-branch-cleanup` (personal skill) — branch/worktree/stale-PR triage. Useful in Phase 0:
+  this repo has 40+ worktrees, several on branches deleted upstream.
+- `superpowers:using-git-worktrees` — worktree mechanics, which this rehearsal leans on throughout.
+- `superpowers:verification-before-completion` — run it before claiming any group landed clean.
+  The specific failure it prevents is reporting a group green on the strength of a lint pass you
+  did not actually read.
+- `superpowers:systematic-debugging` — when a landing breaks `npm test` and the cause is not
+  obvious from the diff.
+- `handoff` (personal skill) — if you run low on context mid-run, use it to write the handoff
+  before you lose the detail, then continue.
+- **Serena MCP** (`mcp__plugin_serena_serena__*`) — `find_symbol`, `find_referencing_symbols`.
+  The fastest way to answer the semantic questions rebase conflicts raise: whether a signature
+  gained a parameter, who calls a renamed symbol. Faster and more reliable here than grep.
+- **GitHub MCP** (`mcp__plugin_github_github__*`) — read-only PR metadata. Keep it read-only, same
+  as `gh`. Worth reaching for when `gh pr diff` returns HTTP 406 on a very large diff, which this
+  repo has hit before.
+
+Two traps in this environment specifically:
+
+- **There is no working TypeScript LSP here.** The `typescript-lsp` plugin is enabled but its
+  server binary is absent from `PATH`, so it silently does nothing. Type errors surface only from
+  `npm run lint` (`tsc --noEmit`) — do not assume an editor-grade diagnostic is watching.
+- **The user-scope `github` stdio MCP server is failing.** Use `gh` on the CLI or the
+  `plugin:github:github` HTTP server instead.
+- **Use the Node version in `.nvmrc`** for every `npm test` run. A newer Node loads
+  `better-sqlite3` built for a different ABI and fails in ways that have nothing to do with the
+  landing you are testing.
+
+Subagents are worth it for Group D — 58 commit subjects to read and classify is exactly the kind
+of read-only fan-out that parallelises safely. Do **not** parallelise anything that touches the
+rehearsal trunk: rebases and squashes stay strictly serial, per the runbook.
 
 ## Phase 0 — Backup and setup
 
