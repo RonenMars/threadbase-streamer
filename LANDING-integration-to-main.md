@@ -193,6 +193,25 @@ PR **#317** cherry-picks only its two genuinely-new commits (`3968cf3`, `031a942
 
 ---
 
+## Step 0.5 — Land `main`'s CI first *(added 2026-08-01)*
+
+**Do this before Group A.** Everything downstream is verified by `main`'s CI, and `main`'s CI is currently weaker than the integration branch's — so every PR landed before this step is checked less thoroughly than it will be afterwards.
+
+`main`'s `.github/workflows/ci.yml` has **no `smoke` job**: it runs ubuntu-only, while the repo ships Windows and macOS deploy scripts, has Windows-specific process discovery, and depends on node-pty, whose prebuilds differ per platform. That is precisely the coverage Group A's `#272` (Windows updater) and the discovery path-separator fixes need.
+
+[PR #340](https://github.com/RonenMars/threadbase-streamer/pull/340) ports the `smoke` job and widens the triggers to `[main, 'integration/**']`. It deliberately excludes the expanded `test:smoke` script and `__tests__/ci-workflow.test.ts`, both of which reference `pty-host` files that do not exist on `main` — those follow with Group E.
+
+**It also unblocks the ruleset.** `main protection` cannot require `Smoke (macos-latest)` / `Smoke (windows-latest)` until `main` can produce them. Adding them first is not merely useless — it makes **every** PR to `main` permanently unmergeable, which happened on 2026-08-01 and had to be reverted. See the warning in [`docs/testing/cross-platform-ci.md`](docs/testing/cross-platform-ci.md).
+
+Sequence:
+
+1. Merge #340.
+2. Confirm both Smoke contexts report on a real PR to `main`.
+3. Re-add them to the ruleset (Settings → Rules → `main protection` → Require status checks) — **the expanded names, never `Smoke (${{ matrix.os }})`**.
+4. Then start Step 1.
+
+---
+
 ## Step 1 — Land Group A, one PR at a time
 
 Per `CLAUDE.md` → "One PR at a time": rebase onto latest `main`, wait for green, squash-merge, then move to the next. A merged PR advances `main`, so the next is behind and must be rebased again.
@@ -286,7 +305,7 @@ npm run test:contracts
 npm run test:e2e
 ```
 
-**Per PR, in CI** — required green: `gate`, `setup`, `warm-caches`, `lint`, `build`, `smoke`, `test`. `smoke` runs a cross-OS matrix, so Windows-specific changes (`#272`, the discovery path-separator fixes) must be watched there specifically.
+**Per PR, in CI** — required green: `gate`, `setup`, `warm-caches`, `lint`, `build`, `smoke`, `test`. `smoke` runs a cross-OS matrix, so Windows-specific changes (`#272`, the discovery path-separator fixes) must be watched there specifically — **which requires Step 0.5 to have landed**, since `main` has no `smoke` job until then.
 
 **After the last PR lands** — confirm `main` runs:
 
