@@ -1601,13 +1601,15 @@ export class StreamerServer {
    * the automatic freshness path when the directory watcher marked the scanner
    * stale or shouldRefreshProjectsFromHdd detected disk drift.
    */
-  private async reconcileConversationsCacheFromDisk(): Promise<void> {
+  private async reconcileConversationsCacheFromDisk(
+    onProgress?: (scanned: number, total: number) => void,
+  ): Promise<void> {
     if (!this.cache) return;
-    // No warm-up gate here: the caller decides. Gating inside this method would
-    // also gate the routine background path, flipping the server into
-    // SERVER_WARMING_UP on every JSONL append. handleListConversations already
-    // rejects while warming up via rejectIfWarmingUp() at handler entry.
-    const scanner = await this.rescanForRefresh();
+    // No warm-up gate here: the caller decides. The cold-start path wraps this
+    // in withWarmup (nothing to serve, so 503 while building is correct); the
+    // routine background path must NOT gate, or every JSONL append flips the
+    // server into SERVER_WARMING_UP and the client flickers.
+    const scanner = await this.rescanForRefresh(onProgress);
     const metas = [...scanner.getMetadataCache().values()];
     try {
       this.cache.upsertFromScannerMeta(metas as any[]);
@@ -1690,12 +1692,19 @@ export class StreamerServer {
       if (canServeStale) {
         this.startBackgroundConversationReconcile();
       } else {
-        // Cold cache or explicit ?refresh=1: nothing to serve while it rebuilds,
-        // so gate on the warm-up state and the client shows "building history".
-        // The background path above must NOT gate, or every JSONL append flips
-        // the server into SERVER_WARMING_UP and the client flickers.
+        // Cold cache (or explicit refresh): nothing to serve, so gate with the
+        // warm-up state — the client shows the one-time "building history"
+        // screen instead of an empty list — and await the build. Emit throttled
+        // scan_progress so the client renders a live progress bar during the
+        // wait instead of a frozen one; the routine background path above stays
+        // silent (no onProgress) so normal-use polls never flicker a bar.
+        const shouldEmitProgress = createScanProgressThrottle();
         await this.withWarmup("conversation_refresh", () =>
-          this.reconcileConversationsCacheFromDisk(),
+          this.reconcileConversationsCacheFromDisk((scanned, total) => {
+            if (shouldEmitProgress(scanned, total)) {
+              this.wsHub.broadcast({ type: "scan_progress", scanned, total });
+            }
+          }),
         );
       }
     }
@@ -1984,7 +1993,9 @@ export class StreamerServer {
   // getFreshScanner() this does NOT discard the warm scanner. scannerReady is
   // only ever reassigned to a live scan promise (never nulled mid-scan), so the
   // getScanner() anti-infinite-loop guard is preserved.
-  private async rescanForRefresh(): Promise<ConversationScanner> {
+  private async rescanForRefresh(
+    onProgress?: (scanned: number, total: number) => void,
+  ): Promise<ConversationScanner> {
     // Let any in-flight scan finish first so we don't run two scans on the same
     // index concurrently.
     if (this.scannerReady) await this.scannerReady;
@@ -1999,6 +2010,7 @@ export class StreamerServer {
       ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
       ...this.codexScanOpts(),
       fullRescan: true,
+      ...(onProgress ? { onProgress } : {}),
     });
     await this.scannerReady;
     return scanner;
