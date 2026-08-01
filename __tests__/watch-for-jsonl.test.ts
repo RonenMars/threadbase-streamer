@@ -1,6 +1,8 @@
 // Integration tests for the watchForJsonl fallback:
-// When Claude resumes an existing conversation, it writes to a different UUID's
-// JSONL file. The server must wire that file for conversation_event streaming.
+// Claude `resume` APPENDS to the SAME JSONL with the SAME sessionId (observed on
+// Claude Code v2.1.215) — it does NOT write a new UUID's file, as this fallback
+// once assumed. The fallback therefore only binds a candidate whose identity
+// matches the session id, and must never capture a foreign conversation.
 
 // Capture pino logs before any module import so the baseLogger singleton
 // (created at logger.ts module-evaluation time) writes through our spy.
@@ -58,16 +60,6 @@ const API_KEY = "tb_test_watch_for_jsonl";
 function claudeProjectsDir(projectPath: string): string {
   const encoded = projectPath.replace(/[/\\:.]/g, "-");
   return join(homedir(), ".claude", "projects", encoded);
-}
-
-// Wait up to `ms` for `predicate` to return truthy, polling every 50ms.
-async function waitFor(predicate: () => boolean, ms = 3000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error("waitFor timed out");
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -163,7 +155,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
     expect(expectedPath).toContain([".claude", "projects"].join(sep));
   });
 
-  it("fallback path: wires a recently-modified JSONL when session file never appears", async () => {
+  it("fallback does NOT bind a foreign actively-written JSONL (P0.4)", async () => {
     // Connect WS before starting the session so the client is registered.
     const events: unknown[] = [];
     const ws = new WebSocket(`ws://localhost:${port}/ws?key=${API_KEY}`);
@@ -176,18 +168,19 @@ describe("watchForJsonl — conversation_event wiring", () => {
     });
     await new Promise<void>((r) => ws.on("open", r));
 
-    // Pre-create the "old" conversation JSONL with a line of content BEFORE
-    // starting the session. tryWire() runs synchronously during startSession()
-    // and finds this file (< 5s old, not named after sessionId → fallback).
-    // Since the file has content, tryWire immediately broadcasts the existing
-    // line via wsHub.broadcast → WS clients receive conversation_event.
+    // Pre-create a FOREIGN conversation JSONL (different stem, and its first
+    // line carries a different sessionId) touched < 5s ago. The old fallback
+    // bound whichever JSONL was most recently modified, capturing this foreign
+    // conversation and re-broadcasting its transcript under the new session id.
+    // The hardened fallback requires an identity match, so it must NOT bind it.
     const dir = claudeProjectsDir(projectPath);
     mkdirSync(dir, { recursive: true });
-    const existingConvId = "aaaabbbb-0000-0000-0000-000000000001";
-    const jsonlPath = join(dir, `${existingConvId}.jsonl`);
+    const foreignConvId = "aaaabbbb-0000-0000-0000-000000000001";
+    const jsonlPath = join(dir, `${foreignConvId}.jsonl`);
     writeFileSync(
       jsonlPath,
       `${JSON.stringify({
+        sessionId: foreignConvId,
         type: "user",
         uuid: "msg-1",
         timestamp: new Date().toISOString(),
@@ -198,13 +191,80 @@ describe("watchForJsonl — conversation_event wiring", () => {
 
     const sessionId = await startSession();
 
-    // tryWire() ran synchronously: fallback found existingConvId.jsonl,
-    // read its existing line, and broadcast conversation_event immediately.
-    await waitFor(() =>
+    // Give tryWire() (sync during start + any fsWatch re-fire) time to run.
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(jsonlWiredLog(sessionId)).toBe(false);
+    expect(
       (events as any[]).some((e) => e.type === "conversation_event" && e.sessionId === sessionId),
-    );
+    ).toBe(false);
 
     ws.close();
+  });
+
+  it("fallback binds a differently-named JSONL whose first-line sessionId matches", async () => {
+    const sessionId = await startSession();
+
+    // A resumed/renamed file whose stem differs but whose first-line sessionId
+    // equals our session id is a legitimate identity match. No primary
+    // {sessionId}.jsonl exists, so the fallback selects this file.
+    const dir = claudeProjectsDir(projectPath);
+    mkdirSync(dir, { recursive: true });
+    const otherStem = "ccccdddd-0000-0000-0000-000000000009";
+    const jsonlPath = join(dir, `${otherStem}.jsonl`);
+    writeFileSync(jsonlPath, `${JSON.stringify({ sessionId, cwd: projectPath, type: "user" })}\n`);
+
+    // Drive tryWire() synchronously rather than depending on fsWatch timing.
+    (server as any).watchForJsonl(sessionId, projectPath);
+
+    // sessionFileMap is set synchronously during wiring (the pino wired-log
+    // flushes asynchronously, so assert the in-memory state instead).
+    expect((server as any).sessionFileMap.get(sessionId)).toBe(jsonlPath);
+  });
+
+  it("readFirstLineSessionId returns the sessionId field, or null when absent/malformed", () => {
+    const dir = claudeProjectsDir(projectPath);
+    mkdirSync(dir, { recursive: true });
+
+    const withId = join(dir, "with-id.jsonl");
+    writeFileSync(withId, `${JSON.stringify({ sessionId: "sid-123", type: "user" })}\nmore\n`);
+    expect((server as any).readFirstLineSessionId(withId)).toBe("sid-123");
+
+    const withoutId = join(dir, "without-id.jsonl");
+    writeFileSync(withoutId, `${JSON.stringify({ type: "user", uuid: "x" })}\n`);
+    expect((server as any).readFirstLineSessionId(withoutId)).toBeNull();
+
+    const malformed = join(dir, "malformed.jsonl");
+    writeFileSync(malformed, "not json at all\n");
+    expect((server as any).readFirstLineSessionId(malformed)).toBeNull();
+  });
+
+  it("seeds the tail-watcher offset AFTER the pre-broadcast dump (no double-broadcast)", async () => {
+    const sessionId = await startSession();
+
+    // Create the primary {sessionId}.jsonl with existing content.
+    const dir = claudeProjectsDir(projectPath);
+    mkdirSync(dir, { recursive: true });
+    const jsonlPath = join(dir, `${sessionId}.jsonl`);
+    writeFileSync(jsonlPath, `${JSON.stringify({ sessionId, cwd: projectPath, type: "user" })}\n`);
+
+    // Spy on the dump (broadcastConversationLines) and the tail-watcher start
+    // (fileWatcher.watch). The fix seeds the offset only AFTER dumping, so the
+    // dump must be invoked before watch(); otherwise a line appended in the
+    // window between watch() and the dump ships twice.
+    const dumpSpy = vi
+      .spyOn(server as any, "broadcastConversationLines")
+      .mockImplementation(() => {});
+    const watchSpy = vi.spyOn((server as any).fileWatcher, "watch").mockImplementation(() => {});
+
+    (server as any).watchForJsonl(sessionId, projectPath);
+
+    expect(dumpSpy).toHaveBeenCalled();
+    expect(watchSpy).toHaveBeenCalledWith(jsonlPath);
+    expect(dumpSpy.mock.invocationCallOrder[0]).toBeLessThan(watchSpy.mock.invocationCallOrder[0]);
+
+    dumpSpy.mockRestore();
+    watchSpy.mockRestore();
   });
 
   it("fallback not triggered: stale JSONL (>5s old) is ignored", async () => {

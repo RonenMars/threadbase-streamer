@@ -25,7 +25,7 @@ import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir } from "os";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 import { createInterface } from "readline";
 import type { WebSocket } from "ws";
 import { type AgentClient, createAgentClient } from "./agent/agent-client";
@@ -88,18 +88,31 @@ import {
   shouldBroadcastQuestion,
 } from "./services/questions/questionBroadcast";
 import { resolveAnswer } from "./services/questions/resolveAnswer";
+import {
+  conversationBusy,
+  RESUME_BUSY_WINDOW_MS,
+  resolveResumeBusyWindowMs,
+} from "./services/sessions/conversationBusy";
 import { SessionStore } from "./session-store";
 import type {
   AskQuestion,
   DiscoveredProcess,
   PermissionOption,
   ServerConfig,
+  SessionActivity,
+  SessionResponse,
   SessionSortKey,
   SortOrder as SessionSortOrder,
   SessionStatus,
 } from "./types";
 
 import { saveUploadFile } from "./uploads";
+import {
+  canonicalizeFilePath,
+  canonicalLivePathSet,
+  joinStatCacheByNativePath,
+  toNativeFilePath,
+} from "./utils/canonicalizeFilePath";
 import { isCodexInjectedContext, toClientConversationLines } from "./utils/codexConversationLine";
 import { computeConversationEtag } from "./utils/conversationEtag";
 import { debounce } from "./utils/debounce";
@@ -116,6 +129,28 @@ const DEFAULT_SYSTEM_PROMPT =
 
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
+// A `running` session is deferred (not held) so a mid-response turn is never
+// interrupted. But a PTY that never settles back to waiting_input (e.g. its
+// last line was a status bar with no prompt marker) would re-arm the grace
+// timer forever and leak. Cap consecutive defers: after this many, hold anyway.
+export const GRACE_MAX_DEFERS = 4;
+
+// Upper bound on the process-discovery half of the resume collision probe.
+// Enumerating processes costs one CIM/wmic query per pid on Windows, so a
+// machine with several CLIs open can take seconds — unacceptable on a path the
+// user is waiting on. Past this we fall back to the jsonl_mtime signal alone.
+export const RESUME_DISCOVERY_TIMEOUT_MS = 750;
+
+// How long adopt waits for the external process to actually exit after SIGTERM
+// before giving up. Exceeding this means the takeover would spawn a second agent
+// alongside a live one, so adopt aborts instead.
+// How long a discovered-process list stays usable. Shared by the sessions list
+// and the resume collision probe so a resume can reuse a warm enumeration.
+const DISCOVERY_TTL_MS = 15_000;
+
+export const ADOPT_KILL_TIMEOUT_MS = 5_000;
+const ADOPT_KILL_POLL_MS = 100;
+
 // A completed refreshFile within this window is treated as fresh — a retry
 // storm on a live conversation collapses to one parse per window instead of
 // one per request.
@@ -128,6 +163,31 @@ const REFRESH_TTL_MS = 2000;
 // sessions. Ready normally lands well under this: Claude's quiet-checker and
 // Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
 const START_READY_TIMEOUT_MS = 10_000;
+
+// ─── External (non-PTY) live tails ───────────────────────────────────────────
+// A JSONL that changes in a watched project directory while NOT owned by any
+// PTY session belongs to an external agent (a terminal `claude`, another
+// streamer, an IDE). Tail it explicitly so mobile gets pushed transcript lines
+// for it instead of nothing.
+
+// A directory event only attaches a tail when the file was touched this
+// recently — the same "actively owned right now" window the resume collision
+// probe uses, so both features agree on what "live" means.
+export const EXTERNAL_TAIL_RECENCY_MS = RESUME_BUSY_WINDOW_MS;
+
+// Hard cap on concurrent external tails; attaching past it LRU-evicts the
+// least recently active one. Bounds chokidar handles on a machine with a large
+// project tree (an unbounded map would attach one per touched JSONL).
+export const EXTERNAL_TAIL_MAX = 32;
+
+// An external tail with no appended lines for this long is detached — the
+// external agent finished or moved on, and the directory watcher re-attaches
+// if it starts writing again.
+export const EXTERNAL_TAIL_IDLE_MS = 300_000; // 5 minutes
+
+// A JSONL that grew within this window reads as "active_writing"; older reads as
+// "quiet". Deliberately short — this is an inferred hint, not a status.
+export const EXTERNAL_ACTIVE_WRITING_MS = 30_000;
 
 // Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
 // runs in /api/conversations and /project-chats.
@@ -144,11 +204,33 @@ export class StreamerServer {
   private wsHub: WSHub;
   private fileWatcher: ConversationWatcher;
   private sessionFileMap = new Map<string, string>(); // sessionId → JSONL filePath
+  // canonical JSONL path → live tail on a file NO PTY session owns (an external
+  // agent is writing it). Deliberately separate from sessionFileMap so managed
+  // session semantics — terminal_output, session_update, question cards — are
+  // untouched: an external tail only ever pushes transcript lines.
+  private externalTails = new Map<string, { conversationId: string; lastActivityAt: number }>();
   // Per-file seq assignments from the most recent onNewLineSpans (offset index),
   // handed to the immediately-following onNewLines so it can stamp WS `seq` on
   // the matching conversation_events entries. Same read → same lines order.
   private pendingLineSeqs = new Map<string, (number | null)[]>();
-  private pendingQuestions = new Map<string, { toolUseId: string; questions: AskQuestion[] }>();
+  // `origin` records whether the pending question came from the live PTY-screen
+  // path (handleLiveQuestion) or a JSONL flush. A JSONL-derived question must
+  // never clobber a PTY-originated one for a DIFFERENT question — an external
+  // agent appending an AskUserQuestion into a shared conversation would
+  // otherwise misroute the answer into this streamer's PTY.
+  private pendingQuestions = new Map<
+    string,
+    { toolUseId: string; questions: AskQuestion[]; origin: "pty" | "jsonl" }
+  >();
+  // Sessions resumed past a detected collision (busy probe said busy, caller
+  // forced). JSONL-derived actionable question cards are suppressed for these
+  // because a line in the shared file may have been written by the other owner.
+  private contendedSessions = new Set<string>();
+  // conversationId → ms epoch when THIS streamer's PTY for it last went idle.
+  // Lets the resume collision probe tell our own trailing JSONL writes (a
+  // hold → resume round trip) apart from another owner's. Pruned on write so it
+  // cannot grow without bound across a long-lived process.
+  private selfPtyEndedAt = new Map<string, number>();
   // Content key of the AskUserQuestion currently broadcast for a session (from
   // either the rendered screen or JSONL), used to de-dupe the two paths: when
   // the screen detection fires first, the later JSONL flush of the same question
@@ -220,6 +302,9 @@ export class StreamerServer {
   private defaultEffort: "low" | "medium" | "high" | "xhigh" | "max";
   // Map of sessionId → grace timer; fires to kill PTY after WS disconnect
   private ptyGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Consecutive grace-timer defers for a still-`running` session (see
+  // GRACE_MAX_DEFERS). Reset when a subscriber reconnects or the PTY settles.
+  private ptyGraceDeferCounts = new Map<string, number>();
   // Map of sessionId → set of subscribed WS clients
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
   // Map of clientId → WS socket (populated by the "register" WS handshake)
@@ -368,41 +453,11 @@ export class StreamerServer {
       onNewLines: (filePath, lines) => {
         // One transactional cache write for the whole batch instead of per line.
         this.cache?.updateFromLines(filePath, lines);
+        let managed = false;
         for (const [sessionId, watchedPath] of this.sessionFileMap) {
           if (watchedPath === filePath) {
-            // toolUseId the client currently holds for this session (set by the
-            // live-screen path as `screen:…`, or a prior JSONL flush). Captured
-            // BEFORE the overwrite below so we can detect an id change.
-            const priorToolUseId = this.pendingQuestions.get(sessionId)?.toolUseId;
-            const { messages, pending } = questionsFromLines(sessionId, lines);
-            for (const p of pending) {
-              this.pendingQuestions.set(sessionId, p); // last pending wins
-              const t = setTimeout(() => {
-                if (this.pendingQuestions.get(sessionId)?.toolUseId === p.toolUseId) {
-                  this.cancelPendingQuestion(sessionId);
-                }
-              }, 60_000);
-              t.unref();
-            }
-            // De-dupe vs the live-screen path: if the rendered detection already
-            // broadcast this exact question (same content key), don't re-render —
-            // EXCEPT when the real JSONL toolUseId differs from the synthetic
-            // `screen:` id the client holds. The client answers with the id it
-            // was given; if it still has the screen id, resolveAnswer rejects the
-            // POST as tool_use_mismatch. Re-broadcasting the real id re-syncs the
-            // client (mapAskQuestionToBlock just replaces activeQuestion — the
-            // card re-renders identically) so answering works.
-            for (const m of messages) {
-              const key = questionContentKey(m.questions);
-              const broadcast = shouldBroadcastQuestion({
-                newContentKey: key,
-                lastContentKey: this.pendingQuestionKey.get(sessionId),
-                newToolUseId: m.toolUseId,
-                priorToolUseId,
-              });
-              this.pendingQuestionKey.set(sessionId, key);
-              if (broadcast) this.wsHub.broadcast(m);
-            }
+            managed = true;
+            this.processJsonlQuestions(sessionId, lines);
             // Additive batched event (one socket write) for newer clients. When
             // the offset index assigned seqs for this read, carry them parallel
             // to lines so a client can map each event to its message_index.
@@ -412,6 +467,12 @@ export class StreamerServer {
             this.broadcastConversationLines(sessionId, lines, seqs);
             break;
           }
+        }
+        // No PTY owns this file: it's an external tail (or nothing at all, in
+        // which case the call is a no-op). Transcript push only — never the
+        // managed-session events, and never a question card.
+        if (!managed) {
+          this.broadcastExternalTailLines(filePath, lines, this.pendingLineSeqs.get(filePath));
         }
         // Seqs are consumed for this read; drop them so a later read for a file
         // with no watched session can't reuse a stale mapping.
@@ -423,13 +484,18 @@ export class StreamerServer {
         // too: per-file fs.watch handles can die silently (2026-07-01 incident
         // — tails went permanently quiet while directory events kept flowing),
         // and the directory watcher is the survivor that can heal them.
-        this.fileWatcher.poke(filePath);
-        // Invalidate only the affected file's cache row immediately (cheap
-        // single-row delete; wiping the whole cache on every event would
-        // prevent the warm-up from persisting while active sessions write).
-        // skipIfTailed: this same append also drives the live-tail watcher's
-        // updateFromLines upsert; the two fire with no ordering guarantee, so
-        // never delete a row a live tail just wrote (CRITICAL #2).
+        const tailed = this.fileWatcher.poke(filePath);
+        // Nobody is tailing it yet — if an external agent is actively writing
+        // it, attach a tail so its transcript is pushed instead of silently
+        // waiting for the client to poll.
+        if (!tailed) this.maybeAttachExternalTail(filePath);
+        this.sweepIdleExternalTails();
+        // Upsert-or-leave: a change event NEVER deletes the cache row (skipIfTailed).
+        // This same append also drives the live-tail watcher's updateFromLines
+        // upsert; the two fire with no ordering guarantee, so deleting here would
+        // wipe a row the live tail just wrote (CRITICAL #2) — and a refresh-created
+        // untailed row would vanish on its next append. The debounced rescan below
+        // re-derives metadata, so leaving the row loses nothing.
         this.cache?.invalidateByFilePath(filePath, { skipIfTailed: true });
         // Debounce the global scanner-staleness flip so a burst of directory
         // events during active sessions collapses into one rescan trigger
@@ -442,7 +508,20 @@ export class StreamerServer {
           event: "cache.directory_change",
         });
       },
+      onTruncated: (filePath) => {
+        // The file shrank below our offset — it is a different generation of
+        // content now, so every byte span we recorded for it is meaningless.
+        // Drop the index (and its parse state); the next read rebuilds from 0.
+        this.cache?.deleteFileIndex(filePath, ConversationCache.conversationIdForFile(filePath));
+        this.cache?.clearIndexParseState(filePath);
+        this.log.warn(`JSONL truncated/replaced; offset index dropped: ${filePath}`, {
+          filePath,
+          event: "tail.truncated",
+        });
+      },
       onFileDeleted: (filePath) => {
+        // The file is gone; an external tail on it can never fire again.
+        this.detachExternalTail(canonicalizeFilePath(filePath));
         const id = this.cache?.invalidateByFilePath(filePath);
         if (id)
           this.log.info(`Cache row invalidated after JSONL delete: ${id}`, {
@@ -528,6 +607,11 @@ export class StreamerServer {
           }
           // A gone PTY can never have an open gate; clear silently.
           this.pendingPermission.delete(session.id);
+          this.contendedSessions.delete(session.id);
+          // Remember that WE owned this conversation up to now, so a resume that
+          // follows a hold isn't mistaken for a collision with someone else
+          // (see conversationBusy's selfPtyEndedAt).
+          this.rememberSelfPtyEnded(session.id);
         }
         const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
         if (resp) {
@@ -777,6 +861,18 @@ export class StreamerServer {
     return new Set(this.ptyManager.listSessions().map((s) => s.id));
   }
 
+  // Record that our own PTY for `conversationId` just ended. Entries older than
+  // the busy window can never change a verdict, so drop them as we go rather
+  // than accumulating one per conversation for the process's lifetime.
+  private rememberSelfPtyEnded(conversationId: string): void {
+    const now = Date.now();
+    const cutoff = now - resolveResumeBusyWindowMs();
+    for (const [id, at] of this.selfPtyEndedAt) {
+      if (at < cutoff) this.selfPtyEndedAt.delete(id);
+    }
+    this.selfPtyEndedAt.set(conversationId, now);
+  }
+
   /**
    * Send a session_list to only the client that triggered this HTTP request
    * (identified by X-Client-Id header → registered WS socket). Falls back to
@@ -803,12 +899,14 @@ export class StreamerServer {
       this.sessionSubscribers.set(sessionId, subs);
     }
     subs.add(ws);
-    // Cancel any pending grace timer since someone is now watching
+    // Cancel any pending grace timer since someone is now watching. Reset the
+    // defer count too so the next disconnect starts a fresh defer budget.
     const existing = this.ptyGraceTimers.get(sessionId);
     if (existing) {
       clearTimeout(existing);
       this.ptyGraceTimers.delete(sessionId);
     }
+    this.ptyGraceDeferCounts.delete(sessionId);
   }
 
   private startGraceTimer(sessionId: string, delayMs: number): void {
@@ -823,16 +921,30 @@ export class StreamerServer {
         // it (SIGINT) would lose the in-flight answer. Re-arm the grace timer
         // and re-check after another grace period — it only becomes eligible
         // for hold once it settles back to waiting_input/idle.
+        //
+        // But bound the deferral: a PTY that never settles (its last line was a
+        // status bar with no prompt marker) would re-arm forever and leak.
+        // After GRACE_MAX_DEFERS consecutive defers, hold it anyway.
         const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
         if (resp?.status === "running") {
-          this.log.info(
-            `[grace] session ${sessionId} still running, deferring hold`,
-            { sessionId, event: "pty.grace_defer" },
+          const defers = (this.ptyGraceDeferCounts.get(sessionId) ?? 0) + 1;
+          if (defers <= GRACE_MAX_DEFERS) {
+            this.ptyGraceDeferCounts.set(sessionId, defers);
+            this.log.info(
+              `[grace] session ${sessionId} still running, deferring hold (${defers}/${GRACE_MAX_DEFERS})`,
+              { sessionId, event: "pty.grace_defer", defers, maxDefers: GRACE_MAX_DEFERS },
+              "pino",
+            );
+            this.startGraceTimer(sessionId, delayMs);
+            return;
+          }
+          this.log.warn(
+            `[grace] session ${sessionId} exceeded ${GRACE_MAX_DEFERS} defers, holding anyway`,
+            { sessionId, event: "pty.grace_defer_cap", defers, maxDefers: GRACE_MAX_DEFERS },
             "pino",
           );
-          this.startGraceTimer(sessionId, delayMs);
-          return;
         }
+        this.ptyGraceDeferCounts.delete(sessionId);
         this.sessionSubscribers.delete(sessionId);
         this.log.info(
           `[grace] killing idle PTY for ${sessionId}`,
@@ -843,6 +955,7 @@ export class StreamerServer {
         const held = this.sessionStore.get(sessionId, this.ptyAttachedIds());
         if (held) this.wsHub.broadcast({ type: "session_update", session: held });
       } else {
+        this.ptyGraceDeferCounts.delete(sessionId);
         this.sessionSubscribers.delete(sessionId);
       }
     }, delayMs);
@@ -897,7 +1010,12 @@ export class StreamerServer {
             {
               filterAgentConversations: !this.includeAgents,
               agentEntrypoints: this.agentEntrypoints,
-              onAgentFileDetected: (fp) => this.fileWatcher.unwatch(fp),
+              onAgentFileDetected: (fp) => {
+                this.fileWatcher.unwatch(fp);
+                // Release the external-tail slot too, otherwise an agent JSONL
+                // holds a capped slot forever with a watcher that's already closed.
+                this.externalTails.delete(canonicalizeFilePath(fp));
+              },
             },
           );
           if (!this.includeAgents) {
@@ -919,6 +1037,15 @@ export class StreamerServer {
           // and cache are invalidated without a restart. projectsDirs() is the
           // shared source of truth with findJsonlPath's degraded-mode discovery.
           for (const dir of this.projectsDirs()) {
+            this.fileWatcher.watchDirectory(dir);
+          }
+          // Codex rollouts too (P4.a). Previously only the Claude projects dirs
+          // were watched, so an externally-launched Codex session produced NO
+          // event at all — it never even flipped the scanner-stale flag, making
+          // it strictly pull-only. The roots are date-partitioned
+          // (<root>/YYYY/MM/DD), so watch the root and let chokidar recurse.
+          for (const dir of this.codexRoots) {
+            if (!existsSync(dir)) continue;
             this.fileWatcher.watchDirectory(dir);
           }
         } catch (err) {
@@ -1187,6 +1314,7 @@ export class StreamerServer {
     this.cache?.close();
     this.ptyManager.dispose();
     this.fileWatcher.dispose();
+    this.externalTails.clear();
     this.wsHub.dispose();
     this.pairTokens.dispose();
     if (this.dbPool) {
@@ -1374,10 +1502,9 @@ export class StreamerServer {
       const metas = [...scanner.getMetadataCache().values()];
       try {
         this.cache.upsertFromScannerMeta(metas as any[]);
-        const livePaths = new Set(
-          metas.map((m) => m.filePath).filter((p): p is string => Boolean(p)),
-        );
-        this.cache.reconcileDeletions(livePaths);
+        // Canonical, because reconcileDeletions compares against
+        // conversation_meta.file_path while the scanner's filePath is native.
+        this.cache.reconcileDeletions(canonicalLivePathSet(metas));
       } catch (err) {
         this.log.warn(
           `refresh reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1533,6 +1660,7 @@ export class StreamerServer {
       type: "conversation" as const,
       id: c.id,
       status: "idle" as const,
+      ownership: "historical" as const,
       ptyAttached: false,
       projectId: c.projectId ?? undefined,
       projectPath: c.projectPath ?? "",
@@ -1561,23 +1689,26 @@ export class StreamerServer {
     previousScanner: ConversationScanner | null,
   ): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> | undefined {
     if (!this.cache) return undefined;
+    // The scanner looks statCache entries up by its own ConversationMeta
+    // .filePath, which is native-separator. Cache rows are canonical. So every
+    // join below compares canonical forms, but the returned map is always keyed
+    // native — otherwise the scanner misses every entry on Windows and silently
+    // re-parses every conversation on each rescan.
     if (!previousScanner) {
       const persisted = this.cache.getScannerStatCache();
-      return persisted.size > 0 ? persisted : undefined;
+      if (persisted.size === 0) return undefined;
+      const nativeKeyed = new Map<string, { stat: FileStatEntry; meta: ConversationMeta }>();
+      for (const [canonicalPath, entry] of persisted) {
+        nativeKeyed.set(toNativeFilePath(canonicalPath), entry);
+      }
+      return nativeKeyed;
     }
     const dbStats = this.cache.getFileStats();
     if (dbStats.size === 0) return undefined;
-    const metaByPath = new Map<string, ConversationMeta>();
-    if (previousScanner) {
-      for (const meta of previousScanner.getMetadataCache().values()) {
-        if (meta.filePath) metaByPath.set(meta.filePath, meta);
-      }
-    }
-    const statCache = new Map<string, { stat: FileStatEntry; meta: ConversationMeta }>();
-    for (const [filePath, stat] of dbStats) {
-      const meta = metaByPath.get(filePath);
-      if (meta) statCache.set(filePath, { stat, meta });
-    }
+    const statCache = joinStatCacheByNativePath(
+      previousScanner.getMetadataCache().values(),
+      dbStats,
+    );
     return statCache.size > 0 ? statCache : undefined;
   }
 
@@ -1800,6 +1931,176 @@ export class StreamerServer {
     for (const line of clientLines) {
       this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
     }
+  }
+
+  // ─── External (non-PTY) live tails ───────────────────────────────
+
+  /** True when a managed (PTY) session owns the tail for this canonical path. */
+  private isManagedTailPath(key: string): boolean {
+    for (const watchedPath of this.sessionFileMap.values()) {
+      if (canonicalizeFilePath(watchedPath) === key) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Attach a live tail to a JSONL nobody is tailing yet, when it was touched
+   * recently enough to look actively written by an external agent. Capped at
+   * EXTERNAL_TAIL_MAX with LRU eviction.
+   */
+  private maybeAttachExternalTail(filePath: string): void {
+    if (!filePath.endsWith(".jsonl")) return;
+    const key = canonicalizeFilePath(filePath);
+    if (this.externalTails.has(key)) return;
+    // A managed session's tail is owned by the PTY path; never shadow it.
+    if (this.isManagedTailPath(key)) return;
+
+    let mtimeMs: number;
+    try {
+      mtimeMs = statSync(filePath).mtimeMs;
+    } catch {
+      return; // unlink event, or unreadable — nothing to tail
+    }
+    const now = Date.now();
+    // Only the UPPER bound matters: a just-written file can carry an mtime a
+    // few ms in the future (timestamp granularity / clock skew).
+    if (now - mtimeMs > EXTERNAL_TAIL_RECENCY_MS) return;
+
+    this.evictExternalTailsIfNeeded();
+    // The real conversation id is resolved from the cache row on the first
+    // broadcast (codex rollout files aren't named after their id); the filename
+    // stem is only a placeholder until then.
+    this.externalTails.set(key, {
+      conversationId: ConversationCache.conversationIdForFile(key),
+      lastActivityAt: now,
+    });
+    this.fileWatcher.watch(filePath);
+    this.log.debug?.(`External tail attached: ${filePath}`, {
+      filePath,
+      tails: this.externalTails.size,
+      event: "external_tail.attach",
+    });
+  }
+
+  /** Stop tailing an external file and drop its bookkeeping. */
+  private detachExternalTail(key: string): void {
+    if (!this.externalTails.delete(key)) return;
+    this.fileWatcher.unwatch(key);
+    this.log.debug?.(`External tail detached: ${key}`, {
+      filePath: key,
+      event: "external_tail.detach",
+    });
+  }
+
+  /** Make room for one more tail by evicting the least recently active ones. */
+  private evictExternalTailsIfNeeded(): void {
+    while (this.externalTails.size >= EXTERNAL_TAIL_MAX) {
+      let lruKey: string | null = null;
+      let lruAt = Number.POSITIVE_INFINITY;
+      for (const [key, entry] of this.externalTails) {
+        // A path a PTY session has since adopted is no longer ours: release the
+        // bookkeeping WITHOUT closing the watcher the managed path now owns.
+        if (this.isManagedTailPath(key)) {
+          this.externalTails.delete(key);
+          return;
+        }
+        if (entry.lastActivityAt < lruAt) {
+          lruAt = entry.lastActivityAt;
+          lruKey = key;
+        }
+      }
+      if (!lruKey) return;
+      this.detachExternalTail(lruKey);
+    }
+  }
+
+  /**
+   * INFERRED activity for an externally-owned conversation, derived purely from
+   * how recently its JSONL grew (the external tail's bookkeeping). Returns
+   * undefined when we hold no tail for it, so a session we know nothing about
+   * reports no activity rather than a fabricated "quiet".
+   *
+   * This can never distinguish a generating agent from one blocked on a
+   * permission gate — gates render on the PTY screen and never reach the JSONL —
+   * which is why it is a separate field and not folded into `status`.
+   */
+  private externalActivityFor(
+    conversationId: string,
+    now = Date.now(),
+  ): SessionActivity | undefined {
+    for (const entry of this.externalTails.values()) {
+      if (entry.conversationId !== conversationId) continue;
+      return {
+        state:
+          now - entry.lastActivityAt <= EXTERNAL_ACTIVE_WRITING_MS ? "active_writing" : "quiet",
+        lastEventAt: new Date(entry.lastActivityAt).toISOString(),
+        source: "jsonl",
+      };
+    }
+    return undefined;
+  }
+
+  /** Attach inferred `activity` to externally-owned sessions in a response set. */
+  private withExternalActivity(sessions: SessionResponse[]): SessionResponse[] {
+    if (this.externalTails.size === 0) return sessions;
+    const now = Date.now();
+    return sessions.map((s) => {
+      if (s.ownership !== "external") return s;
+      const activity = this.externalActivityFor(s.conversationId ?? s.id, now);
+      return activity ? { ...s, activity } : s;
+    });
+  }
+
+  /** Detach external tails idle past EXTERNAL_TAIL_IDLE_MS. */
+  private sweepIdleExternalTails(now = Date.now()): void {
+    for (const [key, entry] of [...this.externalTails]) {
+      if (this.isManagedTailPath(key)) {
+        // Adopted by a PTY session — release bookkeeping, keep the watcher.
+        this.externalTails.delete(key);
+        continue;
+      }
+      if (now - entry.lastActivityAt > EXTERNAL_TAIL_IDLE_MS) this.detachExternalTail(key);
+    }
+  }
+
+  /**
+   * Push appended lines from an externally-owned conversation. Reuses the exact
+   * conversation_events / conversation_event shapes mobile already consumes,
+   * keyed by the conversation UUID — an external session has no PTY, so it must
+   * never produce terminal_output / terminal_replay / session_ready, and never a
+   * session_update whose session.id is a conversation UUID (that would mint a
+   * phantom session row in the mobile cache). Question cards are likewise never
+   * derived here: with no PTY there is nothing that could deliver an answer.
+   */
+  private broadcastExternalTailLines(
+    filePath: string,
+    lines: string[],
+    seqs?: (number | null)[] | null,
+  ): void {
+    const key = canonicalizeFilePath(filePath);
+    const entry = this.externalTails.get(key);
+    if (!entry) return;
+    entry.lastActivityAt = Date.now();
+
+    // Resolve the id from the cache row updateFromLines just wrote. Absent means
+    // nothing recordable landed (or the batch was an agent JSONL, whose row is
+    // deleted) — either way there is nothing to push.
+    const conversationId = this.cache?.getIdByFilePath(key);
+    if (!conversationId) return;
+    entry.conversationId = conversationId;
+
+    this.broadcastConversationLines(conversationId, lines, seqs);
+
+    // List-row refresh hint so clients don't have to poll ?refresh=1 to notice
+    // an external conversation advancing.
+    const meta = this.cache?.getMetaById(conversationId);
+    this.wsHub.broadcast({
+      type: "conversation_updated",
+      conversationId,
+      messageCount: meta?.messageCount ?? 0,
+      lastActivity: meta?.lastActivity ?? new Date().toISOString(),
+      ownership: "external",
+    });
   }
 
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
@@ -2407,7 +2708,6 @@ export class StreamerServer {
   }
 
   private async handleListSessions(url: URL, res: ServerResponse): Promise<void> {
-    const DISCOVERY_TTL_MS = 15_000;
     const now = Date.now();
 
     if (!this.discoveryCache || now - this.discoveryCache.fetchedAt >= DISCOVERY_TTL_MS) {
@@ -2430,7 +2730,7 @@ export class StreamerServer {
       url.searchParams.has("status");
 
     if (!hasPaginationParams) {
-      json(res, 200, this.sessionStore.list(this.ptyAttachedIds()));
+      json(res, 200, this.withExternalActivity(this.sessionStore.list(this.ptyAttachedIds())));
       return;
     }
 
@@ -2442,6 +2742,7 @@ export class StreamerServer {
 
     try {
       const page = this.sessionStore.paginate(this.ptyAttachedIds(), parsed.query);
+      page.sessions = this.withExternalActivity(page.sessions);
       json(res, 200, page);
     } catch (err) {
       if (err instanceof Error && err.message === "INVALID_CURSOR") {
@@ -2474,7 +2775,6 @@ export class StreamerServer {
   }
 
   private async handleResume(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    this.discoveryCache = null;
     const body = await readBody(req);
     // Accept both sessionId (new) and conversationId (legacy alias)
     const sessionId: string | undefined = body.sessionId ?? body.conversationId;
@@ -2519,11 +2819,79 @@ export class StreamerServer {
       return;
     }
 
+    // Pre-flight collision check: refuse to resume a conversation that looks
+    // actively owned elsewhere, unless the caller forces it. Runs AFTER the
+    // hasSession early-return above (a session this streamer already owns still
+    // returns 200). NOTE: this is a one-directional pre-flight guard only —
+    // once this streamer holds the PTY it cannot prevent an external terminal
+    // from attaching to the same conversation afterwards.
+    // Process enumeration is SLOW on Windows (one CIM/wmic query per candidate
+    // pid, seconds when several CLIs are open) and resume is latency-sensitive —
+    // the user is waiting on a spawn. Bound it: past the deadline we proceed
+    // with no process signals rather than making every resume pay the worst
+    // case. jsonl_mtime is the primary signal and is a single stat, so the probe
+    // stays useful even when discovery is dropped.
+    let discovered: DiscoveredProcess[] = [];
+    // Prefer the list GET /api/sessions already keeps warm (15s TTL). A slightly
+    // stale process list is fine for a heuristic pre-flight check, and mobile
+    // polls sessions often enough that this is usually a free hit — enumerating
+    // afresh here made every resume pay seconds of wmic (observed: 4.3s).
+    const cached = this.discoveryCache;
+    if (cached && Date.now() - cached.fetchedAt < DISCOVERY_TTL_MS) {
+      discovered = cached.entries;
+    } else {
+      try {
+        discovered = await Promise.race([
+          discoverClaudeProcesses(),
+          new Promise<DiscoveredProcess[]>((resolve) =>
+            setTimeout(() => resolve([]), RESUME_DISCOVERY_TIMEOUT_MS).unref?.(),
+          ),
+        ]);
+        // Only cache a real enumeration — a timeout resolves [] and must not be
+        // remembered as "no processes are running".
+        if (discovered.length > 0) {
+          this.discoveryCache = { entries: discovered, fetchedAt: Date.now() };
+        }
+      } catch {
+        // Discovery is best-effort; the jsonl_mtime signal still applies.
+      }
+    }
+    const busy = conversationBusy({
+      conversationId: sessionId,
+      projectPath,
+      jsonlPath,
+      discovered,
+      windowMs: resolveResumeBusyWindowMs(),
+      selfPtyEndedAt: this.selfPtyEndedAt.get(sessionId) ?? null,
+    });
+    if (busy.busy && body.force !== true) {
+      json(res, 409, {
+        error: "This conversation looks active in another session",
+        code: "CONVERSATION_BUSY",
+        detectedBy: busy.detectedBy,
+        lastActivityMs: busy.lastActivityMs,
+        likelyOwner: busy.likelyOwner,
+      });
+      return;
+    }
+    if (busy.busy) {
+      // Forced past a detected collision — mark the session so JSONL-derived
+      // question cards from the shared file are suppressed (they may be authored
+      // by the other owner). Cleared when the PTY settles to idle.
+      this.contendedSessions.add(sessionId);
+    }
+
     // Same provider-resolution fallback as the conversation-detail path
     // (server.ts ~1685): `conv` (the full Conversation shape) doesn't carry
     // provider, so fall back to the cached metadata, then default to Claude.
     const cachedConvMeta = this.cache?.getMetaById(sessionId);
     const provider = coerceProviderForRunner((conv as any)?.provider ?? cachedConvMeta?.provider);
+
+    // We are about to change what is running, so the discovered-process snapshot
+    // is now stale — drop it so the next sessions list re-enumerates. Done AFTER
+    // the collision probe, which wants the warm list (a fresh enumeration there
+    // costs seconds of wmic on Windows and resume is latency-sensitive).
+    this.discoveryCache = null;
 
     const session = await this.ptyManager.start(sessionId, {
       provider,
@@ -2695,6 +3063,64 @@ export class StreamerServer {
     }
   }
 
+  // Store + broadcast AskUserQuestion cards found in a JSONL batch for a watched
+  // session. Two P0 safety guards on top of the screen/JSONL de-dupe:
+  //   (a) contended file → suppress JSONL-derived cards entirely (a line may be
+  //       the OTHER owner's question); the streamer's own PTY questions still
+  //       arrive via the live-screen path (handleLiveQuestion), not suppressed.
+  //   (b) a JSONL question must never clobber a PTY-screen question that is a
+  //       DIFFERENT question — answering it would type into this streamer's PTY.
+  //       Same-content re-syncs (screen synthetic id → real toolUseId) still pass.
+  private processJsonlQuestions(sessionId: string, lines: string[]): void {
+    // toolUseId the client currently holds for this session (set by the
+    // live-screen path as `screen:…`, or a prior JSONL flush). Captured BEFORE
+    // the overwrite below so we can detect an id change.
+    const priorPending = this.pendingQuestions.get(sessionId);
+    const priorToolUseId = priorPending?.toolUseId;
+    const contended = this.contendedSessions.has(sessionId);
+    const priorPtyKey =
+      priorPending?.origin === "pty" ? questionContentKey(priorPending.questions) : null;
+    const foreignVsPty = (questions: AskQuestion[]): boolean =>
+      priorPtyKey !== null && questionContentKey(questions) !== priorPtyKey;
+    const { messages, pending } = questionsFromLines(sessionId, lines);
+    for (const p of pending) {
+      if (contended || foreignVsPty(p.questions)) continue;
+      // Preserve a same-question re-sync's "pty" origin so a later foreign JSONL
+      // question still can't clobber it.
+      const origin: "pty" | "jsonl" =
+        priorPtyKey !== null && questionContentKey(p.questions) === priorPtyKey ? "pty" : "jsonl";
+      this.pendingQuestions.set(sessionId, { ...p, origin }); // last pending wins
+      const t = setTimeout(() => {
+        if (this.pendingQuestions.get(sessionId)?.toolUseId === p.toolUseId) {
+          this.cancelPendingQuestion(sessionId);
+        }
+      }, 60_000);
+      t.unref();
+    }
+    // De-dupe vs the live-screen path: if the rendered detection already
+    // broadcast this exact question (same content key), don't re-render —
+    // EXCEPT when the real JSONL toolUseId differs from the synthetic `screen:`
+    // id the client holds. The client answers with the id it was given; if it
+    // still has the screen id, resolveAnswer rejects the POST as
+    // tool_use_mismatch. Re-broadcasting the real id re-syncs the client
+    // (mapAskQuestionToBlock just replaces activeQuestion — the card re-renders
+    // identically) so answering works.
+    for (const m of messages) {
+      // Same suppression as the pending loop: never render a JSONL card for a
+      // contended file, nor a foreign question over a live PTY one.
+      if (contended || foreignVsPty(m.questions)) continue;
+      const key = questionContentKey(m.questions);
+      const broadcast = shouldBroadcastQuestion({
+        newContentKey: key,
+        lastContentKey: this.pendingQuestionKey.get(sessionId),
+        newToolUseId: m.toolUseId,
+        priorToolUseId,
+      });
+      this.pendingQuestionKey.set(sessionId, key);
+      if (broadcast) this.wsHub.broadcast(m);
+    }
+  }
+
   private cancelPendingQuestion(sessionId: string): void {
     const pq = this.pendingQuestions.get(sessionId);
     if (!pq) return;
@@ -2712,7 +3138,7 @@ export class StreamerServer {
     const key = questionContentKey(questions);
     if (this.pendingQuestionKey.get(sessionId) === key) return; // already shown
     const toolUseId = `screen:${sessionId}:${key.length}`;
-    this.pendingQuestions.set(sessionId, { toolUseId, questions });
+    this.pendingQuestions.set(sessionId, { toolUseId, questions, origin: "pty" });
     this.pendingQuestionKey.set(sessionId, key);
     this.wsHub.broadcast({ type: "question", sessionId, toolUseId, questions });
   }
@@ -2940,8 +3366,47 @@ export class StreamerServer {
       return;
     }
 
-    // Kill the external process
+    // Refuse BEFORE killing anything if we could not resolve where the process
+    // is running. Adopt is destructive-then-restorative, so every reason it
+    // cannot restore has to be checked first: Windows exposes no process CWD
+    // (neither CIM nor wmic carries it), and spawning the replacement with an
+    // empty cwd fails outright. Killing first and discovering this after would
+    // destroy the user's session with nothing to put back in its place.
+    if (!projectPath) {
+      this.log.warn("adopt: refusing, working directory unknown", {
+        event: "adopt.no_project_path",
+        sessionId,
+        pid: discSession.pid,
+      });
+      json(res, 400, {
+        error:
+          "Cannot take over this session: its working directory could not be determined on this platform",
+        code: "ADOPT_NO_PROJECT_PATH",
+      });
+      return;
+    }
+
+    // Kill the external process and WAIT for it to actually go. SIGTERM is
+    // asynchronous: spawning `claude --resume` on the same conversation before
+    // the old process is gone leaves two agents appending to one JSONL — the
+    // interleaved-transcript state this codebase has no way to repair. If it
+    // outlives the grace period we abort rather than knowingly create that.
     this.ptyManager.killPid(discSession.pid);
+    const exited = await waitForProcessExit(discSession.pid, ADOPT_KILL_TIMEOUT_MS);
+    if (!exited) {
+      this.log.warn("adopt: external process did not exit; refusing to double-write", {
+        event: "adopt.kill_timeout",
+        sessionId,
+        pid: discSession.pid,
+      });
+      json(res, 409, {
+        error:
+          "The existing process did not exit; not starting a second agent on this conversation",
+        code: "ADOPT_KILL_TIMEOUT",
+        pid: discSession.pid,
+      });
+      return;
+    }
 
     // Start a new managed session, resuming the conversation
     const session = await this.ptyManager.start(convId, {
@@ -3148,6 +3613,23 @@ export class StreamerServer {
     }
   }
 
+  // Read just the `sessionId` field from a JSONL's first line, used by the
+  // watchForJsonl fallback to confirm a candidate file's identity before
+  // binding it. Reads only up to the first newline so a large actively-written
+  // file isn't slurped in full.
+  private readFirstLineSessionId(filePath: string): string | null {
+    try {
+      const content = readFileSync(filePath, "utf8");
+      const nl = content.indexOf("\n");
+      const firstLine = nl === -1 ? content : content.slice(0, nl);
+      if (!firstLine.trim()) return null;
+      const obj = JSON.parse(firstLine);
+      return typeof obj.sessionId === "string" ? obj.sessionId : null;
+    } catch {
+      return null;
+    }
+  }
+
   // Watch the project directory for the JSONL file Claude creates for sessionId.
   // Once found, wire up structured event streaming. No rekeying needed — the UUID
   // was passed to Claude via --session-id so the filename matches from the start.
@@ -3180,18 +3662,29 @@ export class StreamerServer {
       // Primary: Claude named the file after the session UUID
       let resolvedFilePath = existsSync(filePath) ? filePath : null;
 
-      // Fallback: Claude resumed an existing conversation — the JSONL it writes
-      // to will be a different UUID. Pick the most recently modified JSONL in
-      // the directory that was touched within the last 5 seconds (session just started).
+      // Fallback: the `${sessionId}.jsonl` file hasn't appeared yet. Only bind a
+      // candidate whose identity actually matches this session — its filename
+      // stem OR its first-line `sessionId` field must equal our session id.
+      // Claude 'resume' APPENDS to the SAME file with the SAME sessionId
+      // (observed on Claude Code v2.1.215); the previous "resume writes a NEW
+      // UUID file" assumption let this bind whichever JSONL was most recently
+      // touched — capturing an actively-written FOREIGN conversation and
+      // re-broadcasting its whole transcript under our session id. mtime is now
+      // only a tiebreaker among already-matching candidates.
       if (!resolvedFilePath && existsSync(projectsDir)) {
         try {
           const now = Date.now();
-          const recent = readdirSync(projectsDir)
+          const match = readdirSync(projectsDir)
             .filter((f) => f.endsWith(".jsonl"))
             .map((f) => ({ f, mtime: statSync(join(projectsDir, f)).mtimeMs }))
             .filter(({ mtime }) => now - mtime < 5_000)
+            .filter(
+              ({ f }) =>
+                basename(f, ".jsonl") === sessionId ||
+                this.readFirstLineSessionId(join(projectsDir, f)) === sessionId,
+            )
             .sort((a, b) => b.mtime - a.mtime)[0];
-          if (recent) resolvedFilePath = join(projectsDir, recent.f);
+          if (match) resolvedFilePath = join(projectsDir, match.f);
         } catch {
           /* ignore */
         }
@@ -3201,11 +3694,14 @@ export class StreamerServer {
 
       cleanup();
       this.sessionFileMap.set(sessionId, resolvedFilePath);
-      this.fileWatcher.watch(resolvedFilePath);
 
       // Broadcast any lines already written before the watcher started — Claude
       // can finish writing the JSONL in the same tick as the watcher wires up,
-      // so chokidar won't emit a change event for those lines.
+      // so chokidar won't emit a change event for those lines. Dump BEFORE
+      // starting the watcher: fileWatcher.watch() seeds its byte offset at the
+      // file's current size, so seeding before the dump makes the next append
+      // re-ship every dumped line (double broadcast). Seeding after the dump
+      // means the watcher starts at the post-dump EOF.
       try {
         const existing = readFileSync(resolvedFilePath, "utf8").split("\n").filter(Boolean);
         if (existing.length > 0) {
@@ -3214,6 +3710,7 @@ export class StreamerServer {
       } catch {
         /* ignore — file may not be readable yet; watcher will catch future writes */
       }
+      this.fileWatcher.watch(resolvedFilePath);
 
       if (this.scannerReady) {
         this.scannerStale = true;
@@ -3497,6 +3994,26 @@ export class StreamerServer {
 // cwd is gone, so callers still serve the full history — this only flags that
 // resume would fail and why. Returns optional meta fields older clients
 // ignore: cwd exists → resumable; gone → not resumable, with a
+// Poll until `pid` is gone (signal 0 throws ESRCH) or the timeout elapses.
+// Returns true when the process is confirmed gone. Used by adopt so a takeover
+// never spawns a second agent while the one it replaces is still alive.
+export async function waitForProcessExit(
+  pid: number,
+  timeoutMs: number,
+  pollMs: number = ADOPT_KILL_POLL_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true; // ESRCH (or no longer visible to us) — it is gone.
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
 // worktree-specific reason when the path was a git worktree (now removed).
 function classifyResumability(cwd: string | null | undefined): {
   resumable: boolean;
@@ -3519,6 +4036,9 @@ function conversationToResumableSession(c: ConversationListItem) {
     id: c.id,
     conversationId: c.id,
     status: "on_hold" as const,
+    // A cached conversation with no process behind it. Distinguishes "nobody is
+    // running this" from an external session that IS live (ownership "external").
+    ownership: "historical" as const,
     ptyAttached: false,
     projectId: c.projectId ?? undefined,
     projectPath: c.projectPath ?? "",

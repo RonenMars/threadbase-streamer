@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
+import { canonicalizeFilePath } from "../src/utils/canonicalizeFilePath";
 import { splitCompleteLines } from "../src/utils/fileIdentity";
 
 let dbDir: string;
@@ -59,7 +60,7 @@ beforeEach(() => {
     .prepare(
       "INSERT INTO conversation_meta (id, file_path, provider, message_count, updated_at) VALUES (?, ?, 'claude-code', 1, 1)",
     )
-    .run("the-conv-id", jsonlPath);
+    .run("the-conv-id", canonicalizeFilePath(jsonlPath));
 });
 
 afterEach(() => {
