@@ -787,21 +787,62 @@ $G rebase --onto main origin/pr/<parent>
 
 **Wave 3 — `#267`.** Only after wave 1+2. Its delta collapses from 75 files to ~8.
 
-**Strip by provenance, not by compilation.** `#267`'s head is a commit *on the integration branch*
-(Correction 2), so its diff carries content from PRs that have not landed. Everything not traceable
-to the PR's own range must be removed before it is pushed, or it lands on `main` under the wrong
-number.
+### Build the PR from its own commit. Do not strip its branch-wide diff.
 
-The rule that works is **provenance**:
+**This supersedes two rules adopted earlier in the same run. Both were wrong, and both were wrong in
+shape rather than in degree** — recorded as corrections, not refinements, because following either
+one carefully still lands foreign content on `main`.
+
+**Superseded rule 1 — "strip until it fails to compile."** Wrong shape. Compilation is not a
+completion signal, so the procedure it defines is **an open-ended search with no completion
+signal**: you remove what you can see, rebuild, and learn nothing about what remains. `#267`'s
+residual shrank **75 files → 9 → 8 → 4 → 3**, and *each step was caught by a different mechanism,
+the last by none*:
+
+| Step | What came out | Belongs to | Caught by |
+|---|---|---|---|
+| 75 → 9 | the stale three-dot merge-base | — | measuring with `merge --squash` |
+| 9 → 8 | three private methods + the `projectsDirs` option | `#237` | **compilation** |
+| 8 → 4 | four doc files, 656 lines | Group D `eab26e3`, `489a450` | **chasing a `+188` variance** — nothing automated |
+| 4 → 3 | `auto-reconcile without refresh=1` test block, 111 lines | `#237` | **CI tests only** — lint and build were green |
+| 3 → the truth | `refreshConversationCache` block, 2 imports, a comment | `#237` (`a0bfa77`) | **nothing** |
+
+The last row is the one that condemns the rule. That block **survived compilation, lint, a variance
+chase, and a full local test suite**, and surfaced only because a *test carried the feature's name* —
+`GET /api/conversations auto-reconcile without refresh=1` is `#237`'s title. Had `#237` named its
+tests differently, ~20 lines of it would have landed on `main` under `#267`.
+
+**Superseded rule 2 — "diff every resolved region against the integration branch, for every
+conflict."** Wrong shape, and worse than useless on the case that mattered. The branch answers
+*"what does this region look like once everything has landed"*, **never** *"whose content is this"*,
+and it cannot distinguish them because **it contains every PR by construction**. On `#267`'s `h3` it
+did not merely fail to help — **it argued for the wrong side**, endorsing `theirs` because the branch
+does contain `refreshConversationCache` there. It is `#237`'s.
+
+The branch is **a shape check on a resolution already attributed by provenance, and nothing more.**
+It is still worth running for that; it is not an authority on attribution.
+
+**What to do instead.** For any PR whose head sits on the integration branch, **identify the PR's own
+commit and build from it**:
 
 ```bash
-# for each file in the residual, find the commit that introduced it
+git checkout --detach origin/main
+git cherry-pick <the PR's own commit>
+```
+
+Bounded and exact, with a definite answer, versus subtracting foreign material from a branch-wide
+diff until nothing visible remains. Where a residual must still be attributed line by line, use
+provenance rather than the compiler:
+
+```bash
+git log --format='%h %s' -S'<distinctive line>' origin/integration/missing-prs-2026-07-23 -- <file>
 git log --format='%h %s' --diff-filter=A -1 refs/landing/pr/<N> -- <file>
 ```
 
-Anything tracing to a commit outside the PR's own range gets stripped. Use `npm run lint && npm test`
-**only to confirm you did not overshoot** into something the PR genuinely needs — never as the
-criterion itself.
+**The same principle was reached independently by the tb-mobile landing the same night**, from the
+opposite direction: its slice A cherry-picked the net end state rather than replaying 87 commits.
+Both are **construct what you want, rather than remove what you do not** — and both were adopted only
+after the subtractive version had already gone wrong once.
 
 The reason to state it that way is that the compile-based form was tried first and is incomplete.
 On the 2026-08-01 run, `#267` carried two distinct classes of foreign content:
@@ -812,7 +853,10 @@ On the 2026-08-01 run, `#267` carried two distinct classes of foreign content:
 | `docs/postmortems/2026-07-22-merge-all-open-prs-report.md`, `docs/runbooks/{2026-07-22-land-open-prs,README,_template}.md` — **656 lines** | Group D `eab26e3`, `489a450` | **nothing** — docs have no compile-time consequence |
 
 The docs half surfaced only because the residual measured `+855` where §2 predicted `+667` and
-someone chased the variance. **A criterion keyed on compilation is blind to every file that cannot
+someone chased the variance. **That variance is now closed, and its answer is the finding above:**
+§2's `8 files / +667` was never `#267`'s residual either — it was `#267` plus roughly 660 lines of
+`#237` and Group D. Both figures were measuring the same foreign content, in slightly different
+amounts, which is why comparing them looked like a 28% discrepancy rather than a category error. **A criterion keyed on compilation is blind to every file that cannot
 fail to compile** — docs, fixtures, schemas, workflow YAML, migrations that are not yet run.
 
 **That list is observed, not anticipated.** The tb-mobile landing running in parallel on the same
@@ -950,6 +994,33 @@ $G log --first-parent --no-merges --format='%h %s' --reverse main..origin/integr
 ```
 
 `#304` is never merged — `90c1c07` in wave 5 is its content; close it.
+
+### The three remaining integration-headed PRs — take each from its own commit
+
+`#297`, `#299` and `#304` are the rest of the set Correction 2 identifies: their heads are commits on
+the integration branch, so **their diffs against `main` are the branch, not the PR**. `#267` cost four
+rounds of stripping and two red CI runs before this was applied; these three do not need to repeat it.
+SHAs resolved and measured on 2026-08-01 so the next session does not re-derive them:
+
+| PR | Its own commit | Real size | Branch-wide diff (**do not use**) |
+|---|---|---|---|
+| `#297` | **`23e72ac`** `fix(server): dedup permission-gate broadcasts on unchanged repaints` | **3 files / +167** | 113 files / +13 646 |
+| `#299` | **`66fff5f`** `fix(ws): stamp terminal_output/terminal_replay with a per-session seq` | **3 files / +127** | 114 files / +13 773 |
+| `#304` | **`90c1c07`** `feat(config): add server feature-flag registry with boot-time resolution` | **15 files / +739** | 126 files / +15 036 |
+
+`#297`'s commit also exists on the branch as `fad5d5f` (it arrived via cherry-pick PR `#298`); either
+resolves to the same content, and `#298` is excluded from wave 7 for that reason.
+
+**`#304` is closed, not merged** — `90c1c07` is carried in wave 5 as Group D. The other two are
+cherry-picked in wave 8. In all three cases:
+
+```bash
+git checkout --detach origin/main
+git cherry-pick <sha>          # never `git merge --squash refs/landing/pr/<N>`
+```
+
+The ratio is the point: for `#297` the branch-wide diff is **~82× the real change**, and every one of
+those extra lines belongs to a PR with its own number.
 
 **Per-group verification:**
 
