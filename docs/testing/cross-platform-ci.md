@@ -47,11 +47,41 @@ Most of the suite is platform-independent, and running all of it three times wou
 
 `run-ci` caches `node_modules` with a key of `node-modules-v4-node<version>-<lockfile hash>` — **no OS component**. Reusing it on Windows would happily restore a Linux `node_modules`, including Linux `node-pty` binaries, and the job would then "pass" while testing nothing real. The smoke job installs directly instead.
 
-### Why it is `continue-on-error` for now
+### Why it is no longer `continue-on-error`
 
-The job is informational while the platforms are qualified. A genuine cross-platform failure should surface loudly without blocking every merge before the baseline is known green — the alternative is a red check everyone learns to ignore, which is worse than no check.
+**The advisory state was not harmless.** With `continue-on-error: true`, a failing job still rolls up as a *successful* check, so the PR reads `CLEAN` and merges with nothing objecting. That is not hypothetical: during #332 the Windows job went red on a genuine portability defect and was caught only because someone opened the runner log by hand. A check that cannot make a PR unstable is not a check.
 
-**Flip it to required** once it has run green for a sustained period. Track that decision here rather than leaving it implicit; a permanently advisory check is a check that does not exist.
+#### The evidence that settled it
+
+PR #332 expanded `test:smoke` with the real PTY-host socket/named-pipe suite and the Windows-only ConPTY lifetime probe. That expanded set has now run six times:
+
+| | macOS | Windows |
+|---|---|---|
+| Clean runs | **5/5** | **5/6** |
+
+The single Windows miss was the [initial #332 run](https://github.com/RonenMars/threadbase-streamer/actions/runs/30692355135), and it was a **true positive**: the named-pipe transport surfaced native `EADDRINUSE` while the test assumed the POSIX `already listening` shape. Every run after the fix has been clean on both platforms.
+
+The timing-sensitive ConPTY lifetime probe — the one most likely to flake, at ~5.4 s against a 20 s timeout on a shared runner — passed even in that red run. So there was never evidence that the new tests are flaky, and no reason to split them into a separate informational job.
+
+#### Decision: promoted, 2026-08-01
+
+The documented threshold was five clean runs per platform. Both have reached it, so `continue-on-error` is removed and `__tests__/ci-workflow.test.ts` now asserts its *absence*, so returning to the advisory state has to be a deliberate edit rather than a quiet one.
+
+**What promotion actually buys, and what it does not.** A red smoke job now turns the PR `UNSTABLE` instead of `CLEAN`, so a human or an agent following the "wait for green" convention sees the regression. It does not yet *block* the merge.
+
+`main` **is** protected — by a ruleset (`main protection`, id `17561930`), not by classic branch protection, which is why `GET /repos/:owner/:repo/branches/main/protection` answers `404 Branch not protected` and should not be trusted here. The ruleset requires a pull request (0 approvals), enforces linear history, forbids force-push and deletion, and requires these checks with `strict: true`:
+
+`Gate` · `Setup` · `Lint` · `Test (Node 20)` · `Test (Node 22)` · `Test (Node 24)`
+
+**`Smoke (macos-latest)` and `Smoke (windows-latest)` are not on that list** — nor is `Build`. That, not the absence of protection, is why a red smoke job still merges. Closing it is one edit to the existing ruleset (Settings → Rules → `main protection` → Require status checks), not a new configuration.
+
+Worth doing deliberately rather than immediately: `strict: true` means every added context also forces a rebase whenever the base moves, so each one costs churn. `Build` is the easy call — fast, deterministic, and it catches emit-only breakage `Lint` misses. The two Smoke contexts are better added after the expanded set has a longer green streak, since the ConPTY probe is the one plausible flake source and a blocking flake is the failure mode this whole section exists to avoid.
+
+**The larger gap is not on `main` at all.** The ruleset covers `refs/heads/main` only. Day-to-day work lands on `integration/missing-prs-2026-07-23`, which has no protection of any kind — no required checks, no linear history, no force-push guard. Mirroring the ruleset onto `refs/heads/integration/**` would close it, but the better answer is the one `LANDING-integration-to-main.md` argues for: land the work on `main` and stop maintaining a parallel unguarded trunk.
+
+This also means the usual objection to promoting early — a flaky gate that people learn to ignore — carries little weight here. The cost of a false red is someone reading a job log; the cost of staying advisory is another regression merging silently.
+
+If the ConPTY probe does start flaking on a loaded runner, the fix is the split-job option considered above: keep the timing-sensitive probe advisory and leave the rest required. Do not reach for a blanket `continue-on-error` again.
 
 ## What is still not covered
 

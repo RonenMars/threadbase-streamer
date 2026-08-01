@@ -48,6 +48,18 @@ describe("cross-platform smoke", () => {
     expect(PACKAGE.scripts["test:smoke"]).toContain("__tests__/pty-host-windows.test.ts");
   });
 
+  // Promoted once the expanded pty-host set cleared its documented threshold.
+  // Pinned rather than left implicit because the advisory state is exactly how
+  // a real Windows regression once reported itself as a passing check: with
+  // continue-on-error set, a red job still rolls up green and merges unnoticed.
+  it("does not let a platform regression report as a passing check", () => {
+    const smoke = WORKFLOW.slice(
+      WORKFLOW.indexOf("  smoke:"),
+      WORKFLOW.indexOf("  test:", WORKFLOW.indexOf("  smoke:")),
+    );
+    expect(smoke).not.toMatch(/continue-on-error:\s*true/);
+  });
+
   // One platform failing must not cancel the other; both results are wanted.
   it("does not fail fast across the platform matrix", () => {
     const smoke = WORKFLOW.slice(WORKFLOW.indexOf("  smoke:"));
