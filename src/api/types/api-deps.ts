@@ -9,6 +9,7 @@ import type { ConversationsRepository } from "../../db/repositories/conversation
 import type { ProjectsRepository } from "../../db/repositories/projects.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
 import type { LiveSessionManager } from "../../live-session-manager";
+import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
 import type { SessionStore } from "../../session-store";
 import type { WSHub } from "../../ws-hub";
 
@@ -24,6 +25,7 @@ export type ApiDeps = {
   sessionStore: SessionStore;
   wsHub: WSHub;
   cache: () => ConversationCache | null;
+  cacheMonitor: () => CacheIntegrityMonitor | null;
   projectsRepo: () => ProjectsRepository | null;
   conversationsRepo: () => ConversationsRepository | null;
   sessionsRepo: () => SessionsRepository | null;
