@@ -188,6 +188,11 @@ The runbook's Phase 0 order (`fetch --prune`, then fetch PR heads) is correct, b
 
 **Correction:** always `--prune` first, PR heads second, and assert a count afterwards.
 
+**Not sufficient on its own.** Ordering only protects against a prune *you* issue. The 2026-08-01
+real run had all 346 refs deleted by a background prune from outside the repo, minutes after the
+count assertion passed. Fetch the PR heads to `refs/landing/pr/*` instead — §8's Phase 0 carries
+the corrected command and the full diagnosis.
+
 ### D2 — the PR-head fetch fails on a dead submodule
 
 ```
@@ -607,13 +612,40 @@ G=/opt/homebrew/bin/git
 
 # ---- Phase 0: refs (order matters — see D1/D2) -----------------------------
 $G fetch origin --prune
-$G fetch origin --no-recurse-submodules '+refs/pull/*/head:refs/remotes/origin/pr/*'
-test "$($G for-each-ref refs/remotes/origin/pr/ | wc -l)" -gt 300 || exit 1
+# PR heads go to refs/landing/pr/*, NOT refs/remotes/origin/pr/* — see below
+$G fetch origin --no-recurse-submodules '+refs/pull/*/head:refs/landing/pr/*'
+test "$($G for-each-ref refs/landing/pr/ | wc -l)" -gt 300 || exit 1
 $G branch  backup/integration-<date> origin/integration/missing-prs-2026-07-23
 $G tag -m archive archive/integration-<date> origin/integration/missing-prs-2026-07-23
 # assert the backup equals the LIVE tip — a stale backup silently corrupts the final diff
 test "$($G rev-parse backup/integration-<date>)" = "$($G rev-parse origin/integration/missing-prs-2026-07-23)"
 ```
+
+**Fetch the PR heads to `refs/landing/pr/*`, not `refs/remotes/origin/pr/*`.** D1 established that
+`git fetch origin --prune` deletes every `origin/pr/*` ref, because the default fetch refspec does
+not cover them, and prescribed an ordering fix: prune first, PR heads second.
+
+**That ordering fix is not sufficient, because the prune is not necessarily yours.** During the
+2026-08-01 real run the Phase-0 count assertion passed at 346 refs and the same command returned
+**0** about two minutes later, with no fetch issued by the run in between. `fetch.prune` was unset,
+`remote.origin.fetch` held only `+refs/heads/*:refs/remotes/origin/*`, and there was no
+`maintenance.*` config, no scheduled git job in launchd or cron, and no repo hook — some process
+outside the repo (an editor auto-fetch is the likely candidate) prunes periodically. No command
+ordering can protect a ref namespace against a prune that fires an hour later.
+
+This matters more than a re-fetch would suggest. **Groups B, C and F are reachable only through
+these refs** — correction 5 in §7 establishes that Group C has no squash commits on the spine, so
+`pr/<N>` is the *sole* route to those seven PRs, and Group B's four and Group F's four sit behind
+the same fetch. An async prune mid-run makes eleven PRs silently unreachable: `git rev-parse` fails,
+a loop reports "not found", and nothing distinguishes that from a PR that was never fetched. It is
+the silent-drop failure the runbook's Risks table warns about, arriving from a direction neither the
+runbook nor D1 anticipated.
+
+`refs/landing/` sits outside `refs/remotes/`, so no `origin` prune can consider it stale. Same
+objects, prune-proof name, no config change, and nothing else in the repo is affected.
+
+**Everywhere below that names `origin/pr/<N>` — wave 2's `--onto` rebases and wave 4's Group C
+route — read `refs/landing/pr/<N>`.**
 
 **Wave 1 — independent PRs.** Rebase onto `main`, wait for green, squash-merge, one at a time.
 Order is free *except* `#237` (see below). `docs/BACKLOG.md` conflicts are expected on `#257`/`#258`/`#259`; the fixing PR's status wins.
