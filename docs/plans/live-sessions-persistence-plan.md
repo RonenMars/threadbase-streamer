@@ -338,6 +338,8 @@ Version handshake (a host built from a different streamer version is killed and 
 
 `SETSID` and controlling-terminal hangup are POSIX semantics; ConPTY teardown differs. Assert **observed** behaviour on Windows rather than assuming parity, and document whichever way it resolves — including "the host buys nothing on Windows", if that is the answer.
 
+Observed on `windows-latest` on 2026-08-01: a detached host preserved a real PowerShell ConPTY and all subsequent output after its launcher exited, while the real named-pipe suite covered status, output, disconnect, and reconnect. The host therefore buys continuity at the Windows process/ConPTY boundary; a real Claude or Codex `tb-streamer prod restart` through Task Scheduler and real-provider replay remain assumed, so `ptyHost` stays off by default.
+
 **Acceptance (phase):** with `ptyHost` on, `tb-streamer prod restart` mid-turn leaves the agent running; the restarted streamer reconnects, reports `lifecycle: "attached"`, and replays the pre-restart bytes; with the flag off, behaviour is byte-identical to Phase 5; a machine reboot still lands on the Phase 1 recovery path.
 
 ---
@@ -537,7 +539,7 @@ There is no separate tb-mobile plan document, and the streamer plan is deliberat
 | Flag | Default | Gates |
 |---|---|---|
 | `sessionRehydration` (flag) | **on** | Phase 1's recovered-session stubs in `/api/sessions`. Shipped on, with a kill switch, because it changes what the list contains. |
-| `ptyHost` (flag) | **off** | Phase 6. Off until Windows behaviour is qualified (6e). |
+| `ptyHost` (flag) | **off** | Phase 6. Windows ConPTY lifetime and named-pipe reconnect are qualified, but the flag stays off until a real provider restart through Task Scheduler is observed. |
 | `auto_resume_on_boot` (**server.yaml**, not a flag) | **false** | Phase 7. A user preference with a persisted answer, so it belongs beside `default_permission_mode` rather than in the feature-flag registry. Absent means "never asked" and triggers the one-time prompt (7b). |
 
 Both go in the existing registry (`src/feature-flags.ts`), get an env var (`THREADBASE_FEATURE_SESSION_REHYDRATION`, `THREADBASE_FEATURE_PTY_HOST`), and resolve at boot like every other flag. Phases 2–5 are pure correctness fixes and need no flag.
