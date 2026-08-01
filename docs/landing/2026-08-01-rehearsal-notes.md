@@ -160,10 +160,18 @@ Squash-merging either one on GitHub would land a large slice of Groups C, E and 
 > **A wrong `theirs` imports unlanded content under the wrong PR number; a wrong `ours` deletes
 > landed content. Both are silent, and only the oracle separates them.**
 >
-> Measured in the 2026-08-01 real run, which followed §8's ordering: row 8's judgement call never
-> arose at all (the extraction it collides with was not on `main`), and row 10's `h2–h4 ours` was
-> correct for `h4` and **wrong for `h3`**, where `ours` would have deleted `#267`'s
-> `refreshConversationCache` call. Neither `tsc` nor biome distinguishes those outcomes.
+> Measured in the 2026-08-01 real run, which followed §8's ordering: row 8's judgement call **never
+> arose at all** — the extraction it collides with was not yet on `main`, so both halves of `#234`
+> applied cleanly. Row 10's `h2–h4 ours` held for every hunk.
+>
+> **Do not use the integration branch to choose a side.** The real run first took `theirs` for
+> `#267`'s `h3` because the oracle showed that shape, and it was wrong: the
+> `refreshConversationCache` / `setCacheMetadata` block there is **`a0bfa77`, which is `#237`'s** —
+> so `theirs` imported an unlanded PR's work under `#267`'s number. The oracle answers *"what does
+> this region look like once everything has landed"*, **not** *"whose content is this"*, and it
+> cannot tell the two apart because by construction it contains every PR. Choose the side by
+> **provenance** (`git log -S'<distinctive line>' <branch> -- <file>`); use the oracle only to check
+> the *shape* of a resolution you have already attributed.
 
 | # | PR / commit | File | What collided | Resolution | M/J |
 |---|---|---|---|---|---|
@@ -837,7 +845,35 @@ Both share a property worth naming: **the damage is deferred past the point wher
 looking at the landing.** Docs drift is embarrassing; these two are the ones that cost an incident,
 and both transfer beyond this repo.
 
-After stripping both classes, `#267`'s residual is **4 files / +199 / −1**, all of it `session_name`.
+**`#267`'s residual is 3 files / +8 lines**, and the way to get it is not to strip at all — it is to
+identify the PR's own commit and use it directly. §5 already records it: `6a853fd feat(api): emit
+session_name in conversation detail meta`. Cherry-picking that onto `main` reproduces the PR exactly:
+
+```
+__tests__/contracts/mobile-contracts.test.ts | 5 +++++
+contracts/mobile.schema.json                 | 1 +
+src/server.ts                                | 2 ++
+3 files changed, 8 insertions(+)
+```
+
+Two `session_name:` field emissions, one schema property, one contract assertion. That is the whole PR.
+
+**§2's "8 files / +667" is therefore not `#267`'s residual — it is `#267` plus roughly 660 lines of
+other PRs' work**, and the rehearsal landed all of it under `#267`'s number. Successive strips during
+the real run went 75 files → 9 → 8 → 4 → 3, and each step removed content that had looked like part
+of the PR:
+
+| Stripped | Actually belongs to | Would have been caught by |
+|---|---|---|
+| three private methods + `projectsDirs` option | `#237` | compile |
+| four doc files, 656 lines | Group D `eab26e3`, `489a450` | nothing — chased a `+188` variance |
+| `auto-reconcile without refresh=1` test block, 111 lines | `#237` | **CI tests only** — passed lint and build |
+| `refreshConversationCache` block + 2 imports + a comment, ~20 lines | `#237` (`a0bfa77`) | nothing — the oracle actively endorsed keeping it |
+
+**The lesson is to start from the PR's own commit rather than from its diff against `main`.** For any
+PR whose head sits on the integration branch (`#267`, `#297`, `#299`, `#304` — Correction 2), the
+diff is the *branch's* content, and stripping foreign material out of it is an open-ended search with
+no completion signal. Identifying the one commit is bounded and exact.
 
 **Consequence for §5.** `eab26e3` and `489a450` are listed there as Group D **`carry`**, meaning
 nothing else brings them in. That is wrong as stated: both are **inherited by `#267`**, so in a run
