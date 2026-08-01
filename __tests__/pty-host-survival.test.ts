@@ -10,6 +10,7 @@ import WebSocket from "ws";
 import type { ManagedSessionRow } from "../src/db/repositories/managed-sessions.repository";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
+import type { LiveSessionManager } from "../src/live-session-manager";
 import { discoverClaudeProcesses } from "../src/process-discovery";
 import { SessionHost } from "../src/pty-host/host";
 import { RemoteSessionRunner } from "../src/pty-host/remote-session-runner";
@@ -325,5 +326,32 @@ describe("pty-host reconnect on boot", () => {
 
     expect(connect).not.toHaveBeenCalled();
     expect((await listSessions(server)).map((row) => row.id)).not.toContain(CLAUDE_ID);
+  });
+
+  it("boots on in-process PTYs when the host cannot be attached", async () => {
+    // The flag is experimental and default-off, so it must never be the one
+    // subsystem that can stop the streamer from starting. Every other optional
+    // subsystem here — runtime store, cache, reconciliation — logs and carries
+    // on; this one used to reject out of listen() with nothing catching it.
+    const connect = vi
+      .spyOn(hostSpawner, "connectOrSpawnHost")
+      .mockRejectedValue(new Error("pty-host did not accept a connection"));
+
+    server = await startStreamer({ ptyHost: true, sessionRehydration: false });
+
+    expect(connect).toHaveBeenCalled();
+    // Serving requests at all is the assertion: listen() resolved despite the
+    // rejection instead of taking the process down with it.
+    expect(Array.isArray(await listSessions(server))).toBe(true);
+
+    // Fell back rather than half-attaching: the in-process runners are still
+    // the live ones, so a spawn works and is owned locally.
+    const ptyManager = (server as unknown as { ptyManager: LiveSessionManager }).ptyManager;
+    const started = await ptyManager.startFresh({
+      projectPath: projectDir,
+      projectName: "project",
+    });
+    expect(ptyManager.isRemote()).toBe(false);
+    expect(ptyManager.hasSession(started.id)).toBe(true);
   });
 });
