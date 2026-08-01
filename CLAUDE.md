@@ -261,6 +261,7 @@ Don't break without coordination: the marker shape is versioned (`shimVersion` �
 - Conventional commits (`feat:`, `fix:`, `chore:`, etc.) and branch names (`feat/`, `fix/`, `chore/`)
 - Every new feature must have tests in `__tests__/`
 - Vitest globals are enabled — no need to import `describe`, `it`, `expect`
+- **Docs-only changes get `[skip-ci]` appended to the commit/PR title** — e.g. `docs(troubleshooting): record the menubar EPERM fix [skip-ci]`. Documentation cannot break the build, so the full matrix (Gate, Setup, Lint, Build, Test ×3, both Smoke jobs) buys nothing and just queues real PRs behind it. Put the suffix in the title, not the body. This is safe with required status checks because `ci.yml`'s smoke job deliberately has **no job-level `if:`** — under `[skip-ci]` it still runs, skips its steps, and reports **success** rather than "skipped", and a *skipped* required check would leave the PR permanently unmergeable. Applies only when the change touches nothing but docs; docs plus code, workflow YAML, fixtures, schemas or migrations all still need the matrix.
 
 ## Merging PRs — Rebase + Squash, Linear History
 
