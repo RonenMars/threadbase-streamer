@@ -159,7 +159,12 @@ const defaultSpawnTail: SpawnTail = ({ files, lines, follow }) => {
 
 export async function runProdLogs(
   opts: LogsOptions,
-  deps: { spawnTail?: SpawnTail; truncate?: (file: string) => void } = {},
+  deps: {
+    spawnTail?: SpawnTail;
+    truncate?: (file: string) => void;
+    /** After truncate, restart the supervised process so log fds reopen at 0. */
+    kickstart?: () => void;
+  } = {},
 ): Promise<CommandResult> {
   const spawnTail = deps.spawnTail ?? defaultSpawnTail;
   let paths: { stdout: string; stderr: string };
@@ -172,6 +177,8 @@ export async function runProdLogs(
     // Truncate in place (don't unlink): the running streamer holds open file
     // descriptors via launchd's StandardOut/ErrorPath. Removing the inode
     // would leave the daemon writing to a ghost file. `: > file` semantics.
+    // After truncate, kickstart so the daemon reopens at offset 0 — otherwise
+    // the old fd stays at N and the next write creates a sparse NUL-filled gap.
     const truncate =
       deps.truncate ??
       ((file: string) => {
@@ -179,15 +186,33 @@ export async function runProdLogs(
         const fs = require("node:fs") as typeof import("node:fs");
         fs.writeFileSync(file, "");
       });
+    const kickstart = deps.kickstart ?? (() => getSupervisor().kickstartAgent());
+    const cleared: string[] = [];
+    const failures: string[] = [];
     for (const f of [paths.stdout, paths.stderr]) {
       try {
         truncate(f);
+        cleared.push(f);
       } catch (err) {
-        return {
-          ok: false,
-          message: `failed to truncate ${f}: ${err instanceof Error ? err.message : String(err)}`,
-        };
+        failures.push(`${f}: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+    try {
+      kickstart();
+    } catch (err) {
+      failures.push(`kickstart after clear: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (failures.length > 0 && cleared.length === 0) {
+      return {
+        ok: false,
+        message: `failed to truncate logs:\n  ${failures.join("\n  ")}`,
+      };
+    }
+    if (failures.length > 0) {
+      return {
+        ok: false,
+        message: `cleared:\n  ${cleared.join("\n  ")}\nfailed:\n  ${failures.join("\n  ")}`,
+      };
     }
     return { ok: true, message: `cleared:\n  ${paths.stdout}\n  ${paths.stderr}` };
   }
