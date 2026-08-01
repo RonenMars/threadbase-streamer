@@ -73,9 +73,29 @@ The documented threshold was five clean runs per platform. Both have reached it,
 
 `Gate` · `Setup` · `Lint` · `Test (Node 20)` · `Test (Node 22)` · `Test (Node 24)`
 
-**`Smoke (macos-latest)` and `Smoke (windows-latest)` are not on that list** — nor is `Build`. That, not the absence of protection, is why a red smoke job still merges. Closing it is one edit to the existing ruleset (Settings → Rules → `main protection` → Require status checks), not a new configuration.
+`Build` was added on 2026-08-01 and is producible on `main`, so it is safe.
 
-Worth doing deliberately rather than immediately: `strict: true` means every added context also forces a rebase whenever the base moves, so each one costs churn. `Build` is the easy call — fast, deterministic, and it catches emit-only breakage `Lint` misses. The two Smoke contexts are better added after the expanded set has a longer green streak, since the ConPTY probe is the one plausible flake source and a blocking flake is the failure mode this whole section exists to avoid.
+### ⚠️ A required check must exist in the **target branch's** workflow
+
+**Learned the hard way, 2026-08-01.** `Smoke (macos-latest)` and `Smoke (windows-latest)` were added to the ruleset the same day — and **every pull request to `main` immediately became permanently unmergeable**.
+
+The cause: the `smoke` job lives only on `integration/missing-prs-2026-07-23`. `main`'s `.github/workflows/ci.yml` has no such job, so `main` can produce `Gate`, `Setup`, `Warm cache`, `Lint`, `Build` and `Test (…)` and nothing else. A required context that no workflow on the target branch emits is never reported, is never satisfied, and blocks the merge forever. Both contexts had to be removed again.
+
+The mistake was verifying the job existed in the *integration* checkout and assuming `main` matched. It did not — `main` is ~250 commits behind, and the smoke job is part of what has not landed.
+
+**Before adding any context to the ruleset, confirm the target branch produces it:**
+
+```bash
+G=/opt/homebrew/bin/git
+# every job NAME main's workflow can emit
+$G show origin/main:.github/workflows/ci.yml | /usr/bin/grep -E '^    name:'
+```
+
+A matrix job emits one context per leg with the placeholder expanded — `Smoke (macos-latest)`, not `Smoke (${{ matrix.os }})`. **Never require the un-expanded template name**: GitHub's "Add checks" picker offers it, no run ever reports it, and the effect is the same permanent block.
+
+**Correct order:** land the job on `main` first, confirm it reports on a real PR, then add the context. That is what [PR #340](https://github.com/RonenMars/threadbase-streamer/pull/340) does for the smoke job; once it merges, both Smoke contexts become safe to require.
+
+Worth doing deliberately even then: `strict: true` means every added context also forces a rebase whenever the base moves, so each one costs churn. The two Smoke contexts are better added after the expanded set has a longer green streak, since the ConPTY probe is the one plausible flake source and a blocking flake is the failure mode this whole section exists to avoid.
 
 **The larger gap is not on `main` at all.** The ruleset covers `refs/heads/main` only. Day-to-day work lands on `integration/missing-prs-2026-07-23`, which has no protection of any kind — no required checks, no linear history, no force-push guard. Mirroring the ruleset onto `refs/heads/integration/**` would close it, but the better answer is the one `LANDING-integration-to-main.md` argues for: land the work on `main` and stop maintaining a parallel unguarded trunk.
 
