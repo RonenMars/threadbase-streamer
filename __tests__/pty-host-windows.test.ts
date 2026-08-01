@@ -7,6 +7,19 @@ const WINDOWS_BEATS = 12;
 const WINDOWS_BEAT_INTERVAL_MS = 200;
 const STREAMER_EXIT_DELAY_MS = 250;
 
+// The beats themselves take WINDOWS_BEATS * WINDOWS_BEAT_INTERVAL_MS ≈ 2.4s.
+// Everything above that is headroom for a cold `powershell.exe` start, which on
+// a loaded GitHub runner is the dominant and highly variable cost — the first
+// observed flake produced *zero* beats inside an 8s budget while the run itself
+// took 9.1s against a 5.4s baseline.
+//
+// These three are a chain and must be raised together, weakest link first:
+// the host kills the PTY at HOST_PTY_KILL_MS, so waiting longer than that
+// cannot help, and the vitest timeout has to outlast the wait.
+const HOST_PTY_KILL_MS = 45_000;
+const OUTPUT_WAIT_MS = 30_000;
+const TEST_TIMEOUT_MS = 60_000;
+
 function readIfPresent(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
@@ -31,22 +44,24 @@ async function waitForOutput(path: string, marker: string, timeoutMs: number): P
 }
 
 describe.skipIf(process.platform !== "win32")("Windows detached PTY host lifetime", () => {
-  it("keeps ConPTY output flowing after the streamer process exits", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "tb-conpty-host-"));
-    const outputPath = join(dir, "output.txt");
-    const readyPath = join(dir, "ready.json");
-    const hostPidPath = join(dir, "host.pid");
-    let hostPid = 0;
+  it(
+    "keeps ConPTY output flowing after the streamer process exits",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "tb-conpty-host-"));
+      const outputPath = join(dir, "output.txt");
+      const readyPath = join(dir, "ready.json");
+      const hostPidPath = join(dir, "host.pid");
+      let hostPid = 0;
 
-    const powershellCommand = [
-      `$ErrorActionPreference = "Stop"`,
-      `for ($i = 1; $i -le ${WINDOWS_BEATS}; $i++) {`,
-      `Write-Output ("PTY_BEAT_" + $i)`,
-      `Start-Sleep -Milliseconds ${WINDOWS_BEAT_INTERVAL_MS}`,
-      `}`,
-      `Write-Output "PTY_COMPLETE"`,
-    ].join("; ");
-    const hostScript = `
+      const powershellCommand = [
+        `$ErrorActionPreference = "Stop"`,
+        `for ($i = 1; $i -le ${WINDOWS_BEATS}; $i++) {`,
+        `Write-Output ("PTY_BEAT_" + $i)`,
+        `Start-Sleep -Milliseconds ${WINDOWS_BEAT_INTERVAL_MS}`,
+        `}`,
+        `Write-Output "PTY_COMPLETE"`,
+      ].join("; ");
+      const hostScript = `
       const { appendFileSync, writeFileSync } = require("node:fs");
       const pty = require(${JSON.stringify(require.resolve("node-pty"))});
       const child = pty.spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", ${JSON.stringify(
@@ -67,9 +82,9 @@ describe.skipIf(process.platform !== "win32")("Windows detached PTY host lifetim
       setTimeout(() => {
         child.kill();
         process.exit(2);
-      }, 10000);
+      }, ${HOST_PTY_KILL_MS});
     `;
-    const launcherScript = `
+      const launcherScript = `
       const { spawn } = require("node:child_process");
       const { existsSync, writeFileSync } = require("node:fs");
       const host = spawn(process.execPath, ["-e", ${JSON.stringify(hostScript)}], {
@@ -92,31 +107,39 @@ describe.skipIf(process.platform !== "win32")("Windows detached PTY host lifetim
       waitForReady();
     `;
 
-    try {
-      const launcher = spawnSync(process.execPath, ["-e", launcherScript], {
-        encoding: "utf8",
-        timeout: 10_000,
-        windowsHide: true,
-      });
-      hostPid = Number.parseInt(readIfPresent(hostPidPath), 10);
-      const ready = JSON.parse(readIfPresent(readyPath)) as { hostPid: number; ptyPid: number };
-      const outputAtStreamerExit = readIfPresent(outputPath);
+      try {
+        const launcher = spawnSync(process.execPath, ["-e", launcherScript], {
+          encoding: "utf8",
+          timeout: 10_000,
+          windowsHide: true,
+        });
+        hostPid = Number.parseInt(readIfPresent(hostPidPath), 10);
+        const ready = JSON.parse(readIfPresent(readyPath)) as { hostPid: number; ptyPid: number };
+        const outputAtStreamerExit = readIfPresent(outputPath);
 
-      expect(launcher.error).toBeUndefined();
-      expect(launcher.status).toBe(0);
-      expect(ready.hostPid).toBe(hostPid);
-      expect(ready.ptyPid).toBeGreaterThan(0);
-      expect(outputAtStreamerExit).not.toContain("PTY_COMPLETE");
-      expect(isPidAlive(hostPid)).toBe(true);
+        expect(launcher.error).toBeUndefined();
+        expect(launcher.status).toBe(0);
+        expect(ready.hostPid).toBe(hostPid);
+        expect(ready.ptyPid).toBeGreaterThan(0);
+        expect(outputAtStreamerExit).not.toContain("PTY_COMPLETE");
+        expect(isPidAlive(hostPid)).toBe(true);
 
-      const finalOutput = await waitForOutput(outputPath, "PTY_COMPLETE", 8_000);
-      expect(finalOutput.match(/PTY_BEAT_/g)).toHaveLength(WINDOWS_BEATS);
-      expect(finalOutput).toContain("PTY_COMPLETE");
-    } finally {
-      if (hostPid > 0 && isPidAlive(hostPid)) {
-        spawnSync("taskkill.exe", ["/PID", String(hostPid), "/T", "/F"], { windowsHide: true });
+        const finalOutput = await waitForOutput(outputPath, "PTY_COMPLETE", OUTPUT_WAIT_MS);
+        // `String.match` returns null when nothing matched, and `toHaveLength` on
+        // null reports only "Target cannot be null or undefined" — which is what
+        // the first flake produced, hiding the fact that the file was empty.
+        // Coalesce and attach the tail so a timeout says what was actually seen.
+        const beats = finalOutput.match(/PTY_BEAT_/g) ?? [];
+        const seen = `captured ${finalOutput.length} bytes, tail: ${JSON.stringify(finalOutput.slice(-200))}`;
+        expect(beats, `expected ${WINDOWS_BEATS} beats — ${seen}`).toHaveLength(WINDOWS_BEATS);
+        expect(finalOutput, seen).toContain("PTY_COMPLETE");
+      } finally {
+        if (hostPid > 0 && isPidAlive(hostPid)) {
+          spawnSync("taskkill.exe", ["/PID", String(hostPid), "/T", "/F"], { windowsHide: true });
+        }
+        rmSync(dir, { recursive: true, force: true });
       }
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }, 20_000);
+    },
+    TEST_TIMEOUT_MS,
+  );
 });
