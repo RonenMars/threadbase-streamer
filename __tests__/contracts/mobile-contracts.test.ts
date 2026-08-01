@@ -64,6 +64,11 @@ describe("Mobile contract tests", () => {
       expect(body.meta).toHaveProperty("project_path");
       expect(body.meta).toHaveProperty("file_path");
       expect(body.meta).toHaveProperty("message_count");
+      // session_name is optional (omitted when the conversation has no name);
+      // when present it must be a string mobile can render as the title.
+      if (body.meta.session_name !== undefined) {
+        expect(typeof body.meta.session_name).toBe("string");
+      }
     });
 
     it("returns messages with role and timestamp", async () => {
