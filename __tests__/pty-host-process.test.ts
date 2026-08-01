@@ -243,9 +243,14 @@ describe("SessionHost over a real socket", () => {
     // stale-socket cleanup must first prove nothing answers.
     const { socketPath } = await startHost();
 
-    await expect(listenForStreamers(socketPath, { onConnection: () => () => {} })).rejects.toThrow(
-      /already listening/,
-    );
+    const secondHost = listenForStreamers(socketPath, { onConnection: () => () => {} });
+    if (process.platform === "win32") {
+      // No caller branches on this error shape today. If one ever does, revisit
+      // parity at the transport boundary instead of teaching it both variants.
+      await expect(secondHost).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } else {
+      await expect(secondHost).rejects.toThrow(/already listening/);
+    }
   });
 });
 

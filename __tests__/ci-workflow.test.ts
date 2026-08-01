@@ -12,6 +12,9 @@ import { describe, expect, it } from "vitest";
  */
 
 const WORKFLOW = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+const PACKAGE = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")) as {
+  scripts: Record<string, string>;
+};
 
 describe("CI triggers", () => {
   // Task branches are developed against and merged into integration/**. When
@@ -38,6 +41,11 @@ describe("cross-platform smoke", () => {
   // can never catch.
   it("verifies the native addon actually loads", () => {
     expect(WORKFLOW).toMatch(/require\('node-pty'\)/);
+  });
+
+  it("qualifies the pty-host transport and Windows ConPTY lifetime", () => {
+    expect(PACKAGE.scripts["test:smoke"]).toContain("__tests__/pty-host-process.test.ts");
+    expect(PACKAGE.scripts["test:smoke"]).toContain("__tests__/pty-host-windows.test.ts");
   });
 
   // One platform failing must not cancel the other; both results are wanted.
