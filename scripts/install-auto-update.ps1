@@ -58,6 +58,8 @@ if ($Command -eq "uninstall") {
   } else {
     Write-Log "task $TaskName not registered; nothing to do"
   }
+  # Drop the hidden-launch shim files this installer writes.
+  Remove-Item -LiteralPath (Join-Path $InstallDir "updater-launch.cmd"), (Join-Path $InstallDir "updater-launch.vbs") -Force -ErrorAction SilentlyContinue
   exit 0
 }
 
@@ -73,7 +75,7 @@ if ($autoUpdate -ne "true") {
   exit 0
 }
 
-$intervalRaw = Read-YamlField -Key "poll_interval_minutes" -Default "60"
+$intervalRaw = Read-YamlField -Key "poll_interval_minutes" -Default "1440"
 $intervalMin = 0
 if (-not [int]::TryParse($intervalRaw, [ref]$intervalMin) -or $intervalMin -lt 1) {
   Write-Err "invalid poll_interval_minutes: $intervalRaw"
@@ -96,11 +98,22 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $logFile = Join-Path $logDir "updater.log"
 $errFile = Join-Path $logDir "updater.err"
 
-# Task Scheduler has no native stdout/stderr redirection. We invoke pwsh and
-# do the redirection inside the command string (same trick the streamer deploy
-# uses). Single-quote the inner command to defeat re-expansion.
-$cmdString = "& '$nodeBin' '$ActiveLink' update *>> '$logFile' 2>> '$errFile'"
-$action = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument "-NoProfile -Command `"$cmdString`"" -WorkingDirectory $InstallDir
+# Task Scheduler has no native stdout/stderr redirection, and a pwsh.exe action
+# flashes a console window on every run. Route through the same hidden-launch
+# shim scripts/deploy.ps1 uses for the streamer service: a .cmd that redirects
+# stdout/stderr, launched via wscript.exe (which has no console) so its child
+# window stays hidden. cmd.exe handles the `>>`/`2>>` redirection.
+$cmdPath = Join-Path $InstallDir "updater-launch.cmd"
+$vbsPath = Join-Path $InstallDir "updater-launch.vbs"
+$cmdLines = @('@echo off', "cd /d `"$InstallDir`"")
+$cmdLines += "`"$nodeBin`" `"$ActiveLink`" update >> `"$logFile`" 2>> `"$errFile`""
+Set-Content -Path $cmdPath -Value $cmdLines -Encoding Ascii
+# Run the .cmd hidden (window style 0) and wait, so Task Scheduler keeps the task
+# "running" for the update's duration — the ExecutionTimeLimit + MultipleInstances
+# IgnoreNew below only bound a run while wscript is still waiting on it.
+$vbsContent = 'CreateObject("WScript.Shell").Run """' + $cmdPath + '""", 0, True'
+Set-Content -Path $vbsPath -Value $vbsContent -Encoding Ascii
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$vbsPath`"" -WorkingDirectory $InstallDir
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
   -RepetitionInterval (New-TimeSpan -Minutes $intervalMin)
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::FromMinutes(30)) `

@@ -22,8 +22,9 @@ defer_if_active_sessions: true
 
 # How often the scheduled updater job runs (minutes). Ignored by manual
 # `threadbase-streamer update`. Only consulted by the installer scripts
-# when registering the launchd/systemd/Task Scheduler job.
-poll_interval_minutes: 60
+# when registering the launchd/systemd/Task Scheduler job. Defaults to 1440
+# (once a day) when omitted.
+poll_interval_minutes: 1440
 
 # Master switch for the scheduled job installed by
 # scripts/install-auto-update.{sh,ps1}. Manual `threadbase-streamer update`
