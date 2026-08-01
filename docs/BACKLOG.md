@@ -27,6 +27,7 @@ For planned features (work that adds new behavior rather than fixing broken beha
 | Cache integrity alert management | 🔄 In flight — [PR #232](https://github.com/RonenMars/threadbase-streamer/pull/232) |
 | Explicit warm-up status API | 🔄 In flight — [PR #234](https://github.com/RonenMars/threadbase-streamer/pull/234) |
 | `enrichResumedSessionAsync` writes to a throwaway copy | ✅ DONE — [PR #336](https://github.com/RonenMars/threadbase-streamer/pull/336) (merged 2026-08-01) |
+| Auto-resume attempts sessions with no provider history | Open (added 2026-08-01) — low severity |
 
 **Suggested next-up (new PRs, 2026-07-22):** **(1) Log truncation races** → **(2) `bootoutAgent` busy-wait spin**. Merge the in-flight product PRs (#237, #240, #241, #252, #253) ahead of opening those when possible.
 
@@ -208,6 +209,41 @@ This was acceptable before ProjectChat, but now breaks the discriminated-union c
 **Suggested fix:** Introduce a single test helper that constructs a host-isolated `StreamerServer` — defaulting `codexRoots: []`, `disableDb: true`, and a temp `cacheDir`/`scanProfiles` — and migrate the existing ad-hoc boots to it. Then a new server test is isolated by construction instead of by remembering the knob. Alternatively (weaker), lint/grep guard: fail CI if a `new StreamerServer(` in `__tests__/` sets `scanProfiles` without `codexRoots`. The helper is preferable because it also centralizes the temp-dir + teardown boilerplate these tests repeat.
 
 **Done when:** A server-boot test written without thinking about Codex reads zero host data by default, and `grep -rL "codexRoots" __tests__` over files that `new StreamerServer` with `scanProfiles` returns nothing (or the guard passes).
+
+---
+
+## Boot auto-resume attempts sessions that have no provider history yet
+
+**Status (2026-08-01):** Open, low severity. Observed while testing `auto_resume_on_boot` end to end on the live instance, not reported by a user.
+
+**Symptom:** A session that was started but never used — spawned, reached `waiting_input`, and interrupted before any message was sent — is selected for boot auto-resume and then fails:
+
+```
+sessions.auto_resume_skipped  sessionId: c7a1ca86-…  reason: "history_file_missing"
+sessions.auto_resume_completed  attempted: 2, resumed: 1, failed: 1
+```
+
+Nothing breaks. The failure is logged, the session stays in the list as a resumable stub, and the user can still tap it. The cost is one of the five `AUTO_RESUME_MAX` slots spent on a session that could never have worked, plus a `failed` count that looks like a defect when read in a log.
+
+**Root cause:** the five eligibility rules in `autoResumeSkipReason` (`src/services/sessions/autoResumeOnBoot.ts`) check `status_source`, `status`, age, project directory, and provider resume identity — but **not whether the provider has written any history**. For Claude, `resumeIdForRow()` returns `session_id`, which is always non-null, so rule 5 passes for a session whose JSONL does not exist. `resumeSession()` then does the real lookup, finds neither a JSONL nor a cached conversation, and returns `history_file_missing`.
+
+That reason is correct and non-retryable — Claude cannot `--resume` a conversation with no file — so the resume path is behaving properly. The gap is that eligibility promised something the resume path could not deliver.
+
+**Suggested fix:** inject a `historyExists` predicate alongside the existing `projectExists`, and add a `history_missing` skip reason. `AutoResumeOptions` already takes injected predicates precisely so the decision stays a pure function:
+
+```ts
+export interface AutoResumeOptions {
+  now: number;
+  projectExists: (projectPath: string) => boolean;
+  historyExists: (row: ManagedSessionRow) => boolean;   // new
+}
+```
+
+The server supplies it at the single call site (`src/server.ts:1512`), resolving through the same path `resumeSession()` uses — `findJsonlPath(resumeIdForRow(row))` — so eligibility and execution cannot disagree. This mirrors how `rehydrateSkipReason` already refuses a row whose project directory is gone rather than offering a resume that would fail to spawn.
+
+**Trade-off worth stating:** this adds a filesystem lookup per candidate row at boot. The candidate set is bounded by `REHYDRATE_MAX` (25) and the work happens on the fire-and-forget boot chain, so it is not on any request path — but it is not free, and `findJsonlPath` walks directories rather than doing a single `existsSync`. If that proves too costly, the cheaper alternative is to leave the behaviour alone and reclassify: catch `history_file_missing` in `autoResumePreviousSessions` and log it as a *skip* rather than a *failure*, so the counts read honestly without the extra I/O.
+
+**Done when:** a session interrupted before its first message is reported as skipped with a reason naming the missing history, does not consume an `AUTO_RESUME_MAX` slot, and `sessions.auto_resume_completed` reports `failed: 0` for that case. A unit test against `autoResumeSkipReason` with a stubbed `historyExists` covers the decision without touching the disk.
 
 ---
 
