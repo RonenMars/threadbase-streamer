@@ -10,6 +10,7 @@
 > **(a)** `main` has moved: #224 and #226 merged to it on 07-31 and #340 on 08-01, so `main` is **no longer an ancestor** of this branch — the fast-forward escape hatch at the end of this runbook no longer works.
 > **(b)** Group E has grown from 26 PRs to **37** — #333–#339 and #341 all merged onto this branch after the group was first written.
 > **(c)** A previously unrecorded block exists: **#292, #293, #294, #296** were squash-merged onto this branch back on 07-26 and belong to no group in this document. They are now **Group F**.
+> **(d)** Sweeping every *open* PR against the same test found **15 more** that no group covered — Group A was derived from the `integrate PR #NNN` commits, and these never went through that path. They are now **Group A′**, and one of them (`#304`) turns out to be the only route to `main` for a Group-D commit.
 
 The goal is to get that work onto `main` without replaying an unreviewable 221-commit history.
 
@@ -59,7 +60,7 @@ Rebasing 63 merges into a line would explode them into replayed commits and conf
 
 ---
 
-## The work splits six ways
+## The work splits seven ways
 
 Derived from the `integrate PR #NNN` commits, the `(#NNN)`-suffixed squash commits on the spine, and each PR's current state.
 
@@ -82,6 +83,41 @@ No new PRs needed. Their content is already reviewed and targeted correctly.
 | `#234` | `feat/cache-integrity-alert` | `#232` |
 
 Suggested order: dependency-free dependabot bumps first (`#227`, `#264`) to get easy merges out of the way, then `#237`, `#267`, `#270`, `#272`, `#297`, `#299`, then the stacked chains (`#253` → `#254`; `#232` → `#234`; `#266`).
+
+### Group A′ — open against `main`, never integrated via the `integrate PR` convention (15) → also just merge them
+
+**Added 2026-08-01.** Fifteen open PRs target `main` and appear nowhere else in this runbook. Group A was derived from the `chore(merge): integrate PR #NNN` commits, and these were never merged that way — so the derivation could not see them. Being invisible to the derivation is not the same as being landed.
+
+**Twelve are fully contained in the integration branch** — `git cherry origin/integration/… <head>` reports the PR tip as an ancestor, so the branch is already exercising their content. All twelve report `MERGEABLE` / `BEHIND` and are 8–15 commits behind `main`: rebase, wait for green, squash-merge, exactly like Group A.
+
+| PR | Branch | New vs `main` | Behind `main` |
+|---|---|---|---|
+| `#232` | `feat/cache-integrity-alert` | 3 | 15 |
+| `#234` | `feat/cache-warmup-status` | 8 | 15 |
+| `#240` | `fix/bootstrap-agent-exit5` | 1 | 15 |
+| `#241` | `fix/upload-filename-sanitize` | 1 | 15 |
+| `#242` | `docs/pre-release-status-2026-07-19` | 1 | 15 |
+| `#252` | `fix/pty-quiet-marker-screen-recheck` | 1 | 9 |
+| `#255` | `fix/find-free-port-flake` | 1 | 9 |
+| `#257` | `docs/pre-release-status-sync-2026-07-22` | 1 | 8 |
+| `#258` | `fix/bootout-agent-busy-wait` | 1 | 8 |
+| `#259` | `fix/log-truncation-sparse-nuls` | 2 | 8 |
+| `#260` | `test/isolate-scanner-fixtures` | 2 | 8 |
+| `#223` | `dependabot/npm_and_yarn/typescript-7.0.2` | 1 | 1 |
+
+`#232` → `#234` is the stacked pair already named in Group A's dependency table; merge `#232` first. `#223` is a **major** TypeScript bump (6.0.3 → 7.0.2), not a routine patch — give it its own run rather than batching it with the other dependabot PRs.
+
+**Every one of these predates #340**, so their check rollups currently show nine contexts and no Smoke. They cannot merge until rebased, because `main protection` now requires `Smoke (macos-latest)` and `Smoke (windows-latest)`. The rebase is what makes those contexts appear.
+
+**Three need different handling:**
+
+| PR | State | Why |
+|---|---|---|
+| `#302` | `MERGEABLE` / `BEHIND` | **The only PR here whose content exists nowhere else.** `docs/architecture/2026-07-27-sessions-ownership-path-filter.md` is absent from `main` *and* from the integration branch. It is based on `d5181b2`, which is on `main`, so it is clean and independent — merge it. Closing it loses the content outright. |
+| `#245` | `CONFLICTING` | `test(server): replace flaky grace-timer setTimeout waits with polling`. Contained in the branch, but the grace-timer semantics it tests were rewritten by `#305` and Group E. Confirm the flake still exists before spending a rebase on it. |
+| `#304` | `CONFLICTING` | **Do not merge as-is** — 138 commits of drift because it is branched from the *integration branch*, not `main`. Same trap as `#295` and `#303`. See below. |
+
+**`#304` is the recovery vehicle for a Group-D commit, and that is worth stating plainly.** The feature-flag registry (`src/feature-flags.ts`) is on the integration branch and absent from `main`. It arrives on the spine as **`90c1c07`** (2026-07-28) — a *direct commit with no `(#NNN)` suffix*, so it is one of Group D's 58, and it is a real feature rather than merge noise. `CLAUDE.md` documents it as shipped. Recover it by cherry-picking `90c1c07` onto a fresh branch from `main`, then close `#304`.
 
 ### Group B — closed against a dead base (4) → content is stranded
 
@@ -165,6 +201,8 @@ Not attributable to any PR. Expect a mix of:
 
 - **merge-conflict fixups** — meaningless outside this branch; must **not** be carried to `main`
 - **real fixes** made directly on the branch — must be carried
+
+**Worked example, so the second kind is not theoretical:** `90c1c07` (`feat(config): add server feature-flag registry with boot-time resolution`, 2026-07-28) is a Group-D commit by this definition — no PR suffix, made straight on the branch — and it is an entire feature that `CLAUDE.md` documents as shipped. Its only open PR (`#304`) is unmergeable drift. Triage that treats "no `(#NNN)` suffix" as "probably noise" would drop it.
 
 Identify them with:
 
@@ -359,7 +397,8 @@ Then pair a tb-mobile client against it and confirm session list, conversation d
 | The drift-check spec lost during Group C recovery | It has no PR to `main` and reads as free-standing. The Group C note is the only pointer — carry it in `#282`'s PR. |
 | Re-targeting a stale PR that is already absorbed | Verified per PR: `#295` has 0 unique commits and must be **closed**, not re-targeted. Apply the same `git cherry` check to any other PR based on this branch. |
 | Assuming leftovers are duplicates | Verify with `git cherry` / `git patch-id`; same-subject ≠ same patch. |
-| A whole block of stranded PRs going unrecorded | Group F (#292–#296) sat outside every group for six days. Re-run the `(#NNN)`-suffix spine scan against this document's rosters whenever the branch moves; a squash commit whose PR number appears in no group is unlanded work. |
+| A whole block of stranded PRs going unrecorded | Group F (#292–#296) sat outside every group for six days, and Group A′ found 15 more open PRs no group covered. Two sweeps catch both: the `(#NNN)`-suffix spine scan for merged work, and `gh pr list --state open` cross-checked against this document's rosters for unmerged work. |
+| Treating an unsuffixed spine commit as noise | `90c1c07` (feature-flag registry) is a whole documented feature with no PR suffix and no mergeable PR. Read every Group-D subject before discarding it. |
 | Re-landing something `main` already has | `#224`, `#226`, `#269` and `#340` are on `main` now. Check `git log origin/main --grep` before cherry-picking any commit dated 07-23 or later. |
 
 **Rollback:** Group A merges are ordinary squash-merges — revert the single commit. Groups B/C are fresh PRs, revertible the same way. The integration branch is never rewritten and stays available as a reference until Step 3 confirms it is empty.
@@ -369,6 +408,8 @@ Then pair a tb-mobile client against it and confirm session list, conversation d
 ## Cost note
 
 Group A is 11 ordinary PR merges remaining (10 listed plus `#297`) — mostly mechanical, and two are dependabot bumps. Two of the original 12 have already landed.
+
+Group A′ adds 13 more of the same kind (12 contained-in-branch PRs plus `#302`), all needing a rebase before they can produce the now-required Smoke contexts, plus two that need a decision rather than a merge (`#245`, `#304`).
 
 Group E is 37 squash commits to cherry-pick in order — far more PRs than any other group, but the cheapest per PR: each is one commit, already reviewed, already CI-green, with a written rationale.
 
