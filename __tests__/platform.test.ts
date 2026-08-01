@@ -63,6 +63,12 @@ describe("resolveClaudeExe (Windows where.exe filtering)", () => {
 
   it("falls back to the candidate paths when where.exe only finds non-executable matches", async () => {
     vi.resetModules();
+    // resolveClaudeExe() builds the candidate with the real `path.join`, which
+    // uses the host OS's separator regardless of the mocked platform() above
+    // (a "\\"-joined literal here would silently never match on a POSIX CI
+    // runner) — build the expectation the same way so it matches on any host.
+    const { join } = await vi.importActual<typeof import("path")>("path");
+    const expectedCandidate = join("C:\\Users\\test", ".local", "bin", "claude.exe");
     vi.doMock("os", async () => {
       const actual = await vi.importActual<typeof import("os")>("os");
       return { ...actual, platform: () => "win32", homedir: () => "C:\\Users\\test" };
@@ -71,14 +77,14 @@ describe("resolveClaudeExe (Windows where.exe filtering)", () => {
       const actual = await vi.importActual<typeof import("fs")>("fs");
       return {
         ...actual,
-        existsSync: (p: string) => p === "C:\\Users\\test\\.local\\bin\\claude.exe",
+        existsSync: (p: string) => p === expectedCandidate,
       };
     });
     vi.doMock("child_process", () => ({
       execFileSync: () => "C:\\npm\\claude\r\n",
     }));
     const { resolveClaudeExe } = await import("../src/platform");
-    expect(resolveClaudeExe()).toBe("C:\\Users\\test\\.local\\bin\\claude.exe");
+    expect(resolveClaudeExe()).toBe(expectedCandidate);
   });
 });
 
