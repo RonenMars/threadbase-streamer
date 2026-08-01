@@ -151,6 +151,28 @@ Squash-merging either one on GitHub would land a large slice of Groups C, E and 
 
 `M` = mechanical (a later session can repeat it blind). `J` = judgement call (must be re-made by a human).
 
+> **Read the `ours`/`theirs` in this table as rehearsal-specific.** They record which side won under
+> *this rehearsal's* ordering, in which `#237` landed third. §8 defers `#237` until after `#232`,
+> `#253`, `#234` and `#267`, so under §8's own script the sides move. Re-derive them against the
+> current trunk exactly as you already re-derive the counterparty column: the resolution's **intent**
+> survives reordering, its **side** does not.
+>
+> **A wrong `theirs` imports unlanded content under the wrong PR number; a wrong `ours` deletes
+> landed content. Both are silent, and only the oracle separates them.**
+>
+> Measured in the 2026-08-01 real run, which followed §8's ordering: row 8's judgement call **never
+> arose at all** — the extraction it collides with was not yet on `main`, so both halves of `#234`
+> applied cleanly. Row 10's `h2–h4 ours` held for every hunk.
+>
+> **Do not use the integration branch to choose a side.** The real run first took `theirs` for
+> `#267`'s `h3` because the oracle showed that shape, and it was wrong: the
+> `refreshConversationCache` / `setCacheMetadata` block there is **`a0bfa77`, which is `#237`'s** —
+> so `theirs` imported an unlanded PR's work under `#267`'s number. The oracle answers *"what does
+> this region look like once everything has landed"*, **not** *"whose content is this"*, and it
+> cannot tell the two apart because by construction it contains every PR. Choose the side by
+> **provenance** (`git log -S'<distinctive line>' <branch> -- <file>`); use the oracle only to check
+> the *shape* of a resolution you have already attributed.
+
 | # | PR / commit | File | What collided | Resolution | M/J |
 |---|---|---|---|---|---|
 | 1 | `#257` | `docs/BACKLOG.md` ×4 | `#257` is a *status-snapshot* doc; `#237`/`#240`/`#241` had already rewritten the same per-item Status lines | hunk 1 both-added at an empty base → **keep both**; hunks 2–4 → **keep the landed fixing PR's status** | M |
@@ -187,6 +209,11 @@ Nine of the fourteen rows are the same collision: **`#237` extracts the `?refres
 The runbook's Phase 0 order (`fetch --prune`, then fetch PR heads) is correct, but only by luck, and nothing says why it matters. `refs/remotes/origin/pr/*` is not covered by the default fetch refspec, so `--prune` treats all 344 of them as stale and deletes them. Running the two fetches in the other order leaves zero PR refs and Groups C and F become unreachable — exactly the silent-drop failure the runbook's ref table warns about, arrived at from a direction the runbook does not mention.
 
 **Correction:** always `--prune` first, PR heads second, and assert a count afterwards.
+
+**Not sufficient on its own.** Ordering only protects against a prune *you* issue. The 2026-08-01
+real run had all 346 refs deleted by a background prune from outside the repo, minutes after the
+count assertion passed. Fetch the PR heads to `refs/landing/pr/*` instead — §8's Phase 0 carries
+the corrected command and the full diagnosis.
 
 ### D2 — the PR-head fetch fails on a dead submodule
 
@@ -247,6 +274,22 @@ app.route("/api/devices", createDeviceRoutes(deps));
 ```
 
 The `createDeviceRoutes` **import stayed**. The type-check passed — an unused import is not a type error. `/api/devices` had simply ceased to exist, with a green `tsc`. The only thing that surfaced it was biome's `lint/correctness/noUnusedImports`.
+
+**Correction — `noUnusedImports` reports, it does not gate.** The sentence above is accurate about *visibility* and overstates its *authority*, and the distinction decides whether you can rely on CI here. Measured during the 2026-08-01 real run, on `#267` with an orphaned `shouldRefreshProjectsFromHdd` import present:
+
+```
+$ npm run lint
+  src/server.ts:87:8  lint/correctness/noUnusedImports  FIXABLE
+  ! This import is unused.
+Found 2 warnings.
+exit=0
+```
+
+Biome scores the rule as a **warning**, so `npm run lint` exits **0** and the `Lint` required check goes green with the orphan still in the tree. It appears in the log output and blocks nothing. In the `#285` case it "surfaced" the dropped route only because a human read the output — had that run been unattended, or the output tailed to the last few lines, the route would have gone in green.
+
+So D7's real conclusion is unchanged but its safety net is weaker than written: **there is no automated gate on a dropped route.** The per-file route diff at the end of this section is not a belt-and-braces check beside a lint gate, it is the *only* gate. Run it.
+
+Anyone treating `Lint` going green as evidence that no import was orphaned is relying on a gate that does not exist.
 
 Later the same resolver dropped `SEARCH_OVERFETCH`/`SEARCH_MAX_SCAN`, `pushRepo` from `ApiDeps`, and a `DevicesRepository` import — those *did* fail `tsc`, but the route did not.
 
@@ -349,7 +392,7 @@ The table below carries a **59th row**, `66fff5f`, appended deliberately. It is 
 | `0a5d2f9` | 2026-07-22 | test(cache): isolate alert-wiring fixtures from the persistent scanner index | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `616607c` | 2026-07-22 | test(server): isolate the refresh-status fixture from the persistent scanner index | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `d10f2ce` | 2026-07-22 | test(server): isolate auto-reconcile fixture and read back its real port | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
-| `eab26e3` | 2026-07-22 | docs(postmortems): record the 2026-07-22 all-open-PRs merge verification | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
+| `eab26e3` | 2026-07-22 | docs(postmortems): record the 2026-07-22 all-open-PRs merge verification | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it — **correction (real run): also inherited by `#267`, whose head is a branch commit, so a run that lands `#267` whole gets it early and wave 5's pick is a no-op. Stripped from `#267` on 2026-08-01 so Group D picks it for real; its `carry` verdict has never been exercised.** |
 | `7c6f6ff` | 2026-07-22 | docs(postmortems): update the branch name after the rename | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `6009215` | 2026-07-22 | docs(postmortems): add an addendum covering work after the first draft | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `a689b0c` | 2026-07-22 | docs(postmortems): log the #253 rebase run | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
@@ -358,7 +401,7 @@ The table below carries a **59th row**, `66fff5f`, appended deliberately. It is 
 | `023001b` | 2026-07-22 | docs(postmortems): add a landing runbook for the PR chain | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `1430381` | 2026-07-22 | docs(postmortems): correct the cli/prod.ts attribution in the runbook | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `8326d82` | 2026-07-22 | docs(postmortems): add pre-flight sweep and orphaned-stack diagnosis to the runbook | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
-| `489a450` | 2026-07-23 | docs(runbooks): extract the landing runbook and add a runbook format | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
+| `489a450` | 2026-07-23 | docs(runbooks): extract the landing runbook and add a runbook format | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it — **correction (real run): also inherited by `#267`, whose head is a branch commit, so a run that lands `#267` whole gets it early and wave 5's pick is a no-op. Stripped from `#267` on 2026-08-01 so Group D picks it for real; its `carry` verdict has never been exercised.** |
 | `a496a2f` | 2026-07-23 | docs(runbooks): add effort guidance and agent stop points | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
 | `97969a0` | 2026-07-23 | fix(api): serve the cached conversation list while reconciling in the background | **already-covered** | open PR #266 — landed on the trunk as 4a4a421 |
 | `bfbce64` | 2026-07-23 | fix(api): gate the warm-up only on cold start, not the background reconcile | **carry** | the triage pass called this already-covered *by `#304`* — but `#304` is OPEN/CONFLICTING and is never merged, so nothing carries it |
@@ -602,17 +645,149 @@ Re-measured 2026-08-01 at tip `ebe9eb8` (after `#344`): **252** and **104**. The
 
 Written for the next session, with the unknowns resolved. `origin` is still read-only until the final step of each block.
 
+### Step −1 — measure the artifact, never a proxy. Run this before every measurement and every commit.
+
+```bash
+# PRECONDITION: the working tree must be clean before you measure or commit anything.
+test -z "$($G -C <worktree> diff --stat)" || { echo "unstaged changes — stage them first"; exit 1; }
+
+# Every residual number quoted anywhere must come from the COMMIT:
+$G show --stat <sha>            # yes — the artifact
+# NOT:
+$G diff --cached --stat         # no — the index, which may not be what you edited
+$G diff --stat                  # no — the worktree, which may not be what you commit
+```
+
+**Phrase every gate as a property of current state, never as a record of what you did.** This is the
+constructive form of the failure that recurs throughout these notes, and it is worth stating
+positively because every other instance is recorded negatively.
+
+Each thing that went wrong in the 2026-08-01 run was a **proxy standing in for a fact**: an exit code
+for whether a merge happened, the index for what was committed, a check rollup for whether the matrix
+had run, a `grep` for a symbol that did not exist, `git cherry`'s patch-ids for whether content had
+landed. In every case the proxy was accurate about itself and silent about its subject.
+
+The resumability guard is the same distinction applied deliberately, and it is the one gate that
+*worked*:
+
+```bash
+git merge-base --is-ancestor origin/main HEAD    # a property of current state
+# NOT: "have I already rebased this PR?"          # a memory of an action
+```
+
+They differ exactly when something moves in between — and something does. It caught a release commit
+landing inside the window between a PR going green and being merged, where the action-memory form
+would have merged a stale branch. **When writing any check, ask whether it interrogates the world or
+your own record of it.**
+
+**Why this is a step and not advice.** On 2026-08-01 the `#267` residual was measured with
+`git diff --cached --stat` while the strip that produced it existed only in the **working tree** —
+the merge had already staged `src/server.ts`, and the edits were never re-staged. Local
+`npm run lint` passed (it reads the worktree) and the pushed commit failed CI with
+`error TS2561: 'projectsDirs' does not exist in type 'ShouldRefreshOptions'`, because the commit
+carried the *unstripped* file. Every residual figure reported in between — "8 files / +199",
+`src/server.ts | +82` — described a tree that was never committed. The true values were
+**4 files / +140** and `src/server.ts | +24`.
+
+`git status` printed ` M src/server.ts` throughout and was simply not in the loop. The index and the
+worktree are both **proxies for the artifact**, and they diverge exactly when a merge stages files
+that you then edit — which is *every* conflict resolution in this document.
+
+The precondition retires the whole class: if `git diff --stat` is empty, worktree, index and commit
+are the same object, and it no longer matters which one you measured.
+
 ```bash
 G=/opt/homebrew/bin/git
 
 # ---- Phase 0: refs (order matters — see D1/D2) -----------------------------
 $G fetch origin --prune
-$G fetch origin --no-recurse-submodules '+refs/pull/*/head:refs/remotes/origin/pr/*'
-test "$($G for-each-ref refs/remotes/origin/pr/ | wc -l)" -gt 300 || exit 1
+# PR heads go to refs/landing/pr/*, NOT refs/remotes/origin/pr/* — see below
+$G fetch origin --no-recurse-submodules '+refs/pull/*/head:refs/landing/pr/*'
+test "$($G for-each-ref refs/landing/pr/ | wc -l)" -gt 300 || exit 1
 $G branch  backup/integration-<date> origin/integration/missing-prs-2026-07-23
 $G tag -m archive archive/integration-<date> origin/integration/missing-prs-2026-07-23
 # assert the backup equals the LIVE tip — a stale backup silently corrupts the final diff
 test "$($G rev-parse backup/integration-<date>)" = "$($G rev-parse origin/integration/missing-prs-2026-07-23)"
+```
+
+**Fetch the PR heads to `refs/landing/pr/*`, not `refs/remotes/origin/pr/*`.** D1 established that
+`git fetch origin --prune` deletes every `origin/pr/*` ref, because the default fetch refspec does
+not cover them, and prescribed an ordering fix: prune first, PR heads second.
+
+**That ordering fix is not sufficient, because the prune is not necessarily yours.** During the
+2026-08-01 real run the Phase-0 count assertion passed at 346 refs and the same command returned
+**0** about two minutes later, with no fetch issued by the run in between. `fetch.prune` was unset,
+`remote.origin.fetch` held only `+refs/heads/*:refs/remotes/origin/*`, and there was no
+`maintenance.*` config, no scheduled git job in launchd or cron, and no repo hook — some process
+outside the repo (an editor auto-fetch is the likely candidate) prunes periodically. No command
+ordering can protect a ref namespace against a prune that fires an hour later.
+
+This matters more than a re-fetch would suggest. **Groups B, C and F are reachable only through
+these refs** — correction 5 in §7 establishes that Group C has no squash commits on the spine, so
+`pr/<N>` is the *sole* route to those seven PRs, and Group B's four and Group F's four sit behind
+the same fetch. An async prune mid-run makes eleven PRs silently unreachable: `git rev-parse` fails,
+a loop reports "not found", and nothing distinguishes that from a PR that was never fetched. It is
+the silent-drop failure the runbook's Risks table warns about, arriving from a direction neither the
+runbook nor D1 anticipated.
+
+`refs/landing/` sits outside `refs/remotes/`, so no `origin` prune can consider it stale. Same
+objects, prune-proof name, no config change, and nothing else in the repo is affected.
+
+**The oracle's scope, stated once because it was misread three times.** The integration branch is
+**reliable on shape and silent on what the shape displaced**. It shows what a region looks like once
+everything has landed, so it verifies the *form* of a resolution you have already attributed — on the
+real run its ghost-prune block matched the hand-made resolution exactly. It cannot tell you whose
+content a hunk is (it contains every PR), and it cannot tell you what a resolution removed from the
+surrounding context. `#237`'s `h2` matched it perfectly while `h3` still needed a call-site wrap
+restored that the branch's own version obtains from `#266`/`#271` content not yet landed.
+
+**Everywhere below that names `origin/pr/<N>` — wave 2's `--onto` rebases and wave 4's Group C
+route — read `refs/landing/pr/<N>`.**
+
+### Before EVERY `gh pr merge --delete-branch`: re-point the children first
+
+**This applies to every merge in every wave, not just the stacked ones.** Deleting a branch closes
+every open PR whose **base ref** is that branch — GitHub does not retarget them, it closes them, and
+the PR reports `state: CLOSED` with `mergedAt: null`. The merge itself succeeds, so nothing in the
+merge's own result says anything went wrong.
+
+```bash
+# BEFORE merging PR <N> whose head branch is <head>:
+gh pr list --state open --base "<head>" --json number --jq '.[].number'
+# For every number returned:
+gh pr edit <child> --base main
+# only then:
+gh pr merge <N> --squash --delete-branch
+```
+
+**Ancestry-stacked is harmless; base-ref-stacked is fatal — and §2's dependency table records only
+the former.** The two relations are not the same, and §2 measures the wrong one for this purpose:
+
+- §2 defines "stacked" by ancestry (`git merge-base --is-ancestor` across PR heads), and §8's wave 2
+  prescribes a purely *git* remedy, `git rebase --onto main origin/pr/<parent>`.
+- GitHub defines it by `baseRefName`, PR metadata that appears nowhere in these notes.
+
+`#234` is the proof they differ: §2 lists it as stacked on `#232`, but its base ref is `main`, so
+deleting `#232`'s branch did nothing to it. Of the three wave-2 children only `#254` and `#266` were
+base-ref-stacked, and those are exactly the two that break.
+
+`rebase --onto` is therefore **correct and insufficient** — it fixes the child's *commits* and never
+re-points the *PR*, leaving it aimed at a branch that is about to be deleted.
+
+**This happened.** On 2026-08-01, `gh pr merge 253 --squash --delete-branch` closed `#254`, whose
+base was `#253`'s head branch `feat/live-external-sessions`. Its one commit — `c847033 fix(adopt):
+resolve the working directory from the conversation JSONL`, 191 lines of new test plus 45 lines of
+`src/server.ts` — did not reach `main`, and the wave reported success.
+
+Recovery, if it has already happened: the child's *head* branch survives (`--delete-branch` deletes
+only the merged PR's own head), so nothing is lost. GitHub refuses to reopen a PR whose base ref no
+longer exists, so restore it first:
+
+```bash
+git push origin <parent-pre-merge-sha>:refs/heads/<deleted-base-branch>
+gh pr reopen <child>
+gh pr edit <child> --base main
+git push origin --delete <deleted-base-branch>     # safe once the child points at main
 ```
 
 **Wave 1 — independent PRs.** Rebase onto `main`, wait for green, squash-merge, one at a time.
@@ -636,9 +811,184 @@ $G rebase --onto main origin/pr/<parent>
 #234 (parent #232)    #254 (parent #253)    #266 (parent #237)
 ```
 
+`#254` and `#266` are **base-ref-stacked**, not merely ancestry-stacked — `gh pr edit <child> --base main` them before their parent merges, or merging the parent closes them. See the rule above Wave 1.
+
 **`#237` ordering:** land `#237` **after** `#232`, `#253`, `#234` and `#267`. Its extraction of `reconcileConversationsCacheFromDisk()` collides with all four; landing it last costs one resolution instead of four (§3). `#266` follows `#237`.
 
+**Executed 2026-08-01 and it works — one conflict instead of four**, but it arrives as one *compound*
+resolution: `src/server.ts` ×3 plus `docs/BACKLOG.md` ×1, in which rows 5, 7 and 8 must all be
+re-made at once, from the opposite side. `#237`'s extracted method as written is the
+**pre-`#232`/`#253`** body — no freeze guard, and a hand-rolled `livePaths` Set instead of
+`canonicalLivePathSet(metas)`. Taking its side wholesale reinstates the POSIX-invisible
+Windows-only regression `CLAUDE.md` documents. Take `#237`'s *structure* and transplant `main`'s body.
+
+#### Verifying a compound resolution — and the limit of the obvious check
+
+The natural completion signal is a **body diff**: the extracted method must equal the inline block it
+replaces, modulo the extraction itself, with every difference named and attributed. Do that — on the
+real run it flagged exactly two differences, both legitimate (`#237`'s own
+`refreshConversationCache` / `setCacheMetadata` additions, verified present in `a0bfa77` and absent
+from `main`'s inline body).
+
+**But a body diff is structurally blind to anything that *wrapped* the block rather than lived inside
+it.** It compares what is IN the method to what was IN the block; a `withWarmup(...)` that used to
+surround the block and now surrounds nothing is invisible to it. That is exactly what went wrong —
+see §9.4 — and only `#234`'s test caught it.
+
+**So pair the body diff with a construct count, before and after.** It is one command and it is the
+whole finding:
+
+```bash
+git show origin/main:src/server.ts | grep -c 'withWarmup("conversation_refresh"'   # 2
+grep -c 'withWarmup("conversation_refresh"' src/server.ts                          # 1  <- the bug
+```
+
+Count anything that **wraps** rather than lives inside: `withWarmup`, warm-up/permission guards,
+`try`/`catch`, transaction or lock scopes, `trackCacheWrite`. A drop with no deliberate reason means
+the extraction ate a wrapper. **Never read the body diff as sufficient on its own** — it is a check on
+content, and an extraction's risk is in the context.
+
 **Wave 3 — `#267`.** Only after wave 1+2. Its delta collapses from 75 files to ~8.
+
+### Build the PR from its own commit. Do not strip its branch-wide diff.
+
+**This supersedes two rules adopted earlier in the same run. Both were wrong, and both were wrong in
+shape rather than in degree** — recorded as corrections, not refinements, because following either
+one carefully still lands foreign content on `main`.
+
+**Superseded rule 1 — "strip until it fails to compile."** Wrong shape. Compilation is not a
+completion signal, so the procedure it defines is **an open-ended search with no completion
+signal**: you remove what you can see, rebuild, and learn nothing about what remains. `#267`'s
+residual shrank **75 files → 9 → 8 → 4 → 3**, and *each step was caught by a different mechanism,
+the last by none*:
+
+| Step | What came out | Belongs to | Caught by |
+|---|---|---|---|
+| 75 → 9 | the stale three-dot merge-base | — | measuring with `merge --squash` |
+| 9 → 8 | three private methods + the `projectsDirs` option | `#237` | **compilation** |
+| 8 → 4 | four doc files, 656 lines | Group D `eab26e3`, `489a450` | **chasing a `+188` variance** — nothing automated |
+| 4 → 3 | `auto-reconcile without refresh=1` test block, 111 lines | `#237` | **CI tests only** — lint and build were green |
+| 3 → the truth | `refreshConversationCache` block, 2 imports, a comment | `#237` (`a0bfa77`) | **nothing** |
+
+The last row is the one that condemns the rule. That block **survived compilation, lint, a variance
+chase, and a full local test suite**, and surfaced only because a *test carried the feature's name* —
+`GET /api/conversations auto-reconcile without refresh=1` is `#237`'s title. Had `#237` named its
+tests differently, ~20 lines of it would have landed on `main` under `#267`.
+
+**Superseded rule 2 — "diff every resolved region against the integration branch, for every
+conflict."** Wrong shape, and worse than useless on the case that mattered. The branch answers
+*"what does this region look like once everything has landed"*, **never** *"whose content is this"*,
+and it cannot distinguish them because **it contains every PR by construction**. On `#267`'s `h3` it
+did not merely fail to help — **it argued for the wrong side**, endorsing `theirs` because the branch
+does contain `refreshConversationCache` there. It is `#237`'s.
+
+The branch is **a shape check on a resolution already attributed by provenance, and nothing more.**
+It is still worth running for that; it is not an authority on attribution.
+
+**What to do instead.** For any PR whose head sits on the integration branch, **identify the PR's own
+commit and build from it**:
+
+```bash
+git checkout --detach origin/main
+git cherry-pick <the PR's own commit>
+```
+
+Bounded and exact, with a definite answer, versus subtracting foreign material from a branch-wide
+diff until nothing visible remains. Where a residual must still be attributed line by line, use
+provenance rather than the compiler:
+
+```bash
+git log --format='%h %s' -S'<distinctive line>' origin/integration/missing-prs-2026-07-23 -- <file>
+git log --format='%h %s' --diff-filter=A -1 refs/landing/pr/<N> -- <file>
+```
+
+**The same principle was reached independently by the tb-mobile landing the same night**, from the
+opposite direction: its slice A cherry-picked the net end state rather than replaying 87 commits.
+Both are **construct what you want, rather than remove what you do not** — and both were adopted only
+after the subtractive version had already gone wrong once.
+
+The reason to state it that way is that the compile-based form was tried first and is incomplete.
+On the 2026-08-01 run, `#267` carried two distinct classes of foreign content:
+
+| Foreign content | Traces to | Caught by |
+|---|---|---|
+| `reconcileConversationsCacheFromDisk`, `shouldAutoReconcileConversationList`, `projectsDirsForFreshnessCheck`, and the `projectsDirs` option on `shouldRefreshProjectsFromHdd` | `#237` | **strip-until-it-fails-to-compile** — worked |
+| `docs/postmortems/2026-07-22-merge-all-open-prs-report.md`, `docs/runbooks/{2026-07-22-land-open-prs,README,_template}.md` — **656 lines** | Group D `eab26e3`, `489a450` | **nothing** — docs have no compile-time consequence |
+
+The docs half surfaced only because the residual measured `+855` where §2 predicted `+667` and
+someone chased the variance. **That variance is now closed, and its answer is the finding above:**
+§2's `8 files / +667` was never `#267`'s residual either — it was `#267` plus roughly 660 lines of
+`#237` and Group D. Both figures were measuring the same foreign content, in slightly different
+amounts, which is why comparing them looked like a 28% discrepancy rather than a category error. **A criterion keyed on compilation is blind to every file that cannot
+fail to compile** — docs, fixtures, schemas, workflow YAML, migrations that are not yet run.
+
+**That list is observed, not anticipated.** The tb-mobile landing running in parallel on the same
+night hit the identical blind spot from a different direction: its `fee27061` exists solely because
+a replay **reverted `.github/workflows/test.yml` and `package.json`, and resurrected a file `main`
+had deleted**. Workflow YAML, a dependency manifest, and a deletion — none of them capable of
+failing a compile — and all three caught only because someone diffed against `main` by hand
+afterwards. Two independent landings hitting the same class on the same night is the reason this is
+written as a rule rather than a caution.
+
+Two of the categories deserve more weight than the rest:
+
+- **Workflow YAML.** Reverting it silently weakens **the gate everything downstream is verified
+  by**. **Every check that would catch the revert is defined in the file that was reverted, so it
+  does not go red — it goes green with less meaning, and stays that way for every PR after.** That
+  is a categorically worse failure than a loud one, and no runbook in this repo says it anywhere.
+  On this repo the concrete loss is the cross-OS Smoke matrix — the thing `#340` spent an entire PR
+  establishing on `main`, and the only coverage `Smoke (windows-latest)` and `Smoke (macos-latest)`
+  provide. tb-mobile's `fee27061` is a reverted `.github/workflows/test.yml` and nothing else
+  caught it.
+- **Unrun migrations.** A reverted or dropped migration is invisible to `tsc`, to biome, and to the
+  test suite, and stays invisible **until the next boot against a real database** — by which point
+  it is a production failure rather than a CI one. **This is a live instance in this landing, not a
+  hypothetical:** `a60518c` carries `src/db/migrations/014_add_conversation_meta_file_path_index.sql`
+  and §5 records it as the **sole source** of that file. It is a Group D carry scheduled for wave 5;
+  drop it or revert it and every build, lint and test still passes, while the
+  `conversation_meta.file_path` index simply never exists on any deployment.
+
+Both share a property worth naming: **the damage is deferred past the point where anyone is still
+looking at the landing.** Docs drift is embarrassing; these two are the ones that cost an incident,
+and both transfer beyond this repo.
+
+**`#267`'s residual is 3 files / +8 lines**, and the way to get it is not to strip at all — it is to
+identify the PR's own commit and use it directly. §5 already records it: `6a853fd feat(api): emit
+session_name in conversation detail meta`. Cherry-picking that onto `main` reproduces the PR exactly:
+
+```
+__tests__/contracts/mobile-contracts.test.ts | 5 +++++
+contracts/mobile.schema.json                 | 1 +
+src/server.ts                                | 2 ++
+3 files changed, 8 insertions(+)
+```
+
+Two `session_name:` field emissions, one schema property, one contract assertion. That is the whole PR.
+
+**§2's "8 files / +667" is therefore not `#267`'s residual — it is `#267` plus roughly 660 lines of
+other PRs' work**, and the rehearsal landed all of it under `#267`'s number. Successive strips during
+the real run went 75 files → 9 → 8 → 4 → 3, and each step removed content that had looked like part
+of the PR:
+
+| Stripped | Actually belongs to | Would have been caught by |
+|---|---|---|
+| three private methods + `projectsDirs` option | `#237` | compile |
+| four doc files, 656 lines | Group D `eab26e3`, `489a450` | nothing — chased a `+188` variance |
+| `auto-reconcile without refresh=1` test block, 111 lines | `#237` | **CI tests only** — passed lint and build |
+| `refreshConversationCache` block + 2 imports + a comment, ~20 lines | `#237` (`a0bfa77`) | nothing — the oracle actively endorsed keeping it |
+
+**The lesson is to start from the PR's own commit rather than from its diff against `main`.** For any
+PR whose head sits on the integration branch (`#267`, `#297`, `#299`, `#304` — Correction 2), the
+diff is the *branch's* content, and stripping foreign material out of it is an open-ended search with
+no completion signal. Identifying the one commit is bounded and exact.
+
+**Consequence for §5.** `eab26e3` and `489a450` are listed there as Group D **`carry`**, meaning
+nothing else brings them in. That is wrong as stated: both are **inherited by `#267`**, so in a run
+that lets `#267` land whole they arrive early and wave 5's picks of them are no-ops. A no-op
+cherry-pick reads as "already handled" and gets skipped, which is how the row's verdict stops being
+checked. Stripping them from `#267` puts them back on Group D's plate — whether they remain
+correctly classified `carry` depends on whether wave 5 picks them cleanly, which this run will be
+the **first to actually exercise**.
 
 **Wave 4 — Groups B, C, F.** Cherry-pick, do not merge the PRs.
 
@@ -708,6 +1058,33 @@ $G log --first-parent --no-merges --format='%h %s' --reverse main..origin/integr
 
 `#304` is never merged — `90c1c07` in wave 5 is its content; close it.
 
+### The three remaining integration-headed PRs — take each from its own commit
+
+`#297`, `#299` and `#304` are the rest of the set Correction 2 identifies: their heads are commits on
+the integration branch, so **their diffs against `main` are the branch, not the PR**. `#267` cost four
+rounds of stripping and two red CI runs before this was applied; these three do not need to repeat it.
+SHAs resolved and measured on 2026-08-01 so the next session does not re-derive them:
+
+| PR | Its own commit | Real size | Branch-wide diff (**do not use**) |
+|---|---|---|---|
+| `#297` | **`23e72ac`** `fix(server): dedup permission-gate broadcasts on unchanged repaints` | **3 files / +167** | 113 files / +13 646 |
+| `#299` | **`66fff5f`** `fix(ws): stamp terminal_output/terminal_replay with a per-session seq` | **3 files / +127** | 114 files / +13 773 |
+| `#304` | **`90c1c07`** `feat(config): add server feature-flag registry with boot-time resolution` | **15 files / +739** | 126 files / +15 036 |
+
+`#297`'s commit also exists on the branch as `fad5d5f` (it arrived via cherry-pick PR `#298`); either
+resolves to the same content, and `#298` is excluded from wave 7 for that reason.
+
+**`#304` is closed, not merged** — `90c1c07` is carried in wave 5 as Group D. The other two are
+cherry-picked in wave 8. In all three cases:
+
+```bash
+git checkout --detach origin/main
+git cherry-pick <sha>          # never `git merge --squash refs/landing/pr/<N>`
+```
+
+The ratio is the point: for `#297` the branch-wide diff is **~82× the real change**, and every one of
+those extra lines belongs to a PR with its own number.
+
 **Per-group verification:**
 
 ```bash
@@ -771,7 +1148,36 @@ It is still safe, because the rule in §3 ("the fixing PR's status line beats `#
 
 **`#234`'s `withWarmup` (ledger row 8, marked `J`) — runner-up never tested.** `#234` wraps `rescanForRefresh()` in `withWarmup("conversation_refresh", …)`. `#237` had moved that call into a method shared with the routine background path, where gating it would flip the server into `SERVER_WARMING_UP` on every JSONL append — which the integration branch documents as wrong. I dropped the wrap and kept `#234`'s `rejectIfWarmingUp(res)` at the handler entry, asserting that it delivers the same intent.
 
-**That assertion is untested.** The runner-up resolution — keep `withWarmup` but only on the `bustCache` (explicit `?refresh=1`) branch — is equally consistent with both PRs' intent and was not tried. If `#234`'s warm-up reporting misbehaves after landing, start here.
+**RESOLVED 2026-08-01 — the assertion was wrong and the untried runner-up is correct.** This item is
+retired, and the answer is the opposite of what was recorded above.
+
+The real run landed `#237` after `#232`/`#253`/`#234`/`#267` per §8, implemented exactly the
+resolution recorded here — extraction with no internal gate, relying on `rejectIfWarmingUp(res)` at
+handler entry — and **`#234`'s own test failed**:
+
+```
+× returns conversation_refresh while an explicit conversation refresh is running
+AssertionError: expected 200 to be 503
+```
+
+`rejectIfWarmingUp(res)` does **not** deliver the same intent. It rejects requests that arrive
+*while* the server is warming up; it does not put the server *into* `conversation_refresh` for the
+duration of an explicit `?refresh=1` rebuild, which is the state `#234` exists to report.
+
+**The correct resolution is the runner-up: `withWarmup` on the `bustCache` branch only**, at the call
+site rather than inside the extracted method — so an explicit refresh gates and the automatic
+freshness path does not. 87/87 of `__tests__/server.test.ts` pass with it. The integration branch
+independently shows the same structure (`await this.withWarmup("conversation_refresh", () =>
+this.reconcileConversationsCacheFromDisk(…))`), though its version also carries `#271`'s
+`onProgress` and `#266`'s `canServeStale`, so follow its shape and not its text.
+
+**How the wrong side got argued for, recorded because the premise is the reusable part.** The case
+made for the no-gate version was that it *"changes nothing about warm-up behaviour relative to what
+is on `main` and green right now"* — `#234` landed the wrap at two call sites, so keeping both and
+adding no internal gate should have been behaviour-preserving. **That premise was never checked, and
+it was false:** one of the two wraps was *inside the very block `#237` extracts*, so the extraction
+deleted it. `grep -c 'withWarmup("conversation_refresh"'` reads **2** on `main` and **1** after the
+extraction. The argument was sound given its premise; nobody verified the premise.
 
 **`#245`'s content inside `#267`'s squash — never verified.** §2 says dropping `#245` "does not remove its content" from `#267`/`#297`/`#299`/`#304`, because it is their ancestor. That follows from the ancestry, but I never inspected what `#267`'s squash actually carried of `#245`. The claim is sound in principle and unchecked in fact.
 
