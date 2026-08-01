@@ -13,6 +13,7 @@ import {
   runProdStop,
 } from "../../cli/prod";
 import { writeMarker } from "../../src/lifecycle/marker";
+import { PTY_HOST_PROTOCOL_VERSION } from "../../src/pty-host/protocol";
 
 const mockSup = {
   isAgentLoaded: vi.fn(() => true),
@@ -166,6 +167,73 @@ describe("prod commands", () => {
     expect(report.repairs).toContain("cleared stale marker (dev pid 999999 was dead)");
     const { readMarker } = await import("../../src/lifecycle/marker");
     expect(readMarker()).toBeNull();
+  });
+
+  it("prod doctor: reports a compatible pty-host", async () => {
+    const report = await runProdDoctor(
+      { fix: false },
+      {
+        featureFlags: { ptyHost: true },
+        probePtyHost: async () => ({
+          reachable: true,
+          protocolVersion: PTY_HOST_PROTOCOL_VERSION,
+          sessionCount: 2,
+        }),
+      },
+    );
+
+    expect(report.ptyHost).toEqual({
+      reachable: true,
+      protocolVersion: PTY_HOST_PROTOCOL_VERSION,
+      sessionCount: 2,
+    });
+    expect(report.findings.filter((finding) => finding.includes("pty-host"))).toEqual([]);
+  });
+
+  it("prod doctor: reports an unreachable pty-host", async () => {
+    const report = await runProdDoctor(
+      { fix: false },
+      {
+        featureFlags: { ptyHost: true },
+        probePtyHost: async () => ({ reachable: false, error: "connection refused" }),
+      },
+    );
+
+    expect(report.ptyHost).toEqual({ reachable: false, error: "connection refused" });
+    expect(report.findings).toContain("pty-host is not reachable: connection refused");
+  });
+
+  it("prod doctor: reports a pty-host protocol mismatch", async () => {
+    const hostVersion = PTY_HOST_PROTOCOL_VERSION + 1;
+    const report = await runProdDoctor(
+      { fix: false },
+      {
+        featureFlags: { ptyHost: true },
+        probePtyHost: async () => ({
+          reachable: true,
+          protocolVersion: hostVersion,
+          sessionCount: 0,
+        }),
+      },
+    );
+
+    expect(report.findings).toContain(
+      `pty-host protocol ${hostVersion} does not match streamer protocol ${PTY_HOST_PROTOCOL_VERSION}`,
+    );
+  });
+
+  it("prod doctor: leaves the pty-host untouched when the flag is off", async () => {
+    const report = await runProdDoctor(
+      { fix: false },
+      {
+        featureFlags: { ptyHost: false },
+        probePtyHost: async () => {
+          throw new Error("probe should not run");
+        },
+      },
+    );
+
+    expect(report.ptyHost).toBeUndefined();
   });
 
   describe("prod logs", () => {

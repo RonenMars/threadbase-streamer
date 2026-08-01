@@ -1,7 +1,13 @@
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { encodeMessage, type HostTransport } from "./protocol";
+import {
+  encodeMessage,
+  type HostMessage,
+  type HostTransport,
+  isHostEvent,
+  LineDecoder,
+} from "./protocol";
 
 /**
  * Socket plumbing for the pty-host (plan Phase 6b).
@@ -46,10 +52,16 @@ export function socketTransport(socket: Socket): HostTransport {
       socket.on("data", (chunk: string) => handler(chunk));
     },
     onClose(handler) {
-      socket.once("close", handler);
+      let handled = false;
+      const handleClose = () => {
+        if (handled) return;
+        handled = true;
+        handler();
+      };
+      socket.once("close", handleClose);
       // A connection error is a close as far as every caller is concerned; the
       // runner's job is to fail in-flight requests either way.
-      socket.once("error", handler);
+      socket.once("error", handleClose);
     },
     close() {
       socket.destroy();
@@ -66,6 +78,91 @@ export function connectToHost(socketPath: string): Promise<HostTransport> {
       socket.removeListener("error", reject);
       resolve(socketTransport(socket));
     });
+  });
+}
+
+export type PtyHostStatusProbe =
+  | { reachable: true; protocolVersion: number; sessionCount: number }
+  | { reachable: false; error: string };
+
+/** Query host status without subscribing to events or adopting its sessions. */
+export async function probePtyHostStatus(
+  socketPath: string,
+  timeoutMs = 1_000,
+): Promise<PtyHostStatusProbe> {
+  let transport: HostTransport;
+  let connectTimedOut = false;
+  let connectTimer: ReturnType<typeof setTimeout> | undefined;
+  const connecting = connectToHost(socketPath);
+  try {
+    transport = await Promise.race([
+      connecting,
+      new Promise<never>((_, reject) => {
+        connectTimer = setTimeout(() => {
+          connectTimedOut = true;
+          reject(new Error(`status timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        connectTimer.unref?.();
+      }),
+    ]);
+  } catch (err) {
+    if (connectTimer) clearTimeout(connectTimer);
+    if (connectTimedOut)
+      void connecting.then(
+        (late) => late.close(),
+        () => {},
+      );
+    return { reachable: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (connectTimer) clearTimeout(connectTimer);
+
+  return await new Promise<PtyHostStatusProbe>((resolve) => {
+    const decoder = new LineDecoder();
+    let settled = false;
+    const finish = (result: PtyHostStatusProbe) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      transport.close();
+      resolve(result);
+    };
+    const timer = setTimeout(
+      () => finish({ reachable: false, error: `status timed out after ${timeoutMs}ms` }),
+      timeoutMs,
+    );
+    timer.unref?.();
+    transport.onClose(() => finish({ reachable: false, error: "pty-host connection closed" }));
+    transport.onLine((chunk) => {
+      for (const line of decoder.push(chunk)) {
+        let message: HostMessage;
+        try {
+          message = JSON.parse(line) as HostMessage;
+        } catch {
+          finish({ reachable: false, error: "pty-host returned an invalid status response" });
+          return;
+        }
+        if (isHostEvent(message) || message.id !== 1) continue;
+        if (!message.ok) {
+          finish({ reachable: false, error: message.error });
+          return;
+        }
+        const status = message.result as { protocolVersion?: unknown; sessions?: unknown };
+        if (typeof status?.protocolVersion !== "number" || !Array.isArray(status.sessions)) {
+          finish({ reachable: false, error: "pty-host returned an invalid status response" });
+          return;
+        }
+        finish({
+          reachable: true,
+          protocolVersion: status.protocolVersion,
+          sessionCount: status.sessions.length,
+        });
+      }
+    });
+    try {
+      transport.send(encodeMessage({ id: 1, type: "status" }));
+    } catch (err) {
+      finish({ reachable: false, error: err instanceof Error ? err.message : String(err) });
+    }
   });
 }
 
@@ -104,7 +201,7 @@ export async function listenForStreamers(
   const server = createServer((socket) => {
     const transport = socketTransport(socket);
     const dispose = handlers.onConnection(transport);
-    socket.once("close", dispose);
+    transport.onClose(dispose);
   });
 
   return new Promise((resolve, reject) => {

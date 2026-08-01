@@ -33,7 +33,7 @@ Only one streamer can bind port 8766 at a time. The platform-supervised "prod" i
 - `tb-streamer prod start` — clear marker + `launchctl kickstart -k`. Use after a `userHeld` suspension to restore prod.
 - `tb-streamer prod stop` — `launchctl bootout`. Will not auto-restart until `prod start` or reboot.
 - `tb-streamer prod restart` — bootout + bootstrap (re-reads plist).
-- `tb-streamer prod doctor [--fix]` — detect stale marker (dead devPid, not userHeld) and missing agent; `--fix` clears stale markers.
+- `tb-streamer prod doctor [--fix]` — detect stale marker (dead devPid, not userHeld) and missing agent; when `ptyHost` is enabled, also report host liveness, protocol version, and hosted-session count; `--fix` clears stale markers.
 - `tb-streamer prod logs [-n <N>] [--no-follow] [--errors-only]` — tail the supervised streamer's stdout + stderr. Default follows both files live, seeded with the last 50 lines. Resolves paths via `Supervisor.getLogPaths()` (macOS: `~/.threadbase/logs/{stdout,stderr}.log`). Not yet wired on Windows — see `src/lifecycle/task-scheduler.ts` `getLogPaths`.
 
 **Don't break without coordination:**
