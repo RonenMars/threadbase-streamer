@@ -658,6 +658,28 @@ $G diff --cached --stat         # no — the index, which may not be what you ed
 $G diff --stat                  # no — the worktree, which may not be what you commit
 ```
 
+**Phrase every gate as a property of current state, never as a record of what you did.** This is the
+constructive form of the failure that recurs throughout these notes, and it is worth stating
+positively because every other instance is recorded negatively.
+
+Each thing that went wrong in the 2026-08-01 run was a **proxy standing in for a fact**: an exit code
+for whether a merge happened, the index for what was committed, a check rollup for whether the matrix
+had run, a `grep` for a symbol that did not exist, `git cherry`'s patch-ids for whether content had
+landed. In every case the proxy was accurate about itself and silent about its subject.
+
+The resumability guard is the same distinction applied deliberately, and it is the one gate that
+*worked*:
+
+```bash
+git merge-base --is-ancestor origin/main HEAD    # a property of current state
+# NOT: "have I already rebased this PR?"          # a memory of an action
+```
+
+They differ exactly when something moves in between — and something does. It caught a release commit
+landing inside the window between a PR going green and being merged, where the action-memory form
+would have merged a stale branch. **When writing any check, ask whether it interrogates the world or
+your own record of it.**
+
 **Why this is a step and not advice.** On 2026-08-01 the `#267` residual was measured with
 `git diff --cached --stat` while the strip that produced it existed only in the **working tree** —
 the merge had already staged `src/server.ts`, and the edits were never re-staged. Local
