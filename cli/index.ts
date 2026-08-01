@@ -554,9 +554,19 @@ program
     const { SessionHost } = await import("../src/pty-host/host");
     const { listenForStreamers } = await import("../src/pty-host/socket");
 
-    const host = new SessionHost({ logger: getLogger("pty-host") });
-
     let server: Awaited<ReturnType<typeof listenForStreamers>>;
+    let host: InstanceType<typeof SessionHost>;
+    host = new SessionHost({
+      logger: getLogger("pty-host"),
+      onShutdown: () => {
+        host.dispose();
+        server.close(() => process.exit(0));
+      },
+      onOrphaned: () => {
+        host.dispose();
+        server.close(() => process.exit(0));
+      },
+    });
     try {
       server = await listenForStreamers(opts.socket, {
         onConnection: (transport) => host.accept(transport),

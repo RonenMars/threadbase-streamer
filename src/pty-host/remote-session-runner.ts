@@ -10,6 +10,7 @@ import type {
 import {
   encodeMessage,
   type HostEvent,
+  type HostHeartbeatState,
   type HostMessage,
   type HostRequest,
   type HostRequestBody,
@@ -18,10 +19,27 @@ import {
   type InputHistoryResult,
   isHostEvent,
   LineDecoder,
+  PTY_HOST_PROTOCOL_VERSION,
   type ReplayResult,
   reviveSession,
   type StatusResult,
 } from "./protocol";
+
+export class PtyHostProtocolMismatchError extends Error {
+  constructor(
+    readonly hostVersion: number,
+    readonly streamerVersion: number,
+  ) {
+    super(
+      `pty-host protocol ${hostVersion} is incompatible with streamer protocol ${streamerVersion}`,
+    );
+    this.name = "PtyHostProtocolMismatchError";
+  }
+}
+
+export const HOST_HEARTBEAT_INTERVAL_MS = 10_000;
+export const HOST_HEARTBEAT_REQUEST_TIMEOUT_MS = 5_000;
+export const HOST_SHUTDOWN_REQUEST_TIMEOUT_MS = 1_000;
 
 /**
  * `SessionRunner` backed by an out-of-process pty-host (plan Phase 6a).
@@ -50,7 +68,11 @@ export class RemoteSessionRunner implements SessionRunner {
   private nextRequestId = 1;
   private pending = new Map<
     number,
-    { resolve: (value: unknown) => void; reject: (err: Error) => void }
+    {
+      resolve: (value: unknown) => void;
+      reject: (err: Error) => void;
+      timeout: ReturnType<typeof setTimeout> | null;
+    }
   >();
 
   /** The mirror. Rebuilt wholesale by `status`, patched by events. */
@@ -61,6 +83,8 @@ export class RemoteSessionRunner implements SessionRunner {
   /** Fixed for a session's lifetime, so only spawn and status carry it. */
   private pids = new Map<string, number | null>();
   private closed = false;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatInFlight = false;
 
   /**
    * The only supported way to build one: a runner whose mirror has not been
@@ -73,8 +97,22 @@ export class RemoteSessionRunner implements SessionRunner {
     options: PTYManagerOptions = {},
   ): Promise<RemoteSessionRunner> {
     const runner = new RemoteSessionRunner(transport, options);
+    const status = await runner.readStatus();
+    if (status.protocolVersion !== PTY_HOST_PROTOCOL_VERSION) {
+      try {
+        await runner.request({ type: "shutdown-host" }, HOST_SHUTDOWN_REQUEST_TIMEOUT_MS);
+      } catch (err) {
+        options.logger?.warn("[pty-host] incompatible host did not acknowledge shutdown", {
+          event: "pty_host.shutdown_failed",
+          err,
+        });
+      } finally {
+        runner.dispose();
+      }
+      throw new PtyHostProtocolMismatchError(status.protocolVersion, PTY_HOST_PROTOCOL_VERSION);
+    }
     await runner.request({ type: "subscribe" });
-    await runner.refreshMirror();
+    runner.refreshMirror(status);
     return runner;
   }
 
@@ -107,6 +145,7 @@ export class RemoteSessionRunner implements SessionRunner {
       const waiter = this.pending.get(message.id);
       if (!waiter) continue;
       this.pending.delete(message.id);
+      if (waiter.timeout) clearTimeout(waiter.timeout);
       if (message.ok) waiter.resolve(message.result);
       else waiter.reject(new Error(message.error));
     }
@@ -120,17 +159,30 @@ export class RemoteSessionRunner implements SessionRunner {
    * until then a dropped host is a hard failure that says so.
    */
   private handleClose(): void {
+    if (this.closed) return;
     this.closed = true;
+    this.stopHeartbeat();
     const err = new Error("pty-host connection closed");
-    for (const waiter of this.pending.values()) waiter.reject(err);
+    for (const waiter of this.pending.values()) {
+      if (waiter.timeout) clearTimeout(waiter.timeout);
+      waiter.reject(err);
+    }
     this.pending.clear();
   }
 
-  private request(body: HostRequestBody): Promise<unknown> {
+  private request(body: HostRequestBody, timeoutMs?: number): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error("pty-host connection closed"));
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timeout =
+        timeoutMs === undefined
+          ? null
+          : setTimeout(() => {
+              if (!this.pending.delete(id)) return;
+              reject(new Error(`${body.type} timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+      timeout?.unref?.();
+      this.pending.set(id, { resolve, reject, timeout });
       this.transport.send(encodeMessage({ ...body, id } as HostRequest));
     });
   }
@@ -153,8 +205,11 @@ export class RemoteSessionRunner implements SessionRunner {
     });
   }
 
-  private async refreshMirror(): Promise<void> {
-    const status = (await this.request({ type: "status" })) as StatusResult;
+  private async readStatus(): Promise<StatusResult> {
+    return (await this.request({ type: "status" })) as StatusResult;
+  }
+
+  private refreshMirror(status: StatusResult): void {
     this.sessions = new Map();
     this.pids = new Map();
     for (const entry of status.sessions) {
@@ -162,6 +217,44 @@ export class RemoteSessionRunner implements SessionRunner {
       this.sessions.set(session.id, session);
       this.pids.set(session.id, entry.pid);
     }
+  }
+
+  async heartbeat(
+    state: HostHeartbeatState,
+    timeoutMs: number = HOST_HEARTBEAT_REQUEST_TIMEOUT_MS,
+  ): Promise<void> {
+    await this.request({ type: "heartbeat", ...state }, timeoutMs);
+  }
+
+  startHeartbeat(
+    getState: () => HostHeartbeatState,
+    intervalMs: number = HOST_HEARTBEAT_INTERVAL_MS,
+  ): void {
+    this.stopHeartbeat();
+    const send = () => {
+      if (this.closed || this.heartbeatInFlight) return;
+      this.heartbeatInFlight = true;
+      void Promise.resolve()
+        .then(() => this.heartbeat(getState()))
+        .catch((err) => {
+          if (this.closed) return;
+          this.options.logger?.warn("[pty-host] heartbeat failed", {
+            event: "pty_host.heartbeat_failed",
+            err,
+          });
+        })
+        .finally(() => {
+          this.heartbeatInFlight = false;
+        });
+    };
+    send();
+    this.heartbeatTimer = setInterval(send, intervalMs);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
   }
 
   // ─── Events ──────────────────────────────────────────────────────
@@ -346,7 +439,7 @@ export class RemoteSessionRunner implements SessionRunner {
    * them down here would spend the feature to implement a method name.
    */
   dispose(): void {
-    this.closed = true;
+    this.handleClose();
     this.transport.close();
   }
 
