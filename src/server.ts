@@ -3792,6 +3792,21 @@ export class StreamerServer {
           ? this.cache.readMessageWindow(indexFilePath, windowStart, beforeIndex)
           : null;
       if (!indexWindow && indexFilePath && this.cache && !hasAnchor) {
+        // The one line that separates a fast fetch from a slow one. A miss
+        // means this request falls through to the scanner and re-parses the
+        // whole file, which is the entire difference between the 34 ms and
+        // 2877 ms fetches of the same conversation — and it was invisible in
+        // the log, because only the failure case was ever recorded.
+        this.log.info(
+          `[server] offset-index miss ${id} → scanner fallback`,
+          {
+            event: "offset_index.miss",
+            conversationId: id,
+            fromIndex: windowStart,
+            toIndex: beforeIndex,
+          },
+          "pino",
+        );
         // Cold/stale index for a file we page linearly → backfill in the
         // background (tracked so close() awaits it) for next time. The current
         // request is served by the scanner path below.

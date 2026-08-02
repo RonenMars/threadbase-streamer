@@ -11,7 +11,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readSync, type Stats, statS
 import { open as openAsync } from "fs/promises";
 import { dirname } from "path";
 import { setImmediate as yieldToEventLoop } from "timers/promises";
+import { instrumentDatabase, labelStatements } from "./db/query-timing";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
+import { getLogger } from "./logger";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
 import {
   DEFAULT_AGENT_ENTRYPOINTS,
@@ -206,6 +208,8 @@ CREATE TABLE IF NOT EXISTS session_names (
   updated_at  INTEGER NOT NULL
 );
 `;
+
+const cacheLog = getLogger("cache");
 
 export class ConversationCache {
   private db: Database.Database;
@@ -491,6 +495,9 @@ export class ConversationCache {
         "SELECT COUNT(*) as cnt FROM conversation_message_index WHERE conversation_id = ?",
       ),
     };
+    // Name every statement above after its key, so a slow-query line says
+    // `getMessageIndexWindow` and not `select:conversation_message_index`.
+    labelStatements(this.stmts);
   }
 
   /**
@@ -705,6 +712,7 @@ export class ConversationCache {
   }
 
   private async runBackfill(filePath: string): Promise<void> {
+    const startedAt = performance.now();
     const convId = ConversationCache.conversationIdForFile(filePath);
     // Reset any partial/stale state before rebuilding from scratch. For a
     // non-indexable (non-claude) file the purge IS the whole job — it also
@@ -782,6 +790,21 @@ export class ConversationCache {
     // Seed the incremental writer's state so subsequent appends continue the
     // same reducer instead of re-parsing from scratch.
     this.indexParseState.set(filePath, state);
+    // The cold path's only success signal. Until now just `backfill_failed`
+    // was logged, so a full-file re-parse — the difference between a 20 ms
+    // detail fetch and a multi-second one — left no trace when it worked.
+    const ms = Math.round(performance.now() - startedAt);
+    cacheLog.info(
+      `[cache] offset-index backfilled ${convId} ${ms}ms`,
+      {
+        event: "offset_index.backfill_ok",
+        conversationId: convId,
+        ms,
+        rows: nextIndex,
+        bytes: stat.size,
+      },
+      "pino",
+    );
   }
 
   /**
@@ -923,7 +946,7 @@ export class ConversationCache {
     options?: ConversationCacheOptions,
   ): ConversationCache {
     mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new Database(dbPath);
+    const db = instrumentDatabase(new Database(dbPath));
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
     return new ConversationCache(db, tailSize, migrationsDir, options);

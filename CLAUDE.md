@@ -41,6 +41,23 @@ Modules with non-obvious behavior:
 - `db/migrations.ts` + `db/pg-migrations/*.sql` — Postgres migration runner. Postgres is dormant (only `session_uploads` + reserved tables); SQLite is the primary persistence layer.
 - `schemas/*.schema.ts` — zod validation at HTTP/scanner boundaries
 
+## Query timing
+
+Every SQLite statement is timed. `instrumentDatabase()` (`src/db/query-timing.ts`) wraps `db.prepare` at both `new Database()` sites — `ConversationCache.open` and `RuntimeStore.open` — so the ~90 statements prepared across the cache, the runtime store and the repositories that share those handles are all covered without touching a call site.
+`better-sqlite3` is synchronous, so a call's wall time is its cost; measured overhead is +1% on an 8.9 µs call, which is why it is always on rather than behind a flag.
+
+What gets logged, and why so little: the prod log was measured at 261 MB with no rotation, and a single conversation fetch runs dozens of statements.
+
+- **`db.slow_query`** (warn) — a statement at or above `THREADBASE_DB_SLOW_QUERY_MS`. On by default.
+- **`db.query`** (debug) — every statement. Off unless `LOG_LEVEL=debug`.
+- Both are emitted with dest `"pino"`, never the `"both"` default: `both` also writes the message through `console.*`, and in prod both streams land in the same file, so every line would be stored twice.
+- Each line carries the statement's **name** (its key in the `stmts` object, applied by `labelStatements`; anything unnamed falls back to `verb:table`), the duration and the row count. Never the SQL text — too verbose — and never the bound parameters, which carry file paths and conversation ids.
+
+**The 35 ms default is measured, not chosen.** Against the live 22 MB `cache.db` (583 conversations, 38 717 index rows), 3 600 read samples across the twelve statements the hot paths run gave p50 0.03 ms / p99 0.87 ms / max 1.83 ms, and 1 200 write samples gave p99 0.09 ms with rare WAL-checkpoint spikes to 4.37 ms. 35 ms is 8× the slowest healthy operation observed, so checkpoint spikes never page anyone, and it is more than the 34 ms *end-to-end* time of the fastest complete conversation fetch measured on this box — a query crossing it cost more on its own than an entire healthy request.
+Re-measure before trusting the default on hardware unlike this one.
+
+**Slow-query lines are not attributed to a request.** Doing that needs `AsyncLocalStorage` or a request id threaded through (`AppEnv.requestId` is declared but never set by anything today), and it would only cover the subset of queries that have a request at all — the watcher, the boot scan and the backfill run outside any. At a 35 ms threshold these lines are rare enough to correlate with the adjacent `http.request` line by timestamp; revisit if they ever stop being rare.
+
 ## Session lifecycle
 
 Live statuses (`SessionStatus` in `src/types.ts`): `running`, `waiting_input`, `idle`.
@@ -74,6 +91,7 @@ waiting_input / idle ──(idle reaper, 6h of agent silence)───► idle  
 | `THREADBASE_INCLUDE_AGENTS` | Show non-interactive Claude runs (agent SDK, hook invocations) in `/api/conversations` + `/project-chats`. Default off. Toggling triggers a one-time prune-or-rescan on next restart. |
 | `THREADBASE_AGENT_ENTRYPOINTS` | JSONL `entrypoint` values treated as agent traffic. Default `sdk-cli,claude-vscode`. |
 | `THREADBASE_DIR_SCAN_DEBOUNCE_MS` | Trailing debounce (ms) before a project-directory change flags the scanner stale; collapses an event storm during active sessions into one rescan. Default `1000`. |
+| `THREADBASE_DB_SLOW_QUERY_MS` | Duration at or above which a SQLite statement is logged at warn as `db.slow_query`. Default `35` — measured, see [Query timing](#query-timing). `<= 0` disables slow-query logging. |
 | `THREADBASE_FEATURE_*` | One var per feature flag (`THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT`, …). Highest-precedence source; see [Feature flags](#feature-flags). Truthy `1/true/yes/on`, falsy `0/false/no/off/""`; unset means "defer to the CLI flag, then server.yaml". |
 | `THREADBASE_CONFIG_DIR` | Overrides the config directory (default `~/.threadbase`) that `server.yaml` — including the `api_key` — is read from and written to. Mainly a test hook: it lets `setApiKey`/`loadOrCreateApiKey` target a throwaway dir so `POST /api/auth/rotate` and `set-key` never clobber the real live config. Unset in production. |
 | `THREADBASE_RUNTIME_DB` | Overrides the path of the session-registry database (default `runtime.db` inside the config dir). A test hook first: `__tests__/setup/isolate-runtime-db.ts` points every test file at a throwaway file so a suite run never writes sessions into the real `~/.threadbase/runtime.db`. It exists separately from `THREADBASE_CONFIG_DIR` because several auth tests sandbox the config dir by overriding `HOME`, and `THREADBASE_CONFIG_DIR` outranks `homedir()`. Unset in production. |
