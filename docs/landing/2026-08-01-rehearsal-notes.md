@@ -1101,6 +1101,26 @@ git diff --name-status --diff-filter=A HEAD origin/integration/missing-prs-2026-
 **Do not** resolve conflicts file-by-file (D7).
 **Do not** run `biome check --write` mid-sequence (D8).
 
+### Classify every conflict before resolving it, and treat MIXED as an ordering signal
+
+Read each conflict in `diff3` style (`merge.conflictStyle = diff3`, which shows the common ancestor between `|||||||` and `=======`) and classify it before deciding anything. In this landing every conflict fell into one of three shapes, and only one of them is a decision:
+
+| Shape | `ours` | `base` | `theirs` | What it means | Resolution |
+|---|---|---|---|---|---|
+| **subtract-the-ancestor** | empty | non-empty | `base` + delta | the pick is out of branch order, and `base` is a sibling commit's content showing through | take `theirs` − `base`: this commit's own contribution, nothing else |
+| **union at an empty base** | non-empty | empty | non-empty | a genuine both-added | keep both, ordered to match the integration branch |
+| **MIXED** | — | — | — | neither of the above | **stop, and check the ordering first** |
+
+**A MIXED classification is evidence that a prerequisite is missing at least as often as it is evidence of a real conflict. Check the ordering before reaching for judgement.**
+
+Why this is worth a rule rather than a note. An out-of-order pick does not merely cost effort — **it manufactures a decision that does not exist.** `#304` is the worked example: cherry-picked onto `main` before Group F and `9608196`, it produced seventeen hunks across eleven files, three of them MIXED, each presenting as one mechanism versus a different mechanism that supersedes it, with `main` holding neither side. That reads exactly like a design decision. Resolved in that state it would have produced three hand-made resolutions and a recorded judgement call about a choice nobody ever made — and that record would then have been cited as precedent by whoever came next. With the prerequisites landed first, the same commit applies with **zero** conflicts.
+
+**This is the counterweight to the stop rule.** Stopping to think is the right default, and an ordering error is precisely what exploits it: it presents as the signal the stop rule exists to catch. So before treating a MIXED hunk as a judgement call, ask what would have to be on `main` for it to be mechanical, and check whether that is a group you have not landed yet.
+
+A **tree** conflict — a path that does not exist on your side at all — is the same signal in its clearest form, and worth reaching for deliberately when a group's conflicts look wrong. A content conflict is ambiguous; "this file is not here" has exactly one cause. `#304`'s `docs/env.example` conflict named Group F as the missing prerequisite with no analysis at all.
+
+This generalises §8's own ordering rules (`#237` after its four editors; Group D before Group E). Those are not cost optimisations — they are the difference between a mechanical landing and a series of invented decisions.
+
 **Expected end state:** ~98 commits on `main`, and `git diff --stat` against the branch showing only `#302`'s doc, `#223`'s lockfile/`package.json`, and small docs deltas. This rehearsal ended at 7 differing files; anything materially larger means a group was dropped, anything materially smaller means the drift in §6 was resolved better than it was here.
 
 
@@ -1111,6 +1131,30 @@ git diff --name-status --diff-filter=A HEAD origin/integration/missing-prs-2026-
 Written last, deliberately. §3 records the resolution that won; §8 records the order to use. Neither says which calls were close, which were reasoned rather than measured, or what was never checked at all. A colleague picking this up should know the following before trusting either section.
 
 ### 9.1 The single biggest gap: eleven Group-E commits were resolved by the blanket picker, and §3 names none of them
+
+> ## ⚠ RE-DERIVE THE FILE COLUMN BELOW. DO NOT READ IT.
+>
+> **Measured against the real run: the "Files decided by a blanket per-file pick" column is wrong roughly two times in three.** Three entries have now been reviewed by hand, and two of the three had the wrong file recorded:
+>
+> | Entry | This table says | Actually |
+> |---|---|---|
+> | `#313` | `src/pty-manager.ts` | correct — and its answer was already known (§6) |
+> | `#293` | `src/server.ts` | **`src/server.ts`, but one import hunk** — mechanical, and the entry reads as far more dangerous than it is |
+> | `#296` | `src/server.ts` | **`src/api/app.ts`** — a different file, and a real defect (an orphaned `createDiagnosticsRoutes` import) |
+>
+> Both error directions are harmful and neither is safe to absorb. An entry that overstates (`#293`) spends a careful reviewer's attention on an import union. An entry that names the wrong file (`#296`) sends them to inspect `src/server.ts`, find nothing wrong, and conclude the entry is clear — while the actual defect sits in a file they were never pointed at. **The second failure is the dangerous one, because it converts a warning into a false all-clear.**
+>
+> The "seven of the thirteen decided `src/server.ts`" claim below inherits this and must not be quoted. `#296` was one of the seven and is not a `src/server.ts` entry at all.
+>
+> **For each of the ten remaining entries, derive the files from the commit rather than from this table:**
+>
+> ```bash
+> git checkout --detach origin/main
+> git cherry-pick <sha>                       # let it conflict
+> git diff --name-only --diff-filter=U        # the real file list
+> ```
+>
+> The **commit list** in the left column is sound — it came from the Group-E loop's own log and matches the run. It is the file attribution that decayed, because it was recorded from a resolver's output rather than re-measured. **The ten remaining entries are where this landing's residual risk lives, so the cost of re-deriving them is small against what they are guarding.**
 
 §3's ledger covers Groups A/A′/B and the hand-resolved parts of C. It does **not** have a row for any Group-E conflict. Eleven of the forty Group-E commits conflicted and were resolved by the same per-file script whose defect §4 `D7` describes and whose worst outcome was `#313`. **`#313` is in this list — it is how that bug got in.** Every other entry carries the same risk and none was individually reviewed:
 
@@ -1130,7 +1174,11 @@ Written last, deliberately. §3 records the resolution that won; §8 records the
 
 Group F adds two more: `9f85ec5` (`#293`, `src/server.ts`) and `342c61c` (`#296`, `src/server.ts`).
 
-**Seven** of the thirteen decided `src/server.ts` — the file the runbook already names as the main conflict surface: `#309`, `#319`, `#324`, `#327`, `#329` in Group E, plus `#293` and `#296` in Group F. **Treat all thirteen as unreviewed.** `#313` proves the failure is silent under both `tsc` and biome, so re-running the suite is not sufficient to clear them; they need a hunk-level diff against the branch.
+~~**Seven** of the thirteen decided `src/server.ts`~~ — **superseded; see the warning at the top of this section.** This count was derived from the file column and inherits its error rate: `#296` was one of the seven and is not a `src/server.ts` entry at all. Re-derive the file list per commit; do not quote a count taken from the table.
+
+**Treat all thirteen as unreviewed** — that part stands, and is now **ten**, with `#313`, `#293` and `#296` reviewed on the real run. `#313` proves the failure is silent under both `tsc` and biome, so re-running the suite is not sufficient to clear them; they need a hunk-level diff against the branch.
+
+One caveat on that, learned from `#296`: whether a bad resolution here is *silent* depends on ordering, not on the resolution. `#296`'s orphaned import failed loudly with `TS2307` only because the module it referenced belongs to a group that had not landed; `D7`'s original casualty stayed green because its module already had. **So a green `tsc` on one of these is not evidence of a good resolution — it may only mean the owning group landed first.** Keep the route-parity sweep.
 
 ### 9.2 §8's recommendation to land `#237` last was never executed
 
