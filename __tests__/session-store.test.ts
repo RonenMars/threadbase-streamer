@@ -375,4 +375,35 @@ describe("SessionStore", () => {
       ).toThrow("INVALID_CURSOR");
     });
   });
+
+  describe("managedToResponse — a rehydrated session", () => {
+    // `rehydrated` marks a stub the boot rehydrator seeded from the durable
+    // registry: a previous run's session, with no process behind it.
+    it("reports historical ownership and a resumable lifecycle", () => {
+      store.addManaged(makeManagedSession({ status: "idle", rehydrated: true }));
+
+      const [resp] = store.list(noPty);
+      expect(resp.ownership).toBe("historical");
+      expect(resp.lifecycle).toBe("resumable");
+      expect(resp.lifecycleSource).toBe("reconcile");
+      expect(resp.ptyAttached).toBe(false);
+      // Internal marker — translated into the fields above, never emitted.
+      expect(resp).not.toHaveProperty("rehydrated");
+    });
+
+    it("prefers resumable over the failed/completed defaults", () => {
+      store.addManaged(
+        makeManagedSession({ status: "idle", rehydrated: true, failureReason: "boom" }),
+      );
+      expect(store.list(noPty)[0].lifecycle).toBe("resumable");
+    });
+
+    it("leaves a session this run spawned exactly as it was", () => {
+      store.addManaged(makeManagedSession({ status: "idle" }));
+      const [resp] = store.list(noPty);
+      expect(resp.ownership).toBe("managed");
+      expect(resp.lifecycle).toBe("completed");
+      expect(resp.lifecycleSource).toBe("exit");
+    });
+  });
 });

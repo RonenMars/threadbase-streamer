@@ -34,6 +34,14 @@ describe("feature flags registry", () => {
     );
   });
 
+  it("keeps sessionRehydration's env var name stable, and its default ON", () => {
+    const flag = findFeatureFlag("sessionRehydration");
+    expect(flag?.env).toBe("THREADBASE_FEATURE_SESSION_REHYDRATION");
+    // Shipped on: it changes what GET /api/sessions contains, so it exists as a
+    // kill switch, not as an opt-in.
+    expect(flag?.default).toBe(true);
+  });
+
   it("finds a known flag and rejects an unknown one", () => {
     expect(findFeatureFlag(FLAG.id)?.id).toBe(FLAG.id);
     expect(findFeatureFlag("nopeNotAFlag")).toBeUndefined();
@@ -157,6 +165,26 @@ describe("resolveFeatureFlags precedence", () => {
       env: { [FLAG.env]: "0" } as NodeJS.ProcessEnv,
     });
     expect(values[FLAG.id]).toBe(false);
+  });
+
+  // A default-ON flag exercises the chain in the opposite direction from FLAG,
+  // where every rung has to be able to turn something OFF.
+  it("resolves sessionRehydration through the whole chain, in both directions", () => {
+    const on = findFeatureFlag("sessionRehydration");
+    if (!on) throw new Error("sessionRehydration missing from the registry");
+
+    expect(resolveFeatureFlags({ env: NO_ENV })[on.id]).toBe(true);
+    expect(resolveFeatureFlags({ yaml: { [on.id]: false }, env: NO_ENV })[on.id]).toBe(false);
+    expect(
+      resolveFeatureFlags({ yaml: { [on.id]: true }, cli: { [on.id]: false }, env: NO_ENV })[on.id],
+    ).toBe(false);
+    expect(
+      resolveFeatureFlags({
+        yaml: { [on.id]: true },
+        cli: { [on.id]: true },
+        env: { [on.env]: "0" } as NodeJS.ProcessEnv,
+      })[on.id],
+    ).toBe(false);
   });
 
   it("returns a total map — every registry id present", () => {

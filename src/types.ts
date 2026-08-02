@@ -89,6 +89,17 @@ export interface ManagedSession {
   resumedFromConversationId?: string;
 
   /**
+   * This session was seeded from the durable registry at boot, not spawned by
+   * this run — there is no PTY behind it and never was one in this process.
+   *
+   * INTERNAL. It never reaches the wire: `managedToResponse` translates it into
+   * the already-defined `ownership: "historical"` + `lifecycle: "resumable"`
+   * pair, so no client needs to learn a new field to render a recovered session.
+   * Cleared implicitly when a resume overwrites the stub with a real session.
+   */
+  rehydrated?: boolean;
+
+  /**
    * Set once a live session's underlying persisted conversation file is
    * discovered after the fact (currently: fresh Codex sessions, whose
    * rollout id isn't known until the CLI creates its own JSONL). Distinct
