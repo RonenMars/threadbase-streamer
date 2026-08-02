@@ -204,6 +204,17 @@ program
     const isProdInvocation = opts.prod === true || process.ppid === 1;
     if (!isProdInvocation) appendDevSessionMarker();
 
+    // Cap the supervised logs before anything writes to them. Gated on prod
+    // because only there is fd 1 the log file itself, still at offset 0 — an
+    // ad-hoc `serve` logs to its terminal, so truncating prod's file would both
+    // destroy history and race the live daemon's offset.
+    if (isProdInvocation) {
+      const { truncateOversizedLogs } = await import("../src/lifecycle/log-cap");
+      for (const f of truncateOversizedLogs()) {
+        log.info(`truncated oversized log at boot: ${f}`, { path: f, event: "log.truncated" });
+      }
+    }
+
     // On macOS, check for conflicting Threadbase streamer agents (Homebrew vs
     // deploy.sh). If a conflict is detected, warn and let the user resolve it
     // — the port-in-use check downstream will still catch EADDRINUSE, but
