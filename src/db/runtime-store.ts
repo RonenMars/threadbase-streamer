@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { instrumentDatabase } from "./query-timing";
 import { resolveMigrationsDir, runSqliteMigrations } from "./sqlite-migrate";
 
 /**
@@ -21,7 +22,7 @@ export class RuntimeStore {
   private constructor(private readonly db: Database.Database) {}
 
   static open(dbPath: string, migrationsDir?: string): RuntimeStore {
-    const db = new Database(dbPath);
+    const db = instrumentDatabase(new Database(dbPath));
     db.pragma("journal_mode = WAL");
     runSqliteMigrations(db, migrationsDir ?? resolveMigrationsDir("runtime-migrations"));
     return new RuntimeStore(db);
