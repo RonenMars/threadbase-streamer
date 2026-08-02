@@ -3,10 +3,12 @@ import { stdin } from "node:process";
 import { Command } from "commander";
 import qrcode from "qrcode-terminal";
 import {
+  loadAutoResumeOnBoot,
   loadDefaultPermissionMode,
   loadOrCreateApiKey,
   loadPtyGracePeriodMs,
   loadPublicUrl,
+  setAutoResumeOnBoot,
   setDefaultPermissionMode,
 } from "../src/auth";
 import {
@@ -233,6 +235,35 @@ program
       setDefaultPermissionMode(resolvedDefaultPermissionMode);
     }
 
+    // Auto-resume on boot (plan Phase 7b). Same three gates as above, and for
+    // the same reason: a supervised service must never block on stdin.
+    //
+    // Persisting BOTH answers is the whole mechanism — `no` writes `false`, so
+    // the key is present and this never asks again. Every other path (non-TTY,
+    // skipped, declined, prompt failure) resolves to false. There is no
+    // sequence of events in which silence turns this on.
+    let resolvedAutoResumeOnBoot = loadAutoResumeOnBoot();
+    if (
+      resolvedAutoResumeOnBoot === undefined &&
+      !isProdInvocation &&
+      process.env.THREADBASE_SKIP_AUTO_RESUME_PROMPT !== "true" &&
+      stdin.isTTY
+    ) {
+      const { interactiveAutoResumePrompt } = await import("../src/lifecycle/prompt");
+      resolvedAutoResumeOnBoot = await interactiveAutoResumePrompt();
+      setAutoResumeOnBoot(resolvedAutoResumeOnBoot);
+    } else if (resolvedAutoResumeOnBoot === undefined) {
+      // A --prod-only machine never sees a TTY, so the key stays absent forever
+      // and the operator has no way to learn the setting exists. One line, only
+      // when we neither found an answer nor asked for one.
+      log.info(
+        "auto_resume_on_boot is not set; interrupted sessions will wait for you to resume them.\n" +
+          "Set `auto_resume_on_boot: true` in ~/.threadbase/server.yaml to resume them automatically.",
+        undefined,
+        "console",
+      );
+    }
+
     let resolvedPort = requestedPort;
 
     if (!isProdInvocation) {
@@ -272,6 +303,7 @@ program
       browseRoot: opts.browseRoot,
       publicUrl: opts.publicUrl,
       defaultPermissionMode: resolvedDefaultPermissionMode,
+      autoResumeOnBoot: resolvedAutoResumeOnBoot ?? false,
       defaultModel: opts.defaultModel,
       defaultEffort: opts.defaultEffort,
       ptyGracePeriodMs,
