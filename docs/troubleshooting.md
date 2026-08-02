@@ -955,3 +955,25 @@ Check `pm2 list` and `Get-CimInstance Win32_StartupCommand | Where-Object Comman
 { max_restarts: 10, min_uptime: 5000, restart_delay: 2000 }
 ```
 and install `pm2-logrotate` so no single log can grow unbounded.
+
+## `~/.threadbase/logs/stdout.log` grows to hundreds of MB with no rotation
+
+**When:** The supervised streamer's `stdout.log` reaches hundreds of megabytes. There are no archived `.0.gz` siblings, no `logrotate` or `newsyslog.d` entry, and nothing in the launchd plist bounds it. One measured instance hit **261 MB** (with a 17 MB `stderr.log`) between deploys.
+
+**Cause — two independent problems.**
+
+*Volume.* `src/logger.ts` used to default every call to `dest: "both"`, writing each line twice: once as pino JSON and once as an unstructured `console` line. Worse, the `console` half checked no level, so it printed `debug` calls that pino had already filtered out. In a 50k-line sample the split was 18,001 structured pino lines against 20,387 console duplicates — two fifths of the file. The single loudest line was `"Scanner invalidated by directory event"`, a `debug` call that fired once per JSONL write (11,570 times), which meant an active Claude session was the log's own biggest producer and no setting could quiet it.
+
+*No bound.* Nothing ever truncated the file.
+
+**Fix (shipped).** `defaultDest()` now picks by `process.stdout.isTTY`: `pino` under a supervisor (launchd, systemd, Task Scheduler, Docker — fd 1 is a file or pipe), `console` at a human terminal. An explicit `dest` still wins, which is what the CLI's user-facing output (banners, QR, `prod doctor`) passes, and what the high-frequency query-timing lines pass. Debug lines are now genuinely filtered by `LOG_LEVEL`. `truncateOversizedLogs()` (`src/lifecycle/log-cap.ts`) empties either log above 32 MB, at boot, on a `--prod` invocation only.
+
+*Separately, same log:* those request lines also printed `→ 597`, the `ALREADY_HANDLED` sentinel that routes past Hono's response piping rather than a real HTTP status — 96% of lines, so the log could not tell a 200 from a 500 on any direct-write route. Fixed by the query-timing work, which reads the status off the Node response the handler actually wrote to.
+
+**Why rotation is not the fix here.** The supervisor holds the descriptor via `StandardOutPath`/`StandardErrorPath`. Renaming or unlinking the file leaves the daemon writing to an unlinked inode nobody can read while the visible file stays frozen at zero bytes — so log rotation *by rename*, which is what `newsyslog` and `logrotate` do by default, silently breaks logging instead of bounding it. Only truncation-in-place preserves the inode.
+
+**Why the cap runs at boot and only under `--prod`.** `truncate(2)` resets the inode size but not any open writer's seek offset, so emptying a live daemon's log leaves its next write landing at the old offset with the kernel filling `0..N` with NULs — the sparse-log symptom in `docs/BACKLOG.md`. At boot the process has written nothing, so its own fd is still at 0 and no gap can form. An ad-hoc `serve` logs to its terminal, so truncating prod's file from one would both destroy history and race the live daemon's offset.
+
+**Manual escape hatch:** `tb-streamer prod logs --clear` truncates both files in place and kickstarts so the descriptors reopen at 0.
+
+**Known ceiling:** the cap bounds growth *across restarts only*. An instance running for months without one still grows unbounded. If that becomes real, move the same truncate-in-place call onto an interval. A pino transport that owns its own file does not replace this on its own — real stdout (uncaught stack traces, node warnings, PTY noise) still lands in the supervisor-held file.
