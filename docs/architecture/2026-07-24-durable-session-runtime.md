@@ -101,6 +101,12 @@ It is still not the right *first* move. It introduces a second process to instal
 
 So: Phases 1 and 2 solve the common failure completely and stand on their own; Phase 3a makes surviving agents visible; the daemon becomes a well-scoped follow-up whose value is now measured rather than assumed. Recorded here as the intended successor, not a discarded option.
 
+#### Windows qualification result
+
+Phase 6e observed the critical boundary on `windows-latest` on 2026-08-01: a detached Node host spawned a real PowerShell ConPTY, survived its launcher exiting, and captured all output emitted afterward. The real named-pipe suite also observed status, output, disconnect, and reconnect round trips, so the host does buy Windows continuity at the process/ConPTY boundary.
+
+The qualification did not run Claude or Codex, invoke `tb-streamer prod restart` through Task Scheduler, or replay a real provider screen after that restart. Those Windows end-to-end claims remain assumptions, and `ptyHost` therefore remains off by default.
+
 ### E. Detach the PTY from the streamer's lifecycle + persist a session registry — **chosen**
 
 Three separable changes, in dependency order:
@@ -174,7 +180,7 @@ What this task does instead is make 3b cheap later: once PTY ownership sits behi
 
 Consequently **no `detachedSessions` flag ships**. There is no behaviour to gate: `dispose()` keeps killing on clean shutdown (the alternative is a guaranteed `SIGHUP` death seconds later, with a stale registry row claiming otherwise — worse than an honest kill). What changes is that shutdown now *records* terminal state before killing, so the next boot can explain what happened instead of silently forgetting.
 
-Windows is qualified separately regardless: `SETSID` and controlling-terminal semantics are POSIX, and the ConPTY teardown path differs. The cross-platform test asserts observed behaviour rather than assuming parity.
+Windows was qualified separately in Phase 6e because `SETSID` and controlling-terminal semantics are POSIX and the ConPTY teardown path differs. The observed boundary and remaining assumptions are recorded under alternative D above.
 
 On startup the reconciler reads every non-terminal row and probes each `pid`:
 
@@ -242,11 +248,11 @@ The riskiest thing the reconciler could do is act on a misidentified PID, so it 
 
 Stated plainly, per C1's requirement to document where true survival is impossible.
 
-- **An agent cannot outlive the streamer while the streamer owns its PTY master fd.** Measured, not assumed (see *Problem*): closing the last master fd makes the kernel `SIGHUP` the agent, and `setsid` is what elects it to receive that hangup. Surviving a deliberate restart requires relocating fd ownership — the daemon in alternative D. Until then, a clean restart ends managed sessions, and the registry records that it did so rather than losing them silently.
-- **Byte-stream reattachment across restart is impossible regardless.** A master fd cannot be resurrected. Even with the daemon, an agent adopted after restart is observed through provider history and controlled by an explicit resume respawn; its pre-restart terminal bytes are gone. Replay after restart is conversation-accurate, not byte-accurate.
+- **An agent cannot outlive the streamer while the streamer owns its PTY master fd.** Measured, not assumed (see *Problem*): closing the last master fd makes the kernel `SIGHUP` the agent, and `setsid` is what elects it to receive that hangup. `ptyHost` solves this by relocating fd ownership to alternative D; with the flag off, a clean restart still ends managed sessions and the registry records that outcome.
+- **A lost master fd cannot be resurrected.** When `ptyHost` survives, it still owns the fd and xterm screen, so reconnect replay remains byte-accurate. If the host is also lost, recovery falls back to provider history and an explicit resume respawn, and pre-restart terminal bytes are gone.
 - **Machine reboot ends everything.** No user-space design survives it. Post-reboot the reconciler's job is accurate reporting (`resumable` / `failed`), not resurrection.
 - **`SIGKILL` on the streamer skips persistence.** Exit-time writes never run, so the reconciler infers state from PID probe plus provider history rather than a recorded exit. This is exactly why `status_source` exists and why the reconciler never trusts a stored `status` over a live probe.
-- **Windows is qualified separately.** `SETSID` and controlling-terminal hangup are POSIX semantics; ConPTY teardown differs. The cross-platform test asserts observed behaviour rather than assuming parity, and any divergence is documented rather than silently absorbed.
+- **Windows qualification is bounded.** CI observes a detached host preserving real ConPTY output after its launcher exits and reconnecting over a named pipe, but a real provider session and Task Scheduler restart remain unobserved.
 - **PID reuse is real.** Liveness alone is never treated as identity; the cmdline match gates every reattachment claim, and a mismatch yields `orphaned` rather than a guess.
 
 ---
@@ -269,7 +275,7 @@ Mapped to C1's required coverage.
 | Multi-client | Two subscribers, one leaves → no timer armed, other keeps streaming |
 | Long-running | Agent task outliving the former grace period completes intact |
 | Graceful shutdown | Clean `stop()` persists terminal state for every session |
-| Cross-platform | Reconciler probe on macOS/Linux; Windows behaviour asserted explicitly, whichever way it resolves |
+| Cross-platform | Reconciler probe on macOS/Linux; Windows named-pipe reconnect and detached ConPTY host lifetime asserted explicitly |
 | Resume semantics | Claude `--resume <uuid>` and Codex `resume <id>` unchanged before and after |
 
 ---
