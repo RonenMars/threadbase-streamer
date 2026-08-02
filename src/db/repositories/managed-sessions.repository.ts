@@ -64,6 +64,7 @@ export interface RecordSpawnInput {
 export class ManagedSessionsRepository {
   private upsertStmt: Database.Statement;
   private updateStatusStmt: Database.Statement;
+  private bindStmt: Database.Statement;
   private getStmt: Database.Statement;
   private listNonTerminalStmt: Database.Statement;
   private listRecoverableStmt: Database.Statement;
@@ -123,6 +124,12 @@ export class ManagedSessionsRepository {
              prompt_count = @prompt_count,
              failure_reason = COALESCE(@failure_reason, failure_reason),
              session_name = COALESCE(@session_name, session_name)
+       WHERE session_id = @session_id
+    `);
+
+    this.bindStmt = db.prepare(`
+      UPDATE managed_sessions
+         SET bound_conversation_id = @bound_conversation_id
        WHERE session_id = @session_id
     `);
 
@@ -210,6 +217,23 @@ export class ManagedSessionsRepository {
       prompt_count: fields.promptCount ?? 0,
       failure_reason: fields.failureReason ?? null,
       session_name: fields.sessionName ?? null,
+    });
+  }
+
+  /**
+   * Persist the Codex rollout id discovered after spawn.
+   *
+   * Its own statement rather than a `recordSpawn` re-run: the binding arrives
+   * while the session is live, and re-upserting would also rewrite `cmdline`
+   * with an id that is *not* in a fresh Codex process's argv, turning the
+   * reconciler's identity check into a false `orphaned`. Without this write the
+   * binding lives only in memory and dies with the streamer — which is the
+   * whole reason a restarted Codex session could not be resumed (G6).
+   */
+  recordBinding(sessionId: string, boundConversationId: string): void {
+    this.bindStmt.run({
+      session_id: sessionId,
+      bound_conversation_id: boundConversationId,
     });
   }
 

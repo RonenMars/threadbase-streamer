@@ -223,6 +223,51 @@ describe("classifySession across machine boots", () => {
   });
 });
 
+describe("classifySession — Codex resume identity", () => {
+  const unbound = { provider: "codex-cli", session_id: "placeholder", cmdline: "/work/repo" };
+
+  it("reports a dead unbound Codex session as failed, not resumable", async () => {
+    const verdict = await classifySession(mkRow(unbound), mkProbe(), INSTANCE);
+
+    expect(verdict.lifecycle).toBe("failed");
+    expect(verdict.reason).toBe("Codex session ended before its rollout id was known");
+  });
+
+  it("applies the same verdict on the no-pid and pre-boot paths", async () => {
+    const noPid = await classifySession(mkRow({ ...unbound, pid: null }), mkProbe(), INSTANCE);
+    expect(noPid.lifecycle).toBe("failed");
+
+    const preBoot = await classifySession(
+      mkRow({ ...unbound, boot_token: "boot-previous" }),
+      mkProbe({ isPidAlive: () => true }),
+      INSTANCE,
+      "boot-current",
+    );
+    expect(preBoot.lifecycle).toBe("failed");
+  });
+
+  it("leaves a bound Codex session resumable", async () => {
+    const verdict = await classifySession(
+      mkRow({ ...unbound, bound_conversation_id: "rollout-uuid" }),
+      mkProbe(),
+      INSTANCE,
+    );
+
+    expect(verdict.lifecycle).toBe("resumable");
+    expect(verdict.reason).toMatch(/process gone/);
+  });
+
+  it("does not touch a live unbound Codex session — it needs no resume id yet", async () => {
+    const verdict = await classifySession(
+      mkRow(unbound),
+      mkProbe({ isPidAlive: () => true, getProcessArgs: async () => "codex --cd /work/repo" }),
+      INSTANCE,
+    );
+
+    expect(verdict.lifecycle).toBe("detached");
+  });
+});
+
 describe("reconcileSessions", () => {
   it("classifies every row and never signals a process", async () => {
     const rows = [

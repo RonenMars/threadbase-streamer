@@ -101,6 +101,17 @@ describe("shouldRehydrate", () => {
     expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
   });
 
+  it("skips a Codex row that never bound a rollout id", () => {
+    // Nothing can resume it: `codex resume <placeholder>` fails (G6).
+    const row = mkRow({ provider: "codex-cli", bound_conversation_id: null });
+    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(false);
+  });
+
+  it("recovers a Codex row that did bind", () => {
+    const row = mkRow({ provider: "codex-cli", bound_conversation_id: "rollout-9" });
+    expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
+  });
+
   it("recovers a crashed row that never got a shutdown write", () => {
     const row = mkRow({ status: "running", status_source: "transition", completed_at: null });
     expect(shouldRehydrate(row, { now: NOW, projectExists: exists })).toBe(true);
