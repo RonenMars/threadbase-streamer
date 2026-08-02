@@ -86,7 +86,18 @@ export type ClaudeFlagValues = Record<string, ClaudeFlagValue>;
 //                           `--permission-mode bypassPermissions`; two paths to
 //                           one outcome is worse than one.
 //   --bare, --agent         no demonstrated need.
-// All three remain reachable through the free-text extra-args escape hatch.
+//   --max-budget-usd, --fallback-model
+//                           BOTH ARE "(only works with --print)" per `claude
+//                           --help`, and this server never passes --print — it
+//                           spawns interactive PTY sessions. They were in the v1
+//                           allowlist and were silent no-ops there: validated,
+//                           persisted to server.yaml, emitted onto argv, and
+//                           ignored by the CLI. --max-budget-usd was the worse
+//                           of the two, because it was documented as the
+//                           runaway-spend bound for bypass mode — a cap that
+//                           never existed. Do not re-add either without first
+//                           confirming the flag applies without --print.
+// All remain reachable through the free-text extra-args escape hatch.
 export const CLAUDE_FLAGS: readonly FlagDefinition[] = [
   {
     id: "permissionMode",
@@ -98,8 +109,6 @@ export const CLAUDE_FLAGS: readonly FlagDefinition[] = [
   { id: "addDir", flag: "--add-dir", valueType: "list", risk: "elevated" },
   { id: "allowedTools", flag: "--allowedTools", valueType: "list", risk: "elevated" },
   { id: "disallowedTools", flag: "--disallowedTools", valueType: "list", risk: "low" },
-  { id: "maxBudgetUsd", flag: "--max-budget-usd", valueType: "string", risk: "low" },
-  { id: "fallbackModel", flag: "--fallback-model", valueType: "string", risk: "low" },
   { id: "model", flag: "--model", valueType: "string", risk: "low" },
   { id: "effort", flag: "--effort", valueType: "enum", enumValues: EFFORT_LEVELS, risk: "low" },
 ];
