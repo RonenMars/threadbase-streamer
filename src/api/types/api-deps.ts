@@ -8,6 +8,7 @@ import type { ConversationCache } from "../../conversation-cache";
 import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";
 import type { DevicesRepository } from "../../db/repositories/devices.repository";
+import type { ManagedSessionsRepository } from "../../db/repositories/managed-sessions.repository";
 import type { ProjectsRepository } from "../../db/repositories/projects.repository";
 import type { PushRepository } from "../../db/repositories/push.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
@@ -15,6 +16,7 @@ import type { RuntimeStore } from "../../db/runtime-store";
 import type { FeatureFlagDefinition, FeatureFlagValues } from "../../feature-flags";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
+import type { ReconcileVerdict } from "../../services/sessions/reconcileSessions";
 import type { SessionStore } from "../../session-store";
 import type { WSHub } from "../../ws-hub";
 
@@ -56,6 +58,10 @@ export type ApiDeps = {
   cacheMetadataRepo: () => CacheMetadataRepository | null;
   /** Authoritative session registry (~/.threadbase/runtime.db). Null when it failed to open. */
   runtimeStore: () => RuntimeStore | null;
+  /** Rows of that registry. Null when it failed to open. */
+  managedSessionsRepo: () => ManagedSessionsRepository | null;
+  /** This boot's reconcile verdicts, by session id. Empty before it has run. */
+  sessionVerdicts: () => Map<string, ReconcileVerdict>;
   ptyAttachedIds: () => Set<string>;
   // Session handler delegates — called by Hono handlers, implemented by StreamerServer
   handleListSessions: (url: URL, res: ServerResponse) => Promise<void>;

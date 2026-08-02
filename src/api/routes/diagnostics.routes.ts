@@ -7,6 +7,8 @@ import {
   redactPath,
   redactValue,
 } from "../../services/diagnostics/diagnostics";
+import { rehydrateSkipReason } from "../../services/sessions/rehydrateSessions";
+import { currentBootToken } from "../../utils/bootToken";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
@@ -127,6 +129,62 @@ export const createDiagnosticsRoutes = (deps: ApiDeps) => {
     // secrets, but this payload is meant to be shared, so one careless field
     // must not be able to leak a credential.
     return c.json(redactValue(buildReport(checks)));
+  });
+
+  /**
+   * GET /api/diagnostics/sessions — why each registry row ended up as it did
+   * (plan Phase 5, gap G11).
+   *
+   * `GET /api/sessions` shows the outcome; this shows the reasoning. "My
+   * session did not come back after a restart" is otherwise unanswerable
+   * without the server's logs, and the interesting rows are precisely the ones
+   * that never made it into the session list.
+   *
+   * Read-only and side-effect free: it recomputes the rehydration decision from
+   * the same pure function the boot path uses rather than recording one, so
+   * calling it can never change what a later boot would do.
+   */
+  app.get("/sessions", (c) => {
+    const repo = deps.managedSessionsRepo();
+    if (!repo) {
+      return c.json(
+        { error: "Session registry is unavailable", code: "REGISTRY_UNAVAILABLE" },
+        503,
+      );
+    }
+
+    const rows = repo.listAll();
+    const verdicts = deps.sessionVerdicts();
+    const bootToken = currentBootToken();
+    const now = Date.now();
+
+    const sessions = rows.map((row) => {
+      const verdict = verdicts.get(row.session_id);
+      const skip = rehydrateSkipReason(row, { now, projectExists: existsSync });
+      return {
+        sessionId: row.session_id,
+        provider: row.provider,
+        status: row.status,
+        statusSource: row.status_source,
+        statusUpdatedAt: new Date(row.status_updated_at).toISOString(),
+        // Whether the recorded pid is probeable at all this boot, not whether
+        // it is alive — a mismatch means the question was never asked.
+        bootTokenMatches: row.boot_token != null && row.boot_token === bootToken,
+        // Absent when this boot never classified the row: a clean restart
+        // stamps completed_at on the way out, which takes it out of the probe
+        // set entirely. That absence is itself the answer.
+        lifecycle: verdict?.lifecycle ?? null,
+        lifecycleReason: verdict?.reason ?? null,
+        rehydrated: skip == null,
+        rehydrateSkipReason: skip,
+        projectExists: existsSync(row.project_path),
+        projectPath: redactPath(row.project_path),
+      };
+    });
+
+    // Same contract as the report above: meant to be pasted into a bug report,
+    // so paths are reduced and the whole payload gets a final redaction pass.
+    return c.json(redactValue({ generatedAt: new Date().toISOString(), sessions }));
   });
 
   return app;
