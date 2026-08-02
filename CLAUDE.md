@@ -75,6 +75,21 @@ running / waiting_input ──(grace timer / hold_session msg)──► idle  (P
 | `MULTI_AGENT_FLOW` | Routes `POST /api/sessions/start` + `/input` to the multi-agent path instead of PTY. `AGENT_*` tuning vars: see [docs/multi-agent-mode.md](docs/multi-agent-mode.md). |
 | `THREADBASE_SKIP_PERMISSION_MODE_PROMPT` | Set to `true` to disable the `serve` first-run interactive permission-mode prompt (see below); falls straight through to `acceptEdits`. |
 | `THREADBASE_ALLOW_BROWSER_CORS` | Enables browser CORS (off by default; no web page can make authenticated requests without it). Set to `1`/`true`/`yes`/`on` to allow the localhost dev origins, or to a comma-separated origin list (e.g. `https://app.example.com`) to allow those on top of the dev defaults. Overrides `browser_cors:` in server.yaml when set. Mobile is unaffected (no `Origin` header). |
+| `APNS_KEY` | **Contents** of the APNs p8 signing key (PEM), not a path. Enables iOS Live Activity push when set; the feature stays off (one info log, server boots normally) when unset. Never logged. See [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md). |
+| `APNS_KEY_ID` | Key id of the p8 in `APNS_KEY`. Default `BX4B6855WV`. |
+| `APNS_TEAM_ID` | Apple Developer team id. Default `GUW6BN8X57`. |
+| `APNS_BUNDLE_ID` | App bundle id; the APNs topic is this plus `.push-type.liveactivity`. Default `com.ronenmars.threadbase`. |
+| `APNS_HOST` | APNs host. Defaults to sandbox (`api.sandbox.push.apple.com`) because the app's `aps-environment` is still `development`; set `api.push.apple.com` for production. |
+
+## iOS Live Activity push
+
+`APNS_KEY` enables direct-to-APNs Live Activity pushes (Lock Screen / Dynamic Island surfaces for running sessions). ActivityKit **cannot** go through Expo's relay — different token type, `.push-type.liveactivity` topic, p8 credential — so this path uses `node:http2` directly and never `expo-server-sdk`.
+
+Three token kinds now arrive from one device and are not interchangeable: `expo` (relay, ordinary notifications), `liveactivity_start` (push-to-start, app-wide), `liveactivity_update` (per-activity, short-lived). `PushRepository.listDeliverable()` is Expo-only — that query is what keeps the ordinary notification fan-out from handing an ActivityKit token to Expo.
+
+The content-state shape is a **contract shared with tb-mobile** (decoded by a Swift `Codable` struct). An ActivityKit decode failure is silent — the surface just stops updating — so changing a field name or type requires a coordinated tb-mobile change. `startedAt` is epoch **milliseconds** and iOS renders its own ticking timer from it: never send a computed elapsed value, and carry the original value through a renewal or the user's timer visibly resets to zero.
+
+Full contract, env vars, failure handling: [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md).
 
 ## Multi-agent mode
 
