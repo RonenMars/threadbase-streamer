@@ -92,13 +92,21 @@ function apsOf(payload: unknown): { event: string; "content-state": { status: st
 }
 
 describe("credentials", () => {
+  /** A fully configured environment. No real account identifiers appear here. */
+  const FULL_ENV = {
+    APNS_KEY: "-----BEGIN PRIVATE KEY-----\nx\n",
+    APNS_KEY_ID: "FAKEKEY123",
+    APNS_TEAM_ID: "FAKETEAM99",
+    APNS_BUNDLE_ID: "com.example.testapp",
+  };
+
   it("reads the key from the environment, not a path", () => {
-    const creds = readApnsCredentialsFromEnv({ APNS_KEY: "-----BEGIN PRIVATE KEY-----\nx\n" });
+    const creds = readApnsCredentialsFromEnv(FULL_ENV);
 
     expect(creds?.key).toContain("BEGIN PRIVATE KEY");
     // Sandbox by default: the app's aps-environment is still development.
     expect(creds?.host).toBe(APNS_HOST_SANDBOX);
-    expect(creds?.bundleId).toBe("com.ronenmars.threadbase");
+    expect(creds?.bundleId).toBe("com.example.testapp");
   });
 
   // A missing optional push credential must never stop the server booting.
@@ -107,15 +115,42 @@ describe("credentials", () => {
     expect(readApnsCredentialsFromEnv({ APNS_KEY: "   " })).toBeNull();
   });
 
-  it("explains the absence without revealing anything", () => {
+  // No account identifier is defaulted in the source: baking one deployment's
+  // Apple account in would make this silently sign for the wrong team elsewhere.
+  it.each([
+    "APNS_KEY_ID",
+    "APNS_TEAM_ID",
+    "APNS_BUNDLE_ID",
+  ] as const)("returns null when %s is missing rather than guessing an account", (missing) => {
+    const env: NodeJS.ProcessEnv = { ...FULL_ENV };
+    delete env[missing];
+
+    expect(readApnsCredentialsFromEnv(env)).toBeNull();
+  });
+
+  it("explains the absence of the key without revealing anything", () => {
     const why = describeMissingApnsCredentials({});
     expect(why).toContain("APNS_KEY");
-    expect(describeMissingApnsCredentials({ APNS_KEY: "abc" })).toBeNull();
+    expect(describeMissingApnsCredentials(FULL_ENV)).toBeNull();
+  });
+
+  // The harder case to diagnose: it looks configured, and APNs answers a
+  // mismatch with a bare InvalidProviderToken that names nothing.
+  it("names which identifier is missing when the key is present", () => {
+    const why = describeMissingApnsCredentials({
+      APNS_KEY: "k",
+      APNS_KEY_ID: "FAKEKEY123",
+    });
+
+    // Assert on the "is set but X are not" list rather than the whole string:
+    // the trailing guidance sentence legitimately mentions APNS_KEY_ID.
+    const listed = why?.match(/APNS_KEY is set but (.+?) are not/)?.[1];
+    expect(listed).toBe("APNS_TEAM_ID, APNS_BUNDLE_ID");
   });
 
   it("allows overriding the host for production", () => {
     const creds = readApnsCredentialsFromEnv({
-      APNS_KEY: "k",
+      ...FULL_ENV,
       APNS_HOST: "api.push.apple.com",
     });
     expect(creds?.host).toBe("api.push.apple.com");
@@ -172,11 +207,11 @@ describe("provider JWT", () => {
       key: testKeyPem(),
       keyId: "K",
       teamId: "T",
-      bundleId: "com.ronenmars.threadbase",
+      bundleId: "com.example.testapp",
       host: APNS_HOST_SANDBOX,
     });
 
-    expect(client.topic).toBe("com.ronenmars.threadbase.push-type.liveactivity");
+    expect(client.topic).toBe("com.example.testapp.push-type.liveactivity");
   });
 });
 
