@@ -4,6 +4,33 @@ import { join } from "node:path";
 import { createServer } from "http";
 import { StreamerServer } from "../src/server";
 
+// The rotation assertion below reads the emitted log record rather than console.
+// The logger only writes an unstructured console duplicate at an interactive
+// terminal now, and the masked key prefixes live in the record's fields, which
+// never reached console at all — so capturing console could not actually see
+// whether a full key leaked.
+const recorded = vi.hoisted(() => [] as Array<{ msg: unknown; fields?: Record<string, unknown> }>);
+
+vi.mock("../src/logger", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/logger")>();
+  const tap = (real: import("../src/logger").Logger) => {
+    const wrap =
+      (level: "debug" | "info" | "warn" | "error") =>
+      (msg: string, fields?: Record<string, unknown>, dest?: import("../src/logger").LogDest) => {
+        recorded.push({ msg, fields });
+        real[level](msg, fields, dest);
+      };
+    return {
+      ...real,
+      debug: wrap("debug"),
+      info: wrap("info"),
+      warn: wrap("warn"),
+      error: wrap("error"),
+    };
+  };
+  return { ...actual, getLogger: (component?: string) => tap(actual.getLogger(component)) };
+});
+
 // The /api/auth/rotate tests below rotate the API key, which calls setApiKey() →
 // writes server.yaml. Redirect that write to a throwaway dir so the suite never
 // clobbers the user's live ~/.threadbase/server.yaml (which would desync a
@@ -200,21 +227,22 @@ describe("security hardening", () => {
     });
 
     it("logs the rotation event with masked key prefixes, not full keys", async () => {
-      const logs: string[] = [];
-      const orig = console.log;
-      console.log = (...args: unknown[]) => logs.push(args.join(" "));
-      try {
-        const res = await fetch(`${baseUrl}/api/auth/rotate`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${API_KEY}` },
-        });
-        expect(res.status).toBe(200);
-      } finally {
-        console.log = orig;
-      }
-      const rotationLog = logs.find((l) => l.includes("API key rotated"));
+      const from = recorded.length;
+      const res = await fetch(`${baseUrl}/api/auth/rotate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+
+      const rotationLog = recorded
+        .slice(from)
+        .find((e) => typeof e.msg === "string" && e.msg.includes("API key rotated"));
       expect(rotationLog).toBeDefined();
-      expect(rotationLog).not.toContain(API_KEY);
+      // The whole record — message and fields — must carry only the masked
+      // prefixes. The fields are where a full key would actually leak.
+      const serialized = `${rotationLog?.msg} ${JSON.stringify(rotationLog?.fields ?? {})}`;
+      expect(serialized).not.toContain(API_KEY);
+      expect(serialized).toContain(`${API_KEY.slice(0, 6)}…`);
     });
   });
 

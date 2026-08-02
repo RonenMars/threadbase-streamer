@@ -4,6 +4,28 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
 
+const recorded = vi.hoisted(() => [] as Array<{ level: string; msg: unknown }>);
+
+vi.mock("../src/logger", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/logger")>();
+  const tap = (real: import("../src/logger").Logger) => {
+    const wrap =
+      (level: "debug" | "info" | "warn" | "error") =>
+      (msg: string, fields?: Record<string, unknown>, dest?: import("../src/logger").LogDest) => {
+        recorded.push({ level, msg });
+        real[level](msg, fields, dest);
+      };
+    return {
+      ...real,
+      debug: wrap("debug"),
+      info: wrap("info"),
+      warn: wrap("warn"),
+      error: wrap("error"),
+    };
+  };
+  return { ...actual, getLogger: (component?: string) => tap(actual.getLogger(component)) };
+});
+
 // Bug 1 (boot EADDRINUSE noise): on every prod boot `launchctl kickstart -k`
 // relaunches before the old process frees :PORT, so bindWithRetry hits a
 // transient EADDRINUSE and recovers within its attempt budget. The retries are
@@ -11,9 +33,12 @@ import { StreamerServer } from "../src/server";
 // default) rather than warn. Only a genuinely stuck port — all attempts
 // exhausted — should surface, exactly once, at error before rethrowing.
 //
-// The logger emits to console with dest="both" regardless of pino level, and
-// maps debug -> console.log, warn -> console.warn, error -> console.error. We
-// spy on those to assert the level each path uses.
+// We tap getLogger and record the level each line was emitted at. This used to
+// spy on console.log/warn/error, which only worked because the logger's old
+// dest="both" default printed every call to console regardless of pino level —
+// the very duplication that grew stdout.log to 261 MB. Recording at the logger
+// asserts the same intent (which level the bind path chose) without depending
+// on a line being visible at a level that should have filtered it out.
 
 const API_KEY = "tb_test_key_for_bind_retry_tests";
 
@@ -55,37 +80,26 @@ function bindLogCounter() {
   // during the retry window (it's demoted to debug while binding).
   const isHandlerWarn = (m: unknown) =>
     typeof m === "string" && m.includes("httpServer error:") && m.includes("EADDRINUSE");
-  let debugRetries = 0;
-  let warnRetries = 0;
-  let errorFails = 0;
-  let handlerWarns = 0;
-  const logSpy = vi.spyOn(console, "log").mockImplementation((m?: unknown) => {
-    if (isRetry(m)) debugRetries++;
-  });
-  const warnSpy = vi.spyOn(console, "warn").mockImplementation((m?: unknown) => {
-    if (isRetry(m)) warnRetries++;
-    if (isHandlerWarn(m)) handlerWarns++;
-  });
-  const errorSpy = vi.spyOn(console, "error").mockImplementation((m?: unknown) => {
-    if (isFail(m)) errorFails++;
-  });
+  const from = recorded.length;
+  const since = () => recorded.slice(from);
+  const count = (level: string, match: (m: unknown) => boolean) =>
+    since().filter((e) => e.level === level && match(e.msg)).length;
   return {
     restore() {
-      logSpy.mockRestore();
-      warnSpy.mockRestore();
-      errorSpy.mockRestore();
+      // Nothing to unhook — the tap lives for the module's lifetime and each
+      // counter reads only the slice recorded after it was created.
     },
     get debugRetries() {
-      return debugRetries;
+      return count("debug", isRetry);
     },
     get warnRetries() {
-      return warnRetries;
+      return count("warn", isRetry);
     },
     get errorFails() {
-      return errorFails;
+      return count("error", isFail);
     },
     get handlerWarns() {
-      return handlerWarns;
+      return count("warn", isHandlerWarn);
     },
   };
 }
