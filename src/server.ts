@@ -193,6 +193,7 @@ import {
 } from "./utils/canonicalizeFilePath";
 import { isCodexInjectedContext, toClientConversationLines } from "./utils/codexConversationLine";
 import { computeConversationEtag } from "./utils/conversationEtag";
+import { parseIsoDateOrNull } from "./utils/dates";
 import { debounce } from "./utils/debounce";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
 import { createScanProgressThrottle } from "./utils/scanProgressThrottle";
@@ -1242,7 +1243,7 @@ export class StreamerServer {
     }
   }
 
-  private sessionListPayload(): { type: "session_list"; sessions: SessionResponse[] } {
+  private sessionListPayload(): { type: "session_list"; sessions: readonly SessionResponse[] } {
     return {
       type: "session_list" as const,
       sessions: this.withReconciledLifecycle(this.sessionStore.list(this.ptyAttachedIds())),
@@ -1263,7 +1264,9 @@ export class StreamerServer {
    * an authoritative lifecycle already, and a stale verdict must never override
    * it.
    */
-  private withReconciledLifecycle(sessions: SessionResponse[]): SessionResponse[] {
+  private withReconciledLifecycle(
+    sessions: readonly SessionResponse[],
+  ): readonly SessionResponse[] {
     if (this.sessionVerdicts.size === 0) return sessions;
     return sessions.map((s) => {
       if (s.ptyAttached) return s;
@@ -3481,7 +3484,7 @@ export class StreamerServer {
   }
 
   /** Attach inferred `activity` to externally-owned sessions in a response set. */
-  private withExternalActivity(sessions: SessionResponse[]): SessionResponse[] {
+  private withExternalActivity(sessions: readonly SessionResponse[]): readonly SessionResponse[] {
     if (this.externalTails.size === 0) return sessions;
     const now = Date.now();
     return sessions.map((s) => {
@@ -4231,17 +4234,22 @@ export class StreamerServer {
 
   private async handleGetSession(sessionId: string, res: ServerResponse): Promise<void> {
     if (this.rejectIfWarmingUp(res)) return;
-    const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-    if (session) {
-      if (!existsSync(session.projectPath)) {
-        session.failureReason = `Project directory not found: ${session.projectPath}`;
-      }
+    // A response copy, so decorating it means building a new object — see
+    // SessionStore.get(). Persisting anything here would need updateManaged().
+    const base = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+    if (base) {
       // Apply a boot-reconciliation verdict if one exists for this session and
       // it isn't live here — the detail screen is where the distinction between
       // `detached` and `orphaned` actually matters to a user.
-      const reconciled = this.withReconciledLifecycle([session])[0];
-      session.lifecycle = reconciled.lifecycle;
-      session.lifecycleSource = reconciled.lifecycleSource;
+      const reconciled = this.withReconciledLifecycle([base])[0];
+      const session: SessionResponse = {
+        ...base,
+        ...(existsSync(base.projectPath)
+          ? {}
+          : { failureReason: `Project directory not found: ${base.projectPath}` }),
+        lifecycle: reconciled.lifecycle,
+        lifecycleSource: reconciled.lifecycleSource,
+      };
       // Scrape model/effort/permission-mode off the live PTY's rendered status
       // line so the client can show them natively instead of parsing terminal
       // text. Live sessions only, and strictly best-effort: a failed scrape
@@ -4495,8 +4503,6 @@ export class StreamerServer {
     // Watch the conversation's JSONL file for structured events
     void this.watchConversationFile(sessionId, historyId);
 
-    const response = this.sessionStore.get(session.id, this.ptyAttachedIds());
-
     // Enrich session metadata and update DB (best-effort bookkeeping; the
     // conversation history is already in the JSONL). Now runs just before the
     // caller writes its response rather than just after — it is a couple of
@@ -4504,19 +4510,28 @@ export class StreamerServer {
     // Windows process enumeration, so the move is not measurable.
     this.enrichResumedSessionAsync(sessionId, projectPath, conv);
 
+    // Read AFTER enrichment: it writes to the store, so the 201 body carries
+    // sessionName/projectId/message metadata instead of the bare spawn shape.
+    const response = this.sessionStore.get(session.id, this.ptyAttachedIds());
+
     return { ok: true, alreadyRunning: false, session, response };
   }
 
   private enrichResumedSessionAsync(sessionId: string, projectPath: string, conv: any): void {
     try {
-      const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-      if (!session) return;
+      // Writes go through updateManaged: sessionStore.get() would hand back a
+      // response copy and every assignment below would be silently discarded.
+      // The store holds `ManagedSession`, so the timestamps are Dates here —
+      // managedToResponse serializes them, as it already does for startedAt.
+      if (!this.sessionStore.getManaged(sessionId)) return;
 
       if (conv) {
-        session.sessionName = conv.sessionName ?? undefined;
-        session.messageCount = conv.messageCount ?? 0;
-        session.account = conv.account ?? undefined;
-        session.filePath = conv.filePath ?? undefined;
+        this.sessionStore.updateManaged(sessionId, {
+          sessionName: conv.sessionName ?? undefined,
+          messageCount: conv.messageCount ?? 0,
+          account: conv.account ?? undefined,
+          filePath: conv.filePath ?? undefined,
+        });
       }
 
       if (!this.cache || !this.projectsRepo || !this.conversationsRepo) return;
@@ -4525,18 +4540,19 @@ export class StreamerServer {
       // no scanner round-trip needed; these fields are already cached.
       const cached = this.cache.getMetaById(sessionId);
       if (cached) {
-        session.model = cached.model ?? undefined;
-        session.preview = cached.preview ?? undefined;
         const first = cached.firstMessage ? JSON.parse(cached.firstMessage as string) : null;
         const last = cached.lastMessage ? JSON.parse(cached.lastMessage as string) : null;
-        session.firstMessageText = first?.text ?? undefined;
-        session.firstMessageAt = first?.timestamp
-          ? new Date(first.timestamp).toISOString()
-          : undefined;
-        session.lastMessageText = last?.text ?? undefined;
-        session.lastMessageAt = last?.timestamp
-          ? new Date(last.timestamp).toISOString()
-          : undefined;
+        this.sessionStore.updateManaged(sessionId, {
+          model: cached.model ?? undefined,
+          preview: cached.preview ?? undefined,
+          firstMessageText: first?.text ?? undefined,
+          // parseIsoDateOrNull, not `new Date()`: an unparseable cached
+          // timestamp must land as absent, not as an Invalid Date that
+          // managedToResponse would throw on when it calls .toISOString().
+          firstMessageAt: parseIsoDateOrNull(first?.timestamp) ?? undefined,
+          lastMessageText: last?.text ?? undefined,
+          lastMessageAt: parseIsoDateOrNull(last?.timestamp) ?? undefined,
+        });
       }
 
       let resolvedProjectId: string | null = cached?.projectId ?? null;
@@ -4549,8 +4565,10 @@ export class StreamerServer {
         });
       }
       if (resolvedProjectId) {
-        session.projectId = resolvedProjectId;
-        session.resumedFromConversationId = sessionId;
+        this.sessionStore.updateManaged(sessionId, {
+          projectId: resolvedProjectId,
+          resumedFromConversationId: sessionId,
+        });
       }
     } catch (err) {
       // ponytail: log but don't crash; session is already live and usable
