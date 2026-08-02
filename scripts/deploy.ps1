@@ -505,10 +505,11 @@ function Invoke-Deploy {
 
     # On Windows, cli.js is a real file at $installDir so __dirname = $installDir.
     # Copy both migration trees to the install root (not releases/) so the CJS bundle finds them.
-    # - migrations/    — SQLite (ConversationCache.open(); always required)
-    # - pg-migrations/ — Postgres (only loaded when THREADBASE_DATABASE_URL is set, but the
-    #                   migration runner reads the dir at startup and crashes if absent)
-    foreach ($mig in @('migrations', 'pg-migrations')) {
+    # - migrations/         — SQLite cache (ConversationCache.open(); always required)
+    # - runtime-migrations/ — SQLite session registry (RuntimeStore.open(); always required)
+    # - pg-migrations/      — Postgres (only loaded when THREADBASE_DATABASE_URL is set, but the
+    #                         migration runner reads the dir at startup and crashes if absent)
+    foreach ($mig in @('migrations', 'runtime-migrations', 'pg-migrations')) {
       $src = Join-Path $repoRoot "dist\$mig"
       if (Test-Path $src) {
         $dst = Join-Path $installDir $mig

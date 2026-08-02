@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import type { ManagedSession } from "../src/types";
 
 /**
@@ -15,23 +15,23 @@ import type { ManagedSession } from "../src/types";
  * "recoverable" session — it left nothing, and the session reappeared at best
  * as an external process with no managed metadata.
  *
- * Opening a second ConversationCache against the same file is the honest
- * simulation of a restart: a new process, new prepared statements, same disk.
+ * Opening a second RuntimeStore against the same file is the honest simulation
+ * of a restart: a new process, new prepared statements, same disk.
  */
 
-let cacheDir: string;
+let runtimeDir: string;
 
 beforeEach(() => {
-  cacheDir = mkdtempSync(join(tmpdir(), "tb-registry-restart-"));
+  runtimeDir = mkdtempSync(join(tmpdir(), "tb-registry-restart-"));
 });
 
 afterEach(() => {
-  rmSync(cacheDir, { recursive: true, force: true });
+  rmSync(runtimeDir, { recursive: true, force: true });
 });
 
-function openRepo(): { cache: ConversationCache; repo: ManagedSessionsRepository } {
-  const cache = ConversationCache.open(join(cacheDir, "cache.db"));
-  return { cache, repo: new ManagedSessionsRepository(cache.getDatabase()) };
+function openRepo(): { store: RuntimeStore; repo: ManagedSessionsRepository } {
+  const store = RuntimeStore.open(join(runtimeDir, "runtime.db"));
+  return { store, repo: new ManagedSessionsRepository(store.getDatabase()) };
 }
 
 const STARTED = new Date("2026-07-24T09:00:00Z");
@@ -62,7 +62,7 @@ describe("managed-session registry across a streamer restart", () => {
       cmdline: "claude-code /work/repo",
       streamerInstanceId: "instance-1",
     });
-    first.cache.close();
+    first.store.close();
 
     // ── restart ──
     const second = openRepo();
@@ -79,7 +79,7 @@ describe("managed-session registry across a streamer restart", () => {
       expect(row.project_path).toBe("/work/repo");
       expect(row.pid).toBe(31337);
     } finally {
-      second.cache.close();
+      second.store.close();
     }
   });
 
@@ -91,7 +91,7 @@ describe("managed-session registry across a streamer restart", () => {
       cmdline: "claude-code /work/repo",
       streamerInstanceId: "instance-1",
     });
-    first.cache.close();
+    first.store.close();
 
     const second = openRepo();
     try {
@@ -101,7 +101,7 @@ describe("managed-session registry across a streamer restart", () => {
       expect(row.streamer_instance_id).toBe("instance-1");
       expect(row.streamer_instance_id).not.toBe("instance-2");
     } finally {
-      second.cache.close();
+      second.store.close();
     }
   });
 
@@ -115,7 +115,7 @@ describe("managed-session registry across a streamer restart", () => {
     });
     // What close() now does for every live session before dispose() kills it.
     first.repo.recordStatus("restart-sess", "idle", "shutdown", { completedAt: new Date() });
-    first.cache.close();
+    first.store.close();
 
     const second = openRepo();
     try {
@@ -126,7 +126,7 @@ describe("managed-session registry across a streamer restart", () => {
       // A deliberate shutdown is not a session failure.
       expect(second.repo.get("restart-sess")?.failure_reason).toBeNull();
     } finally {
-      second.cache.close();
+      second.store.close();
     }
   });
 
@@ -139,7 +139,7 @@ describe("managed-session registry across a streamer restart", () => {
       streamerInstanceId: "instance-1",
     });
     // SIGKILL: close() never runs, so nothing stamps a terminal state.
-    first.cache.close();
+    first.store.close();
 
     const second = openRepo();
     try {
@@ -150,7 +150,7 @@ describe("managed-session registry across a streamer restart", () => {
       expect(row.status_source).toBe("spawn");
       expect(row.completed_at).toBeNull();
     } finally {
-      second.cache.close();
+      second.store.close();
     }
   });
 });

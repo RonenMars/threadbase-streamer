@@ -22,6 +22,7 @@ export default defineConfig({
   test: {
     globals: true,
     include: ["__tests__/**/*.test.ts"],
+    setupFiles: ["__tests__/setup/isolate-runtime-db.ts"],
     pool: "forks",
     poolOptions: { forks: { singleFork: true } },
     hookTimeout: 30_000,
