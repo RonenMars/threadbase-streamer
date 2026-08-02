@@ -26,10 +26,8 @@ import {
 /**
  * `SessionRunner` backed by an out-of-process pty-host (plan Phase 6a).
  *
- * Nothing constructs this yet — `LiveSessionManager` still builds in-process
- * runners, and the `ptyHost` flag that will choose between them arrives with
- * the host itself. This is the seam, landed on its own so the protocol can be
- * reviewed and tested before a daemon depends on it.
+ * `LiveSessionManager` selects this runner at boot when the `ptyHost` feature
+ * flag is enabled; the default-off path keeps the in-process runners.
  *
  * **The mirror is the whole design problem.** `SessionRunner` is mostly
  * synchronous — `hasSession`, `getPid`, `listSessions`, `getOutput` and
@@ -177,7 +175,14 @@ export class RemoteSessionRunner implements SessionRunner {
       }
       case "status-change": {
         const session = reviveSession(event.session);
-        this.sessions.set(session.id, session);
+        if (session.status === "idle" && session.completedAt != null) {
+          this.sessions.delete(session.id);
+          this.pids.delete(session.id);
+          this.output.delete(session.id);
+          this.inputHistory.delete(session.id);
+        } else {
+          this.sessions.set(session.id, session);
+        }
         this.options.onStatusChange?.(session);
         break;
       }

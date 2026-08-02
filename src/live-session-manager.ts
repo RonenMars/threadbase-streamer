@@ -1,6 +1,8 @@
 import { basename } from "path";
 import { CodexPtyRunner } from "./codex-pty-runner";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
+import type { HostTransport } from "./pty-host/protocol";
+import { RemoteSessionRunner } from "./pty-host/remote-session-runner";
 import { PTYManager } from "./pty-manager";
 import type {
   ManagedSession,
@@ -13,12 +15,29 @@ import type {
 
 export class LiveSessionManager {
   private runners: Map<ProviderName, SessionRunner>;
+  private remoteRunner: RemoteSessionRunner | null = null;
+  private options: PTYManagerOptions;
 
   constructor(options: PTYManagerOptions = {}) {
+    this.options = options;
     this.runners = new Map<ProviderName, SessionRunner>([
       [CLAUDE_CODE_PROVIDER, new PTYManager(options)],
       [CODEX_CLI_PROVIDER, new CodexPtyRunner(options)],
     ]);
+  }
+
+  async useRemoteRunner(transport: HostTransport): Promise<ManagedSession[]> {
+    const remote = await RemoteSessionRunner.connect(transport, this.options);
+    await Promise.all(
+      remote.listSessions().map((session) => remote.hydrateInputHistory(session.id)),
+    );
+    for (const runner of this.runners.values()) runner.dispose();
+    this.remoteRunner = remote;
+    return remote.listSessions();
+  }
+
+  isRemote(): boolean {
+    return this.remoteRunner !== null;
   }
 
   async start(
@@ -51,7 +70,7 @@ export class LiveSessionManager {
   }
 
   killPid(pid: number): void {
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeRunners()) {
       runner.killPid(pid);
     }
   }
@@ -62,13 +81,13 @@ export class LiveSessionManager {
   // every runner rather than throwing; this matches the pre-extraction
   // behavior of delegating straight through with no existence check.
   putOnHold(sessionId: string): void {
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeRunners()) {
       if (runner.hasSession(sessionId) || runner.getSession(sessionId)) {
         runner.putOnHold(sessionId);
         return;
       }
     }
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeRunners()) {
       runner.putOnHold(sessionId);
     }
   }
@@ -86,7 +105,7 @@ export class LiveSessionManager {
   }
 
   getSession(sessionId: string): ManagedSession | null {
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeRunners()) {
       const session = runner.getSession(sessionId);
       if (session) return session;
     }
@@ -97,7 +116,7 @@ export class LiveSessionManager {
   // best-effort basis, so an unknown session must return null rather than
   // throw the way the input-routing methods do.
   getPid(sessionId: string): number | null {
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeRunners()) {
       const pid = runner.getPid(sessionId);
       if (pid != null) return pid;
     }
@@ -105,18 +124,18 @@ export class LiveSessionManager {
   }
 
   hasSession(sessionId: string): boolean {
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeRunners()) {
       if (runner.hasSession(sessionId)) return true;
     }
     return false;
   }
 
   listSessions(): ManagedSession[] {
-    return Array.from(this.runners.values()).flatMap((runner) => runner.listSessions());
+    return this.activeRunners().flatMap((runner) => runner.listSessions());
   }
 
   dispose(): void {
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeRunners()) {
       runner.dispose();
     }
   }
@@ -125,13 +144,14 @@ export class LiveSessionManager {
   // this is a linear scan across hasSession()/getSession() rather than a
   // separate session→provider index — see task-1-brief.md.
   private runnerFor(sessionId: string): SessionRunner {
-    for (const runner of this.runners.values()) {
+    for (const runner of this.activeRunners()) {
       if (runner.hasSession(sessionId) || runner.getSession(sessionId)) return runner;
     }
     throw new Error(`Session not found: ${sessionId}`);
   }
 
   private assertSupportedProvider(provider: ProviderName, projectPath: string): SessionRunner {
+    if (this.remoteRunner) return this.remoteRunner;
     const runner = this.runners.get(provider);
     if (runner) return runner;
     const err = new Error(
@@ -139,5 +159,9 @@ export class LiveSessionManager {
     );
     (err as Error & { statusCode?: number }).statusCode = 501;
     throw err;
+  }
+
+  private activeRunners(): SessionRunner[] {
+    return this.remoteRunner ? [this.remoteRunner] : [...this.runners.values()];
   }
 }
