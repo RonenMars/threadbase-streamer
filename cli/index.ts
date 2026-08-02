@@ -12,7 +12,9 @@ import {
 import {
   CLAUDE_FLAGS,
   type ClaudeFlagValues,
+  EFFORT_LEVELS,
   findFlag,
+  isEffortLevel,
   isPermissionMode,
   PERMISSION_MODES,
   validateFlagValues,
@@ -165,10 +167,9 @@ program
       featureFlags = parsed.values;
     }
 
-    const validEfforts = ["low", "medium", "high", "xhigh", "max"];
-    if (opts.defaultEffort !== undefined && !validEfforts.includes(opts.defaultEffort)) {
+    if (opts.defaultEffort !== undefined && !isEffortLevel(opts.defaultEffort)) {
       log.error(
-        `Invalid --default-effort: ${opts.defaultEffort} (expected one of ${validEfforts.join(", ")})`,
+        `Invalid --default-effort: ${opts.defaultEffort} (expected one of ${EFFORT_LEVELS.join(", ")})`,
         undefined,
         "console",
       );

@@ -1,7 +1,10 @@
 import {
   buildFlagArgs,
   buildSettingsJson,
+  CLAUDE_FLAGS,
+  EFFORT_LEVELS,
   flagValueRisk,
+  isEffortLevel,
   isPermissionMode,
   tokenizeExtraArgs,
   validateFlagValues,
@@ -39,6 +42,17 @@ describe("validateFlagValues", () => {
     expect(validateFlagValues({ maxBudgetUsd: "   ", addDir: [] })).toEqual({});
   });
 
+  it("keeps model and effort", () => {
+    expect(validateFlagValues({ model: "claude-opus-4-5", effort: "xhigh" })).toEqual({
+      model: "claude-opus-4-5",
+      effort: "xhigh",
+    });
+  });
+
+  it("drops an off-registry effort level", () => {
+    expect(validateFlagValues({ effort: "turbo" })).toEqual({});
+  });
+
   it("tolerates non-object input", () => {
     expect(validateFlagValues(null)).toEqual({});
     expect(validateFlagValues(["addDir"])).toEqual({});
@@ -59,6 +73,20 @@ describe("buildFlagArgs", () => {
   // emitting it here too would put --permission-mode on the argv twice.
   it("never emits permissionMode", () => {
     expect(buildFlagArgs({ permissionMode: "bypassPermissions" })).toEqual([]);
+  });
+
+  // Same reason as permissionMode: both spawn paths already pass --model and
+  // --effort positionally, sourced from these very values via
+  // StreamerServer.spawnFlagOverrides(). Emitting them here would duplicate the
+  // flag on the command line.
+  it("never emits model or effort", () => {
+    expect(buildFlagArgs({ model: "opus", effort: "high" })).toEqual([]);
+  });
+
+  // fallbackModel is a different flag and is NOT positional — regression guard
+  // against widening the skip set too far.
+  it("still emits fallbackModel", () => {
+    expect(buildFlagArgs({ fallbackModel: "sonnet" })).toEqual(["--fallback-model", "sonnet"]);
   });
 
   it("appends extra args last so they can override the allowlist", () => {
@@ -139,5 +167,36 @@ describe("permission modes", () => {
     expect(flagValueRisk("permissionMode", "acceptEdits")).toBe("low");
     expect(flagValueRisk("addDir", ["/a"])).toBe("elevated");
     expect(flagValueRisk("unknownFlag", "x")).toBe("low");
+  });
+});
+
+describe("effort levels", () => {
+  it("accepts all five CLI values", () => {
+    for (const level of ["low", "medium", "high", "xhigh", "max"]) {
+      expect(isEffortLevel(level)).toBe(true);
+    }
+    expect(isEffortLevel("turbo")).toBe(false);
+    expect(isEffortLevel(undefined)).toBe(false);
+  });
+});
+
+// The registry is shipped to mobile over GET /api/config/claude-flags and its
+// settings form is rendered generically from it — so these two entries ARE the
+// server-default model/effort control surface. Losing them silently removes the
+// UI rather than breaking it.
+describe("model/effort registry entries", () => {
+  it("exposes model as a free-text string flag", () => {
+    expect(CLAUDE_FLAGS.find((f) => f.id === "model")).toEqual({
+      id: "model",
+      flag: "--model",
+      valueType: "string",
+      risk: "low",
+    });
+  });
+
+  it("exposes effort as an enum flag carrying the level list", () => {
+    const def = CLAUDE_FLAGS.find((f) => f.id === "effort");
+    expect(def).toMatchObject({ id: "effort", flag: "--effort", valueType: "enum" });
+    expect(def?.enumValues).toEqual(EFFORT_LEVELS);
   });
 });

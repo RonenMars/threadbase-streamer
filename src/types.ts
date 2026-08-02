@@ -1,6 +1,6 @@
 import type { Stage } from "@threadbase-sh/agent-types";
 import type { ProgressDedupeLRU } from "./agent/dedupe";
-import type { ClaudeFlagValues, PermissionMode } from "./claude-flags";
+import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "./claude-flags";
 import type { FeatureFlagValues } from "./feature-flags";
 import type { ProviderName } from "./providers";
 
@@ -483,7 +483,7 @@ export interface ServerConfig {
   featureFlags?: FeatureFlagValues;
   defaultPermissionMode?: PermissionMode; // Claude Code --permission-mode for spawned PTY sessions (default "acceptEdits")
   defaultModel?: string; // Claude Code --model for spawned PTY sessions (default "sonnet")
-  defaultEffort?: "low" | "medium" | "high" | "xhigh" | "max"; // Claude Code --effort for spawned PTY sessions (default "low")
+  defaultEffort?: EffortLevel; // Claude Code --effort for spawned PTY sessions (default "low")
   claudeFlags?: ClaudeFlagValues; // allowlisted Claude CLI flags appended to every spawn (see src/claude-flags.ts)
   claudeExtraArgs?: string; // free-text argv appended after claudeFlags; unvalidated escape hatch
 }
@@ -526,7 +526,7 @@ export interface StartSessionOptions {
   branch?: string;
   permissionMode?: PermissionMode;
   model?: string;
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  effort?: EffortLevel;
   claudeFlags?: ClaudeFlagValues;
   claudeExtraArgs?: string;
 }
@@ -537,7 +537,7 @@ export interface StartFreshSessionOptions {
   systemPrompt?: string;
   permissionMode?: PermissionMode;
   model?: string;
-  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  effort?: EffortLevel;
   claudeFlags?: ClaudeFlagValues;
   claudeExtraArgs?: string;
 }

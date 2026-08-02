@@ -42,6 +42,15 @@ export function isDangerousPermissionMode(mode: PermissionMode): boolean {
   return DANGEROUS_PERMISSION_MODES.includes(mode);
 }
 
+/** Claude Code `--effort` levels, as accepted by CLI v2.1.x. */
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+export function isEffortLevel(value: unknown): value is EffortLevel {
+  return typeof value === "string" && (EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
 export type FlagValueType = "boolean" | "string" | "enum" | "list";
 
 /** How risky enabling a flag is. Drives the client's confirmation UX. */
@@ -91,7 +100,15 @@ export const CLAUDE_FLAGS: readonly FlagDefinition[] = [
   { id: "disallowedTools", flag: "--disallowedTools", valueType: "list", risk: "low" },
   { id: "maxBudgetUsd", flag: "--max-budget-usd", valueType: "string", risk: "low" },
   { id: "fallbackModel", flag: "--fallback-model", valueType: "string", risk: "low" },
+  { id: "model", flag: "--model", valueType: "string", risk: "low" },
+  { id: "effort", flag: "--effort", valueType: "enum", enumValues: EFFORT_LEVELS, risk: "low" },
 ];
+
+// Ids the spawn paths emit as explicit positionals rather than letting
+// buildFlagArgs append them — see PTYManager.doStart/startFresh, which always
+// pass `--permission-mode`, `--model` and `--effort`. Emitting them here too
+// would put a duplicate flag on the command line.
+const SPAWN_POSITIONAL_FLAG_IDS = new Set(["permissionMode", "model", "effort"]);
 
 export function findFlag(id: string): FlagDefinition | undefined {
   return CLAUDE_FLAGS.find((f) => f.id === id);
@@ -188,10 +205,11 @@ export function tokenizeExtraArgs(input: string | undefined): string[] {
 /**
  * Turn validated flag values + extra args into argv tokens.
  *
- * `permissionMode` is intentionally NOT emitted here: both PTY spawn paths
- * already pass `--permission-mode` as an explicit positional, and emitting it
- * twice would put a duplicate flag on the command line. It flows through
- * `options.permissionMode` instead.
+ * The SPAWN_POSITIONAL_FLAG_IDS are intentionally NOT emitted here: both PTY
+ * spawn paths already pass them as explicit positionals, and emitting them
+ * twice would put a duplicate flag on the command line. They flow through
+ * `options.permissionMode` / `options.model` / `options.effort` instead, which
+ * StreamerServer.spawnFlagOverrides() sources from these same flag values.
  *
  * Extra args land LAST so the escape hatch can override anything the allowlist
  * set.
@@ -201,7 +219,7 @@ export function buildFlagArgs(values: ClaudeFlagValues | undefined, extraArgs?: 
   const safe = validateFlagValues(values ?? {});
 
   for (const def of CLAUDE_FLAGS) {
-    if (def.id === "permissionMode") continue;
+    if (SPAWN_POSITIONAL_FLAG_IDS.has(def.id)) continue;
     const value = safe[def.id];
     if (value === undefined) continue;
     if (def.valueType === "boolean") {

@@ -70,6 +70,16 @@ export type ApiDeps = {
     req: IncomingMessage,
     res: ServerResponse,
   ) => Promise<void>;
+  handleSetSessionModel: (
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => Promise<void>;
+  handleSetSessionEffort: (
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => Promise<void>;
   handleUploadFile: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleAdopt: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleResume: (req: IncomingMessage, res: ServerResponse) => Promise<void>;

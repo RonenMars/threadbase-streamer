@@ -73,6 +73,16 @@ export const createSessionRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
+  app.patch("/:id/model", async (c) => {
+    await deps.handleSetSessionModel(c.req.param("id"), c.env.incoming, c.env.outgoing);
+    return alreadyHandled();
+  });
+
+  app.patch("/:id/effort", async (c) => {
+    await deps.handleSetSessionEffort(c.req.param("id"), c.env.incoming, c.env.outgoing);
+    return alreadyHandled();
+  });
+
   app.post("/:id/adopt", async (c) => {
     await deps.handleAdopt(c.req.param("id"), c.env.outgoing);
     return alreadyHandled();

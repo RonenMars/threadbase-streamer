@@ -63,6 +63,10 @@ import {
 import {
   CLAUDE_FLAGS,
   type ClaudeFlagValues,
+  EFFORT_LEVELS,
+  type EffortLevel,
+  isEffortLevel,
+  isPermissionMode,
   type PermissionMode,
   validateFlagValues,
 } from "./claude-flags";
@@ -221,6 +225,13 @@ const REFRESH_TTL_MS = 2000;
 // Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
 const START_READY_TIMEOUT_MS = 10_000;
 
+// Accepted `--model` / `/model` values: an alias ("opus", "sonnet") or a full
+// model name ("claude-opus-4-5"). Deliberately strict — this string is written
+// straight into a live PTY by applyLiveSessionSetting, so anything that could
+// terminate the slash command (\r, \n) or start another word must be rejected
+// rather than escaped.
+const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
 // ─── External (non-PTY) live tails ───────────────────────────────────────────
 // A JSONL that changes in a watched project directory while NOT owned by any
 // PTY session belongs to an external agent (a terminal `claude`, another
@@ -374,7 +385,7 @@ export class StreamerServer {
   private codexSystemPromptEnabled: boolean;
   private defaultPermissionMode: PermissionMode;
   private defaultModel: string;
-  private defaultEffort: "low" | "medium" | "high" | "xhigh" | "max";
+  private defaultEffort: EffortLevel;
   // Allowlisted Claude CLI flags + free-text escape hatch, applied to every
   // spawn. Resolved once at startup (flag → server.yaml), then mutated in place
   // by PUT /api/config/claude-flags so a change applies to the next session
@@ -869,6 +880,9 @@ export class StreamerServer {
       handleCancel: (id, res) => this.handleCancel(id, res),
       handleStopSession: (id, res) => this.handleStopSession(id, res),
       handleSetSessionName: (id, req, res) => this.handleSetSessionName(id, req, res),
+      handleSetSessionModel: (id, req, res) => this.applyLiveSessionSetting(id, req, res, "model"),
+      handleSetSessionEffort: (id, req, res) =>
+        this.applyLiveSessionSetting(id, req, res, "effort"),
       handleUploadFile: (id, req, res) => this.handleUploadFile(id, req, res),
       handleAdopt: (id, res) => this.handleAdopt(id, res),
       handleResume: (req, res) => this.handleResume(req, res),
@@ -2132,6 +2146,35 @@ export class StreamerServer {
       values: this.claudeFlags,
       extraArgs: this.claudeExtraArgs ?? null,
       persisted: this.claudeFlagsPersistable,
+    };
+  }
+
+  /**
+   * The three spawn options that a configured claude-flag can override, with
+   * the boot-time CLI/yaml default as the fallback. Spread into every
+   * start/resume/adopt call so all three paths agree.
+   *
+   * These ids are excluded from buildFlagArgs (SPAWN_POSITIONAL_FLAG_IDS)
+   * precisely because they arrive here instead — the PTY spawn paths pass them
+   * as explicit positionals, so emitting them from the allowlist too would
+   * duplicate the flag.
+   *
+   * Narrowed with the type guards rather than cast: ClaudeFlagValues is a loose
+   * Record by design, and while validateFlagValues already guarantees the shape
+   * on the way in, TypeScript cannot see that through the record.
+   */
+  private spawnFlagOverrides(): {
+    permissionMode: PermissionMode;
+    model: string;
+    effort: EffortLevel;
+  } {
+    const mode = this.claudeFlags.permissionMode;
+    const model = this.claudeFlags.model;
+    const effort = this.claudeFlags.effort;
+    return {
+      permissionMode: isPermissionMode(mode) ? mode : this.defaultPermissionMode,
+      model: typeof model === "string" ? model : this.defaultModel,
+      effort: isEffortLevel(effort) ? effort : this.defaultEffort,
     };
   }
 
@@ -3720,11 +3763,9 @@ export class StreamerServer {
       projectPath,
       projectName: body.projectName,
       branch: body.branch,
-      permissionMode: this.defaultPermissionMode,
       claudeFlags: this.claudeFlags,
       claudeExtraArgs: this.claudeExtraArgs,
-      model: this.defaultModel,
-      effort: this.defaultEffort,
+      ...this.spawnFlagOverrides(),
     });
 
     this.sessionStore.addManaged(session);
@@ -4309,11 +4350,9 @@ export class StreamerServer {
       projectPath,
       projectName,
       branch,
-      permissionMode: this.defaultPermissionMode,
       claudeFlags: this.claudeFlags,
       claudeExtraArgs: this.claudeExtraArgs,
-      model: this.defaultModel,
-      effort: this.defaultEffort,
+      ...this.spawnFlagOverrides(),
     });
 
     this.sessionStore.addManaged(session);
@@ -4402,11 +4441,9 @@ export class StreamerServer {
         projectPath: resolvedPath,
         projectName: body.projectName,
         ...(includeSystemPrompt && { systemPrompt: systemPromptParts.join("\n") }),
-        permissionMode: this.defaultPermissionMode,
         claudeFlags: this.claudeFlags,
         claudeExtraArgs: this.claudeExtraArgs,
-        model: this.defaultModel,
-        effort: this.defaultEffort,
+        ...this.spawnFlagOverrides(),
       });
 
       this.sessionStore.addManaged(session);
@@ -4883,6 +4920,107 @@ export class StreamerServer {
     }
     this.cache.upsertSessionName(sessionId, name);
     json(res, 200, { ok: true });
+  }
+
+  /**
+   * Retarget a LIVE session's model or effort by typing the corresponding
+   * Claude Code slash command into its PTY.
+   *
+   * There is no CLI or IPC channel for this — `--model`/`--effort` are spawn
+   * arguments — so the interactive `/model <x>` / `/effort <y>` commands are the
+   * only way to change a session already running. Both accept an argument and
+   * apply it without opening the picker (verified against Claude Code v2.1.220).
+   *
+   * Answers 202, not 200: the value is applied by the TUI on its next render, so
+   * there is nothing truthful to echo back synchronously. Clients confirm with
+   * `GET /api/sessions/:id`, which scrapes the applied value off the live status
+   * line.
+   */
+  private async applyLiveSessionSetting(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+    setting: "model" | "effort",
+  ): Promise<void> {
+    // Both putOnHold() and handleExit() DELETE the session from the runner's
+    // map, so "no live PTY" reads as absent here, not as status "idle". Fall back
+    // to the registry to tell a held/exited session (409, resume it) apart from
+    // an id that was never ours (404) — mobile holds sessions routinely via the
+    // grace timer, and answering 404 for one it can see in its list is a lie.
+    const session = this.ptyManager.getSession(sessionId);
+    if (!session) {
+      const known = this.sessionStore.getManaged(sessionId);
+      if (known) {
+        json(res, 409, {
+          error: "Session has no live PTY; resume it first",
+          code: "SESSION_IDLE",
+        });
+        return;
+      }
+      json(res, 404, { error: "Session not found" });
+      return;
+    }
+    if ((session.provider ?? CLAUDE_CODE_PROVIDER) !== CLAUDE_CODE_PROVIDER) {
+      json(res, 501, {
+        error: `Setting ${setting} on a ${session.provider} session is not supported`,
+        code: "UNSUPPORTED_PROVIDER",
+      });
+      return;
+    }
+    // Mid-turn the composer is not accepting a slash command, so the injected
+    // text would be swallowed or garbled. Make the caller wait for the turn.
+    if (session.status === "running") {
+      json(res, 409, {
+        error: "Session is mid-turn; retry once it is waiting for input",
+        code: "SESSION_BUSY",
+      });
+      return;
+    }
+
+    let parsed: { model?: unknown; effort?: unknown };
+    try {
+      parsed = await readBody(req);
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+      return;
+    }
+
+    // TRUST BOUNDARY: this value is written as raw bytes into a live terminal.
+    // An unvalidated \r would end the slash command and let the rest of the
+    // string run as a second, attacker-chosen command. Validate, never escape.
+    let value: string;
+    if (setting === "effort") {
+      if (!isEffortLevel(parsed.effort)) {
+        json(res, 400, {
+          error: `effort must be one of ${EFFORT_LEVELS.join(", ")}`,
+        });
+        return;
+      }
+      value = parsed.effort;
+    } else {
+      if (typeof parsed.model !== "string" || !MODEL_NAME_RE.test(parsed.model)) {
+        json(res, 400, {
+          error:
+            "model must be an alias or full model name (letters, digits, dot, dash, underscore)",
+        });
+        return;
+      }
+      value = parsed.model;
+    }
+
+    try {
+      this.ptyManager.sendKeys(sessionId, `/${setting} ${value}\r`);
+    } catch (err) {
+      json(res, 400, { error: err instanceof Error ? err.message : "Failed to write to session" });
+      return;
+    }
+    this.log.info(`Live session ${setting} set to ${value}`, {
+      event: "session.setting_applied",
+      sessionId,
+      setting,
+      value,
+    });
+    json(res, 202, { id: sessionId, [setting]: value });
   }
 
   private handleGetSessionNames(res: ServerResponse): void {
