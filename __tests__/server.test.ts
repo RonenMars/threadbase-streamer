@@ -3222,10 +3222,30 @@ describe("StreamerServer", () => {
       // Spy after the write so the counts scope to the reconcile below.
       //
       // The spy records each caller as well as the count. This assertion has failed
-      // on CI five times and has never reproduced locally in ~50 attempts across
+      // on CI repeatedly and has never reproduced locally in ~50 attempts across
       // five configurations, so a bare count costs a re-run and teaches nothing:
       // three separate call sites can reach scan(), and the failure has to say
       // which one did. Behaviour is unchanged — the original is still invoked.
+      //
+      // The caller alone is not enough, which the first fire showed: BOTH routes
+      // into reconcileConversationsCacheFromDisk print an identical stack — mode
+      // "files" with a drained path set, and mode "full" from
+      // shouldRefreshProjectsFromHdd. So record the mode the background reconcile
+      // was started with; that one field is what separates them.
+      const reconcileModes: string[] = [];
+      const realStart = (
+        autoServer as unknown as {
+          startBackgroundConversationReconcile: (mode?: string) => void;
+        }
+      ).startBackgroundConversationReconcile;
+      vi.spyOn(
+        autoServer as unknown as { startBackgroundConversationReconcile: (mode?: string) => void },
+        "startBackgroundConversationReconcile",
+      ).mockImplementation(function (this: unknown, mode?: string) {
+        reconcileModes.push(mode ?? "full(default)");
+        return realStart.call(this, mode);
+      });
+
       const scanCallers: string[] = [];
       const realScan = ConversationScanner.prototype.scan;
       const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan").mockImplementation(function (
@@ -3262,7 +3282,7 @@ describe("StreamerServer", () => {
       // refreshFile evicts only its own file's keys.
       expect(
         scanSpy.mock.calls.length,
-        `scan() ran during the per-file reconcile window; callers:\n${scanCallers.join("\n") || "(none recorded — the stack capture is broken, not the code)"}`,
+        `scan() ran during the per-file reconcile window.\nreconcile modes: ${reconcileModes.join(", ") || "(none recorded — the mode capture is broken, not the code)"}\ncallers:\n${scanCallers.join("\n") || "(none recorded — the stack capture is broken, not the code)"}`,
       ).toBe(0);
       expect(srv.scanner).toBe(scannerBefore);
       const refreshed = new Set(refreshSpy.mock.calls.map((c) => c[0]));
