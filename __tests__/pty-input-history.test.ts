@@ -108,4 +108,33 @@ describe("PTYManager — user message input history", () => {
     const mgr = new PTYManager();
     expect(mgr.getInputHistory("does-not-exist")).toEqual([]);
   });
+
+  it("derives sessionName/firstMessageText from the first user message only", async () => {
+    const mgr = new PTYManager();
+    const session = await spawnFresh(mgr);
+    await makeReady(mgr, session.id);
+
+    mgr.sendInput(session.id, "fix the login bug\nmore detail here");
+    await settle();
+    mgr.sendInput(session.id, "second message should not retitle");
+    await settle();
+
+    const updated = mgr.getSession(session.id);
+    expect(updated?.firstMessageText).toBe("fix the login bug\nmore detail here");
+    expect(updated?.sessionName).toBe("fix the login bug");
+    mgr.dispose();
+  });
+
+  it("derives sessionName from queued input flushed on ready", async () => {
+    const mgr = new PTYManager();
+    const session = await spawnFresh(mgr);
+
+    mgr.sendInput(session.id, "queued first message");
+    await settle();
+    await makeReady(mgr, session.id);
+
+    const updated = mgr.getSession(session.id);
+    expect(updated?.sessionName).toBe("queued first message");
+    mgr.dispose();
+  });
 });

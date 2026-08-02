@@ -26,6 +26,7 @@ import type {
   UserMessage,
 } from "./types";
 import { debounce } from "./utils/debounce";
+import { deriveSessionName } from "./utils/deriveSessionName";
 
 const OUTPUT_BUFFER_MAX = 65536;
 
@@ -674,6 +675,13 @@ export class PTYManager implements SessionRunner {
     if (session.inputHistory.length > INPUT_HISTORY_MAX) {
       session.inputHistory.shift();
     }
+    // First message of the session: derive a title the same way the scanner
+    // would once it observes this line, so a live session has a name from its
+    // very first turn rather than waiting on a resume/rescan to compute it.
+    if (session.firstMessageText === undefined) {
+      session.firstMessageText = text;
+      session.sessionName = deriveSessionName(text);
+    }
     this.onUserMessage?.(session.id, text, ts);
   }
 
@@ -1078,6 +1086,8 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.statusSource != null && { statusSource: s.statusSource }),
     ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
+    ...(s.sessionName != null && { sessionName: s.sessionName }),
+    ...(s.firstMessageText != null && { firstMessageText: s.firstMessageText }),
   };
 }
 

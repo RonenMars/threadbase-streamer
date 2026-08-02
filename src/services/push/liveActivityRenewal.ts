@@ -180,6 +180,7 @@ export class LiveActivityRenewalScheduler {
       startedAt,
       lastOutput: session.lastOutput ?? "",
       ...(this.deps.serverLabel != null && { serverLabel: this.deps.serverLabel }),
+      ...(session.sessionName != null && { sessionName: session.sessionName }),
     };
 
     try {
@@ -253,6 +254,7 @@ export class LiveActivityRenewalScheduler {
         startedAt: args.startedAt,
         lastOutput: truncateLastOutput(session.lastOutput ?? ""),
         ...(this.deps.serverLabel != null && { serverLabel: this.deps.serverLabel }),
+        ...(session.sessionName != null && { sessionName: session.sessionName }),
       },
       now: args.now,
       staleDate: args.startedAt + ACTIVITY_MAX_LIFETIME_MS,
