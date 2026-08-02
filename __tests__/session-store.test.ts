@@ -74,6 +74,19 @@ describe("SessionStore", () => {
       expect(store.updateManaged("nonexistent", { status: "idle" })).toBeNull();
     });
 
+    // A session is added at spawn, before its first user message exists, so the
+    // derived name can only ever arrive on a later update. server.ts's
+    // onStatusChange mirrors it in from the runner's own copy; this pins the
+    // half SessionStore owns — a name that arrives late must reach the wire.
+    it("surfaces a sessionName that arrives after the session was added", () => {
+      store.addManaged(makeManagedSession({ sessionName: undefined }));
+      expect(store.get(UUID_A, noPty)?.sessionName).toBeUndefined();
+
+      store.updateManaged(UUID_A, { status: "running", sessionName: "fix the parser" });
+
+      expect(store.get(UUID_A, noPty)?.sessionName).toBe("fix the parser");
+    });
+
     it("removes a managed session", () => {
       store.addManaged(makeManagedSession());
       expect(store.removeManaged(UUID_A)).toBe(true);
