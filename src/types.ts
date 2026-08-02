@@ -7,6 +7,19 @@ import type { ProviderName } from "./providers";
 
 export type SessionStatus = "running" | "waiting_input" | "idle";
 
+/**
+ * Process-lifetime axis for a managed session (C1 durable session runtime).
+ * Orthogonal to SessionStatus — see SessionResponse.lifecycle for why the two
+ * are separate, and docs/architecture/2026-07-24-durable-session-runtime.md.
+ */
+export type SessionLifecycle =
+  | "attached" // this streamer run owns the PTY and streams its bytes
+  | "detached" // process alive, but this run does not own its fd
+  | "orphaned" // something is alive at the recorded pid, identity unconfirmed
+  | "resumable" // no live process; provider history supports resume
+  | "completed" // terminal, ended cleanly
+  | "failed"; // terminal, ended badly
+
 export interface ManagedSession {
   id: string; // JSONL UUID — the .jsonl filename under ~/.claude/projects/
   provider?: ProviderName;
@@ -232,6 +245,22 @@ export interface SessionResponse {
   startedAt: string;
   completedAt: string | null;
   ptyAttached: boolean; // true when a live PTY is spawned for this session
+  /**
+   * Process-lifetime axis, orthogonal to `status` (C1).
+   *
+   * `status` answers "what is the agent doing" (running / waiting_input /
+   * idle); `lifecycle` answers "does this process still exist and do we own
+   * it". They were conflated before: `idle` meant finished, killed-to-save-
+   * resources, and externally-discovered all at once, so a client could not
+   * tell a completed session from one we terminated.
+   *
+   * Additive and optional — `ptyAttached` keeps its meaning (=== "attached"),
+   * so a client that ignores this behaves exactly as it did before.
+   */
+  lifecycle?: SessionLifecycle;
+  /** How `lifecycle` was determined, so stale values are visible not implied. */
+  lifecycleSource?: "spawn" | "exit" | "probe" | "reconcile";
+  lifecycleUpdatedAt?: string; // ISO 8601
   failureReason?: string;
   pid?: number;
   sessionName?: string;
@@ -439,6 +468,10 @@ export interface SessionRunner {
   // unknown session. Sourced by terminal_replay so a re-subscribing client can
   // reconcile ground-truth ownership without the live user_message stream.
   getInputHistory(sessionId: string): UserMessage[];
+  // OS pid of the live agent process, or null if this runner doesn't own the
+  // session. Recorded in the durable session registry so a later streamer run
+  // can probe whether the process outlived it.
+  getPid(sessionId: string): number | null;
   getSession(sessionId: string): ManagedSession | null;
   hasSession(sessionId: string): boolean;
   listSessions(): ManagedSession[];

@@ -14,7 +14,7 @@ import WebSocket from "ws";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
 import { PTYManager } from "../src/pty-manager";
-import { GRACE_MAX_DEFERS, StreamerServer } from "../src/server";
+import { GRACE_MAX_DEFERS, IDLE_REAP_AFTER_MS, StreamerServer } from "../src/server";
 
 const FIXTURE_PROFILES = [
   {
@@ -1230,6 +1230,160 @@ describe("StreamerServer", () => {
     });
   });
 
+  // The reconciler's verdicts are useless if they never reach a client. This
+  // covers the overlay that carries them onto session responses.
+  describe("withReconciledLifecycle", () => {
+    const mkResp = (over: Record<string, unknown> = {}) =>
+      ({
+        id: "prev-run-sess",
+        status: "idle",
+        ptyAttached: false,
+        lifecycle: "completed",
+        lifecycleSource: "exit",
+        ...over,
+      }) as any;
+
+    afterEach(() => (server as any).sessionLifecycles.clear());
+
+    it("applies a reconciled verdict to a session this run does not own", () => {
+      (server as any).sessionLifecycles.set("prev-run-sess", "orphaned");
+
+      const [out] = (server as any).withReconciledLifecycle([mkResp()]);
+
+      expect(out.lifecycle).toBe("orphaned");
+      expect(out.lifecycleSource).toBe("reconcile");
+    });
+
+    // A live session's own lifecycle is authoritative — a verdict from boot
+    // must never override what this run currently observes.
+    it("never overrides a session whose PTY is attached here", () => {
+      (server as any).sessionLifecycles.set("prev-run-sess", "orphaned");
+
+      const [out] = (server as any).withReconciledLifecycle([
+        mkResp({ ptyAttached: true, lifecycle: "attached", lifecycleSource: "spawn" }),
+      ]);
+
+      expect(out.lifecycle).toBe("attached");
+      expect(out.lifecycleSource).toBe("spawn");
+    });
+
+    it("leaves sessions with no verdict untouched", () => {
+      const input = mkResp();
+      const [out] = (server as any).withReconciledLifecycle([input]);
+      expect(out).toBe(input);
+    });
+  });
+
+  // The registry records this token so the boot reconciler can reject a
+  // recycled pid: it must be a string genuinely present in the spawned
+  // process's argv, or the guard silently never matches.
+  describe("spawnArgvToken", () => {
+    const base = {
+      id: "sess-abc",
+      projectPath: "/work/repo",
+      projectName: "repo",
+      branch: "",
+      status: "running",
+      startedAt: new Date(),
+      completedAt: null,
+      promptCount: 0,
+      lastOutput: "",
+    };
+
+    it("uses the session id for Claude — always in argv via --resume/--session-id", () => {
+      const token = (server as any).spawnArgvToken({ ...base, provider: "claude-code" });
+      expect(token).toBe("sess-abc");
+    });
+
+    it("uses the rollout id for a bound Codex session — `codex resume <id>`", () => {
+      const token = (server as any).spawnArgvToken({
+        ...base,
+        provider: "codex-cli",
+        boundConversationId: "rollout-5",
+      });
+      expect(token).toBe("rollout-5");
+    });
+
+    // A fresh Codex spawn is `codex --cd <path> --no-alt-screen` — the local
+    // placeholder id appears nowhere in argv, so matching on it would never hit.
+    it("falls back to the project path for an unbound fresh Codex session", () => {
+      const token = (server as any).spawnArgvToken({ ...base, provider: "codex-cli" });
+      expect(token).toBe("/work/repo");
+      expect(token).not.toBe("sess-abc");
+    });
+  });
+
+  describe("idle reaper", () => {
+    // The reaper is the resource bound that replaces kill-on-disconnect. Drive
+    // reapIdleSessions() with an explicit `now` rather than the interval, so
+    // these assert the eligibility rules and not the clock.
+    const mkSession = (over: Record<string, unknown> = {}) =>
+      ({
+        id: "reap-sess",
+        status: "waiting_input",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(0),
+        completedAt: null,
+        lastOutput: "",
+        ...over,
+      }) as any;
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it("reaps a settled session whose agent has been silent past the threshold", () => {
+      vi.spyOn(PTYManager.prototype, "listSessions").mockReturnValue([mkSession()]);
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+
+      const reaped = (server as any).reapIdleSessions(IDLE_REAP_AFTER_MS + 1);
+
+      expect(holdSpy).toHaveBeenCalledWith("reap-sess");
+      expect(reaped).toEqual(["reap-sess"]);
+    });
+
+    // The whole point of C1: a long-running turn is never interrupted, no
+    // matter how old it is or whether anyone is watching.
+    it("never reaps a running session, however long it has been running", () => {
+      vi.spyOn(PTYManager.prototype, "listSessions").mockReturnValue([
+        mkSession({ status: "running" }),
+      ]);
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+
+      const reaped = (server as any).reapIdleSessions(IDLE_REAP_AFTER_MS * 100);
+
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect(reaped).toEqual([]);
+    });
+
+    it("does not reap a settled session that is still within the threshold", () => {
+      vi.spyOn(PTYManager.prototype, "listSessions").mockReturnValue([mkSession()]);
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+
+      const reaped = (server as any).reapIdleSessions(IDLE_REAP_AFTER_MS - 1);
+
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect(reaped).toEqual([]);
+    });
+
+    // Agent output — not user input — is what keeps a session alive. An agent
+    // grinding through a long task with nobody watching must survive.
+    it("treats recent agent output as activity", () => {
+      vi.spyOn(PTYManager.prototype, "listSessions").mockReturnValue([mkSession()]);
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+      const now = IDLE_REAP_AFTER_MS * 10;
+      // Chunk arrived a moment ago, even though startedAt is ancient.
+      (server as any).lastAgentChunkAt.set("reap-sess", now - 1000);
+
+      const reaped = (server as any).reapIdleSessions(now);
+
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect(reaped).toEqual([]);
+      (server as any).lastAgentChunkAt.delete("reap-sess");
+    });
+  });
+
   describe("ptyGracePeriodMs = 0 disables auto-hold", () => {
     // Subscribe a real WS to a session id, close it, and inspect whether the
     // last-subscriber-disconnect path armed a grace timer. subscribe_session's
@@ -1297,7 +1451,11 @@ describe("StreamerServer", () => {
       }
     });
 
-    it("still arms a grace timer on disconnect when grace is positive", async () => {
+    // A socket closing is not a request to stop the agent — phones sleep, signal
+    // drops, Wi-Fi hands off to cellular. This asserts the C1 inversion: even
+    // with a positive grace period, an involuntary disconnect arms nothing. The
+    // resource bound moved to the idle reaper (see "idle reaper" below).
+    it("does NOT arm a grace timer on disconnect even when grace is positive", async () => {
       const p = await getRandomPort();
       const srv = new StreamerServer({
         ...HOST_ISOLATION,
@@ -1313,10 +1471,7 @@ describe("StreamerServer", () => {
       await srv.listen(p, { awaitReady: true });
       try {
         await subscribeAndClose(srv);
-        expect((srv as any).ptyGraceTimers.has(SID)).toBe(true);
-        // clean up the armed timer so it can't fire after teardown
-        const t = (srv as any).ptyGraceTimers.get(SID);
-        if (t) clearTimeout(t);
+        expect((srv as any).ptyGraceTimers.has(SID)).toBe(false);
       } finally {
         await srv.close();
       }
