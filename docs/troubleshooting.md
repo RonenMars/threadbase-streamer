@@ -195,6 +195,22 @@ git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 ---
 
+### `npm install --ignore-scripts` recovery still fails the build (`qrcode-terminal` legacy octal escape)
+
+**When:** Recovering from a broken `node_modules` with `npm install --ignore-scripts` (e.g. because `npm ci`'s native rebuild of a nested `better-sqlite3` fails without Visual Studio Build Tools), then running `npm run build`.
+**Cause:** `--ignore-scripts` also skips the `prepare` script, which runs `patch-package`. The unpatched `qrcode-terminal` package contains legacy octal escape sequences (`"\033[40m"`) that `tsup`'s `esbuild` rejects under `"strict": true`, failing the CLI build with `Legacy octal escape sequences cannot be used in strict mode`. This is easy to misdiagnose as a `node-pty` problem, since the `postinstall` script (also skipped) is the one that's documented as fixing native-module permissions — but on Windows `postinstall`'s chmod target (`prebuilds/*/spawn-helper`) doesn't exist at all (Windows ships `conpty.node`/`pty.node`, not `spawn-helper`), so skipping `postinstall` is a genuine no-op there. `prepare`/`patch-package` is the script that actually matters.
+**Fix:** After `npm install --ignore-scripts`, run `npx patch-package` before building.
+
+---
+
+### `EPERM` cleanup errors during `npm ci`/`npm install` in a dev checkout
+
+**When:** `npm ci` or `npm install` fails partway through with `EPERM: operation not permitted, rmdir '...\node_modules\...'`, and can leave `node_modules` gutted (only `.bin/` remaining) rather than restored.
+**Cause:** The Threadbase menubar Electron app (`vendor/menubar`), when running against this checkout (e.g. launched by the `deploy-menubar` skill), holds file handles inside `node_modules` for the lifetime of its process. Any concurrent `npm install`/`npm ci` in the same checkout can lose the race against Electron's own file locking.
+**Fix:** Close the menubar tray app (or kill its `electron.exe` processes — they run from `vendor/menubar/node_modules/electron/dist/electron.exe`) before running `npm ci`/`npm install` in a dev checkout. Re-run the install afterward.
+
+---
+
 ### Path prefix checks fail silently on Windows
 
 **When:** Browse or file-watch endpoints return unexpected results on Windows.
