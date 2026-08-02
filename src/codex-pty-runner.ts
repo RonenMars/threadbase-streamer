@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
 import { getLogger, type Logger } from "./logger";
-import { resolveCodexExe } from "./platform";
+import { clearCodexExeCache, resolveCodexExe } from "./platform";
 import { CODEX_CLI_PROVIDER } from "./providers";
 import {
   type CodexGateType,
@@ -252,20 +252,28 @@ export class CodexPtyRunner implements SessionRunner {
     const nodePty = await loadPty();
     const projectName = options.projectName ?? basename(options.projectPath);
 
-    const proc = nodePty.spawn(
-      resolveCodexExe(),
-      // `sessionId` stays the runner's map key — only argv carries the
-      // provider-side id, so a resumed Codex session keeps the placeholder id
-      // its client already navigated to.
-      ["resume", options.resumeId ?? sessionId, "--cd", options.projectPath, "--no-alt-screen"],
-      {
-        name: "xterm-256color",
-        cols: PTY_COLS,
-        rows: PTY_ROWS,
-        cwd: options.projectPath,
-        env: process.env as Record<string, string>,
-      },
-    );
+    let proc: ReturnType<typeof nodePty.spawn>;
+    try {
+      proc = nodePty.spawn(
+        resolveCodexExe(),
+        // `sessionId` stays the runner's map key — only argv carries the
+        // provider-side id, so a resumed Codex session keeps the placeholder id
+        // its client already navigated to.
+        ["resume", options.resumeId ?? sessionId, "--cd", options.projectPath, "--no-alt-screen"],
+        {
+          name: "xterm-256color",
+          cols: PTY_COLS,
+          rows: PTY_ROWS,
+          cwd: options.projectPath,
+          env: process.env as Record<string, string>,
+        },
+      );
+    } catch (err) {
+      // See resolveClaudeExe's clearClaudeExeCache() in platform.ts — same
+      // memoize-then-invalidate-on-spawn-failure rationale for Codex.
+      clearCodexExeCache();
+      throw err;
+    }
 
     const session: InternalSession = {
       id: sessionId,
@@ -322,13 +330,20 @@ export class CodexPtyRunner implements SessionRunner {
       args.push(options.systemPrompt);
     }
 
-    const proc = nodePty.spawn(resolveCodexExe(), args, {
-      name: "xterm-256color",
-      cols: PTY_COLS,
-      rows: PTY_ROWS,
-      cwd: options.projectPath,
-      env: process.env as Record<string, string>,
-    });
+    let proc: ReturnType<typeof nodePty.spawn>;
+    try {
+      proc = nodePty.spawn(resolveCodexExe(), args, {
+        name: "xterm-256color",
+        cols: PTY_COLS,
+        rows: PTY_ROWS,
+        cwd: options.projectPath,
+        env: process.env as Record<string, string>,
+      });
+    } catch (err) {
+      // See the analogous catch in doStart() above.
+      clearCodexExeCache();
+      throw err;
+    }
 
     const session: InternalSession = {
       id: sessionId,
