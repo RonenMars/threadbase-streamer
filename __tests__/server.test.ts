@@ -3211,7 +3211,27 @@ describe("StreamerServer", () => {
       );
 
       // Spy after the write so the counts scope to the reconcile below.
-      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan");
+      //
+      // The spy records each caller as well as the count. This assertion has failed
+      // on CI five times and has never reproduced locally in ~50 attempts across
+      // five configurations, so a bare count costs a re-run and teaches nothing:
+      // three separate call sites can reach scan(), and the failure has to say
+      // which one did. Behaviour is unchanged — the original is still invoked.
+      const scanCallers: string[] = [];
+      const realScan = ConversationScanner.prototype.scan;
+      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan").mockImplementation(function (
+        this: ConversationScanner,
+        ...args: Parameters<typeof realScan>
+      ) {
+        scanCallers.push(
+          (new Error().stack ?? "no stack")
+            .split("\n")
+            .slice(2, 6)
+            .map((l) => l.trim())
+            .join(" <- "),
+        );
+        return realScan.apply(this, args);
+      });
       const refreshSpy = vi.spyOn(ConversationScanner.prototype, "refreshFile");
 
       // What onConversationChanged now records: the flag AND the path it is
@@ -3231,7 +3251,10 @@ describe("StreamerServer", () => {
       // scanner instance + no scan() is what keeps auto-b's parsed snapshot
       // alive: scan() is the only call that clears the whole LRU, and
       // refreshFile evicts only its own file's keys.
-      expect(scanSpy.mock.calls.length).toBe(0);
+      expect(
+        scanSpy.mock.calls.length,
+        `scan() ran during the per-file reconcile window; callers:\n${scanCallers.join("\n") || "(none recorded — the stack capture is broken, not the code)"}`,
+      ).toBe(0);
       expect(srv.scanner).toBe(scannerBefore);
       const refreshed = new Set(refreshSpy.mock.calls.map((c) => c[0]));
       expect([...refreshed]).toEqual([changed]);
