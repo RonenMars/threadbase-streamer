@@ -18,4 +18,7 @@
 | GET | `/api/search?q=...` | Full-text search across conversations |
 | GET | `/api/browse` | Browse the file system |
 | GET | `/api/profiles` | List scan profiles |
+| GET | `/api/config/claude-flags` | Allowlisted Claude CLI flags: `{registry, values, extraArgs, persisted}` (admin) |
+| PUT | `/api/config/claude-flags` | Update those flags; 403 while `--local-no-auth` is active (admin) |
+| GET | `/api/config/feature-flags` | Server feature flags: `{registry, values}`. Read-only — flags resolve at boot (admin) |
 | POST | `/api/pair/start` / `/api/pair/exchange` | Mobile pairing handshake |

@@ -46,6 +46,7 @@ import {
   loadClaudeExtraArgs,
   loadClaudeFlags,
   loadDefaultPermissionMode,
+  loadFeatureFlags,
   loadPublicUrl,
   loadTailSize,
   setApiKey,
@@ -75,6 +76,12 @@ import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
+import {
+  FEATURE_FLAGS,
+  type FeatureFlagValues,
+  nonDefaultFeatureFlags,
+  resolveFeatureFlags,
+} from "./feature-flags";
 import { handleListProjects } from "./handlers/handleListProjects";
 import { isPidAlive } from "./lifecycle/process-liveness";
 import { LiveSessionManager } from "./live-session-manager";
@@ -357,7 +364,11 @@ export class StreamerServer {
   private sessionInputAttempts = new Map<string, number[]>();
   private ptyGracePeriodMs: number;
   private defaultSystemPrompt: string;
-  // See ServerConfig.codexSystemPromptEnabled.
+  // Resolved once at boot; see src/feature-flags.ts. Total map — every registry
+  // id is present, so indexing it never yields undefined.
+  private featureFlags: FeatureFlagValues;
+  // Derived from featureFlags.codexSystemPrompt. Kept as its own field so the
+  // read site in startFresh() is unchanged.
   private codexSystemPromptEnabled: boolean;
   private defaultPermissionMode: PermissionMode;
   private defaultModel: string;
@@ -461,7 +472,13 @@ export class StreamerServer {
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-    this.codexSystemPromptEnabled = config.codexSystemPromptEnabled ?? false;
+    // env > CLI > server.yaml > registry default, then the legacy explicit
+    // field on top (see ServerConfig.codexSystemPromptEnabled).
+    this.featureFlags = resolveFeatureFlags({ cli: config.featureFlags, yaml: loadFeatureFlags() });
+    if (config.codexSystemPromptEnabled !== undefined) {
+      this.featureFlags.codexSystemPrompt = config.codexSystemPromptEnabled;
+    }
+    this.codexSystemPromptEnabled = this.featureFlags.codexSystemPrompt;
     this.defaultPermissionMode =
       config.defaultPermissionMode ?? loadDefaultPermissionMode() ?? "acceptEdits";
     this.defaultModel = config.defaultModel ?? "sonnet";
@@ -481,6 +498,16 @@ export class StreamerServer {
     }, this.directoryDebounceMs);
     this.includeAgents = parseIncludeAgentsEnv(process.env.THREADBASE_INCLUDE_AGENTS);
     this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
+
+    // Log only what differs from the registry defaults: on a normal boot this is
+    // silent, so a line here always means someone turned something on.
+    const enabledFlags = nonDefaultFeatureFlags(this.featureFlags);
+    if (enabledFlags.length > 0) {
+      this.log.info(`Feature flags active: ${enabledFlags.join(", ")}`, {
+        event: "config.feature_flags_active",
+        flags: enabledFlags,
+      });
+    }
 
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
     if (rawRoot) {
@@ -803,6 +830,7 @@ export class StreamerServer {
       logMenubarRequests: this.logMenubarRequests,
       rotateApiKey: () => this.rotateApiKey(),
       claudeFlagsConfig: () => this.getClaudeFlagsConfig(),
+      featureFlagsConfig: () => this.getFeatureFlagsConfig(),
       setClaudeFlagsConfig: (values, extraArgs) => this.setClaudeFlagsConfig(values, extraArgs),
       publicUrl: this.publicUrl,
       browseRoot: this.browseRoot,
@@ -2008,6 +2036,20 @@ export class StreamerServer {
       persisted,
     });
     return { newKey, persisted };
+  }
+
+  /**
+   * The registry ships with the values so a client renders the list from one
+   * round-trip, same as getClaudeFlagsConfig().
+   *
+   * Deliberately no `persisted` field: unlike claude-flags there is no PUT, and
+   * the absence of that field is the signal that this endpoint is read-only.
+   */
+  private getFeatureFlagsConfig(): {
+    registry: typeof FEATURE_FLAGS;
+    values: FeatureFlagValues;
+  } {
+    return { registry: FEATURE_FLAGS, values: this.featureFlags };
   }
 
   private getClaudeFlagsConfig(): {
