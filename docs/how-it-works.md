@@ -26,7 +26,12 @@ A `projects` row is the canonical identity for a project (UUID + canonical path)
 
 Live statuses are `running`, `waiting_input`, and `idle` (`SessionStatus` in `src/types.ts`). A session becomes `waiting_input` when Claude prints a prompt marker (`╭` or `❯`, with a fallback timer), and returns to `running` when input arrives. Any PTY exit lands on `idle`; an instant non-zero exit with no output gets a diagnosed `failureReason`.
 
-When the last WebSocket subscriber disconnects, the server starts a grace timer (`ptyGracePeriodMs`, default 270 000 ms = 4.5 minutes) that calls `PTYManager.putOnHold()` — SIGINT to the PTY, status `idle`, conversation history intact. A client can hold immediately by sending `{ type: "hold_session", sessionId }` over WebSocket (same path, zero delay). Idle sessions are resumed via `POST /api/sessions/resume` with the same `conversationId`; historical conversations are surfaced to clients as resumable shapes with `status: "on_hold"`.
+A WebSocket disconnect does **not** stop the agent — `handleWsClose` deliberately arms no timer, because phones sleep and connections drop while real work is in flight. Two paths put a PTY on hold (`PTYManager.putOnHold()` — SIGINT to the PTY, status `idle`, conversation history intact):
+
+- **Explicit `{ type: "hold_session", sessionId }`** over WebSocket. This arms the grace timer for `ptyGracePeriodMs` (default 270 000 ms = 4.5 minutes) — it is *not* instant, so mobile can send it on backgrounding and the session keeps working until the timer elapses. A `running` session defers the hold and re-arms, up to `GRACE_MAX_DEFERS` (4), so a turn is never cut mid-response. Setting the period to `0` makes the hold instant; there is no value meaning "never" (use a very large delay).
+- **The idle reaper**, sweeping every `IDLE_REAP_SWEEP_MS` (5 min) and holding any PTY whose agent has been silent for `IDLE_REAP_AFTER_MS` (6 h). It measures agent inactivity rather than subscriber absence, and skips `running` sessions entirely.
+
+Idle sessions are resumed via `POST /api/sessions/resume` with the same `conversationId`; historical conversations are surfaced to clients as resumable shapes with `status: "on_hold"`.
 
 ## Mobile pairing
 
