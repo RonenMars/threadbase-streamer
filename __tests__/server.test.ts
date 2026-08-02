@@ -3008,6 +3008,84 @@ describe("StreamerServer", () => {
       expect(a?.preview).toContain("alpha continued externally");
     });
 
+    it("reconciles only the changed file, leaving the other conversation's snapshot intact", async () => {
+      // The regression: a live session appending to its own transcript fired a
+      // directory event ~6x/min, and honoring it meant a full-tree rescan. On
+      // the non-persistent scanner this server runs, scan() clears
+      // conversationLRU — so every OTHER conversation's parsed snapshot died
+      // with it and its next full fetch re-parsed from disk (745-2877ms on a
+      // 5MB history) while the per-file paginated path stayed at ~20ms.
+      await listCached();
+      const srv = autoServer as unknown as {
+        scannerStale: boolean;
+        staleFiles: Set<string>;
+        scanner: unknown;
+      };
+      const scannerBefore = srv.scanner;
+      expect(scannerBefore).toBeTruthy();
+
+      const changed = join(projDir, "auto-a.jsonl");
+      writeFileSync(
+        changed,
+        convLine("auto-a", "2026-06-07T11:00:00.000Z", "alpha continued externally"),
+      );
+
+      // Spy after the write so the counts scope to the reconcile below.
+      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan");
+      const refreshSpy = vi.spyOn(ConversationScanner.prototype, "refreshFile");
+
+      // What onConversationChanged now records: the flag AND the path it is
+      // about. Poked directly rather than waiting on chokidar's debounce.
+      srv.staleFiles.add(changed);
+      srv.scannerStale = true;
+
+      // Freshness is preserved for the file that actually changed.
+      const after = await listCachedUntil((r) =>
+        Boolean(r.conversations.find((c) => c.id === "auto-a")?.preview?.includes("externally")),
+      );
+      expect(after.conversations.find((c) => c.id === "auto-a")?.preview).toContain(
+        "alpha continued externally",
+      );
+
+      // …and it cost a single-file refresh, not a full-tree rescan. Same
+      // scanner instance + no scan() is what keeps auto-b's parsed snapshot
+      // alive: scan() is the only call that clears the whole LRU, and
+      // refreshFile evicts only its own file's keys.
+      expect(scanSpy.mock.calls.length).toBe(0);
+      expect(srv.scanner).toBe(scannerBefore);
+      const refreshed = new Set(refreshSpy.mock.calls.map((c) => c[0]));
+      expect([...refreshed]).toEqual([changed]);
+
+      scanSpy.mockRestore();
+      refreshSpy.mockRestore();
+    });
+
+    it("still rebuilds the whole index when the stale flag names no path", async () => {
+      // Armed with an empty set means "stale, source unknown" — the pre-identity
+      // meaning of the flag. That has to keep rebuilding from disk, or a
+      // staleness signal from anywhere but onConversationChanged loses its
+      // reconcile entirely. Driven through getScanner() rather than the list
+      // endpoint so chokidar can't record a path mid-test and quietly route it
+      // down the per-file branch instead.
+      const srv = autoServer as unknown as {
+        scannerStale: boolean;
+        staleFiles: Set<string>;
+        scanner: unknown;
+        getScanner: (skipStaleRescan?: boolean) => Promise<unknown>;
+      };
+      await srv.getScanner();
+      const before = srv.scanner;
+      expect(before).toBeTruthy();
+
+      srv.staleFiles.clear();
+      srv.scannerStale = true;
+      await srv.getScanner();
+
+      // Discarded and rebuilt — a fresh instance, flag disarmed.
+      expect(srv.scanner).not.toBe(before);
+      expect(srv.scannerStale).toBe(false);
+    });
+
     it("serves the cached list immediately while a routine reconcile runs in the background", async () => {
       // Prime the cache so there is something stale to serve.
       await listCached();

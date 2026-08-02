@@ -217,6 +217,9 @@ const ADOPT_KILL_POLL_MS = 100;
 // one per request.
 const REFRESH_TTL_MS = 2000;
 
+// How much of the tree a background conversation-list reconcile has to cover.
+type ConversationReconcileMode = "files" | "full";
+
 // Session start blocks for the PTY to reach waiting_input/idle before
 // responding; past this we fall back to the async 202 shape. Must stay BELOW
 // the mobile client's start-request fetch timeout (15s) — at the old 15s value
@@ -331,6 +334,20 @@ export class StreamerServer {
   // Set by onConversationChanged while a scan is in-flight; getScanner() does
   // a single rescan after the current one completes instead of restarting it.
   private scannerStale = false;
+  // WHICH files scannerStale is about. A directory event names exactly one
+  // JSONL, and the only correct response is refreshFile() on that one file —
+  // but scannerStale alone carries no identity, so honoring it used to mean a
+  // full-tree rescan. On the non-persistent scanner this server actually runs
+  // (buildStatCache => persistent:false, see listen()), scan() opens by
+  // clearing metadataCache AND conversationLRU — so one live session appending
+  // to its own transcript threw away every OTHER conversation's parsed
+  // snapshot, and the next full fetch of an unrelated conversation re-parsed
+  // it from disk (745-2877ms on a 5MB/1112-message history) while the
+  // per-file paginated path stayed at ~20ms throughout. Populated alongside
+  // scannerStale and drained with it by takeStaleFiles(); an armed flag with
+  // an EMPTY set means "stale, source unknown" and still falls back to the
+  // full rescan.
+  private staleFiles = new Set<string>();
   // Single-flight guard for the background disk reconcile: a burst of list
   // polls during active session writes shares one rescan instead of queueing
   // a full rescan per request.
@@ -513,7 +530,13 @@ export class StreamerServer {
       1000;
     this.markScannerStaleDebounced = debounce(() => {
       if (this.scannerReady) this.scannerStale = true;
-      else this.scanner = null;
+      // No adopted scanner yet, so there are no in-place indexes to refresh —
+      // drop it and let the next getScanner() build one. The recorded paths go
+      // with it; the fresh scan covers them.
+      else {
+        this.scanner = null;
+        this.staleFiles.clear();
+      }
     }, this.directoryDebounceMs);
     this.includeAgents = parseIncludeAgentsEnv(process.env.THREADBASE_INCLUDE_AGENTS);
     this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
@@ -652,11 +675,13 @@ export class StreamerServer {
         // untailed row would vanish on its next append. The debounced rescan below
         // re-derives metadata, so leaving the row loses nothing.
         this.cache?.invalidateByFilePath(filePath, { skipIfTailed: true });
-        // Debounce the global scanner-staleness flip so a burst of directory
-        // events during active sessions collapses into one rescan trigger
-        // after a quiet period. The debounced callback still checks
-        // scannerReady at fire time, preserving the anti-infinite-loop rule
-        // (never null scannerReady mid-scan).
+        // Debounce the scanner-staleness flip so a burst of directory events
+        // during active sessions collapses into one reconcile trigger after a
+        // quiet period. The debounced callback still checks scannerReady at
+        // fire time, preserving the anti-infinite-loop rule (never null
+        // scannerReady mid-scan). Record the path before debouncing so the
+        // reconcile can refresh exactly this file instead of the whole tree.
+        this.staleFiles.add(filePath);
         this.markScannerStaleDebounced();
         this.log.debug?.(`Scanner invalidated by directory event: ${filePath}`, {
           filePath,
@@ -2284,22 +2309,54 @@ export class StreamerServer {
   // so a burst of list polls during active session writes shares one rescan
   // rather than queueing a full rescan each; tracked so close() awaits the
   // in-flight cache write before shutting the DB.
-  private startBackgroundConversationReconcile(): void {
+  private startBackgroundConversationReconcile(mode: ConversationReconcileMode = "full"): void {
     if (this.conversationReconcileInFlight) return;
-    const task = this.reconcileConversationsCacheFromDisk().finally(() => {
+    const paths = mode === "files" ? this.takeStaleFiles() : [];
+    const task = (
+      paths.length > 0
+        ? this.reconcileStaleFilesFromDisk(paths)
+        : this.reconcileConversationsCacheFromDisk()
+    ).finally(() => {
       this.conversationReconcileInFlight = null;
     });
     this.conversationReconcileInFlight = task;
     this.trackCacheWrite(task);
   }
 
-  private shouldAutoReconcileConversationList(): boolean {
-    if (!this.cache) return false;
-    if (this.scannerStale) return true;
-    if (!this.conversationsRepo || !this.cacheMetadataRepo) return false;
+  // "files": a directory event named specific JSONLs, so refresh only those.
+  // "full": disk drifted in ways a per-file refresh can't see (a project dir
+  // appeared, rows vanished), so walk the tree. Order matters — the staleness
+  // check short-circuits first so the HDD freshness probe stays off the hot
+  // poll path, exactly as it did when this returned a boolean.
+  private conversationReconcileMode(): ConversationReconcileMode | null {
+    if (!this.cache) return null;
+    if (this.scannerStale) return "files";
+    if (!this.conversationsRepo || !this.cacheMetadataRepo) return null;
     return shouldRefreshProjectsFromHdd(this.conversationsRepo, this.cacheMetadataRepo, {
       projectsDirs: this.projectsDirsForFreshnessCheck(),
-    });
+    })
+      ? "full"
+      : null;
+  }
+
+  // The per-file half of reconcileConversationsCacheFromDisk: re-index just the
+  // changed JSONLs and upsert their rows. No reconcileDeletions here — that
+  // needs the whole live-path set, and deletions already have their own path
+  // (onFileDeleted -> invalidateByFilePath). New projects still arrive via the
+  // HDD-freshness "full" mode.
+  private async reconcileStaleFilesFromDisk(paths: string[]): Promise<void> {
+    if (!this.cache) return;
+    const scanner = await this.getScanner(true);
+    const metas = await this.refreshStaleFiles(scanner, paths);
+    if (metas.length === 0) return;
+    try {
+      this.cache.upsertFromScannerMeta(metas as any[]);
+    } catch (err) {
+      this.log.warn(
+        `stale-file reconcile failed: ${err instanceof Error ? err.message : String(err)}`,
+        { event: "conversations.reconcile_failed" },
+      );
+    }
   }
 
   private async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
@@ -2323,11 +2380,12 @@ export class StreamerServer {
     // next poll sees the fresh data (stale-while-revalidate). Block only when
     // there is nothing to serve (cold cache) or the caller asked for fresh data
     // explicitly with ?refresh=1.
-    if (this.cache && (bustCache || this.shouldAutoReconcileConversationList())) {
+    const reconcileMode = this.conversationReconcileMode();
+    if (this.cache && (bustCache || reconcileMode)) {
       const canServeStale =
         !bustCache && this.cache.listConversations({ limit: 0, offset: 0 }).total > 0;
       if (canServeStale) {
-        this.startBackgroundConversationReconcile();
+        this.startBackgroundConversationReconcile(reconcileMode ?? "full");
       } else {
         // Cold cache (or explicit refresh): nothing to serve, so gate with the
         // warm-up state — the client shows the one-time "building history"
@@ -2572,6 +2630,40 @@ export class StreamerServer {
     );
   }
 
+  // Drain the stale set and disarm the flag together. The caller owns the
+  // returned paths: clearing before the refresh means events that land DURING
+  // it re-arm the flag and get their own pass instead of being swallowed.
+  private takeStaleFiles(): string[] {
+    const paths = [...this.staleFiles];
+    this.staleFiles.clear();
+    this.scannerStale = false;
+    return paths;
+  }
+
+  // Reconcile exactly the JSONLs a directory event named. Failures are logged
+  // and swallowed per file: one unreadable transcript must not abort the
+  // others, and the file simply stays on its previous snapshot until the next
+  // event — the same outcome the full rescan gave on a parse failure.
+  private async refreshStaleFiles(
+    scanner: ConversationScanner,
+    paths: string[],
+  ): Promise<ConversationMeta[]> {
+    const metas = await Promise.all(
+      paths.map((filePath) =>
+        scanner.refreshFile(filePath).catch((err) => {
+          this.log.warn("scanner.refreshFile: failed", {
+            event: "scanner.refresh_failed",
+            filePath,
+            trigger: "directory-event",
+            err,
+          });
+          return null;
+        }),
+      ),
+    );
+    return metas.filter((m): m is ConversationMeta => m !== null);
+  }
+
   private async getScanner(skipStaleRescan = false): Promise<ConversationScanner> {
     if (this.scannerReady) {
       await this.scannerReady;
@@ -2579,19 +2671,30 @@ export class StreamerServer {
       // if so, fall through and create a fresh one.
       if (this.scanner) {
         if (skipStaleRescan) return this.scanner;
-        // If file events arrived while the scan was running, do one rescan now
-        // rather than serving a stale result. The stale flag is cleared first so
-        // any events during the rescan trigger another pass on the next call.
+        // If file events arrived while the scan was running, reconcile now
+        // rather than serving a stale result — but per file, not by discarding
+        // the instance. refreshFile() re-indexes exactly the named JSONL and
+        // touches only that file's conversationLRU keys, so an append to one
+        // conversation can no longer evict every other conversation's parsed
+        // snapshot. Paths are drained first so events arriving during the
+        // refresh re-arm the flag and get their own pass.
         if (this.scannerStale) {
-          this.scannerStale = false;
-          this.scanner = null;
-          this.scannerReady = null;
-          return this.getScanner();
+          const paths = this.takeStaleFiles();
+          // Armed with no paths ("stale, source unknown"): fall back to the
+          // full rebuild, which is what the flag meant before it carried
+          // identity.
+          if (paths.length === 0) {
+            this.scanner = null;
+            this.scannerReady = null;
+            return this.getScanner();
+          }
+          await this.refreshStaleFiles(this.scanner, paths);
+          return this.scanner ?? this.getScanner();
         }
         return this.scanner;
       }
     }
-    this.scannerStale = false;
+    this.takeStaleFiles();
     const statCache = this.buildStatCache(this.scanner);
     // Scanner 0.9.4 reads statCache only in non-persistent scans.
     this.scanner = this.newScanner(statCache ? { persistent: false } : undefined);
@@ -2636,8 +2739,8 @@ export class StreamerServer {
     // Let any in-flight scan finish first so we don't run two scans on the same
     // index concurrently.
     if (this.scannerReady) await this.scannerReady;
-    // A full rescan supersedes any pending staleness.
-    this.scannerStale = false;
+    // A full rescan supersedes any pending staleness, per-file paths included.
+    this.takeStaleFiles();
     if (!this.scanner) {
       this.scanner = new ConversationScanner();
       this.allScanners.add(this.scanner);
