@@ -166,6 +166,63 @@ describe("classifySession", () => {
   });
 });
 
+// Phase 2: a pid recorded under a previous boot identifies nothing today, so it
+// must never be probed. See docs/plans/live-sessions-persistence-plan.md.
+describe("classifySession across machine boots", () => {
+  const BOOT = "boot-current";
+
+  it("classifies a foreign boot token as resumable without probing the pid", async () => {
+    const isPidAlive = vi.fn(() => true);
+    const getProcessArgs = vi.fn(async () => "claude --resume sess-1");
+
+    const verdict = await classifySession(
+      mkRow({ boot_token: "boot-previous" }),
+      mkProbe({ isPidAlive, getProcessArgs }),
+      INSTANCE,
+      BOOT,
+    );
+
+    // A live process with a matching argv token at that pid is exactly the case
+    // that used to produce a false `detached`.
+    expect(verdict.lifecycle).toBe("resumable");
+    expect(verdict.reason).toMatch(/before this machine boot/);
+    expect(isPidAlive).not.toHaveBeenCalled();
+    expect(getProcessArgs).not.toHaveBeenCalled();
+  });
+
+  it("treats a row recorded before the column existed exactly like a mismatch", async () => {
+    const isPidAlive = vi.fn(() => true);
+
+    const verdict = await classifySession(
+      mkRow({ boot_token: null }),
+      mkProbe({ isPidAlive, getProcessArgs: async () => "claude --resume sess-1" }),
+      INSTANCE,
+      BOOT,
+    );
+
+    expect(verdict.lifecycle).toBe("resumable");
+    expect(isPidAlive).not.toHaveBeenCalled();
+  });
+
+  it("leaves the same-boot decision table alone", async () => {
+    const ours = await classifySession(
+      mkRow({ boot_token: BOOT }),
+      mkProbe({ isPidAlive: () => true, getProcessArgs: async () => "claude --resume sess-1" }),
+      INSTANCE,
+      BOOT,
+    );
+    expect(ours.lifecycle).toBe("detached");
+
+    const recycled = await classifySession(
+      mkRow({ boot_token: BOOT }),
+      mkProbe({ isPidAlive: () => true, getProcessArgs: async () => "/usr/bin/postgres" }),
+      INSTANCE,
+      BOOT,
+    );
+    expect(recycled.lifecycle).toBe("orphaned");
+  });
+});
+
 describe("reconcileSessions", () => {
   it("classifies every row and never signals a process", async () => {
     const rows = [
