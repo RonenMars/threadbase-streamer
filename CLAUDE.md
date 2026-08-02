@@ -133,7 +133,8 @@ All three clauses must hold for `serve` to ask: the key is absent, `THREADBASE_S
 
 A `--prod`-only machine never sees a TTY, so the key would stay absent forever and the operator would have no way to learn the setting exists. One boot-time info line covers that, emitted only when the key is absent *and* the prompt did not run.
 
-The resume flow this setting gates is not built yet (plan Phase 7c / PR 12) — today the setting is resolved, persisted and reported, and nothing reads it.
+The `sessionRehydration` feature flag only controls whether historical stubs appear in the session list; turning it off does not disable `auto_resume_on_boot`.
+Set `auto_resume_on_boot: false` to prevent unattended agent starts at boot.
 
 `--pty-grace-period-ms <ms>` (or `pty_grace_period_ms:` in `server.yaml`) sets the delay between an explicit `{ type: "hold_session" }` message and the actual hold (SIGINT + screen disposal, history intact, resumable). Precedence is flag → yaml → default `270000` (4.5 min). Since `handleWsClose` no longer arms a timer, this knob governs the explicit hold path *only*.
 
@@ -192,7 +193,7 @@ Current flags:
 | id | Default | Gates |
 |----|---------|-------|
 | `codexSystemPrompt` | off | Sending the built system prompt to fresh Codex sessions. Off because Codex has no `--system-prompt` flag — the prompt lands in the positional `[PROMPT]` argument, which Codex treats as the user's opening turn rather than a system instruction. |
-| `sessionRehydration` | **on** | Seeding the session list at boot from the durable registry, so sessions a previous run was interrupted mid-flight come back in `GET /api/sessions` as `ownership: "historical"` / `lifecycle: "resumable"` stubs instead of vanishing. On because it is the fix for the restart case, not an experiment — but it changes what `GET /api/sessions` contains for every client, so it ships with a kill switch rather than unconditionally. `GET /api/sessions/count` is unaffected: recovered stubs are filtered out of it. |
+| `sessionRehydration` | **on** | Seeding the session list at boot from the durable registry, so sessions a previous run was interrupted mid-flight come back in `GET /api/sessions` as `ownership: "historical"` / `lifecycle: "resumable"` stubs instead of vanishing. On because it is the fix for the restart case, not an experiment — but it changes what `GET /api/sessions` contains for every client, so it ships with a kill switch rather than unconditionally. `GET /api/sessions/count` is unaffected: recovered stubs are filtered out of it. Turning this flag off does not disable `auto_resume_on_boot`; only `auto_resume_on_boot: false` prevents unattended starts. |
 
 ## Dependencies
 
