@@ -496,7 +496,7 @@ const isLiveForStream =
 
 A stub reports `ptyAttached: false`, so the first clause already fails and no stream is opened. The real symptom is narrower: the session falls through to the `noAttachEmptyPlaceholder && status === 'idle'` branch (`app/session/[id].tsx:1014`) and renders **"Running elsewhere"** — a false claim about a session nobody is running. A wrong label, not a hang.
 
-Recovered sessions therefore render *and resume* on already-shipped clients: `app/session/[id].tsx:579` redirects a stub with a conversation to `/conversation/{id}`, which implements the full resume flow. M1's residual value is the pre-redirect frame and the case where a stub has no `conversationId`.
+Recovered sessions therefore render *and resume* on already-shipped clients: a stub matches the redirect at `app/session/[id].tsx:579` (`ptyAttached === false && status === 'idle' && hasConversation && id is a UUID`), so mobile sends it to `/conversation/{id}` — which resolves `200` with real history and `resumable: true`, and whose screen implements the full `POST /api/sessions/resume` flow including the soft-409 collision dialog. Verified against all five recovered sessions on the deployed instance. M1's residual value is the pre-redirect frame and the case where a stub has no `conversationId` (no redirect fires).
 
 Historical *conversations* avoid this today only because they arrive through the `ProjectChat` discriminated union's `type: "conversation"` branch. A **session-shaped** historical row is a genuinely new case that this plan introduces.
 
@@ -639,7 +639,7 @@ The job's purpose is undocumented (memory, leaked handles, log rotation are all 
 - [ ] **PR 8** — Phase 6c: boot reconnect, `lifecycle: "attached"` across restart, byte-accurate replay
 - [ ] **PR 9** — Phase 6d: version handshake, heartbeat, orphan reaping, `prod doctor` check
 - [ ] **PR 10** — Phase 6e: Windows / ConPTY qualification, `ptyHost` default decision
-- [x] **PR M1** *(tb-mobile, independent of PR 1)* — `isTerminalSession` treats `ownership === 'historical'` as terminal (see §5.1). Implemented on `fix/historical-session-terminal`. Not a gate on any streamer PR.
+- [x] **PR M1** *(tb-mobile, independent of PR 1)* — `isTerminalSession` treats `ownership === 'historical'` as terminal (see §5.1). Landed as tb-mobile `16987b0c` on 2026-07-31. Not a gate on any streamer PR.
 - [ ] **PR 11** — Phase 7a/7b: `auto_resume_on_boot` in `server.yaml`, loader + writer, `ServerConfig` field, first-run TTY prompt, `scripts/deploy.sh` install-time question, skip env var. ~~**Ride-along:** `loadDefaultModel()` / `loadDefaultEffort()` in `src/auth.ts` + `cli/index.ts`, closing the `claude_extra_args` silent revert (7a)~~ — **dropped:** #306 made `model` and `effort` first-class claude-flags with their own persisted key, so PR 11 no longer needs to carry them (see `docs/2026-07-30-session-review-consolidation.md` §8)
 - [ ] **PR 12** — Phase 7c: shared `resumeSession()`, eligibility rules, caps and ceiling, logged skips
 - [ ] **PR M2** *(tb-mobile, optional, after PR 5)* — adopt `interruptedStatus` for the "interrupted mid-response" label
