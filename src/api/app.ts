@@ -11,7 +11,6 @@ import { createBrowseRoutes } from "./routes/browse.routes";
 import { createCacheAlertRoutes } from "./routes/cacheAlert.routes";
 import { createConfigRoutes } from "./routes/config.routes";
 import { createConversationRoutes } from "./routes/conversations.routes";
-
 import { createDeviceRoutes } from "./routes/devices.routes";
 import { createHealthRoutes } from "./routes/health.routes";
 import { createLogsRoutes } from "./routes/logs.routes";

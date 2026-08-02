@@ -41,7 +41,11 @@ describe("codex scan plumbing", () => {
   });
 
   it("returns zero codex sessions when codexRoots is empty", async () => {
-    const { root, cleanup } = makeCodexRoot();
+    // `root` is deliberately not destructured: this test asserts that an empty
+    // codexRoots finds nothing, so the fixture must exist on disk but must NOT be
+    // handed to the scanner. Keeping the makeCodexRoot() call is the point — a
+    // scan that ignored codexRoots would find it and fail the assertion below.
+    const { cleanup } = makeCodexRoot();
     try {
       const scanner = new ConversationScanner({ persistent: false });
       await scanner.scan({ ...CODEX_ONLY_SCAN, codexRoots: [] });
