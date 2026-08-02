@@ -3182,9 +3182,22 @@ describe("StreamerServer", () => {
         scannerStale: boolean;
         staleFiles: Set<string>;
         scanner: unknown;
+        fileWatcher: { unwatchDirectory(directory: string): void };
       };
       const scannerBefore = srv.scanner;
       expect(scannerBefore).toBeTruthy();
+
+      // The real directory watcher sees the write below too, and its debounced
+      // callback lands inside the poll window: with no scanner adopted at fire
+      // time it nulls the scanner AND clears staleFiles, and getScanner() then
+      // reads "armed with no paths" as stale-source-unknown and rebuilds the
+      // whole tree. That fallback is correct — it is the next test's subject —
+      // but here it is the watcher's scan being attributed to the reconcile
+      // under test, which failed CI on Node 24 twice while passing Node 20.
+      // This test drives the invalidation explicitly ("poked directly rather
+      // than waiting on chokidar's debounce"), so chokidar has no part to play
+      // in the window and is taken out of it.
+      srv.fileWatcher.unwatchDirectory(projDir);
 
       const changed = join(projDir, "auto-a.jsonl");
       writeFileSync(
