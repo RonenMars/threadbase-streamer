@@ -72,6 +72,7 @@ import { ConversationsRepository } from "./db/repositories/conversations.reposit
 import { DevicesRepository } from "./db/repositories/devices.repository";
 import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
 import { ProjectsRepository } from "./db/repositories/projects.repository";
+import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { recordUpload } from "./db/upload-records";
 import { handleListProjects } from "./handlers/handleListProjects";
@@ -397,6 +398,9 @@ export class StreamerServer {
   // session that outlived the process that started it.
   private readonly streamerInstanceId = randomUUID();
   private cacheMetadataRepo: CacheMetadataRepository | null = null;
+  // Push registration + delivery state (C7). Null when the cache DB failed to
+  // open — registration then degrades to a no-op rather than 500ing.
+  private pushRepo: PushRepository | null = null;
 
   // Paired-device registry (C5). Null when the cache DB failed to open — auth
   // then falls back to the shared API key alone, which is the pre-C5 behaviour.
@@ -787,6 +791,7 @@ export class StreamerServer {
       wsHub: this.wsHub,
       cache: () => this.cache,
       cacheMonitor: () => this.cacheMonitor,
+      pushRepo: () => this.pushRepo,
 
       devicesRepo: () => this.devicesRepo,
       projectsRepo: () => this.projectsRepo,
@@ -1443,6 +1448,7 @@ export class StreamerServer {
           // probes would delay the listener for no correctness gain.
           void this.reconcilePreviousSessions();
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
+          this.pushRepo = new PushRepository(db);
 
           this.devicesRepo = new DevicesRepository(db);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
