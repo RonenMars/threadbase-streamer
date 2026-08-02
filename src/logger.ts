@@ -22,6 +22,24 @@ export interface Logger {
   pino: PinoLogger;
 }
 
+/**
+ * Where a line goes when the caller doesn't pass an explicit `dest`.
+ *
+ * Under a supervisor (launchd, systemd, Task Scheduler, Docker) fd 1 is a file
+ * or a pipe. There the console half of the old `"both"` default was an
+ * unstructured duplicate of the pino line — and because `console` has no level
+ * of its own, it also printed every `debug` call pino had already filtered out.
+ * Those two effects were ~40% of a 261 MB stdout.log, the single loudest line
+ * being a `debug` one that could not be turned off by any setting.
+ *
+ * At a human terminal the tradeoff inverts: the pretty line is the useful one
+ * and the JSON is the noise. An explicit `dest` still overrides both cases,
+ * which is what the CLI's user-facing output (banners, QR, `prod doctor`) uses.
+ */
+function defaultDest(): LogDest {
+  return process.stdout.isTTY ? "console" : "pino";
+}
+
 function emit(
   pinoChild: PinoLogger,
   level: LogLevel,
@@ -42,11 +60,11 @@ function emit(
 
 function build(pinoChild: PinoLogger): Logger {
   return {
-    debug: (m, f, d = "both") => emit(pinoChild, "debug", m, f, d),
-    info: (m, f, d = "both") => emit(pinoChild, "info", m, f, d),
-    warn: (m, f, d = "both") => emit(pinoChild, "warn", m, f, d),
-    error: (m, f, d = "both") => emit(pinoChild, "error", m, f, d),
-    log: (lvl, m, f, d = "both") => emit(pinoChild, lvl, m, f, d),
+    debug: (m, f, d = defaultDest()) => emit(pinoChild, "debug", m, f, d),
+    info: (m, f, d = defaultDest()) => emit(pinoChild, "info", m, f, d),
+    warn: (m, f, d = defaultDest()) => emit(pinoChild, "warn", m, f, d),
+    error: (m, f, d = defaultDest()) => emit(pinoChild, "error", m, f, d),
+    log: (lvl, m, f, d = defaultDest()) => emit(pinoChild, lvl, m, f, d),
     pino: pinoChild,
   };
 }
