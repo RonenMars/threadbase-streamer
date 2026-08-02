@@ -2,7 +2,11 @@ import { mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
+import {
+  ManagedSessionsRepository,
+  PROBE_SET_MAX,
+  TERMINAL_RETENTION_MS,
+} from "../src/db/repositories/managed-sessions.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
 import type { ManagedSession } from "../src/types";
 
@@ -143,6 +147,78 @@ describe("ManagedSessionsRepository", () => {
 
     it("is empty on a fresh database — a first run and a pre-010 db look alike", () => {
       expect(repo.listNonTerminal()).toEqual([]);
+    });
+
+    it("never returns more than the cap, oldest first", () => {
+      for (let i = 0; i < 5; i++) {
+        repo.recordSpawn({
+          session: mkSession({ id: `s-${i}`, startedAt: new Date(STARTED.getTime() + i * 1000) }),
+          pid: i,
+          cmdline: "c",
+          streamerInstanceId: "inst-a",
+        });
+      }
+
+      const clipped = repo.listNonTerminal(3);
+      expect(clipped.map((r) => r.session_id)).toEqual(["s-0", "s-1", "s-2"]);
+    });
+
+    it("defaults to PROBE_SET_MAX", () => {
+      repo.recordSpawn({
+        session: mkSession({ id: "only" }),
+        pid: 1,
+        cmdline: "c",
+        streamerInstanceId: "inst-a",
+      });
+
+      expect(PROBE_SET_MAX).toBe(200);
+      expect(repo.listNonTerminal()).toHaveLength(1);
+    });
+  });
+
+  describe("pruneTerminal", () => {
+    const DAY = 24 * 3_600_000;
+
+    function recordCompletedAt(id: string, completedAt: Date): void {
+      repo.recordSpawn({
+        session: mkSession({ id }),
+        pid: 1,
+        cmdline: "c",
+        streamerInstanceId: "inst-a",
+      });
+      repo.recordStatus(id, "idle", "exit", { completedAt });
+    }
+
+    it("deletes terminal rows past the retention window and reports the count", () => {
+      recordCompletedAt("old", new Date(Date.now() - 40 * DAY));
+      recordCompletedAt("recent", new Date(Date.now() - 2 * DAY));
+
+      expect(repo.pruneTerminal(30 * DAY)).toBe(1);
+      expect(repo.get("old")).toBeNull();
+      expect(repo.get("recent")).not.toBeNull();
+    });
+
+    it("never touches a row with no completed_at, however old it looks", () => {
+      // Unfinished business by definition — the reconciler and rehydrator both
+      // still want it, and `started_at` alone must not make it eligible.
+      repo.recordSpawn({
+        session: mkSession({ id: "ancient", startedAt: new Date(Date.now() - 400 * DAY) }),
+        pid: 1,
+        cmdline: "c",
+        streamerInstanceId: "inst-a",
+      });
+
+      expect(repo.pruneTerminal(30 * DAY)).toBe(0);
+      expect(repo.get("ancient")).not.toBeNull();
+    });
+
+    it("defaults to a 30-day window", () => {
+      recordCompletedAt("old", new Date(Date.now() - 31 * DAY));
+      recordCompletedAt("young", new Date(Date.now() - 29 * DAY));
+
+      expect(TERMINAL_RETENTION_MS).toBe(30 * DAY);
+      expect(repo.pruneTerminal()).toBe(1);
+      expect(repo.get("young")).not.toBeNull();
     });
   });
 

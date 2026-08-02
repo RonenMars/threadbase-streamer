@@ -473,4 +473,36 @@ describe("boot rehydration", () => {
       await server.close();
     }
   }, 60_000);
+
+  // Phase 4: the registry is authoritative and never rebuilt, so nothing else
+  // would ever remove a row — without retention it grows for the life of the
+  // install and every boot pays for it.
+  it("prunes terminal rows past the retention window on boot", async () => {
+    const OLD = "aaaaaaaa-1111-4222-8333-444444444444";
+    seedRegistry([
+      { id: OLD, projectPath: projectDir, ageMs: 40 * 24 * 3_600_000 },
+      { id: UUID, projectPath: projectDir },
+    ]);
+
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+
+      const store = RuntimeStore.open(runtimeDbPath);
+      const repo = new ManagedSessionsRepository(store.getDatabase());
+      try {
+        // Pruning is chained off the same fire-and-forget boot promise.
+        for (let i = 0; i < 100 && repo.get(OLD) != null; i++) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        expect(repo.get(OLD)).toBeNull();
+        // The recent one is history the user can still act on.
+        expect(repo.get(UUID)).not.toBeNull();
+      } finally {
+        store.close();
+      }
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
 });
