@@ -130,15 +130,17 @@ describe("PTYManager — ready detection", () => {
       mgr.sendInput(session.id, "hello");
       expect(proc.write).not.toHaveBeenCalled();
 
-      // Tick #1: small chunk, no marker, well under the 10s window.
+      // Tick #1: small chunk, no marker, well under the backstop window.
       proc._emit("data", "\x1b[?2004h booting...");
       expect(proc.write).not.toHaveBeenCalled();
 
-      // Advance past the 10s fallback window.
+      // Advance past the flat backstop. It is a timer, not a chunk check, so
+      // it fires here on its own — the queued input is flushed without needing
+      // any further output from the PTY.
       vi.advanceTimersByTime(10_500);
 
-      // Tick #2: another chunk with no marker — but now elapsed > 10s, so the
-      // fallback should fire and flush the queued input.
+      // A later marker-less chunk changes nothing; the session is already out
+      // of pendingReady by now.
       proc._emit("data", "still booting...");
 
       // Paste body first, then \r after the submit delay.
@@ -296,9 +298,18 @@ describe("PTYManager — ready detection", () => {
       expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
 
       // No further chunk ever arrives (Claude is blocked on a prompt with no
-      // marker in the boot screen). Advancing past the 500ms quiet window
-      // should flip the session to waiting_input on its own.
+      // marker in the boot screen). Silence alone must NOT be read as
+      // readiness — that is what let input leak into a TUI still replaying a
+      // resume (session bb94c668) — so the 500ms quiet window changes nothing.
       vi.advanceTimersByTime(500);
+
+      expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
+      expect(ready).toHaveLength(0);
+      expect(proc.write).not.toHaveBeenCalled();
+
+      // The flat backstop is what stops this session hanging forever: it fires
+      // on a timer, so it works even though no further chunk ever arrives.
+      vi.advanceTimersByTime(8_000);
 
       expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
       expect(ready).toHaveLength(1);
@@ -402,8 +413,13 @@ describe("PTYManager — ready detection", () => {
       // handler never got 500ms of uninterrupted silence to fire in.
       expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
 
-      // Now let it actually go quiet — the debounce should fire from here.
+      // Going quiet is still not enough on its own — no marker has been
+      // painted, so the screen recheck finds nothing and the session stays
+      // held. Only the flat backstop releases it.
       vi.advanceTimersByTime(500);
+      expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(false);
+
+      vi.advanceTimersByTime(8_000);
       expect(statusChanges.some((s) => s.status === "waiting_input")).toBe(true);
       mgr.dispose();
     } finally {
@@ -611,5 +627,74 @@ describe("PTYManager — spawn permission flags", () => {
     expect(args[args.indexOf("--add-dir") + 1]).toBe("/srv/a");
     expect(args[args.length - 1]).toBe("--bare");
     mgr.dispose();
+  });
+
+  // Regression: session bb94c668 (2026-07-31). A resume replaying a 506 KB
+  // JSONL went quiet for 668ms mid-boot; the quiet-checker read that silence as
+  // readiness, cleared pendingReady, and the next POST /input was written into a
+  // TUI that had not started reading stdin. The bytes were not discarded — they
+  // sat in the tty buffer and were consumed later, so the user's NEXT message
+  // arrived carrying the previous one as a prefix ("HelloHello test 1233").
+  describe("boot readiness is never inferred from silence", () => {
+    // A resume replaying history: real output, no prompt marker yet.
+    const REPLAY_CHUNK = "\x1b[38;5;246m  … +122 lines\x1b[39m\r\n";
+
+    async function quietTick(): Promise<void> {
+      // Drive the debounced quiet-checker without waiting real time.
+      await vi.advanceTimersByTimeAsync(600);
+      await Promise.resolve();
+    }
+
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("stays pendingReady when the PTY falls quiet without a marker", async () => {
+      const ready: ManagedSession[] = [];
+      const mgr = new PTYManager({ onReady: (s) => ready.push(s) });
+      const session = await spawnResume(mgr);
+      getMockProc(mgr, session.id)._emit("data", REPLAY_CHUNK);
+
+      await quietTick();
+
+      // The old behaviour marked ready here, at ~500ms, with no marker on screen.
+      expect(ready).toHaveLength(0);
+      expect((mgr as any).pendingReady.has(session.id)).toBe(true);
+      mgr.dispose();
+    });
+
+    it("holds input in the queue across that silence, then flushes on the marker", async () => {
+      const mgr = new PTYManager({});
+      const session = await spawnResume(mgr);
+      const proc = getMockProc(mgr, session.id);
+      proc._emit("data", REPLAY_CHUNK);
+      await quietTick();
+
+      mgr.sendInput(session.id, "Hello");
+      // Held, not written — this is the byte that used to leak into the tty.
+      expect((mgr as any).queuedInputs.get(session.id)).toEqual(["Hello"]);
+      expect(proc.write).not.toHaveBeenCalled();
+
+      proc._emit("data", MCP_SPLASH_BOOT);
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect((mgr as any).pendingReady.has(session.id)).toBe(false);
+      expect(proc.write).toHaveBeenCalled();
+      mgr.dispose();
+    });
+
+    it("still releases a boot that never paints a marker, via the flat backstop", async () => {
+      const ready: ManagedSession[] = [];
+      const mgr = new PTYManager({ onReady: (s) => ready.push(s) });
+      const session = await spawnResume(mgr);
+      // One chunk, then permanent silence: the old chunk-gated 10s fallback
+      // could never fire here, because it only ran when a chunk arrived.
+      getMockProc(mgr, session.id)._emit("data", REPLAY_CHUNK);
+
+      await vi.advanceTimersByTimeAsync(8_100);
+
+      expect(ready).toHaveLength(1);
+      expect((mgr as any).pendingReady.has(session.id)).toBe(false);
+      mgr.dispose();
+    });
   });
 });

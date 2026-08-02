@@ -51,19 +51,26 @@ const SCREEN_SCROLLBACK = 1000;
 // the worst case is flushing queued input slightly early, which Claude buffers.
 const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
 
-// If a fresh session has produced any output but neither prompt marker has
-// fired within this window, flush queued input anyway. Defense against future
-// TUI changes that drop both markers from the boot screen.
-const PROMPT_MARKER_FALLBACK_MS = 10_000;
-
 // Re-run ready/prompt detection this long after the PTY goes quiet, instead of
 // waiting for another chunk (which may never come if Claude is blocked on a
-// prompt) or the full PROMPT_MARKER_FALLBACK_MS. 500ms was picked from real
+// prompt) or the full CLAUDE_READY_FALLBACK_MS. 500ms was picked from real
 // [pty.chunk] gap logs: p50/p75 inter-chunk gaps while status=running are
 // 31ms/467ms, so 500ms clears normal streaming pauses without adding
 // meaningful perceived latency (see docs/postmortems or session notes for the
 // gapMs sample this was based on).
 const QUIET_DETECT_MS = 500;
+
+// Flat backstop armed at spawn, mirroring CODEX_READY_FALLBACK_MS. It replaces
+// a chunk-gated 10s check that could only fire if another chunk happened to
+// arrive — useless for the case it was written for, a boot that falls silent
+// without ever painting a marker. A timer fires either way.
+//
+// The quiet-checker cannot fill this role: a resume replaying a large JSONL is
+// quiet for well over QUIET_DETECT_MS *before* the TUI reads stdin, so treating
+// that silence as readiness disarms the input queue during exactly the window
+// it exists to protect. Must stay below server.ts START_READY_TIMEOUT_MS (10s)
+// so a start request resolves on our verdict rather than racing its timeout.
+const CLAUDE_READY_FALLBACK_MS = 8_000;
 
 // Build the two byte sequences for a paste-then-submit. We deliberately split
 // the paste body and the trailing \r into two separate PTY writes (see
@@ -210,8 +217,8 @@ export class PTYManager implements SessionRunner {
   // silently lost — the "dot bug".
   private queuedInputs = new Map<string, string[]>();
   private log: Logger;
-  // Timestamp of first PTY chunk per session; drives the prompt-marker fallback
-  // when neither ╭ nor ❯ shows up within PROMPT_MARKER_FALLBACK_MS.
+  // Timestamp of first PTY chunk per session; used for the [pty.ready] elapsed
+  // measurement so a slow boot is visible in the logs.
   private firstChunkAt = new Map<string, number>();
   // Per-session chunk counter and last-chunk timestamp. Diagnostic-only,
   // feeds the [pty.chunk] log lines so we can trace whether Claude responded
@@ -222,6 +229,8 @@ export class PTYManager implements SessionRunner {
   // QUIET_DETECT_MS after the last chunk so ready/prompt detection doesn't
   // wait for another chunk that may never arrive (Claude blocked on input).
   private quietCheckers = new Map<string, ReturnType<typeof debounce>>();
+  // Per-session flat backstop from the first chunk (CLAUDE_READY_FALLBACK_MS).
+  private readyFallbackTimers = new Map<string, NodeJS.Timeout>();
   // In-flight start()/startFresh() calls keyed by sessionId. A second
   // concurrent resume for the same session (double-tap, client retry) awaits
   // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
@@ -329,6 +338,7 @@ export class PTYManager implements SessionRunner {
     // are swallowed (the "dot bug" — first message vanishes, second message
     // appears to trigger both). Same pendingReady + flush gating as startFresh.
     this.pendingReady.add(sessionId);
+    this.armReadyFallback(sessionId);
 
     proc.onData((data: string) => {
       this.handleOutput(sessionId, data);
@@ -401,6 +411,7 @@ export class PTYManager implements SessionRunner {
 
     this.sessions.set(sessionId, session);
     this.pendingReady.add(sessionId);
+    this.armReadyFallback(sessionId);
 
     proc.onData((data: string) => {
       this.handleOutput(sessionId, data);
@@ -606,6 +617,7 @@ export class PTYManager implements SessionRunner {
     this.shellPromptOpen.delete(sessionId);
     this.quietCheckers.get(sessionId)?.cancel();
     this.quietCheckers.delete(sessionId);
+    this.clearReadyFallback(sessionId);
     try {
       session.process.kill("SIGINT");
     } catch {
@@ -713,6 +725,8 @@ export class PTYManager implements SessionRunner {
     this.lastChunkAt.clear();
     for (const quiet of this.quietCheckers.values()) quiet.cancel();
     this.quietCheckers.clear();
+    for (const timer of this.readyFallbackTimers.values()) clearTimeout(timer);
+    this.readyFallbackTimers.clear();
     this.permissionOpen.clear();
     this.lastScreenQuestionKey.clear();
     this.shellPromptOpen.clear();
@@ -768,15 +782,10 @@ export class PTYManager implements SessionRunner {
 
     if (session.status === "running" && matchedMarker) {
       this.markReady(sessionId, session, "prompt-marker", `marker:${matchedMarker}`);
-    } else if (
-      session.status === "running" &&
-      this.pendingReady.has(sessionId) &&
-      now - (this.firstChunkAt.get(sessionId) ?? now) >= PROMPT_MARKER_FALLBACK_MS
-    ) {
-      // Fallback: PTY has produced output for >=10s but neither marker fired.
-      // Treat the session as ready so queued input doesn't sit forever.
-      this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
     }
+    // The no-marker backstop lives in armReadyFallback() rather than here: this
+    // branch only ran when a chunk happened to arrive, so a boot that fell
+    // silent before showing a marker was never rescued by it.
 
     this.onOutput?.(sessionId, data);
 
@@ -962,7 +971,21 @@ export class PTYManager implements SessionRunner {
     if (session?.status !== "running") return;
 
     if (this.pendingReady.has(sessionId)) {
-      this.markReady(sessionId, session, "quiet-fallback", "quiet:timeout");
+      // Silence is NOT evidence of readiness while booting. `--resume` replays
+      // the JSONL and can sit quiet for far longer than QUIET_DETECT_MS before
+      // the TUI reads stdin at all; marking ready here disarmed the input
+      // queue mid-boot, and the bytes then sat unconsumed in the tty buffer
+      // until the TUI started reading — surfacing as the NEXT message silently
+      // carrying the previous one as a prefix. Ask the screen instead, the
+      // same question the settled branch below asks, and leave the flat
+      // backstop (armReadyFallback) to break a genuine deadlock.
+      this.recheckReadyFromScreen(sessionId).catch((err) => {
+        this.log.warn("[pty.ready] boot screen recheck failed", {
+          event: "pty.ready_recheck_failed",
+          sessionId,
+          err,
+        });
+      });
     } else {
       // handleOutput() only checks the triggering chunk for a prompt marker,
       // but Claude's TUI does differential repaints and doesn't always
@@ -1003,6 +1026,30 @@ export class PTYManager implements SessionRunner {
     }
   }
 
+  // Flat backstop from the first chunk: if neither a prompt marker nor the
+  // screen recheck settles the session within CLAUDE_READY_FALLBACK_MS, mark it
+  // ready anyway so start requests resolve and queued input is not held
+  // forever. This is what makes the quiet-checker safe to be strict — a boot
+  // variant whose marker we cannot see still recovers, just 8s later instead of
+  // 500ms sooner and wrong. unref() so it never holds the process open.
+  private armReadyFallback(sessionId: string): void {
+    const timer = setTimeout(() => {
+      this.readyFallbackTimers.delete(sessionId);
+      const session = this.sessions.get(sessionId);
+      if (session?.status === "running" && this.pendingReady.has(sessionId)) {
+        this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
+      }
+    }, CLAUDE_READY_FALLBACK_MS);
+    timer.unref?.();
+    this.readyFallbackTimers.set(sessionId, timer);
+  }
+
+  private clearReadyFallback(sessionId: string): void {
+    const timer = this.readyFallbackTimers.get(sessionId);
+    if (timer) clearTimeout(timer);
+    this.readyFallbackTimers.delete(sessionId);
+  }
+
   // Transition a session from "running" to "waiting_input", clear pendingReady,
   // and flush any queued input. Idempotent: callers can invoke at any chunk.
   private markReady(
@@ -1011,6 +1058,7 @@ export class PTYManager implements SessionRunner {
     source: StatusSource,
     reason: string,
   ): void {
+    this.clearReadyFallback(sessionId);
     session.lastActivityAt = new Date();
     session.status = "waiting_input";
     // C3: record HOW we concluded this, not just that we did. A
@@ -1066,6 +1114,7 @@ export class PTYManager implements SessionRunner {
     this.shellPromptOpen.delete(sessionId);
     this.quietCheckers.get(sessionId)?.cancel();
     this.quietCheckers.delete(sessionId);
+    this.clearReadyFallback(sessionId);
   }
 }
 
