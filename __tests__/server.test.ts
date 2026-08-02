@@ -3188,27 +3188,36 @@ describe("StreamerServer", () => {
         staleFiles: Set<string>;
         scanner: unknown;
         fileWatcher: { unwatchDirectory(directory: string): void };
+        markScannerStaleDebounced: { cancel(): void };
       };
       const scannerBefore = srv.scanner;
       expect(scannerBefore).toBeTruthy();
 
-      // The real directory watcher sees the write below too, and its debounced
-      // callback lands inside the poll window: with no scanner adopted at fire
-      // time it nulls the scanner AND clears staleFiles, and getScanner() then
-      // reads "armed with no paths" as stale-source-unknown and rebuilds the
-      // whole tree. That fallback is correct — it is the next test's subject —
-      // but here it is the watcher's scan being attributed to the reconcile
-      // under test, which failed CI on Node 24 twice while passing Node 20.
-      // This test drives the invalidation explicitly ("poked directly rather
-      // than waiting on chokidar's debounce"), so chokidar has no part to play
-      // in the window and is taken out of it.
-      srv.fileWatcher.unwatchDirectory(projDir);
+      // Take the real directory watcher out of the window. This test drives the
+      // invalidation explicitly — "poked directly rather than waiting on
+      // chokidar's debounce" — so a real event racing the poll below is noise
+      // that shows up as a full-tree scan attributed to the reconcile under test.
+      //
+      // The directory that is actually watched is the PARENT: watchDirectory is
+      // called only over projectsDirs(), which is join(configDir, "projects"),
+      // and chokidar watches it recursively. An earlier version of this unwatched
+      // projDir — a child of that — and unwatchDirectory returns early for a path
+      // it never held, so it was a no-op that read as a guard.
+      srv.fileWatcher.unwatchDirectory(join(profileDir, "projects"));
 
       const changed = join(projDir, "auto-a.jsonl");
       writeFileSync(
         changed,
         convLine("auto-a", "2026-06-07T11:00:00.000Z", "alpha continued externally"),
       );
+
+      // A directory event may already be in flight from before the unwatch, and
+      // awaitWriteFinish holds it ~500ms, so cancelling after the write is what
+      // catches it. A late fire sets scannerStale with the path set already
+      // drained by an earlier poll, and an armed flag with no paths falls back to
+      // a full rescan in startBackgroundConversationReconcile — which is the exact
+      // scan this test asserts does not happen.
+      srv.markScannerStaleDebounced.cancel();
 
       // Spy after the write so the counts scope to the reconcile below.
       //
