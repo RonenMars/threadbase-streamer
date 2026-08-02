@@ -104,6 +104,7 @@ import {
   isProviderName,
   isProviderResumable,
 } from "./providers";
+import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
 import { seal } from "./seal";
 import { setCacheMetadata } from "./services/cache/cacheMetadata";
@@ -1921,10 +1922,24 @@ export class StreamerServer {
       // runners *after* a successful connect, so on this path they are still
       // the live ones and nothing has been adopted.
       try {
-        const transport = await connectOrSpawnHost({
-          instanceId: process.env.THREADBASE_INSTANCE_ID ?? hostname(),
-        });
-        const sessions = await this.ptyManager.useRemoteRunner(transport);
+        let sessions: ManagedSession[] | null = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const transport = await connectOrSpawnHost({
+            instanceId: process.env.THREADBASE_INSTANCE_ID ?? hostname(),
+          });
+          try {
+            sessions = await this.ptyManager.useRemoteRunner(transport);
+            break;
+          } catch (err) {
+            if (!(err instanceof PtyHostProtocolMismatchError) || attempt > 0) throw err;
+            this.log.info(`[pty-host] replaced incompatible protocol ${err.hostVersion}`, {
+              event: "pty_host.protocol_replaced",
+              hostVersion: err.hostVersion,
+              streamerVersion: err.streamerVersion,
+            });
+          }
+        }
+        if (!sessions) throw new Error("pty-host replacement did not produce a compatible host");
         for (const session of sessions) {
           this.sessionStore.addManaged({ ...session, reconciled: true });
         }
@@ -2003,6 +2018,18 @@ export class StreamerServer {
               ` (${message})`,
             { error: message, abiMismatch, path: this.runtimeDbPath, event: "runtime.open_failed" },
           );
+        }
+        if (this.ptyManager.isRemote()) {
+          this.ptyManager.startRemoteHeartbeat(() => {
+            if (!this.managedSessionsRepo) {
+              return { registryState: "unknown", referencedSessionIds: [] };
+            }
+            const referencedSessionIds = this.ptyManager
+              .listSessions()
+              .filter((session) => this.managedSessionsRepo?.get(session.id)?.completed_at == null)
+              .map((session) => session.id);
+            return { registryState: "known", referencedSessionIds };
+          });
         }
         try {
           this.cache = ConversationCache.open(

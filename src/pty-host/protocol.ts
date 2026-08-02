@@ -42,10 +42,15 @@ import type {
  */
 
 /**
- * Bumped on any incompatible change to the shapes below. PR 9 makes the host
- * kill and respawn itself on a mismatch rather than try to speak across it.
+ * Bumped on any incompatible change to the shapes below. Version 2 adds the
+ * heartbeat and shutdown controls required for host supervision.
  */
-export const PTY_HOST_PROTOCOL_VERSION = 1;
+export const PTY_HOST_PROTOCOL_VERSION = 2;
+
+export interface HostHeartbeatState {
+  registryState: "known" | "unknown";
+  referencedSessionIds: string[];
+}
 
 /** `spawn` with a null sessionId means startFresh — the host assigns the id. */
 export type SpawnRequest = {
@@ -63,7 +68,7 @@ export type HostRequest =
   | { id: number; type: "write"; sessionId: string; input: string }
   /** Raw keystrokes — never recorded as a user message. */
   | { id: number; type: "keys"; sessionId: string; keys: string }
-  /** Begin receiving events. Sent once per connection, before anything else. */
+  /** Begin receiving events. Sent once per connection after status passes the version check. */
   | { id: number; type: "subscribe" }
   /** The rendered screen, newest `maxLines` rows, in true on-screen order. */
   | { id: number; type: "replay"; sessionId: string; maxLines: number }
@@ -76,6 +81,9 @@ export type HostRequest =
    */
   | { id: number; type: "kill"; sessionId: string; hold: true }
   | { id: number; type: "kill"; pid: number; hold?: false }
+  | ({ id: number; type: "heartbeat" } & HostHeartbeatState)
+  /** Stop this host after acknowledging the request. Used only on version skew. */
+  | { id: number; type: "shutdown-host" }
   /** Every session the host owns. Seeds the streamer's mirror on connect. */
   | { id: number; type: "status" };
 

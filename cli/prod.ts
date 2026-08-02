@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { Command } from "commander";
 import { Command as CommanderCommand } from "commander";
+import { loadFeatureFlags } from "../src/auth";
+import { getInstanceId } from "../src/db/config";
+import { type FeatureFlagValues, resolveFeatureFlags } from "../src/feature-flags";
 import { detectConflictingAgents } from "../src/lifecycle/conflict-check";
 import { TASK_NAME } from "../src/lifecycle/constants";
 import { darwinPlistPath } from "../src/lifecycle/launchd";
@@ -9,6 +12,12 @@ import { clearMarker, readMarker } from "../src/lifecycle/marker";
 import { getSupervisor } from "../src/lifecycle/platform";
 import { isPidAlive } from "../src/lifecycle/process-liveness";
 import { getLogger } from "../src/logger";
+import { PTY_HOST_PROTOCOL_VERSION } from "../src/pty-host/protocol";
+import {
+  hostSocketPath,
+  type PtyHostStatusProbe,
+  probePtyHostStatus,
+} from "../src/pty-host/socket";
 
 const log = getLogger("prod");
 
@@ -88,11 +97,22 @@ export async function runProdStatus(): Promise<ProdStatus> {
   };
 }
 
-export type DoctorReport = { findings: string[]; repairs: string[] };
+export type DoctorReport = {
+  findings: string[];
+  repairs: string[];
+  ptyHost?: PtyHostStatusProbe;
+};
 
-export async function runProdDoctor(opts: { fix: boolean }): Promise<DoctorReport> {
+export async function runProdDoctor(
+  opts: { fix: boolean },
+  deps: {
+    featureFlags?: FeatureFlagValues;
+    probePtyHost?: () => Promise<PtyHostStatusProbe>;
+  } = {},
+): Promise<DoctorReport> {
   const findings: string[] = [];
   const repairs: string[] = [];
+  let ptyHost: PtyHostStatusProbe | undefined;
 
   const marker = readMarker();
   if (marker && !marker.userHeld && !isPidAlive(marker.devPid)) {
@@ -121,7 +141,24 @@ export async function runProdDoctor(opts: { fix: boolean }): Promise<DoctorRepor
     }
   }
 
-  return { findings, repairs };
+  const featureFlags = deps.featureFlags ?? resolveFeatureFlags({ yaml: loadFeatureFlags() });
+  if (featureFlags.ptyHost) {
+    const probe = deps.probePtyHost ?? (() => probePtyHostStatus(hostSocketPath(getInstanceId())));
+    try {
+      ptyHost = await probe();
+    } catch (err) {
+      ptyHost = { reachable: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    if (!ptyHost.reachable) {
+      findings.push(`pty-host is not reachable: ${ptyHost.error}`);
+    } else if (ptyHost.protocolVersion !== PTY_HOST_PROTOCOL_VERSION) {
+      findings.push(
+        `pty-host protocol ${ptyHost.protocolVersion} does not match streamer protocol ${PTY_HOST_PROTOCOL_VERSION}`,
+      );
+    }
+  }
+
+  return { findings, repairs, ...(ptyHost ? { ptyHost } : {}) };
 }
 
 export type LogsOptions = {
@@ -285,10 +322,19 @@ export function registerProdCommands(program: Command): void {
 
   prod
     .command("doctor")
-    .description("Detect & repair stale markers, missing agent, plist drift")
+    .description("Detect stale markers, missing agents, and pty-host health")
     .option("--fix", "Apply repairs (default is dry-run)", false)
     .action(async (opts) => {
       const r = await runProdDoctor({ fix: opts.fix === true });
+      if (r.ptyHost) {
+        log.info(
+          r.ptyHost.reachable
+            ? `pty-host: reachable, protocol=${r.ptyHost.protocolVersion}, sessions=${r.ptyHost.sessionCount}`
+            : `pty-host: unreachable (${r.ptyHost.error})`,
+          undefined,
+          "console",
+        );
+      }
       log.info(`findings: ${r.findings.length === 0 ? "(none)" : ""}`, undefined, "console");
       for (const f of r.findings) log.info(`  - ${f}`, undefined, "console");
       if (r.repairs.length) {
