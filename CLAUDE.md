@@ -82,9 +82,15 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 
 ## CLI flags vs. `server.yaml`
 
-`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`) from it, but most runtime knobs come exclusively from CLI flags. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
+`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`, `claude_flags`, `claude_extra_args`) from it, but most runtime knobs come exclusively from CLI flags.
 
-`--default-permission-mode <acceptEdits|manual>` (or `default_permission_mode:` in `server.yaml`) controls the Claude Code `--permission-mode` used to spawn every PTY session — `acceptEdits` (default) auto-approves file edits and still prompts for shell commands; `manual` prompts for everything. `bypassPermissions`/`plan`/`dontAsk`/`auto` are intentionally not offered — `bypassPermissions` renders a blocking "Bypass Permissions mode" TUI warning on every boot that hangs the mobile client (see `src/pty-manager.ts`).
+The file is parsed by **single-line regex, not a YAML library** — every value must stay on one line. `claude_flags:` therefore stores one line of JSON (`{"permissionMode":"bypassPermissions"}`), which keeps colons/quotes/spaces escaped for free; a corrupt line is logged and ignored rather than failing the boot. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
+
+`--default-permission-mode <mode>` (or `default_permission_mode:` in `server.yaml`) controls the Claude Code `--permission-mode` used to spawn every PTY session. All six CLI values are accepted: `acceptEdits` (default — auto-approves file edits, still prompts for shell commands), `manual`, `auto`, `plan`, `bypassPermissions`, `dontAsk`.
+
+`bypassPermissions`/`dontAsk` disable the confirmation prompts entirely. They would normally hit a blocking "Bypass Permissions mode" warning menu at boot (`1. No, exit` / `2. Yes, I accept`) that strands the PTY and leaves mobile on an empty screen; `buildSettingsJson()` in `src/claude-flags.ts` suppresses it by adding `skipDangerousModePermissionPrompt` to the `--settings` blob for exactly those modes (probe-verified against Claude Code v2.1.218). The streamer never passes `--dangerously-skip-permissions` — bypass is always requested via `--permission-mode`.
+
+**Security.** Enabling a bypass mode turns every future session on this machine into unattended arbitrary code execution: a leaked API key no longer stops at a human-in-the-loop confirmation. `--add-dir` compounds it by widening the filesystem scope beyond the project. `PUT /api/config/claude-flags` is therefore refused (403) while `--local-no-auth` is active, `--max-budget-usd` is offered as a runaway bound, and every flag change is logged at info level with old→new values.
 
 If none of the flag/env/yaml sources set a mode, `serve` shows a one-time interactive prompt (`src/lifecycle/prompt.ts`'s `interactivePermissionModePrompt`) and persists the answer to `server.yaml` via `setDefaultPermissionMode()` — but only for a human dev invocation on a real TTY (never under `--prod`/launchd, which must never block on stdin). Set `THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true` to skip it and fall through to `acceptEdits`.
 
@@ -100,6 +106,8 @@ For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args a
 | `cacheDir` | `~/.threadbase/cache` | Directory for the SQLite conversation cache |
 | `tailSize` | `10` | Tail messages cached per conversation for fast session-list enrichment |
 | `directoryScanDebounceMs` | `1000` | Trailing debounce (ms) before a directory change flags the scanner stale (env override: `THREADBASE_DIR_SCAN_DEBOUNCE_MS`) |
+| `claudeFlags` | `{}` | Allowlisted Claude CLI flags appended to every spawn. Registry + validation in `src/claude-flags.ts`; persisted as one line of JSON under `claude_flags:` in server.yaml. Set via repeatable `--claude-flag <id=value>` or `PUT /api/config/claude-flags`. |
+| `claudeExtraArgs` | — | Free-text argv appended after `claudeFlags` (and after `--resume`/`--session-id`), so it can override them. Unvalidated escape hatch; persisted under `claude_extra_args:`. Set via `--claude-extra-args`. |
 
 ## Dependencies
 
