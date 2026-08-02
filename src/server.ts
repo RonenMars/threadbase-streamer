@@ -140,6 +140,7 @@ import {
   SearchQueryError,
 } from "./services/search/searchQuery";
 import {
+  type BusySignal,
   conversationBusy,
   RESUME_BUSY_WINDOW_MS,
   resolveResumeBusyWindowMs,
@@ -295,6 +296,43 @@ export function parseIncludeAgentsEnv(raw: string | undefined): boolean {
   const v = raw.trim().toLowerCase();
   return !(v === "0" || v === "false" || v === "no" || v === "off" || v === "");
 }
+
+/**
+ * Why a resume did not happen, in the vocabulary of the thing that failed
+ * rather than of HTTP (plan Phase 7c).
+ *
+ * `resumeSession` has two callers with nothing in common at the response layer:
+ * one writes a status code, the other writes a log line. Neither can be the
+ * owner of these distinctions, so they live here.
+ */
+export type ResumeFailure =
+  | { ok: false; reason: "history_file_missing" }
+  | { ok: false; reason: "no_project_path" }
+  | {
+      ok: false;
+      reason: "conversation_busy";
+      /** Which signals fired — carried verbatim so the 409 body is unchanged. */
+      detectedBy: BusySignal[];
+      lastActivityMs: number | null;
+      likelyOwner: "external" | "unknown";
+    };
+
+export type ResumeOutcome =
+  | ResumeFailure
+  | {
+      ok: true;
+      /** The session was already live here — nothing was spawned. */
+      alreadyRunning: true;
+      session: null;
+      response: SessionResponse;
+    }
+  | {
+      ok: true;
+      alreadyRunning: false;
+      session: ManagedSession;
+      /** Null only if the store lost the session between spawn and read. */
+      response: SessionResponse | null;
+    };
 
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
@@ -4035,12 +4073,77 @@ export class StreamerServer {
       return;
     }
 
+    const outcome = await this.resumeSession({
+      sessionId,
+      force: body.force === true,
+      projectName: body.projectName,
+      branch: body.branch,
+    });
+
+    if (!outcome.ok) {
+      switch (outcome.reason) {
+        case "history_file_missing":
+          // The cache can keep a "tailed ghost" row (JSONL deleted out-of-band,
+          // e.g. bulk branch/worktree cleanup) so its history stays viewable via
+          // GET /:id — see pruneGhostFiles(). It can never be resumed though, so
+          // give a distinct, non-retryable reason instead of a generic 404 that
+          // sends mobile into a retry loop.
+          json(res, 404, {
+            error: "Conversation history file is missing; it can no longer be resumed",
+            code: "history_file_missing",
+          });
+          return;
+        case "no_project_path":
+          json(res, 400, { error: "Could not determine project path" });
+          return;
+        case "conversation_busy":
+          json(res, 409, {
+            error: "This conversation looks active in another session",
+            code: "CONVERSATION_BUSY",
+            detectedBy: outcome.detectedBy,
+            lastActivityMs: outcome.lastActivityMs,
+            likelyOwner: outcome.likelyOwner,
+          });
+          return;
+      }
+    }
+
+    // Already ours: answer 200 rather than 201, and broadcast nothing — the
+    // session list did not change.
+    if (outcome.alreadyRunning) {
+      json(res, 200, outcome.response);
+      return;
+    }
+
+    this.broadcastOrUnicastSessionList(req);
+    json(res, 201, outcome.response ?? outcome.session);
+  }
+
+  /**
+   * Resume a session, from an HTTP request or from the boot path.
+   *
+   * Extracted from `handleResume` so both callers hit the **same collision
+   * probe** (plan Phase 7c). The probe is what stops this streamer attaching to
+   * a conversation an external terminal already owns; a second, hand-adapted
+   * copy of this sequence in the boot path is how two agents end up appending
+   * to one JSONL at 4am with nobody watching.
+   *
+   * Returns a typed reason rather than writing a response, so the HTTP caller
+   * maps it to a status code and the boot caller logs it.
+   */
+  private async resumeSession(opts: {
+    sessionId: string;
+    force?: boolean;
+    projectName?: string;
+    branch?: string;
+  }): Promise<ResumeOutcome> {
+    const { sessionId } = opts;
+
     // If a PTY is already running for this session, return it immediately
     if (this.ptyManager.hasSession(sessionId)) {
       const resp = this.sessionStore.get(sessionId, this.ptyAttachedIds());
       if (resp) {
-        json(res, 200, resp);
-        return;
+        return { ok: true, alreadyRunning: true, session: null, response: resp };
       }
     }
 
@@ -4073,20 +4176,11 @@ export class StreamerServer {
     const jsonlCwd = jsonlPath ? await this.readCwdFromJsonl(jsonlPath) : null;
     const projectPath: string = jsonlCwd ?? (conv as any)?.projectPath;
     if (!projectPath) {
-      if (!conv && !jsonlPath) {
-        // The cache can keep a "tailed ghost" row (JSONL deleted out-of-band,
-        // e.g. bulk branch/worktree cleanup) so its history stays viewable via
-        // GET /:id — see pruneGhostFiles(). It can never be resumed though, so
-        // give a distinct, non-retryable reason instead of a generic 404 that
-        // sends mobile into a retry loop.
-        json(res, 404, {
-          error: "Conversation history file is missing; it can no longer be resumed",
-          code: "history_file_missing",
-        });
-        return;
-      }
-      json(res, 400, { error: "Could not determine project path" });
-      return;
+      // Nothing at all resolved — the history file is gone, not merely
+      // unreadable. Distinguished from "path unknown" because it is permanent:
+      // the caller must not retry it.
+      if (!conv && !jsonlPath) return { ok: false, reason: "history_file_missing" };
+      return { ok: false, reason: "no_project_path" };
     }
 
     // Pre-flight collision check: refuse to resume a conversation that looks
@@ -4136,15 +4230,14 @@ export class StreamerServer {
       windowMs: resolveResumeBusyWindowMs(),
       selfPtyEndedAt: this.selfPtyEndedAt.get(sessionId) ?? null,
     });
-    if (busy.busy && body.force !== true) {
-      json(res, 409, {
-        error: "This conversation looks active in another session",
-        code: "CONVERSATION_BUSY",
+    if (busy.busy && opts.force !== true) {
+      return {
+        ok: false,
+        reason: "conversation_busy",
         detectedBy: busy.detectedBy,
         lastActivityMs: busy.lastActivityMs,
         likelyOwner: busy.likelyOwner,
-      });
-      return;
+      };
     }
     if (busy.busy) {
       // Forced past a detected collision — mark the session so JSONL-derived
@@ -4173,8 +4266,8 @@ export class StreamerServer {
     const session = await this.ptyManager.start(sessionId, {
       provider,
       projectPath,
-      projectName: body.projectName,
-      branch: body.branch,
+      projectName: opts.projectName,
+      branch: opts.branch,
       // Omitted on every ordinary resume, so argv is unchanged there.
       ...(historyId !== sessionId && { resumeId: historyId }),
       claudeFlags: this.claudeFlags,
@@ -4192,15 +4285,16 @@ export class StreamerServer {
     // Watch the conversation's JSONL file for structured events
     void this.watchConversationFile(sessionId, historyId);
 
-    const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
-    this.broadcastOrUnicastSessionList(req);
+    const response = this.sessionStore.get(session.id, this.ptyAttachedIds());
 
-    json(res, 201, resp ?? session);
-
-    // Enrich session metadata and update DB in background (fire-and-forget).
-    // The conversation history is already in the JSONL; DB writes are
-    // bookkeeping that can happen asynchronously without blocking the response.
+    // Enrich session metadata and update DB (best-effort bookkeeping; the
+    // conversation history is already in the JSONL). Now runs just before the
+    // caller writes its response rather than just after — it is a couple of
+    // local SQLite reads, on a path whose latency budget was set by seconds of
+    // Windows process enumeration, so the move is not measurable.
     this.enrichResumedSessionAsync(sessionId, projectPath, conv);
+
+    return { ok: true, alreadyRunning: false, session, response };
   }
 
   private enrichResumedSessionAsync(sessionId: string, projectPath: string, conv: any): void {
