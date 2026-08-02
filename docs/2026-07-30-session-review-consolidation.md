@@ -81,9 +81,17 @@ Effective max session lifetime is "until 04:00" — the 7-day `pty_grace_period_
 **Additional value worth adding to the plan:** the nightly restart is an already-deployed, recurring instance of the exact failure the plan addresses.
 It is a free daily test harness for validating Phase 1 rehydration and Phase 7 auto-resume against real state, rather than a synthesized event.
 
-## 8 — `claude_extra_args` fragility
+## 8 — `claude_extra_args` fragility — **RESOLVED 2026-07-31 by #306, no further code change**
 
-**Mechanism confirmed in code, not inferred.**
+The harm here was never the deletion itself; it was that `claude_extra_args` had become the only home for model and effort, so clearing it silently reverted the spawn defaults.
+#306 gave both a real home: `model` and `effort` are first-class entries in the claude-flags registry (`src/claude-flags.ts:112-113`), persisted under the separate `claude_flags:` key, and resolved at all three spawn sites through `spawnFlagOverrides()`.
+A `PUT` that omits `extraArgs` can no longer change which model or effort a session spawns with.
+
+What remains is a replacing `PUT` clearing a field the caller omitted, which is the correct semantics for a full-document `PUT` — and is exactly what the "not recommended" section below argues for keeping.
+The response body echoes `extraArgs: null`, so the caller is told the resulting state rather than left guessing.
+The analysis below is kept for the reasoning, not as an open action.
+
+**Original finding — mechanism confirmed in code, not inferred.**
 `setClaudeFlagsConfig()` (`src/server.ts:2132`) calls `setClaudeExtraArgs(extraArgs)` **unconditionally**.
 A `PUT /api/config/claude-flags` that omits `extraArgs` passes `undefined` → `setConfigValue("claude_extra_args", undefined)` → the line is **deleted** from `server.yaml`.
 The next spawn silently reverts to `--model sonnet --effort low`.
@@ -116,7 +124,7 @@ Phase 7 already builds a `server.yaml` user preference with a tri-state loader (
 
 1. **Protect the plan docs** — decide kickoff in/out, rebase `plan/live-sessions-persistence` onto `13b5ff0`, commit, push, open PR.
 2. **Verify the model override** via the `pgrep -af claude` argv check.
-3. **Add `default_model` / `default_effort` loaders** in `src/auth.ts` + `cli/index.ts`, ideally folded into Phase 7 PR 11.
+3. ~~**Add `default_model` / `default_effort` loaders** in `src/auth.ts` + `cli/index.ts`, ideally folded into Phase 7 PR 11.~~ **Done differently in #306** — model and effort became claude-flags registry entries with their own persisted key, which closes §8 without a second config mechanism. PR 11 no longer needs to carry them.
 4. **Record the `adopt` cross-repo pairing** in the plan's PR checklist.
 5. **Add the nightly restart** to the plan as a recurring validation harness.
 
