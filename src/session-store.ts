@@ -227,9 +227,14 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     // the durable registry, so it is a previous run's session with no process
     // behind it — `resumable`, and `historical` rather than `managed`
     // (docs/plans/live-sessions-persistence-plan.md §4, Phase 1).
+    // A session this run itself put on hold (grace timer, explicit hold_session,
+    // idle reaper) is the other exception: the PTY is gone the same way an exit
+    // leaves it gone, but the conversation is still resumable, not terminal —
+    // `putOnHold` records that by leaving `statusSource: "shutdown"` (the only
+    // place either runner sets it), so it is checked here alongside `rehydrated`.
     lifecycle: ptyAttached
       ? "attached"
-      : s.rehydrated
+      : s.rehydrated || s.statusSource === "shutdown"
         ? "resumable"
         : s.failureReason != null
           ? "failed"

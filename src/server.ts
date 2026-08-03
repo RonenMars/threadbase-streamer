@@ -871,6 +871,13 @@ export class StreamerServer {
           // restart rebuilt the row as a stub. Guarded so a runner that has not
           // derived one yet cannot blank a name set by enrichResumedSessionAsync.
           ...(session.sessionName != null && { sessionName: session.sessionName }),
+          // Without mirroring this, SessionStore's copy is frozen at whatever
+          // `addManaged` saw at spawn ("spawn") forever, because updateManaged
+          // is a partial merge — so managedToResponse can never tell a
+          // grace-timer/idle-reaper hold (statusSource "shutdown") apart from a
+          // genuine process exit ("process-exit"), and reports both as
+          // `lifecycle: "completed"`. See managedToResponse in session-store.ts.
+          ...(session.statusSource != null && { statusSource: session.statusSource }),
         });
         // Mirror the transition into the durable registry. Both runners funnel
         // every status change through this callback, so this is the one place
