@@ -22,6 +22,42 @@ The goal is to get that work onto `main` without replaying an unreviewable 250-c
 
 ---
 
+## Corrections from the real run (2026-08-02/03)
+
+This plan was written from static analysis. The rehearsal corrected it once and the real run corrected it
+again; where they disagree, **the real run wins**. Recorded here rather than only in the notes, because
+this file is where people start.
+
+1. **Group G did not exist in this document.** Added above. Three whole features, invisible to the
+   roster command by construction.
+2. **`#271` is stacked on `#237`.** It is listed in Group B with no dependency noted; its commit
+   `4261160` is authored against a tree containing `#237`'s extraction and cannot land before it.
+3. **Group C's seven PR heads are integration-branch commits, not PR-shaped.** "Reach via
+   `origin/pr/<N>`" lands ~120 commits of other groups' work per PR. Build from the twelve constituent
+   commits instead. The same is true of `#267`, `#297`, `#299` and `#304` — take each PR's **own**
+   commit, never its diff against `main`.
+4. **The `chore(merge): integrate PR #NNN` commits change zero files.** Their `^1..^2` bracket is the
+   only mechanical enumeration of what each PR actually contributed, and together those two facts
+   explain the duplicate count this document reports without explaining.
+5. **`origin/pr/*` is deleted mid-run by a background prune.** Fetch PR heads into `refs/landing/pr/*`
+   instead — outside `refs/remotes/`, so no `origin` prune can consider them stale. Ordering the fetches
+   does not help: the prune is asynchronous.
+6. **The `(#NNN)` spine scan is not a complete audit of what a landing put on `main`.** Group B's four
+   commits carry no suffix because `#349` was rebase-merged rather than squashed — 16 files and 457
+   lines invisible to the scan — and 143 unlanded branch commits carried no suffix at all. Any
+   hardcoded numeric range (`3[0-4][0-9]`) also silently stops at its upper bound.
+7. **`main`'s health is the last run that EXECUTED, not the last conclusion.** Docs-only PRs carry
+   `[skip-ci]`, and that convention deliberately reports **success** on every required context without
+   running anything — a *skipped* required check would leave the PR permanently unmergeable. The trade
+   is inherent and correct. The consequence is not: a red `main` sat unnoticed for an hour between a
+   `[skip-ci]` green and an in-progress run. Never read health from `gh run list` conclusions alone.
+8. **Two families of wrong set, and the well-known remedy only fixes one.** A set *derived from a
+   reading* — a PR description, a roster, a rendered comment — is fixed by deriving it mechanically from
+   the artefact. A set *derived correctly over the wrong population* is not: several of this run's worst
+   errors came from greps that were mechanical, correct and reproducible, pointed at the wrong set. The
+   question that catches those is **"what set does my method actually cover, and is that the set the
+   question is about?"** — and what catches them in practice is running the thing, not a better grep.
+
 ## Measured facts
 
 Against `origin/main` and `origin/integration/missing-prs-2026-07-23`:
@@ -112,7 +148,7 @@ Skipping that fetch is the failure this table exists to prevent: `origin/feat/pr
 
 ---
 
-## The work splits seven ways
+## The work splits eight ways
 
 Derived from the `integrate PR #NNN` commits, the `(#NNN)`-suffixed squash commits on the spine, and each PR's current state.
 
@@ -261,6 +297,33 @@ Verified stranded: `src/db/repositories/push.repository.ts` and `src/services/pu
 `#292` → `#293` → `#294` are a stack in that order — the sender needs the token store, and the renewal loop needs the sender. This is the iOS Live Activity push feature that `CLAUDE.md` documents; landing the docs without these three would describe a feature `main` does not have. `#296` is independent and may already be moot on today's `main` — check whether `npx biome check .` is clean there before recovering it.
 
 `#298` (`fad5d5f`) sits next to this block on the spine and looks like a fifth member. It is not: it is a cherry-pick of **`#297`, which is still open against `main`**. Merge `#297` (Group A) rather than recovering `fad5d5f`.
+
+### Group G — three whole features the roster command cannot see (added 2026-08-03)
+
+**Not in the original runbook at all**, which is the defect: the runbook is the entry point and the
+rehearsal notes are the appendix, so a reader starting where everyone starts found Groups A–F and no G.
+
+| Feature | Carry | Duplicate NOT to carry |
+|---|---|---|
+| `feat/search-scalability` | `32c2c34` | `db4de0a` — same patch-id `9dbb8a1c…` |
+| `feat/diagnostics-api` | `fe498bd` | `89deb1d` — same patch-id `9ed702ab…` |
+| `feat(backup)` | `0f463ea` + `27efe97` | none — patch-ids differ, genuinely two commits |
+
+**Why the Group-D command cannot see them.** It runs
+`git log --first-parent --no-merges origin/main..origin/integration/…`: `--no-merges` drops the merge
+commit that brought each feature in, and `--first-parent` never descends into the merged side. So
+neither the merge nor the feature's own commits appear in any roster. The runbook's risk table claims two
+sweeps catch unrostered work — the `(#NNN)` spine scan and `gh pr list --state open` — and **neither
+catches these**: they are merged rather than open, and they are not on the spine.
+
+**The sweep that does find them**, and the one that terminates this landing:
+
+```bash
+git diff --name-status --diff-filter=A <main> origin/integration/missing-prs-2026-07-23
+```
+
+Files on the branch that exist on neither side. Run it before declaring any group complete. In the real
+run it went 52 → 0.
 
 ### Group D — 58 direct commits on the branch spine → triage required
 
