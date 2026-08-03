@@ -190,6 +190,25 @@ describe("SessionStore", () => {
       expect(resp?.lifecycle).toBe("failed");
     });
 
+    // putOnHold (grace timer, explicit hold_session, idle reaper) kills the PTY
+    // the same way a real exit does — ptyAttached goes false, completedAt gets
+    // stamped — but the conversation is still resumable, not terminal. Both
+    // runners' putOnHold set statusSource: "shutdown", and nothing else does,
+    // so it is the one signal that tells a hold apart from a genuine exit.
+    it("reports resumable when this run put the session on hold rather than exited", () => {
+      store.addManaged(makeManagedSession({ status: "idle", statusSource: "shutdown" }));
+
+      const resp = store.get(UUID_A, noPty);
+      expect(resp?.lifecycle).toBe("resumable");
+    });
+
+    it("still reports completed for a genuine exit (statusSource: process-exit)", () => {
+      store.addManaged(makeManagedSession({ status: "idle", statusSource: "process-exit" }));
+
+      const resp = store.get(UUID_A, noPty);
+      expect(resp?.lifecycle).toBe("completed");
+    });
+
     // An external process is alive but we hold no PTY for it — which is exactly
     // `detached`, and more informative than the `idle` status discovery is
     // forced to report because it cannot see the process's prompt state.
