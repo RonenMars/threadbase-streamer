@@ -4,15 +4,6 @@
 // once assumed. The fallback therefore only binds a candidate whose identity
 // matches the session id, and must never capture a foreign conversation.
 
-// Capture pino logs before any module import so the baseLogger singleton
-// (created at logger.ts module-evaluation time) writes through our spy.
-const _capturedLogs: string[] = [];
-const _origWrite = process.stdout.write.bind(process.stdout);
-process.stdout.write = (chunk: any, ...args: any[]): boolean => {
-  _capturedLogs.push(typeof chunk === "string" ? chunk : chunk.toString());
-  return _origWrite(chunk, ...args);
-};
-
 import { EventEmitter } from "events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { createServer } from "http";
@@ -73,9 +64,6 @@ describe("watchForJsonl — conversation_event wiring", () => {
   let origBrowseRoot: string | undefined;
 
   beforeEach(async () => {
-    // Clear the shared log spy before each test.
-    _capturedLogs.length = 0;
-
     port = await getRandomPort();
     baseUrl = `http://localhost:${port}`;
 
@@ -109,18 +97,6 @@ describe("watchForJsonl — conversation_event wiring", () => {
       process.env.THREADBASE_BROWSE_ROOT = origBrowseRoot;
     }
   });
-
-  function jsonlWiredLog(sessionId: string, filePath?: string): boolean {
-    return _capturedLogs.some((line) => {
-      try {
-        const obj = JSON.parse(line);
-        if (obj.event !== "session.jsonl_wired" || obj.sessionId !== sessionId) return false;
-        return filePath ? obj.filePath === filePath : true;
-      } catch {
-        return false;
-      }
-    });
-  }
 
   async function startSession(): Promise<string> {
     const res = await fetch(`${baseUrl}/api/sessions/start`, {
@@ -194,7 +170,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
     // Give tryWire() (sync during start + any fsWatch re-fire) time to run.
     await new Promise((r) => setTimeout(r, 300));
 
-    expect(jsonlWiredLog(sessionId)).toBe(false);
+    expect((server as any).sessionFileMap.get(sessionId)).toBeUndefined();
     expect(
       (events as any[]).some((e) => e.type === "conversation_event" && e.sessionId === sessionId),
     ).toBe(false);
@@ -282,7 +258,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
 
     // tryWire() found the stale JSONL but rejected it (mtime > 5s ago).
     await new Promise((r) => setTimeout(r, 300));
-    expect(jsonlWiredLog(sessionId)).toBe(false);
+    expect((server as any).sessionFileMap.get(sessionId)).toBeUndefined();
   });
 
   it("no JSONLs at all: no wiring fires", async () => {
@@ -290,6 +266,6 @@ describe("watchForJsonl — conversation_event wiring", () => {
     const sessionId = await startSession();
 
     await new Promise((r) => setTimeout(r, 300));
-    expect(jsonlWiredLog(sessionId)).toBe(false);
+    expect((server as any).sessionFileMap.get(sessionId)).toBeUndefined();
   });
 });
