@@ -584,6 +584,24 @@ An earlier draft of these notes wrote off failures on untested predictions. Both
 
 **Do not treat the three assertion failures as explained.** They are the first thing the real run should investigate, and the fact that two plausible one-commit fixes both failed is evidence the cause is a resolution defect (D7-class) rather than a missing commit.
 
+#### Correction (2026-08-03, verified against `main` @ `eb4f6ad`): all three no longer reproduce
+
+The "unresolved" status above was measured on the rehearsal trunk `8bbfedf`, not on `main`. Re-run today in a fresh worktree off `origin/main` (Node pinned via `.nvmrc`; `node_modules` reused from an already-installed, lockfile-identical checkout, no `npm install`/`npm ci` run), the same three files pass, individually and together:
+
+```
+npx vitest run --no-file-parallelism __tests__/server.test.ts __tests__/pty-host-survival.test.ts __tests__/codex-resume.test.ts
+# Test Files  3 passed (3)
+#      Tests  148 passed (148)
+```
+
+Isolated by name (`-t`), each also passes on its own:
+
+- `server.test.ts` — *omits systemPrompt for a fresh codex-cli session by default* — ✓ 225ms
+- `pty-host-survival.test.ts` — *re-adopts host sessions once, preserves replay, and leaves the host alive on close* — ✓ 347ms
+- `codex-resume.test.ts` — *resumes a placeholder id via `codex resume <boundId>` while keeping the placeholder as the session id* — ✓ 7953ms
+
+**What this does not establish:** which commit(s) landed between `8bbfedf` and `main` cleared them, or whether the D7-class resolution-defect hypothesis above was correct — no bisect was run. Treat the three as currently green on `main`, not as explained.
+
 ### The runbook's own docs — deliberate decision
 
 `LANDING-integration-to-main.md`, `docs/landing/` and `docs/testing/cross-platform-ci.md` are **CARRIED to the trunk**, not dropped. They arrived naturally as part of Group E (`#334`, `#341`, `#342`, `#343`, `#344` are edits to those files and are Group E members). Dropping them would have required deliberately excluding five Group-E commits.
