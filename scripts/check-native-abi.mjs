@@ -14,6 +14,12 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// --warn downgrades the failure to a notice. Used by `preinstall`, because
+// `npm install` is one of the two remedies this check recommends — failing the
+// install hard makes the guard block its own fix, and the only escape becomes
+// `rm -rf node_modules` (the guard exits 0 when no binary exists at all).
+const warnOnly = process.argv.includes("--warn");
+
 const PKG = "better-sqlite3";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const binary = join(root, "node_modules", PKG, "build", "Release", "better_sqlite3.node");
@@ -35,7 +41,7 @@ if (res.status !== 3) process.exit(0);
 
 const err = (res.stderr || "").trim();
 console.error(`
-✖ ${PKG} native binary is incompatible with this Node.
+${warnOnly ? "⚠" : "✖"} ${PKG} native binary is incompatible with this Node.
 
   Expected: Node ABI ${process.versions.modules}  ${process.platform}/${process.arch}  (node ${process.version})
   Binary:   ${binary}
@@ -47,4 +53,4 @@ Fix it with one of:
   npm rebuild ${PKG}
   rm -rf node_modules && npm install
 `);
-process.exit(1);
+process.exit(warnOnly ? 0 : 1);

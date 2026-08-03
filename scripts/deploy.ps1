@@ -468,6 +468,13 @@ function Invoke-CheckBrowseRoot {
 }
 
 function Invoke-Deploy {
+  # See the same guard in deploy.sh. nvm-windows has no auto-cd hook at all, so
+  # the shell that launches this is more likely to be on a different Node major
+  # than .nvmrc pins — and a build under the wrong major yields native binaries
+  # the Task Scheduler action's Node cannot load.
+  & node (Join-Path $PSScriptRoot 'check-node-version.mjs')
+  if ($LASTEXITCODE -ne 0) { exit 1 }
+
   Invoke-VersionCheck
   Invoke-PredeployCheck
   Invoke-CheckBrowseRoot

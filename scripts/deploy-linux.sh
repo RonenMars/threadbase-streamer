@@ -379,6 +379,11 @@ cmd_deploy() {
     esac
   done
 
+  # See the same guard in deploy.sh: this subshell's `node` may not be the one
+  # .nvmrc pins, and a build under the wrong major yields native binaries the
+  # systemd unit's Node cannot load.
+  node "$REPO_ROOT/scripts/check-node-version.mjs" || exit 1
+
   cmd_version_check
   cmd_predeploy_check "$force"
   cmd_check_browse_root
