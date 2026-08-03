@@ -22,7 +22,7 @@ For planned features (work that adds new behavior rather than fixing broken beha
 | Server tests `codexRoots` host leak | ✅ DONE — [PR #235](https://github.com/RonenMars/threadbase-streamer/pull/235) / [PR #239](https://github.com/RonenMars/threadbase-streamer/pull/239) |
 | `server.test.ts` grace-timer flake | 🟡 Partial — [PR #248](https://github.com/RonenMars/threadbase-streamer/pull/248) merged; follow-up [PR #245](https://github.com/RonenMars/threadbase-streamer/pull/245) open |
 | Log truncation sparse/NUL logs | Open — **next action** |
-| Busy-wait CPU spin in `bootoutAgent` | Open — **next action** |
+| Busy-wait CPU spin in `bootoutAgent` | Fixed |
 | Partial `prod logs --clear` failure messaging | Open |
 | Cache integrity alert management | 🔄 In flight — [PR #232](https://github.com/RonenMars/threadbase-streamer/pull/232) |
 | Explicit warm-up status API | 🔄 In flight — [PR #234](https://github.com/RonenMars/threadbase-streamer/pull/234) |
@@ -59,6 +59,20 @@ existing projects; in-place appends rely on the watcher → `scannerStale` path.
 ## Log truncation races with the still-running streamer fd
 
 **Status:** Fixed on `fix/log-truncation-sparse-nuls` — `prod logs --clear` kickstarts after truncate; deploy `--clear-logs` bootouts before truncate then re-bootstraps. Partial truncate failures report both outcomes.
+
+**Symptom:** After `npm run deploy` or `tb-streamer prod logs --clear`, `~/.threadbase/logs/stdout.log` / `stderr.log` can appear to contain NUL bytes from offset 0..N when `tail`ed, instead of being empty. Subsequent log lines are appended far past the visible end of the file.
+
+**Root cause:** Both code paths truncate the log files via `: > file` (`scripts/deploy.sh:823-831`) / `fs.writeFileSync(file, "")` (`cli/prod.ts:123-144`) while the supervised streamer — and launchd itself, holding `StandardOutPath` / `StandardErrorPath` open — still have file descriptors at offset N. POSIX `truncate(2)` sets the inode size to 0 but does **not** reset any open writer's seek offset. The next `write(2)` from the old streamer (final shutdown line before `kickstart -k` swaps it out, or any line if `--clear` runs against a healthy daemon) lands at offset N and the kernel extends the file as sparse — leaving NUL bytes 0..N that `tail` reads as garbage.
+
+The comment in `runProdLogs` (*"Removing the inode would leave the daemon writing to a ghost file. `: > file` semantics"*) is correct about unlink but wrong about truncate — the kernel-level write offset is per-fd, not per-inode.
+
+**Suggested fix:** Either (a) reorder so the supervised process restarts *first* — `launchctl kickstart -k` opens fresh fds at offset 0 in the new process, so a separate truncate is unnecessary in `cmd_deploy`; for `runProdLogs --clear`, do `kickstart -k` *after* the truncate so the daemon reopens — or (b) send SIGUSR1/SIGHUP to the supervised process and have it reopen its log fds in-process. Tests should reproduce by writing N bytes, opening a tail fd, truncating, then writing one more byte and asserting the visible file size matches the expected post-truncate state.
+
+---
+
+## Busy-wait CPU spin in `bootoutAgent`
+
+**Status:** Fixed — the poll wait in `src/lifecycle/launchd.ts` uses `Atomics.wait` on a `SharedArrayBuffer` rather than a busy-spin.
 
 **Symptom:** `tb-streamer prod restart` (and the dev-takeover path) pegs a full CPU core for up to 2 seconds while launchd tears down the agent.
 
