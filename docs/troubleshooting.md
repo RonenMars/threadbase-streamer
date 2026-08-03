@@ -68,6 +68,37 @@ const isHumanTurn = m.role === "user" && !m.is_tool_result;
 
 ---
 
+## A PR can validate its own workflow change — `pull_request` evaluates the workflow from the PR HEAD
+
+**Symptom / question:** you are changing `.github/workflows/ci.yml` — a gate condition, a job, a trigger
+— and cannot tell whether the PR's own checks are running the new file or the one still on `main`. If it
+were the base branch's copy, a workflow change would only be testable *after* merging it, which is the
+worst possible place to discover it is wrong.
+
+**Answer: the PR's own run uses the PR's version.** For `pull_request` events GitHub evaluates the
+workflow from the head, so a gate change is testable before it lands.
+
+**Evidence from this repository, so it can be re-derived rather than believed.** `#340`
+(`ci: give main the cross-platform smoke job`) introduced the `smoke:` job:
+
+```bash
+git show 28da612^:.github/workflows/ci.yml | grep -c 'smoke:'   # 0 — the base branch had none
+git show 28da612:.github/workflows/ci.yml  | grep -c 'smoke:'   # 1 — #340 added it
+gh pr checks 340 | grep -i smoke                                # both jobs ran, and passed
+```
+
+`Smoke (macos-latest)` and `Smoke (windows-latest)` ran on `#340`'s own PR. Those jobs existed nowhere
+but the PR head, so they cannot have come from the base.
+
+**How to re-derive it for a gate change specifically**, where the observable is less obvious: the `gate`
+job's script is inline in `ci.yml`, and it emits `::notice title=CI skipped::…` with fixed text. Change
+that text in a PR and read that PR's **own** Gate log — the log shows which script actually ran, which is
+the artefact. Do not infer it from the file on `main`.
+
+**Independently established in tb-mobile** (`#529`, documented as `#536`) by the same method: its Gate
+job's log showed the new script running while `main` still carried the old one. Two repositories, two
+runners, same behaviour.
+
 ## Deploy failures
 
 ### `Cannot find module` on lint or build
