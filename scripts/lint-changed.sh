@@ -20,7 +20,10 @@ fi
 # Biome exits non-zero when every provided path is outside `files.includes`
 # (e.g. a pure .gitignore commit). Skip in that case — there's nothing to lint.
 if ! git diff --cached --quiet; then
+  # package-lock.json matches *.json but Biome ignores it; a lockfile-only
+  # stage would otherwise run `biome check --staged` and exit non-zero.
   if ! git diff --cached --name-only --diff-filter=ACMR |
+    grep -Ev '(^|/)package-lock\.json$' |
     grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|json|css)$|^biome\.jsonc?$'; then
     echo "lint-changed: no lintable staged files, skipping biome"
     exit 0
