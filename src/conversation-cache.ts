@@ -300,6 +300,16 @@ export class ConversationCache {
     this.onAgentFileDetected = options?.onAgentFileDetected;
     db.exec(SCHEMA);
     runSqliteMigrations(db, this.migrationsDir);
+    // Exactly the columns listConversations' row mapper reads. `SELECT *` also
+    // pulled scanner_meta_json, which averages 5.7 KB per row — 3.5 MB of the
+    // 4.5 MB this table occupies — and is never read on this path: roughly
+    // 285 KB marshalled into V8 strings and discarded per 50-row page.
+    // Measured on a 22 MB cache: 0.38 ms with it, 0.03 ms without.
+    //
+    // getFullById deliberately keeps `SELECT *`: it is a single row by primary
+    // key and its callers want every column.
+    const LIST_COLUMNS =
+      "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider";
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
       getFullById: db.prepare("SELECT * FROM conversation_meta WHERE id = ?"),
@@ -380,17 +390,17 @@ export class ConversationCache {
         WHERE conversation_tail.updated_at < excluded.updated_at
       `),
       list: db.prepare(
-        "SELECT * FROM conversation_meta ORDER BY last_activity DESC LIMIT ? OFFSET ?",
+        `SELECT ${LIST_COLUMNS} FROM conversation_meta ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
       ),
       count: db.prepare("SELECT COUNT(*) as n FROM conversation_meta"),
       listByProject: db.prepare(
-        "SELECT * FROM conversation_meta WHERE project_path = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?",
+        `SELECT ${LIST_COLUMNS} FROM conversation_meta WHERE project_path = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
       ),
       countByProject: db.prepare(
         "SELECT COUNT(*) as n FROM conversation_meta WHERE project_path = ?",
       ),
       listByProvider: db.prepare(
-        "SELECT * FROM conversation_meta WHERE provider = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?",
+        `SELECT ${LIST_COLUMNS} FROM conversation_meta WHERE provider = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
       ),
       countByProvider: db.prepare("SELECT COUNT(*) as n FROM conversation_meta WHERE provider = ?"),
       deleteById: db.prepare("DELETE FROM conversation_meta WHERE id = ?"),
