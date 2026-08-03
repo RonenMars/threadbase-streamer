@@ -70,7 +70,15 @@ describe.skipIf(process.platform !== "win32")("Windows detached PTY host lifetim
         name: "xterm-256color",
         cols: 80,
         rows: 24,
-        cwd: ${JSON.stringify(dir)},
+        // NOT \`dir\`. Windows refuses to remove a directory that is any live
+        // process's working directory, and ConPTY's side process (conhost /
+        // OpenConsole) is not reliably a child of the tree \`taskkill /T /F\`
+        // kills — so it can outlive the kill still holding this CWD, and the
+        // cleanup below then fails with EBUSY no matter how long it retries.
+        // Nothing here needs \`dir\` as a working directory: outputPath,
+        // readyPath and hostPidPath are absolute joins, and the PowerShell
+        // command only writes to stdout.
+        cwd: ${JSON.stringify(tmpdir())},
         env: process.env,
       });
       child.onData((data) => appendFileSync(${JSON.stringify(outputPath)}, data));
@@ -138,15 +146,17 @@ describe.skipIf(process.platform !== "win32")("Windows detached PTY host lifetim
           spawnSync("taskkill.exe", ["/PID", String(hostPid), "/T", "/F"], { windowsHide: true });
         }
         // `taskkill /F` returns once the terminate request is issued; Windows
-        // releases the process's handles afterwards, on its own schedule. The
-        // ConPTY child is spawned with `cwd: dir` (see hostScript), so until
-        // that release lands the directory is some process's working directory
-        // and cannot be removed. `force: true` suppresses ENOENT, not EBUSY, so
-        // the bare call throws — which is what turned the Windows smoke job red
-        // on `fd1a5e5` while the same tree passed on its PR.
-        // Retrying IS the synchronisation here: there is no handle-release event
-        // to await, which is why node exposes these options for exactly this
-        // errno family (EBUSY/EPERM/ENOTEMPTY) on Windows.
+        // releases the process's handles afterwards, on its own schedule, so
+        // `force: true` — which suppresses ENOENT, not EBUSY — is not enough on
+        // its own and the retries below cover a straggling handle on output.txt.
+        //
+        // The retries are NOT what fixes the EBUSY this test kept hitting, and
+        // an earlier version of this comment claimed they were. Ten attempts
+        // over ~1s were already in place on `df5b737` and the job still failed
+        // the same way: a 1s exhaustion inside an 8.6s test means something was
+        // still holding the directory, not slowly letting go of it. That was
+        // the ConPTY child's `cwd`, which now points outside `dir` — see
+        // hostScript. No backoff length can fix a live working directory.
         rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }
     },
