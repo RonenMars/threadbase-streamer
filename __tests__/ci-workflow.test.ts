@@ -1,5 +1,6 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import picomatch from "picomatch";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -92,5 +93,41 @@ describe("run-ci cache key", () => {
 
     expect(key).toBeTruthy();
     expect(key).not.toMatch(/runner\.os|matrix\.os/);
+  });
+});
+
+// CI runs bare `npx vitest run` (.github/actions/run-ci/action.yml), so what
+// executes is whatever vitest.config.ts's `include` matches — NOT what
+// package.json names. `test:contracts` and `test:e2e` exist as scripts and no
+// workflow invokes either; those directories run only because the include glob
+// is recursive.
+//
+// That makes the wiring real but implicit, and silently breakable: narrow the
+// glob to `__tests__/*.test.ts`, or add an `exclude`, and the contract and e2e
+// suites stop running while both scripts still exist and still pass by hand.
+// A suite nothing runs does not merely fail to catch things — it produces false
+// confidence in anyone who cites a green adjacent job.
+describe("test discovery covers the nested suites", () => {
+  const config = readFileSync(join(__dirname, "..", "vitest.config.ts"), "utf8");
+  const include = [...config.matchAll(/include:\s*\[([^\]]+)\]/g)].flatMap((m) =>
+    [...m[1].matchAll(/"([^"]+)"/g)].map((q) => q[1]),
+  );
+
+  it("declares at least one include pattern", () => {
+    expect(include.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["__tests__/contracts/mobile-contracts.test.ts"],
+    ["__tests__/contracts/desktop-contracts.test.ts"],
+    ["__tests__/contracts/shared-contracts.test.ts"],
+    ["__tests__/e2e/api-e2e.test.ts"],
+  ])("runs %s under the default vitest invocation", (file) => {
+    expect(existsSync(join(__dirname, "..", file))).toBe(true);
+    expect(include.some((pattern) => picomatch(pattern)(file))).toBe(true);
+  });
+
+  it("has no exclude that could remove them", () => {
+    expect(config).not.toMatch(/^\s*exclude:/m);
   });
 });

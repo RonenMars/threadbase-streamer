@@ -1235,7 +1235,36 @@ extraction. The argument was sound given its premise; nobody verified the premis
 
 ### 9.5 Verification that was specified and never run
 
-The runbook's Verification section asks for these on contract-touching or end-to-end PRs. **Neither was run at any point in this rehearsal:**
+> ## ⚠ CORRECTED 2026-08-03 — TRUE OF THE REHEARSAL, FALSE OF CI, AND THE NOTE DID NOT SAY WHICH
+>
+> **The contract and e2e suites run in CI on every PR, across all three Node versions, and always have.**
+> `.github/actions/run-ci/action.yml` runs bare `npx vitest run`, so what executes is whatever
+> `vitest.config.ts`'s `include` matches — `["__tests__/**/*.test.ts"]`, a recursive glob that covers
+> `__tests__/contracts/` and `__tests__/e2e/`. Verified from a CI job log rather than from the config:
+> `contracts/mobile-contracts`, `contracts/desktop-contracts`, `contracts/shared-contracts` and
+> `e2e/api-e2e` all appear in the output of a green `Test (Node 20)` job; a non-existent control file
+> appears zero times. All 189 test files in the repo match the glob; none sit outside it.
+>
+> **What was true is narrower than what this note says.** The *scripts* `npm run test:contracts` and
+> `npm run test:e2e` are invoked by no workflow, and were not run during the rehearsal, which executed
+> things locally and ad hoc. Neither fact means the *files* went unexecuted.
+>
+> **The defect in the note is not the claim, it is the missing population.** "Never run at any point"
+> does not say *by whom*, so a reader who arrives with CI in mind inherits a statement that was only ever
+> about a local replay. That is how it survived: it was quoted forward six times in the 2026-08-02
+> landing as "still never run in either stage", named as the highest-value remaining risk, and amplified
+> by a reviewer whose own grep — `test:contracts` appears nowhere in `.github/` — was **correct** and
+> answered a different question, because the glob runs the files whether or not the script is named.
+>
+> **The general form, for the next note of this shape:** a claim true of one population, inherited by a
+> reader who applies it to another, is indistinguishable from a claim that is simply true. State the
+> population, or the claim will be re-scoped by whoever reads it next.
+>
+> What survives: the wiring is **implicit**. Narrow the glob or add an `exclude` and both suites stop
+> running silently while the scripts still exist and still pass by hand. `__tests__/ci-workflow.test.ts`
+> now pins it, validated by narrowing the glob and by adding an exclude, red in both directions.
+
+The runbook's Verification section asks for these on contract-touching or end-to-end PRs. **Neither script was invoked during this rehearsal:**
 
 ```bash
 npm run test:contracts
