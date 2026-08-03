@@ -231,7 +231,7 @@ Current flags:
 ## Build notes
 
 - **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and everything else must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
-- `npm run build` copies both `src/db/migrations/` (SQLite) and `src/db/pg-migrations/` (Postgres) into `dist/`; deploy ships only the SQLite folder. Details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
+- `npm run build` copies `src/db/migrations/` (SQLite cache), `src/db/runtime-migrations/` (SQLite session registry) and `src/db/pg-migrations/` (Postgres) into `dist/`. Deploy ships the first two unconditionally and `pg-migrations/` only when it exists (`scripts/deploy.sh`) — both SQLite folders are required at runtime, and a missing `runtime-migrations/` disables session persistence silently while the server keeps serving. Details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
 
 ## Deploy & distribution
 

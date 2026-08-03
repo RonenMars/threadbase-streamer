@@ -673,6 +673,27 @@ npm run deploy
 ```
 If you also see `node-pty` complain (it didn't in this incident, but it's the other native dep), rebuild it manually: `npm rebuild node-pty`.
 
+**The self-heal does NOT work when your shell's Node and the deploy script's Node differ**, and this is the common case on a machine using nvm.
+`scripts/deploy.sh` runs in a subshell that does not load nvm's lazy-init function, so its `node` falls back to the system install — typically `/opt/homebrew/bin/node` — while your interactive shell resolves the `.nvmrc` version through nvm's shell function.
+Each side's rebuild then produces a binary for its own ABI and breaks the other, so the deploy fails on a check that passes when you run it by hand seconds later.
+
+```sh
+# The tell — these must agree, and under nvm they usually do not:
+node -p "process.version + ' ABI ' + process.versions.modules"                  # your shell
+bash -c 'node -p "process.version + \" ABI \" + process.versions.modules"'      # what deploy.sh sees
+```
+
+Two things make this harder to escape than it looks.
+`npm rebuild better-sqlite3` reports success while rebuilding for the *invoking* Node, so a "successful" rebuild is what breaks the other side.
+And `preinstall` (`scripts/check-native-abi.mjs`) refuses to let `npm install` run at all while a stale binary is present, then recommends `npm rebuild` — so the two documented remedies deadlock against each other.
+The checker exits 0 when no binary exists, which is why deleting `node_modules` first is the only reliable escape.
+
+```sh
+# Deploy with the pinned Node on PATH — this is also the Node the launchd plist runs:
+rm -rf node_modules && npm install
+PATH="$HOME/.nvm/versions/node/$(cat .nvmrc)/bin:$PATH" npm run deploy
+```
+
 **Staying on the right Node version:** the repo pins its Node version in `.nvmrc`. Use your version manager's auto-switch to avoid stale ABIs in the first place:
 
 - **macOS / Linux (nvm):** `nvm use` in the repo root, or add `nvm use --silent` to your shell's `cd` hook via `nvm`'s `--auto-use` option.
