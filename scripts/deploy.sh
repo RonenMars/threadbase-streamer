@@ -822,6 +822,14 @@ cmd_deploy() {
     esac
   done
 
+  # Before anything else: this script runs in a subshell that does not load
+  # nvm's lazy-init function, so its `node` is whatever the system provides —
+  # not necessarily the pinned one your shell resolves. Building here under a
+  # different major produces native binaries the service cannot load, and the
+  # rebuild that "fixes" it breaks the other side. Fail with both versions
+  # named rather than three steps later on a dlopen error.
+  node "$REPO_ROOT/scripts/check-node-version.mjs" || exit 1
+
   cmd_version_check
   cmd_predeploy_check "$force"
   cmd_check_browse_root
