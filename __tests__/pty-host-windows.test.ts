@@ -137,7 +137,17 @@ describe.skipIf(process.platform !== "win32")("Windows detached PTY host lifetim
         if (hostPid > 0 && isPidAlive(hostPid)) {
           spawnSync("taskkill.exe", ["/PID", String(hostPid), "/T", "/F"], { windowsHide: true });
         }
-        rmSync(dir, { recursive: true, force: true });
+        // `taskkill /F` returns once the terminate request is issued; Windows
+        // releases the process's handles afterwards, on its own schedule. The
+        // ConPTY child is spawned with `cwd: dir` (see hostScript), so until
+        // that release lands the directory is some process's working directory
+        // and cannot be removed. `force: true` suppresses ENOENT, not EBUSY, so
+        // the bare call throws — which is what turned the Windows smoke job red
+        // on `fd1a5e5` while the same tree passed on its PR.
+        // Retrying IS the synchronisation here: there is no handle-release event
+        // to await, which is why node exposes these options for exactly this
+        // errno family (EBUSY/EPERM/ENOTEMPTY) on Windows.
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       }
     },
     TEST_TIMEOUT_MS,
