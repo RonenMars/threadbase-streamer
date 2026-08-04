@@ -44,6 +44,16 @@ const SCREEN_SCROLLBACK = 1000;
 // signal) and "Working" (mid-turn) — must NOT be treated as ready.
 export const CODEX_PROMPT_READY_TEXT = "Ready";
 
+// Status-bar words that mean the composer is not accepting submits. Matched
+// as whole words so a project path containing "Working" does not false-hit.
+export const CODEX_BUSY_STATUS_RE = /\b(?:Starting|Working)\b/;
+
+// Boot progress lines that appear *above* the status bar while MCP servers
+// load. The status bar may already omit "Starting" (or truncate "Ready")
+// during this window — treating quiet as ready here is what stranded
+// keystrokes in the compose box as newlines (session 61928fac).
+export const CODEX_MCP_BOOT_RE = /Booting MCP|Starting MCP servers|model:\s*loading/i;
+
 // Phase 0: a brand-new `--cd <dir>` shows a blocking directory-trust gate on
 // first-ever launch — a rendered screen containing this text, with options
 // "1. Yes, continue" / "2. No, quit" and a "Press enter to continue" footer.
@@ -62,16 +72,18 @@ export const CODEX_HOOKS_GATE_REGEX = /hooks need review/i;
 // Re-run screen detection this long after the PTY goes quiet — a session
 // blocked on a gate (or a status bar whose "Ready" got truncated) may never
 // produce another chunk to trigger detection. Same value/rationale as
-// pty-manager.ts QUIET_DETECT_MS. On quiet with pendingReady still set we mark
-// ready anyway: the mobile client is better off inside the session watching
-// live boot output than stuck on a spinner.
+// pty-manager.ts QUIET_DETECT_MS. Quiet alone does NOT mark boot ready
+// (mirrors PTYManager.handleQuiet): silence during MCP Starting used to
+// disarm the input queue and let \r land as a compose newline.
 const QUIET_DETECT_MS = 500;
 
 // Flat backstop from spawn: "Ready" lives at the END of a single status line
 // whose prefix (dir · repo · branch · diffstats) can exceed PTY_COLS, in which
 // case the marker is truncated off-screen and can NEVER match (live-probe
 // verified). Must stay below server.ts START_READY_TIMEOUT_MS (10s) so the
-// start request resolves 200-with-session rather than 202-pending.
+// start request resolves 200-with-session rather than 202-pending — but only
+// when the screen is not still Starting/Working/MCP-booting; otherwise we
+// re-arm so a slow MCP boot cannot be mistaken for Ready.
 const CODEX_READY_FALLBACK_MS = 8_000;
 
 const SUBMIT_BYTES = "\r";
@@ -79,9 +91,47 @@ const SUBMIT_BYTES = "\r";
 // Delay between the input write and the submit \r. Same value as Claude's
 // SUBMIT_DELAY_MS (pty-manager.ts) — no bracketed-paste wrap needed for
 // Codex (Phase 0: plain keystrokes are accepted directly into the compose
-// box), but we still yield an event-loop tick before Enter for consistency
-// with the observed-stable Claude pattern.
+// box), but we still wait for PTY quiescence before Enter (see writeSubmit).
 const CODEX_SUBMIT_DELAY_MS = 16;
+
+// Cap on how long writeSubmit will wait for the PTY to go quiet before
+// forcing \r — mirrors pty-manager.ts SUBMIT_MAX_WAIT_MS.
+const CODEX_SUBMIT_MAX_WAIT_MS = 500;
+
+/** Last non-blank rendered line — Codex paints the status bar there. */
+export function codexStatusBarLine(lines: string[]): string {
+  return [...lines].reverse().find((l) => l.trim() !== "") ?? "";
+}
+
+/**
+ * True while Codex must not receive composer keystrokes: gate dialogs, MCP
+ * boot progress, or a Starting/Working status bar. Shared by boot detection,
+ * the flat fallback, and mid-session idle re-detect.
+ */
+export function codexScreenBlocksComposer(lines: string[]): boolean {
+  const screenText = lines.join("\n");
+  if (CODEX_HOOKS_GATE_REGEX.test(screenText) || CODEX_TRUST_GATE_REGEX.test(screenText)) {
+    return true;
+  }
+  if (CODEX_MCP_BOOT_RE.test(screenText)) return true;
+  return CODEX_BUSY_STATUS_RE.test(codexStatusBarLine(lines));
+}
+
+/** Authoritative Ready: status-bar word present and screen not otherwise busy. */
+export function codexScreenShowsReady(lines: string[]): boolean {
+  if (codexScreenBlocksComposer(lines)) return false;
+  return codexStatusBarLine(lines).includes(CODEX_PROMPT_READY_TEXT);
+}
+
+/**
+ * Soft idle for a truncated Ready bar: compose `›` is up and nothing busy is
+ * on screen. Not used as a boot-ready signal — `›` appears during Starting.
+ */
+export function codexScreenLooksIdle(lines: string[]): boolean {
+  if (codexScreenBlocksComposer(lines)) return false;
+  if (codexScreenShowsReady(lines)) return true;
+  return lines.some((l) => l.includes("›"));
+}
 
 function digestBytes(s: string): string {
   const escaped = s
@@ -212,6 +262,14 @@ export class CodexPtyRunner implements SessionRunner {
   private quietCheckers = new Map<string, ReturnType<typeof debounce<[]>>>();
   // Per-session flat backstop from spawn (CODEX_READY_FALLBACK_MS).
   private readyFallbackTimers = new Map<string, NodeJS.Timeout>();
+  // Wall-clock of the last PTY chunk per session — writeSubmit waits until
+  // this hasn't advanced for CODEX_SUBMIT_DELAY_MS before writing \r.
+  private lastChunkAt = new Map<string, number>();
+  // Sessions that have shown a Working status bar since the last user submit.
+  // Mid-session Ready→waiting_input only fires after this, so a still-painted
+  // Ready bar immediately after sendInput cannot flip status back before the
+  // turn starts (which would let grace/hold kill a live turn).
+  private turnBusy = new Set<string>();
   // In-flight start()/startFresh() calls keyed by sessionId. A second
   // concurrent resume for the same session (double-tap, client retry) awaits
   // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
@@ -380,20 +438,49 @@ export class CodexPtyRunner implements SessionRunner {
     return toPublicSession(session);
   }
 
-  // Flat backstop: if neither the "Ready" marker nor the quiet-checker settled
-  // the session within CODEX_READY_FALLBACK_MS of spawn, mark it ready anyway
-  // so start requests resolve and mobile can watch the boot live. unref() so a
-  // pending timer never holds the process open.
+  // Flat backstop: if the "Ready" marker never appears within
+  // CODEX_READY_FALLBACK_MS of spawn (truncated status bar), mark ready once
+  // the screen is no longer Starting/Working/MCP-booting. Re-arms while the
+  // boot is still busy so a slow MCP load cannot be mistaken for Ready.
+  // unref() so a pending timer never holds the process open.
   private armReadyFallback(sessionId: string): void {
     const timer = setTimeout(() => {
       this.readyFallbackTimers.delete(sessionId);
-      const session = this.sessions.get(sessionId);
-      if (session?.status === "running" && this.pendingReady.has(sessionId)) {
-        this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
-      }
+      void this.tryReadyFallback(sessionId);
     }, CODEX_READY_FALLBACK_MS);
     timer.unref?.();
     this.readyFallbackTimers.set(sessionId, timer);
+  }
+
+  private async tryReadyFallback(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (session?.status !== "running" || !this.pendingReady.has(sessionId)) return;
+
+    // No PTY output at all — nothing busy to inspect; settle so start() can
+    // resolve and queued input is not held forever (same role as Claude's
+    // flat fallback on a silent boot).
+    if (session.outputBuffer.length === 0) {
+      this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
+      return;
+    }
+
+    try {
+      const lines = await this.getOutputLines(sessionId, PTY_ROWS);
+      if (!this.pendingReady.has(sessionId)) return;
+      if (codexScreenBlocksComposer(lines)) {
+        this.armReadyFallback(sessionId);
+        return;
+      }
+      this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
+    } catch (err) {
+      this.log.warn("[codex.ready_fallback] failed", {
+        event: "codex.ready_fallback_failed",
+        sessionId,
+        err,
+      });
+      // Keep trying — a transient screen-read failure must not strand boot.
+      if (this.pendingReady.has(sessionId)) this.armReadyFallback(sessionId);
+    }
   }
 
   // Write raw key bytes directly to the PTY, same as PTYManager.sendKeys.
@@ -458,10 +545,10 @@ export class CodexPtyRunner implements SessionRunner {
     if (session.status === "idle") {
       throw new Error(`Session is idle (no active PTY): ${sessionId}`);
     }
-    // Codex hasn't reached Ready yet — queue and flush once it does. Same
-    // rationale as PTYManager: writing into the raw PTY mid-boot risks the
-    // startup/trust-gate UI swallowing the keystrokes.
-    if (this.pendingReady.has(sessionId)) {
+    // Hold input while booting OR while a gate dialog owns the screen — a
+    // digit flushed into a trust/hooks card would confirm an option; plain
+    // text mid-boot lands as compose newlines once \r is treated as Enter.
+    if (this.pendingReady.has(sessionId) || this.openGate.has(sessionId)) {
       const queue = this.queuedInputs.get(sessionId) ?? [];
       queue.push(input);
       this.queuedInputs.set(sessionId, queue);
@@ -492,8 +579,10 @@ export class CodexPtyRunner implements SessionRunner {
   }
 
   // Write the input as plain bytes (no bracketed-paste wrap — Phase 0
-  // confirmed Codex accepts plain keystrokes), then submit \r after a short
-  // delay so Codex's TUI gets an event-loop tick to process the input first.
+  // confirmed Codex accepts plain keystrokes), then submit \r once the PTY
+  // has been quiet for CODEX_SUBMIT_DELAY_MS. A flat delay fired \r into a
+  // still-repainting TUI and the Enter became a compose newline instead of a
+  // turn submit (same pathology Claude's quiescence wait fixed).
   private writeSubmit(
     sessionId: string,
     session: InternalSession,
@@ -514,12 +603,22 @@ export class CodexPtyRunner implements SessionRunner {
         phase: "input",
       },
     );
+    const writeAt = Date.now();
     session.process.write(input);
-    setTimeout(() => {
+
+    const trySubmit = () => {
       const current = this.sessions.get(sessionId);
       if (!current || current !== session) return;
+      const now = Date.now();
+      const lastChunk = this.lastChunkAt.get(sessionId) ?? writeAt;
+      const quiet = now - lastChunk >= CODEX_SUBMIT_DELAY_MS;
+      const timedOut = now - writeAt >= CODEX_SUBMIT_MAX_WAIT_MS;
+      if (!quiet && !timedOut) {
+        setTimeout(trySubmit, CODEX_SUBMIT_DELAY_MS);
+        return;
+      }
       this.log.info(
-        `[codex.input.submit] ${sessionId.slice(0, 8)} promptCount=${promptCount} digest=\\r`,
+        `[codex.input.submit] ${sessionId.slice(0, 8)} promptCount=${promptCount} digest=\\r waitedMs=${now - writeAt} timedOut=${timedOut}`,
         {
           event: "codex.input_write",
           sessionId,
@@ -528,10 +627,13 @@ export class CodexPtyRunner implements SessionRunner {
           digest: "\\r",
           path,
           phase: "submit",
+          waitedMs: now - writeAt,
+          timedOut,
         },
       );
       current.process.write(SUBMIT_BYTES);
-    }, CODEX_SUBMIT_DELAY_MS);
+    };
+    setTimeout(trySubmit, CODEX_SUBMIT_DELAY_MS);
   }
 
   // Drain any inputs sent while the session was still pendingReady, writing
@@ -613,11 +715,13 @@ export class CodexPtyRunner implements SessionRunner {
     const timer = this.readyFallbackTimers.get(sessionId);
     if (timer) clearTimeout(timer);
     this.readyFallbackTimers.delete(sessionId);
+    this.lastChunkAt.delete(sessionId);
     if (this.openGate.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
     }
     this.gateActioned.delete(`${sessionId}:hooks`);
     this.gateActioned.delete(`${sessionId}:trust`);
+    this.turnBusy.delete(sessionId);
   }
 
   getOutput(sessionId: string): string {
@@ -700,11 +804,15 @@ export class CodexPtyRunner implements SessionRunner {
     this.gateActioned.clear();
     this.quietCheckers.clear();
     this.readyFallbackTimers.clear();
+    this.lastChunkAt.clear();
+    this.turnBusy.clear();
   }
 
   private handleOutput(sessionId: string, data: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+
+    this.lastChunkAt.set(sessionId, Date.now());
 
     const chunk = Buffer.from(data, "utf-8");
     session.outputBuffer = Buffer.concat([session.outputBuffer, chunk]);
@@ -755,12 +863,11 @@ export class CodexPtyRunner implements SessionRunner {
   //   - Gates (directory trust, hooks review) — checked on EVERY pass,
   //     independent of pendingReady, so a gate appearing after ready is still
   //     surfaced and a gate leaving the screen closes its card.
-  //   - Readiness — the "Ready" status-bar marker while pendingReady, plus the
-  //     quiet path: after QUIET_DETECT_MS of PTY silence a still-pending
-  //     session is marked ready anyway (`›` alone is NOT a marker — Phase 0 —
-  //     but a quiet boot screen is more useful to the user live than a
-  //     spinner, and "Ready" may be truncated off the 120-col status bar).
-  private async detectScreenState(sessionId: string, trigger: "chunk" | "quiet"): Promise<void> {
+  //   - Readiness — boot (pendingReady) requires the "Ready" status-bar marker
+  //     (quiet alone never settles boot — Starting shows `›` already). Mid-
+  //     session, running → waiting_input after Working then Ready (or a stale
+  //     Ready recovery if the turn never started).
+  private async detectScreenState(sessionId: string, _trigger: "chunk" | "quiet"): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session || session.status === "idle") return;
 
@@ -784,12 +891,40 @@ export class CodexPtyRunner implements SessionRunner {
     }
 
     // ── Readiness ──────────────────────────────────────────────────
-    if (session.status !== "running" || !this.pendingReady.has(sessionId)) return;
-    const lastNonBlank = [...lines].reverse().find((l) => l.trim() !== "") ?? "";
-    if (lastNonBlank.includes(CODEX_PROMPT_READY_TEXT)) {
-      this.markReady(sessionId, session, "prompt-marker", `marker:${CODEX_PROMPT_READY_TEXT}`);
-    } else if (trigger === "quiet") {
-      this.markReady(sessionId, session, "quiet-fallback", "quiet:timeout");
+    const hasReady = codexScreenShowsReady(lines);
+
+    if (this.pendingReady.has(sessionId)) {
+      // Boot: only the Ready marker settles pendingReady on a chunk/quiet
+      // pass. The flat fallback covers a truncated status bar once MCP boot
+      // lines are gone — quiet-during-Starting must never disarm the queue.
+      if (hasReady) {
+        this.markReady(sessionId, session, "prompt-marker", `marker:${CODEX_PROMPT_READY_TEXT}`);
+      }
+      return;
+    }
+
+    // Mid-session: after sendInput flipped waiting_input → running, flip back
+    // only once we've observed Working (turn actually started) and Ready has
+    // returned. A stale Ready still on screen right after submit must not
+    // undo the running status — grace/hold would then kill a live turn.
+    if (session.status === "running") {
+      const bar = codexStatusBarLine(lines);
+      if (/\bWorking\b/.test(bar)) this.turnBusy.add(sessionId);
+
+      if (hasReady && this.turnBusy.has(sessionId)) {
+        this.turnBusy.delete(sessionId);
+        this.markReady(sessionId, session, "prompt-marker", `marker:${CODEX_PROMPT_READY_TEXT}`);
+      } else if (
+        hasReady &&
+        !this.turnBusy.has(sessionId) &&
+        session.statusSource === "user-input" &&
+        session.statusUpdatedAt != null &&
+        Date.now() - session.statusUpdatedAt.getTime() >= 2_000
+      ) {
+        // Submit never left Ready (Enter absorbed as a newline, etc.) —
+        // recover so the session is not stuck "running" forever.
+        this.markReady(sessionId, session, "quiet-fallback", "ready-stale");
+      }
     }
   }
 
@@ -841,16 +976,19 @@ export class CodexPtyRunner implements SessionRunner {
     // must be distinguishable from one reached by observing a marker.
     session.statusSource = source;
     session.statusUpdatedAt = new Date();
-    // `reason=quiet:timeout`/`fallback:timeout` in volume would mean the
-    // status-bar marker regressed (e.g. a Codex TUI redesign) — keep logged.
+    // `reason=fallback:timeout`/`quiet:soft-idle` in volume would mean the
+    // status-bar Ready marker regressed (e.g. a Codex TUI redesign) — keep logged.
     this.log.info(`[codex.ready] ${sessionId.slice(0, 8)} ${reason}`, {
       event: "codex.ready",
       sessionId,
       reason,
     });
     this.onStatusChange?.(toPublicSession(session));
-    if (this.pendingReady.has(sessionId)) {
-      this.pendingReady.delete(sessionId);
+    const wasPending = this.pendingReady.delete(sessionId);
+    if (wasPending) {
+      const timer = this.readyFallbackTimers.get(sessionId);
+      if (timer) clearTimeout(timer);
+      this.readyFallbackTimers.delete(sessionId);
       this.flushQueuedInputs(sessionId);
       this.onReady?.(toPublicSession(session));
     }

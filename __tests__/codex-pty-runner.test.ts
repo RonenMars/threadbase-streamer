@@ -3,7 +3,12 @@ import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { spawn as mockSpawn } from "node-pty";
 import { tmpdir } from "os";
 import { join } from "path";
-import { CodexPtyRunner } from "../src/codex-pty-runner";
+import {
+  CodexPtyRunner,
+  codexScreenBlocksComposer,
+  codexScreenLooksIdle,
+  codexScreenShowsReady,
+} from "../src/codex-pty-runner";
 import type { ManagedSession, PermissionOption } from "../src/types";
 
 vi.mock("node-pty", () => {
@@ -93,6 +98,21 @@ function spawnArgs(): string[] {
   const calls = (mockSpawn as any).mock.calls;
   return calls[calls.length - 1][1] as string[];
 }
+
+describe("CodexPtyRunner — screen helpers", () => {
+  it("blocks composer during Starting / MCP boot / gates, not after incomplete", () => {
+    expect(codexScreenBlocksComposer(["› ", "gpt · Starting"])).toBe(true);
+    expect(codexScreenBlocksComposer(["• Starting MCP servers (1/2): github", "› "])).toBe(true);
+    expect(
+      codexScreenBlocksComposer(["Do you want to trust the contents of this directory?"]),
+    ).toBe(true);
+    expect(codexScreenBlocksComposer(["⚠ MCP startup incomplete (failed: expo)", "› "])).toBe(
+      false,
+    );
+    expect(codexScreenShowsReady(["gpt-5.5 medium · /path · Ready · Wo…"])).toBe(true);
+    expect(codexScreenLooksIdle(["gpt-5.6-sol default · ~/proj", "› ask me"])).toBe(true);
+  });
+});
 
 describe("CodexPtyRunner — spawn args", () => {
   beforeEach(() => {
@@ -299,16 +319,17 @@ describe("CodexPtyRunner — gate close", () => {
 
       runner.sendInput(session.id, "hello");
 
-      // Quiet fires while the gate is open: ready is marked (mobile navigates
-      // in and sees the card) but the queued input stays held.
+      // Quiet while a gate is open must NOT mark ready — that used to disarm
+      // the input queue and let keystrokes hit the dialog.
       await vi.advanceTimersByTimeAsync(600);
-      expect(ready).toHaveLength(1);
+      expect(ready).toHaveLength(0);
       expect(proc.write).not.toHaveBeenCalled();
 
-      // Gate answered elsewhere → screen moves on → card dismissed, queue drains.
+      // Gate answered elsewhere → screen shows Ready → card dismissed, queue drains.
       proc._emit("data", `\x1b[2J\x1b[H${READY_STATUS_BAR}`);
       await vi.advanceTimersByTimeAsync(0);
       expect(cards[cards.length - 1]).toBeNull();
+      expect(ready).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(60);
       const writes = proc.write.mock.calls.map((c: unknown[]) => c[0]);
@@ -320,7 +341,7 @@ describe("CodexPtyRunner — gate close", () => {
 });
 
 describe("CodexPtyRunner — ready fallbacks", () => {
-  it("marks ready after 500ms of PTY silence even without the Ready marker", async () => {
+  it("does NOT mark ready on quiet while the Starting status bar is showing", async () => {
     vi.useFakeTimers();
     try {
       const { runner, ready } = gateRunner();
@@ -331,10 +352,51 @@ describe("CodexPtyRunner — ready fallbacks", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(ready).toHaveLength(0);
 
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(ready).toHaveLength(0);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT mark ready on quiet while MCP boot lines are on screen", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, ready } = gateRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit(
+        "data",
+        "• Starting MCP servers (1/6): github, vercel (2s • esc to interrupt)\r\n› \r\n",
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(ready).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-arms the flat 8s fallback while still Starting, then settles once idle", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, ready } = gateRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", STARTING_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(8_000);
       expect(ready).toHaveLength(0);
 
-      await vi.advanceTimersByTimeAsync(200);
+      // MCP finished; truncated status bar (no Ready word) — fallback allows it.
+      proc._emit("data", "\x1b[2J\x1b[Hgpt-5.6-sol default · ~/proj\r\n› \r\n");
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(8_000);
       expect(ready).toHaveLength(1);
       expect(runner.getSession(session.id)?.status).toBe("waiting_input");
     } finally {
@@ -353,6 +415,64 @@ describe("CodexPtyRunner — ready fallbacks", () => {
 
       await vi.advanceTimersByTimeAsync(1);
       expect(ready).toHaveLength(1);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("CodexPtyRunner — mid-session Ready", () => {
+  it("returns to waiting_input after Working then Ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const statusChanges: ManagedSession[] = [];
+      const runner = new CodexPtyRunner({
+        onStatusChange: (s) => statusChanges.push(s),
+      });
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+
+      runner.sendInput(session.id, "hello");
+      expect(runner.getSession(session.id)?.status).toBe("running");
+      await vi.advanceTimersByTimeAsync(60);
+
+      proc._emit("data", "gpt-5.5 medium · /path · Working\r\n");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      proc._emit("data", `\x1b[2J\x1b[H${READY_STATUS_BAR}`);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+      expect(statusChanges.some((s) => s.status === "waiting_input" && s.promptCount >= 1)).toBe(
+        true,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers to waiting_input if Ready never left after submit", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendInput(session.id, "hello");
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      // Still Ready on screen (Enter absorbed) — after 2s, a repaint recovers.
+      await vi.advanceTimersByTimeAsync(2_000);
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
       expect(runner.getSession(session.id)?.status).toBe("waiting_input");
     } finally {
       vi.useRealTimers();
