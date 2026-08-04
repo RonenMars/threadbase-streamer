@@ -551,6 +551,10 @@ export class StreamerServer {
     entries: DiscoveredProcess[];
     fetchedAt: number;
   } | null = null;
+  // Single-flight for process discovery. Mobile polls GET /api/sessions and
+  // retries on timeout; without this, every concurrent request starts its own
+  // Windows CIM scan (observed: overlapping 80–100s /api/sessions responses).
+  private discoveryInFlight: Promise<DiscoveredProcess[]> | null = null;
   private cacheDir: string;
   private runtimeDbPath: string;
   private tailSize: number;
@@ -4240,17 +4244,7 @@ export class StreamerServer {
   private async handleListSessions(url: URL, res: ServerResponse): Promise<void> {
     if (this.rejectIfWarmingUp(res)) return;
 
-    const now = Date.now();
-
-    if (!this.discoveryCache || now - this.discoveryCache.fetchedAt >= DISCOVERY_TTL_MS) {
-      try {
-        const discovered = await discoverClaudeProcesses();
-        this.sessionStore.setDiscovered(discovered);
-        this.discoveryCache = { entries: discovered, fetchedAt: now };
-      } catch {
-        // Discovery is best-effort
-      }
-    }
+    await this.refreshDiscovery();
 
     // Backwards compat: a bare GET /api/sessions returns the legacy plain
     // array. Any pagination param switches to the new envelope.
@@ -4289,6 +4283,41 @@ export class StreamerServer {
       }
       throw err;
     }
+  }
+
+  /**
+   * Refresh the discovered-process list, sharing one in-flight enumeration
+   * across concurrent callers and honouring the 15s TTL cache.
+   */
+  private async refreshDiscovery(): Promise<DiscoveredProcess[]> {
+    const cached = this.discoveryCache;
+    if (cached && Date.now() - cached.fetchedAt < DISCOVERY_TTL_MS) {
+      return cached.entries;
+    }
+    if (this.discoveryInFlight) {
+      return this.discoveryInFlight;
+    }
+
+    let flight!: Promise<DiscoveredProcess[]>;
+    flight = (async (): Promise<DiscoveredProcess[]> => {
+      try {
+        const discovered = await discoverClaudeProcesses();
+        this.sessionStore.setDiscovered(discovered);
+        this.discoveryCache = { entries: discovered, fetchedAt: Date.now() };
+        return discovered;
+      } catch {
+        // Discovery is best-effort — keep any previous cache rather than
+        // remembering a failure as "nothing is running".
+        return this.discoveryCache?.entries ?? [];
+      } finally {
+        if (this.discoveryInFlight === flight) {
+          this.discoveryInFlight = null;
+        }
+      }
+    })();
+
+    this.discoveryInFlight = flight;
+    return flight;
   }
 
   private async handleGetSession(sessionId: string, res: ServerResponse): Promise<void> {
@@ -4473,29 +4502,22 @@ export class StreamerServer {
     // case. jsonl_mtime is the primary signal and is a single stat, so the probe
     // stays useful even when discovery is dropped.
     let discovered: DiscoveredProcess[] = [];
-    // Prefer the list GET /api/sessions already keeps warm (15s TTL). A slightly
-    // stale process list is fine for a heuristic pre-flight check, and mobile
-    // polls sessions often enough that this is usually a free hit — enumerating
-    // afresh here made every resume pay seconds of wmic (observed: 4.3s).
-    const cached = this.discoveryCache;
-    if (cached && Date.now() - cached.fetchedAt < DISCOVERY_TTL_MS) {
-      discovered = cached.entries;
-    } else {
-      try {
-        discovered = await Promise.race([
-          discoverClaudeProcesses(),
-          new Promise<DiscoveredProcess[]>((resolve) =>
-            setTimeout(() => resolve([]), RESUME_DISCOVERY_TIMEOUT_MS).unref?.(),
-          ),
-        ]);
-        // Only cache a real enumeration — a timeout resolves [] and must not be
-        // remembered as "no processes are running".
-        if (discovered.length > 0) {
-          this.discoveryCache = { entries: discovered, fetchedAt: Date.now() };
-        }
-      } catch {
-        // Discovery is best-effort; the jsonl_mtime signal still applies.
-      }
+    // Prefer the list GET /api/sessions already keeps warm (15s TTL), including
+    // any in-flight refresh — a slightly stale process list is fine for a
+    // heuristic pre-flight check, and mobile polls sessions often enough that
+    // this is usually a free hit. Bound the wait: past the deadline we proceed
+    // with no process signals rather than making every resume pay the worst
+    // case. jsonl_mtime is the primary signal and is a single stat, so the probe
+    // stays useful even when discovery is dropped.
+    try {
+      discovered = await Promise.race([
+        this.refreshDiscovery(),
+        new Promise<DiscoveredProcess[]>((resolve) =>
+          setTimeout(() => resolve([]), RESUME_DISCOVERY_TIMEOUT_MS).unref?.(),
+        ),
+      ]);
+    } catch {
+      // Discovery is best-effort; the jsonl_mtime signal still applies.
     }
     const busy = conversationBusy({
       // The id another owner's argv would actually carry — for a placeholder
