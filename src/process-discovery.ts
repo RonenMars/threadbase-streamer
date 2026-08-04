@@ -268,11 +268,15 @@ export function parseCimDate(value: string | null): Date {
 async function discoverWindowsViaCim(): Promise<DiscoveredProcess[] | null> {
   let stdout: string;
   try {
+    // WQL filter at the provider — dumping every Win32_Process as JSON is what
+    // made GET /api/sessions take tens of seconds on a busy Windows box. Claude
+    // still runs as claude.exe or under a JS runtime (npm shim); looksLikeClaudeProcess
+    // below drops unrelated node/bun/deno processes.
     stdout = await run("powershell.exe", [
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress",
+      "Get-CimInstance Win32_Process -Filter \"Name = 'claude.exe' OR Name = 'claude' OR Name = 'node.exe' OR Name = 'bun.exe' OR Name = 'deno.exe'\" | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress",
     ]);
   } catch {
     return null; // PowerShell unavailable — let the caller fall back.
