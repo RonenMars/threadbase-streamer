@@ -1,3 +1,20 @@
+# Local supporting services for tb-streamer development.
+#
+# Two independent concerns:
+#   postgres  — optional Postgres for THREADBASE_DATABASE_URL testing
+#   streamer  — the Fly demo image, built locally (claude stub + demo-data)
+#
+# Usage (from repo root):
+#
+#   docker compose up postgres          # DB only (port 5432)
+#   docker compose --profile demo up streamer --build
+#   docker compose --profile demo up    # streamer + nothing else unless started
+#
+# The streamer service does NOT replace a host-installed tb-streamer for
+# day-to-day Claude work — it is the public-demo image (scripted replies).
+# Point THREADBASE_DATABASE_URL at the postgres service when you need DB mode:
+#   postgresql://threadbase:threadbase@localhost:5432/threadbase
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -9,6 +26,33 @@ services:
       POSTGRES_DB: threadbase
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U threadbase -d threadbase"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  streamer:
+    profiles: ["demo"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: demo
+    ports:
+      - "8080:8080"
+    environment:
+      DEMO_API_KEY: tb_public_demo_reviewer_key
+      THREADBASE_PUBLIC_URL: http://localhost:8080
+      CLAUDE_CODE_MODEL: claude-haiku-4-5-20251001
+    volumes:
+      - streamer_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   pgdata:
+  streamer_data:

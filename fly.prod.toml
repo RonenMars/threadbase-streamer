@@ -2,7 +2,7 @@
 #
 # Lives at the repo root because Fly resolves [build].dockerfile relative to
 # this file's directory. Build context = repo root, so docker/Dockerfile can
-# COPY src/, package.json, vendor/, etc.
+# COPY src/, package.json, etc.
 #
 # Deploy from the repo root: `fly deploy --config fly.prod.toml --remote-only`.
 #
@@ -12,19 +12,20 @@
 #   - THREADBASE_PUBLIC_URL (defaults to the assigned hostname; override
 #     only if pointing at a custom domain)
 #
-# Resource notes: 1GB memory for sqlite + PTY + node_modules.
+# Resource notes: 1GB memory for sqlite + PTY + pruned node_modules.
 #
 # TEMPORARY (App Store review): the machine is pinned always-on
 # (auto_stop_machines = 'off', min_machines_running = 1) so an Apple reviewer
-# never hits a cold start. This incurs ~$5-6/mo of idle cost. REVERT after the
-# app is approved: set auto_stop_machines = 'stop' and min_machines_running = 0,
-# then redeploy.
+# never hits a cold start. This incurs ~$5-6/mo of idle cost. Do NOT flip these
+# back automatically — confirm review is finished with the mobile release owner,
+# then set auto_stop_machines = 'stop' and min_machines_running = 0 and redeploy.
 
 app = 'threadbase'
 primary_region = 'iad'
 
 [build]
   dockerfile = 'docker/Dockerfile'
+  build-target = 'production'
 
 [http_service]
   internal_port = 8080
@@ -32,6 +33,13 @@ primary_region = 'iad'
   auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
 
 [[mounts]]
   source = 'prod_data'

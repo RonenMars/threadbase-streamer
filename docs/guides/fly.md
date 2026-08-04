@@ -7,7 +7,7 @@ Two Fly apps host tb-streamer in the cloud:
 | demo | `threadbase-demo` | `https://threadbase-demo.fly.dev` | `fly.toml` |
 | prod | `threadbase` | `https://threadbase.fly.dev` | `fly.prod.toml` |
 
-Both use `docker/Dockerfile` as the build target. The build context is the repo root, so `src/`, `cli/`, `vendor/`, etc. are all available to `COPY` instructions.
+Both use `docker/Dockerfile` as the build target. The build context is the repo root, so `src/`, `cli/`, etc. are available to `COPY` instructions. Demo builds the `demo` stage (`build-target = "demo"`); prod builds the `production` stage.
 
 ## Prerequisites
 
@@ -65,10 +65,11 @@ npm run fly:secrets -- --prod --unset OLD_KEY
 
 | | demo | prod |
 |-|------|------|
-| `auto_stop_machines` | `stop` (sleeps when idle) | `off` (always on — App Store review) |
+| `auto_stop_machines` | `stop` (sleeps when idle) | `off` (always on — App Store review; confirm before reverting) |
 | `min_machines_running` | `0` | `1` |
-| Build arg `DEMO_MODE` | `true` (seed data baked in) | unset |
+| Docker build target | `demo` (stub + seed) | `production` (pinned Claude CLI) |
 | Volume | `demo_data` | `prod_data` |
+| Process user | `streamer` (uid 10001) | `streamer` (uid 10001) |
 
 The prod app is pinned always-on until Apple review completes (see comment in `fly.prod.toml`). Revert to `auto_stop_machines = 'stop'` and `min_machines_running = 0` after approval and redeploy.
 
