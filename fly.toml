@@ -2,7 +2,7 @@
 #
 # Lives at the repo root because Fly resolves [build].dockerfile relative to
 # this file's directory. Build context = repo root, so docker/Dockerfile can
-# COPY src/, package.json, vendor/, etc.
+# COPY src/, package.json, etc.
 #
 # Deploy from the repo root: `fly deploy --remote-only`.
 #
@@ -19,8 +19,7 @@ primary_region = 'iad'
 
 [build]
   dockerfile = 'docker/Dockerfile'
-  [build.args]
-    DEMO_MODE = "true"
+  build-target = 'demo'
 
 [http_service]
   internal_port = 8080
@@ -28,6 +27,13 @@ primary_region = 'iad'
   auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "20s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
 
 [[mounts]]
   source = 'demo_data'

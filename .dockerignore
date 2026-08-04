@@ -9,6 +9,8 @@
 .vscode
 .idea
 .claude
+.codex
+.agents
 .worktrees
 .remember
 .threadbase-uploads
@@ -30,13 +32,14 @@ __fixtures__
 *.log
 
 # Workflow + docs files that don't affect the runtime
-.github
 docs
 *.md
-!docker/README.md
 
-# But keep:
-# - src/, cli/, scripts/, patches/, vendor/, package.json, package-lock.json,
-#   tsup.config.ts, tsconfig.json, biome.json (the Dockerfile COPYs these)
-# - demo-data/ (Dockerfile COPYs into /seed)
-# - docker/ itself (Dockerfile + entrypoint + claude-code-stub + fly.toml)
+# Menubar submodule is Electron-only — never needed in the streamer image.
+# scanner/agent-types ship from npm; vendor/ only holds menubar now.
+vendor
+
+# Contracts / release / local-only noise
+contracts
+CHANGELOG.md
+LICENSE
