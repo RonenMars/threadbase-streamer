@@ -3348,6 +3348,36 @@ describe("StreamerServer", () => {
       expect(srv.scannerStale).toBe(false);
     });
 
+    it("does not re-arm scannerStale when the debounce fires after paths were drained", async () => {
+      // The #409 race: onConversationChanged adds a path and arms the debounce;
+      // a list poll drains both via takeStaleFiles before the debounce fires;
+      // the late fire must NOT set scannerStale with an empty set (that would
+      // upgrade the next "files" reconcile into a full-tree rescan).
+      await listCached();
+      const srv = autoServer as unknown as {
+        scannerStale: boolean;
+        staleFiles: Set<string>;
+        scannerReady: Promise<unknown> | null;
+        markScannerStaleDebounced: { (): void; flush(): void; cancel(): void };
+        startBackgroundConversationReconcile: (mode?: string) => void;
+      };
+      expect(srv.scannerReady).toBeTruthy();
+
+      const changed = join(projDir, "auto-a.jsonl");
+      srv.staleFiles.add(changed);
+      srv.markScannerStaleDebounced();
+
+      // Drain before the debounce fires — the correct per-file reconcile path.
+      srv.startBackgroundConversationReconcile("files");
+      expect(srv.staleFiles.size).toBe(0);
+      expect(srv.scannerStale).toBe(false);
+
+      // Late debounce fire: must stay disarmed when no paths remain.
+      srv.markScannerStaleDebounced.flush();
+      expect(srv.scannerStale).toBe(false);
+      expect(srv.staleFiles.size).toBe(0);
+    });
+
     it("serves the cached list immediately while a routine reconcile runs in the background", async () => {
       // Prime the cache so there is something stale to serve.
       await listCached();
