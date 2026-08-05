@@ -302,4 +302,18 @@ describe("external live tails", () => {
 
     expect(await waitFor(() => externalTails().size === 0)).toBe(true);
   });
+
+  it("detaches via handleJsonlDeleted when the per-file unlink is dropped", async () => {
+    // #393: directory-watcher / shared unlink path must detach even when the
+    // per-file watcher's unlink never arrives.
+    const convId = "aaaa1111-0000-0000-0000-00000000e007";
+    const filePath = join(projectDir, `${convId}.jsonl`);
+    writeFileSync(filePath, userLine(convId, "first", projectPath, "2026-07-21T16:00:00.000Z"));
+    expect(await waitFor(() => externalTails().size === 1)).toBe(true);
+
+    rmSync(filePath, { force: true });
+    (server as any).handleJsonlDeleted(filePath);
+
+    expect(externalTails().size).toBe(0);
+  });
 });
