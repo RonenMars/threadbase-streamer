@@ -30,7 +30,14 @@ describe("handleStartAgentSession", () => {
     expect(result.body.sessionId).toBeTruthy();
     expect(result.body.conversationId).toBe(result.body.sessionId);
     expect(result.body.status).toBe("running");
-    expect(deps.sessionStore.addManaged).toHaveBeenCalledOnce();
+    expect(deps.sessionStore.addManaged).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "running",
+        // Multi-agent marker: defined (null between turns). PTY sessions leave
+        // it undefined, which is what managedToResponse uses to tell them apart.
+        currentTurnId: null,
+      }),
+    );
     expect(deps.sessionStore.initAgentSession).toHaveBeenCalledOnce();
     expect(deps.agentClient.startSession).toHaveBeenCalledWith(result.body.sessionId);
   });

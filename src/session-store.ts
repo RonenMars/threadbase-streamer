@@ -214,6 +214,11 @@ function findCursorBoundary(
   return sorted.length;
 }
 
+/** Multi-agent sessions set `currentTurnId` (possibly null); PTY sessions leave it undefined. */
+function isLiveMultiAgent(s: ManagedSession): boolean {
+  return s.currentTurnId !== undefined && (s.status === "running" || s.status === "waiting_input");
+}
+
 function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResponse {
   return {
     id: s.id,
@@ -232,20 +237,25 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     // leaves it gone, but the conversation is still resumable, not terminal —
     // `putOnHold` records that by leaving `statusSource: "shutdown"` (the only
     // place either runner sets it), so it is checked here alongside `rehydrated`.
-    lifecycle: ptyAttached
-      ? "attached"
-      : s.rehydrated || s.statusSource === "shutdown"
-        ? "resumable"
-        : s.failureReason != null
-          ? "failed"
-          : "completed",
-    lifecycleSource: ptyAttached
-      ? s.reconciled
-        ? "reconcile"
-        : "spawn"
-      : s.rehydrated
-        ? "reconcile"
-        : "exit",
+    // Multi-agent sessions never have a PTY (`currentTurnId` is defined — null
+    // while idle between turns — only on that path). While their status is
+    // still live they are `attached`, not terminal (#438).
+    lifecycle:
+      ptyAttached || isLiveMultiAgent(s)
+        ? "attached"
+        : s.rehydrated || s.statusSource === "shutdown"
+          ? "resumable"
+          : s.failureReason != null
+            ? "failed"
+            : "completed",
+    lifecycleSource:
+      ptyAttached || isLiveMultiAgent(s)
+        ? s.reconciled
+          ? "reconcile"
+          : "spawn"
+        : s.rehydrated
+          ? "reconcile"
+          : "exit",
     // We own its PTY, so `status` is the authoritative signal — no inferred
     // `activity` is attached for managed sessions.
     ownership: s.rehydrated ? "historical" : "managed",
