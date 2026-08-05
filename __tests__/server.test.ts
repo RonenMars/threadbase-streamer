@@ -3824,6 +3824,95 @@ describe("StreamerServer", () => {
       expect((reuseServer as unknown as { scannerStale: boolean }).scannerStale).toBe(true);
     });
 
+    it("serves a detail fetch mid-fullRescan without waiting for the scan (#368)", async () => {
+      // Acceptance: a detail fetch issued while rescanForRefresh is in flight
+      // returns the conversation and does not wait for the scan to finish.
+      profileDir = mkdtempSync(join(tmpdir(), "threadbase-midrescan-profile-"));
+      const projDir = join(profileDir, "projects", "-proj-mid");
+      mkdirSync(projDir, { recursive: true });
+      const jsonlPath = join(projDir, `${convId}.jsonl`);
+      writeFileSync(
+        jsonlPath,
+        `${JSON.stringify({
+          type: "user",
+          uuid: "m-u1",
+          timestamp: "2026-06-10T08:00:00.000Z",
+          sessionId: convId,
+          cwd: profileDir,
+          message: { role: "user", content: [{ type: "text", text: "hi" }] },
+        })}\n`,
+      );
+
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        ...HOST_ISOLATION,
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-midrescan-cache-")),
+        scanProfiles: [
+          { id: "mid", label: "Mid", configDir: profileDir, enabled: true, emoji: "🔄" },
+        ],
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
+
+      const srv = reuseServer as unknown as {
+        scanner: unknown;
+        scannerReady: Promise<unknown> | null;
+        rescanForRefresh: () => Promise<unknown>;
+      };
+      const scannerBefore = srv.scanner;
+      expect(scannerBefore).toBeTruthy();
+
+      // Gate the shadow scan so it stays in flight while we hit the detail path.
+      let releaseScan!: () => void;
+      const scanGate = new Promise<void>((r) => {
+        releaseScan = r;
+      });
+      const realScan = ConversationScanner.prototype.scan;
+      const scanSpy = vi.spyOn(ConversationScanner.prototype, "scan").mockImplementation(function (
+        this: ConversationScanner,
+        ...args: Parameters<typeof realScan>
+      ) {
+        const opts = args[0] as { fullRescan?: boolean } | undefined;
+        if (opts?.fullRescan) {
+          return scanGate.then(() => realScan.apply(this, args));
+        }
+        return realScan.apply(this, args);
+      });
+
+      // Kick a full rescan in the background (do not await).
+      const rescanPromise = srv.rescanForRefresh();
+      // Give the gated scan a tick to assign scannerReady.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(srv.scannerReady).toBeTruthy();
+      // Previous generation still installed — shadow has not swapped yet.
+      expect(srv.scanner).toBe(scannerBefore);
+
+      const t0 = Date.now();
+      const res = await fetch(
+        `http://localhost:${reusePort}/api/conversations/${convId}?msg_limit=80`,
+        { headers: auth },
+      );
+      const elapsed = Date.now() - t0;
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        messages: Array<{ text: string }>;
+        meta: { id: string };
+      };
+      expect(body.meta.id).toBe(convId);
+      expect(body.messages.length).toBeGreaterThan(0);
+      // Must not have waited on the gated full rescan (gate never released yet).
+      expect(elapsed).toBeLessThan(500);
+
+      releaseScan();
+      await rescanPromise;
+      scanSpy.mockRestore();
+    });
+
     it("reconciles single-file drift on the stale detail path via refreshFile, not scan()", async () => {
       // Deterministic unit-level proof that the detail path reconciles the one
       // conversation it serves with refreshFile (cheap, single-file) instead of
