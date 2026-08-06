@@ -209,6 +209,33 @@ describe("SessionStore", () => {
       expect(resp?.lifecycle).toBe("completed");
     });
 
+    // Multi-agent sessions never appear in a PTY runner's map, so ptyAttached is
+    // always false — but while status is live they are actively being worked,
+    // not terminal. `currentTurnId` is the multi-agent marker (undefined in PTY).
+    it("reports attached for a live multi-agent session with no PTY", () => {
+      store.addManaged(makeManagedSession({ status: "running", currentTurnId: null }));
+
+      const resp = store.get(UUID_A, noPty);
+      expect(resp?.lifecycle).toBe("attached");
+      expect(resp?.lifecycleSource).toBe("spawn");
+      expect(resp?.ptyAttached).toBe(false);
+      expect(resp?.status).toBe("running");
+    });
+
+    it("reports attached for a multi-agent session mid-turn", () => {
+      store.addManaged(makeManagedSession({ status: "running", currentTurnId: "turn_1" }));
+
+      expect(store.get(UUID_A, noPty)?.lifecycle).toBe("attached");
+    });
+
+    it("reports completed once a multi-agent session is idle", () => {
+      store.addManaged(makeManagedSession({ status: "idle", currentTurnId: null }));
+
+      const resp = store.get(UUID_A, noPty);
+      expect(resp?.lifecycle).toBe("completed");
+      expect(resp?.lifecycleSource).toBe("exit");
+    });
+
     // An external process is alive but we hold no PTY for it — which is exactly
     // `detached`, and more informative than the `idle` status discovery is
     // forced to report because it cannot see the process's prompt state.
