@@ -184,3 +184,15 @@ If you hit an undocumented issue during setup, deploy, or runtime — ask the us
 ## Release notes
 
 Milestone-level release notes live in `docs/release-notes/YYYY-MM-DD-<milestone>.md` — the human story of what shipped; separate from `CHANGELOG.md`, which semantic-release auto-generates (never edit it by hand). When a milestone is ready to merge, add the `milestone` label to the merge PR and write the release notes manually using `docs/release-notes/_template.md` as the skeleton.
+
+## Cursor Cloud specific instructions
+
+The Cloud VM runs Node 22 (in `engines: >=20 <25`; a required CI check), even though `.nvmrc` pins v24.15.0. `better-sqlite3` and `node-pty` compile natively against the running Node at install time — the startup update script (`npm install`) handles that. Standard lint/test/build/run commands are in `README.md` and `package.json` scripts; don't duplicate them here. Build before running: you execute the built `dist/cli.cjs`, and `npm run dev` is only the tsup watcher (it does not start a server).
+
+Non-obvious gotchas when running the server here (Linux):
+
+- **`serve` needs `--prod` on Linux.** A plain `node dist/cli.cjs serve` crashes with `lifecycle: unsupported platform linux` — the dev/prod-coordination path (`detectProdActive` → `getSupervisor` in `src/lifecycle/platform.ts`) only supports darwin/win32. Passing `--prod` marks the run as supervised, skips that path and the first-run TTY prompts, and installs plain shutdown handlers. (Without `--prod`, an interactive TTY also blocks on permission-mode / auto-resume prompts; `THREADBASE_SKIP_PERMISSION_MODE_PROMPT=true` + `THREADBASE_SKIP_AUTO_RESUME_PROMPT=true` suppress those, but `--prod` already avoids them.)
+- **Live sessions need a `claude` binary.** `POST /api/sessions/start` spawns `claude` in a PTY (resolved via `which`, then `~/.local/bin/claude`); with none present, sessions instant-exit to `idle`. The repo ships a reviewer-safe stub at `docker/claude-code-stub/claude.js` that prints the welcome box + `❯` ready marker and echoes scripted replies (no Anthropic calls). To exercise the full PTY + WebSocket flow, install it as an executable `~/.local/bin/claude` (`cp docker/claude-code-stub/claude.js ~/.local/bin/claude && chmod +x`).
+- **`POST /api/sessions/start` requires `--browse-root <dir>`** and a body `{ "path": "<dir-relative-to-browse-root>" }`; otherwise it returns 403 `BROWSE_ROOT_NOT_SET`. Send prompts to a session with `POST /api/sessions/:id/input` `{ "input": "…" }`.
+- End-to-end smoke: `node dist/cli.cjs serve --prod --local-no-auth --browse-root <dir> --no-pair-qr` (with the stub on PATH), then `curl /healthz`, start a session, POST input, and read `/api/sessions/:id/output` or subscribe over `ws://localhost:8766/ws` with `{ "type": "subscribe_session", "sessionId": "…" }` to see `terminal_replay` + live `terminal_output`.
+- Persistence (SQLite cache + runtime DB under `~/.threadbase/`) is auto-created; no external DB needed. Postgres (`THREADBASE_DATABASE_URL`) and Temporal/multi-agent mode (`MULTI_AGENT_FLOW`) are optional and off by default.
