@@ -1,23 +1,22 @@
-# Production deploy container for tb-streamer.
+# Production / demo deploy container for tb-streamer (Fly.io).
 #
-# Builds the streamer from local source on linux-x86_64, rebuilds the native
-# modules (node-pty + better-sqlite3) against the target Linux runtime, and
-# installs the real Claude CLI for production use.
+# Multi-stage layout:
+#   builder       — full npm ci, native rebuild, tsup bundle
+#   runtime-base  — pruned prod node_modules + dist, non-root user, healthcheck
+#   production    — real Claude CLI (pinned)
+#   demo          — scripted claude stub + demo-data seed corpus
 #
-# By default, this is a PRODUCTION image with real Claude CLI.
-# For DEMO mode (scripted stub responses), pass --build-arg DEMO_MODE=true
+# Build context must be the repo root:
 #
-# Build context must be the repo root, not docker/, so the Dockerfile can
-# COPY the source tree. Run from the repo root:
+#   docker build -f docker/Dockerfile --target production .
+#   docker build -f docker/Dockerfile --target demo .
 #
-#   Production: docker build -f docker/Dockerfile .
-#   Demo:       docker build -f docker/Dockerfile --build-arg DEMO_MODE=true .
-#
-# fly.toml's [build] dockerfile = 'docker/Dockerfile' takes care of this for
-# `fly deploy`.
+# fly.toml / fly.prod.toml set build-target accordingly.
+
+ARG NODE_VERSION=24.15.0
 
 # ─── builder ────────────────────────────────────────────────────────────────
-FROM node:24-bookworm-slim AS builder
+FROM node:${NODE_VERSION}-bookworm-slim AS builder
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -26,88 +25,87 @@ RUN apt-get update \
 
 WORKDIR /build
 
-# Submodule (vendor/scanner) must be present before `npm ci` because
-# package.json depends on `file:vendor/scanner`. We rely on the build context
-# already containing the initialized submodule; on Fly's remote builder the
-# upload step submits the working tree as-is, so as long as the host has run
-# `git submodule update --init --recursive` before `fly deploy`, vendor/
-# arrives populated.
+# Deps layer first so source edits don't invalidate npm ci.
+# prepare runs `git config core.hooksPath` — needs a repo, so git init.
+# scanner/agent-types are published npm packages (no vendor/ COPY needed).
 COPY package.json package-lock.json ./
 COPY patches ./patches
-COPY vendor ./vendor
-COPY scripts ./scripts
+RUN git init -q \
+    && npm ci --no-audit --no-fund
+
+# Rebuild native modules against this Linux runtime. node-pty's bundled
+# prebuilds are darwin/win32 only; better-sqlite3's generic prebuilds may not
+# match. Both rebuild from source given python3 + make + g++.
+RUN cd /build/node_modules/node-pty && npm install --no-save --no-audit --no-fund node-addon-api \
+    && cd /build && npm install --no-save --no-audit --no-fund bindings \
+    && cd /build/node_modules/node-pty && npm run install \
+    && cd /build/node_modules/better-sqlite3 && npm run build-release
+
 COPY src ./src
 COPY cli ./cli
 COPY tsup.config.ts tsconfig.json biome.json ./
 
-# npm ci handles patch-package + node-pty chmod + build:scanner (vendor/scanner
-# npm install) via the postinstall hook. node-pty's install script falls back
-# to node-gyp rebuild on platforms with no prebuild — we supply node-addon-api
-# explicitly because the streamer's package-lock omits it as a build peer.
-RUN npm ci --no-audit --no-fund
+RUN npm run build \
+    && npm prune --omit=dev
 
-# Rebuild native modules against the target Linux runtime. node-pty's bundled
-# prebuilds are darwin/win32 only; better-sqlite3 ships only generic prebuilds
-# that may not match. Both have valid source + binding.gyp; node-gyp can
-# rebuild from source given python3 + make + g++ from the apt step.
-RUN cd node_modules/node-pty && npm install --no-save --no-audit --no-fund node-addon-api
-RUN npm install --no-save --no-audit --no-fund bindings
-RUN cd node_modules/node-pty && npm run install
-RUN cd node_modules/better-sqlite3 && npm run build-release
-
-# Bundle the streamer (tsup → dist/) and copy migrations.
-RUN npm run build
-
-# ─── runtime ────────────────────────────────────────────────────────────────
-FROM node:24-bookworm-slim
-
-# Build argument to control demo vs production mode
-ARG DEMO_MODE=false
+# ─── runtime-base ───────────────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-bookworm-slim AS runtime-base
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 streamer \
+    && useradd --system --uid 10001 --gid streamer \
+        --home-dir /data --shell /usr/sbin/nologin streamer \
+    && mkdir -p /data \
+    && chown streamer:streamer /data
 
-# Copy only what the runtime actually needs: bundled dist/ + the (rebuilt)
-# node_modules tree with native binaries for Linux.
 WORKDIR /opt/tb-streamer
-COPY --from=builder /build/dist ./dist
-COPY --from=builder /build/node_modules ./node_modules
-COPY --from=builder /build/package.json ./package.json
 
-# Install Claude CLI based on mode:
-# - Production (default): Install real Claude CLI from npm
-# - Demo: Install scripted stub that returns canned responses
-RUN if [ "$DEMO_MODE" = "true" ]; then \
-        echo "Building DEMO mode - installing claude-code-stub"; \
-        mkdir -p /opt/claude-code-stub; \
-    else \
-        echo "Building PRODUCTION mode - installing real Claude CLI"; \
-        npm install -g @anthropic-ai/claude-code; \
-    fi
-
-# Copy demo stub (only used when DEMO_MODE=true)
-COPY docker/claude-code-stub /opt/claude-code-stub
-RUN if [ "$DEMO_MODE" = "true" ]; then \
-        chmod +x /opt/claude-code-stub/claude.js && \
-        ln -sf /opt/claude-code-stub/claude.js /usr/local/bin/claude; \
-    fi
-
-# Demo conversation corpus (only copied when DEMO_MODE=true)
-COPY demo-data /seed
-RUN if [ "$DEMO_MODE" != "true" ]; then \
-        rm -rf /seed; \
-    fi
+# Pruned prod tree (~174 MB vs ~500 MB full) + bundled dist. Natives already
+# rebuilt in the builder stage.
+COPY --from=builder --chown=streamer:streamer /build/dist ./dist
+COPY --from=builder --chown=streamer:streamer /build/node_modules ./node_modules
+COPY --from=builder --chown=streamer:streamer /build/package.json ./package.json
 
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh \
+    && chown streamer:streamer /entrypoint.sh
 
 # Default Claude model for spawned sessions. entrypoint.sh exports this as
-# ANTHROPIC_MODEL, which the Claude CLI honors. Override at runtime with
-# `fly secrets set CLAUDE_CODE_MODEL=…` or `-e CLAUDE_CODE_MODEL=…`.
+# ANTHROPIC_MODEL. Override at runtime with CLAUDE_CODE_MODEL.
 ENV HOME=/data \
     PORT=8080 \
-    CLAUDE_CODE_MODEL=claude-haiku-4-5-20251001
+    CLAUDE_CODE_MODEL=claude-haiku-4-5-20251001 \
+    NODE_ENV=production
+
 EXPOSE 8080
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT}/healthz" || exit 1
+
 ENTRYPOINT ["/entrypoint.sh"]
+
+# ─── production ─────────────────────────────────────────────────────────────
+FROM runtime-base AS production
+
+# Pin the Claude CLI so rebuilds are reproducible. Bump deliberately.
+ARG CLAUDE_CODE_VERSION=2.1.221
+USER root
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+# Stay root for ENTRYPOINT so the first boot can chown the Fly volume; the
+# entrypoint then drops to uid 10001 via setpriv.
+
+# ─── demo ───────────────────────────────────────────────────────────────────
+FROM runtime-base AS demo
+
+USER root
+COPY --chown=streamer:streamer docker/claude-code-stub /opt/claude-code-stub
+RUN chmod +x /opt/claude-code-stub/claude.js \
+    && ln -sf /opt/claude-code-stub/claude.js /usr/local/bin/claude
+
+# Seed corpus → /seed; entrypoint copies into $HOME on boot (cp -rn).
+COPY --chown=streamer:streamer demo-data /seed
+# Project dirs referenced by seed JSONL cwd fields are created at boot from the
+# corpus; pre-create /home/demo so the non-root user can mkdir underneath.
+RUN mkdir -p /home/demo && chown streamer:streamer /home/demo
