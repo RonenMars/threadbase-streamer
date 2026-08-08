@@ -272,4 +272,69 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     expect(gates[gates.length - 1]).not.toBeNull();
     mgr.dispose();
   });
+
+  it("does not reopen on a plain repaint tick after an OSC close left the box painted (no duplicate notify)", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+
+    proc._emit("data", GATE_PAINT);
+    await settle();
+    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+
+    // End-of-turn OSC only — no repaint, box remains exactly as last
+    // rendered (the notify itself is invisible on screen).
+    proc._emit("data", "\x1b]777;notify;Claude Code;Claude is waiting for your input\x07");
+    await settle();
+    expect(gates[gates.length - 1]).toBeNull();
+
+    // A further ordinary chunk, no notify, no clear — the box is still
+    // fully painted on screen. Wait past the throttle window so this tick
+    // actually scrapes (scrapeDue), same as the paint-time trigger the
+    // whole feature relies on.
+    await new Promise((r) => setTimeout(r, 310));
+    proc._emit(
+      "data",
+      "\r\nLet me check whether the cache needs a migration before we continue.\r\n",
+    );
+    await settle();
+
+    expect(gates[gates.length - 1]).toBeNull();
+    mgr.dispose();
+  });
+
+  it("claims a genuinely new identical gate once the closed box is erased", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+
+    proc._emit("data", GATE_PAINT);
+    await settle();
+    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+
+    proc._emit("data", "\x1b]777;notify;Claude Code;Claude is waiting for your input\x07");
+    await settle();
+    expect(gates[gates.length - 1]).toBeNull();
+
+    // Claude erases the box on a later tick — this must clear any
+    // suppression recorded at close time.
+    await new Promise((r) => setTimeout(r, 310));
+    proc._emit("data", "\x1b[2J\x1b[Hjust some other output\r\n");
+    await settle();
+    expect(gates[gates.length - 1]).toBeNull();
+
+    // A NEW gate paints with the SAME content as the one that was closed —
+    // it must still be claimed, proving the suppression can never become
+    // permanent.
+    await new Promise((r) => setTimeout(r, 310));
+    proc._emit("data", GATE_PAINT);
+    await settle();
+
+    const lastGate = gates[gates.length - 1];
+    expect(lastGate).not.toBeNull();
+    expect(lastGate?.options.length).toBe(3);
+    mgr.dispose();
+  });
 });
