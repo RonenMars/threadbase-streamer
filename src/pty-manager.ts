@@ -7,6 +7,7 @@ import { getLogger, type Logger } from "./logger";
 import { clearClaudeExeCache, resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
 import {
+  detectGateScreen,
   hasPermissionOsc,
   hasWaitingForInputOsc,
   scrapePermissionGate,
@@ -65,6 +66,17 @@ const QUIET_DETECT_MS = 500;
 // half when split. 128 chars covers the escape with margin, tmux-wrapped or
 // not.
 const OSC_TAIL_CHARS = 128;
+
+// Ceiling on unsolicited rendered-screen scrapes: a chunk's arrival alone
+// may trigger a full detection pass at most this often. Exists because the
+// gate paint has NO reliable chunk-level signal (the TUI paints
+// cursor-addressed fragments and the box gutter defeats the hint regex)
+// while Claude debounces its OSC 777 notify ~6s — see
+// docs/superpowers/specs/2026-08-08-paint-time-gate-detection-design.md.
+// 300ms = half the blink cadence of a waiting gate (~450-620ms observed), so
+// worst-case added card latency is one tick and scrape work is ≤ ~3/s per
+// active session (idle sessions emit no chunks, so they never scrape).
+const SCRAPE_THROTTLE_MS = 300;
 
 // Flat backstop armed at spawn, mirroring CODEX_READY_FALLBACK_MS. It replaces
 // a chunk-gated 10s check that could only fire if another chunk happened to
@@ -208,6 +220,9 @@ export class PTYManager implements SessionRunner {
   // Last chunk's raw tail per session — prepended to the next chunk before
   // the OSC regex test so a split escape still matches. Consumed on match.
   private oscTail = new Map<string, string>();
+  // When the last full detection pass ran per session (any trigger) — the
+  // clock the SCRAPE_THROTTLE_MS ceiling is measured against.
+  private lastDetectAt = new Map<string, number>();
   // Content key of the last AskUserQuestion broadcast from the rendered screen,
   // per session — de-dupes the same menu firing on consecutive repaints.
   private lastScreenQuestionKey = new Map<string, string>();
@@ -640,6 +655,7 @@ export class PTYManager implements SessionRunner {
     this.firstChunkAt.delete(sessionId);
     this.permissionOpen.delete(sessionId);
     this.oscTail.delete(sessionId);
+    this.lastDetectAt.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
     this.quietCheckers.get(sessionId)?.cancel();
@@ -756,6 +772,7 @@ export class PTYManager implements SessionRunner {
     this.readyFallbackTimers.clear();
     this.permissionOpen.clear();
     this.oscTail.clear();
+    this.lastDetectAt.clear();
     this.lastScreenQuestionKey.clear();
     this.shellPromptOpen.clear();
   }
@@ -885,6 +902,11 @@ export class PTYManager implements SessionRunner {
         stripped,
       );
 
+    // Paint-time throttle: when the last full pass is ≥ SCRAPE_THROTTLE_MS
+    // old, a chunk's arrival alone is enough to scrape — the gate paint has
+    // no reliable chunk-level signal and its OSC arrives ~6s late.
+    const nowMs = Date.now();
+    const scrapeDue = nowMs - (this.lastDetectAt.get(sessionId) ?? 0) >= SCRAPE_THROTTLE_MS;
     // Nothing to do unless a trigger fired or a prompt we already broadcast is
     // open (so we can detect its close on the next prompt-ready).
     if (
@@ -892,12 +914,14 @@ export class PTYManager implements SessionRunner {
       !oscWaitingForInput &&
       !hasAskFooter &&
       !hasShellPromptHint &&
+      !scrapeDue &&
       !this.permissionOpen.has(sessionId) &&
       !this.shellPromptOpen.has(sessionId) &&
       !this.lastScreenQuestionKey.has(sessionId)
     ) {
       return;
     }
+    this.lastDetectAt.set(sessionId, nowMs);
 
     const lines = await this.getOutputLines(sessionId, 60);
 
@@ -947,6 +971,17 @@ export class PTYManager implements SessionRunner {
         this.permissionOpen.delete(sessionId);
         this.onPermissionChange?.(sessionId, null);
       } else if (gate) {
+        this.onPermissionChange?.(sessionId, gate);
+      }
+    } else if (!askFooterOnScreen) {
+      // Paint-time claim: the gate is on screen but Claude's OSC 777 notify
+      // (debounced ~6s upstream) hasn't arrived. detectGateScreen anchors on
+      // the gate footer + a Yes/No option label so a numbered list in prose
+      // can't open a card. Downstream is the OSC path unchanged — same
+      // broadcast, same dedupe, same close signals.
+      const gate = detectGateScreen(lines);
+      if (gate) {
+        this.permissionOpen.add(sessionId);
         this.onPermissionChange?.(sessionId, gate);
       }
     }
@@ -1148,6 +1183,7 @@ export class PTYManager implements SessionRunner {
     this.firstChunkAt.delete(sessionId);
     this.permissionOpen.delete(sessionId);
     this.oscTail.delete(sessionId);
+    this.lastDetectAt.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
     this.quietCheckers.get(sessionId)?.cancel();
