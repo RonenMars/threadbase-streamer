@@ -263,7 +263,9 @@ describe("SessionStore", () => {
     });
 
     it("reports completed once a multi-agent session is idle", () => {
-      store.addManaged(makeManagedSession({ status: "idle", currentTurnId: null }));
+      store.addManaged(
+        makeManagedSession({ status: "idle", currentTurnId: null, completedAt: new Date() }),
+      );
 
       const resp = store.get(UUID_A, noPty);
       expect(resp?.lifecycle).toBe("completed");
