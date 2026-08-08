@@ -10,6 +10,7 @@ import {
   detectGateScreen,
   hasPermissionOsc,
   hasWaitingForInputOsc,
+  permissionContentKey,
   scrapePermissionGate,
 } from "./services/questions/detectPermissionGate";
 import {
@@ -231,6 +232,13 @@ export class PTYManager implements SessionRunner {
   // on a prompt-ready/marker return and de-dupe consecutive repaints. Modelled
   // on permissionOpen but keyed by content (a shell prompt has no OSC trigger).
   private shellPromptOpen = new Map<string, string>();
+  // Content key (permissionContentKey, cursor excluded — see arm 3) of the
+  // gate that was still painted on screen when arm 2 closed it. Suppresses
+  // arm 3 re-claiming that same box from a later trigger-less/throttled pass
+  // before Claude erases it — otherwise the paint-time claim reopens the
+  // card it just closed. Cleared once detectGateScreen sees the box is gone,
+  // so a genuinely new (even content-identical) gate is claimed normally.
+  private closedGateKey = new Map<string, string>();
   // Tracks sessions (both fresh and resume) whose PTY has spawned but Claude
   // hasn't yet reached an interactive prompt — i.e. onReady hasn't fired.
   private pendingReady = new Set<string>();
@@ -658,6 +666,7 @@ export class PTYManager implements SessionRunner {
     this.lastDetectAt.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
+    this.closedGateKey.delete(sessionId);
     this.quietCheckers.get(sessionId)?.cancel();
     this.quietCheckers.delete(sessionId);
     this.clearReadyFallback(sessionId);
@@ -775,6 +784,7 @@ export class PTYManager implements SessionRunner {
     this.lastDetectAt.clear();
     this.lastScreenQuestionKey.clear();
     this.shellPromptOpen.clear();
+    this.closedGateKey.clear();
   }
 
   private handleOutput(sessionId: string, data: string): void {
@@ -982,6 +992,14 @@ export class PTYManager implements SessionRunner {
       if (oscWaitingForInput || (!stillPainted && hasPromptMarker)) {
         this.permissionOpen.delete(sessionId);
         this.onPermissionChange?.(sessionId, null);
+        // Record what's still on screen (if anything) so arm 3 doesn't
+        // reclaim this exact box on a later trigger-less pass before Claude
+        // erases it — see closedGateKey.
+        if (gate) {
+          this.closedGateKey.set(sessionId, permissionContentKey({ ...gate, cursor: undefined }));
+        } else {
+          this.closedGateKey.delete(sessionId);
+        }
       } else if (gate) {
         this.onPermissionChange?.(sessionId, gate);
       }
@@ -990,14 +1008,22 @@ export class PTYManager implements SessionRunner {
       // (debounced ~6s upstream) hasn't arrived. detectGateScreen anchors on
       // the gate footer + a Yes/No option label so a numbered list in prose
       // can't open a card. Downstream is the OSC path unchanged — same
-      // broadcast, same dedupe, same close signals. Never claim in a pass
-      // where the turn just ended (oscWaitingForInput) — a still-painted box
-      // that arm 2 already closed this pass, or a duplicate/late notify on
-      // the next tick, must not reopen the card.
+      // broadcast, same dedupe, same close signals. A still-painted box that
+      // arm 2 closed on an EARLIER pass reaches this arm on the very next
+      // trigger-less/throttled tick (arm 3 is an else-if of arm 2, so it can
+      // never run in the SAME pass as the close) — closedGateKey suppresses
+      // reclaiming that exact content until Claude erases the box.
       const gate = detectGateScreen(lines);
       if (gate) {
-        this.permissionOpen.add(sessionId);
-        this.onPermissionChange?.(sessionId, gate);
+        const key = permissionContentKey({ ...gate, cursor: undefined });
+        if (this.closedGateKey.get(sessionId) !== key) {
+          this.permissionOpen.add(sessionId);
+          this.onPermissionChange?.(sessionId, gate);
+        }
+      } else {
+        // Box is gone — clear the suppression so a later, even
+        // content-identical, gate is claimed normally.
+        this.closedGateKey.delete(sessionId);
       }
     }
 
@@ -1201,6 +1227,7 @@ export class PTYManager implements SessionRunner {
     this.lastDetectAt.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
+    this.closedGateKey.delete(sessionId);
     this.quietCheckers.get(sessionId)?.cancel();
     this.quietCheckers.delete(sessionId);
     this.clearReadyFallback(sessionId);
