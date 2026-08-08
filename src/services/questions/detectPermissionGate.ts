@@ -111,6 +111,9 @@ function stripGutter(line: string): string {
 
 /**
  * Scrape the permission gate's options + prompt from rendered screen lines.
+ * Scrapes the LAST option block on screen, scanning bottom-up: a stale
+ * numbered list sitting in scrollback above the real gate (e.g. Claude's own
+ * prose) matches the same option shape and must not be vacuumed in with it.
  * Returns null when no numbered options are present (not a gate, or not painted
  * yet). Pure — no I/O.
  */
@@ -119,14 +122,21 @@ export function scrapePermissionGate(lines: string[]): PermissionGate | null {
   let cursor: number | undefined;
   let firstOptionLine = -1;
 
-  for (let i = 0; i < lines.length; i++) {
-    const m = OPTION_RE.exec(stripGutter(lines[i]));
-    if (!m) continue;
-    const index = Number.parseInt(m[2], 10);
-    if (!Number.isFinite(index)) continue;
-    if (firstOptionLine === -1) firstOptionLine = i;
-    if (m[1]) cursor = index; // `❯` marks the highlighted option
-    options.push({ index, label: m[3] });
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const stripped = stripGutter(lines[i]);
+    const m = OPTION_RE.exec(stripped);
+    if (m) {
+      const index = Number.parseInt(m[2], 10);
+      if (!Number.isFinite(index)) continue;
+      firstOptionLine = i; // overwritten as we walk up — ends up topmost
+      if (m[1]) cursor = index; // `❯` marks the highlighted option
+      options.unshift({ index, label: m[3] }); // keep top-to-bottom screen order
+      continue;
+    }
+    if (options.length === 0) continue; // still below the block: footer, box bottom, blanks
+    // Inside the block: a blank line or the box edge marks its top boundary.
+    if (stripped.trim().length === 0 || BOX_ONLY_RE.test(lines[i].trim())) break;
+    // otherwise: a wrapped option label or the prompt line — keep walking
   }
 
   if (options.length === 0) return null;
