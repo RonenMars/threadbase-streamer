@@ -49,10 +49,15 @@ export const CODEX_PROMPT_READY_TEXT = "Ready";
 export const CODEX_BUSY_STATUS_RE = /\b(?:Starting|Working)\b/;
 
 // Boot progress lines that appear *above* the status bar while MCP servers
-// load. The status bar may already omit "Starting" (or truncate "Ready")
-// during this window — treating quiet as ready here is what stranded
+// are still loading. The status bar may already omit "Starting" (or truncate
+// "Ready") during this window — treating quiet as ready here is what stranded
 // keystrokes in the compose box as newlines (session 61928fac).
-export const CODEX_MCP_BOOT_RE = /Booting MCP|Starting MCP servers|model:\s*loading/i;
+//
+// Do NOT match post-boot warnings ("MCP startup incomplete", "not logged in",
+// "timed out after"): those stay on screen after Codex is usable. Matching
+// them blocked Ready forever (session fbb5eb36) and left mobile stuck in
+// `running` with a spinning send affordance.
+export const CODEX_MCP_BOOT_RE = /Booting MCP|Starting MCP servers/i;
 
 // Phase 0: a brand-new `--cd <dir>` shows a blocking directory-trust gate on
 // first-ever launch — a rendered screen containing this text, with options
@@ -68,6 +73,62 @@ export const CODEX_TRUST_GATE_REGEX = /trust the contents/i;
 // with a "Press enter to confirm or esc to go back" footer. Live-probe
 // verified: a digit keypress selects AND confirms instantly (no Enter).
 export const CODEX_HOOKS_GATE_REGEX = /hooks need review/i;
+
+// Hard usage-limit error Codex prints when the account quota is exhausted.
+export const CODEX_USAGE_LIMIT_RE = /you(?:'ve| have) hit your usage limit/i;
+
+// Soft tip Codex paints when a reset is available — often the only quota
+// signal on screen when a turn never starts (hard-limit text never appears).
+export const CODEX_USAGE_RESET_TIP_RE = /usage limit reset available/i;
+
+// Interactive model-switch menu shown when a turn would exceed rate limits.
+export const CODEX_RATE_LIMIT_MENU_RE = /approaching rate limits/i;
+
+export interface CodexBlockingPrompt {
+  prompt: string;
+  detail?: string;
+  options: PermissionOption[];
+  /** Tip-only (not a hard limit / rate-limit menu). Surfaced after a failed turn. */
+  soft?: boolean;
+}
+
+/** Parse Codex's numbered TUI menus (`1. …`, `› 2. …`). */
+export function parseCodexNumberedOptions(lines: string[]): PermissionOption[] {
+  const options: PermissionOption[] = [];
+  for (const line of lines) {
+    const m = /^\s*›?\s*(\d+)\.\s+(.+?)\s*$/.exec(line.trimEnd());
+    if (!m) continue;
+    const label = m[2].replace(/\s*\(selected\)\s*$/i, "").trim();
+    options.push({ index: Number(m[1]), label, answerKeys: `${m[1]}\r` });
+  }
+  return options;
+}
+
+/**
+ * Usage-limit errors, the soft "reset available" tip, and the "Approaching
+ * rate limits" model-picker menu. Surfaced over the permission transport so
+ * mobile shows a card instead of spinning forever in `running`.
+ */
+export function detectCodexBlockingPrompt(lines: string[]): CodexBlockingPrompt | null {
+  const screenText = lines.join("\n");
+  const usageLine = lines.find((l) => CODEX_USAGE_LIMIT_RE.test(l))?.trim();
+  const tipLine = lines.find((l) => CODEX_USAGE_RESET_TIP_RE.test(l))?.trim();
+  const rateMenu = CODEX_RATE_LIMIT_MENU_RE.test(screenText);
+  if (!usageLine && !rateMenu && !tipLine) return null;
+
+  const soft = !usageLine && !rateMenu && Boolean(tipLine);
+  const prompt =
+    usageLine ??
+    lines.find((l) => CODEX_RATE_LIMIT_MENU_RE.test(l))?.trim() ??
+    tipLine ??
+    "Codex usage limit reached";
+  const detail = lines.find((l) => /try again at/i.test(l))?.trim();
+  const options = parseCodexNumberedOptions(lines);
+  if (options.length === 0) {
+    options.push({ index: 1, label: soft ? "Dismiss" : "OK", answerKeys: "\x1b" });
+  }
+  return { prompt, ...(detail ? { detail } : {}), options, ...(soft ? { soft: true } : {}) };
+}
 
 // Re-run screen detection this long after the PTY goes quiet — a session
 // blocked on a gate (or a status bar whose "Ready" got truncated) may never
@@ -98,6 +159,12 @@ const CODEX_SUBMIT_DELAY_MS = 16;
 // forcing \r — mirrors pty-manager.ts SUBMIT_MAX_WAIT_MS.
 const CODEX_SUBMIT_MAX_WAIT_MS = 500;
 
+// After sendInput flips waiting_input → running, if Working never appears
+// within this window the turn never started (\r absorbed as a compose
+// newline, truncated Ready boot, etc.). Recover so grace/hold and mobile
+// are not stuck on `running`. Same 2s used by the Ready-stale path.
+const CODEX_SUBMIT_STALE_MS = 2_000;
+
 /** Last non-blank rendered line — Codex paints the status bar there. */
 export function codexStatusBarLine(lines: string[]): string {
   return [...lines].reverse().find((l) => l.trim() !== "") ?? "";
@@ -124,13 +191,17 @@ export function codexScreenShowsReady(lines: string[]): boolean {
 }
 
 /**
- * Soft idle for a truncated Ready bar: compose `›` is up and nothing busy is
- * on screen. Not used as a boot-ready signal — `›` appears during Starting.
+ * Soft idle for a truncated Ready bar: compose `›` / `>` is up and nothing
+ * busy is on screen. Not used as a sole boot-ready signal on quiet — `›`
+ * appears during Starting — but the flat fallback requires it (or Ready)
+ * before settling so a model-only status line is not mistaken for usable.
  */
 export function codexScreenLooksIdle(lines: string[]): boolean {
   if (codexScreenBlocksComposer(lines)) return false;
   if (codexScreenShowsReady(lines)) return true;
-  return lines.some((l) => l.includes("›"));
+  // Compose prefix: `›` (Codex default) or `>` (some Windows/ConPTY paints).
+  // Require start-of-line so URLs like `https://…` do not false-hit.
+  return lines.some((l) => /^\s*[›>]\s/.test(l) || l.includes("›"));
 }
 
 function digestBytes(s: string): string {
@@ -262,6 +333,8 @@ export class CodexPtyRunner implements SessionRunner {
   private quietCheckers = new Map<string, ReturnType<typeof debounce<[]>>>();
   // Per-session flat backstop from spawn (CODEX_READY_FALLBACK_MS).
   private readyFallbackTimers = new Map<string, NodeJS.Timeout>();
+  // After a user submit: if Working never appears, recover from stuck `running`.
+  private submitWatchTimers = new Map<string, NodeJS.Timeout>();
   // Wall-clock of the last PTY chunk per session — writeSubmit waits until
   // this hasn't advanced for CODEX_SUBMIT_DELAY_MS before writing \r.
   private lastChunkAt = new Map<string, number>();
@@ -270,6 +343,11 @@ export class CodexPtyRunner implements SessionRunner {
   // Ready bar immediately after sendInput cannot flip status back before the
   // turn starts (which would let grace/hold kill a live turn).
   private turnBusy = new Set<string>();
+  // Usage-limit / rate-limit menus — content key for deduped permission cards.
+  private openBlockingPrompt = new Map<string, string>();
+  // Last codex.screen fingerprint per session — only emit when it changes so
+  // MCP boot redraw storms don't flood the log.
+  private lastScreenLog = new Map<string, string>();
   // In-flight start()/startFresh() calls keyed by sessionId. A second
   // concurrent resume for the same session (double-tap, client retry) awaits
   // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
@@ -467,7 +545,25 @@ export class CodexPtyRunner implements SessionRunner {
     try {
       const lines = await this.getOutputLines(sessionId, PTY_ROWS);
       if (!this.pendingReady.has(sessionId)) return;
-      if (codexScreenBlocksComposer(lines)) {
+      const busy = codexScreenBlocksComposer(lines);
+      const bar = codexStatusBarLine(lines);
+      this.log.info(
+        `[codex.ready_fallback] ${sessionId.slice(0, 8)} busy=${busy} bar=${JSON.stringify(bar.slice(0, 120))}`,
+        {
+          event: "codex.ready_fallback",
+          sessionId,
+          busy,
+          hasReady: codexScreenShowsReady(lines),
+          statusBar: bar.slice(0, 160),
+        },
+      );
+      if (busy) {
+        this.armReadyFallback(sessionId);
+        return;
+      }
+      // Truncated Ready bar still needs a compose prompt (or Ready itself) —
+      // a model-only status line mid-paint must not disarm the input queue.
+      if (!codexScreenShowsReady(lines) && !codexScreenLooksIdle(lines)) {
         this.armReadyFallback(sessionId);
         return;
       }
@@ -572,6 +668,7 @@ export class CodexPtyRunner implements SessionRunner {
       session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
     }
+    this.turnBusy.delete(sessionId);
     this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
     session.lastActivityAt = new Date();
     session.promptCount++;
@@ -632,8 +729,53 @@ export class CodexPtyRunner implements SessionRunner {
         },
       );
       current.process.write(SUBMIT_BYTES);
+      this.armSubmitWatch(sessionId);
     };
     setTimeout(trySubmit, CODEX_SUBMIT_DELAY_MS);
+  }
+
+  // If Working never appears after \r, the turn did not start — recover from
+  // stuck `running` even when no further PTY chunks re-arm the quiet checker
+  // (session ddc67b57: one post-submit chunk, then silence forever).
+  private armSubmitWatch(sessionId: string): void {
+    const prev = this.submitWatchTimers.get(sessionId);
+    if (prev) clearTimeout(prev);
+    const timer = setTimeout(() => {
+      this.submitWatchTimers.delete(sessionId);
+      void this.trySubmitStaleRecovery(sessionId);
+    }, CODEX_SUBMIT_STALE_MS);
+    timer.unref?.();
+    this.submitWatchTimers.set(sessionId, timer);
+  }
+
+  private async trySubmitStaleRecovery(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status !== "running") return;
+    if (this.turnBusy.has(sessionId)) return;
+    if (session.statusSource !== "user-input") return;
+
+    try {
+      const lines = await this.getOutputLines(sessionId, PTY_ROWS);
+      if (session.status !== "running" || this.turnBusy.has(sessionId)) return;
+      if (codexScreenBlocksComposer(lines)) {
+        // Still Starting/MCP — give the turn more time.
+        this.armSubmitWatch(sessionId);
+        return;
+      }
+      this.log.info(`[codex.submit_stale] ${sessionId.slice(0, 8)} recovering`, {
+        event: "codex.submit_stale",
+        sessionId,
+        statusBar: codexStatusBarLine(lines).slice(0, 160),
+      });
+      this.markReady(sessionId, session, "quiet-fallback", "submit-stale");
+    } catch (err) {
+      this.log.warn("[codex.submit_stale] failed", {
+        event: "codex.submit_stale_failed",
+        sessionId,
+        err,
+      });
+      this.armSubmitWatch(sessionId);
+    }
   }
 
   // Drain any inputs sent while the session was still pendingReady, writing
@@ -715,6 +857,9 @@ export class CodexPtyRunner implements SessionRunner {
     const timer = this.readyFallbackTimers.get(sessionId);
     if (timer) clearTimeout(timer);
     this.readyFallbackTimers.delete(sessionId);
+    const submitWatch = this.submitWatchTimers.get(sessionId);
+    if (submitWatch) clearTimeout(submitWatch);
+    this.submitWatchTimers.delete(sessionId);
     this.lastChunkAt.delete(sessionId);
     if (this.openGate.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
@@ -722,6 +867,10 @@ export class CodexPtyRunner implements SessionRunner {
     this.gateActioned.delete(`${sessionId}:hooks`);
     this.gateActioned.delete(`${sessionId}:trust`);
     this.turnBusy.delete(sessionId);
+    if (this.openBlockingPrompt.delete(sessionId)) {
+      this.onPermissionChange?.(sessionId, null);
+    }
+    this.lastScreenLog.delete(sessionId);
   }
 
   getOutput(sessionId: string): string {
@@ -804,8 +953,14 @@ export class CodexPtyRunner implements SessionRunner {
     this.gateActioned.clear();
     this.quietCheckers.clear();
     this.readyFallbackTimers.clear();
+    for (const timer of this.submitWatchTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.submitWatchTimers.clear();
     this.lastChunkAt.clear();
     this.turnBusy.clear();
+    this.openBlockingPrompt.clear();
+    this.lastScreenLog.clear();
   }
 
   private handleOutput(sessionId: string, data: string): void {
@@ -890,8 +1045,61 @@ export class CodexPtyRunner implements SessionRunner {
       this.flushQueuedInputs(sessionId);
     }
 
+    // ── Usage / rate limits ────────────────────────────────────────
+    const blocking = detectCodexBlockingPrompt(lines);
+    if (blocking) {
+      // Soft tip alone is informational during boot / healthy idle — only
+      // elevate it when a user submit is stuck in `running` without Working
+      // (hard-limit text never appears; tip is the only quota signal).
+      const elevateSoft =
+        !blocking.soft ||
+        (session.status === "running" &&
+          session.statusSource === "user-input" &&
+          !this.turnBusy.has(sessionId) &&
+          !this.pendingReady.has(sessionId));
+      if (elevateSoft) {
+        this.handleBlockingPrompt(sessionId, session, blocking);
+      }
+    } else if (this.openBlockingPrompt.delete(sessionId)) {
+      this.onPermissionChange?.(sessionId, null);
+    }
+
     // ── Readiness ──────────────────────────────────────────────────
     const hasReady = codexScreenShowsReady(lines);
+    const busy = codexScreenBlocksComposer(lines);
+    const bar = codexStatusBarLine(lines);
+
+    // State-change trail for Starting/Ready/usage investigations. Info (not
+    // debug) so a default LOG_LEVEL=info prod log captures it; fingerprint
+    // dedupe keeps MCP redraw storms from flooding the file.
+    const screenFp = [
+      this.pendingReady.has(sessionId) ? "1" : "0",
+      session.status,
+      hasReady ? "1" : "0",
+      busy ? "1" : "0",
+      blocking ? (blocking.soft ? "soft" : "1") : "0",
+      bar.slice(0, 80),
+    ].join("|");
+    if (this.lastScreenLog.get(sessionId) !== screenFp) {
+      this.lastScreenLog.set(sessionId, screenFp);
+      this.log.info(
+        `[codex.screen] ${sessionId.slice(0, 8)} pending=${this.pendingReady.has(sessionId)} ` +
+          `status=${session.status} ready=${hasReady} busy=${busy} usage=${Boolean(blocking)} ` +
+          `bar=${JSON.stringify(bar.slice(0, 100))}`,
+        {
+          event: "codex.screen",
+          sessionId,
+          trigger: _trigger,
+          pendingReady: this.pendingReady.has(sessionId),
+          status: session.status,
+          hasReady,
+          busy,
+          usageHit: Boolean(blocking),
+          usageSoft: Boolean(blocking?.soft),
+          statusBar: bar.slice(0, 160),
+        },
+      );
+    }
 
     if (this.pendingReady.has(sessionId)) {
       // Boot: only the Ready marker settles pendingReady on a chunk/quiet
@@ -908,23 +1116,55 @@ export class CodexPtyRunner implements SessionRunner {
     // returned. A stale Ready still on screen right after submit must not
     // undo the running status — grace/hold would then kill a live turn.
     if (session.status === "running") {
-      const bar = codexStatusBarLine(lines);
-      if (/\bWorking\b/.test(bar)) this.turnBusy.add(sessionId);
+      if (/\bWorking\b/.test(bar)) {
+        this.turnBusy.add(sessionId);
+        const watch = this.submitWatchTimers.get(sessionId);
+        if (watch) clearTimeout(watch);
+        this.submitWatchTimers.delete(sessionId);
+      }
 
       if (hasReady && this.turnBusy.has(sessionId)) {
         this.turnBusy.delete(sessionId);
         this.markReady(sessionId, session, "prompt-marker", `marker:${CODEX_PROMPT_READY_TEXT}`);
       } else if (
-        hasReady &&
         !this.turnBusy.has(sessionId) &&
+        !busy &&
         session.statusSource === "user-input" &&
         session.statusUpdatedAt != null &&
-        Date.now() - session.statusUpdatedAt.getTime() >= 2_000
+        Date.now() - session.statusUpdatedAt.getTime() >= CODEX_SUBMIT_STALE_MS
       ) {
-        // Submit never left Ready (Enter absorbed as a newline, etc.) —
-        // recover so the session is not stuck "running" forever.
-        this.markReady(sessionId, session, "quiet-fallback", "ready-stale");
+        // Submit never started a turn (Enter absorbed, no Ready on screen,
+        // etc.) — recover so the session is not stuck "running" forever.
+        // Does not require Ready: fallback boots often never paint it.
+        this.markReady(sessionId, session, "quiet-fallback", "submit-stale");
       }
+    }
+  }
+
+  // Surface quota / rate-limit screens as permission cards and stop leaving
+  // the session stuck in `running` while Codex waits for a menu pick.
+  private handleBlockingPrompt(
+    sessionId: string,
+    session: InternalSession,
+    blocking: CodexBlockingPrompt,
+  ): void {
+    const key = `${blocking.prompt}\0${blocking.detail ?? ""}\0${blocking.options.map((o) => o.index).join(",")}`;
+    const prev = this.openBlockingPrompt.get(sessionId);
+    if (prev !== key) {
+      this.openBlockingPrompt.set(sessionId, key);
+      session.failureReason = blocking.detail
+        ? `${blocking.prompt} ${blocking.detail}`
+        : blocking.prompt;
+      this.log.info(`[codex.usage_limit] ${sessionId.slice(0, 8)}`, {
+        event: "codex.usage_limit",
+        sessionId,
+        prompt: blocking.prompt,
+      });
+      this.onPermissionChange?.(sessionId, blocking);
+    }
+    if (session.status === "running") {
+      this.turnBusy.delete(sessionId);
+      this.markReady(sessionId, session, "quiet-fallback", "usage-limit");
     }
   }
 
@@ -985,6 +1225,9 @@ export class CodexPtyRunner implements SessionRunner {
     });
     this.onStatusChange?.(toPublicSession(session));
     const wasPending = this.pendingReady.delete(sessionId);
+    const submitWatch = this.submitWatchTimers.get(sessionId);
+    if (submitWatch) clearTimeout(submitWatch);
+    this.submitWatchTimers.delete(sessionId);
     if (wasPending) {
       const timer = this.readyFallbackTimers.get(sessionId);
       if (timer) clearTimeout(timer);
