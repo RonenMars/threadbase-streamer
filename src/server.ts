@@ -744,6 +744,17 @@ export class StreamerServer {
         this.pendingLineSeqs.delete(filePath);
       },
       onConversationChanged: (filePath) => {
+        // Directory unlink is the survivor when the per-file watcher's unlink
+        // is dropped (delete inside a write-finish window, or a dead handle).
+        // Detect gone-on-disk here and take the same detach + invalidate path
+        // as onFileDeleted — otherwise an external tail stays attached until
+        // the 5 min idle sweep (#393).
+        try {
+          statSync(filePath);
+        } catch {
+          this.handleJsonlDeleted(filePath);
+          return;
+        }
         // A new JSONL appeared (or changed) in a watched project directory.
         // If we hold a per-file tail for it, re-drive the tail read from here
         // too: per-file fs.watch handles can die silently (2026-07-01 incident
@@ -786,25 +797,7 @@ export class StreamerServer {
           event: "tail.truncated",
         });
       },
-      onFileDeleted: (filePath) => {
-        // The file is gone; an external tail on it can never fire again.
-        this.detachExternalTail(canonicalizeFilePath(filePath));
-        // While an alert is pending, freeze: queue the deletion instead of
-        // invalidating the row, so an rm -rf mid-freeze can't drain the cache.
-        if (this.cacheMonitor?.pending) {
-          this.cacheMonitor.deferUnlink(filePath);
-          return;
-        }
-        const id = this.cache?.invalidateByFilePath(filePath);
-        if (id)
-          this.log.info(`Cache row invalidated after JSONL delete: ${id}`, {
-            id,
-            filePath,
-            event: "cache.invalidate_on_unlink",
-          });
-        // Feed the storm detector — a burst of unlinks re-triggers detection.
-        this.cacheMonitor?.recordUnlink(filePath);
-      },
+      onFileDeleted: (filePath) => this.handleJsonlDeleted(filePath),
     });
 
     this.ptyManager = new LiveSessionManager({
@@ -3458,6 +3451,31 @@ export class StreamerServer {
       filePath: key,
       event: "external_tail.detach",
     });
+  }
+
+  /**
+   * Shared unlink path for the per-file watcher and the directory watcher.
+   * Detaches any external tail and drops the cache row (unless an integrity
+   * alert is freezing deletes).
+   */
+  private handleJsonlDeleted(filePath: string): void {
+    // The file is gone; an external tail on it can never fire again.
+    this.detachExternalTail(canonicalizeFilePath(filePath));
+    // While an alert is pending, freeze: queue the deletion instead of
+    // invalidating the row, so an rm -rf mid-freeze can't drain the cache.
+    if (this.cacheMonitor?.pending) {
+      this.cacheMonitor.deferUnlink(filePath);
+      return;
+    }
+    const id = this.cache?.invalidateByFilePath(filePath);
+    if (id)
+      this.log.info(`Cache row invalidated after JSONL delete: ${id}`, {
+        id,
+        filePath,
+        event: "cache.invalidate_on_unlink",
+      });
+    // Feed the storm detector — a burst of unlinks re-triggers detection.
+    this.cacheMonitor?.recordUnlink(filePath);
   }
 
   /** Make room for one more tail by evicting the least recently active ones. */

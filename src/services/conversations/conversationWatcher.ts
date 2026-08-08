@@ -109,7 +109,11 @@ export class ConversationWatcher {
 
     const watcher = chokidar.watch(filePath, {
       ignoreInitial: true,
-      awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 25 },
+      // No awaitWriteFinish: readNewLines already coalesces bursts via the
+      // reading/pending flags, and awaitWriteFinish on Linux has been observed
+      // to drop the unlink when a just-created file is deleted inside the
+      // stability window — leaving an external tail attached until the 5 min
+      // idle sweep (#393).
     });
 
     watcher.on("change", () => {
