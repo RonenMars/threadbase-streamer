@@ -143,4 +143,46 @@ describe("scrapePermissionGate", () => {
     expect(scrapePermissionGate(["Claude needs your permission", ""])).toBeNull();
     expect(scrapePermissionGate([])).toBeNull();
   });
+
+  it("ignores a numbered list in prose above the gate box", () => {
+    const lines = [
+      "⏺ Here is the plan:",
+      "  1. Rebase onto main",
+      "  2. Squash-merge",
+      "",
+      "╭──────────────────────────────────────────────╮",
+      "│ Bash command                                 │",
+      "│   /opt/homebrew/bin/git reflog -8            │",
+      "│                                              │",
+      "│ Do you want to proceed?                      │",
+      "│ ❯ 1. Yes                                     │",
+      "│   2. No                                      │",
+      "│                                              │",
+      "│ Esc to cancel · Tab to amend                 │",
+      "╰──────────────────────────────────────────────╯",
+    ];
+    const gate = scrapePermissionGate(lines);
+    // Only the gate's own two options — the prose rows are not the gate's.
+    expect(gate?.options).toEqual([
+      { index: 1, label: "Yes" },
+      { index: 2, label: "No" },
+    ]);
+    expect(gate?.cursor).toBe(1);
+    // The prompt must be the gate's question, not the line above the prose.
+    expect(gate?.prompt).toBe("Do you want to proceed?");
+  });
+
+  it("still collects an option whose label wrapped onto the next line", () => {
+    const lines = [
+      "│ Do you want to proceed?                      │",
+      "│ ❯ 1. Yes                                     │",
+      "│   2. Yes, and don't ask again for:           │",
+      "│      /opt/homebrew/bin/git reflog *          │",
+      "│   3. No                                      │",
+      "│ Esc to cancel                                │",
+    ];
+    const gate = scrapePermissionGate(lines);
+    expect(gate?.options.map((o) => o.index)).toEqual([1, 2, 3]);
+    expect(gate?.prompt).toBe("Do you want to proceed?");
+  });
 });

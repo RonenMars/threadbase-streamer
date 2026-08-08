@@ -2381,6 +2381,31 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("GET /api/projects/summary", () => {
+    it("returns the paginated project aggregate", async () => {
+      const res = await fetch(`${baseUrl}/api/projects/summary?limit=5`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(Array.isArray(body.projects)).toBe(true);
+      expect(typeof body.total).toBe("number");
+      expect(body.offset).toBe(0);
+      expect(typeof body.hasMore).toBe("boolean");
+      for (const p of body.projects) {
+        expect(typeof p.path).toBe("string");
+        expect(typeof p.name).toBe("string");
+        expect(typeof p.conversationCount).toBe("number");
+        expect(new Date(p.lastActivity).toString()).not.toBe("Invalid Date");
+      }
+    });
+
+    it("returns 401 without auth", async () => {
+      const res = await fetch(`${baseUrl}/api/projects/summary`);
+      expect(res.status).toBe(401);
+    });
+  });
+
   describe("404 handling", () => {
     it("returns 404 for unknown routes", async () => {
       const res = await fetch(`${baseUrl}/api/nonexistent`, {

@@ -269,6 +269,8 @@ export class ConversationCache {
     listConversationsForProjectBackfill: Database.Statement;
     hasOrphanProjectId: Database.Statement;
     popularProjects: Database.Statement;
+    projectSummaries: Database.Statement;
+    projectSummaryCount: Database.Statement;
     getFileState: Database.Statement;
     upsertFileState: Database.Statement;
     deleteFileState: Database.Statement;
@@ -467,6 +469,21 @@ export class ConversationCache {
          GROUP BY project_path
          ORDER BY cnt DESC
          LIMIT ?`,
+      ),
+      // Same table, same rows and same NULL filter /api/conversations lists
+      // from, so a group's count/last-activity can never disagree with the
+      // page it opens. Bare project_name is the one from the MAX(last_activity)
+      // row (SQLite's documented min/max-aggregate bare-column rule).
+      projectSummaries: db.prepare(
+        `SELECT project_path, project_name, COUNT(*) as cnt, MAX(last_activity) as latest
+         FROM conversation_meta
+         WHERE project_path IS NOT NULL
+         GROUP BY project_path
+         ORDER BY latest DESC, project_path ASC
+         LIMIT ? OFFSET ?`,
+      ),
+      projectSummaryCount: db.prepare(
+        "SELECT COUNT(DISTINCT project_path) as n FROM conversation_meta WHERE project_path IS NOT NULL",
       ),
       getFileState: db.prepare("SELECT * FROM conversation_file_state WHERE path = ?"),
       upsertFileState: db.prepare(
@@ -977,6 +994,40 @@ export class ConversationCache {
       name: r.project_name ?? r.project_path.split(/[/\\]/).pop() ?? r.project_path,
       sessionCount: r.cnt,
     }));
+  }
+
+  /** Every project with at least one cached conversation, most recently active
+   *  first. Paths are the raw `project_path` values, which is what
+   *  /api/conversations?project= matches on exactly — so a summary row is
+   *  always joinable against the page it describes. */
+  listProjectSummaries(opts: { limit: number; offset: number }): {
+    projects: Array<{
+      path: string;
+      name: string;
+      conversationCount: number;
+      lastActivity: string;
+    }>;
+    total: number;
+  } {
+    const total = (this.stmts.projectSummaryCount.get() as { n: number }).n;
+    const rows =
+      opts.limit === 0
+        ? []
+        : (this.stmts.projectSummaries.all(opts.limit, opts.offset) as Array<{
+            project_path: string;
+            project_name: string | null;
+            cnt: number;
+            latest: number | null;
+          }>);
+    return {
+      total,
+      projects: rows.map((r) => ({
+        path: r.project_path,
+        name: r.project_name ?? r.project_path.split(/[/\\]/).pop() ?? r.project_path,
+        conversationCount: r.cnt,
+        lastActivity: new Date(r.latest ?? 0).toISOString(),
+      })),
+    };
   }
 
   private ensureFileIndex(): void {

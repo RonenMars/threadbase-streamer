@@ -1436,3 +1436,57 @@ describe("updateFromLines() — batched write", () => {
     expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(1);
   });
 });
+
+describe("listProjectSummaries()", () => {
+  const conv = (id: string, projectPath: string, timestamp: string, projectName?: string) => ({
+    ...BASE_META,
+    id,
+    sessionId: id,
+    filePath: `/p/${id}.jsonl`,
+    projectPath,
+    projectName,
+    timestamp,
+  });
+
+  it("returns every project ordered by last activity, with counts matching the pages", () => {
+    cache.upsertFromScannerMeta([
+      conv("a1", "/home/a-b", "2024-01-01T10:00:00.000Z", "a-b"),
+      conv("a2", "/home/a-b", "2024-03-01T10:00:00.000Z", "a-b"),
+      conv("b1", "/home/other", "2024-02-01T10:00:00.000Z", "other"),
+    ] as any);
+
+    const { projects, total } = cache.listProjectSummaries({ limit: 10, offset: 0 });
+    expect(total).toBe(2);
+    expect(projects.map((p) => p.path)).toEqual(["/home/a-b", "/home/other"]);
+    expect(projects[0]).toMatchObject({
+      name: "a-b",
+      conversationCount: 2,
+      lastActivity: "2024-03-01T10:00:00.000Z",
+    });
+
+    // The contract mobile depends on: a summary row must describe exactly what
+    // /api/conversations?project=<path> returns.
+    for (const p of projects) {
+      const page = cache.listConversations({ project: p.path, limit: 50, offset: 0 });
+      expect(page.total).toBe(p.conversationCount);
+      expect(page.conversations[0].lastActivity).toBe(p.lastActivity);
+    }
+  });
+
+  it("paginates with a stable total", () => {
+    cache.upsertFromScannerMeta([
+      conv("c1", "/home/one", "2024-01-01T10:00:00.000Z"),
+      conv("c2", "/home/two", "2024-02-01T10:00:00.000Z"),
+      conv("c3", "/home/three", "2024-03-01T10:00:00.000Z"),
+    ] as any);
+
+    const page = cache.listProjectSummaries({ limit: 2, offset: 2 });
+    expect(page.total).toBe(3);
+    expect(page.projects.map((p) => p.path)).toEqual(["/home/one"]);
+  });
+
+  it("falls back to the last path segment when projectName is null", () => {
+    cache.upsertFromScannerMeta([conv("d1", "/home/work/frontend", BASE_META.timestamp)] as any);
+    expect(cache.listProjectSummaries({ limit: 10, offset: 0 }).projects[0].name).toBe("frontend");
+  });
+});
