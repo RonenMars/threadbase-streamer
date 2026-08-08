@@ -3172,6 +3172,13 @@ export class StreamerServer {
   }
 
   private async getScanner(skipStaleRescan = false): Promise<ConversationScanner> {
+    // Detail path (#368): never block on an in-flight scan. The live scanner is
+    // kept readable across full rescans (shadow-and-swap in rescanForRefresh);
+    // mid-rebuild the previous generation is still correct for conversations
+    // that existed before the rescan started.
+    if (skipStaleRescan && this.scanner) {
+      return this.scanner;
+    }
     if (this.scannerReady) {
       await this.scannerReady;
       // onConversationChanged may have nulled this.scanner while we awaited —
@@ -3233,13 +3240,16 @@ export class StreamerServer {
     return this.getScanner();
   }
 
-  // refresh=1's scan: reuse the WARM scanner and re-run its scan with
-  // fullRescan:true — the escape hatch that bypasses the scanner's
-  // dir-mtime discovery gate, since an explicit user pull-to-refresh is exactly
-  // the "don't trust the gate, check disk for real" signal. Unlike
-  // getFreshScanner() this does NOT discard the warm scanner. scannerReady is
-  // only ever reassigned to a live scan promise (never nulled mid-scan), so the
-  // getScanner() anti-infinite-loop guard is preserved.
+  // refresh=1's scan: build a SHADOW scanner with fullRescan:true, then swap
+  // it in atomically. The escape hatch bypasses the scanner's dir-mtime
+  // discovery gate (an explicit user pull-to-refresh is exactly the "don't
+  // trust the gate, check disk for real" signal).
+  //
+  // Scanning in place would clear the non-persistent scanner's metadataCache
+  // at start, so a concurrent detail fetch that skipped the await would 404 a
+  // conversation that exists — and one that awaited would pay the full scan's
+  // wall clock (#368). Shadow-and-swap keeps this.scanner readable as the
+  // previous generation for the whole rebuild.
   private async rescanForRefresh(
     onProgress?: (scanned: number, total: number) => void,
   ): Promise<ConversationScanner> {
@@ -3248,19 +3258,27 @@ export class StreamerServer {
     if (this.scannerReady) await this.scannerReady;
     // A full rescan supersedes any pending staleness, per-file paths included.
     this.takeStaleFiles();
-    if (!this.scanner) {
-      this.scanner = new ConversationScanner();
-      this.allScanners.add(this.scanner);
-    }
-    const scanner = this.scanner;
-    this.scannerReady = scanner.scan({
+    const previous = this.scanner;
+    const statCache = this.buildStatCache(previous);
+    const shadow = this.newScanner(statCache ? { persistent: false } : undefined);
+    this.allScanners.add(shadow);
+    this.scannerReady = shadow.scan({
       ...(this.scanProfiles ? { profiles: this.scanProfiles } : {}),
       ...this.codexScanOpts(),
       fullRescan: true,
+      ...(statCache ? { statCache } : {}),
       ...(onProgress ? { onProgress } : {}),
     });
-    await this.scannerReady;
-    return scanner;
+    try {
+      await this.scannerReady;
+    } catch (err) {
+      // Leave this.scanner as the previous generation; clear the failed promise
+      // so the next caller retries rather than replaying the rejection.
+      this.scannerReady = null;
+      throw err;
+    }
+    this.scanner = shadow;
+    return shadow;
   }
 
   /**
@@ -3674,6 +3692,30 @@ export class StreamerServer {
       this.findLiveSessionFilePath(uuid) ??
       this.findLiveSessionFilePath(lookupId);
     if (!filePath) return null;
+
+    // Mid-full-rescan (or any in-flight scannerReady): do NOT discard the live
+    // scanner and kick a competing getScanner() — that races the shadow rebuild
+    // in rescanForRefresh. Parse just this one file the same way the cold-start
+    // path does (#368).
+    if (this.scannerReady) {
+      const account = this.cache?.getMetaById(lookupId)?.account ?? undefined;
+      const singleFileScanner = this.scanner ?? this.newScanner();
+      try {
+        const page = await singleFileScanner.parseSingleFilePage(filePath, account, {
+          limit: Number.MAX_SAFE_INTEGER,
+        });
+        if (page?.conversation) return page.conversation;
+      } catch (err) {
+        this.log.warn("detail.single_file_parse_failed", {
+          event: "detail.single_file_parse_failed",
+          conversationId: lookupId,
+          filePath,
+          err,
+        });
+      }
+      return null;
+    }
+
     this.scanner = null;
     this.scannerReady = null;
     const freshScanner = await this.getScanner();
