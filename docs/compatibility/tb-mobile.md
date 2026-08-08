@@ -53,6 +53,9 @@ A recovered session's `status` has to report `idle` (it holds no PTY, and a nove
 This field carries that one bit separately, so a client can say "interrupted mid-response" instead of "idle".
 Purely additive and safe to ignore: nothing keys off it server-side, and a client that never reads it behaves exactly as it does today.
 Adopting it is tracked as tb-mobile PR M2.
+- Session — new value on the existing optional `lifecycle` field: `"starting"`, for a managed session this run holds no PTY for and has observed no exit for (no `completedAt`, no `failureReason`).
+It replaces the `"completed"` those sessions used to report, which made "has not attached yet" and "has ended" the same value on the wire — the ambiguity tb-mobile #508 needs resolved.
+`status`, `ptyAttached` and every other field are unchanged, and `lifecycle` was already optional, so a client that does not know the value behaves exactly as it does today; adopting it is tracked in tb-mobile #508.
 - Session — optional field `sessionName`: a user-visible title. Previously only populated on a resumed session (from the scanner's own title derivation); now also derived for a fresh live session from its first user message (`deriveSessionName`, first line truncated to 80 chars) as soon as that message is submitted. Absent until then.
 - Conversation list item: `id`, `title`, `projectPath`, `messageCount`, `lastActivity`, `firstMessage`, `lastMessage`, `preview`, `model`
 - Conversation detail: `meta` object + `messages` array + `message_pagination` object
