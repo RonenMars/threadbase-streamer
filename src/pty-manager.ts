@@ -60,6 +60,12 @@ const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
 // gapMs sample this was based on).
 const QUIET_DETECT_MS = 500;
 
+// Raw tail carried across chunks for the OSC 777 regexes. node-pty chunk
+// boundaries are arbitrary, and the ~54-char notify escape matched NEITHER
+// half when split. 128 chars covers the escape with margin, tmux-wrapped or
+// not.
+const OSC_TAIL_CHARS = 128;
+
 // Flat backstop armed at spawn, mirroring CODEX_READY_FALLBACK_MS. It replaces
 // a chunk-gated 10s check that could only fire if another chunk happened to
 // arrive — useless for the case it was written for, a boot that falls silent
@@ -199,6 +205,9 @@ export class PTYManager implements SessionRunner {
   // the next prompt-ready without a fresh 777 (gate closed). Prevents
   // re-broadcasting open/close on every chunk.
   private permissionOpen = new Set<string>();
+  // Last chunk's raw tail per session — prepended to the next chunk before
+  // the OSC regex test so a split escape still matches. Consumed on match.
+  private oscTail = new Map<string, string>();
   // Content key of the last AskUserQuestion broadcast from the rendered screen,
   // per session — de-dupes the same menu firing on consecutive repaints.
   private lastScreenQuestionKey = new Map<string, string>();
@@ -630,6 +639,7 @@ export class PTYManager implements SessionRunner {
     this.queuedInputs.delete(sessionId);
     this.firstChunkAt.delete(sessionId);
     this.permissionOpen.delete(sessionId);
+    this.oscTail.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
     this.quietCheckers.get(sessionId)?.cancel();
@@ -745,6 +755,7 @@ export class PTYManager implements SessionRunner {
     for (const timer of this.readyFallbackTimers.values()) clearTimeout(timer);
     this.readyFallbackTimers.clear();
     this.permissionOpen.clear();
+    this.oscTail.clear();
     this.lastScreenQuestionKey.clear();
     this.shellPromptOpen.clear();
   }
@@ -844,11 +855,20 @@ export class PTYManager implements SessionRunner {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
-    const oscPermission = hasPermissionOsc(rawData);
+    // OSC escapes can split across node-pty chunk boundaries — test against
+    // the previous chunk's tail + this chunk. The tail is consumed on a match
+    // so the quiet path (rawData === "") can never re-fire a seen escape, and
+    // left untouched by the quiet path so a pending partial isn't dropped.
+    const oscWindow = (this.oscTail.get(sessionId) ?? "") + rawData;
+    const oscPermission = hasPermissionOsc(oscWindow);
     // Claude finished its turn. Authoritative "no gate is open" signal — it
     // arrives even when no further chunk will (the turn is over), so it is the
     // only thing that can close a gate whose options never painted.
-    const oscWaitingForInput = hasWaitingForInputOsc(rawData);
+    const oscWaitingForInput = hasWaitingForInputOsc(oscWindow);
+    if (rawData !== "") {
+      if (oscPermission || oscWaitingForInput) this.oscTail.delete(sessionId);
+      else this.oscTail.set(sessionId, rawData.slice(-OSC_TAIL_CHARS));
+    }
     // Footer test on the CURRENT chunk — a cheap trigger only. The authoritative
     // test runs on the full rendered screen below (askFooterOnScreen), because
     // the OSC-777 notify and the "Enter to select" footer often arrive in
@@ -1127,6 +1147,7 @@ export class PTYManager implements SessionRunner {
     this.queuedInputs.delete(sessionId);
     this.firstChunkAt.delete(sessionId);
     this.permissionOpen.delete(sessionId);
+    this.oscTail.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
     this.quietCheckers.get(sessionId)?.cancel();
