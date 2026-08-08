@@ -218,6 +218,11 @@ describe("StreamerServer", () => {
       expect(body.id).toBe(conversationId);
       expect(body.type).toBe("conversation");
       expect(body.status).toBe("on_hold");
+      // Same wire shape as a rehydrated stub — resumable, no live process (#438).
+      expect(body.ownership).toBe("historical");
+      expect(body.lifecycle).toBe("resumable");
+      expect(body.lifecycleSource).toBe("reconcile");
+      expect(body.ptyAttached).toBe(false);
     });
   });
 

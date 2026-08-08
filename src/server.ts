@@ -5926,7 +5926,11 @@ function conversationToResumableSession(c: ConversationListItem) {
     status: "on_hold" as const,
     // A cached conversation with no process behind it. Distinguishes "nobody is
     // running this" from an external session that IS live (ownership "external").
+    // Match the rehydrated branch of managedToResponse: same conceptual state
+    // ("resumable, no live process") must produce the same wire shape (#438).
     ownership: "historical" as const,
+    lifecycle: "resumable" as const,
+    lifecycleSource: "reconcile" as const,
     ptyAttached: false,
     projectId: c.projectId ?? undefined,
     projectPath: c.projectPath ?? "",
