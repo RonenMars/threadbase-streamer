@@ -48,4 +48,29 @@ describe("GET /api/sessions — discovery TTL cache", () => {
 
     expect(vi.mocked(discoverClaudeProcesses)).toHaveBeenCalledTimes(1);
   });
+
+  it("shares one in-flight discovery across concurrent requests", async () => {
+    // Without single-flight, mobile retry storms each spawn a full Windows
+    // CIM scan (observed: many overlapping GET /api/sessions at 80–100s).
+    let release!: (value: never[]) => void;
+    const gate = new Promise<never[]>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(discoverClaudeProcesses).mockImplementation(() => gate);
+
+    const headers = { Authorization: `Bearer ${API_KEY}` };
+    const first = fetch(`${baseUrl}/api/sessions`, { headers });
+    const second = fetch(`${baseUrl}/api/sessions`, { headers });
+
+    // Both handlers must reach the discovery await before we release it.
+    await vi.waitFor(() => {
+      expect(vi.mocked(discoverClaudeProcesses)).toHaveBeenCalledTimes(1);
+    });
+
+    release([]);
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(vi.mocked(discoverClaudeProcesses)).toHaveBeenCalledTimes(1);
+  });
 });
