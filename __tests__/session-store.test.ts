@@ -177,10 +177,38 @@ describe("SessionStore", () => {
     });
 
     it("reports completed once the PTY is gone with no failure recorded", () => {
-      store.addManaged(makeManagedSession({ status: "idle" }));
+      store.addManaged(makeManagedSession({ status: "idle", completedAt: new Date() }));
 
       const resp = store.get(UUID_A, noPty);
       expect(resp?.lifecycle).toBe("completed");
+    });
+
+    // The pre-attach window. Every exit path stamps completedAt (both runners'
+    // handleExit); without it there is no evidence the session ever ended, so
+    // reporting `completed` made "has not started" and "has ended" the same
+    // value on the wire — the ambiguity tb-mobile #508 needs resolved.
+    it("reports starting when no PTY is held and no exit was observed", () => {
+      store.addManaged(makeManagedSession({ status: "running", completedAt: null }));
+
+      const resp = store.get(UUID_A, noPty);
+      expect(resp?.lifecycle).toBe("starting");
+      expect(resp?.lifecycleSource).toBe("spawn");
+    });
+
+    it("leaves starting for attached once the PTY shows up", () => {
+      const session = makeManagedSession({ completedAt: null });
+      store.addManaged(session);
+
+      expect(store.get(session.id, noPty)?.lifecycle).toBe("starting");
+      expect(store.get(session.id, new Set([session.id]))?.lifecycle).toBe("attached");
+    });
+
+    it("prefers failed over starting when a failure was recorded without completedAt", () => {
+      store.addManaged(
+        makeManagedSession({ status: "idle", completedAt: null, failureReason: "binary missing" }),
+      );
+
+      expect(store.get(UUID_A, noPty)?.lifecycle).toBe("failed");
     });
 
     it("reports failed when a failure reason was recorded", () => {
@@ -203,7 +231,13 @@ describe("SessionStore", () => {
     });
 
     it("still reports completed for a genuine exit (statusSource: process-exit)", () => {
-      store.addManaged(makeManagedSession({ status: "idle", statusSource: "process-exit" }));
+      store.addManaged(
+        makeManagedSession({
+          status: "idle",
+          statusSource: "process-exit",
+          completedAt: new Date(),
+        }),
+      );
 
       const resp = store.get(UUID_A, noPty);
       expect(resp?.lifecycle).toBe("completed");
@@ -431,7 +465,7 @@ describe("SessionStore", () => {
     });
 
     it("leaves a session this run spawned exactly as it was", () => {
-      store.addManaged(makeManagedSession({ status: "idle" }));
+      store.addManaged(makeManagedSession({ status: "idle", completedAt: new Date() }));
       const [resp] = store.list(noPty);
       expect(resp.ownership).toBe("managed");
       expect(resp.lifecycle).toBe("completed");

@@ -232,20 +232,32 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     // leaves it gone, but the conversation is still resumable, not terminal —
     // `putOnHold` records that by leaving `statusSource: "shutdown"` (the only
     // place either runner sets it), so it is checked here alongside `rehydrated`.
+    // Terminal requires evidence of termination — a recorded `failureReason`, or
+    // the `completedAt` every exit path stamps. Without either, no PTY here means
+    // the spawn has not landed (a runner that does not list it yet, the
+    // multi-agent path, which holds no PTY at all), which is `starting`, not
+    // `completed`. This is the rule the boot reconciler already applies to the
+    // registry row (`completed_at != null`, services/sessions/reconcileSessions.ts);
+    // reporting the absence of evidence as `completed` made a session that had not
+    // started indistinguishable from one that ended (tb-mobile #508).
     lifecycle: ptyAttached
       ? "attached"
       : s.rehydrated || s.statusSource === "shutdown"
         ? "resumable"
         : s.failureReason != null
           ? "failed"
-          : "completed",
+          : s.completedAt != null
+            ? "completed"
+            : "starting",
     lifecycleSource: ptyAttached
       ? s.reconciled
         ? "reconcile"
         : "spawn"
       : s.rehydrated
         ? "reconcile"
-        : "exit",
+        : s.completedAt == null && s.failureReason == null && s.statusSource !== "shutdown"
+          ? "spawn"
+          : "exit",
     // We own its PTY, so `status` is the authoritative signal — no inferred
     // `activity` is attached for managed sessions.
     ownership: s.rehydrated ? "historical" : "managed",
