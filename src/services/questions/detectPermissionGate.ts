@@ -181,3 +181,35 @@ function scrapeDetail(lines: string[], promptLine: number): string | undefined {
 
   return collected.length > 0 ? collected.reverse().join("\n") : undefined;
 }
+
+// ── Paint-time gate signature ──────────────────────────────────────
+// The OSC 777 notify is debounced ~6s by Claude Code (measured 2026-08-08,
+// see docs/superpowers/specs/2026-08-08-paint-time-gate-detection-design.md),
+// so waiting for it makes the mobile card lag a fully painted gate. This
+// classifier claims a gate from the RENDERED screen alone. All three anchors
+// must hold — the Yes/No label test is what keeps a numbered list in Claude's
+// prose from opening a card.
+
+// Gate footer ("Esc to cancel · Tab to amend · ctrl+e to explain"); "esc to
+// cancel" is the stable core across versions.
+const GATE_FOOTER_RE = /esc to cancel/i;
+// AskUserQuestion footer — that path has priority (its footer also contains
+// "Esc to cancel", so this must be tested first).
+const ASK_MENU_FOOTER_RE = /Enter to select/i;
+// Same family test detectQuestionFromScreen uses in reverse to REJECT gates.
+const YES_NO_LABEL_RE = /^(yes|no)\b/i;
+
+/**
+ * Claim a permission gate from rendered screen lines without an OSC 777.
+ * Returns the scraped gate when the full gate signature is present:
+ * ≥2 numbered options, the gate footer, no Ask-menu footer, and at least one
+ * Yes/No-family option label. Pure — no I/O.
+ */
+export function detectGateScreen(lines: string[]): PermissionGate | null {
+  if (lines.some((l) => ASK_MENU_FOOTER_RE.test(l))) return null;
+  if (!lines.some((l) => GATE_FOOTER_RE.test(l))) return null;
+  const gate = scrapePermissionGate(lines);
+  if (!gate || gate.options.length < 2) return null;
+  if (!gate.options.some((o) => YES_NO_LABEL_RE.test(o.label))) return null;
+  return gate;
+}
