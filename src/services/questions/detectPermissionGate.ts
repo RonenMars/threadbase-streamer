@@ -1,17 +1,26 @@
-// Permission-gate detection. Two independent signals:
+// Permission-gate detection. Three independent signals:
 //
-//   1. OSC 777 escape — the deterministic TRIGGER. The PTY emits
+//   1. Rendered gate signature — the PRIMARY, paint-time trigger
+//      (detectGateScreen): gate footer + numbered Yes/No options in the
+//      rendered screen. Fires within one scrape throttle tick of the paint.
+//
+//   2. OSC 777 escape — the deterministic FALLBACK trigger. The PTY emits
 //      `\x1b]777;notify;Claude Code;Claude needs your permission\x07`
-//      (often tmux-wrapped: `\x1bPtmux;\x1b\x1b]777;notify;…\x1b\`) the instant
-//      a gate opens. Confirmed in live logs (pty.chunk #53/#193). This tells us
-//      a gate is open; it carries no option text.
+//      (often tmux-wrapped: `\x1bPtmux;\x1b\x1b]777;notify;…\x1b\`) — but
+//      ~6s AFTER the gate paints (measured 2026-08-08, see
+//      docs/superpowers/specs/2026-08-08-paint-time-gate-detection-design.md).
+//      Still load-bearing: it covers a gate whose options never painted, and
+//      its "waiting for your input" body is the authoritative close signal.
 //
-//   2. Rendered option scrape — the gate's numbered options are painted into the
-//      screen grid via absolute-cursor moves, so they live in the rendered
-//      headless buffer (getOutputLines), not the raw byte stream. We read the
-//      ACTUAL leading numbers and the `❯` cursor — the numbers are NOT a stable
-//      1-based index (a gate can show "2. Yes / 3. No"), which is exactly the
-//      "2 didn't take" bug this avoids.
+//   3. Rendered option scrape — the payload builder. The gate's numbered
+//      options are painted via absolute-cursor moves, so they live in the
+//      rendered headless buffer (getOutputLines), not the raw byte stream. We
+//      read the ACTUAL leading numbers and the `❯` cursor — the numbers are
+//      NOT a stable 1-based index (a gate can show "2. Yes / 3. No"), which
+//      is exactly the "2 didn't take" bug this avoids. The scrape takes the
+//      LAST option block scanning bottom-up, since a numbered list in Claude's
+//      prose above the gate can match the same option shape and must not be
+//      swept in.
 
 export interface PermissionOption {
   /** The real leading number shown on screen (NOT a 1-based array index). */
@@ -111,6 +120,9 @@ function stripGutter(line: string): string {
 
 /**
  * Scrape the permission gate's options + prompt from rendered screen lines.
+ * Scrapes the LAST option block on screen, scanning bottom-up: a stale
+ * numbered list sitting in scrollback above the real gate (e.g. Claude's own
+ * prose) matches the same option shape and must not be vacuumed in with it.
  * Returns null when no numbered options are present (not a gate, or not painted
  * yet). Pure — no I/O.
  */
@@ -119,14 +131,21 @@ export function scrapePermissionGate(lines: string[]): PermissionGate | null {
   let cursor: number | undefined;
   let firstOptionLine = -1;
 
-  for (let i = 0; i < lines.length; i++) {
-    const m = OPTION_RE.exec(stripGutter(lines[i]));
-    if (!m) continue;
-    const index = Number.parseInt(m[2], 10);
-    if (!Number.isFinite(index)) continue;
-    if (firstOptionLine === -1) firstOptionLine = i;
-    if (m[1]) cursor = index; // `❯` marks the highlighted option
-    options.push({ index, label: m[3] });
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const stripped = stripGutter(lines[i]);
+    const m = OPTION_RE.exec(stripped);
+    if (m) {
+      const index = Number.parseInt(m[2], 10);
+      if (!Number.isFinite(index)) continue;
+      firstOptionLine = i; // overwritten as we walk up — ends up topmost
+      if (m[1]) cursor = index; // `❯` marks the highlighted option
+      options.unshift({ index, label: m[3] }); // keep top-to-bottom screen order
+      continue;
+    }
+    if (options.length === 0) continue; // still below the block: footer, box bottom, blanks
+    // Inside the block: a blank line or the box edge marks its top boundary.
+    if (stripped.trim().length === 0 || BOX_ONLY_RE.test(lines[i].trim())) break;
+    // otherwise: a wrapped option label or the prompt line — keep walking
   }
 
   if (options.length === 0) return null;
@@ -180,4 +199,36 @@ function scrapeDetail(lines: string[], promptLine: number): string | undefined {
   }
 
   return collected.length > 0 ? collected.reverse().join("\n") : undefined;
+}
+
+// ── Paint-time gate signature ──────────────────────────────────────
+// The OSC 777 notify is debounced ~6s by Claude Code (measured 2026-08-08,
+// see docs/superpowers/specs/2026-08-08-paint-time-gate-detection-design.md),
+// so waiting for it makes the mobile card lag a fully painted gate. This
+// classifier claims a gate from the RENDERED screen alone. All three anchors
+// must hold — the Yes/No label test is what keeps a numbered list in Claude's
+// prose from opening a card.
+
+// Gate footer ("Esc to cancel · Tab to amend · ctrl+e to explain"); "esc to
+// cancel" is the stable core across versions.
+const GATE_FOOTER_RE = /esc to cancel/i;
+// AskUserQuestion footer — that path has priority (its footer also contains
+// "Esc to cancel", so this must be tested first).
+const ASK_MENU_FOOTER_RE = /Enter to select/i;
+// Same family test detectQuestionFromScreen uses in reverse to REJECT gates.
+const YES_NO_LABEL_RE = /^(yes|no)\b/i;
+
+/**
+ * Claim a permission gate from rendered screen lines without an OSC 777.
+ * Returns the scraped gate when the full gate signature is present:
+ * ≥2 numbered options, the gate footer, no Ask-menu footer, and at least one
+ * Yes/No-family option label. Pure — no I/O.
+ */
+export function detectGateScreen(lines: string[]): PermissionGate | null {
+  if (lines.some((l) => ASK_MENU_FOOTER_RE.test(l))) return null;
+  if (!lines.some((l) => GATE_FOOTER_RE.test(l))) return null;
+  const gate = scrapePermissionGate(lines);
+  if (!gate || gate.options.length < 2) return null;
+  if (!gate.options.some((o) => YES_NO_LABEL_RE.test(o.label))) return null;
+  return gate;
 }
