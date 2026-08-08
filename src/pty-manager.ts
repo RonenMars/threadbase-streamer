@@ -836,10 +836,14 @@ export class PTYManager implements SessionRunner {
 
     // Live interactive-prompt detection from the PTY stream — fires the moment
     // a prompt is on screen, independent of (and ahead of) the JSONL flush.
-    // Trigger-gated so we don't scrape the rendered buffer on every chunk:
-    //   - OSC 777 (raw byte signal) → permission gate opened.
+    // Trigger-gated with a throttle floor so we don't scrape the rendered
+    // buffer on every chunk:
+    //   - OSC 777 (raw byte signal, tail-carried across chunks) → gate opened.
     //   - "Enter to select" footer (AskUserQuestion menu) → structured question.
-    //   - prompt-ready marker without a fresh 777 → gate may have closed.
+    //   - an already-open gate/prompt keeps passing, so its close is seen (the
+    //     prompt-ready marker without a fresh 777 is what marks it closed).
+    //   - otherwise, at most every SCRAPE_THROTTLE_MS, a chunk alone triggers
+    //     a pass — how a painted gate is claimed ~6s before its OSC arrives.
     this.detectLivePrompts(sessionId, data, stripped).catch((err) => {
       this.log.warn("[pty.prompt_detect] failed", {
         event: "pty.prompt_detect_failed",

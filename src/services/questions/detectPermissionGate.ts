@@ -1,17 +1,26 @@
-// Permission-gate detection. Two independent signals:
+// Permission-gate detection. Three independent signals:
 //
-//   1. OSC 777 escape — the deterministic TRIGGER. The PTY emits
+//   1. Rendered gate signature — the PRIMARY, paint-time trigger
+//      (detectGateScreen): gate footer + numbered Yes/No options in the
+//      rendered screen. Fires within one scrape throttle tick of the paint.
+//
+//   2. OSC 777 escape — the deterministic FALLBACK trigger. The PTY emits
 //      `\x1b]777;notify;Claude Code;Claude needs your permission\x07`
-//      (often tmux-wrapped: `\x1bPtmux;\x1b\x1b]777;notify;…\x1b\`) the instant
-//      a gate opens. Confirmed in live logs (pty.chunk #53/#193). This tells us
-//      a gate is open; it carries no option text.
+//      (often tmux-wrapped: `\x1bPtmux;\x1b\x1b]777;notify;…\x1b\`) — but
+//      ~6s AFTER the gate paints (measured 2026-08-08, see
+//      docs/superpowers/specs/2026-08-08-paint-time-gate-detection-design.md).
+//      Still load-bearing: it covers a gate whose options never painted, and
+//      its "waiting for your input" body is the authoritative close signal.
 //
-//   2. Rendered option scrape — the gate's numbered options are painted into the
-//      screen grid via absolute-cursor moves, so they live in the rendered
-//      headless buffer (getOutputLines), not the raw byte stream. We read the
-//      ACTUAL leading numbers and the `❯` cursor — the numbers are NOT a stable
-//      1-based index (a gate can show "2. Yes / 3. No"), which is exactly the
-//      "2 didn't take" bug this avoids.
+//   3. Rendered option scrape — the payload builder. The gate's numbered
+//      options are painted via absolute-cursor moves, so they live in the
+//      rendered headless buffer (getOutputLines), not the raw byte stream. We
+//      read the ACTUAL leading numbers and the `❯` cursor — the numbers are
+//      NOT a stable 1-based index (a gate can show "2. Yes / 3. No"), which
+//      is exactly the "2 didn't take" bug this avoids. The scrape takes the
+//      LAST option block scanning bottom-up, since a numbered list in Claude's
+//      prose above the gate can match the same option shape and must not be
+//      swept in.
 
 export interface PermissionOption {
   /** The real leading number shown on screen (NOT a 1-based array index). */
