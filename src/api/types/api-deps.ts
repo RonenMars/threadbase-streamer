@@ -106,6 +106,7 @@ export type ApiDeps = {
   handleSearchTarget: (id: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleListProjects: (url: URL, res: ServerResponse) => void;
   handleGetPopularProjects: (url: URL, res: ServerResponse) => void;
+  handleGetProjectSummaries: (url: URL, res: ServerResponse) => void;
   handlePairStart: (res: ServerResponse) => void;
   handlePairExchange: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleBrowse: (url: URL, res: ServerResponse) => Promise<void>;

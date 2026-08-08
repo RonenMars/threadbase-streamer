@@ -1042,6 +1042,7 @@ export class StreamerServer {
       handleSearchTarget: (id, req, res) => this.handleSearchTarget(id, req, res),
       handleListProjects: (url, res) => handleListProjects(url, res),
       handleGetPopularProjects: (url, res) => this.handleGetPopularProjects(url, res),
+      handleGetProjectSummaries: (url, res) => this.handleGetProjectSummaries(url, res),
       handlePairStart: (res) => this.handlePairStart(res),
       handlePairExchange: (req, res) => this.handlePairExchange(req, res),
       handleBrowse: (url, res) => this.handleBrowse(url, res),
@@ -3085,6 +3086,24 @@ export class StreamerServer {
     }
     const projects = this.cache.getPopularProjects(limit);
     json(res, 200, { projects, total: projects.length });
+  }
+
+  private handleGetProjectSummaries(url: URL, res: ServerResponse): void {
+    if (this.rejectIfWarmingUp(res)) return;
+    const limit = intParam(url, "limit", 200);
+    const offset = intParam(url, "offset", 0);
+    if (!this.cache) {
+      // Deliberately not an empty 200: without the cache /api/conversations
+      // falls back to the scanner and still returns rows, so "no projects"
+      // would be a lie mobile draws an empty group tree from.
+      json(res, 503, {
+        error: "Conversation cache unavailable",
+        code: "CACHE_UNAVAILABLE",
+      });
+      return;
+    }
+    const { projects, total } = this.cache.listProjectSummaries({ limit, offset });
+    json(res, 200, { projects, total, offset, hasMore: offset + projects.length < total });
   }
 
   private buildStatCache(
