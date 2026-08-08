@@ -429,7 +429,10 @@ describe("CodexPtyRunner — ready fallbacks", () => {
       expect(ready).toHaveLength(0);
       expect(runner.getSession(session.id)?.status).toBe("running");
 
-      proc._emit("data", "\x1b[2J\x1b[H› \r\ngpt-5.6-sol default · ~/Desktop/dev/facebook-scanner\r\n");
+      proc._emit(
+        "data",
+        "\x1b[2J\x1b[H› \r\ngpt-5.6-sol default · ~/Desktop/dev/facebook-scanner\r\n",
+      );
       await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(8_000);
       expect(ready).toHaveLength(1);

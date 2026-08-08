@@ -750,7 +750,7 @@ export class CodexPtyRunner implements SessionRunner {
 
   private async trySubmitStaleRecovery(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
-    if (!session || session.status !== "running") return;
+    if (session?.status !== "running") return;
     if (this.turnBusy.has(sessionId)) return;
     if (session.statusSource !== "user-input") return;
 
