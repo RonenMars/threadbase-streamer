@@ -99,4 +99,27 @@ describe("PTYManager — OSC 777 split across chunk boundaries", () => {
     expect(gates[gates.length - 1]).toBeNull();
     mgr.dispose();
   });
+
+  it("fires when the notify escape is split across THREE chunks", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+
+    // The 54-byte notify split three ways. The tail-carry bug stores only the
+    // last CHUNK (not the rolling window), so after chunk B the tail is just
+    // B — chunk A's "\x1b]777;notify;Claude Cod" prefix is lost, and chunk C's
+    // window (B+C) never matches.
+    proc._emit("data", "\x1b]777;notify;Claude Cod");
+    await settle();
+    proc._emit("data", "e;Claude needs your");
+    await settle();
+    proc._emit("data", ` permission\x07${GATE_OPTIONS}`);
+    await settle();
+
+    const gate = gates.find((g) => g && g.options.length === 2);
+    expect(gate).toBeTruthy();
+    expect(gate?.options.map((o) => o.label)).toEqual(["Yes", "No"]);
+    mgr.dispose();
+  });
 });

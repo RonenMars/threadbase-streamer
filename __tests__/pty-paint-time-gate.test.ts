@@ -46,6 +46,25 @@ const GATE_PAINT = [
   "╰────────────────────────────────────────────────────╯",
 ].join("\r\n");
 
+// Same gate, mid-repaint: the footer row ("Esc to cancel...") hasn't redrawn
+// yet, but the box top border (╭) and the highlighted option cursor (❯) —
+// both CLAUDE_PROMPT_MARKERS glyphs — and the numbered options are still on
+// screen. No OSC anywhere.
+const GATE_REPAINT_NO_FOOTER = [
+  "╭────────────────────────────────────────────────────╮",
+  "│ Bash command                                       │",
+  "│   /opt/homebrew/bin/git reflog -8                  │",
+  "│ This command requires approval                     │",
+  "│                                                    │",
+  "│ Do you want to proceed?                            │",
+  "│ ❯ 1. Yes                                           │",
+  "│   2. Yes, and don't ask again for: git reflog *    │",
+  "│   3. No                                            │",
+  "│                                                    │",
+  "│                                                     │",
+  "╰────────────────────────────────────────────────────╯",
+].join("\r\n");
+
 describe("PTYManager — paint-time gate detection (no OSC)", () => {
   it("broadcasts the gate from the paint alone", async () => {
     const gates: Gate[] = [];
@@ -150,6 +169,107 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     await settle();
     const gate = gates.find((g) => g && g.options.length === 3);
     expect(gate).toBeTruthy();
+    mgr.dispose();
+  });
+
+  it("does not re-broadcast prose that scrapes as options; only the end-of-turn OSC closes it", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+
+    proc._emit("data", GATE_PAINT);
+    await settle();
+    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+    const broadcastsAfterGate = gates.length;
+
+    // User approved; Claude clears the box and answers with a numbered list
+    // that scrapePermissionGate's loose scan would happily read as "options",
+    // plus a prompt marker (╭) — under the old (pre-hardening) rule this alone
+    // closed the card. Now scrapePermissionGate ALSO sees those numbers as
+    // "still painted", so the card must not close on this alone; detectGateScreen
+    // (strict, footer-anchored) rejects the prose as a gate, so there is nothing
+    // valid to re-broadcast either — no new callback at all.
+    proc._emit(
+      "data",
+      "\x1b[2J\x1b[H" +
+        [
+          "The session lifecycle has three live statuses:",
+          "",
+          "1. running — actively producing output",
+          "2. waiting_input — Claude printed a prompt marker",
+          "3. idle — no live PTY",
+          "",
+          "╭────────────╮",
+          "│ >           │",
+          "╰────────────╯",
+        ].join("\r\n"),
+    );
+    await settle();
+
+    expect(gates).toHaveLength(broadcastsAfterGate);
+
+    // The end-of-turn OSC is still the authoritative close.
+    proc._emit(
+      "data",
+      "\x1b[2J\x1b[H\x1b]777;notify;Claude Code;Claude is waiting for your input\x07",
+    );
+    await settle();
+
+    expect(gates[gates.length - 1]).toBeNull();
+    mgr.dispose();
+  });
+
+  it("does not reopen after a close-OSC chunk that leaves the gate box still painted", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+
+    proc._emit("data", GATE_PAINT);
+    await settle();
+    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+
+    // End-of-turn OSC arrives BEFORE Claude erases the box — the notify and
+    // the still-painted gate land in the same chunk.
+    const CLOSE_WITH_BOX_STILL_PAINTED = `\x1b]777;notify;Claude Code;Claude is waiting for your input\x07${GATE_PAINT}`;
+
+    proc._emit("data", CLOSE_WITH_BOX_STILL_PAINTED);
+    await settle();
+    expect(gates[gates.length - 1]).toBeNull();
+
+    // A duplicate/late notify arrives on the next throttle tick, box still
+    // painted (Claude still hasn't erased it) and the gate already closed —
+    // the paint-time claim must not reopen it.
+    await new Promise((r) => setTimeout(r, 310));
+    proc._emit("data", CLOSE_WITH_BOX_STILL_PAINTED);
+    await settle();
+
+    expect(gates[gates.length - 1]).toBeNull();
+    mgr.dispose();
+  });
+
+  it("does not close on a mid-repaint tick where the footer is briefly absent but options are still painted", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+
+    proc._emit("data", GATE_PAINT);
+    await settle();
+    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+
+    // Mid-repaint tick: Claude clears and repaints the box, but this frame
+    // landed BEFORE the footer row ("Esc to cancel...") was redrawn — the
+    // options and the box's own ╭/❯ glyphs are on screen, no OSC anywhere.
+    // detectGateScreen requires the footer, so it reads null here; hasPromptMarker
+    // matches those same ╭/❯ glyphs. Without the fix those two alone close a gate
+    // that is still visibly blocking, which then reopens on the next tick —
+    // a close→reopen flicker.
+    proc._emit("data", `\x1b[2J\x1b[H${GATE_REPAINT_NO_FOOTER}`);
+    await settle();
+
+    expect(gates[gates.length - 1]).not.toBeNull();
     mgr.dispose();
   });
 });

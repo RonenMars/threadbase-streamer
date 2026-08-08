@@ -877,7 +877,9 @@ export class PTYManager implements SessionRunner {
     if (!session) return;
 
     // OSC escapes can split across node-pty chunk boundaries — test against
-    // the previous chunk's tail + this chunk. The tail is consumed on a match
+    // the previous chunk's tail + this chunk. The tail carries the ROLLING
+    // WINDOW (not just the last chunk), so a split across three+ chunks still
+    // matches once the final piece arrives. The tail is consumed on a match
     // so the quiet path (rawData === "") can never re-fire a seen escape, and
     // left untouched by the quiet path so a pending partial isn't dropped.
     const oscWindow = (this.oscTail.get(sessionId) ?? "") + rawData;
@@ -888,7 +890,7 @@ export class PTYManager implements SessionRunner {
     const oscWaitingForInput = hasWaitingForInputOsc(oscWindow);
     if (rawData !== "") {
       if (oscPermission || oscWaitingForInput) this.oscTail.delete(sessionId);
-      else this.oscTail.set(sessionId, rawData.slice(-OSC_TAIL_CHARS));
+      else this.oscTail.set(sessionId, oscWindow.slice(-OSC_TAIL_CHARS));
     }
     // Footer test on the CURRENT chunk — a cheap trigger only. The authoritative
     // test runs on the full rendered screen below (askFooterOnScreen), because
@@ -970,19 +972,28 @@ export class PTYManager implements SessionRunner {
       // the gate closed. The end-of-turn notify is checked FIRST and without a
       // prompt-marker requirement: it is the last chunk of the turn, so a gate
       // still waiting on a marker here would never close at all.
-      const gate = scrapePermissionGate(lines);
-      if (oscWaitingForInput || (!gate && hasPromptMarker)) {
+      const gate = detectGateScreen(lines);
+      // "Gate is gone" must survive a mid-repaint tick: detectGateScreen needs
+      // the footer, which can be briefly absent while the box repaints, and
+      // hasPromptMarker matches the box's own ╭/❯ glyphs — together those would
+      // close a live gate. Require BOTH detectors to see nothing before closing;
+      // the refresh below stays strict so prose is never broadcast as options.
+      const stillPainted = gate !== null || scrapePermissionGate(lines) !== null;
+      if (oscWaitingForInput || (!stillPainted && hasPromptMarker)) {
         this.permissionOpen.delete(sessionId);
         this.onPermissionChange?.(sessionId, null);
       } else if (gate) {
         this.onPermissionChange?.(sessionId, gate);
       }
-    } else if (!askFooterOnScreen) {
+    } else if (!askFooterOnScreen && !oscWaitingForInput) {
       // Paint-time claim: the gate is on screen but Claude's OSC 777 notify
       // (debounced ~6s upstream) hasn't arrived. detectGateScreen anchors on
       // the gate footer + a Yes/No option label so a numbered list in prose
       // can't open a card. Downstream is the OSC path unchanged — same
-      // broadcast, same dedupe, same close signals.
+      // broadcast, same dedupe, same close signals. Never claim in a pass
+      // where the turn just ended (oscWaitingForInput) — a still-painted box
+      // that arm 2 already closed this pass, or a duplicate/late notify on
+      // the next tick, must not reopen the card.
       const gate = detectGateScreen(lines);
       if (gate) {
         this.permissionOpen.add(sessionId);
