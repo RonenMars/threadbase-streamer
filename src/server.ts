@@ -616,7 +616,13 @@ export class StreamerServer {
       config.directoryScanDebounceMs ??
       1000;
     this.markScannerStaleDebounced = debounce(() => {
-      if (this.scannerReady) this.scannerStale = true;
+      if (this.scannerReady) {
+        // Only arm when paths remain. takeStaleFiles may have drained them
+        // while this debounce was pending; re-arming then would leave
+        // scannerStale=true with an empty set, and the next "files" reconcile
+        // would silently upgrade into a full-tree rescan (#409).
+        if (this.staleFiles.size > 0) this.scannerStale = true;
+      }
       // No adopted scanner yet, so there are no in-place indexes to refresh —
       // drop it and let the next getScanner() build one. The recorded paths go
       // with it; the fresh scan covers them.
