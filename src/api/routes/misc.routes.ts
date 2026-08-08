@@ -95,6 +95,9 @@ export const createMiscRoutes = (
       // here rather than behind /api/config (admin-only) so a read-only client
       // still learns the server supports flags even if it can't read values.
       featureFlags: true,
+      // Same contract: this server serves GET /api/projects/summary, which the
+      // Hub's grouped views need before they can draw a tree.
+      projectSummary: true,
     });
   });
 

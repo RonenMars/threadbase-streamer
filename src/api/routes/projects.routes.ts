@@ -20,5 +20,11 @@ export const createProjectRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
+  app.get("/summary", (c) => {
+    const url = new URL(c.req.url);
+    deps.handleGetProjectSummaries(url, c.env.outgoing);
+    return alreadyHandled();
+  });
+
   return app;
 };
