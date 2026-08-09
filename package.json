@@ -144,5 +144,8 @@
     "@hono/node-ws": {
       "@hono/node-server": "$@hono/node-server"
     }
+  },
+  "allowScripts": {
+    "better-sqlite3": true
   }
 }
