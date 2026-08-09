@@ -150,6 +150,19 @@ browse_root: /path/to/your/projects
 
 ---
 
+### `deploy.ps1` reports "healthcheck failed" but the server actually started fine *(Windows)*
+
+**When:** `scripts/deploy.ps1 deploy` (or `deploy:windows`/`deploy:windows:force`) ends with `ERROR healthcheck failed after 15s (http://localhost:8766/healthz): no response: The request was canceled due to the configured HttpClient.Timeout of 2 seconds elapsing`, but a manual `Invoke-RestMethod http://localhost:8766/healthz` immediately after returns `{ ok: true }`, and `~/.threadbase/logs/stdout.log` shows `server.listening` and a real `200` on `/healthz` at essentially the same timestamp the script gave up.
+**Cause:** The script's healthcheck probe uses a 2-second-per-attempt `HttpClient.Timeout`. On a slower boot (DB migrations, a large session-registry rehydration, etc.) the server can finish starting in a window that lands *between* two probe attempts, so the specific attempt that would have succeeded times out first. This is a false negative, not an actual deploy failure — the release was already activated and the scheduled task restarted before the healthcheck ran.
+**Fix:** Don't take the reported failure at face value. Check directly:
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8766/healthz" -TimeoutSec 5 | ConvertTo-Json
+Get-ScheduledTaskInfo -TaskName 'Threadbase'   # LastTaskResult 0 means the task itself launched cleanly
+```
+If both come back healthy, the deploy succeeded despite the reported error. Re-run `npm run deploy:windows:status` for a fuller picture, and only treat it as a real failure if the manual healthcheck also fails or `~/.threadbase/logs/stderr.log` shows a startup exception.
+
+---
+
 ## Windows-specific issues
 
 ### Service starts but immediately exits (no error visible)
@@ -250,11 +263,35 @@ git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 ---
 
+### `ensure-demo-project-dirs` test fails on Windows (`expected [...] to deeply equal []`)
+
+**When:** `__tests__/ensure-demo-project-dirs.test.ts > ensureDemoProjectDirs > creates every unique absolute cwd and skips junk lines` fails on Windows with an empty array where paths were expected.
+**Cause:** `src/docker/ensureDemoProjectDirs.ts` is entrypoint-only code for seeding demo project directories **inside the Docker container** (see `docker/entrypoint.sh`) — it's never imported or called from anywhere in `src/` on the Node process itself. It deliberately filters `cwd` values to ones starting with `"/"` (`obj.cwd.startsWith("/")`) because real demo seed JSONLs only ever reference POSIX container paths like `/home/demo/projects/...`. The test's own fixture writes Windows temp-dir paths (`C:\Users\...`) as the `cwd` values, which correctly get filtered out by that same POSIX-only check when the test runs on Windows.
+**Fix:** Nothing to fix — this is inert code on Windows (only exercised inside a Linux container) failing a test whose fixture happens to be platform-specific. Don't "fix" the `startsWith("/")` check to also accept backslash paths; that would defeat its purpose of only matching genuine container-style demo paths.
+
+---
+
 ### Timestamp mismatches in tests on Windows
 
 **When:** Reconcile or session tests fail on Windows but pass on macOS/Linux.
 **Cause:** `fs.stat().birthtimeMs` reflects the real Windows creation time and is unaffected by `fs.utimes()`. Tests that call `utimes` to manipulate timestamps and then read `birthtimeMs` will not see the change.
 **Fix:** Use `mtimeMs` for any timestamp that needs to survive cross-platform test assertions. See `src/reconcile.ts`.
+
+---
+
+### `writes with 0600 permissions` test fails on Windows
+
+**When:** `__tests__/auth-claude-flags.test.ts > claude_flags persistence > writes with 0600 permissions` (or any similar test asserting an exact POSIX mode bit) fails on Windows but passes on macOS/Linux.
+**Cause:** Windows' filesystem ACL model doesn't map onto POSIX permission bits (`0600`, `chmod`, etc.) the way `fs.chmod`/`fs.stat().mode` assume. A file written with intent to be `0600` on POSIX simply doesn't read back that way on NTFS.
+**Fix:** Nothing to fix in the streamer — this is a platform limitation, not a regression. Treat this failure as expected/pre-existing on a Windows dev box and don't chase it; if it needs to be asserted cross-platform, the test itself would need a Windows-specific branch (not yet written).
+
+---
+
+### `pty-host-survival`/`pty-host-windows` tests fail with `EADDRINUSE` on a named pipe
+
+**When:** `__tests__/pty-host-survival.test.ts` and/or `__tests__/pty-host-windows.test.ts` fail with `Error: listen EADDRINUSE: address already in use \\.\pipe\threadbase-pty-host-*`, or with unrelated-looking timing assertions in the same files.
+**Cause:** These tests bind to a real named pipe (Windows' analogue of a Unix socket) to simulate the `ptyHost` feature's detached-host protocol. If a prior test run's host process didn't clean up its pipe, or (more commonly) a real `ptyHost`-mode streamer is already running on the same machine, the pipe name collides and the bind fails.
+**Fix:** No streamer code fix needed if there's no genuinely live host holding the pipe — re-run the test file in isolation (`npx vitest run __tests__/pty-host-survival.test.ts`) to rule out cross-test-file interference first. If it still fails in isolation, check for a stray `node.exe` from a previous interrupted test run or a real `ptyHost`-enabled streamer instance and stop it before re-running.
 
 ---
 
@@ -409,6 +446,14 @@ Restart the streamer to pick it up.
 **When:** `/api/sessions/:id/output` returns 404 for a session that is visible in `/api/sessions`.
 **Cause (historical):** An earlier version returned 404 for sessions that were discovered via process scanning but had no PTY-managed output buffer.
 **Fix:** Untracked (discovered) sessions should return an empty output array, not 404. Verify `server.ts` distinguishes "session not found at all" (404) from "session exists but has no buffered output" (200 + empty array).
+
+---
+
+### `GET /api/providers` test returns `500` instead of `200` in local test runs
+
+**When:** `__tests__/server.test.ts > StreamerServer > GET /api/providers > reports capabilities and compatibility for every provider` fails with `expected 500 to be 200`.
+**Cause:** `providerHealth()` (`src/services/providers/providerHealth.ts`) runs `<exe> --version` against whatever `resolveClaudeExe()`/`resolveCodexExe()` resolve on the machine running the test — this endpoint deliberately probes the real installed binaries rather than a mock, so its test has no fixture to fall back on. On a machine where those binaries aren't resolvable/runnable in the sandboxed test environment (e.g. a limited `PATH`, or the binary itself failing to spawn), the route throws before `providerHealth()`'s own try/catch boundaries can turn that into a `warnings: [...]` response.
+**Fix:** Confirm this isn't a regression before spending time on it — check out `main` in place (`git checkout main -- .`, don't switch branches) and re-run just this test; if it fails identically there, it's a pre-existing environment gap, not something your change broke. No code fix is implied by seeing this locally.
 
 ---
 
@@ -755,6 +800,15 @@ A plain `npm ci` then produces the binding. If you hit this on a branch that pre
 **Never copy `build/Release/*.node` from another checkout to work around this.** Branches pin different majors — `main` and the integration branches have differed by a full major (11.x vs 12.x) — and a binding from the wrong major loads without complaint and then misbehaves in ways that look like product bugs. It also silently invalidates whatever test run you were trying to verify.
 
 **CI:** `ci.yml` sidesteps the gate with `npm ci --ignore-scripts=false`, which allows *every* package's scripts. `release.yml`'s three `npm ci` calls have no such flag — they work today only because GitHub's runners still bundle npm 10/11. The `allowScripts` field covers both paths with no flags at all, and is the reason release builds won't quietly start shipping without a binding when runners move to npm 12.
+
+---
+
+### Nested `@threadbase-sh/scanner` `better-sqlite3` binding never built *(Windows dev checkouts)*
+
+**When:** `npm test` (or the server itself, run from a dev checkout) logs `cache.warmup_failed` with `Could not locate the bindings file`, and any endpoint that depends on the SQLite cache — `POST /api/sessions/resume`, `GET /api/conversations/count`, etc. — returns `500` instead of its documented status. The stack trace path ends in `node_modules\@threadbase-sh\scanner\node_modules\better-sqlite3\build\...\better_sqlite3.node`, **not** the top-level `node_modules\better-sqlite3`.
+**Cause:** `@threadbase-sh/scanner` vendors its own `better-sqlite3` dependency rather than sharing the repo's top-level one. `npm install`/`npm ci` on Windows without Visual Studio Build Tools installed silently fails to compile this *nested* copy's native binding — unlike the top-level `better-sqlite3` binding, which this repo already handles (see the `npm install --ignore-scripts` entry above). This is a build-time failure with a runtime symptom: the install itself doesn't error loudly, so it's easy to reach a deploy or test run without noticing the nested binding never got built.
+**Fix:** No general fix short of installing Visual Studio Build Tools so the nested `better-sqlite3` compiles during install. If you just need to keep working, treat cache-dependent 500s during local testing on this box as expected and measure with `persistent:false` where the test/tool supports it, rather than chasing them as regressions.
+**Diagnosis cue:** confirm the failure predates your change by checking out `main` in place (`git checkout main -- .` without switching branches, so `node_modules` stays put) and re-running the same test — if it fails identically against `main`, it's this pre-existing environment issue, not something your change introduced.
 
 ---
 
