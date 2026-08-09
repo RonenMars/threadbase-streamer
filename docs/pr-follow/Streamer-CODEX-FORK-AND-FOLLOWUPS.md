@@ -1,13 +1,15 @@
-# tb-streamer — Codex active-writer fork, and the ADR 0001 streamer set (as of 2026-08-09 13:00)
+# tb-streamer — Codex active-writer fork, and the ADR 0001 streamer set (as of 2026-08-09 17:45)
 
-Extracted from `../mobile/Mobile-LEFTOVERS.md` and `../mobile/Mobile-ADR-0001-LEFTOVERS.md`, then corrected against PR #463.
+Extracted from the tb-mobile leftovers notes, then corrected against PR #463.
 Treat as stale by default — re-check before acting.
 
-## The server half of mobile #572 exists: it is PR #463, green and unmerged
+## The server half of mobile #572 exists, and is now merged
 
 **The mobile leftovers say the streamer half "does not exist — no `fix/codex-active-writer-resume` branch." That is false.**
 PR #463 (`fix(codex): reject resume of a session Codex already has a writer for`) is on exactly that branch and implements all three fixes from the investigation: the authoritative startup handshake, the bounded `lsof` open-file preflight (`services/sessions/codexRolloutOwner.ts`, POSIX only), and `POST /api/sessions/:id/fork`.
-All 11 checks are SUCCESS. The blocker is that nobody has merged it, not that it is missing.
+
+**Status: MERGED into `integration/prs-223-441-…-456`, not into `main`.** GitHub closed it as merged automatically when that branch — its base — was advanced to contain its commits. #465 (the claude open-file measurement) rode along the same way.
+So `main` still has none of this; the contract only reaches clients when the integration branch lands.
 
 Contract doc ships with the PR: `docs/compatibility/codex-collision-and-fork.md`.
 
@@ -30,3 +32,6 @@ The three live scenarios from the investigation report: a Codex session owned by
 
 **Its whole scope is reviewing and landing PRs #461 and #462, which already exist** — #461 resolves project paths from the recorded cwd instead of the lossy dir-name decode, #462 drops the dead `projects.message_count` column.
 Do not let anyone reimplement them.
+
+Both are still **open against `main`**, though their content is already on the integration branch (by content equivalence — they were rebased, so a SHA-ancestry check reports them absent).
+Landing them means merging them to `main`, or letting the integration branch carry them there.

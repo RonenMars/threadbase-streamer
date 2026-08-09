@@ -1,35 +1,42 @@
-# tb-streamer — orphan fix: multi-agent lifecycle gate (as of 2026-08-09 15:10)
+# tb-streamer — multi-agent lifecycle gate fix: LANDED (as of 2026-08-09 17:40)
 
-A one-commit fix that belongs to no open PR because it patches the **merge** of two of them.
-Preserved on origin as `wip/lifecycle-starting-multi-agent-gate` (`a681ac0`) so it cannot be lost with a worktree.
+**Resolved.** This note described a one-commit fix that belonged to no PR because it patched the *merge* of two of them.
+It is now on `integration/prs-223-441-…-456` as **`6c1ed95`**. Kept for the reasoning, which explains why it sat orphaned for a day.
 
 ## What it fixes
 
-`fix(sessions): scope lifecycle-starting gate to the PTY path` — `src/session-store.ts`, 12 insertions.
+`fix(sessions): scope lifecycle-starting gate to the PTY path` — `src/session-store.ts`.
 
 The #456/#448 merge resolution gated `completed` vs `starting` on `completedAt`, but multi-agent sessions never stamp `completedAt`, so an **idle multi-agent session was reported as `starting`**.
 The fix scopes the gate to `currentTurnId === undefined` — the PTY-only signal — so multi-agent stays `completed`.
 
-`lifecycle` is a field tb-mobile reads, so this is a client-visible wrong value, not an internal tidy-up.
+`lifecycle` is a field tb-mobile reads, so this was a client-visible wrong value, not an internal tidy-up.
 
-## Why it cannot be a PR yet
+## Why it was stuck
 
-It needs symbols from both PRs at once, and no single branch has both:
+It needs symbols from both PRs at once, and no single branch had both:
 
 | ref | `"starting"` (#456) | `isLiveMultiAgent` (#448) |
 |---|---|---|
-| `origin/main` | absent | absent |
+| `origin/main` (then and now) | absent | absent |
 | `origin/feat/lifecycle-starting` (#456) | present | absent |
 | `origin/cursor/fix-lifecycle-outside-pty-path-2a19` (#448) | absent | present |
 
-Cherry-picking it anywhere today produces a patch against code that does not exist.
+Cherry-picking it onto any of those produced a patch against code that did not exist.
 
-## What to do, and when
+## What unblocked it
 
-**Trigger: whichever of #456 / #448 merges second.** At that moment `main` has both symbols and the bug goes live.
-Then cherry-pick `a681ac0` onto a branch off `main` and open it as an ordinary `fix(sessions):` PR.
+Syncing the integration branch merged **both** #456 and #448 into one tree, which is the first place both symbols coexist — and the first place the bug was actually live.
+The cherry-pick conflicted only on the surrounding comment; the `lifecycle` ternary applied cleanly.
 
-Do not merge #456 and #448 without doing this — between their merge and this fix landing, every idle multi-agent session reports `lifecycle: "starting"` to mobile.
+Verified after landing: lint exit 0, and `session-store` + `session-rehydration` + `server` = 211 tests passing.
 
-The other nine commits from the same abandoned `integration-sync-tmp` worktree are **content-landed on `main`** (the paint-time gate stack — `detectGateScreen` is in `src/pty-manager.ts` and `src/services/questions/detectPermissionGate.ts`) and need nothing.
-Their SHAs differ because `feat/paint-time-gate-detection` was rewritten and deleted from origin, so a `git branch --contains` check reports them as unreachable and is misleading here.
+## Still open
+
+**The fix is on the integration branch, not on `main`.** `main` has neither #456 nor #448, so it does not have the bug either — but whenever those two reach `main`, this commit must travel with them.
+If they land individually rather than via this branch, cherry-pick `6c1ed95` immediately after the second one merges.
+
+## Related, for whoever prunes branches
+
+`wip/lifecycle-starting-multi-agent-gate` on origin was the preservation ref for this commit and is now redundant.
+`integration/2026-08-08_14-22-prs-441-…-454` is also redundant — it is 4 commits ahead of the current integration branch, all of them merges plus the TypeScript 7 bump that was deliberately reverted.
