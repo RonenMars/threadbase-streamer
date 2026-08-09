@@ -10,6 +10,7 @@
 | POST | `/api/sessions/resume` | Resume a conversation |
 | POST | `/api/sessions/:id/input` | Send input |
 | POST | `/api/sessions/:id/cancel` | Cancel a session |
+| POST | `/api/sessions/:id/fork` | Fork a Codex conversation into an independent session (`codex fork`). 201/202, 409 `CONVERSATION_BUSY`, 501 `UNSUPPORTED_PROVIDER` |
 | PATCH | `/api/sessions/:id/model` | Switch a LIVE session's model: `{model}` → 202. 409 `SESSION_BUSY` mid-turn, 409 `SESSION_IDLE` with no PTY, 501 `UNSUPPORTED_PROVIDER` for Codex |
 | PATCH | `/api/sessions/:id/effort` | Switch a LIVE session's effort: `{effort}` (`low`…`max`) → 202. Same error codes |
 | GET | `/api/sessions/:id/output` | Get terminal output buffer |
