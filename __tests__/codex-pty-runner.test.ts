@@ -3,7 +3,14 @@ import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { spawn as mockSpawn } from "node-pty";
 import { tmpdir } from "os";
 import { join } from "path";
-import { CodexPtyRunner } from "../src/codex-pty-runner";
+import {
+  CodexPtyRunner,
+  codexScreenBlocksComposer,
+  codexScreenLooksIdle,
+  codexScreenShowsReady,
+  detectCodexBlockingPrompt,
+  parseCodexNumberedOptions,
+} from "../src/codex-pty-runner";
 import type { ManagedSession, PermissionOption } from "../src/types";
 
 vi.mock("node-pty", () => {
@@ -94,6 +101,30 @@ function spawnArgs(): string[] {
   return calls[calls.length - 1][1] as string[];
 }
 
+describe("CodexPtyRunner — screen helpers", () => {
+  it("blocks composer during Starting / MCP boot / gates, not after incomplete", () => {
+    expect(codexScreenBlocksComposer(["› ", "gpt · Starting"])).toBe(true);
+    expect(codexScreenBlocksComposer(["• Starting MCP servers (1/2): github", "› "])).toBe(true);
+    expect(
+      codexScreenBlocksComposer(["Do you want to trust the contents of this directory?"]),
+    ).toBe(true);
+    // Post-boot warnings stay on screen after Codex is usable — must NOT block Ready.
+    expect(codexScreenBlocksComposer(["⚠ MCP startup incomplete (failed: expo)", "› "])).toBe(
+      false,
+    );
+    expect(codexScreenBlocksComposer(["⚠ MCP server is not logged in: vercel", "› "])).toBe(false);
+    expect(codexScreenShowsReady(["gpt-5.5 medium · /path · Ready · Wo…"])).toBe(true);
+    expect(
+      codexScreenShowsReady(["⚠ MCP startup incomplete (failed: expo)", "gpt · Ready · Wo…"]),
+    ).toBe(true);
+    expect(codexScreenLooksIdle(["gpt-5.6-sol default · ~/proj", "› ask me"])).toBe(true);
+    expect(codexScreenLooksIdle(["> Hi, scan the directory", "gpt-5.6-sol default · ~/proj"])).toBe(
+      true,
+    );
+    expect(codexScreenLooksIdle(["gpt-5.6-sol default · ~/proj"])).toBe(false);
+  });
+});
+
 describe("CodexPtyRunner — spawn args", () => {
   beforeEach(() => {
     (mockSpawn as any).mockClear();
@@ -142,7 +173,7 @@ describe("CodexPtyRunner — spawn args", () => {
   });
 });
 
-type GateBroadcast = { prompt?: string; options: PermissionOption[] } | null;
+type GateBroadcast = { prompt?: string; detail?: string; options: PermissionOption[] } | null;
 
 function gateRunner() {
   const cards: GateBroadcast[] = [];
@@ -299,16 +330,17 @@ describe("CodexPtyRunner — gate close", () => {
 
       runner.sendInput(session.id, "hello");
 
-      // Quiet fires while the gate is open: ready is marked (mobile navigates
-      // in and sees the card) but the queued input stays held.
+      // Quiet while a gate is open must NOT mark ready — that used to disarm
+      // the input queue and let keystrokes hit the dialog.
       await vi.advanceTimersByTimeAsync(600);
-      expect(ready).toHaveLength(1);
+      expect(ready).toHaveLength(0);
       expect(proc.write).not.toHaveBeenCalled();
 
-      // Gate answered elsewhere → screen moves on → card dismissed, queue drains.
+      // Gate answered elsewhere → screen shows Ready → card dismissed, queue drains.
       proc._emit("data", `\x1b[2J\x1b[H${READY_STATUS_BAR}`);
       await vi.advanceTimersByTimeAsync(0);
       expect(cards[cards.length - 1]).toBeNull();
+      expect(ready).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(60);
       const writes = proc.write.mock.calls.map((c: unknown[]) => c[0]);
@@ -320,7 +352,7 @@ describe("CodexPtyRunner — gate close", () => {
 });
 
 describe("CodexPtyRunner — ready fallbacks", () => {
-  it("marks ready after 500ms of PTY silence even without the Ready marker", async () => {
+  it("does NOT mark ready on quiet while the Starting status bar is showing", async () => {
     vi.useFakeTimers();
     try {
       const { runner, ready } = gateRunner();
@@ -331,12 +363,79 @@ describe("CodexPtyRunner — ready fallbacks", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(ready).toHaveLength(0);
 
-      await vi.advanceTimersByTimeAsync(400);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(ready).toHaveLength(0);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT mark ready on quiet while MCP boot lines are on screen", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, ready } = gateRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit(
+        "data",
+        "• Starting MCP servers (1/6): github, vercel (2s • esc to interrupt)\r\n› \r\n",
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(ready).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-arms the flat 8s fallback while still Starting, then settles once idle", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, ready } = gateRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", STARTING_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(8_000);
       expect(ready).toHaveLength(0);
 
-      await vi.advanceTimersByTimeAsync(200);
+      // MCP finished; truncated status bar (no Ready word) — fallback allows it.
+      proc._emit("data", "\x1b[2J\x1b[Hgpt-5.6-sol default · ~/proj\r\n› \r\n");
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(8_000);
       expect(ready).toHaveLength(1);
       expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT settle the flat fallback on a model-only bar without compose", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, ready } = gateRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", "gpt-5.6-sol default · ~/Desktop/dev/facebook-scanner\r\n");
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(ready).toHaveLength(0);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      proc._emit(
+        "data",
+        "\x1b[2J\x1b[H› \r\ngpt-5.6-sol default · ~/Desktop/dev/facebook-scanner\r\n",
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(ready).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -353,6 +452,87 @@ describe("CodexPtyRunner — ready fallbacks", () => {
 
       await vi.advanceTimersByTimeAsync(1);
       expect(ready).toHaveLength(1);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("CodexPtyRunner — mid-session Ready", () => {
+  it("returns to waiting_input after Working then Ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const statusChanges: ManagedSession[] = [];
+      const runner = new CodexPtyRunner({
+        onStatusChange: (s) => statusChanges.push(s),
+      });
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+
+      runner.sendInput(session.id, "hello");
+      expect(runner.getSession(session.id)?.status).toBe("running");
+      await vi.advanceTimersByTimeAsync(60);
+
+      proc._emit("data", "gpt-5.5 medium · /path · Working\r\n");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      proc._emit("data", `\x1b[2J\x1b[H${READY_STATUS_BAR}`);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+      expect(statusChanges.some((s) => s.status === "waiting_input" && s.promptCount >= 1)).toBe(
+        true,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers to waiting_input if Ready never left after submit", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendInput(session.id, "hello");
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      // Still Ready on screen (Enter absorbed) — after 2s, a repaint recovers.
+      await vi.advanceTimersByTimeAsync(2_000);
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers to waiting_input after failed submit with no Ready and no further chunks", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+
+      runner.sendInput(session.id, "Hi, scan the directory and look for bugs");
+      expect(runner.getSession(session.id)?.status).toBe("running");
+      await vi.advanceTimersByTimeAsync(60); // \r + arm submit watch
+
+      // No Working, no Ready repaint, no further chunks — timer recovers.
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(runner.getSession(session.id)?.status).toBe("waiting_input");
     } finally {
       vi.useRealTimers();
@@ -442,6 +622,140 @@ describe("CodexPtyRunner — input queueing", () => {
 
       await vi.advanceTimersByTimeAsync(20);
       expect(proc.write).toHaveBeenCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+const USAGE_LIMIT_SCREEN =
+  "> hi, what's the status\r\n" +
+  "You've hit your usage limit. Upgrade to Pro, visit https://chatgpt.com/codex/settings/usage " +
+  "or try again at Aug 8th, 2026 10:18 AM.\r\n" +
+  "\r\n" +
+  "Approaching rate limits\r\n" +
+  "› 1. Switch to gpt-5.6-luna (selected)\r\n" +
+  "  Fast and affordable agentic coding model.\r\n" +
+  "  2. Keep current model.\r\n" +
+  "  3. Keep current model (never show again).\r\n";
+
+describe("CodexPtyRunner — blocking prompt helpers", () => {
+  it("parses numbered menu options", () => {
+    expect(
+      parseCodexNumberedOptions([
+        "Approaching rate limits",
+        "› 1. Switch to gpt-5.6-luna (selected)",
+        "  2. Keep current model.",
+        "  3. Keep current model (never show again).",
+      ]),
+    ).toEqual([
+      { index: 1, label: "Switch to gpt-5.6-luna", answerKeys: "1\r" },
+      { index: 2, label: "Keep current model.", answerKeys: "2\r" },
+      { index: 3, label: "Keep current model (never show again).", answerKeys: "3\r" },
+    ]);
+  });
+
+  it("detects usage-limit errors and reset detail", () => {
+    const blocking = detectCodexBlockingPrompt([
+      "> hi",
+      "You've hit your usage limit. Upgrade to Pro.",
+      "or try again at Aug 8th, 2026 10:18 AM.",
+      "Approaching rate limits",
+      "› 1. Switch to gpt-5.6-luna",
+      "  2. Keep current model.",
+    ]);
+    expect(blocking?.prompt).toContain("hit your usage limit");
+    expect(blocking?.detail).toContain("try again at");
+    expect(blocking?.options).toHaveLength(2);
+    expect(blocking?.soft).toBeUndefined();
+  });
+
+  it("detects soft usage-limit reset tip", () => {
+    const blocking = detectCodexBlockingPrompt([
+      "⚠ You have 1 usage limit reset available. Run /usage to use one.",
+      "› ",
+      "gpt-5.6-sol default · ~/proj",
+    ]);
+    expect(blocking?.soft).toBe(true);
+    expect(blocking?.prompt).toMatch(/usage limit reset available/i);
+    expect(blocking?.options?.[0]?.label).toBe("Dismiss");
+  });
+});
+
+describe("CodexPtyRunner — usage / rate limits", () => {
+  it("broadcasts a permission card and flips running → waiting_input", async () => {
+    const cards: GateBroadcast[] = [];
+    const statusChanges: ManagedSession[] = [];
+    const runner = new CodexPtyRunner({
+      onPermissionChange: (_sessionId, gate) => cards.push(gate as GateBroadcast),
+      onStatusChange: (s) => statusChanges.push(s),
+    });
+    const session = await spawnResume(runner);
+    const proc = getMockProc(runner, session.id);
+
+    proc._emit("data", READY_STATUS_BAR);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    runner.sendInput(session.id, "hello");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    proc._emit("data", USAGE_LIMIT_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.prompt).toContain("hit your usage limit");
+    expect(cards[0]?.detail).toContain("try again at");
+    expect(cards[0]?.options?.[0]?.label).toContain("Switch to gpt-5.6-luna");
+    const latest = statusChanges[statusChanges.length - 1];
+    expect(latest.status).toBe("waiting_input");
+    expect(latest.failureReason).toContain("hit your usage limit");
+  });
+
+  it("does not card the soft tip during boot or healthy idle", async () => {
+    const cards: GateBroadcast[] = [];
+    const runner = new CodexPtyRunner({
+      onPermissionChange: (_sessionId, gate) => cards.push(gate as GateBroadcast),
+    });
+    const session = await spawnFresh(runner);
+    const proc = getMockProc(runner, session.id);
+
+    proc._emit(
+      "data",
+      "⚠ You have 1 usage limit reset available. Run /usage to use one.\r\n" + READY_STATUS_BAR,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    expect(cards).toHaveLength(0);
+  });
+
+  it("cards the soft tip when a submit is stuck running without Working", async () => {
+    vi.useFakeTimers();
+    try {
+      const cards: GateBroadcast[] = [];
+      const runner = new CodexPtyRunner({
+        onPermissionChange: (_sessionId, gate) => cards.push(gate as GateBroadcast),
+      });
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendInput(session.id, "hello");
+      await vi.advanceTimersByTimeAsync(60);
+
+      proc._emit(
+        "data",
+        "\x1b[2J\x1b[H> hello\r\n" +
+          "⚠ You have 1 usage limit reset available. Run /usage to use one.\r\n" +
+          "gpt-5.6-sol default · ~/proj\r\n",
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(cards).toHaveLength(1);
+      expect(cards[0]?.prompt).toMatch(/usage limit reset available/i);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+      expect(runner.getSession(session.id)?.failureReason).toMatch(/usage limit reset available/i);
     } finally {
       vi.useRealTimers();
     }
