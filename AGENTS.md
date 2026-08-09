@@ -149,6 +149,7 @@ Don't break without coordination: the marker shape is versioned (`shimVersion` �
 - **Task Scheduler env vars**: `[Environment]::SetEnvironmentVariable(..., 'User')` doesn't update the live session; read back from registry and inline the value in the task command string (applies to `THREADBASE_DATABASE_URL`, `THREADBASE_INSTANCE_ID`).
 - **Stale port 8766**: kill any node process already bound to 8766 before starting the task — the new task fails silently if the port is taken.
 - **Submodule SSH → HTTPS**: machines without SSH keys fail `git submodule update --init`. Fix once: `git config --global url."https://github.com/".insteadOf "git@github.com:"`.
+- **Integration deploys**: use `npm run deploy:windows:force`; it now skips the advisory npm-version lookup as well as lint/tests, so an unreachable registry cannot delay the local build. If its 15-second healthcheck times out, verify `/healthz`, the `Threadbase` task result, and `~/.threadbase/version.txt` before treating the deploy as failed; details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md#windows-local-deploys) and [docs/troubleshooting.md](docs/troubleshooting.md#deployps1-reports-healthcheck-failed-but-the-server-actually-started-fine-windows).
 
 ## Code Conventions
 

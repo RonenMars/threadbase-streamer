@@ -40,3 +40,19 @@ Deploy no longer touches the menubar — `npm run deploy` / `scripts/deploy.sh` 
 Install or update the menubar separately via the `deploy-menubar` skill (`.claude/skills/deploy-menubar`), which checks out the submodule, installs deps, compiles, and launches the Electron app.
 
 During install/update the streamer is briefly down (a few seconds); the menubar shows "disconnected" until its next 5s health poll. If that gap exceeds ~10s, something's wrong with the restart step — check `~/.threadbase/logs/updater.{log,err}`.
+
+## Windows local deploys
+
+Use `npm run deploy:windows` for the normal linted and tested deployment, or `npm run deploy:windows:force` when intentionally deploying a non-main integration checkout. The force path visibly skips lint, tests, the dirty-tree guard, and the advisory npm published-version lookup, so it never waits on an unavailable npm registry before building the selected checkout.
+
+For a normal deploy where the registry lookup should be skipped but checks should still run, invoke PowerShell directly with `pwsh scripts/deploy.ps1 deploy -SkipVersionCheck`.
+
+The Task Scheduler restart can finish after the script's 15-second healthcheck window. If it reports a timeout, verify the active release rather than redeploying blindly:
+
+```powershell
+curl.exe --max-time 5 http://127.0.0.1:8766/healthz
+Get-ScheduledTaskInfo -TaskName 'Threadbase'
+Get-Content "$env:USERPROFILE\.threadbase\version.txt"
+```
+
+An HTTP 200 with the expected version and `LastTaskResult` of `0` confirm that the deployment completed; see [the troubleshooting entry](../troubleshooting.md#deployps1-reports-healthcheck-failed-but-the-server-actually-started-fine-windows) for failure diagnosis.
