@@ -455,6 +455,11 @@ write_plist() {
   </dict>
   <key>ThrottleInterval</key>
   <integer>10</integer>
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>16384</integer>
+  </dict>
   <key>StandardOutPath</key>
   <string>$logs_dir/stdout.log</string>
   <key>StandardErrorPath</key>
@@ -511,6 +516,15 @@ ensure_plist_healthy() {
   # New: detect old layout that points at cli.js directly (no shim).
   if grep -q "<string>$ACTIVE_LINK</string>" "$plist_path"; then
     warn "plist still points at cli.js directly (no shim) — rewriting to use launchd-entry.cjs"
+    needs_rewrite="true"
+  fi
+
+  # New: detect a plist written before SoftResourceLimits. launchd hands new
+  # jobs a 256 soft fd limit and node does not raise its own, so a machine that
+  # applies that default hits EMFILE at ~249 fds — well under the ~1 fd per
+  # conversation transcript the watcher holds.
+  if ! grep -q "SoftResourceLimits" "$plist_path"; then
+    warn "plist is missing SoftResourceLimits — the server can hit EMFILE once the conversation corpus grows"
     needs_rewrite="true"
   fi
 
