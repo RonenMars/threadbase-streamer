@@ -156,6 +156,27 @@ export class ConversationWatcher {
    * Watch a directory of conversation JSONL files. Fires
    * onConversationChanged for any add/change/unlink event so the caller
    * can mark the cache dirty without scanning everything immediately.
+   *
+   * **This costs one OS watch handle per file under `directory`, not one per
+   * directory.** chokidar recurses the tree and registers a separate fs.watch
+   * per entry, because a directory watch alone does not report writes to files
+   * inside it — and per-file `change` events are exactly what the caller needs
+   * (they drive poke()'s tail self-heal and the external-tail attach). So the
+   * handle count tracks the size of the conversation corpus on disk, not the
+   * number of live sessions, and it does not shrink until transcripts are
+   * deleted. `ignoreInitial` suppresses the startup *events*, not the walk.
+   *
+   * Measured 2026-08-09 on the live macOS instance: 2131 open .jsonl fds
+   * against 2133 files under the watched roots — 1:1, ~88% of all fds on the
+   * process, at 2.0% of that box's 122 880 per-process ceiling. Comfortable
+   * there. **Linux is the tight one**: these are inotify watches billed to the
+   * per-user `max_user_watches`, which can be 8192 and is shared with every
+   * other watcher the user runs. Exhaustion surfaces as ENOSPC on the `error`
+   * event — which is why server.ts wires onError rather than leaving it unset.
+   *
+   * Before trading handles for a bound here, note the regression it invites: a
+   * conversation excluded from the walk (by age or by an LRU cap) is one whose
+   * external appends produce no event at all, and that failure is silent.
    */
   watchDirectory(directory: string): void {
     if (this.directories.has(directory)) return;
