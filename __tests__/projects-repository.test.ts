@@ -64,3 +64,17 @@ describe("ProjectsRepository", () => {
     expect(repo.listProjects()).toHaveLength(2);
   });
 });
+
+describe("projects.message_count", () => {
+  it("is dropped by migration 015, and upsert still round-trips", () => {
+    const columns = (
+      cache.getDatabase().prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>
+    ).map((c) => c.name);
+    // It was written as 0 on insert and never updated or read — a column that
+    // always reads 0 invites a caller to trust it.
+    expect(columns).not.toContain("message_count");
+
+    const project = repo.upsertProjectByPath("/a/b", { name: "b" });
+    expect(repo.getProjectById(project.id)?.name).toBe("b");
+  });
+});

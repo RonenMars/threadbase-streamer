@@ -14,7 +14,6 @@ export const ProjectSchema = z.object({
 
   latestMessageAt: z.string().nullable().optional(),
   latestMessageId: z.string().nullable().optional(),
-  messageCount: z.number().int().nonnegative().optional(),
 
   createdAt: z.string(),
   updatedAt: z.string(),
