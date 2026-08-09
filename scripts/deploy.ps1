@@ -29,6 +29,9 @@ param(
 
   [switch]$Force,
 
+  # Skip the advisory npm registry check before a local deploy.
+  [switch]$SkipVersionCheck,
+
   # Non-interactive override for the global-shim install step.
   # Equivalent to the bash $TB_INSTALL_SHIM env var.
   [ValidateSet('standard', 'user-local', 'custom', 'skip', '')]
@@ -114,6 +117,10 @@ function Write-YamlKey {
 # A persisted decision in server.yaml (deploy_version_prompt: always_yes /
 # always_no) auto-answers the prompt.
 function Invoke-VersionCheck {
+  if ($SkipVersionCheck -or $Force) {
+    Write-Log 'skipping published-version check (-SkipVersionCheck or -Force)'
+    return
+  }
   if (-not [Environment]::UserInteractive) { return }
   if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { return }
 
@@ -121,8 +128,12 @@ function Invoke-VersionCheck {
   if (-not $localVer) { return }
   $localVer = $localVer.Trim()
 
-  $publishedVer = (npm view '@threadbase-sh/streamer' version --registry https://registry.npmjs.org/ 2>$null)
-  if (-not $publishedVer) { return }
+  Write-Log 'checking npm for a newer published version (5s timeout)'
+  $publishedVer = (npm view '@threadbase-sh/streamer' version --registry https://registry.npmjs.org/ --fetch-timeout=5000 --fetch-retries=0 2>$null)
+  if (-not $publishedVer) {
+    Write-Warn 'npm version check unavailable; deploying the local checkout'
+    return
+  }
   $publishedVer = $publishedVer.Trim()
 
   $behind = (node -e "try { const s = require('$($repoRoot -replace '\\','/')/node_modules/semver'); process.stdout.write(s.gt(process.argv[2], process.argv[1]) ? '1' : '0'); } catch { process.stdout.write('0'); }" $localVer $publishedVer 2>$null)
