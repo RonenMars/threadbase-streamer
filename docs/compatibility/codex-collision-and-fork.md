@@ -86,6 +86,24 @@ Identity:
 - `src/codex-pty-runner.ts` — `CODEX_ACTIVE_WRITER_RE` against the rendered screen, and `failStartup()`, which tears the session down without ever firing `onReady`.
 - `src/server.ts` — `resolveConversationTarget()`, the post-spawn handshake in `resumeSession()`/`handleFork()`, and `codexSessionActiveBody()`.
 
+## Why `file_handle` is Codex-only — measured, do not re-derive
+
+The obvious follow-up was to extend the same open-handle pre-flight to Claude Code resumes, as a stronger sibling of `jsonl_mtime`.
+It was measured on macOS 25.5 against Claude Code 2.1.226 on 2026-08-09 and the answer is **no**: a live `claude` process does not hold its conversation JSONL open at all, not even while writing it.
+
+Six live `claude` processes — an idle `--resume` session, a `--session-id --fork-session` session that had written 2 minutes earlier, a `claude daemon run`, and two `bg-pty-host` children — each reported **zero** open `.jsonl` handles (`lsof -p <pid> -Fn | grep '\.jsonl'`).
+Sampling the other direction, `lsof -F pc -w -- <transcript>` was run 120 times over 46 seconds against an interactive session's own transcript while it was actively being appended to (9 distinct file sizes observed inside the window, so writes were landing throughout).
+The owning `claude` pid appeared in **none** of the 120 samples: the open→append→close window is shorter than a single `lsof` invocation, so even the flush is not observable.
+Both idle samples on quiet sessions (2 minutes and ~95 minutes after the last turn) were likewise empty.
+
+So the signal would never fire on a real collision, and `jsonl_mtime` already covers the only window in which the handle could theoretically exist.
+
+The probe would also be actively misleading. In every sample the transcript *did* have exactly one holder — the streamer itself (pid 42549), whose watcher had 2 129 `.jsonl` files open, including the target.
+After excluding our own pid the result is always null; without that exclusion, or with a second streamer instance on the box (dev alongside prod), the only thing the probe can ever detect is a Threadbase process, which says nothing about Claude ownership.
+
+Claude has no writer lock either, so there is nothing authoritative behind the heuristic to escalate to — two `claude --resume` processes on one conversation both append and neither complains.
+The Claude collision contract therefore stays as it is: `jsonl_mtime` + `process_argv` + `process_cwd`, `canForce: true`.
+
 ## Still unverified
 
 The live matrix from the report is not covered by tests: a real Codex session owned by a standalone terminal, by VS Code, and by the desktop app, plus a real `codex fork` producing a usable independent rollout.
