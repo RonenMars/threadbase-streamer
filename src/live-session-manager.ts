@@ -8,6 +8,7 @@ import type {
   ManagedSession,
   PTYManagerOptions,
   SessionRunner,
+  StartForkSessionOptions,
   StartFreshSessionOptions,
   StartSessionOptions,
   UserMessage,
@@ -59,6 +60,29 @@ export class LiveSessionManager {
     const provider = options.provider ?? CLAUDE_CODE_PROVIDER;
     const runner = this.assertSupportedProvider(provider, options.projectPath);
     return runner.startFresh(options);
+  }
+
+  /**
+   * Fork an existing conversation into a new session. Codex-only: `codex fork`
+   * has no Claude Code equivalent, and there is no safe generic fallback — a
+   * silent downgrade to resume would attach to the very writer the caller is
+   * trying to leave alone.
+   */
+  async startFork(
+    options: StartForkSessionOptions & { provider?: ProviderName },
+  ): Promise<ManagedSession> {
+    const provider = options.provider ?? CODEX_CLI_PROVIDER;
+    const runner = this.remoteRunner ?? this.runners.get(provider);
+    if (!(runner instanceof CodexPtyRunner)) {
+      const err = new Error(
+        this.remoteRunner
+          ? "Forking is not supported while sessions are hosted by the pty-host"
+          : `Forking is not supported for ${provider} sessions`,
+      );
+      (err as Error & { statusCode?: number }).statusCode = 501;
+      throw err;
+    }
+    return runner.startFork(options);
   }
 
   sendInput(sessionId: string, input: string): number {

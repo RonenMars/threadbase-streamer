@@ -17,7 +17,11 @@ export function resolveResumeBusyWindowMs(env: NodeJS.ProcessEnv = process.env):
   return Number.isFinite(n) && n >= 0 ? n : RESUME_BUSY_WINDOW_MS;
 }
 
-export type BusySignal = "jsonl_mtime" | "process_argv" | "process_cwd";
+// `file_handle` is produced by the Codex-only pre-flight in
+// codexRolloutOwner.ts, not by conversationBusy() — another process holds the
+// exact rollout JSONL open. Listed here so the wire vocabulary of `detectedBy`
+// stays in one place.
+export type BusySignal = "jsonl_mtime" | "process_argv" | "process_cwd" | "file_handle";
 
 // Allowance for a JSONL write that lands just AFTER we observe our own PTY go
 // idle — Claude flushes the tail of a turn as it exits, so the file's mtime can

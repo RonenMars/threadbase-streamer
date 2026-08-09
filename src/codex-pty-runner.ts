@@ -15,6 +15,7 @@ import type {
   PermissionOption,
   PTYManagerOptions,
   SessionRunner,
+  StartForkSessionOptions,
   StartFreshSessionOptions,
   StartSessionOptions,
   StatusSource,
@@ -73,6 +74,22 @@ export const CODEX_TRUST_GATE_REGEX = /trust the contents/i;
 // with a "Press enter to confirm or esc to go back" footer. Live-probe
 // verified: a digit keypress selects AND confirms instantly (no Enter).
 export const CODEX_HOOKS_GATE_REGEX = /hooks need review/i;
+
+// Codex's single-writer lock: `codex resume` (or `codex fork`) refuses to
+// attach to a rollout another process already holds open, printing
+// "already has an active writer (code -32600)" and going no further. Codex
+// itself is the authority here — no pre-flight can be, because the owner may
+// be a TUI, VS Code, or the desktop app, and it can attach between our probe
+// and our spawn.
+//
+// Both spellings are accepted: the message is rendered into a 120-col TUI and
+// can wrap or truncate, so the JSON-RPC code is the more durable half. Matching
+// runs against the RENDERED screen, so a message split across PTY chunks (or
+// reordered by absolute-cursor repaints) still matches.
+export const CODEX_ACTIVE_WRITER_RE = /already has an active writer|-32600/;
+
+/** `failureCode` set on a session killed by the writer-lock detection above. */
+export const CODEX_ACTIVE_WRITER_CODE = "codex_active_writer";
 
 // Hard usage-limit error Codex prints when the account quota is exhausted.
 export const CODEX_USAGE_LIMIT_RE = /you(?:'ve| have) hit your usage limit/i;
@@ -385,25 +402,36 @@ export class CodexPtyRunner implements SessionRunner {
   }
 
   private async doStart(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
+    // `sessionId` stays the runner's map key — only argv carries the
+    // provider-side id, so a resumed Codex session keeps the placeholder id
+    // its client already navigated to.
+    return this.launch(
+      sessionId,
+      ["resume", options.resumeId ?? sessionId, "--cd", options.projectPath, "--no-alt-screen"],
+      options,
+    );
+  }
+
+  // Spawn a Codex PTY under `sessionId` and wire up the shared boot machinery
+  // (screen, ready fallback, output/exit handlers). The only difference between
+  // resume, fresh and fork is argv.
+  private async launch(
+    sessionId: string,
+    args: string[],
+    options: { projectPath: string; projectName?: string; branch?: string },
+  ): Promise<ManagedSession> {
     const nodePty = await loadPty();
     const projectName = options.projectName ?? basename(options.projectPath);
 
     let proc: ReturnType<typeof nodePty.spawn>;
     try {
-      proc = nodePty.spawn(
-        resolveCodexExe(),
-        // `sessionId` stays the runner's map key — only argv carries the
-        // provider-side id, so a resumed Codex session keeps the placeholder id
-        // its client already navigated to.
-        ["resume", options.resumeId ?? sessionId, "--cd", options.projectPath, "--no-alt-screen"],
-        {
-          name: "xterm-256color",
-          cols: PTY_COLS,
-          rows: PTY_ROWS,
-          cwd: options.projectPath,
-          env: process.env as Record<string, string>,
-        },
-      );
+      proc = nodePty.spawn(resolveCodexExe(), args, {
+        name: "xterm-256color",
+        cols: PTY_COLS,
+        rows: PTY_ROWS,
+        cwd: options.projectPath,
+        env: process.env as Record<string, string>,
+      });
     } catch (err) {
       // See resolveClaudeExe's clearClaudeExeCache() in platform.ts — same
       // memoize-then-invalidate-on-spawn-failure rationale for Codex.
@@ -451,9 +479,7 @@ export class CodexPtyRunner implements SessionRunner {
   // binding logic). This runner generates a local placeholder id for the
   // ManagedSession handle only.
   async startFresh(options: StartFreshSessionOptions): Promise<ManagedSession> {
-    const nodePty = await loadPty();
     const sessionId = randomUUID();
-    const projectName = options.projectName ?? basename(options.projectPath);
 
     // Codex CLI has no `--system-prompt` flag (unlike Claude). Its only
     // launch-time injection point is the positional `[PROMPT]` argument, which
@@ -466,54 +492,27 @@ export class CodexPtyRunner implements SessionRunner {
       args.push(options.systemPrompt);
     }
 
-    let proc: ReturnType<typeof nodePty.spawn>;
-    try {
-      proc = nodePty.spawn(resolveCodexExe(), args, {
-        name: "xterm-256color",
-        cols: PTY_COLS,
-        rows: PTY_ROWS,
-        cwd: options.projectPath,
-        env: process.env as Record<string, string>,
-      });
-    } catch (err) {
-      // See the analogous catch in doStart() above.
-      clearCodexExeCache();
-      throw err;
-    }
+    return this.launch(sessionId, args, options);
+  }
 
-    const session: InternalSession = {
-      id: sessionId,
-      provider: CODEX_CLI_PROVIDER,
-      projectPath: options.projectPath,
-      projectName,
-      branch: "",
-      status: "running",
-      statusSource: "spawn",
-      statusUpdatedAt: new Date(),
-      startedAt: new Date(),
-      completedAt: null,
-      promptCount: 0,
-      lastOutput: "",
-      process: proc,
-      outputBuffer: Buffer.alloc(0),
-      screen: createScreen(),
-      inputHistory: [],
-    };
-
-    this.sessions.set(sessionId, session);
-    this.pendingReady.add(sessionId);
-    this.armReadyFallback(sessionId);
-
-    proc.onData((data: string) => {
-      this.handleOutput(sessionId, data);
-    });
-
-    proc.onExit(({ exitCode }: { exitCode: number }) => {
-      this.pendingReady.delete(sessionId);
-      this.handleExit(sessionId, exitCode);
-    });
-
-    return toPublicSession(session);
+  /**
+   * Fork an existing Codex conversation into a new, independently-owned one
+   * (`codex fork <session-id>`).
+   *
+   * This is the recovery path for a rollout Codex will not let us resume: fork
+   * starts a *new* rollout seeded from the source's history and never touches
+   * the source's writer, so the terminal / VS Code / desktop client that owns
+   * it keeps running untouched. Like a fresh start, Codex assigns the new
+   * rollout id itself — the returned session is keyed by a local placeholder
+   * until watchForCodexRollout binds the real id.
+   */
+  async startFork(options: StartForkSessionOptions): Promise<ManagedSession> {
+    const sessionId = randomUUID();
+    return this.launch(
+      sessionId,
+      ["fork", options.forkFromId, "--cd", options.projectPath, "--no-alt-screen"],
+      options,
+    );
   }
 
   // Flat backstop: if the "Ready" marker never appears within
@@ -1029,6 +1028,21 @@ export class CodexPtyRunner implements SessionRunner {
     const lines = await this.getOutputLines(sessionId, PTY_ROWS);
     const screenText = lines.join("\n");
 
+    // ── Writer lock ────────────────────────────────────────────────
+    // Codex refused to attach: another client owns this rollout. Only during
+    // boot — the message can only be produced before the session is usable,
+    // and treating a later appearance (a user pasting the error text, say) as
+    // fatal would kill a live session.
+    if (this.pendingReady.has(sessionId) && CODEX_ACTIVE_WRITER_RE.test(screenText)) {
+      this.failStartup(
+        sessionId,
+        session,
+        CODEX_ACTIVE_WRITER_CODE,
+        "This Codex session is already open in another client",
+      );
+      return;
+    }
+
     // ── Gates ──────────────────────────────────────────────────────
     const gate: CodexGateType | null = CODEX_HOOKS_GATE_REGEX.test(screenText)
       ? "hooks"
@@ -1237,6 +1251,52 @@ export class CodexPtyRunner implements SessionRunner {
     }
   }
 
+  /**
+   * Tear down a session that failed before it ever became usable, and report
+   * the reason in machine-readable form.
+   *
+   * Deliberately NOT markReady + exit: the caller must be able to tell a
+   * never-started session from a live one, `onReady` must not fire (no
+   * `session_ready` for a failed start), and every piece of per-session state —
+   * queue, timers, quiet-checker, gate cards, screen — has to go, since the
+   * session is removed from the map and nothing will collect it later.
+   */
+  private failStartup(
+    sessionId: string,
+    session: InternalSession,
+    code: string,
+    message: string,
+  ): void {
+    this.log.warn(`[codex.start_failed] ${sessionId.slice(0, 8)} ${code}`, {
+      event: "codex.start_failed",
+      sessionId,
+      code,
+      message,
+    });
+    session.failureCode = code;
+    session.failureReason = message;
+    session.status = "idle";
+    session.statusSource = "process-exit";
+    session.statusUpdatedAt = new Date();
+    session.completedAt = new Date();
+
+    this.pendingReady.delete(sessionId);
+    this.queuedInputs.delete(sessionId);
+    this.clearSessionDetectors(sessionId);
+    // Removed before the callback: the server reacts by reading the runner,
+    // and must not see a session that is already dead.
+    this.sessions.delete(sessionId);
+    try {
+      // Codex normally exits on its own here; SIGINT covers the case where it
+      // sits on the error screen instead. handleExit no-ops — session is gone.
+      session.process.kill("SIGINT");
+    } catch {
+      // Already dead.
+    }
+    session.screen.dispose();
+    this.onStatusChange?.(toPublicSession(session));
+  }
+
   private handleExit(sessionId: string, exitCode: number): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
@@ -1277,6 +1337,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     promptCount: s.promptCount,
     lastOutput: s.lastOutput,
     ...(s.failureReason != null && { failureReason: s.failureReason }),
+    ...(s.failureCode != null && { failureCode: s.failureCode }),
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt }),
     ...(s.statusSource != null && { statusSource: s.statusSource }),
     ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
