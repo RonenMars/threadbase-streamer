@@ -70,6 +70,7 @@ import {
   type PermissionMode,
   validateFlagValues,
 } from "./claude-flags";
+import { CODEX_ACTIVE_WRITER_CODE } from "./codex-pty-runner";
 import { ConversationCache, type ConversationListItem } from "./conversation-cache";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
@@ -103,6 +104,7 @@ import {
   coerceProviderForRunner,
   isProviderName,
   isProviderResumable,
+  type ProviderName,
 } from "./providers";
 import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
@@ -148,6 +150,7 @@ import {
   type AutoResumeSkipReason,
   planAutoResume,
 } from "./services/sessions/autoResumeOnBoot";
+import { type CodexOwnerSource, findRolloutOwner } from "./services/sessions/codexRolloutOwner";
 import {
   type BusySignal,
   conversationBusy,
@@ -267,6 +270,23 @@ type ConversationReconcileMode = "files" | "full";
 // Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
 const START_READY_TIMEOUT_MS = 10_000;
 
+// How long a Codex resume/fork waits for an authoritative startup outcome
+// before falling back to the pre-existing "spawned, still booting" behaviour.
+//
+// Deliberately shorter than START_READY_TIMEOUT_MS: this window only has to
+// cover Codex FAILING, and the writer-lock refusal happens when it opens the
+// rollout — before the TUI boots at all — not after the 8s ready fallback. A
+// resume that is merely slow to paint still answers 201 and finishes booting in
+// the background, exactly as it did before.
+const CODEX_STARTUP_TIMEOUT_MS = 4_000;
+
+function resolveCodexStartupTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.THREADBASE_CODEX_STARTUP_TIMEOUT_MS;
+  if (raw === undefined) return CODEX_STARTUP_TIMEOUT_MS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : CODEX_STARTUP_TIMEOUT_MS;
+}
+
 // Accepted `--model` / `/model` values: an alias ("opus", "sonnet") or a full
 // model name ("claude-opus-4-5"). Deliberately strict — this string is written
 // straight into a live PTY by applyLiveSessionSetting, so anything that could
@@ -325,7 +345,25 @@ export type ResumeFailure =
       detectedBy: BusySignal[];
       lastActivityMs: number | null;
       likelyOwner: "external" | "unknown";
-    };
+    }
+  /**
+   * Codex's own single-writer lock said no — either an open handle on the exact
+   * rollout (pre-flight) or the `-32600` error Codex printed after spawn.
+   *
+   * Separate from `conversation_busy` because the two are not the same claim:
+   * that one is a heuristic a caller may override with `force`, this one is the
+   * provider refusing, which no flag of ours can bypass.
+   */
+  | {
+      ok: false;
+      reason: "codex_session_active";
+      detectedBy: BusySignal[];
+      lastActivityMs: number | null;
+      ownerPid?: number;
+      ownerSource?: CodexOwnerSource;
+    }
+  /** Codex exited or errored during startup for some other reason. */
+  | { ok: false; reason: "codex_start_failed"; failureReason: string };
 
 export type ResumeOutcome =
   | ResumeFailure
@@ -343,6 +381,42 @@ export type ResumeOutcome =
       /** Null only if the store lost the session between spawn and read. */
       response: SessionResponse | null;
     };
+
+/**
+ * The 409 body for a Codex conversation another client already owns.
+ *
+ * Keeps `code: "CONVERSATION_BUSY"` on purpose: released mobile builds switch
+ * on that string, and a new top-level code would land as a generic network
+ * error with no recovery UI. The Codex-specific truth is carried additively —
+ * `reasonCode` names the real cause, and the capability flags say what the
+ * client may offer, so nothing has to be inferred from `likelyOwner`.
+ *
+ * `canForce` is false because `force` only ever bypassed OUR heuristic; Codex's
+ * writer lock is enforced inside Codex. `canTakeOver` is false because the
+ * owner may be a shared VS Code / desktop app-server hosting unrelated threads,
+ * and there is no way to prove otherwise today.
+ */
+function codexSessionActiveBody(outcome: {
+  detectedBy: BusySignal[];
+  lastActivityMs: number | null;
+  ownerPid?: number;
+  ownerSource?: CodexOwnerSource;
+}): Record<string, unknown> {
+  return {
+    error: "This Codex session is already open in another client",
+    code: "CONVERSATION_BUSY",
+    reasonCode: "CODEX_SESSION_ACTIVE",
+    provider: CODEX_CLI_PROVIDER,
+    detectedBy: outcome.detectedBy,
+    lastActivityMs: outcome.lastActivityMs,
+    likelyOwner: "external",
+    canForce: false,
+    canTakeOver: false,
+    canFork: true,
+    ...(outcome.ownerPid != null && { ownerPid: outcome.ownerPid }),
+    ...(outcome.ownerSource != null && { ownerSource: outcome.ownerSource }),
+  };
+}
 
 export class StreamerServer {
   private httpServer: ReturnType<typeof createServer>;
@@ -955,7 +1029,10 @@ export class StreamerServer {
         // Fire-and-forget: the notifier logs its own failures, and a push must
         // never delay or fail a session transition. No-op when APNs is off.
         void this.liveActivityNotifier?.onStatusChange(session, previousStatus);
-        this.sessionStatusBus.emit(`status:${session.id}`, session.status);
+        // The session object rides along: SessionStore's copy is a partial
+        // merge that does not carry failureReason/failureCode, so a startup
+        // handshake reading the store could not tell WHY a session went idle.
+        this.sessionStatusBus.emit(`status:${session.id}`, session.status, session);
       },
     });
 
@@ -1035,6 +1112,7 @@ export class StreamerServer {
         this.applyLiveSessionSetting(id, req, res, "effort"),
       handleUploadFile: (id, req, res) => this.handleUploadFile(id, req, res),
       handleAdopt: (id, res) => this.handleAdopt(id, res),
+      handleFork: (id, req, res) => this.handleFork(id, req, res),
       handleResume: (req, res) => this.handleResume(req, res),
       handleStartSession: (req, res) => this.handleStartSession(req, res),
       handleListConversations: (url, res) => this.handleListConversations(url, res),
@@ -4457,6 +4535,22 @@ export class StreamerServer {
             detectedBy: outcome.detectedBy,
             lastActivityMs: outcome.lastActivityMs,
             likelyOwner: outcome.likelyOwner,
+            // Additive capability hints (see docs/compatibility/tb-mobile.md).
+            // Older clients ignore them and keep deriving the same actions from
+            // `likelyOwner`; newer ones must honour these instead of guessing.
+            canForce: true,
+            canTakeOver: outcome.likelyOwner === "external",
+            canFork: false,
+          });
+          return;
+        case "codex_session_active":
+          json(res, 409, codexSessionActiveBody(outcome));
+          return;
+        case "codex_start_failed":
+          json(res, 502, {
+            error: outcome.failureReason,
+            code: "SESSION_START_FAILED",
+            provider: CODEX_CLI_PROVIDER,
           });
           return;
       }
@@ -4471,6 +4565,143 @@ export class StreamerServer {
 
     this.broadcastOrUnicastSessionList(req);
     json(res, 201, outcome.response ?? outcome.session);
+  }
+
+  /**
+   * `POST /api/sessions/:id/fork` — continue a conversation this streamer is
+   * not allowed to resume, without touching whoever owns it.
+   *
+   * Codex only (`codex fork <id>`): Claude Code has no equivalent, and there is
+   * no safe generic fallback — quietly resuming instead would attach to the
+   * exact writer the caller is trying to leave alone, which is the failure this
+   * endpoint exists to avoid.
+   *
+   * NOT idempotent by default: every accepted call starts another Codex
+   * process and another rollout. Clients that retry on timeout must send
+   * `idempotencyKey`, which replays the first outcome for 10 minutes (same
+   * store and semantics as `POST /:id/input`).
+   */
+  private async handleFork(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await readBody(req);
+
+    let idempotencyKey: string | undefined;
+    try {
+      idempotencyKey = readIdempotencyKey(body as Record<string, unknown>);
+    } catch (err) {
+      json(res, 400, { error: err instanceof Error ? err.message : "Invalid idempotencyKey" });
+      return;
+    }
+    if (idempotencyKey) {
+      const replayed = this.idempotency.get(sessionId, idempotencyKey);
+      if (replayed) {
+        json(res, replayed.status, replayed.body);
+        return;
+      }
+    }
+
+    const target = await this.resolveConversationTarget(sessionId);
+    if (!target.ok) {
+      if (target.reason === "history_file_missing") {
+        json(res, 404, {
+          error: "Conversation history file is missing; it can no longer be forked",
+          code: "history_file_missing",
+        });
+      } else {
+        json(res, 400, { error: "Could not determine project path" });
+      }
+      return;
+    }
+    if (target.provider !== CODEX_CLI_PROVIDER) {
+      json(res, 501, {
+        error: "Forking is only supported for Codex sessions",
+        code: "UNSUPPORTED_PROVIDER",
+        provider: target.provider,
+      });
+      return;
+    }
+
+    this.discoveryCache = null;
+
+    let session: ManagedSession;
+    try {
+      session = await this.ptyManager.startFork({
+        provider: CODEX_CLI_PROVIDER,
+        // The rollout id, never the placeholder the client navigated to — it is
+        // the only id `codex fork` accepts.
+        forkFromId: target.historyId,
+        projectPath: target.projectPath,
+        projectName: body.projectName,
+        branch: body.branch,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fork session";
+      const statusCode =
+        typeof (err as Error & { statusCode?: unknown }).statusCode === "number"
+          ? (err as Error & { statusCode: number }).statusCode
+          : 500;
+      this.log.error(`[fork] failed to fork ${sessionId}: ${message}`, {
+        event: "session.fork_failed",
+        sessionId,
+        error: message,
+      });
+      json(res, statusCode, { error: message, code: "FORK_FAILED" });
+      return;
+    }
+
+    // The fork's own id is a placeholder until Codex writes its rollout; the
+    // source id is recorded separately and deliberately never written into
+    // `resumedFromConversationId` — the two histories diverge here.
+    session.forkedFromConversationId = target.historyId;
+    this.sessionStore.addManaged(session);
+    this.recordSessionSpawn(session);
+
+    const { outcome, session: settled } = await this.waitForStartupOutcome(
+      session.id,
+      resolveCodexStartupTimeoutMs(),
+    );
+    if (outcome === "failed") {
+      const failed = settled ?? this.sessionStore.getManaged(session.id);
+      this.abandonFailedStart(session.id);
+      if (failed?.failureCode === CODEX_ACTIVE_WRITER_CODE) {
+        // Rare but real: Codex can refuse a fork too (e.g. the source rollout
+        // is mid-write). Same structured collision the resume path returns.
+        json(res, 409, codexSessionActiveBody({ detectedBy: [], lastActivityMs: null }));
+        return;
+      }
+      json(res, 502, {
+        error: failed?.failureReason ?? "Codex exited before the fork became ready",
+        code: "SESSION_START_FAILED",
+        provider: CODEX_CLI_PROVIDER,
+      });
+      return;
+    }
+
+    // Bind the NEW rollout id. The candidate filter requires a session_meta
+    // created at/after this session started, so it can never re-bind the source.
+    this.watchForCodexRollout(session.id, target.projectPath);
+
+    const response = this.sessionStore.get(session.id, this.ptyAttachedIds());
+    const result = {
+      status: outcome === "ready" ? 201 : 202,
+      body:
+        outcome === "ready"
+          ? (response ?? session)
+          : { id: session.id, status: "pending", forkedFromConversationId: target.historyId },
+    };
+    if (idempotencyKey) this.idempotency.set(sessionId, idempotencyKey, result);
+
+    this.log.info(`[fork] forked ${target.historyId} into ${session.id}`, {
+      event: "session.forked",
+      sessionId: session.id,
+      forkedFromConversationId: target.historyId,
+      outcome,
+    });
+    this.broadcastOrUnicastSessionList(req);
+    json(res, result.status, result.body);
   }
 
   /**
@@ -4501,40 +4732,37 @@ export class StreamerServer {
       }
     }
 
-    // Authoritative cwd comes from the JSONL itself — the file Claude looks
-    // up by filename when processing --resume. The scanner index can return a
-    // stale or wrong path (e.g. …/tb-mobile/android vs …/tb-mobile), so we
-    // read the first cwd field directly, mirroring tb-scanner/src/parser.ts.
-    let jsonlPath = this.findJsonlPath(sessionId);
-    let conv = await this.findConversationByUuid(sessionId);
+    const target = await this.resolveConversationTarget(sessionId);
+    if (!target.ok) return target;
+    const { historyId, jsonlPath, historyPath, conv, projectPath, provider } = target;
 
-    // Nothing resolves for a *fresh Codex* session id: it is a local
-    // placeholder, and Codex indexes its history under the rollout id it
-    // assigned itself. The registry is what remembers which is which, so fall
-    // back to the bound id and resolve path + history from there (G6). The
-    // session keeps the placeholder id the client navigated to — only argv and
-    // these lookups use the bound one.
-    let historyId = sessionId;
-    let registryProvider: string | undefined;
-    if (!jsonlPath && !conv) {
-      const row = this.managedSessionsRepo?.get(sessionId) ?? null;
-      const boundId = row ? resumeIdForRow(row) : null;
-      if (boundId != null && boundId !== sessionId) {
-        historyId = boundId;
-        registryProvider = row?.provider;
-        jsonlPath = this.findJsonlPath(boundId);
-        conv = await this.findConversationByUuid(boundId);
+    // Codex-only fast path: does another process hold this exact rollout open?
+    // The generic probe below cannot answer that — a Codex owner need not carry
+    // the rollout id in argv, and an owned rollout can sit quiet well past the
+    // mtime window (the 2026-08-09 incident). An open handle is the same
+    // condition Codex's own writer lock rejects, so this is treated as
+    // authoritative and `force` does NOT bypass it: forcing would spawn a PTY
+    // that Codex refuses anyway, and answer 201 for a session that will never
+    // become usable. Fork is the recovery path, not force.
+    if (provider === CODEX_CLI_PROVIDER && historyPath) {
+      const owner = await findRolloutOwner(historyPath);
+      if (owner) {
+        this.log.info(`[resume] codex rollout held by pid ${owner.pid}`, {
+          event: "session.codex_rollout_busy",
+          sessionId,
+          historyId,
+          ownerPid: owner.pid,
+          ownerCommand: owner.command,
+        });
+        return {
+          ok: false,
+          reason: "codex_session_active",
+          detectedBy: ["file_handle"],
+          lastActivityMs: null,
+          ownerPid: owner.pid,
+          ownerSource: owner.source,
+        };
       }
-    }
-
-    const jsonlCwd = jsonlPath ? await this.readCwdFromJsonl(jsonlPath) : null;
-    const projectPath: string = jsonlCwd ?? (conv as any)?.projectPath;
-    if (!projectPath) {
-      // Nothing at all resolved — the history file is gone, not merely
-      // unreadable. Distinguished from "path unknown" because it is permanent:
-      // the caller must not retry it.
-      if (!conv && !jsonlPath) return { ok: false, reason: "history_file_missing" };
-      return { ok: false, reason: "no_project_path" };
     }
 
     // Pre-flight collision check: refuse to resume a conversation that looks
@@ -4593,17 +4821,6 @@ export class StreamerServer {
       this.contendedSessions.add(sessionId);
     }
 
-    // Same provider-resolution fallback as the conversation-detail path
-    // (server.ts ~1685): `conv` (the full Conversation shape) doesn't carry
-    // provider, so fall back to the cached metadata, then default to Claude.
-    // …and, when the fallback above fired, the registry row's own provider as a
-    // last resort: neither lookup is keyed by the placeholder id, so without it
-    // a Codex placeholder would default to Claude and spawn the wrong CLI.
-    const cachedConvMeta = this.cache?.getMetaById(historyId);
-    const provider = coerceProviderForRunner(
-      (conv as any)?.provider ?? cachedConvMeta?.provider ?? registryProvider,
-    );
-
     // We are about to change what is running, so the discovered-process snapshot
     // is now stale — drop it so the next sessions list re-enumerates. Done AFTER
     // the collision probe, which wants the warm list (a fresh enumeration there
@@ -4629,6 +4846,35 @@ export class StreamerServer {
     this.sessionStore.addManaged(session);
     this.recordSessionSpawn(session);
 
+    // Codex is the only authority on its writer lock, and it reports the
+    // refusal AFTER the process starts. Spawning is therefore not evidence of a
+    // successful resume: wait for a bounded ready-or-failed outcome before
+    // telling the caller this worked. Claude's resume is unchanged — it has no
+    // equivalent lock, and its collision guard is entirely pre-spawn.
+    if (provider === CODEX_CLI_PROVIDER) {
+      const { outcome, session: settled } = await this.waitForStartupOutcome(
+        sessionId,
+        resolveCodexStartupTimeoutMs(),
+      );
+      if (outcome === "failed") {
+        const failed = settled ?? this.sessionStore.getManaged(sessionId);
+        this.abandonFailedStart(sessionId);
+        if (failed?.failureCode === CODEX_ACTIVE_WRITER_CODE) {
+          return {
+            ok: false,
+            reason: "codex_session_active",
+            detectedBy: [],
+            lastActivityMs: null,
+          };
+        }
+        return {
+          ok: false,
+          reason: "codex_start_failed",
+          failureReason: failed?.failureReason ?? "Codex exited before becoming ready",
+        };
+      }
+    }
+
     // Watch the conversation's JSONL file for structured events
     void this.watchConversationFile(sessionId, historyId);
 
@@ -4644,6 +4890,148 @@ export class StreamerServer {
     const response = this.sessionStore.get(session.id, this.ptyAttachedIds());
 
     return { ok: true, alreadyRunning: false, session, response };
+  }
+
+  /**
+   * Resolve a client-supplied session/conversation id into everything needed to
+   * launch against it: the id the PROVIDER filed the history under, that
+   * history's path, the project cwd, and which CLI owns it.
+   *
+   * Shared by resume and fork so the two can never disagree about identity —
+   * which for Codex is the whole difficulty: the id a client navigated to may
+   * be a local placeholder, and only the registry knows the rollout id behind
+   * it.
+   */
+  private async resolveConversationTarget(sessionId: string): Promise<
+    | ResumeFailure
+    | {
+        ok: true;
+        historyId: string;
+        jsonlPath: string | null;
+        historyPath: string | null;
+        conv: any;
+        projectPath: string;
+        provider: ProviderName;
+      }
+  > {
+    // Authoritative cwd comes from the JSONL itself — the file Claude looks
+    // up by filename when processing --resume. The scanner index can return a
+    // stale or wrong path (e.g. …/tb-mobile/android vs …/tb-mobile), so we
+    // read the first cwd field directly, mirroring tb-scanner/src/parser.ts.
+    let jsonlPath = this.findJsonlPath(sessionId);
+    let conv = await this.findConversationByUuid(sessionId);
+
+    // Nothing resolves for a *fresh Codex* session id: it is a local
+    // placeholder, and Codex indexes its history under the rollout id it
+    // assigned itself. The registry is what remembers which is which, so fall
+    // back to the bound id and resolve path + history from there (G6). The
+    // session keeps the placeholder id the client navigated to — only argv and
+    // these lookups use the bound one.
+    let historyId = sessionId;
+    let registryProvider: string | undefined;
+    if (!jsonlPath && !conv) {
+      const row = this.managedSessionsRepo?.get(sessionId) ?? null;
+      const boundId = row ? resumeIdForRow(row) : null;
+      if (boundId != null && boundId !== sessionId) {
+        historyId = boundId;
+        registryProvider = row?.provider;
+        jsonlPath = this.findJsonlPath(boundId);
+        conv = await this.findConversationByUuid(boundId);
+      }
+    }
+
+    const jsonlCwd = jsonlPath ? await this.readCwdFromJsonl(jsonlPath) : null;
+    const projectPath: string = jsonlCwd ?? (conv as any)?.projectPath;
+    if (!projectPath) {
+      // Nothing at all resolved — the history file is gone, not merely
+      // unreadable. Distinguished from "path unknown" because it is permanent:
+      // the caller must not retry it.
+      if (!conv && !jsonlPath) return { ok: false, reason: "history_file_missing" };
+      return { ok: false, reason: "no_project_path" };
+    }
+
+    // Same provider-resolution fallback as the conversation-detail path
+    // (server.ts ~1685): `conv` (the full Conversation shape) doesn't carry
+    // provider, so fall back to the cached metadata, then default to Claude.
+    // …and, when the fallback above fired, the registry row's own provider as a
+    // last resort: neither lookup is keyed by the placeholder id, so without it
+    // a Codex placeholder would default to Claude and spawn the wrong CLI.
+    const cachedConvMeta = this.cache?.getMetaById(historyId);
+    const provider = coerceProviderForRunner(
+      (conv as any)?.provider ?? cachedConvMeta?.provider ?? registryProvider,
+    );
+
+    return {
+      ok: true,
+      historyId,
+      jsonlPath,
+      // findJsonlPath() only knows Claude's `<uuid>.jsonl` layout under
+      // ~/.claude/projects; a Codex rollout lives in a date-nested directory
+      // under a name it chose, so its path only ever comes from the indexed
+      // conversation. Kept separate from `jsonlPath` deliberately: feeding it to
+      // conversationBusy() would newly arm the mtime heuristic for Codex, which
+      // is exactly the over-broad signal the report ruled out.
+      historyPath: jsonlPath ?? ((conv as any)?.filePath as string | undefined) ?? null,
+      conv,
+      projectPath,
+      provider,
+    };
+  }
+
+  /**
+   * Block until a freshly spawned session reaches `waiting_input` (ready) or
+   * `idle` (failed), or until `timeoutMs` elapses with the process still alive.
+   *
+   * "timeout" is not an error: it is the pre-existing asynchronous contract —
+   * the session keeps booting and the caller answers with a pending shape.
+   */
+  private waitForStartupOutcome(
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<{ outcome: "ready" | "failed" | "timeout"; session: ManagedSession | null }> {
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout | null = null;
+      const handler = (status: string, session?: ManagedSession) => {
+        if (status !== "waiting_input" && status !== "idle") return;
+        this.sessionStatusBus.off(`status:${sessionId}`, handler);
+        if (timer) clearTimeout(timer);
+        resolve({
+          outcome: status === "waiting_input" ? "ready" : "failed",
+          session: session ?? null,
+        });
+      };
+      this.sessionStatusBus.on(`status:${sessionId}`, handler);
+      timer = setTimeout(() => {
+        this.sessionStatusBus.off(`status:${sessionId}`, handler);
+        resolve({ outcome: "timeout", session: null });
+      }, timeoutMs);
+      timer.unref?.();
+    });
+  }
+
+  /**
+   * Drop every trace of a session that never became usable, and hand back what
+   * it failed with.
+   *
+   * The runner has already torn itself down (failStartup / handleExit); what
+   * remains is server-side bookkeeping that would otherwise leave a dead
+   * session in the list, a registry row claiming a spawn, and a `selfPtyEndedAt`
+   * marker that would suppress the mtime collision signal on the NEXT resume —
+   * i.e. it would help hide the very owner we just collided with.
+   */
+  private abandonFailedStart(sessionId: string): void {
+    this.sessionStore.removeManaged(sessionId);
+    this.selfPtyEndedAt.delete(sessionId);
+    this.contendedSessions.delete(sessionId);
+    try {
+      this.managedSessionsRepo?.delete(sessionId);
+    } catch (err) {
+      this.log.warn("[registry] failed to drop a failed start", {
+        event: "registry.forget_failed",
+        sessionId,
+        err,
+      });
+    }
   }
 
   private enrichResumedSessionAsync(sessionId: string, projectPath: string, conv: any): void {
@@ -5323,20 +5711,7 @@ export class StreamerServer {
       // Races against the same fallback window pty-manager itself uses for
       // prompt-marker detection, plus margin — if neither settles in time we
       // fall back to the old fire-and-forget shape rather than hang the request.
-      const readyOrFailed = new Promise<"ready" | "failed">((resolve) => {
-        const handler = (status: string) => {
-          if (status === "waiting_input" || status === "idle") {
-            this.sessionStatusBus.off(`status:${session.id}`, handler);
-            resolve(status === "waiting_input" ? "ready" : "failed");
-          }
-        };
-        this.sessionStatusBus.on(`status:${session.id}`, handler);
-      });
-      const timeoutPromise = new Promise<"timeout">((resolve) =>
-        setTimeout(() => resolve("timeout"), START_READY_TIMEOUT_MS),
-      );
-
-      const outcome = await Promise.race([readyOrFailed, timeoutPromise]);
+      const { outcome } = await this.waitForStartupOutcome(session.id, START_READY_TIMEOUT_MS);
       const current = this.sessionStore.get(session.id, this.ptyAttachedIds());
 
       if (outcome === "ready" && current) {

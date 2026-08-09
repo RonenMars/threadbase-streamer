@@ -299,6 +299,9 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     ...(s.resumedFromConversationId != null && {
       resumedFromConversationId: s.resumedFromConversationId,
     }),
+    ...(s.forkedFromConversationId != null && {
+      forkedFromConversationId: s.forkedFromConversationId,
+    }),
     ...(s.boundConversationId != null && { boundConversationId: s.boundConversationId }),
     ...(s.interruptedStatus != null && { interruptedStatus: s.interruptedStatus }),
   };

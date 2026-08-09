@@ -88,6 +88,11 @@ export const createSessionRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
+  app.post("/:id/fork", async (c) => {
+    await deps.handleFork(c.req.param("id"), c.env.incoming, c.env.outgoing);
+    return alreadyHandled();
+  });
+
   app.post("/:id/stop", async (c) => {
     await deps.handleStopSession(c.req.param("id"), c.env.outgoing);
     return alreadyHandled();

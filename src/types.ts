@@ -70,6 +70,13 @@ export interface ManagedSession {
   promptCount: number;
   lastOutput: string;
   failureReason?: string;
+  /**
+   * Machine-readable companion to `failureReason`, set only when the runner
+   * recognised the failure. Currently just `codex_active_writer` (Codex's
+   * single-writer lock), which the resume path maps to a structured 409 rather
+   * than reporting a spawn as successful. Absent for every other failure.
+   */
+  failureCode?: string;
   sessionName?: string;
   model?: string;
   account?: string;
@@ -123,6 +130,14 @@ export interface ManagedSession {
    * lifetime of a live PTY) — must never be written into either of those.
    */
   boundConversationId?: string;
+
+  /**
+   * Source conversation this session was FORKED from (`codex fork`). Distinct
+   * from `resumedFromConversationId`: a resume continues one conversation, a
+   * fork starts a second one whose history diverges from the source at the fork
+   * point — and the source keeps its own owner, which is the entire point.
+   */
+  forkedFromConversationId?: string;
 
   /**
    * Multi-agent mode only. Per-session in-memory LRU of progress event ids
@@ -387,6 +402,8 @@ export interface SessionResponse {
   lastActivityAt?: string;
   filePath?: string;
   resumedFromConversationId?: string;
+  /** See `ManagedSession.forkedFromConversationId`. Additive; older clients ignore it. */
+  forkedFromConversationId?: string;
   /** See `ManagedSession.boundConversationId` — never repurposes `conversationId`. */
   boundConversationId?: string;
   /**
@@ -590,6 +607,18 @@ export interface StartSessionOptions {
   effort?: EffortLevel;
   claudeFlags?: ClaudeFlagValues;
   claudeExtraArgs?: string;
+}
+
+export interface StartForkSessionOptions {
+  /**
+   * Provider-side id of the conversation to fork FROM (for Codex, the rollout
+   * id — never a local placeholder). The forked session gets its own id; the
+   * two identities are deliberately kept distinct.
+   */
+  forkFromId: string;
+  projectPath: string;
+  projectName?: string;
+  branch?: string;
 }
 
 export interface StartFreshSessionOptions {

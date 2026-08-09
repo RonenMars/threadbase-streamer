@@ -25,6 +25,17 @@ vi.mock("node-pty", () => {
   return { spawn: vi.fn(() => makeMockProcess()) };
 });
 
+// A Codex resume now runs the exact-rollout open-file pre-flight, which shells
+// out to `lsof` — a whole-process-table walk that costs seconds on a loaded
+// box and has nothing to do with what these cases assert (argv and identity).
+// Stub it to "no owner"; the probe's own behaviour is covered in
+// codex-rollout-owner.test.ts and codex-active-writer.test.ts.
+vi.mock("../src/services/sessions/codexRolloutOwner", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../src/services/sessions/codexRolloutOwner")>();
+  return { ...actual, findRolloutOwner: vi.fn(async () => null) };
+});
+
 // Ask the kernel for an ephemeral port at bind time. Probing for a free port up
 // front and releasing it is a TOCTOU race: another server can take it between
 // the probe's close() and our listen(), producing a flaky EADDRINUSE under
@@ -41,7 +52,24 @@ const CODEX_SESSION_ID = "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0011";
 const PLACEHOLDER_ID = "0199bbbb-cccc-7ddd-8eee-ffff00112233";
 const FIXTURE = join(__dirname, "fixtures", "codex-rollout.jsonl");
 
+// Applied at collection time, not in a hook — a hook runs after the timeout is
+// already fixed for the collected tests.
+vi.setConfig({ testTimeout: 60_000 });
+
 describe("Codex resume", () => {
+  // A Codex resume now waits for an authoritative startup outcome, and runs the
+  // bounded open-file pre-flight (real `lsof`, 800ms cap), before answering.
+  // The mock PTY never paints a Ready bar, so every resume here would pay the
+  // full handshake window: zero it — these cases assert argv and identity, and
+  // the handshake has its own coverage in codex-active-writer.test.ts. The
+  // wider timeout covers the pre-flight on a box slow under full-suite load.
+  beforeAll(() => {
+    process.env.THREADBASE_CODEX_STARTUP_TIMEOUT_MS = "0";
+  });
+  afterAll(() => {
+    delete process.env.THREADBASE_CODEX_STARTUP_TIMEOUT_MS;
+  });
+
   let ptySpawn: ReturnType<typeof vi.fn>;
   let codexRoot: string;
   let liveCwd: string;
