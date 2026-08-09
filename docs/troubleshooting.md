@@ -789,6 +789,29 @@ PATH="$HOME/.nvm/versions/node/$(cat .nvmrc)/bin:$PATH" npm run deploy
 
 ---
 
+### `npm ci` succeeds but `better-sqlite3` has no binding at all (npm ≥ 12)
+
+**When:** A fresh clone or a new worktree on npm 12+. `npm ci` exits 0, but every test touching the cache fails, and the visible error is usually the same red herring as the entry above — `Cannot read properties of undefined (reading 'close')` in an `afterEach`, or `Error: Could not locate the bindings file`. The tell is at the end of the install output, not in the test output:
+```
+npm warn install-scripts 6 packages had install scripts blocked because they are
+not covered by allowScripts. Run `npm install-scripts ls` to review.
+```
+**Cause:** npm 12 blocks dependency install scripts by default. `better-sqlite3` builds its native module in an `install` script, so a blocked install leaves `build/Release/better_sqlite3.node` absent entirely. This is **not** an ABI mismatch — there is no binary to mismatch, so the `NODE_MODULE_VERSION` line the entries above tell you to look for never appears, and `scripts/check-native-abi.mjs` passes (it exits 0 when no binary exists).
+
+Only `better-sqlite3` is affected. The other blocked packages are fine without their scripts: `node-pty` ships `prebuilds/<platform>/pty.node`, `fsevents` ships `fsevents.node`, and `esbuild` resolves through its platform package. The root project's own `preinstall`/`pretest`/`prepare` hooks are unaffected — npm gates *dependency* scripts only.
+
+**Fix:** `package.json` carries an `allowScripts` field naming the one package allowed to build:
+```jsonc
+"allowScripts": { "better-sqlite3": true }
+```
+A plain `npm ci` then produces the binding. If you hit this on a branch that predates the field, add it with `npm install-scripts approve better-sqlite3 --no-allow-scripts-pin` (the `--no-…-pin` matters: the default writes `better-sqlite3@<version>`, so the next dependabot bump silently re-blocks the build) and run `npm rebuild better-sqlite3`.
+
+**Never copy `build/Release/*.node` from another checkout to work around this.** Branches pin different majors — `main` and the integration branches have differed by a full major (11.x vs 12.x) — and a binding from the wrong major loads without complaint and then misbehaves in ways that look like product bugs. It also silently invalidates whatever test run you were trying to verify.
+
+**CI:** `ci.yml` sidesteps the gate with `npm ci --ignore-scripts=false`, which allows *every* package's scripts. `release.yml`'s three `npm ci` calls have no such flag — they work today only because GitHub's runners still bundle npm 10/11. The `allowScripts` field covers both paths with no flags at all, and is the reason release builds won't quietly start shipping without a binding when runners move to npm 12.
+
+---
+
 ## Menubar packaging
 
 The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applications/Threadbase Menubar.app`. It is installed via the `deploy-menubar` skill (`.claude/skills/deploy-menubar`), which builds via electron-builder, mounts the produced `.dmg`, and copies the app into place — `scripts/deploy.sh` no longer touches the menubar. Several gotchas emerged during the initial rollout — collected here.
