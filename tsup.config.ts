@@ -27,6 +27,8 @@ export default defineConfig([
       cli: "cli/index.ts",
       "launchd-entry": "cli/launchd-entry.ts",
       "seed-claude-config": "src/docker/seed-claude-config.ts",
+      "merge-server-yaml": "src/docker/mergeServerYaml.ts",
+      "ensure-demo-project-dirs": "src/docker/ensureDemoProjectDirs.ts",
     },
     format: ["cjs"],
     banner: { js: "#!/usr/bin/env node" },
