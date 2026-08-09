@@ -12,7 +12,6 @@ interface ProjectRow {
   last_indexed_at: string | null;
   latest_message_at: string | null;
   latest_message_id: string | null;
-  message_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -27,7 +26,6 @@ function rowToProject(row: ProjectRow): Project {
     lastIndexedAt: row.last_indexed_at,
     latestMessageAt: row.latest_message_at,
     latestMessageId: row.latest_message_id,
-    messageCount: row.message_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -56,12 +54,12 @@ export class ProjectsRepository {
       INSERT INTO projects (
         id, path, name,
         last_conversation_id, last_conversation_created_at, last_indexed_at,
-        latest_message_at, latest_message_id, message_count,
+        latest_message_at, latest_message_id,
         created_at, updated_at
       ) VALUES (
         @id, @path, @name,
         @last_conversation_id, @last_conversation_created_at, @last_indexed_at,
-        @latest_message_at, @latest_message_id, @message_count,
+        @latest_message_at, @latest_message_id,
         @created_at, @updated_at
       )
     `);
@@ -128,7 +126,6 @@ export class ProjectsRepository {
       last_indexed_at: now,
       latest_message_at: input.latestMessageAt ?? null,
       latest_message_id: input.latestMessageId ?? null,
-      message_count: 0,
       created_at: now,
       updated_at: now,
     });
