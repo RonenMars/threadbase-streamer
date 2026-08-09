@@ -4,7 +4,6 @@ Follow-up to the Codex active-writer work (`fix/codex-active-writer-resume`).
 Read these first:
 
 ```text
-docs/2026-08-09-codex-active-writer-resume-report.md
 docs/compatibility/codex-collision-and-fork.md
 src/services/sessions/codexRolloutOwner.ts
 src/services/sessions/conversationBusy.ts

@@ -1,7 +1,6 @@
 # Codex active-writer collisions and fork — client contract
 
 **Status:** implemented in the streamer (2026-08-09). Mobile work not started.
-**Background:** [docs/2026-08-09-codex-active-writer-resume-report.md](../2026-08-09-codex-active-writer-resume-report.md)
 
 Codex enforces a **single writer per rollout** and only reports the refusal after `codex resume` starts: `already has an active writer (code -32600)`.
 The streamer used to answer `201`, then the session went idle with no structured failure, and mobile sat on its pending screen until the 20-second stuck-session fallback.
