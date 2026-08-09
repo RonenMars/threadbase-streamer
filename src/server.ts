@@ -805,6 +805,24 @@ export class StreamerServer {
         // Feed the storm detector — a burst of unlinks re-triggers detection.
         this.cacheMonitor?.recordUnlink(filePath);
       },
+      onError: (filePath, err) => {
+        // Was unwired, so every watcher error was dropped on the floor. The one
+        // that matters is ENOSPC from a directory watch: chokidar takes one
+        // OS-level watch handle PER FILE under a watched root (see
+        // watchDirectory's note), so on Linux the conversation corpus is spent
+        // directly against inotify's per-user max_user_watches — a ceiling as
+        // low as 8192 on some distros, shared with every other watcher the user
+        // is running. Past it the watch never attaches: tails go quiet and new
+        // conversations stop being discovered, with nothing in the log tying it
+        // to the fd budget. Name the cause here so it isn't re-derived.
+        const enospc = (err as NodeJS.ErrnoException).code === "ENOSPC";
+        this.log.error(
+          enospc
+            ? `Watcher hit the OS watch-handle limit on ${filePath} — raise fs.inotify.max_user_watches (Linux) or the process fd limit; conversation discovery and live tails are degraded until then`
+            : `Watcher error on ${filePath}: ${err.message}`,
+          { filePath, err, event: enospc ? "watcher.limit_exhausted" : "watcher.error" },
+        );
+      },
     });
 
     this.ptyManager = new LiveSessionManager({
