@@ -720,7 +720,7 @@ describe("CodexPtyRunner — usage / rate limits", () => {
 
     proc._emit(
       "data",
-      "⚠ You have 1 usage limit reset available. Run /usage to use one.\r\n" + READY_STATUS_BAR,
+      `⚠ You have 1 usage limit reset available. Run /usage to use one.\r\n${READY_STATUS_BAR}`,
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
