@@ -1052,3 +1052,29 @@ and install `pm2-logrotate` so no single log can grow unbounded.
 **Manual escape hatch:** `tb-streamer prod logs --clear` truncates both files in place and kickstarts so the descriptors reopen at 0.
 
 **Known ceiling:** the cap bounds growth *across restarts only*. An instance running for months without one still grows unbounded. If that becomes real, move the same truncate-in-place call onto an interval. A pino transport that owns its own file does not replace this on its own — real stdout (uncaught stack traces, node warnings, PTY noise) still lands in the supervisor-held file.
+
+## `EMFILE: too many open files` from unrelated code paths, or `watcher.limit_exhausted` in the log
+
+**When:** A supervised streamer on a machine with a populated `~/.claude` fails in `fs` calls that have nothing to do with each other — a PTY spawn, a cache write, a migration — with `EMFILE` or `ENOSPC`. Nothing in the message mentions conversations or watchers. A `watcher.limit_exhausted` warn line may appear if the watcher is what trips first.
+
+**Cause.** `ConversationWatcher.watchDirectory()` costs one OS watch handle *per file* under the root, not one per directory — chokidar recurses, and the per-file `change` events are what the tail self-heal and external-tail attach depend on. So the process holds roughly one open descriptor per conversation transcript on the box: 2131 fds against 2133 files, ~88% of all fds on the process, measured 2026-08-09. That tracks the corpus on disk, not live sessions, so it grows with history and never with load.
+
+Nothing asked the OS for room to do that. **Node does not raise `RLIMIT_NOFILE` for itself** — a reasonable thing to assume it does, and it does not. `launchctl limit maxfiles` hands new launchd jobs a **256 soft** limit by default, and Node was measured hitting `EMFILE` at **249** open fds under a forced `ulimit -n 256`. Against a 2415-fd steady state that is roughly 8× short, so the process is broken from its first boot rather than degrading later.
+
+A development machine usually will not show this: a launchd domain that inherited an unlimited soft limit passes it down, leaving the effective ceiling at `kern.maxfilesperproc` (122880 here). That is inheritance, not anything the deploy asked for, which is why the failure only appears on other people's machines.
+
+**Fix (shipped).** Both service definitions now set the limit explicitly: `SoftResourceLimits`/`NumberOfFiles` in the launchd plist (`scripts/deploy.sh`) and `LimitNOFILE=` in the systemd unit (`scripts/deploy-linux.sh`), both at **16384** — about 7× the measured steady state, which covers several years of growth at the observed ~41 conversations/day while staying far under the per-process ceiling. `ensure_plist_healthy()` rewrites and re-bootstraps any existing plist that predates the key, so installs from before this change pick it up on the next deploy.
+
+Not "unlimited": a real number is what makes a runaway show up as a failure instead of as swap pressure.
+
+**Linux needs a second, separate knob.** `LimitNOFILE` does **not** cover inotify. The watch handles are billed against the per-user `fs.inotify.max_user_watches`, which can be as low as 8192 and is shared with every other watcher the user runs — editors, language servers, other agents. A 2133-file corpus already sits at ~26% of that on its own. Raising the fd limit alone on Linux looks like a fix and is not one:
+
+```sh
+# check
+sysctl fs.inotify.max_user_watches
+# raise persistently
+echo 'fs.inotify.max_user_watches=65536' | sudo tee /etc/sysctl.d/60-threadbase.conf
+sudo sysctl --system
+```
+
+**Why there is no boot-time self-check.** Reading the process's own limit cannot be done truthfully across platforms for a price worth paying: `process.report.getReport().header` carries no `rlimit` on darwin, and shelling out to `ulimit -n` reports the *shell's* limit rather than the running process's. A check that is right on Linux and blind on macOS reads as coverage without being coverage. Setting the limit in the service definition needs no detection at all, which is why it is the fix.

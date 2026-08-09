@@ -263,6 +263,7 @@ After=network.target
 [Service]
 ExecStart=$node_bin $ACTIVE_LINK serve --port $PORT --verbose
 Restart=on-failure
+LimitNOFILE=16384
 StandardOutput=append:$logs_dir/stdout.log
 StandardError=append:$logs_dir/stderr.log
 
