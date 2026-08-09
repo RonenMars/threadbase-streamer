@@ -15,6 +15,7 @@ export type SessionStatus = "running" | "waiting_input" | "idle";
  */
 export type SessionLifecycle =
   | "attached" // this streamer run owns the PTY and streams its bytes
+  | "starting" // registered, spawn in flight; not attached here and no exit observed
   | "detached" // process alive, but this run does not own its fd
   | "orphaned" // something is alive at the recorded pid, identity unconfirmed
   | "resumable" // no live process; provider history supports resume
@@ -335,7 +336,10 @@ export interface SessionResponse {
    * tell a completed session from one we terminated.
    *
    * Additive and optional — `ptyAttached` keeps its meaning (=== "attached"),
-   * so a client that ignores this behaves exactly as it did before.
+   * so a client that ignores this behaves exactly as it did before. `"starting"`
+   * is additive in the same way: a session we hold no PTY for and have observed
+   * no exit for reports it instead of the `"completed"` it used to, so a client
+   * can tell "not attached yet" from "ended" (tb-mobile #508).
    */
   /**
    * How `status` was derived and how far to trust it (C3). Additive: `status`

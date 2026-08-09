@@ -240,6 +240,13 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     // Multi-agent sessions never have a PTY (`currentTurnId` is defined — null
     // while idle between turns — only on that path). While their status is
     // still live they are `attached`, not terminal (#438).
+    // Otherwise, terminal requires evidence of termination — a recorded
+    // `failureReason`, or the `completedAt` every exit path stamps. Without
+    // either, no PTY here means the spawn has not landed, which is `starting`,
+    // not `completed` (tb-mobile #508). Scoped to the PTY path only
+    // (`currentTurnId === undefined`) — multi-agent never stamps `completedAt`
+    // at all, so an idle multi-agent session (no pre-attach race to
+    // disambiguate) stays `completed` regardless.
     lifecycle:
       ptyAttached || isLiveMultiAgent(s)
         ? "attached"
@@ -247,7 +254,9 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
           ? "resumable"
           : s.failureReason != null
             ? "failed"
-            : "completed",
+            : s.currentTurnId === undefined && s.completedAt == null
+              ? "starting"
+              : "completed",
     lifecycleSource:
       ptyAttached || isLiveMultiAgent(s)
         ? s.reconciled
@@ -255,7 +264,9 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
           : "spawn"
         : s.rehydrated
           ? "reconcile"
-          : "exit",
+          : s.currentTurnId === undefined && s.completedAt == null
+            ? "spawn"
+            : "exit",
     // We own its PTY, so `status` is the authoritative signal — no inferred
     // `activity` is attached for managed sessions.
     ownership: s.rehydrated ? "historical" : "managed",
