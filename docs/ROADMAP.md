@@ -53,11 +53,11 @@ The streamer currently forwards a `hasImages` boolean per message, which is suff
 
 ## Feature: Windows `prod logs` (Task Scheduler redirection)
 
-**Status (2026-08-10):** promoted to a release blocker — tracked as [#472](https://github.com/RonenMars/threadbase-streamer/issues/472), since Windows is in scope for the public release. A Windows user who hits a problem has no diagnostic surface at all.
+**Status (2026-08-10):** built, as [#472](https://github.com/RonenMars/threadbase-streamer/issues/472). Windows is in scope for the public release, and a Windows user who hit a problem had no diagnostic surface at all.
 
-`tb-streamer prod logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. On Windows, `src/lifecycle/task-scheduler.ts:67-72`'s `getLogPaths()` throws a clear message because `launch.cmd` does not currently redirect stdout/stderr to a file — Task Scheduler has no native redirection.
+`tb-streamer prod logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. Task Scheduler has no native redirection, so on Windows the `launch.cmd` that `scripts/deploy.ps1` generates carries it instead: cmd's `>>` appends to the same `~/.threadbase/logs/{stdout,stderr}.log` layout, and `getLogPaths()` on the Task Scheduler backend returns those paths. Both sides read them from `logPaths()` in `src/lifecycle/constants.ts` rather than repeating string literals, and `Repair-LaunchCmd` rewrites any pre-existing `launch.cmd` that has no `>>` in it.
 
-**Approach:** rewrite `launch.cmd` (or the scheduled task action) to invoke `pwsh.exe -Command "node cli.js serve ... *>> $logDir\stdout.log 2>> $logDir\stderr.log"` so the runtime captures output. Then map `getLogPaths()` on the Task Scheduler backend to those paths. Until that's wired, gate the `prod logs` Commander registration on `process.platform === "darwin"` so `tb-streamer prod --help` on Windows doesn't advertise a feature that always fails.
+The redirection is unverified on a real Windows box — it is covered only by content assertions in `__tests__/deploy-windows-script.test.ts` and by the `Smoke (windows-latest)` CI job.
 
 ---
 

@@ -206,6 +206,30 @@ function Invoke-PredeployCheck {
   }
 }
 
+# Builds the contents of launch.cmd. Single source of truth for the launcher:
+# Invoke-Setup writes it at first registration, Repair-LaunchCmd rewrites it in
+# place afterwards.
+#
+# Task Scheduler has no native stdout/stderr redirection and the action runs via
+# wscript -> launch.vbs (hidden window), so cmd's `>>` inside launch.cmd is the
+# only place output can be captured. The two targets must stay in step with
+# logPaths() in src/lifecycle/constants.ts — that is what `tb-streamer prod logs`
+# tails (locked by __tests__/deploy-windows-script.test.ts). The mkdir guard is
+# load-bearing: cmd fails the whole line if the redirect directory is missing,
+# and the failure lands in the hidden console nobody reads.
+function Get-LaunchCmdLines {
+  param([string]$NodeBin)
+  $logsDir = Join-Path $installDir 'logs'
+  $outLog = Join-Path $logsDir 'stdout.log'
+  $errLog = Join-Path $logsDir 'stderr.log'
+  @(
+    '@echo off',
+    "cd /d `"$installDir`"",
+    "if not exist `"$logsDir`" mkdir `"$logsDir`"",
+    "`"$NodeBin`" `"$activeFile`" serve --port $port --verbose --prod >> `"$outLog`" 2>> `"$errLog`""
+  )
+}
+
 function Invoke-Setup {
   $logsDir = Join-Path $installDir 'logs'
   New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
@@ -224,9 +248,7 @@ function Invoke-Setup {
   $cmdPath = Join-Path $installDir 'launch.cmd'
   $vbsPath = Join-Path $installDir 'launch.vbs'
 
-  $cmdLines = @('@echo off', "cd /d `"$installDir`"")
-  $cmdLines += "`"$nodeBin`" `"$activeFile`" serve --port $port --verbose --prod"
-  Set-Content -Path $cmdPath -Value $cmdLines -Encoding Ascii
+  Set-Content -Path $cmdPath -Value (Get-LaunchCmdLines -NodeBin $nodeBin) -Encoding Ascii
 
   $vbsContent = 'CreateObject("WScript.Shell").Run """' + $cmdPath + '""", 0, False'
   Set-Content -Path $vbsPath -Value $vbsContent -Encoding Ascii
@@ -245,7 +267,8 @@ function Invoke-Setup {
 }
 
 # Self-heal: existing launch.cmd files from before the lifecycle work omit
-# --port / --verbose / --prod. Detect + rewrite in place.
+# --port / --verbose / --prod, and every one written before the logging fix omits
+# the `>>` redirection. Detect + rewrite in place.
 function Repair-LaunchCmd {
   $cmdPath = Join-Path $installDir 'launch.cmd'
   if (-not (Test-Path $cmdPath)) { return }
@@ -261,14 +284,16 @@ function Repair-LaunchCmd {
     Write-Warn "launch.cmd is missing --port flag — rewriting"
     $needsRewrite = $true
   }
+  if ($content -notmatch '>>') {
+    Write-Warn "launch.cmd is missing stdout/stderr redirection — rewriting"
+    $needsRewrite = $true
+  }
 
   if (-not $needsRewrite) { return }
 
   Copy-Item -Path $cmdPath -Destination "$cmdPath.bak.$(Get-Date -Format yyyyMMddHHmmss)" -Force
   $nodeBin = (Get-Command node).Source
-  $cmdLines = @('@echo off', "cd /d `"$installDir`"")
-  $cmdLines += "`"$nodeBin`" `"$activeFile`" serve --port $port --verbose --prod"
-  Set-Content -Path $cmdPath -Value $cmdLines -Encoding Ascii
+  Set-Content -Path $cmdPath -Value (Get-LaunchCmdLines -NodeBin $nodeBin) -Encoding Ascii
   Write-Ok "launch.cmd healed (backup saved alongside)"
 }
 

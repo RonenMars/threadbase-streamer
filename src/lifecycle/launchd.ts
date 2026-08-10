@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
-import { installDir, LAUNCHD_LABEL } from "./constants";
+import { LAUNCHD_LABEL, logPaths } from "./constants";
 
 // launchd label Homebrew registers for `brew services start tb-streamer`,
 // distinct from the deploy.sh LAUNCHD_LABEL. A brew prod install must be
@@ -116,8 +115,7 @@ export function darwinPlistPath(): string {
  * into the launchd plist: `$INSTALL_DIR/logs/{stdout,stderr}.log`.
  */
 export function getLogPaths(): { stdout: string; stderr: string } {
-  const dir = join(installDir(), "logs");
-  return { stdout: join(dir, "stdout.log"), stderr: join(dir, "stderr.log") };
+  return logPaths();
 }
 
 /** Returns the current PID of the supervised agent, or null. */

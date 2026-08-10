@@ -1,5 +1,5 @@
 import { statSync, truncateSync } from "node:fs";
-import { getLogPaths } from "./launchd";
+import { logPaths } from "./constants";
 
 /**
  * Size above which a supervised log file is emptied at boot. Nothing else
@@ -39,7 +39,7 @@ export const LOG_CAP_BYTES = 32 * 1024 * 1024;
  */
 export function truncateOversizedLogs(
   maxBytes: number = LOG_CAP_BYTES,
-  paths: string[] = Object.values(getLogPaths()),
+  paths: string[] = Object.values(logPaths()),
 ): string[] {
   const truncated: string[] = [];
   for (const file of paths) {
