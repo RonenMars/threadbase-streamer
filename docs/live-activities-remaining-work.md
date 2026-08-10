@@ -2,26 +2,23 @@
 
 Status of the APNs Live Activity delivery path in tb-streamer after PRs [#292](https://github.com/RonenMars/threadbase-streamer/pull/292), [#293](https://github.com/RonenMars/threadbase-streamer/pull/293), [#294](https://github.com/RonenMars/threadbase-streamer/pull/294).
 
-All three are open, stacked, and unmerged.
-Everything below is what those PRs do **not** cover.
+**Revised 2026-08-10 against `main` @ `f390d67`.** All three PRs are **merged**, and the whole "Blocking" section below is resolved — the feature works end to end. The live prod instance reports it enabled against the **production** APNs host, and a shipping TestFlight build exercises ES256 JWT signing, the `.push-type.liveactivity` topic and HTTP/2 transport:
 
-## Blocking — nothing works end to end until these are done
+```
+{"event":"live_activity.enabled","host":"api.push.apple.com","topic":"com.ronenmars.threadbase.push-type.liveactivity"}
+```
 
-### CI is red on the stack
-- [ ] Fix two pre-existing Biome errors on `integration/missing-prs-2026-07-23`, in a **separate PR** against that branch.
-  - `__tests__/server.test.ts:572,714,1006` — `lint/style/useTemplate`
-  - `__tests__/codex-scan.test.ts:44` — `lint/correctness/noUnusedVariables`
-  - Neither file is touched by #292–#294; both fail on the untouched base. CI runs `biome check .` repo-wide, so the whole stack inherits the failure.
-- [ ] Rebase the stack onto the fixed base and confirm Lint goes green.
+**What is actually left is provisioning, not code** — tracked as [#480](https://github.com/RonenMars/threadbase-streamer/issues/480) and [#481](https://github.com/RonenMars/threadbase-streamer/issues/481). The feature works on the maintainer's machine because two files were placed there by hand that no install path creates: `~/.threadbase/AuthKey_<keyId>.p8` (auto-discovered by `loadApnsKeyIntoEnv`, `cli/launchd-entry.ts:175`) and `~/.threadbase/.env` supplying `APNS_TEAM_ID` / `APNS_BUNDLE_ID` / `APNS_HOST`, none of which have a default or any discovery (`src/services/push/apnsClient.ts:107-111`). Both mechanisms live only in the launchd entry point, so Windows and Linux can never enable push at all.
 
-### Downstream PRs were never actually verified by CI
-- [ ] Get the full suite (Lint / Build / Test) to run on #293 and #294. Both currently show **only** `security/snyk` — the workflow did not trigger for a PR whose base is another feature branch. A green Snyk is not a passing test suite.
-  - Verified locally instead: `tsc --noEmit` clean, Biome clean on all touched files, 1482 tests passing.
+## Resolved since this doc was written
 
-### Mobile side does not exist yet
-- [ ] `~/dev/ai-tools/tb-mobile/types/live-activity.ts` — **still absent**. The streamer sends the contract inlined from the prompt; nothing on the mobile side consumes it.
-- [ ] Swift `ActivityAttributes` / `ContentState` struct matching the shape below, field for field.
-- [ ] Mobile must POST its ActivityKit tokens to `/api/push/register` with the new `kind` field. Until it does, zero rows of kind `liveactivity_*` exist and every send path is a no-op.
+- [x] Two pre-existing Biome errors on the base branch — `biome check .` now exits 0 repo-wide.
+- [x] Rebase the stack and confirm Lint green — #292–#294 merged with CI green.
+- [x] Get the full suite to run on #293 and #294 — merged through normal CI.
+- [x] `tb-mobile/types/live-activity.ts` and the Swift `ActivityAttributes` / `ContentState` structs — the mobile side exists and ships in TestFlight.
+- [x] Mobile POSTs ActivityKit tokens to `/api/push/register` with the `kind` field — the endpoint validates `kind` (`src/api/routes/misc.routes.ts:131`) and is no longer the `{ok:true}` stub some older docs describe.
+- [x] Send one real push to a physical device — the TestFlight build exercises the full chain.
+- [x] Verify the signing key is Team Scoped (All Topics) — production sends succeed.
 
 ## Missing server functionality
 
@@ -29,10 +26,8 @@ Everything below is what those PRs do **not** cover.
 - [ ] There is **no initial** push-to-start send path. `liveactivity_start` tokens are read in exactly one place — `liveActivityRenewal.ts:236`, for starting a *replacement* during renewal.
 - [ ] Decide and implement: should the server start a Live Activity for a session the app never foregrounded? Today the first activity can only be created in-app over WebSocket; the push path only updates and renews an activity that already exists.
 
-### Never exercised against a real device
-- [ ] Send one real push to a physical device with `APNS_KEY` set. Every APNs interaction so far is against a fake client — the ES256 JWT encoding, the `.push-type.liveactivity` topic, and the HTTP/2 transport have **never** been validated by Apple.
-- [ ] Confirm sandbox vs production. `APNS_HOST` defaults to sandbox because `aps-environment` is `development`; a TestFlight/App Store build needs `api.push.apple.com` or pushes silently never arrive.
-- [ ] Verify the signing key is genuinely **Team Scoped (All Topics)**. A bundle-scoped key cannot sign the liveactivity topic, and the failure is a bare `403 InvalidProviderToken`.
+### Host default is wrong for the shipping case
+- [ ] `APNS_HOST` defaults to **sandbox** (`src/services/push/apnsClient.ts:111`) because `aps-environment` was `development`. Every TestFlight/App Store build needs `api.push.apple.com`, and today each operator has to discover that and override it by hand — a wrong host does not error, the pushes simply never arrive. Tracked in [#480](https://github.com/RonenMars/threadbase-streamer/issues/480).
 
 ### Renewal is untested in wall-clock time
 - [ ] Observe one real renewal fire across an actual ~7.5 hour window. All 14 renewal tests inject a fake clock; the boot re-arm, the chained one-hour timer hops, and drift across a laptop suspend have never run against the real timer.
@@ -40,7 +35,7 @@ Everything below is what those PRs do **not** cover.
 
 ## Operational gaps
 
-- [ ] `APNS_KEY` is not wired into any deploy path. Not in the launchd plist, the systemd unit, the Task Scheduler action, `scripts/deploy.sh`, or Fly secrets. Prod will boot with Live Activities silently off.
+- [ ] `APNS_KEY` reaches the server on **macOS only**, and not via the plist: `cli/launchd-entry.ts:175` discovers `AuthKey_<keyId>.p8` in the install dir and derives `APNS_KEY_ID` from the filename. Linux and Windows invoke `cli.js` directly and never run that loader, so prod boots with Live Activities silently off there. No install path on any platform creates the `.env` that supplies team and bundle id. Tracked in [#480](https://github.com/RonenMars/threadbase-streamer/issues/480) and [#481](https://github.com/RonenMars/threadbase-streamer/issues/481).
 - [ ] No metric or health surface for Live Activity delivery. `/api/push/health` reports per-token state, but there is no count of activities renewed, ended, or retired.
 - [ ] No cleanup for `push_tokens` rows. Expired and revoked rows are retained deliberately (so health can explain why delivery stopped) and nothing ever prunes them.
 - [ ] Decide whether `THREADBASE_INSTANCE_ID` is stable enough to be `serverId`. It defaults to `os.hostname()`, so a hostname change makes mobile treat it as a different server.

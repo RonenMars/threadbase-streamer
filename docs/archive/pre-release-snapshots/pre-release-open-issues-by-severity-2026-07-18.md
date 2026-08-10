@@ -1,3 +1,5 @@
+> **Superseded — archived 2026-08-10.** A frozen 2026-07-19 snapshot. Most rows here are now fixed. For current status see [`docs/2026-08-10-open-items-register.md`](../../2026-08-10-open-items-register.md).
+
 # Open Pre-release Issues by Severity — status update
 
 > **Date:** 2026-07-19 (update of 2026-07-18 snapshot)  

@@ -10,5 +10,7 @@
 | Postmortems for resolved incidents | [postmortems/](postmortems/) |
 | Known bugs | [BACKLOG.md](BACKLOG.md) |
 | Planned features | [ROADMAP.md](ROADMAP.md) |
+| Everything open or closed, audited against code | [2026-08-10-open-items-register.md](2026-08-10-open-items-register.md) |
+| Issue labels and format (canonical, all Threadbase repos) | [threadbase/docs/issue-tracker.md](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md) |
 | Historical material (shipped plans, superseded reference docs) | [archive/](archive/) |
 | Sample auto-update config | [update.yaml.example](update.yaml.example) |

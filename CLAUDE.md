@@ -296,6 +296,22 @@ Don't break without coordination: the marker shape is versioned (`shimVersion` �
 - Vitest globals are enabled — no need to import `describe`, `it`, `expect`
 - **Docs-only changes get `[skip-ci]` appended to the commit/PR title** — e.g. `docs(troubleshooting): record the menubar EPERM fix [skip-ci]`. Documentation cannot break the build, so the full matrix (Gate, Setup, Lint, Build, Test ×3, both Smoke jobs) buys nothing and just queues real PRs behind it. Put the suffix in the title, not the body. This is safe with required status checks because `ci.yml`'s smoke job deliberately has **no job-level `if:`** — under `[skip-ci]` it still runs, skips its steps, and reports **success** rather than "skipped", and a *skipped* required check would leave the PR permanently unmergeable. Applies only when the change touches nothing but docs; docs plus code, workflow YAML, fixtures, schemas or migrations all still need the matrix.
 
+## Issue tracker
+
+**Format and labels: [threadbase/docs/issue-tracker.md](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md).** That file lives in the `threadbase` umbrella repo and is canonical for **every** component repo — never keep a local copy of these rules, invent a variant, or add a label to only one side.
+
+Read it before filing, labelling, or re-prioritising anything. The shape:
+
+- Title is `P<N>: <what is wrong or what should exist>`, and the prefix must match the priority label — they are two representations of one fact, so re-prioritising means editing both.
+- Exactly one priority (`P0`–`P3`), exactly one type (`bug`, `enhancement`, `documentation`, `question`, `tech-debt`), any number of areas (`ci`, `e2e`, `performance`, `security`, `observability`, `platform`, `native`, `provider`, `ux`).
+- A `## Verified state` section citing a `file.ts:123`, a PR number, or a quoted log line, with the date it was checked. An assertion with no evidence costs the next reader a re-investigation.
+
+**GitHub is the worklist for open work; the docs are not.** `docs/BACKLOG.md` and `docs/ROADMAP.md` carry diagnosis and plans, never status. Duplicating an item's status into a doc is exactly what produced the drift catalogued in [docs/2026-08-10-open-items-register.md](docs/2026-08-10-open-items-register.md), where eight merged PRs still read as "🔄 In flight".
+
+Cross-repo work is filed in **both** repos, each describing its own half, linked by URL — never one issue spanning both, or one side tracks work it cannot close.
+
+The conventions file carries three `gh` queries that verify compliance; both repos return empty on all three.
+
 ## Merging PRs — Rebase + Squash, Linear History
 
 Keep `main` a straight line — one commit per PR, no merge commits. Every PR follows the same two operations, in this order:

@@ -25,6 +25,10 @@ The detailed step-by-step plans that drove substantial pieces of the streamer. E
 
 These are kept because they show the design + planning discipline that preceded each feature. The corresponding design docs (where they exist) live under [`architecture/`](../architecture/).
 
+### [`pre-release-snapshots/`](pre-release-snapshots/)
+
+Frozen status reports from the July 2026 pre-release triage, kept for their prioritization reasoning rather than their status. Every row in them has been re-verified since and most are now fixed; the current picture lives in [`docs/2026-08-10-open-items-register.md`](../2026-08-10-open-items-register.md). They are archived rather than deleted because the "which of these actually blocks a public invite" argument in `pre-release-issues-cursor.md` is still the useful lens, and re-deriving it would cost more than keeping it.
+
 ### [`research/`](research/)
 
 Pre-decision research dossiers. The one currently here surveyed the npm-install-vs-tarball question; the streamer stayed with tarballs + Homebrew rather than npm-first.

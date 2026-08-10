@@ -158,6 +158,14 @@ Don't break without coordination: the marker shape is versioned (`shimVersion` �
 - Every new feature must have tests in `__tests__/`
 - Vitest globals are enabled — no need to import `describe`, `it`, `expect`
 
+## Issue tracker
+
+**Format and labels: [threadbase/docs/issue-tracker.md](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md).** Lives in the `threadbase` umbrella repo and is canonical for **every** component repo — do not keep a local copy or invent a variant.
+
+Read it before filing, labelling, or re-prioritising an issue. In short: title is `P<N>: <what is wrong>`, and every issue carries exactly one priority label (`P0`–`P3`) plus exactly one type (`bug`, `enhancement`, `documentation`, `question`, `tech-debt`) and any number of area labels.
+
+GitHub is the worklist for open work. `docs/BACKLOG.md` and `docs/ROADMAP.md` are not — they hold diagnosis and plans, and duplicating an item's *status* into them is what caused the drift that [docs/2026-08-10-open-items-register.md](docs/2026-08-10-open-items-register.md) exists to record.
+
 ## Testing
 
 Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP server on random ports. Run the full verification before committing: `npm run lint && npm test`

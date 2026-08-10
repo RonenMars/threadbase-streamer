@@ -1,3 +1,5 @@
+> **Superseded — archived 2026-08-10.** A frozen 2026-07-19 snapshot, kept for the prioritization reasoning. Most rows here are now fixed. For current status see [`docs/2026-08-10-open-items-register.md`](../../2026-08-10-open-items-register.md).
+
 Under an **open-source invite** lens (LinkedIn / Reddit / dev.to / Medium), most labeled Critical/High items are **maintainer release gates**, not first-user blockers.
 
 ### Recalculation verdict
