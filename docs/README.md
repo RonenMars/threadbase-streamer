@@ -10,5 +10,6 @@
 | Postmortems for resolved incidents | [postmortems/](postmortems/) |
 | Known bugs | [BACKLOG.md](BACKLOG.md) |
 | Planned features | [ROADMAP.md](ROADMAP.md) |
+| Everything open or closed, audited against code | [2026-08-10-open-items-register.md](2026-08-10-open-items-register.md) |
 | Historical material (shipped plans, superseded reference docs) | [archive/](archive/) |
 | Sample auto-update config | [update.yaml.example](update.yaml.example) |

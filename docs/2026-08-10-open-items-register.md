@@ -1,7 +1,7 @@
 # Open-items register — tb-streamer
 
 > **Audited:** 2026-08-10 against `main` @ `f390d67` (v1.47.0).
-> **Supersedes** the three frozen July snapshots (`pre-release-backlog-roadmap-analysis-2026-07-18.md`, `pre-release-open-issues-by-severity-2026-07-18.md`, `pre-release-issues-cursor.md`) and the status tables in `BACKLOG.md` / `ROADMAP.md` / `pr-follow/ACTIONS.md`.
+> **Supersedes** the three frozen July snapshots, now archived under [`archive/pre-release-snapshots/`](archive/pre-release-snapshots/), and the status tables in [`BACKLOG.md`](BACKLOG.md) / [`ROADMAP.md`](ROADMAP.md) / [`pr-follow/ACTIONS.md`](pr-follow/ACTIONS.md), all three of which were pruned to match this audit on 2026-08-10.
 
 ## How to read this
 
@@ -218,9 +218,9 @@ Doc-claimed status is quoted from the source; verified status is this audit's fi
 | Fully incremental warm-up | Partial | **`OPEN`** | warm-up mode still unlogged, `server.ts:2283` |
 | Split `src/server.ts` | Open | **`OPEN`** | 6,502 lines; no `src/api/handlers/` — **P2-8** |
 
-### `docs/pre-release-backlog-roadmap-analysis-2026-07-18.md` · `docs/pre-release-open-issues-by-severity-2026-07-18.md` · `docs/pre-release-issues-cursor.md`
+### The three July snapshots — now [`archive/pre-release-snapshots/`](archive/pre-release-snapshots/)
 
-Three frozen July snapshots. Their 17-row analysis table, S2–S4 severity tables, and TOP-5 lists enumerate the same population as BACKLOG + ROADMAP above; every row resolves to the verified status given there. Snapshot-specific rows:
+`pre-release-backlog-roadmap-analysis-2026-07-18.md`, `pre-release-open-issues-by-severity-2026-07-18.md`, `pre-release-issues-cursor.md`. Archived on 2026-08-10 as part of this audit. Their 17-row analysis table, S2–S4 severity tables, and TOP-5 lists enumerate the same population as BACKLOG + ROADMAP above; every row resolves to the verified status given there. Snapshot-specific rows:
 
 | Item | Doc claim | Verified | Evidence |
 |---|---|---|---|

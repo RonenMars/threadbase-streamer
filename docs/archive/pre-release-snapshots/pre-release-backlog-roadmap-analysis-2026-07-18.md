@@ -1,9 +1,11 @@
+> **Superseded — archived 2026-08-10.** A frozen 2026-07-18 snapshot, kept for the reasoning. Most rows here are now fixed. For current status see [`docs/2026-08-10-open-items-register.md`](../../2026-08-10-open-items-register.md).
+
 # 🚦 Pre-release Backlog and Roadmap Analysis
 
 > 📅 **Date:** 2026-07-18 (snapshot) · **Status update:** 2026-07-19  
 > 📦 **Repository:** `@threadbase/streamer`  
 > 🌿 **Main commit reviewed:** `e8565ea`  
-> 📚 **Sources:** [BACKLOG.md](BACKLOG.md) and [ROADMAP.md](ROADMAP.md)  
+> 📚 **Sources:** [BACKLOG.md](../../BACKLOG.md) and [ROADMAP.md](../../ROADMAP.md) — as they stood in July 2026; both have since been pruned.  
 > 📌 **Live open-items view:** [pre-release-open-issues-by-severity-2026-07-18.md](pre-release-open-issues-by-severity-2026-07-18.md) (updated 2026-07-19)
 
 ---

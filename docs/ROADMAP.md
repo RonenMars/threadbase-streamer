@@ -3,8 +3,9 @@
 Planned features and deferred work. Not blocking. No fixed dates — these get picked up when there is a concrete need or a quiet stretch.
 
 For bugs (work that fixes broken behavior rather than adding new behavior) see [BACKLOG.md](BACKLOG.md).
+For the full audited inventory across every doc, open **and** closed, see [2026-08-10-open-items-register.md](2026-08-10-open-items-register.md).
 
-**Next new streamer PRs (2026-07-22):** see BACKLOG — log truncation, then `bootoutAgent` busy-wait. Prefer merging open product PRs (#237/#240/#241/#252/#253) first.
+**Next up (2026-08-10):** the release gates are bugs, not features — see BACKLOG and issues [#472](https://github.com/RonenMars/threadbase-streamer/issues/472), [#473](https://github.com/RonenMars/threadbase-streamer/issues/473), [#480](https://github.com/RonenMars/threadbase-streamer/issues/480)–[#483](https://github.com/RonenMars/threadbase-streamer/issues/483). Nothing on this roadmap blocks the public invite.
 
 ---
 
@@ -32,16 +33,6 @@ Today the streamer's API key lives at `~/.threadbase/server.yaml` as plaintext `
 
 ---
 
----
-
-## Feature: forward `thinkingSignature` in the messages mapper
-
-**Status (2026-07-22):** ✅ DONE — already mapped as `signature` on `main`.
-
-The scanner exposes `thinkingSignature` per message but the streamer's mapper (`src/server.ts`) does not forward it. Add it next to `thinking` / `thinkingContent`. UI work in [`threadbase-mobile`](https://github.com/RonenMars/threadbase-mobile) is then a small follow-up to show a "redacted reasoning" placeholder when the signature is present but the content is empty.
-
----
-
 ## Feature: forward `sourceToolAssistantUUID`
 
 Scanner extracts `sourceToolAssistantUUID` for cross-entry correlation (tool result → originating tool-use). No concrete consumer use case yet. Add forwarding when a feature needs it (e.g. a "show me the tool-use that produced this result" affordance in the mobile UI).
@@ -62,7 +53,9 @@ The streamer currently forwards a `hasImages` boolean per message, which is suff
 
 ## Feature: Windows `prod logs` (Task Scheduler redirection)
 
-`tb-streamer prod logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. On Windows, `src/lifecycle/task-scheduler.ts:65-69`'s `getLogPaths()` throws a clear message because `launch.cmd` does not currently redirect stdout/stderr to a file — Task Scheduler has no native redirection.
+**Status (2026-08-10):** promoted to a release blocker — tracked as [#472](https://github.com/RonenMars/threadbase-streamer/issues/472), since Windows is in scope for the public release. A Windows user who hits a problem has no diagnostic surface at all.
+
+`tb-streamer prod logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. On Windows, `src/lifecycle/task-scheduler.ts:67-72`'s `getLogPaths()` throws a clear message because `launch.cmd` does not currently redirect stdout/stderr to a file — Task Scheduler has no native redirection.
 
 **Approach:** rewrite `launch.cmd` (or the scheduled task action) to invoke `pwsh.exe -Command "node cli.js serve ... *>> $logDir\stdout.log 2>> $logDir\stderr.log"` so the runtime captures output. Then map `getLogPaths()` on the Task Scheduler backend to those paths. Until that's wired, gate the `prod logs` Commander registration on `process.platform === "darwin"` so `tb-streamer prod --help` on Windows doesn't advertise a feature that always fails.
 
@@ -78,7 +71,7 @@ The streamer currently forwards a `hasImages` boolean per message, which is suff
 
 ## Feature: structured prompt cards (permission gates + AskUserQuestion) for Codex sessions
 
-**Status (2026-07-22):** 🟡 Partial — Codex trust/hooks startup gates exist; general approvals/AskUserQuestion cards still open (no PR for the remainder).
+**Status (2026-08-10):** 🟡 Partial, and **blocked** on a live probe rather than on implementation time. Codex trust/hooks startup gates and usage-limit screens already produce permission cards; general approvals and AskUserQuestion-equivalent cards remain. The three open questions below — whether Codex emits a deterministic marker under `--ask-for-approval`, what that screen actually looks like, and whether Codex has a multi-choice UI at all — must be answered against a real Codex session before any of it can be built.
 
 Claude Code live sessions get a native `QuestionCard` UI in `tb-mobile` for permission gates and `AskUserQuestion` menus, detected server-side from the rendered PTY screen (`src/services/questions/*`, orchestrated in `src/pty-manager.ts`). Codex sessions (added in [PR #159](https://github.com/RonenMars/threadbase-streamer/pull/159)) don't get this — `CodexPtyRunner` never emits the `permission`/`question` WebSocket events, so any Codex-side approval or choice prompt only shows as raw terminal text.
 
@@ -88,7 +81,7 @@ Claude Code live sessions get a native `QuestionCard` UI in `tb-mobile` for perm
 
 ## Improvement: fully incremental warm-up (delta-only cache reconcile)
 
-**Status (2026-07-22):** 🟡 Partial — related warm-up status API in flight ([PR #234](https://github.com/RonenMars/threadbase-streamer/pull/234)); full delta-only reconcile still open.
+**Status (2026-08-10):** 🟡 Partial — the warm-up status API landed ([PR #234](https://github.com/RonenMars/threadbase-streamer/pull/234)); the full delta-only reconcile is still open. Item 1 below (log which warm-up mode actually ran) remains the cheapest and is still not done: `src/server.ts:2283` silently picks `persistent: false` and pays a full re-parse with nothing recording that it happened.
 
 Every `listen()` fires a background warm-up scan (`src/server.ts:836`) that reconciles the SQLite cache from disk. The scan itself is already cursor-incremental at the scanner layer (persistent index at `~/.config/threadbase-scanner/index.db`: dir watermarks gate discovery, per-file byte cursors make unchanged files stat-only and appended files O(Δ) — same Filebeat pattern as the offset index). Three streamer-side pieces are not delta-only yet:
 
@@ -104,6 +97,6 @@ Every `listen()` fires a background warm-up scan (`src/server.ts:836`) that reco
 
 ## Improvement: split `src/server.ts` along the existing `ApiDeps` seams
 
-`src/server.ts` is ~3300 lines, dominated by the `StreamerServer` god class — the repo's #1 merge-conflict magnet, touched in nearly every PR. The routing migration is half-done: `src/api/routes/*.ts` are thin Hono factories that delegate back into the class via `ApiDeps.handleXxx` bound methods, but the handler **bodies** (~2000 lines) still live inside the class.
+`src/server.ts` is **6,502 lines** as of 2026-08-10 — the plan below was written against ~3,300, so the problem has roughly doubled since and `src/api/handlers/` still does not exist. It is dominated by the `StreamerServer` god class, the repo's #1 merge-conflict magnet, touched in nearly every PR. The routing migration is half-done: `src/api/routes/*.ts` are thin Hono factories that delegate back into the class via `ApiDeps.handleXxx` bound methods, but the handler **bodies** still live inside the class.
 
 **Approach:** see [docs/plans/2026-07-12-server-ts-split.md](plans/2026-07-12-server-ts-split.md) — extract handler bodies into factory-with-context handler modules (`src/api/handlers/`), plus a `ScannerManager` for scanner lifecycle/freshness state and a `session-watchers` module. `ApiDeps` and all HTTP behavior stay identical (tb-mobile compat untouched). Four mechanical-move PRs, each independently mergeable; sequenced after the in-flight reparse-stall guard-rails work lands, since that touches the exact code the first extraction moves.
