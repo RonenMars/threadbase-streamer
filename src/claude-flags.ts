@@ -42,6 +42,22 @@ export function isDangerousPermissionMode(mode: PermissionMode): boolean {
   return DANGEROUS_PERMISSION_MODES.includes(mode);
 }
 
+/**
+ * The mode sessions will actually spawn with, for callers that need to know
+ * before any spawn happens (the boot warning). Mirrors the precedence
+ * `StreamerServer.spawnFlagOverrides()` applies — `claudeFlags.permissionMode`
+ * wins over the `--default-permission-mode` fallback — so the two must not
+ * drift: a warning that reads the fallback would stay silent while a
+ * `claude_flags:` bypass is what actually reaches argv.
+ */
+export function effectivePermissionMode(
+  flags: ClaudeFlagValues | undefined,
+  fallback: string | undefined,
+): PermissionMode | undefined {
+  const candidate = flags?.permissionMode ?? fallback;
+  return isPermissionMode(candidate) ? candidate : undefined;
+}
+
 /** Claude Code `--effort` levels, as accepted by CLI v2.1.x. */
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 

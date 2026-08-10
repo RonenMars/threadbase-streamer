@@ -3,6 +3,7 @@ import {
   buildSettingsJson,
   CLAUDE_FLAGS,
   EFFORT_LEVELS,
+  effectivePermissionMode,
   flagValueRisk,
   isEffortLevel,
   isPermissionMode,
@@ -203,5 +204,27 @@ describe("model/effort registry entries", () => {
     const def = CLAUDE_FLAGS.find((f) => f.id === "effort");
     expect(def).toMatchObject({ id: "effort", flag: "--effort", valueType: "enum" });
     expect(def?.enumValues).toEqual(EFFORT_LEVELS);
+  });
+});
+
+describe("effectivePermissionMode", () => {
+  it("prefers claudeFlags over the --default-permission-mode fallback", () => {
+    // The precedence that matters: spawnFlagOverrides() reads permissionMode
+    // from claudeFlags, so a boot warning consulting only the fallback would
+    // stay silent while a claude_flags: bypass is what actually reaches argv.
+    expect(effectivePermissionMode({ permissionMode: "bypassPermissions" }, "acceptEdits")).toBe(
+      "bypassPermissions",
+    );
+  });
+
+  it("falls back when claudeFlags carries no permissionMode", () => {
+    expect(effectivePermissionMode({ model: "opus" }, "dontAsk")).toBe("dontAsk");
+    expect(effectivePermissionMode(undefined, "manual")).toBe("manual");
+  });
+
+  it("returns undefined when neither source names a valid mode", () => {
+    expect(effectivePermissionMode(undefined, undefined)).toBeUndefined();
+    expect(effectivePermissionMode(undefined, "nonsense")).toBeUndefined();
+    expect(effectivePermissionMode({ permissionMode: "nonsense" }, undefined)).toBeUndefined();
   });
 });

@@ -15,7 +15,9 @@ import {
   CLAUDE_FLAGS,
   type ClaudeFlagValues,
   EFFORT_LEVELS,
+  effectivePermissionMode,
   findFlag,
+  isDangerousPermissionMode,
   isEffortLevel,
   isPermissionMode,
   PERMISSION_MODES,
@@ -302,6 +304,27 @@ program
       if (plan.kind === "replace-prod") {
         takeoverProd({ port: plan.port, repoToplevel });
       }
+    }
+
+    // A bypass mode disables the human-in-the-loop confirmation for every
+    // session this server spawns, and nothing bounds what one costs. The
+    // interactive prompt cannot reach these modes — they arrive only via
+    // --default-permission-mode, --claude-flag, or server.yaml, all of which
+    // are set once and then forgotten. So say it at every boot, where the
+    // person actually running it will see it, not only in the README they read
+    // at install time. claudeFlags wins over the default: spawnFlagOverrides()
+    // resolves permissionMode from there, so warn on what will really be spawned.
+    const spawnMode = effectivePermissionMode(
+      claudeFlags,
+      resolvedDefaultPermissionMode ?? loadDefaultPermissionMode(),
+    );
+    if (spawnMode !== undefined && isDangerousPermissionMode(spawnMode)) {
+      log.warn(
+        `[WARN] permission mode is ${spawnMode} — spawned sessions run without confirmation prompts, ` +
+          "so anyone holding the API key can execute arbitrary code on this machine. There is no spend limit.",
+        undefined,
+        "console",
+      );
     }
 
     const server = new StreamerServer({
