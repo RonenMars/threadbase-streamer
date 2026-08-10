@@ -168,12 +168,12 @@ If both come back healthy, the deploy succeeded despite the reported error. Re-r
 ### Service starts but immediately exits (no error visible)
 
 **When:** Task Scheduler task starts and exits with no log output.
-**Cause:** Task Scheduler has no native stdout/stderr redirection. If the action does not use `pwsh.exe` as the executor with explicit redirection inside the PowerShell command string, `%TEMP%\threadbase.err` is never written.
-**Fix:** The task action must use `pwsh.exe` as executor and redirect inside `$psArg`:
+**Cause:** Task Scheduler has no native stdout/stderr redirection, and the task action runs `wscript.exe` → `launch.vbs` with window mode `0`, so a `launch.cmd` without redirection sends every line to a hidden console nothing captures. Every `launch.cmd` generated before the logging fix is in that state.
+**Fix:** Re-run `pwsh scripts/deploy.ps1` — `Repair-LaunchCmd` detects a `launch.cmd` with no `>>` and rewrites it. The redirection has to live inside the command string; cmd's `>>` in `launch.cmd` is the only place it fits:
 ```powershell
-$psArg = "-NonInteractive -WindowStyle Hidden -Command `"& '$nodePath' '$cliPath' serve --port 8766 --verbose >> '$logOut' 2>> '$logErr'`""
+"`"$nodeBin`" `"$activeFile`" serve --port $port --verbose --prod >> `"$outLog`" 2>> `"$errLog`""
 ```
-Then read `%TEMP%\threadbase.err` to diagnose the actual failure.
+Then read `~/.threadbase/logs/stderr.log` (or run `tb-streamer prod logs --errors-only`) to diagnose the actual failure.
 
 ---
 

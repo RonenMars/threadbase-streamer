@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +7,7 @@ import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearSupervisorLogs,
+  defaultSpawnTail,
   registerProdCommands,
   runProdDoctor,
   runProdLogs,
@@ -26,6 +29,10 @@ const mockSup = {
 
 vi.mock("../../src/lifecycle/platform", () => ({
   getSupervisor: () => mockSup,
+}));
+
+vi.mock("node:child_process", () => ({
+  spawn: vi.fn(),
 }));
 
 describe("prod commands", () => {
@@ -237,6 +244,37 @@ describe("prod commands", () => {
   });
 
   describe("prod logs", () => {
+    it("uses PowerShell to read Windows log files", async () => {
+      const platform = process.platform;
+      const child = new EventEmitter();
+      vi.mocked(spawn).mockReturnValueOnce(child as never);
+      Object.defineProperty(process, "platform", { value: "win32" });
+
+      try {
+        const resultPromise = defaultSpawnTail({
+          files: [stdoutLog, stderrLog],
+          lines: 20,
+          follow: true,
+        });
+        child.emit("exit", 0);
+        const result = await resultPromise;
+        expect(result.ok).toBe(true);
+        expect(spawn).toHaveBeenCalledWith(
+          "powershell.exe",
+          expect.arrayContaining([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            expect.stringContaining("Get-Content -LiteralPath"),
+            expect.stringContaining("-Tail 20 -Wait"),
+          ]),
+          { stdio: ["ignore", "inherit", "inherit"] },
+        );
+      } finally {
+        Object.defineProperty(process, "platform", { value: platform });
+      }
+    });
+
     it("follows both stdout and stderr by default with seed lines", async () => {
       const spawnTail = vi.fn().mockResolvedValue({ ok: true });
       const result = await runProdLogs(

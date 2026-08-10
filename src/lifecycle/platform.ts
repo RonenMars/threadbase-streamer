@@ -22,7 +22,8 @@ export interface Supervisor {
   getAgentPid(): number | null;
   /**
    * Absolute paths to the stdout/stderr log files for the supervised service.
-   * Throws on platforms where log redirection is not yet wired (Windows today).
+   * Both backends return `logPaths()`; what differs is who fills those files —
+   * the plist's StandardOutPath on macOS, launch.cmd's `>>` on Windows.
    */
   getLogPaths(): { stdout: string; stderr: string };
 }

@@ -34,7 +34,7 @@ Only one streamer can bind port 8766 at a time. The platform-supervised "prod" i
 - `tb-streamer prod stop` — `launchctl bootout`. Will not auto-restart until `prod start` or reboot.
 - `tb-streamer prod restart` — bootout + bootstrap (re-reads plist).
 - `tb-streamer prod doctor [--fix]` — detect stale marker (dead devPid, not userHeld) and missing agent; when `ptyHost` is enabled, also report host liveness, protocol version, and hosted-session count; `--fix` clears stale markers.
-- `tb-streamer prod logs [-n <N>] [--no-follow] [--errors-only]` — tail the supervised streamer's stdout + stderr. Default follows both files live, seeded with the last 50 lines. Resolves paths via `Supervisor.getLogPaths()` (macOS: `~/.threadbase/logs/{stdout,stderr}.log`). Not yet wired on Windows — see `src/lifecycle/task-scheduler.ts` `getLogPaths`.
+- `tb-streamer prod logs [-n <N>] [--no-follow] [--errors-only]` — tail the supervised streamer's stdout + stderr. Default follows both files live, seeded with the last 50 lines. Resolves paths via `Supervisor.getLogPaths()`, which is `~/.threadbase/logs/{stdout,stderr}.log` on both platforms — filled by the plist's `StandardOutPath` on macOS and by the `>>` redirection `scripts/deploy.ps1` writes into `launch.cmd` on Windows, since Task Scheduler has no native redirection. Both backends and the deploy script take the paths from `logPaths()` in `src/lifecycle/constants.ts`.
 
 **Don't break without coordination:**
 
@@ -67,6 +67,6 @@ The same lifecycle module is implemented for Windows via `src/lifecycle/task-sch
 
 **Don't break without coordination:**
 
-- `launch.cmd` must include `--port`, `--verbose`, and `--prod`. `Repair-LaunchCmd` in `scripts\deploy.ps1` self-heals stale layouts (mirrors `ensure_plist_healthy` on macOS).
+- `launch.cmd` must include `--port`, `--verbose`, `--prod`, and the `>>` redirection into `logs\{stdout,stderr}.log` — that redirection is the only thing producing logs on Windows, since Task Scheduler has no native one. `Repair-LaunchCmd` in `scripts\deploy.ps1` self-heals stale layouts, including a `launch.cmd` with no `>>` in it (mirrors `ensure_plist_healthy` on macOS).
 - The `TASK_NAME` constant in `src/lifecycle/constants.ts` must match the task name registered by `deploy.ps1`. Both default to `"Threadbase"` and both honour the `THREADBASE_TASK_NAME` env var. If you change one, change the other.
 - `task-scheduler.getAgentPid()` greps `Get-CimInstance Win32_Process` for `node.exe` whose command line matches `*cli.js*serve*`. If you change `launch.cmd` to invoke node with a different command line, update the WMI filter in `task-scheduler.ts` to match.
