@@ -142,6 +142,8 @@ The content-state shape is a **contract shared with tb-mobile** (decoded by a Sw
 
 `LiveActivityNotifier` is **per-turn, not per-session**: a push fires on the `waiting_input → running` edge (turn starts) and the matching `running → waiting_input` edge (turn — including sub-agents — ends), not on every status transition. A fresh session's first `running` has no prior `waiting_input`, so booting/idling never opens an activity. `sessionName` (derived from the first user message, `src/utils/deriveSessionName.ts`) is included in content-state and mobile should fall back to `projectName` when it's unset.
 
+Capability is reported to clients on `GET /api/info` and `GET /api/push/health` as an additive `push` object (`liveActivity`, `notifications`, `liveActivityReason`), built by `describePushCapability()` in `src/api/routes/misc.routes.ts`. `liveActivity` comes from the server's own wiring state (`liveActivityNotifier !== null`) rather than a re-read of the environment, because credentials alone do not enable it — the sender is only built when the push token store opened too. `available` on `/api/push/health` deliberately still means "the token store opened", not "credentials are present": released mobile builds render it verbatim as "Push store is available / unavailable (registration cannot persist)", so retargeting it would make every credential-less server tell users their registrations do not persist.
+
 Full contract, env vars, failure handling: [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md).
 
 ## Multi-agent mode

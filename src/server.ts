@@ -1113,6 +1113,7 @@ export class StreamerServer {
       cache: () => this.cache,
       cacheMonitor: () => this.cacheMonitor,
       pushRepo: () => this.pushRepo,
+      liveActivityPushEnabled: () => this.liveActivityNotifier !== null,
 
       devicesRepo: () => this.devicesRepo,
       projectsRepo: () => this.projectsRepo,

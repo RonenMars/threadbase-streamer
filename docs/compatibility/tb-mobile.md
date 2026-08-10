@@ -89,6 +89,12 @@ Note: mobile treats `on_hold` and `idle` as the same status. The server currentl
 
 **API key format** — mobile uses `tb_` prefix detection in pairing logic. Key format `tb_<32-hex-chars>` must be preserved.
 
+**Push endpoints** — `POST /api/push/register` and `GET /api/push/health` both have shipped mobile consumers and belong to this contract.
+
+`available` on `/api/push/health` means "the SQLite token store opened", **not** "credentials are present". Mobile renders it verbatim as "Push store is available / unavailable (registration cannot persist)" (`app/notification-health.tsx`), so retargeting it at credentials would tell every credential-less server's user that their registrations do not persist — false, and it points debugging at the database instead of the missing `.p8`. `parsePushHealthResponse` only type-checks it as a boolean, so the wrong sentence would render with no parse error.
+
+`GET /api/info` and `GET /api/push/health` carry an additive `push` object describing what the server can actually deliver: `{ liveActivity: boolean, notifications: boolean, liveActivityReason?: string }`. `liveActivity` is true only when APNs credentials resolved *and* the sender was wired — the same fact the boot log reports as `live_activity.enabled`. `notifications` is currently always false: `expo-server-sdk` is not a dependency and `PushRepository.listDeliverable()` has no caller, so ordinary push has no server-side implementation either. `liveActivityReason` is present only when `liveActivity` is false and names the missing environment variable, never its value. The object is absent on servers that predate it, which a client must read as "unknown" rather than "unavailable". Mobile should hide or disable the Live Activity affordance when `push.liveActivity` is false rather than registering tokens nothing will ever send to.
+
 ## Safe changes
 
 - Adding optional fields to any response object

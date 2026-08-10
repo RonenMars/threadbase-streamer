@@ -10,6 +10,7 @@ import {
   PUSH_TOKEN_KINDS,
 } from "../../db/repositories/push.repository";
 import { getLogger } from "../../logger";
+import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
@@ -61,6 +62,58 @@ function verifyWebhookSignature(body: string, header: string | undefined, secret
   return timingSafeEqual(a, b);
 }
 
+/**
+ * What push this server can actually deliver.
+ *
+ * Reported on `GET /api/info` and `GET /api/push/health` so a client can hide an
+ * affordance the server can never honour instead of registering tokens nothing
+ * will ever send to. It cannot be inferred from `/api/push/health`'s `available`,
+ * which reports whether the SQLite token store opened — that is `true` on a
+ * server holding no APNs credentials at all.
+ */
+export interface PushCapability {
+  /**
+   * Live Activity (ActivityKit) push. True only when APNs credentials resolved
+   * *and* the sender was wired, so it is the same fact the boot log reports as
+   * `live_activity.enabled` / `live_activity.disabled`.
+   */
+  liveActivity: boolean;
+  /**
+   * Ordinary (non-Live-Activity) notifications. Always false: `expo-server-sdk`
+   * is not a dependency and `PushRepository.listDeliverable()` has no caller, so
+   * nothing sends them. Reported rather than omitted so a client cannot infer
+   * that ordinary push works because Live Activity push happens to be configured.
+   */
+  notifications: boolean;
+  /** Why `liveActivity` is false; absent when it is true. Names env vars, never values. */
+  liveActivityReason?: string;
+}
+
+/**
+ * Describe push capability for a client.
+ *
+ * `liveActivityEnabled` is the server's own wiring state rather than a re-read of
+ * the environment: credentials alone are not enough, since the notifier is only
+ * built when the push token store opened too.
+ */
+export function describePushCapability(
+  liveActivityEnabled: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): PushCapability {
+  if (liveActivityEnabled) return { liveActivity: true, notifications: false };
+  return {
+    liveActivity: false,
+    notifications: false,
+    // describeMissingApnsCredentials only explains a *credential* gap and
+    // returns null once the credentials are complete — reachable here, because
+    // an unavailable token store disables the feature with the key still set.
+    liveActivityReason:
+      describeMissingApnsCredentials(env) ??
+      "APNs credentials are set but the push token store is unavailable, so Live Activity " +
+        "push is disabled.",
+  };
+}
+
 const clientLog = getLogger("client");
 
 type ClientLogEntry = {
@@ -74,7 +127,13 @@ type ClientLogEntry = {
 export const createMiscRoutes = (
   deps: Pick<
     ApiDeps,
-    "publicUrl" | "sessionStore" | "ptyAttachedIds" | "rotateApiKey" | "localNoAuth" | "pushRepo"
+    | "publicUrl"
+    | "sessionStore"
+    | "ptyAttachedIds"
+    | "rotateApiKey"
+    | "localNoAuth"
+    | "pushRepo"
+    | "liveActivityPushEnabled"
   >,
 ) => {
   const app = new Hono<AppEnv>();
@@ -98,6 +157,11 @@ export const createMiscRoutes = (
       // Same contract: this server serves GET /api/projects/summary, which the
       // Hub's grouped views need before they can draw a tree.
       projectSummary: true,
+      // Delivery capability, not endpoint support: whether this server can
+      // actually send a push, so mobile can hide an affordance instead of
+      // registering tokens nothing will ever send to. Absent on older servers,
+      // which a client should read as "unknown", not "unavailable".
+      push: describePushCapability(deps.liveActivityPushEnabled()),
     });
   });
 
@@ -202,9 +266,15 @@ export const createMiscRoutes = (
   // is a delivery credential, and this endpoint exists to explain state, not to
   // hand out secrets.
   app.get("/api/push/health", (c) => {
+    // `available` keeps its original meaning — "the token store opened" — because
+    // released mobile builds render it verbatim as "Push store is available /
+    // unavailable (registration cannot persist)". Retargeting it at credentials
+    // would make every credential-less server tell users their registrations do
+    // not persist, which is false. Credential state is the additive `push` object.
+    const push = describePushCapability(deps.liveActivityPushEnabled());
     const repo = deps.pushRepo();
-    if (!repo) return c.json({ tokens: [], available: false });
-    return c.json({ tokens: repo.listHealth(), available: true });
+    if (!repo) return c.json({ tokens: [], available: false, push });
+    return c.json({ tokens: repo.listHealth(), available: true, push });
   });
 
   // Webhook for auto-update. Triggered by the release CI (or any caller that
