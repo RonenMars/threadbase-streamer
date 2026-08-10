@@ -171,12 +171,16 @@ export type SpawnTailArgs = { files: string[]; lines: number; follow: boolean };
 export type SpawnTailResult = { ok: boolean; message?: string };
 export type SpawnTail = (args: SpawnTailArgs) => Promise<SpawnTailResult>;
 
+function toPowerShellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 /**
  * Default tail implementation — spawns `tail` (-F follows files across rotation;
  * macOS BSD tail and GNU tail both support -F and -n). Streams to the parent's
  * stdout/stderr and resolves when the child exits.
  */
-const defaultSpawnTail: SpawnTail = ({ files, lines, follow }) => {
+export const defaultSpawnTail: SpawnTail = ({ files, lines, follow }) => {
   const existing = files.filter((f) => existsSync(f));
   if (existing.length === 0) {
     return Promise.resolve({
@@ -184,11 +188,20 @@ const defaultSpawnTail: SpawnTail = ({ files, lines, follow }) => {
       message: `no log files found at: ${files.join(", ")}. The streamer may not have started yet, or the deploy uses a different log layout.`,
     });
   }
-  const args = ["-n", String(lines)];
-  if (follow) args.push("-F");
-  args.push(...existing);
+  const isWindows = process.platform === "win32";
+  const args = isWindows
+    ? [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Get-Content -LiteralPath @(${existing.map(toPowerShellLiteral).join(", ")}) -Tail ${lines}${follow ? " -Wait" : ""}`,
+      ]
+    : ["-n", String(lines), ...(follow ? ["-F"] : []), ...existing];
   return new Promise<SpawnTailResult>((resolve) => {
-    const child = spawn("tail", args, { stdio: ["ignore", "inherit", "inherit"] });
+    const child = spawn(isWindows ? "powershell.exe" : "tail", args, {
+      stdio: ["ignore", "inherit", "inherit"],
+    });
     child.on("error", (err) => resolve({ ok: false, message: `tail failed: ${err.message}` }));
     child.on("exit", (code) => resolve({ ok: code === 0 }));
   });
