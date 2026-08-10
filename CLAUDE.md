@@ -298,7 +298,7 @@ Don't break without coordination: the marker shape is versioned (`shimVersion` �
 
 ## Issue tracker
 
-**Format and labels: [docs/conventions/issue-tracker.md](docs/conventions/issue-tracker.md).** That file is canonical for this repo *and* for `threadbase-mobile` — both repos share one vocabulary, so never invent a local variant or add a label to only one side.
+**Format and labels: [threadbase/docs/issue-tracker.md](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md).** That file lives in the `threadbase` umbrella repo and is canonical for **every** component repo — never keep a local copy of these rules, invent a variant, or add a label to only one side.
 
 Read it before filing, labelling, or re-prioritising anything. The shape:
 

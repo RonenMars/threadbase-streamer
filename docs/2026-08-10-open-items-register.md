@@ -47,7 +47,7 @@ Verified status vocabulary:
 
 The release gate is P0 + P1: [#472](https://github.com/RonenMars/threadbase-streamer/issues/472), [#473](https://github.com/RonenMars/threadbase-streamer/issues/473), [#480](https://github.com/RonenMars/threadbase-streamer/issues/480), [#481](https://github.com/RonenMars/threadbase-streamer/issues/481), [#482](https://github.com/RonenMars/threadbase-streamer/issues/482), [#483](https://github.com/RonenMars/threadbase-streamer/issues/483).
 
-Label vocabulary and issue format: [`conventions/issue-tracker.md`](conventions/issue-tracker.md).
+Label vocabulary and issue format: [`threadbase/docs/issue-tracker.md`](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md).
 
 **What this document still holds that the tracker cannot:** the evidence for work already finished (section 2), the per-document audit trail showing where each claim came from (section 3), and the conflict-ordered execution plan (section 4). Closed work is not an issue, so nothing else records why a doc's claim was dismissed.
 
@@ -341,7 +341,7 @@ All of P3 — each is blocked on an external dependency: a live Codex probe, a t
 
 **Full parity.** Every `OPEN` and `BLOCKED` row in this document is a GitHub issue; nothing open is tracked only here.
 
-Format and label vocabulary: [`conventions/issue-tracker.md`](conventions/issue-tracker.md).
+Format and label vocabulary: [`threadbase/docs/issue-tracker.md`](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md).
 
 | Register item | Issue | Labels |
 |---|---|---|

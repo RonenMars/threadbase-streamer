@@ -160,7 +160,7 @@ Don't break without coordination: the marker shape is versioned (`shimVersion` �
 
 ## Issue tracker
 
-**Format and labels: [docs/conventions/issue-tracker.md](docs/conventions/issue-tracker.md).** Canonical for this repo *and* `threadbase-mobile` — both use one vocabulary, so do not invent a local variant.
+**Format and labels: [threadbase/docs/issue-tracker.md](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md).** Lives in the `threadbase` umbrella repo and is canonical for **every** component repo — do not keep a local copy or invent a variant.
 
 Read it before filing, labelling, or re-prioritising an issue. In short: title is `P<N>: <what is wrong>`, and every issue carries exactly one priority label (`P0`–`P3`) plus exactly one type (`bug`, `enhancement`, `documentation`, `question`, `tech-debt`) and any number of area labels.
 

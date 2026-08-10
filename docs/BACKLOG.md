@@ -4,7 +4,7 @@ Known bugs and unresolved issues. Self-contained enough to pick up without re-re
 
 For planned features (work that adds new behavior rather than fixing broken behavior) see [ROADMAP.md](ROADMAP.md).
 For the full audited inventory — every item across every doc, open **and** closed, with the code evidence for each — see [2026-08-10-open-items-register.md](2026-08-10-open-items-register.md).
-For how issues are labelled and written, shared with tb-mobile, see [conventions/issue-tracker.md](conventions/issue-tracker.md).
+For how issues are labelled and written, canonical for every Threadbase repo, see [threadbase/docs/issue-tracker.md](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md).
 
 **GitHub issues are the worklist.** Open bugs live there, not here — this file keeps only the two with enough diagnosis to be worth carrying in the repo.
 
@@ -23,7 +23,7 @@ Verified against `main` @ `f390d67` (v1.47.0). Everything previously on this lis
 | `server.test.ts` grace-timer flake blocks the merge pipeline | P1 | Open — [#482](https://github.com/RonenMars/threadbase-streamer/issues/482) |
 | Boot auto-resume spends a slot on sessions with no provider history | P1 | Open — [#483](https://github.com/RonenMars/threadbase-streamer/issues/483) |
 
-Lower-severity open work (observability gaps, the `src/server.ts` split, the security items reverted by [#220](https://github.com/RonenMars/threadbase-streamer/pull/220), doc hygiene) is catalogued as P2–P4 in the register rather than as issues, to keep the issue list readable as a release gate.
+Lower-severity open work — observability gaps, the `src/server.ts` split, the security items reverted by [#220](https://github.com/RonenMars/threadbase-streamer/pull/220) — is filed as `P2` and `P3` issues. Filter by label rather than reading it here: [`label:P2`](https://github.com/RonenMars/threadbase-streamer/issues?q=is%3Aissue+is%3Aopen+label%3AP2), [`label:P3`](https://github.com/RonenMars/threadbase-streamer/issues?q=is%3Aissue+is%3Aopen+label%3AP3).
 
 **Why this file shrank.** Nine of the eighteen entries it previously carried were already fixed while still reading as "🔄 In flight" — the table listed eight merged PRs as open work. That drift is what makes work get redone, so closed items now live in the register with the PR that closed each, instead of lingering here.
 
