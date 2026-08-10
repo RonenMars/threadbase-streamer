@@ -7,6 +7,8 @@
 
 This is a **register**, not a summary: every bug, issue, feature and follow-up found anywhere in `docs/` is listed, including the ones already closed. The closed rows are the point — the recurring failure in this repo is re-opening solved work, and a list that silently drops resolved items cannot prevent that.
 
+**Open items live in the issue tracker, not here.** Every one was filed (section 5), so this document is the audit trail and the record of finished work; GitHub is the worklist. Do not re-rank or re-describe open work in this file — that is how the drift it documents got started.
+
 **Status came from code, not from the source document.** Each row carries the doc's own claim next to a verified status established by reading `main`. Where the two disagree, the verified column wins and the evidence is cited. The drift is large: `BACKLOG.md`'s status table lists eight already-merged PRs as "🔄 In flight", and `pr-follow/ACTIONS.md` (snapshot 2026-08-09 17:45) lists as open an integration branch that landed hours later the same evening.
 
 Verified status vocabulary:
@@ -27,102 +29,28 @@ Verified status vocabulary:
 - `npx biome check .` → exit 0. `npx tsc --noEmit` → exit 0. `npm ls --depth=0` reports no `invalid:` lines.
 - CI green on `main`.
 - Full local `npm test`: 33 failed / 1885 passed / 5 skipped. **All 33 failures are 39–97 s timeouts with zero assertion failures**, confined to the known load-sensitive files. Per the repo's own failure-signature rule that is host load, not regression — CI on Node 20/22/24 is the authority and it is green.
-- 2 open issues (#472, #473 — both `critical-pre-release`). 2 open PRs, both Dependabot (#475 postcss; #223 TypeScript 7, permanently excluded because it breaks `rollup-plugin-dts`).
+- At audit time: 2 open issues (#472, #473) and 2 open PRs, both Dependabot (#475 postcss; #223 TypeScript 7, permanently excluded because it breaks `rollup-plugin-dts`). The tracker has since been brought to full parity with this audit — see section 5.
 - Zero `TODO` / `FIXME` / `HACK` / `XXX` markers in `src/`, `cli/`, `scripts/`.
 
 ---
 
-## 1. Open items, ranked for the public release
+## 1. Open items — now in the issue tracker
 
-### P0 — blocks the invite
+**Every open item from this audit is a GitHub issue.** This section used to rank them inline; that is now duplication, and a status kept in two places drifts — which is the exact failure this audit was written to fix. The tracker is authoritative for what is open.
 
-#### P0-1 · Windows has no diagnostic surface at all · issue [#472](https://github.com/RonenMars/threadbase-streamer/issues/472)
+| Priority | Count | Query |
+|---|---|---|
+| P0 — blocks the invite | 4 | [`label:P0`](https://github.com/RonenMars/threadbase-streamer/issues?q=is%3Aissue+is%3Aopen+label%3AP0) |
+| P1 — fix before the invite | 2 | [`label:P1`](https://github.com/RonenMars/threadbase-streamer/issues?q=is%3Aissue+is%3Aopen+label%3AP1) |
+| P2 — post-release | 14 | [`label:P2`](https://github.com/RonenMars/threadbase-streamer/issues?q=is%3Aissue+is%3Aopen+label%3AP2) |
+| P3 — deferred or blocked | 18 | [`label:P3`](https://github.com/RonenMars/threadbase-streamer/issues?q=is%3Aissue+is%3Aopen+label%3AP3) |
 
-`src/lifecycle/task-scheduler.ts:67-72` throws unconditionally, while the `prod logs` command stays registered in Commander — so the command is advertised on Windows and always fails. The deeper cause is `scripts/deploy.ps1`, which writes a `launch.cmd` with no stdout/stderr redirection and runs it hidden via `wscript.exe`; it even creates a `logs` directory it never writes to. A Windows user who hits a problem has nothing to send you.
+The release gate is P0 + P1: [#472](https://github.com/RonenMars/threadbase-streamer/issues/472), [#473](https://github.com/RonenMars/threadbase-streamer/issues/473), [#480](https://github.com/RonenMars/threadbase-streamer/issues/480), [#481](https://github.com/RonenMars/threadbase-streamer/issues/481), [#482](https://github.com/RonenMars/threadbase-streamer/issues/482), [#483](https://github.com/RonenMars/threadbase-streamer/issues/483).
 
-**Fix:** redirect inside the command string (`pwsh.exe -Command "node cli.js serve … *>> $logDir\stdout.log 2>> $logDir\stderr.log"`), map `getLogPaths()` to those paths, and gate the Commander registration on platform in the meantime. The approach is already written down in `ROADMAP.md:63-67`, and CLAUDE.md's Windows notes state the pwsh-redirect rule as though it were already in place.
+Label vocabulary and issue format: [`conventions/issue-tracker.md`](conventions/issue-tracker.md).
 
-#### P0-2 · Live Activity works only on machines where files were placed by hand
+**What this document still holds that the tracker cannot:** the evidence for work already finished (section 2), the per-document audit trail showing where each claim came from (section 3), and the conflict-ordered execution plan (section 4). Closed work is not an issue, so nothing else records why a doc's claim was dismissed.
 
-Nothing is wrong in the code. Verified from the live prod instance:
-
-```
-{"event":"live_activity.enabled","host":"api.push.apple.com",
- "topic":"com.ronenmars.threadbase.push-type.liveactivity","msg":"Live Activity push enabled"}
-```
-
-That is the **production** APNs host, and a shipping TestFlight build exercises the whole chain — ES256 JWT signing, the `.push-type.liveactivity` topic, HTTP/2 transport. The feature is real and it works. What makes it work on this machine are two files placed by hand in July that **no install path creates**:
-
-- `~/.threadbase/AuthKey_BX4B6855WV.p8` (mode 0600) — auto-discovered by `loadApnsKeyIntoEnv` (`cli/launchd-entry.ts:175`), which also derives `APNS_KEY_ID` from the filename so key and id cannot disagree across a rotation.
-- `~/.threadbase/.env` — supplies `APNS_TEAM_ID`, `APNS_BUNDLE_ID`, `APNS_HOST`. All three have **no default and no discovery** (`src/services/push/apnsClient.ts:107-111`).
-
-Three gaps follow, tracked separately because they are different fixes:
-
-- **P0-2a — no provisioning path.** No installer creates `.env`, prompts for team/bundle id, or documents dropping the p8. A new user gets Live Activity silently off with a single info log.
-- **P0-2b — the default host is wrong for the shipping case.** `APNS_HOST` defaults to sandbox (`apnsClient.ts:111`) because the app's `aps-environment` was `development`. Every user shipping via TestFlight or the App Store needs `api.push.apple.com` and must currently discover that themselves.
-- **P0-2c — Windows and Linux have neither mechanism.** `loadApnsKeyIntoEnv` and the install-dir `.env` read exist **only** in `cli/launchd-entry.ts`, the macOS launchd entry point. `deploy-linux.sh` and `deploy.ps1` invoke `cli.js` directly, where `dotenv/config` (`cli/index.ts:1`) reads `.env` from the process CWD — not the install dir. With Windows in scope this is a parity hole.
-
-#### P0-3 · No security disclosure in the README · issue [#473](https://github.com/RonenMars/threadbase-streamer/issues/473)
-
-The issue poses three questions. **Two are already answered correctly by the code** — only the third is a real gap, so this is narrower than the issue title suggests.
-
-- *"Is a bypass mode reachable from the first-run prompt, or is it flag-only?"* — **flag-only, safe.** `src/lifecycle/prompt.ts:60-69` offers exactly `[a] acceptEdits` and `[m] manual`. Bypass cannot be selected interactively.
-- *"Is `auto_resume_on_boot` documented as an unattended-start switch where a new user meets it?"* — **yes, safe.** `interactiveAutoResumePrompt` (`prompt.ts:86-100`) prints "Note: yes means agents can start without you present, including after a reboot", defaults to No on an empty line, and the tri-state loader means a malformed value costs a re-prompt rather than silently enabling it.
-- *"Does the README state plainly that no spend ceiling exists?"* — **no. This is the gap.** `README.md` is 131 lines and mentions permission modes, spend ceiling, `auto_resume_on_boot`, and the fact that the API key grants remote code execution **exactly zero times**.
-
-`README.md:69` is also stale — "Sessions are in-memory: a restart drops live PTYs" predates session rehydration and auto-resume.
-
-So the remaining work is a README security section, not a defaults decision: the defaults were already made correctly and just aren't written down where a new user meets them.
-
-### P1 — fix before the invite
-
-#### P1-4 · `server.test.ts` grace-timer flake still blocks the merge pipeline
-
-PR [#245](https://github.com/RonenMars/threadbase-streamer/pull/245) — the polling fix that would have removed the fixed sleeps — was **CLOSED, not merged**. CI flaked twice on this file on 2026-08-09 while merging #475. Green CI gates every other item in this register, which is what makes a test-only defect a release concern.
-
-#### P1-5 · Boot auto-resume spends a slot on sessions with no provider history
-
-`src/services/sessions/autoResumeOnBoot.ts:25` injects a `projectExists` predicate but no `historyExists`. For Claude, `resumeIdForRow()` returns a never-null `session_id`, so a session that was started and interrupted before its first message passes all five eligibility rules, consumes one of five `AUTO_RESUME_MAX` slots, and then fails with `history_file_missing`. Nothing breaks; the cost is a wasted slot and a `failed` count that reads as a defect in the log.
-
-### P2 — post-release
-
-#### P2-6 · Security debt from revert #220, never re-landed
-
-PR #213 shipped three hardening fixes and was reverted wholesale by [#220](https://github.com/RonenMars/threadbase-streamer/pull/220) **purely to green up `main`** — the revert commit says so explicitly. None were re-landed. Re-assessed severity for a single-user, single-key server:
-
-- **M4** — `isWithinSkew` returns `true` when the header is missing (`src/api/routes/progress.routes.ts:65`). Real replay exposure, but on `/internal/sessions/:id/progress`, gated behind `MULTI_AGENT_FLOW`, which is off by default.
-- **M5** — `answerKeys` sanitization. Defense-in-depth, not escalation: `permissionAnswerKeys` already rejects a non-integer index, and mobile sends raw keystrokes through `/input` by design, so an authenticated client can already write arbitrary bytes to the PTY.
-- **L1** — `hold_session` / `subscribe_session` accept any session id with no ownership check. Low while one API key means one user.
-
-The right output here is a **written decision**, not silent carry.
-
-#### P2-7 · Observability gaps
-
-Verified still absent: no auth-401 log (`src/api/middleware/auth.middleware.ts` contains zero log calls), no PTY-exit event (`src/pty-manager.ts` emits no `pty.*` events), no WS connect/disconnect logging (`src/ws-hub.ts` contains zero log calls), no error-middleware log before the 500, and zero structured logging across all of `src/updater/`.
-
-#### P2-8 · Split `src/server.ts` — the plan understates the problem
-
-`docs/plans/2026-07-12-server-ts-split.md` describes a ~3,300-line file. It is **6,502 lines** today and `src/api/handlers/` does not exist. Highest-value cleanup in the repo and the highest conflict cost, which is why it must be sequenced last.
-
-#### P2-9 · Leftovers from `pr-follow/ACTIONS.md`
-
-- **9a** — replace CLAUDE.md's Testing section with the failure-*signature* rule. This audit reproduced the evidence exactly: 33 failures, all timeouts, zero assertions.
-- **9b** — verify the three live Codex ownership scenarios (standalone terminal, VS Code, desktop app) against #476. The only genuinely unverified part of that work.
-- **9c** — prune two redundant origin refs: `wip/lifecycle-starting-multi-agent-gate` and `integration/2026-08-08_14-22-prs-441-…-454`. Both still present.
-
-#### P2-10 · Release job leaves `package-lock.json`'s root version stale
-
-`semantic-release` bumps `package.json` without regenerating the lockfile, so the two drift further apart every release.
-
-### P3 — deferred: no consumer, or externally blocked
-
-Codex structured prompt cards (**BLOCKED** on a live `--ask-for-approval` probe); keychain API-key storage; fully-incremental warm-up; `/api/search` → QUERY (must retain GET for compat); `sourceToolAssistantUUID`, full `SystemEntry`, per-image metadata (no consumer); Commander boolean normalization; conversation-ETag Part B (**BLOCKED** on a tb-scanner release); the `session-source-visibility` spec (S1–S6 plus 7 new test files); `idle-session-notifications` design.
-
-### P4 — doc hygiene
-
-`BACKLOG.md` and `ROADMAP.md` status tables are wrong in ~15 rows; the three July `pre-release-*.md` snapshots and `pr-follow/ACTIONS.md` are stale; `live-activities-remaining-work.md` asserts "mobile side does not exist yet", now false.
-
----
 
 ## 2. Verified solved — do not re-open
 
@@ -411,13 +339,53 @@ All of P3 — each is blocked on an external dependency: a live Codex probe, a t
 
 ## 5. Issues filed from this register
 
+**Full parity.** Every `OPEN` and `BLOCKED` row in this document is a GitHub issue; nothing open is tracked only here.
+
+Format and label vocabulary: [`conventions/issue-tracker.md`](conventions/issue-tracker.md).
+
 | Register item | Issue | Labels |
 |---|---|---|
-| P0-1 | [#472](https://github.com/RonenMars/threadbase-streamer/issues/472) (pre-existing) | `bug`, `critical-pre-release` |
-| P0-2a / P0-2b | [#480](https://github.com/RonenMars/threadbase-streamer/issues/480) | `bug`, `critical-pre-release` |
-| P0-2c | [#481](https://github.com/RonenMars/threadbase-streamer/issues/481) | `bug`, `critical-pre-release` |
-| P0-3 | [#473](https://github.com/RonenMars/threadbase-streamer/issues/473) (pre-existing) | `documentation`, `critical-pre-release` |
-| P1-4 | [#482](https://github.com/RonenMars/threadbase-streamer/issues/482) | `bug` |
-| P1-5 | [#483](https://github.com/RonenMars/threadbase-streamer/issues/483) | `bug` |
+| P0-1 Windows logging | [#472](https://github.com/RonenMars/threadbase-streamer/issues/472) | `P0` `bug` `platform` `observability` |
+| P0-3 README security posture | [#473](https://github.com/RonenMars/threadbase-streamer/issues/473) | `P0` `documentation` `security` |
+| P0-2a/b APNs provisioning + host default | [#480](https://github.com/RonenMars/threadbase-streamer/issues/480) | `P0` `bug` |
+| P0-2c APNs launchd-only | [#481](https://github.com/RonenMars/threadbase-streamer/issues/481) | `P0` `bug` `platform` |
+| P1-4 grace-timer flake | [#482](https://github.com/RonenMars/threadbase-streamer/issues/482) | `P1` `bug` `ci` `tech-debt` |
+| P1-5 auto-resume history | [#483](https://github.com/RonenMars/threadbase-streamer/issues/483) | `P1` `bug` |
+| P2-6 security revert #220 | [#485](https://github.com/RonenMars/threadbase-streamer/issues/485) | `P2` `question` `security` |
+| P2-7 auth 401 log | [#486](https://github.com/RonenMars/threadbase-streamer/issues/486) | `P2` `enhancement` `observability` `security` |
+| P2-7 PTY exit log | [#487](https://github.com/RonenMars/threadbase-streamer/issues/487) | `P2` `enhancement` `observability` |
+| P2-7 WS connect/disconnect | [#488](https://github.com/RonenMars/threadbase-streamer/issues/488) | `P2` `enhancement` `observability` |
+| P2-7 error middleware log | [#489](https://github.com/RonenMars/threadbase-streamer/issues/489) | `P2` `enhancement` `observability` |
+| P2-7 updater logging | [#490](https://github.com/RonenMars/threadbase-streamer/issues/490) | `P2` `enhancement` `observability` |
+| P2-7 subscribe_session log | [#491](https://github.com/RonenMars/threadbase-streamer/issues/491) | `P2` `enhancement` `observability` |
+| P2-7 ring-buffer pressure | [#492](https://github.com/RonenMars/threadbase-streamer/issues/492) | `P2` `enhancement` `observability` `performance` |
+| P2-7 remaining audit gaps | [#493](https://github.com/RonenMars/threadbase-streamer/issues/493) | `P2` `enhancement` `observability` |
+| P2-8 split `src/server.ts` | [#494](https://github.com/RonenMars/threadbase-streamer/issues/494) | `P2` `tech-debt` |
+| P2-9a CLAUDE.md failure-signature rule | [#495](https://github.com/RonenMars/threadbase-streamer/issues/495) | `P2` `tech-debt` `ci` `documentation` |
+| P2-9b Codex ownership scenarios | [#496](https://github.com/RonenMars/threadbase-streamer/issues/496) | `P2` `question` `provider` |
+| P2-9c prune origin refs | [#497](https://github.com/RonenMars/threadbase-streamer/issues/497) | `P2` `tech-debt` |
+| P2-10 stale lockfile root version | [#498](https://github.com/RonenMars/threadbase-streamer/issues/498) | `P2` `bug` `ci` |
+| P3 Codex prompt cards | [#499](https://github.com/RonenMars/threadbase-streamer/issues/499) | `P3` `enhancement` `provider` `ux` |
+| P3 keychain API key | [#500](https://github.com/RonenMars/threadbase-streamer/issues/500) | `P3` `enhancement` `security` |
+| P3 delta-only warm-up | [#501](https://github.com/RonenMars/threadbase-streamer/issues/501) | `P3` `enhancement` `performance` |
+| P3 `/api/search` QUERY | [#502](https://github.com/RonenMars/threadbase-streamer/issues/502) | `P3` `enhancement` |
+| P3 unmapped scanner fields | [#503](https://github.com/RonenMars/threadbase-streamer/issues/503) | `P3` `enhancement` |
+| P3 Commander booleans | [#504](https://github.com/RonenMars/threadbase-streamer/issues/504) | `P3` `tech-debt` |
+| P3 bounded page reads | [#505](https://github.com/RonenMars/threadbase-streamer/issues/505) | `P3` `performance` `enhancement` |
+| P3 session source visibility | [#506](https://github.com/RonenMars/threadbase-streamer/issues/506) | `P3` `enhancement` `provider` |
+| P3 push-to-start path | [#507](https://github.com/RonenMars/threadbase-streamer/issues/507) | `P3` `enhancement` |
+| P3 real renewal observation | [#508](https://github.com/RonenMars/threadbase-streamer/issues/508) | `P3` `question` |
+| P3 delivery metrics + token retention | [#509](https://github.com/RonenMars/threadbase-streamer/issues/509) | `P3` `enhancement` `observability` |
+| P3 `THREADBASE_INSTANCE_ID` as serverId | [#510](https://github.com/RonenMars/threadbase-streamer/issues/510) | `P3` `question` |
+| P3 `/api/profiles` stub | [#511](https://github.com/RonenMars/threadbase-streamer/issues/511) | `P3` `bug` |
+| P3 nightly restart kills PTYs | [#512](https://github.com/RonenMars/threadbase-streamer/issues/512) | `P3` `question` `platform` |
+| P3 test-isolation hardening | [#513](https://github.com/RonenMars/threadbase-streamer/issues/513) | `P3` `tech-debt` `e2e` |
+| P3 torn-line gap in the watcher | [#514](https://github.com/RonenMars/threadbase-streamer/issues/514) | `P3` `bug` |
+| P3 idle-session notifications | [#515](https://github.com/RonenMars/threadbase-streamer/issues/515) | `P3` `enhancement` |
+| P3 upstream scanner checkpoint fix | [#516](https://github.com/RonenMars/threadbase-streamer/issues/516) | `P3` `performance` `enhancement` |
 
-`critical-pre-release` is reserved for P0 so the label keeps meaning what it says. P2 and below are tracked here rather than as issues, to keep the issue list readable as a release gate.
+P4 doc hygiene is not filed — it was done in the same PR that added this register.
+
+### Why this document survives full parity
+
+The tracker holds open work. It does not hold the ~90 rows in sections 2 and 3 recording what was *already* fixed and where the evidence is, because closed work is not an issue. That record is what stops the next audit re-deriving the same conclusions, and it is the reason this file was written.

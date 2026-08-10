@@ -4,6 +4,9 @@ Known bugs and unresolved issues. Self-contained enough to pick up without re-re
 
 For planned features (work that adds new behavior rather than fixing broken behavior) see [ROADMAP.md](ROADMAP.md).
 For the full audited inventory — every item across every doc, open **and** closed, with the code evidence for each — see [2026-08-10-open-items-register.md](2026-08-10-open-items-register.md).
+For how issues are labelled and written, shared with tb-mobile, see [conventions/issue-tracker.md](conventions/issue-tracker.md).
+
+**GitHub issues are the worklist.** Open bugs live there, not here — this file keeps only the two with enough diagnosis to be worth carrying in the repo.
 
 ---
 
