@@ -80,6 +80,21 @@ libuv tightened the length check between the two. Because the Node-24 legs of `T
 
 Since `Smoke (windows-latest)` is a required check, pinning 22 there is what stops that crash blocking every PR in the repo. **This is a known gap, not a fix**: Windows is not exercised on the Node the project pins, and a Node-24-specific Windows defect would still be invisible. It is also not a regression — Windows was never on 24. Raise it once the worker crash is understood, and `__tests__/ci-workflow.test.ts` asserts the current pin so doing so is a visible edit.
 
+### Flake exposure, stated up front
+
+Going from 8 files to 199 on a **required** check widens the flake surface, and that is the one real cost of this change.
+
+The repo's documented bar for promoting a cross-platform job to blocking was five clean runs per platform. On the widened suite as of 2026-08-11 the sample is much smaller than that, and it already contains a miss:
+
+| platform | full-suite runs | clean | observed |
+|---|---|---|---|
+| macOS (Node 24) | 3 | 3 | — |
+| Windows (Node 22) | 3 | 2 | one flake |
+
+The Windows miss was `__tests__/session-status-line.test.ts` answering `503` (`STORE_UNAVAILABLE`) instead of `200` on `GET /api/sessions/:id` — a store-readiness race on a loaded runner, not a portability defect. It passed on an immediate re-run.
+
+**Do not read that as harmless.** A flaky required check is the failure mode that teaches people to re-run without reading, which is how a true positive gets waved through. If Windows flakes again, fix the readiness race in the test rather than re-running past it; the standing rule is re-run once, and stop and report if the re-run also fails.
+
 ### What stays out, and how
 
 A test that genuinely cannot run on a platform guards **itself**, in its own file:
