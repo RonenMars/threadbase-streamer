@@ -15,6 +15,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StreamerServer } from "../src/server";
 
 vi.mock("node-pty", () => {
   const { EventEmitter } = require("events");
@@ -108,7 +109,6 @@ describe("findJsonlPath honors scanProfiles (degraded-mode resume)", () => {
   });
 
   it("resumes with cwd read from the profile JSONL, not ~/.claude/projects", async () => {
-    const { StreamerServer } = await import("../src/server");
     const port = await getRandomPort();
     const server = new StreamerServer({
       port,

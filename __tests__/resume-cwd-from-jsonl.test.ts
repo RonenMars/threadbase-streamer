@@ -10,6 +10,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
 import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
+import { StreamerServer } from "../src/server";
 
 vi.mock("node-pty", () => {
   const { EventEmitter } = require("events");
@@ -70,8 +71,6 @@ describe("handleResume — cwd from JSONL", () => {
   });
 
   it("spawns claude with cwd from JSONL, not from scanner's stale projectPath", async () => {
-    // Import StreamerServer after setting up mocks
-    const { StreamerServer } = await import("../src/server");
     const nodePty = await import("node-pty");
     ptySpawn = nodePty.spawn as unknown as ReturnType<typeof vi.fn>;
     ptySpawn.mockClear();
@@ -90,6 +89,7 @@ describe("handleResume — cwd from JSONL", () => {
       localNoAuth: false,
       verbose: false,
       disableDb: true,
+      skipStartupWarmup: true,
       cacheDir,
     });
     await server.listen(port);
@@ -128,8 +128,6 @@ describe("handleResume — cwd from JSONL", () => {
   });
 
   it("readCwdFromJsonl extracts the first cwd field from a JSONL file", async () => {
-    const { StreamerServer } = await import("../src/server");
-
     const server = new StreamerServer({
       port: await getRandomPort(),
       apiKey: API_KEY,
@@ -153,8 +151,6 @@ describe("handleResume — cwd from JSONL", () => {
   });
 
   it("readCwdFromJsonl returns null for a JSONL with no cwd fields", async () => {
-    const { StreamerServer } = await import("../src/server");
-
     const server = new StreamerServer({
       port: await getRandomPort(),
       apiKey: API_KEY,

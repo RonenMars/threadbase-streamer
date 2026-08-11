@@ -24,7 +24,7 @@ export default defineConfig({
     include: ["__tests__/**/*.test.ts"],
     setupFiles: ["__tests__/setup/isolate-runtime-db.ts"],
     pool: "forks",
-    poolOptions: { forks: { singleFork: true } },
+    fileParallelism: false,
     hookTimeout: 30_000,
     testTimeout: 15_000,
   },
