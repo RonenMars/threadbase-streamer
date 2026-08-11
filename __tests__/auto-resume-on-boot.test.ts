@@ -3,6 +3,7 @@ import { spawn as mockSpawn } from "node-pty";
 import { tmpdir } from "os";
 import { join } from "path";
 import WebSocket from "ws";
+import { ConversationCache } from "../src/conversation-cache";
 import type { ManagedSessionRow } from "../src/db/repositories/managed-sessions.repository";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
@@ -12,6 +13,7 @@ import {
   AUTO_RESUME_STAGGER_MS,
   AUTO_RESUME_WINDOW_MS,
   autoResumeSkipReason,
+  planAutoResume,
 } from "../src/services/sessions/autoResumeOnBoot";
 
 vi.mock("node-pty", () => {
@@ -62,27 +64,38 @@ function mkRow(over: Partial<ManagedSessionRow> = {}): ManagedSessionRow {
 
 describe("auto-resume eligibility", () => {
   const exists = () => true;
+  const historyExists = () => true;
 
   it("requires a shutdown status source", () => {
     expect(
       autoResumeSkipReason(mkRow({ status_source: "transition" }), {
         now: NOW,
         projectExists: exists,
+        historyExists,
       }),
     ).toBe("not_shutdown");
   });
 
   it("requires a running or waiting_input status at shutdown", () => {
     expect(
-      autoResumeSkipReason(mkRow({ status: "idle" }), { now: NOW, projectExists: exists }),
+      autoResumeSkipReason(mkRow({ status: "idle" }), {
+        now: NOW,
+        projectExists: exists,
+        historyExists,
+      }),
     ).toBe("not_interrupted");
     expect(
-      autoResumeSkipReason(mkRow({ status: "running" }), { now: NOW, projectExists: exists }),
+      autoResumeSkipReason(mkRow({ status: "running" }), {
+        now: NOW,
+        projectExists: exists,
+        historyExists,
+      }),
     ).toBeNull();
     expect(
       autoResumeSkipReason(mkRow({ status: "waiting_input" }), {
         now: NOW,
         projectExists: exists,
+        historyExists,
       }),
     ).toBeNull();
   });
@@ -92,20 +105,26 @@ describe("auto-resume eligibility", () => {
       autoResumeSkipReason(mkRow({ status_updated_at: NOW - AUTO_RESUME_WINDOW_MS - 1 }), {
         now: NOW,
         projectExists: exists,
+        historyExists,
       }),
     ).toBe("too_old");
     expect(
       autoResumeSkipReason(mkRow({ status_updated_at: NOW - AUTO_RESUME_WINDOW_MS }), {
         now: NOW,
         projectExists: exists,
+        historyExists,
       }),
     ).toBeNull();
   });
 
   it("requires the project directory to exist", () => {
-    expect(autoResumeSkipReason(mkRow(), { now: NOW, projectExists: () => false })).toBe(
-      "project_missing",
-    );
+    expect(
+      autoResumeSkipReason(mkRow(), {
+        now: NOW,
+        projectExists: () => false,
+        historyExists,
+      }),
+    ).toBe("project_missing");
   });
 
   it("requires a provider resume identity", () => {
@@ -113,14 +132,41 @@ describe("auto-resume eligibility", () => {
       autoResumeSkipReason(mkRow({ provider: "codex-cli", bound_conversation_id: null }), {
         now: NOW,
         projectExists: exists,
+        historyExists,
       }),
     ).toBe("resume_identity_missing");
     expect(
       autoResumeSkipReason(mkRow({ provider: "codex-cli", bound_conversation_id: "rollout-1" }), {
         now: NOW,
         projectExists: exists,
+        historyExists,
       }),
     ).toBeNull();
+  });
+
+  it("requires provider history", () => {
+    expect(
+      autoResumeSkipReason(mkRow(), {
+        now: NOW,
+        projectExists: exists,
+        historyExists: () => false,
+      }),
+    ).toBe("history_missing");
+  });
+
+  it("skips missing history before applying the per-boot ceiling", () => {
+    const rows = Array.from({ length: AUTO_RESUME_MAX + 1 }, (_, i) =>
+      mkRow({ session_id: `aaaaaaaa-1111-4222-8333-${String(i).padStart(12, "0")}` }),
+    );
+    const plan = planAutoResume(rows, {
+      now: NOW,
+      projectExists: exists,
+      historyExists: (row) => row.session_id !== rows[0].session_id,
+    });
+
+    expect(plan.skipped).toEqual([{ row: rows[0], reason: "history_missing" }]);
+    expect(plan.attempts).toEqual(rows.slice(1));
+    expect(plan.overflow).toEqual([]);
   });
 });
 
@@ -131,6 +177,9 @@ type AutoResumeInternals = {
   sessionHandlers: {
     resumeSession: ReturnType<typeof vi.fn>;
   };
+  // Stays on StreamerServer: SessionRegistryBoot reaches it through a
+  // late-binding dep thunk, so stubbing it here is still observed.
+  resolveConversationTarget: ReturnType<typeof vi.fn>;
   log: {
     debug: ReturnType<typeof vi.fn>;
     info: ReturnType<typeof vi.fn>;
@@ -157,6 +206,7 @@ function makePolicyServer(enabled: boolean, cacheDir: string): AutoResumeInterna
     warn: vi.fn(),
     error: vi.fn(),
   };
+  server.resolveConversationTarget = vi.fn().mockResolvedValue({ ok: true });
   return server;
 }
 
@@ -297,6 +347,141 @@ describe("auto-resume orchestration", () => {
       ),
     ).toBe(true);
   });
+
+  it("caps provider-history preflight concurrency at two while preserving input order", async () => {
+    const server = makePolicyServer(true, cacheDir);
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let maxActive = 0;
+    server.resolveConversationTarget = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          releases.push(() => {
+            active--;
+            resolve({ ok: true });
+          });
+        }),
+    );
+    server.sessionHandlers.resumeSession = vi.fn().mockResolvedValue({
+      ok: true,
+      alreadyRunning: false,
+      session: null,
+      response: null,
+    });
+    const rows = Array.from({ length: 3 }, (_, i) =>
+      mkRow({
+        session_id: `aaaaaaaa-1111-4222-8333-${String(i).padStart(12, "0")}`,
+        project_path: projectDir,
+        status_updated_at: Date.now(),
+      }),
+    );
+
+    const run = server.registryBoot.autoResumePreviousSessions(rows);
+    while (
+      server.resolveConversationTarget.mock.calls.length < rows.length ||
+      releases.length > 0
+    ) {
+      releases.shift()?.();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    await run;
+
+    expect(maxActive).toBe(2);
+    expect(server.resolveConversationTarget.mock.calls.map(([sessionId]) => sessionId)).toEqual(
+      rows.map((row) => row.session_id),
+    );
+  });
+
+  it("skips actual missing history before attempts without consuming capacity", async () => {
+    const server = makePolicyServer(true, cacheDir);
+    const rows = Array.from({ length: AUTO_RESUME_MAX + 1 }, (_, i) =>
+      mkRow({
+        session_id: `aaaaaaaa-1111-4222-8333-${String(i).padStart(12, "0")}`,
+        project_path: projectDir,
+        status_updated_at: Date.now(),
+      }),
+    );
+    server.resolveConversationTarget = vi.fn((sessionId: string) =>
+      Promise.resolve(
+        sessionId === rows[0].session_id
+          ? { ok: false, reason: "history_file_missing" }
+          : { ok: true },
+      ),
+    );
+    server.sessionHandlers.resumeSession = vi.fn().mockResolvedValue({
+      ok: true,
+      alreadyRunning: false,
+      session: null,
+      response: null,
+    });
+
+    await server.registryBoot.autoResumePreviousSessions(rows);
+
+    expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(AUTO_RESUME_MAX);
+    expect(server.sessionHandlers.resumeSession.mock.calls.map(([options]) => options.sessionId)).toEqual(
+      rows.slice(1).map((row) => row.session_id),
+    );
+    expect(
+      server.log.debug.mock.calls.some(
+        ([, fields]) =>
+          fields?.event === "sessions.auto_resume_skipped" && fields?.reason === "history_missing",
+      ),
+    ).toBe(true);
+    expect(
+      server.log.info.mock.calls.find(
+        ([, fields]) => fields?.event === "sessions.auto_resume_completed",
+      )?.[1],
+    ).toMatchObject({ attempted: AUTO_RESUME_MAX, failed: 0 });
+  });
+
+  it("leaves no_project_path for normal resume handling", async () => {
+    const server = makePolicyServer(true, cacheDir);
+    server.resolveConversationTarget = vi.fn().mockResolvedValue({
+      ok: false,
+      reason: "no_project_path",
+    });
+    server.sessionHandlers.resumeSession = vi.fn().mockResolvedValue({ ok: false, reason: "no_project_path" });
+
+    await server.registryBoot.autoResumePreviousSessions([
+      mkRow({ project_path: projectDir, status_updated_at: Date.now() }),
+    ]);
+
+    expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(1);
+    expect(
+      server.log.debug.mock.calls.some(([, fields]) => fields?.reason === "history_missing"),
+    ).toBe(false);
+  });
+
+  it("contains a rejected history lookup and continues later eligible work", async () => {
+    const server = makePolicyServer(true, cacheDir);
+    const rows = [
+      mkRow({ project_path: projectDir, status_updated_at: Date.now() }),
+      mkRow({
+        session_id: "aaaaaaaa-1111-4222-8333-555555555555",
+        project_path: projectDir,
+        status_updated_at: Date.now(),
+      }),
+    ];
+    server.resolveConversationTarget = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("history lookup failed"))
+      .mockResolvedValue({ ok: true });
+    server.sessionHandlers.resumeSession = vi.fn().mockResolvedValue({
+      ok: true,
+      alreadyRunning: false,
+      session: null,
+      response: null,
+    });
+
+    await server.registryBoot.autoResumePreviousSessions(rows);
+
+    expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(2);
+    expect(server.sessionHandlers.resumeSession.mock.calls.map(([options]) => options.sessionId)).toEqual(
+      rows.map((row) => row.session_id),
+    );
+  });
 });
 
 describe("boot auto-resume integration", () => {
@@ -413,6 +598,91 @@ describe("boot auto-resume integration", () => {
       expect(mockSpawn).toHaveBeenCalledTimes(1);
     } finally {
       await server.close();
+    }
+  }, 30_000);
+
+  it("resolves persisted Codex history during cold boot before scanner warm-up", async () => {
+    const codexRoot = mkdtempSync(join(tmpdir(), "tb-auto-resume-codex-"));
+    const rolloutId = "cccccccc-1111-4222-8333-444444444444";
+    const rolloutDir = join(codexRoot, "2026", "08", "11");
+    const rolloutPath = join(rolloutDir, `rollout-2026-08-11T08-00-00-${rolloutId}.jsonl`);
+    mkdirSync(rolloutDir, { recursive: true });
+    writeFileSync(
+      rolloutPath,
+      `${JSON.stringify({
+        timestamp: new Date().toISOString(),
+        type: "session_meta",
+        payload: { id: rolloutId, cwd: projectDir, timestamp: new Date().toISOString() },
+      })}\n`,
+    );
+
+    const store = RuntimeStore.open(runtimeDbPath);
+    const repo = new ManagedSessionsRepository(store.getDatabase());
+    repo.delete(sessionId);
+    repo.recordSpawn({
+      session: {
+        id: sessionId,
+        provider: "codex-cli",
+        projectPath: projectDir,
+        projectName: "repo",
+        branch: "main",
+        status: "running",
+        startedAt: new Date(Date.now() - 60_000),
+        completedAt: null,
+        promptCount: 1,
+        lastOutput: "",
+        boundConversationId: rolloutId,
+      },
+      pid: 999_999,
+      cmdline: `codex resume ${rolloutId}`,
+      streamerInstanceId: "previous-run",
+    });
+    repo.recordStatus(sessionId, "running", "shutdown", {
+      completedAt: new Date(),
+      promptCount: 1,
+    });
+    store.close();
+
+    const cache = ConversationCache.open(join(cacheDir, "cache.db"));
+    cache.upsertFromScannerMeta([
+      {
+        id: rolloutId,
+        sessionId: rolloutId,
+        filePath: rolloutPath,
+        projectPath: projectDir,
+        projectName: "repo",
+        sessionName: "Codex interrupted work",
+        provider: "codex-cli",
+        messageCount: 0,
+        timestamp: new Date().toISOString(),
+      } as never,
+    ]);
+    cache.close();
+
+    const server = new StreamerServer({
+      port: 0,
+      apiKey: API_KEY,
+      disableDb: true,
+      skipStartupWarmup: true,
+      cacheDir,
+      runtimeDbPath,
+      scannerPersistent: false,
+      codexRoots: [],
+      autoResumeOnBoot: false,
+    });
+
+    try {
+      await server.listen(0, { awaitReady: true });
+      await expect((server as any).resolveConversationTarget(sessionId)).resolves.toMatchObject({
+        ok: true,
+        historyId: rolloutId,
+        historyPath: rolloutPath,
+        projectPath: projectDir,
+        provider: "codex-cli",
+      });
+    } finally {
+      await server.close();
+      rmSync(codexRoot, { recursive: true, force: true });
     }
   }, 30_000);
 

@@ -15,6 +15,7 @@ import {
   AUTO_RESUME_CONCURRENCY,
   AUTO_RESUME_STAGGER_MS,
   type AutoResumeSkipReason,
+  autoResumeSkipReason,
   planAutoResume,
 } from "./services/sessions/autoResumeOnBoot";
 import {
@@ -56,6 +57,13 @@ export type SessionRegistryBootDeps = {
   }) => Promise<ResumeOutcome>;
   watchConversationFile: (sessionId: string, historyId?: string) => Promise<void>;
   broadcastSessionList: () => void;
+  // Boot auto-resume preflights each candidate for a provider history before
+  // spending one of the AUTO_RESUME_MAX slots on it (#483). Typed loosely on the
+  // success side for the same reason SessionHandlersDeps is: the full shape is
+  // declared on StreamerServer and only `ok` / `reason` are read here.
+  resolveConversationTarget: (
+    sessionId: string,
+  ) => Promise<{ ok: false; reason: string } | { ok: true; [key: string]: unknown }>;
 };
 
 /**
@@ -304,7 +312,41 @@ export class SessionRegistryBoot {
   async autoResumePreviousSessions(rows: ManagedSessionRow[]): Promise<void> {
     if (!this.autoResumeOnBoot) return;
 
-    const plan = planAutoResume(rows, { now: Date.now(), projectExists: existsSync });
+    // Preflight each otherwise-eligible row for a provider history before
+    // planning. A session whose JSONL/rollout is gone can never resume, and
+    // spending one of the AUTO_RESUME_MAX slots on it starves a session that
+    // could (#483). Rows already skippable for a cheaper reason are marked
+    // ineligible without a probe, so this costs nothing for them.
+    const now = Date.now();
+    const baseOptions = { now, projectExists: existsSync, historyExists: () => true };
+    const historyExists = new Map<string, boolean>();
+    const preflights = new Set<Promise<void>>();
+    for (const row of rows) {
+      if (autoResumeSkipReason(row, baseOptions) != null) {
+        historyExists.set(row.session_id, false);
+        continue;
+      }
+      while (preflights.size >= AUTO_RESUME_CONCURRENCY) {
+        await Promise.race(preflights);
+      }
+      const preflight = (async () => {
+        try {
+          const target = await this.deps.resolveConversationTarget(row.session_id);
+          historyExists.set(row.session_id, target.ok || target.reason !== "history_file_missing");
+        } catch {
+          // Preserve the normal per-attempt failure handling when preflight is unavailable.
+          historyExists.set(row.session_id, true);
+        }
+      })();
+      preflights.add(preflight);
+      void preflight.then(() => preflights.delete(preflight));
+    }
+    await Promise.all(preflights);
+
+    const plan = planAutoResume(rows, {
+      ...baseOptions,
+      historyExists: (row) => historyExists.get(row.session_id) ?? false,
+    });
     const skippedBy: Partial<Record<AutoResumeSkipReason, number>> = {};
     for (const { row, reason } of plan.skipped) {
       skippedBy[reason] = (skippedBy[reason] ?? 0) + 1;
