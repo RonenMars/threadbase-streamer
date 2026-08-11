@@ -1,10 +1,13 @@
 import { mkdtempSync } from "fs";
 import { createServer, type Server } from "http";
+import { Server as NetServer } from "net";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
 
-const recorded = vi.hoisted(() => [] as Array<{ level: string; msg: unknown }>);
+const recorded = vi.hoisted(
+  () => [] as Array<{ level: string; msg: unknown; fields?: Record<string, unknown> }>,
+);
 
 vi.mock("../src/logger", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/logger")>();
@@ -12,7 +15,7 @@ vi.mock("../src/logger", async (importOriginal) => {
     const wrap =
       (level: "debug" | "info" | "warn" | "error") =>
       (msg: string, fields?: Record<string, unknown>, dest?: import("../src/logger").LogDest) => {
-        recorded.push({ level, msg });
+        recorded.push({ level, msg, fields });
         real[level](msg, fields, dest);
       };
     return {
@@ -53,10 +56,11 @@ async function getRandomPort(): Promise<number> {
   });
 }
 
-function makeServer(port: number): StreamerServer {
+function makeServer(port: number, host?: string): StreamerServer {
   const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-bind-retry-test-"));
   return new StreamerServer({
     port,
+    host,
     apiKey: API_KEY,
     localNoAuth: false,
     verbose: false,
@@ -101,17 +105,37 @@ function bindLogCounter() {
     get handlerWarns() {
       return count("warn", isHandlerWarn);
     },
+    hostsFor(event: string) {
+      return since()
+        .filter((entry) => entry.fields?.event === event)
+        .map((entry) => entry.fields?.host);
+    },
   };
 }
 
 describe("StreamerServer bind retry logging", () => {
+  it("passes the configured host to the HTTP listener", async () => {
+    const listen = vi.spyOn(NetServer.prototype, "listen");
+    const counter = bindLogCounter();
+    const server = makeServer(0, "127.0.0.1");
+
+    try {
+      await server.listen(0);
+      expect(listen).toHaveBeenCalledWith(0, "127.0.0.1");
+      expect(counter.hostsFor("server.listening")).toEqual(["127.0.0.1"]);
+    } finally {
+      await server.close();
+      listen.mockRestore();
+    }
+  });
+
   it("logs a recovering EADDRINUSE retry at debug, not warn", async () => {
     const port = await getRandomPort();
-    const first = makeServer(port);
+    const first = makeServer(port, "127.0.0.1");
     await first.listen(port);
 
     const counter = bindLogCounter();
-    const second = makeServer(port);
+    const second = makeServer(port, "127.0.0.1");
     const bindPromise = second.listen(port); // EADDRINUSE, then retries
 
     // Free the port once a retry has actually been logged, rather than on a fixed
@@ -126,6 +150,8 @@ describe("StreamerServer bind retry logging", () => {
     expect(counter.debugRetries).toBeGreaterThanOrEqual(1);
     expect(counter.warnRetries).toBe(0);
     expect(counter.errorFails).toBe(0);
+    expect(counter.hostsFor("server.bind_retry")).not.toHaveLength(0);
+    expect(counter.hostsFor("server.bind_retry")).toEqual(expect.arrayContaining(["127.0.0.1"]));
     // The persistent listener-level handler also sees each failed attempt's
     // EADDRINUSE — it must stay quiet (debug) during the bind window, not warn.
     expect(counter.handlerWarns).toBe(0);
@@ -137,10 +163,10 @@ describe("StreamerServer bind retry logging", () => {
   it("logs exactly one error and rethrows when all attempts are exhausted", async () => {
     const port = await getRandomPort();
     const blocker: Server = createServer();
-    await new Promise<void>((resolve) => blocker.listen(port, resolve));
+    await new Promise<void>((resolve) => blocker.listen(port, "127.0.0.1", resolve));
 
     const counter = bindLogCounter();
-    const server = makeServer(port);
+    const server = makeServer(port, "127.0.0.1");
 
     // Port is held for the entire ~3s retry budget, so every attempt fails and
     // the final one rethrows EADDRINUSE.
@@ -153,6 +179,7 @@ describe("StreamerServer bind retry logging", () => {
     // The persistent handler stayed quiet for every in-window EADDRINUSE; the
     // final give-up surfaced via the bind_failed error line above, not warn.
     expect(counter.handlerWarns).toBe(0);
+    expect(counter.hostsFor("server.bind_failed")).toEqual(["127.0.0.1"]);
 
     counter.restore();
     await new Promise<void>((resolve) => blocker.close(() => resolve()));

@@ -338,6 +338,7 @@ export class StreamerServer {
   private dbPool: Awaited<ReturnType<typeof createPool>> | null = null;
   private dbInstanceId: string | null = null;
   private disableDb = false;
+  private host: string | undefined;
   // Skip the startup warm-up scan (test hook; see ServerConfig.skipStartupWarmup).
   private skipStartupWarmup: boolean;
   private autoResumeOnBoot: boolean;
@@ -465,6 +466,7 @@ export class StreamerServer {
     }
     this.verbose = config.verbose ?? false;
     this.disableDb = config.disableDb ?? false;
+    this.host = config.host;
     this.skipStartupWarmup = config.skipStartupWarmup ?? false;
     this.autoResumeOnBoot = config.autoResumeOnBoot ?? false;
     this.scanProfiles = config.scanProfiles;
@@ -1272,7 +1274,7 @@ export class StreamerServer {
     // handler logged EADDRINUSE once and gave up, failing the deploy
     // healthcheck). On the final attempt we let the error propagate so a
     // genuinely occupied port still surfaces loudly.
-    await this.bindWithRetry(port);
+    await this.bindWithRetry(port, this.host);
 
     // unref() so an idle server with no other work can still exit — this timer
     // must never be the reason the process stays alive.
@@ -1286,6 +1288,7 @@ export class StreamerServer {
         this.log.info(`Streamer server listening on port ${port}`, {
           port,
           event: "server.listening",
+          ...(this.host !== undefined && { host: this.host }),
         });
         // Opened BEFORE and INDEPENDENTLY of the conversation cache. These two
         // used to share a handle, so the documented better-sqlite3 ABI mismatch
@@ -1604,16 +1607,26 @@ export class StreamerServer {
   // Bind the HTTP listener, retrying on a transient EADDRINUSE. See the call
   // site in listen() for why the race exists (kickstart -k relaunch). Total
   // worst case ≈ 6 × 500 ms = 3 s before the final attempt rethrows.
-  private async bindWithRetry(port: number, attempts = 6, delayMs = 500): Promise<void> {
+  private async bindWithRetry(
+    port: number,
+    host?: string,
+    attempts = 6,
+    delayMs = 500,
+  ): Promise<void> {
     this.binding = true;
     try {
-      await this.bindWithRetryLoop(port, attempts, delayMs);
+      await this.bindWithRetryLoop(port, host, attempts, delayMs);
     } finally {
       this.binding = false;
     }
   }
 
-  private async bindWithRetryLoop(port: number, attempts: number, delayMs: number): Promise<void> {
+  private async bindWithRetryLoop(
+    port: number,
+    host: string | undefined,
+    attempts: number,
+    delayMs: number,
+  ): Promise<void> {
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         await new Promise<void>((resolve, reject) => {
@@ -1627,7 +1640,11 @@ export class StreamerServer {
           };
           this.httpServer.once("error", onError);
           this.httpServer.once("listening", onListening);
-          this.httpServer.listen(port);
+          if (host === undefined) {
+            this.httpServer.listen(port);
+          } else {
+            this.httpServer.listen(port, host);
+          }
         });
         return;
       } catch (err) {
@@ -1638,7 +1655,12 @@ export class StreamerServer {
           // before rethrowing.
           this.log.error(
             `port ${port} still busy (EADDRINUSE) after ${attempts} attempts; giving up`,
-            { port, attempts, event: "server.bind_failed" },
+            {
+              port,
+              attempts,
+              event: "server.bind_failed",
+              ...(host !== undefined && { host }),
+            },
           );
         }
         if (e.code !== "EADDRINUSE" || attempt === attempts) throw err;
@@ -1646,7 +1668,7 @@ export class StreamerServer {
         // since bindWithRetry recovers on its own within the attempt budget.
         this.log.debug?.(
           `port ${port} busy (EADDRINUSE), retry ${attempt}/${attempts - 1} in ${delayMs}ms`,
-          { port, attempt, event: "server.bind_retry" },
+          { port, attempt, event: "server.bind_retry", ...(host !== undefined && { host }) },
         );
         await new Promise<void>((r) => setTimeout(r, delayMs));
       }
