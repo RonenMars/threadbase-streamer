@@ -7,7 +7,7 @@
 //
 // Compiled by tsup to dist/ensure-demo-project-dirs.cjs.
 import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 /** Recursively list *.jsonl files under `root`. */
 export function listJsonlFiles(root: string): string[] {
@@ -49,7 +49,11 @@ export function extractDemoCwds(projectsRoot: string): string[] {
       if (!line.trim()) continue;
       try {
         const obj = JSON.parse(line) as { cwd?: unknown };
-        if (typeof obj.cwd === "string" && obj.cwd.length > 0 && obj.cwd.startsWith("/")) {
+        // Absolute-only, to skip relative or garbage cwds we must not mkdir.
+        // This runs on Linux (the demo container), where isAbsolute is exactly
+        // startsWith("/"); it is written portably so the unit tests can drive it
+        // with native temp paths on Windows.
+        if (typeof obj.cwd === "string" && obj.cwd.length > 0 && isAbsolute(obj.cwd)) {
           cwds.add(obj.cwd);
         }
       } catch {

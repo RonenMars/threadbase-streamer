@@ -5,7 +5,7 @@ import { EventEmitter, once } from "events";
 import { mkdirSync, mkdtempSync, rmSync } from "fs";
 import type { Server } from "net";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
 import WebSocket from "ws";
 import type { ManagedSessionRow } from "../src/db/repositories/managed-sessions.repository";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
@@ -56,7 +56,7 @@ vi.mock("../src/process-discovery", async (importOriginal) => {
 
 const API_KEY = "tb_0123456789abcdef0123456789abcdef";
 const CLAUDE_ID = "11111111-2222-4333-8444-555555555555";
-const INSTANCE_ID = "s8";
+let instanceId: string;
 
 type RegistrySeed = ManagedSession & { boundConversationId?: string };
 
@@ -112,6 +112,14 @@ describe("pty-host reconnect on boot", () => {
 
   beforeEach(() => {
     rootDir = mkdtempSync(join(tmpdir(), "tph-"));
+    // Per-test, because the Windows named pipe is NOT scoped by
+    // THREADBASE_CONFIG_DIR: a shared id makes a pipe the previous test has not
+    // finished releasing collide with this one's listen(). Reuse mkdtemp's
+    // suffix rather than minting a new random — it is already unique, and it is
+    // short. A longer id pushes the POSIX socket path (config dir +
+    // /run/pty-host-<id>.sock) past the 104-byte sun_path limit on macOS, where
+    // os.tmpdir() alone is 48 chars, and every listen() fails with EINVAL.
+    instanceId = basename(rootDir);
     projectDir = join(rootDir, "project");
     mkdirSync(projectDir);
     cacheDir = join(rootDir, "cache");
@@ -119,7 +127,7 @@ describe("pty-host reconnect on boot", () => {
     previousConfigDir = process.env.THREADBASE_CONFIG_DIR;
     previousInstanceId = process.env.THREADBASE_INSTANCE_ID;
     process.env.THREADBASE_CONFIG_DIR = rootDir;
-    process.env.THREADBASE_INSTANCE_ID = INSTANCE_ID;
+    process.env.THREADBASE_INSTANCE_ID = instanceId;
     host = null;
     socketServer = null;
     server = null;
@@ -143,11 +151,20 @@ describe("pty-host reconnect on boot", () => {
 
   async function startHost(): Promise<RemoteSessionRunner> {
     host = new SessionHost({ idleSweepMs: 1_000_000 });
-    const socketPath = hostSocketPath(INSTANCE_ID);
+    const socketPath = hostSocketPath(instanceId);
     socketServer = await listenForStreamers(socketPath, {
       onConnection: (transport) => host?.accept(transport) ?? (() => {}),
     });
     return RemoteSessionRunner.connect(await connectToHost(socketPath));
+  }
+
+  async function closeSocketServer(): Promise<void> {
+    const current = socketServer;
+    socketServer = null;
+    if (!current) return;
+    await new Promise<void>((resolve, reject) => {
+      current.close((err) => (err ? reject(err) : resolve()));
+    });
   }
 
   function seedRegistry(sessions: RegistrySeed[]): void {
@@ -318,7 +335,7 @@ describe("pty-host reconnect on boot", () => {
     expect(registryRow(CLAUDE_ID)?.completed_at).toBeNull();
 
     const afterRestart = await RemoteSessionRunner.connect(
-      await connectToHost(hostSocketPath(INSTANCE_ID)),
+      await connectToHost(hostSocketPath(instanceId)),
     );
     expect(afterRestart.hasSession(CLAUDE_ID)).toBe(true);
     expect(afterRestart.hasSession(codex.id)).toBe(true);
@@ -334,6 +351,15 @@ describe("pty-host reconnect on boot", () => {
     seedRegistry([session]);
     first.dispose();
     host?.dispose();
+    await closeSocketServer();
+    // Nothing is listening now, so the real connectOrSpawnHost would spawn a
+    // detached node process and poll it for the full 5s ready timeout before
+    // giving up — under vitest that child is argv[1] of the pool worker, i.e. an
+    // orphan nothing reaps. Rejecting is the same end state (no host attached)
+    // without either cost.
+    vi.spyOn(hostSpawner, "connectOrSpawnHost").mockRejectedValue(
+      new Error("pty-host did not accept a connection"),
+    );
 
     const store = RuntimeStore.open(runtimeDbPath);
     try {
