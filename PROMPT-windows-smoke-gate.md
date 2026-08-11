@@ -1,5 +1,13 @@
 # Prompt — stop Windows smoke regressions merging silently
 
+> **DONE — do not run this prompt. Historical record only, annotated 2026-08-11.**
+>
+> The task it asks for was completed on 2026-08-01: `continue-on-error` was removed, so a red `Smoke (macos-latest)` / `Smoke (windows-latest)` now fails the PR instead of reporting green. Both contexts were subsequently added to ruleset `17561930` and **block the merge**.
+>
+> Two of the three "facts already established" below were **already wrong when written, or became wrong since**, and the section explicitly tells a reader not to re-derive them — which is the dangerous part. They are struck through and corrected in place. Do not lift facts out of this file; read [docs/testing/cross-platform-ci.md](docs/testing/cross-platform-ci.md), which is maintained.
+>
+> The follow-on work this prompt did *not* anticipate is tracked in #524 (the eight-file allowlist, fixed by #527) and #530 (Node 24 crashes vitest workers on Windows).
+
 Paste everything below the line into a fresh session.
 
 ---
@@ -24,9 +32,12 @@ The cost of leaving it: a red Windows job still reports the *check* as successfu
 
 ## Facts already established — do not re-derive
 
-- The full suite (`Test (Node 20/22/24)`) runs on **ubuntu-latest only**. `smoke` is the *only* macOS and Windows coverage.
-- **`main` has no branch protection** (`gh api repos/RonenMars/threadbase-streamer/branches/main/protection` → `Branch not protected`). There are no required status checks on any branch. So removing `continue-on-error` changes **visibility**, not enforcement: the job turns the PR `UNSTABLE` instead of `CLEAN`, which is enough for a workflow that waits for `CLEAN` before merging, but it does not *block* anything.
-- Recent history over the last 12 CI runs: **11 success, 1 failure** on `Smoke (windows-latest)` — and that one failure was a true positive, not a flake.
+- ~~The full suite (`Test (Node 20/22/24)`) runs on **ubuntu-latest only**. `smoke` is the *only* macOS and Windows coverage.~~
+  **Half right, and the wrong half mattered.** `Test (Node 20/22/24)` is still ubuntu-only and `smoke` is still the only macOS/Windows coverage — but `smoke` ran a hand-curated eight-file allowlist, not "the smoke suite" as a meaningful subset, so most of the repo had no macOS or Windows coverage at all. That is what let #523 ship a macOS-breaking `sun_path` overflow through a fully green board. Fixed in #527: both legs now run `npm test`.
+- ~~**`main` has no branch protection** (`gh api repos/RonenMars/threadbase-streamer/branches/main/protection` → `Branch not protected`). There are no required status checks on any branch.~~
+  **Wrong, and wrong in the direction that invites pushing to `main`.** `main` is protected — by a **ruleset** (`main protection`, id `17561930`), not by classic branch protection. The `branches/main/protection` endpoint returns `404 Branch not protected` on ruleset-protected repos, so that probe proves nothing; read `gh api repos/RonenMars/threadbase-streamer/rulesets` instead. The ruleset requires a PR, enforces linear history, forbids force-push and deletion, and requires nine checks — including both `Smoke (macos-latest)` and `Smoke (windows-latest)`. So removing `continue-on-error` changed **enforcement**, not merely visibility.
+- ~~Recent history over the last 12 CI runs: **11 success, 1 failure** on `Smoke (windows-latest)` — and that one failure was a true positive, not a flake.~~
+  **Superseded.** That sample was of the eight-file allowlist and says nothing about the full suite now running. On the widened suite the sample is small and already contains one Windows flake (`session-status-line.test.ts` answering `503 STORE_UNAVAILABLE`, green on re-run). Current counts live in [docs/testing/cross-platform-ci.md](docs/testing/cross-platform-ci.md) under "Flake exposure, stated up front".
 
 ## The judgement call this needs — do not skip it
 
