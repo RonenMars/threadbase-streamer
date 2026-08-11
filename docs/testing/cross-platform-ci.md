@@ -15,15 +15,17 @@ Every CI job ran on `ubuntu-latest`. The repo, meanwhile:
 
 A regression in any of those was invisible to a Linux-only matrix until a user hit it.
 
-## What the smoke job does
+## What the cross-platform job does
 
 `smoke` runs on `macos-latest` and `windows-latest`:
 
 1. Installs dependencies **with** lifecycle scripts, so the native addon actually builds or fetches its prebuild for that platform.
-2. Runs `npm run test:smoke` — the platform-sensitive subset, including the real PTY-host socket/named-pipe suite and a Windows-only ConPTY lifetime probe.
+2. Runs `npm test` — the **whole** suite, the same command the Linux `Test` jobs run.
 3. Verifies `require('node-pty')` succeeds.
 
 Step 3 is the one a Linux-only matrix can never catch: an ABI mismatch or a missing prebuild produces a server that starts fine and then fails the moment anyone opens a session.
+
+**The job is still named `Smoke (…)` and no longer runs a smoke subset.** That is deliberate: both context names are required checks in ruleset `17561930`, and a required context that no workflow emits is never reported and never satisfied — renaming the job makes every PR permanently unmergeable. That has happened here once already (see the warning further down). The misnomer is the cheaper of the two problems.
 
 ## Windows PTY-host qualification
 
@@ -37,11 +39,37 @@ This proves that moving ConPTY ownership into the detached host buys continuity 
 
 It does not prove a full `tb-streamer prod restart` through Task Scheduler, provider-specific Claude or Codex behaviour, or terminal replay from a real provider session on Windows; those claims remain assumed until an end-to-end Windows service test observes them.
 
-### Why not the full suite on every platform
+### Why the full suite, since 2026-08-11
 
-Most of the suite is platform-independent, and running all of it three times would triple CI wall-clock for coverage that mostly repeats. The smoke subset targets what genuinely differs.
+It used to be a curated allowlist of eight files, on the reasoning that most of the suite is platform-independent and running it three times would triple CI wall-clock. Both halves of that turned out to be wrong in the ways that mattered.
 
-**This is a deliberate ceiling.** Platform-specific bugs outside the smoke subset — a Windows-only path bug in the offset index, say — are still not covered. Widen `test:smoke` when a class of failure proves it needs to be there, rather than pre-emptively.
+**The allowlist made "not covered" the default.** Every test written after it was excluded from macOS and Windows unless someone remembered to add the file by hand, and nothing told an author they were supposed to. That is not a ceiling anyone chose per-file; it is a ceiling that moved on its own every time the suite grew. Two independent incidents in one week came out of it:
+
+- **[#523](https://github.com/RonenMars/threadbase-streamer/pull/523)** randomized a pty-host instance id, pushing the POSIX unix-socket path to 106 bytes against macOS's 104-byte `sun_path` limit. Five tests in `__tests__/pty-host-survival.test.ts` failed with `listen EINVAL`. The PR reached `MERGEABLE`/`CLEAN` with all 12 checks green and merged as `9f28397`. Two of the three `pty-host` files were on the allowlist; the one that broke was not, and nothing about that split was principled.
+- **`docs/ROADMAP.md`** claimed `Smoke (windows-latest)` covered the Windows log-redirection assertions in `__tests__/deploy-windows-script.test.ts`. It did not — that file was not on the list either. A false assurance, written down and believed.
+
+**And it was not buying wall-clock.** Measured on 2026-08-11 against run `31461926905`:
+
+| | allowlist | full suite | run critical path |
+|---|---|---|---|
+| macOS | ends t+108s | ends ~t+184s | **289s** |
+| Windows | ends t+149s | ends ~t+246s | **289s** |
+
+The critical path is owned by `Warm cache (Node 20)` (208s) feeding `Test (Node 24)`. Both platform jobs finished inside that slack before the change and still do after it, so **run wall-clock is unchanged**. The repo is public, so macOS's 10× and Windows's 2× runner multipliers bill nothing either. The saving was imaginary; the cost was two real bugs.
+
+### What stays out, and how
+
+A test that genuinely cannot run on a platform guards **itself**, in its own file:
+
+```ts
+describe.skipIf(process.platform === "win32")("POSIX socket paths", () => { … });
+```
+
+Eighteen test files already do this. The property that matters is that exclusion is visible to the person writing the test, at the moment they write it — not recorded in a central list they have no reason to open. There is no list to forget, so a newly-added test is covered on every platform by default.
+
+`__tests__/ci-workflow.test.ts` pins this: it asserts the platform job's `run:` steps contain `npm test` and name no individual test file. Narrowing back to a subset is a test failure, not a quiet YAML edit.
+
+`npm run test:precommit` — the old eight-file set, renamed off "smoke" so the two cannot be confused again — still exists for the pre-commit hook, where local speed is the whole point. **It is not a coverage boundary and nothing in CI runs it.**
 
 ### Why it does not reuse the `run-ci` action
 
@@ -115,7 +143,18 @@ Stated plainly so this doc is not mistaken for a completeness claim:
 
 ## When a platform-specific failure appears
 
-1. **Reproduce the narrow thing first.** The smoke subset is small; run the single failing test locally on that platform before assuming the platform is at fault.
+1. **Reproduce the narrow thing first.** Run the single failing test locally on that platform before assuming the platform is at fault.
 2. **Check the native addon before the logic.** `node -e "require('node-pty')"` fails loudly on an ABI mismatch and is by far the most common cause. `scripts/check-native-abi.mjs` covers the same ground locally.
 3. **Do not fix by loosening the assertion.** A path test that passes on both platforms only because it stopped checking separators has removed the coverage rather than earned it.
-4. **Widen `test:smoke` when the class recurs.** One Windows path bug is a bug; three are a signal that the subset is drawn too narrowly.
+4. **Do not reach for an exclusion.** There is no allowlist to fall off any more, and re-introducing one fails `__tests__/ci-workflow.test.ts`. If a test truly cannot run on a platform, guard that test in its own file with `describe.skipIf(process.platform === …)` and say why in a comment.
+5. **A green board is not evidence when the box is dirty.** A developer machine with a supervised streamer on port 8766 and a populated `~/.threadbase` fails ~8 files on timeouts that a clean runner passes. Baseline against clean `main` before attributing a failure to your change, and prefer a throwaway CI branch over local reasoning about "clean".
+
+### Windows: `fs.realpathSync` keeps 8.3 short names
+
+The first defect the widened job found, and worth knowing before writing the next path assertion.
+
+`fs.realpathSync` is a JS implementation that resolves symlinks but **preserves** 8.3 short names, so on a GitHub Windows runner `os.tmpdir()` stays `C:\Users\RUNNER~1\AppData\Local\Temp\…`. `fs/promises.realpath` and `fs.realpathSync.native` are libuv-backed and **expand** them to `C:\Users\runneradmin\…`.
+
+`src/server.ts:727` canonicalizes the browse root with the promises form, so a test that built its expectation with plain `realpathSync` compared a short path against a long one and failed — on Windows only, and invisibly everywhere else. Seven cases in `__tests__/server.test.ts` did exactly that, and the allowlist had hidden it since the file was written.
+
+**Match the variant the product uses.** The fix is `realpathSync.native`, not a looser assertion; on POSIX the two behave identically, so nothing about Linux or macOS coverage changes.

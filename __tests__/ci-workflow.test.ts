@@ -44,9 +44,36 @@ describe("cross-platform smoke", () => {
     expect(WORKFLOW).toMatch(/require\('node-pty'\)/);
   });
 
-  it("qualifies the pty-host transport and Windows ConPTY lifetime", () => {
-    expect(PACKAGE.scripts["test:smoke"]).toContain("__tests__/pty-host-process.test.ts");
-    expect(PACKAGE.scripts["test:smoke"]).toContain("__tests__/pty-host-windows.test.ts");
+  // THE load-bearing assertion in this file. The platform jobs used to run a
+  // hand-curated list of eight files, which made "not covered on
+  // macOS/Windows" the default for every test added afterwards — the author
+  // got no signal they were meant to enrol. #523 shipped a macOS-breaking
+  // socket-path overflow through a fully green board that way, and a Windows
+  // 8.3 short-path bug in server.test.ts sat undetected for the same reason.
+  //
+  // Running the whole suite is what makes a new test covered by default, so
+  // narrowing it back to a subset has to be a test failure rather than a
+  // quiet YAML edit. This also subsumes the old explicit assertion that the
+  // pty-host socket/named-pipe and ConPTY-lifetime files run cross-platform:
+  // they do, because everything does.
+  it("runs the whole suite on macOS and Windows, not a curated subset", () => {
+    const smoke = WORKFLOW.slice(
+      WORKFLOW.indexOf("  smoke:"),
+      WORKFLOW.indexOf("  test:", WORKFLOW.indexOf("  smoke:")),
+    );
+    const commands = [...smoke.matchAll(/^\s*run:\s*(.+)$/gm)].map((m) => m[1].trim());
+
+    expect(commands).toContain("npm test");
+    // No step may name individual test files — that is the allowlist returning.
+    expect(commands.filter((c) => c.includes("__tests__/"))).toEqual([]);
+  });
+
+  // The fast subset still exists for the pre-commit hook, where local speed is
+  // the point. It must not be what CI treats as platform coverage; the
+  // rename off "smoke" is what keeps the two from being confused again.
+  it("keeps the fast subset local-only", () => {
+    expect(PACKAGE.scripts["test:precommit"]).toBeTruthy();
+    expect(PACKAGE.scripts).not.toHaveProperty("test:smoke");
   });
 
   // Promoted once the expanded pty-host set cleared its documented threshold.
