@@ -141,6 +141,9 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
+    "@threadbase-sh/scanner": {
+      "better-sqlite3": "12.11.1"
+    },
     "@hono/node-ws": {
       "@hono/node-server": "$@hono/node-server"
     }

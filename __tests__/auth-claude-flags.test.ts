@@ -101,7 +101,7 @@ describe("claude_flags persistence", () => {
   });
 
   // server.yaml holds the API key, so the atomic write must not widen its mode.
-  it("writes with 0600 permissions", async () => {
+  it.skipIf(process.platform === "win32")("writes with 0600 permissions", async () => {
     const { setClaudeFlags } = await auth();
     setClaudeFlags({ model: "opus" });
 

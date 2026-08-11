@@ -56,7 +56,7 @@ vi.mock("../src/process-discovery", async (importOriginal) => {
 
 const API_KEY = "tb_0123456789abcdef0123456789abcdef";
 const CLAUDE_ID = "11111111-2222-4333-8444-555555555555";
-const INSTANCE_ID = "s8";
+let instanceId: string;
 
 type RegistrySeed = ManagedSession & { boundConversationId?: string };
 
@@ -112,6 +112,7 @@ describe("pty-host reconnect on boot", () => {
 
   beforeEach(() => {
     rootDir = mkdtempSync(join(tmpdir(), "tph-"));
+    instanceId = `s8-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     projectDir = join(rootDir, "project");
     mkdirSync(projectDir);
     cacheDir = join(rootDir, "cache");
@@ -119,7 +120,7 @@ describe("pty-host reconnect on boot", () => {
     previousConfigDir = process.env.THREADBASE_CONFIG_DIR;
     previousInstanceId = process.env.THREADBASE_INSTANCE_ID;
     process.env.THREADBASE_CONFIG_DIR = rootDir;
-    process.env.THREADBASE_INSTANCE_ID = INSTANCE_ID;
+    process.env.THREADBASE_INSTANCE_ID = instanceId;
     host = null;
     socketServer = null;
     server = null;
@@ -143,11 +144,20 @@ describe("pty-host reconnect on boot", () => {
 
   async function startHost(): Promise<RemoteSessionRunner> {
     host = new SessionHost({ idleSweepMs: 1_000_000 });
-    const socketPath = hostSocketPath(INSTANCE_ID);
+    const socketPath = hostSocketPath(instanceId);
     socketServer = await listenForStreamers(socketPath, {
       onConnection: (transport) => host?.accept(transport) ?? (() => {}),
     });
     return RemoteSessionRunner.connect(await connectToHost(socketPath));
+  }
+
+  async function closeSocketServer(): Promise<void> {
+    const current = socketServer;
+    socketServer = null;
+    if (!current) return;
+    await new Promise<void>((resolve, reject) => {
+      current.close((err) => (err ? reject(err) : resolve()));
+    });
   }
 
   function seedRegistry(sessions: RegistrySeed[]): void {
@@ -318,7 +328,7 @@ describe("pty-host reconnect on boot", () => {
     expect(registryRow(CLAUDE_ID)?.completed_at).toBeNull();
 
     const afterRestart = await RemoteSessionRunner.connect(
-      await connectToHost(hostSocketPath(INSTANCE_ID)),
+      await connectToHost(hostSocketPath(instanceId)),
     );
     expect(afterRestart.hasSession(CLAUDE_ID)).toBe(true);
     expect(afterRestart.hasSession(codex.id)).toBe(true);
@@ -334,6 +344,7 @@ describe("pty-host reconnect on boot", () => {
     seedRegistry([session]);
     first.dispose();
     host?.dispose();
+    await closeSocketServer();
 
     const store = RuntimeStore.open(runtimeDbPath);
     try {

@@ -61,10 +61,14 @@ export function parseVersionOutput(output: string): string | null {
 
 function runVersion(exe: string): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile(exe, ["--version"], { timeout: VERSION_TIMEOUT_MS }, (err, stdout, stderr) => {
-      if (err && !stdout && !stderr) return resolve(null);
-      resolve(parseVersionOutput(`${stdout}${stderr}`));
-    });
+    try {
+      execFile(exe, ["--version"], { timeout: VERSION_TIMEOUT_MS }, (err, stdout, stderr) => {
+        if (err && !stdout && !stderr) return resolve(null);
+        resolve(parseVersionOutput(`${stdout}${stderr}`));
+      });
+    } catch {
+      resolve(null);
+    }
   });
 }
 
