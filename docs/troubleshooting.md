@@ -1132,3 +1132,20 @@ sudo sysctl --system
 ```
 
 **Why there is no boot-time self-check.** Reading the process's own limit cannot be done truthfully across platforms for a price worth paying: `process.report.getReport().header` carries no `rlimit` on darwin, and shelling out to `ulimit -n` reports the *shell's* limit rather than the running process's. A check that is right on Linux and blind on macOS reads as coverage without being coverage. Setting the limit in the service definition needs no detection at all, which is why it is the fix.
+
+## Push health says `healthy` and `Last success` advances, but no notification appears on the phone
+
+**When:** A send reports `{"attempted":1,"succeeded":1,"retired":0}`, the mobile Notification-health screen shows **Healthy / Recent deliveries succeeded** with a fresh `Last success` timestamp, and nothing arrives on the Lock Screen. Every layer the streamer can see says the push worked.
+
+**Cause.** Success means *Expo accepted the message*, not *iOS drew it*. `ExpoPushSender` records `recordSuccess` on an Expo ticket of `status: "ok"`, which is the relay confirming it took the message for delivery — everything past that point is APNs and the device, and none of it reports back on this path. So a phone with notifications denied for the app, a Focus mode filtering it, or a delivery APNs dropped is indistinguishable from a delivered notification.
+
+Observed 2026-08-11: three consecutive sends returned `ok` and advanced `last_success_at` while the app's iOS notification permission was off. Granting the permission made the fourth one appear, with no change to the server.
+
+**Fix.** Check, in this order:
+
+1. **iOS notification permission for the app** — Settings → Threadbase → Notifications. This is the one that produces a perfectly healthy server-side record with nothing on screen.
+2. **Focus / Do Not Disturb**, including a schedule that is active without being obvious. The app's own quiet-hours setting is separate and is reported on the health screen.
+3. **Token freshness after a permission change** — iOS can issue a different APNs device token once the permission state changes, so tap **Re-register** on the health screen and send again. A stale token usually fails loudly with `DeviceNotRegistered` rather than silently, but re-registering costs nothing and rules it out.
+4. **Build vs. Expo credentials** — a development build's token does not route through a production Expo project's credentials, or vice versa.
+
+**Why the server cannot tell you which.** Expo's tickets are receipts for *acceptance*; the delivery outcome lives behind a second call, `getPushNotificationReceiptsAsync`, which the streamer does not make today. Until it does, treat `healthy` as "handed to the relay" and debug the device side from the list above. Adding receipt polling would let `push_tokens.last_failure_code` carry the real reason (`DeviceNotRegistered`, `MessageRateExceeded`, an APNs rejection) instead of stopping at the relay boundary.
