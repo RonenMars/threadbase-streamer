@@ -50,14 +50,18 @@ It used to be a curated allowlist of eight files, on the reasoning that most of 
 - **[#523](https://github.com/RonenMars/threadbase-streamer/pull/523)** randomized a pty-host instance id, pushing the POSIX unix-socket path to 106 bytes against macOS's 104-byte `sun_path` limit. Five tests in `__tests__/pty-host-survival.test.ts` failed with `listen EINVAL`. The PR reached `MERGEABLE`/`CLEAN` with all 12 checks green and merged as `9f28397`. Two of the three `pty-host` files were on the allowlist; the one that broke was not, and nothing about that split was principled.
 - **`docs/ROADMAP.md`** claimed `Smoke (windows-latest)` covered the Windows log-redirection assertions in `__tests__/deploy-windows-script.test.ts`. It did not — that file was not on the list either. A false assurance, written down and believed.
 
-**And it was not buying wall-clock.** Measured on 2026-08-11 against run `31461926905`:
+**And what it bought in wall-clock was much less than "triple".** Measured on 2026-08-11, before and after, and the answer depends entirely on the `node_modules` cache:
 
-| | allowlist | full suite | run critical path |
+| cache state | before | after | delta |
 |---|---|---|---|
-| macOS | ends t+108s | ends ~t+184s | **289s** |
-| Windows | ends t+149s | ends ~t+246s | **289s** |
+| **cold** (lockfile changed) — run `31461926905` | 289s | ~289s | **none** |
+| **warm** (the common case) — runs `31429429893` → `1cfc9e1` | 145s | 216s | **+71s** |
 
-The critical path is owned by `Warm cache (Node 20)` (208s) feeding `Test (Node 24)`. Both platform jobs finished inside that slack before the change and still do after it, so **run wall-clock is unchanged**. The repo is public, so macOS's 10× and Windows's 2× runner multipliers bill nothing either. The saving was imaginary; the cost was two real bugs.
+On a cold cache `Warm cache (Node 20)` alone takes ~208s and owns the critical path, so the platform jobs finish inside the slack and cost nothing. On a warm cache the Linux side is done in ~132s and the platform jobs *become* the critical path.
+
+So the honest figure is **up to about +70s, often zero** — not "free", and not the tripling the old comment feared. In money it genuinely is free: the repo is public, so macOS's 10× and Windows's 2× runner multipliers bill nothing. Raw runner-minutes, if it were ever private, go from roughly 29 to roughly 50 per run.
+
+Weighed against two real bugs shipped green, ~70s on some runs is a trade worth making. State it accurately rather than rounding it to zero — an over-favourable cost claim in a doc is the same failure mode as an over-favourable coverage claim.
 
 ### Node version, and why the two platforms differ
 

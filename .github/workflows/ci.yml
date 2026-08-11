@@ -202,11 +202,14 @@ jobs:
       # through a fully green board that way, and a Windows 8.3 short-path bug
       # in server.test.ts sat undetected for the same reason.
       #
-      # Running everything costs nothing here. Measured 2026-08-11: the full
-      # suite is 101s on macOS and 162s on Windows, against a 289s run critical
-      # path owned by `Warm cache (Node 20)` → `Test (Node 24)`. Both finish
-      # inside that slack, so wall-clock is unchanged — and this is a public
-      # repo, so the 10x/2x runner multipliers bill nothing.
+      # What this costs, measured 2026-08-11 and not rounded in our favour:
+      # with a COLD node_modules cache, `Warm cache (Node 20)` takes ~208s and
+      # owns a ~289s critical path, so these jobs finish inside the slack and
+      # add nothing. With a WARM cache the Linux side finishes in ~132s and
+      # these jobs become the critical path instead: 145s -> 216s, about +71s.
+      # So the honest number is "up to ~70s, often zero", not "free".
+      # It is free in money — public repo, so the 10x/2x runner multipliers
+      # bill nothing.
       #
       # A test that genuinely cannot run on a platform guards itself in-file
       # with `describe.skipIf(process.platform === …)`, which is visible to
