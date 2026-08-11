@@ -119,6 +119,18 @@ waiting_input / idle ──(idle reaper, 6h of agent silence)───► idle  
 | `APNS_TEAM_ID` | Apple Developer team id. Required when `APNS_KEY` is set; no default, so one deployment's Apple account is never baked into the source. |
 | `APNS_BUNDLE_ID` | App bundle id; the APNs topic is this plus `.push-type.liveactivity`. Required when `APNS_KEY` is set. |
 | `APNS_HOST` | APNs host. Defaults to sandbox (`api.sandbox.push.apple.com`) because the app's `aps-environment` is still `development`; set `api.push.apple.com` for production. |
+| `THREADBASE_EXPO_ACCESS_TOKEN` | Expo access token for the "your turn" push relay. Only needed if the Expo project has enhanced security enabled; unset is the normal case and sends go unauthenticated. Never logged. See [Waiting-for-input push](#waiting-for-input-push). |
+
+## Waiting-for-input push
+
+The one notification the away-from-desk workflow depends on: the agent finished its turn and it is the user's move. `WaitingInputNotifier` + `ExpoPushSender` (`src/services/push/`) send it through Expo's relay with a plain `POST https://exp.host/--/api/v2/push/send` — **no Apple credential**, one code path for iOS and Android.
+
+That transport choice is structural, not a preference. An APNs `.p8` signs only topics for bundle ids its developer team owns, so a self-hosted streamer can never push to the published app; Expo holds the app's APNs and FCM credentials, so any streamer can. Self-hosting is the primary deployment, which is why ordinary notifications go through Expo and only Live Activities go direct to APNs.
+
+- **Trigger** — the same `onStatusChange` funnel Live Activities use, on the `running → waiting_input` edge of a turn the user opened (`waiting_input → running`). Boot/resume ready opens no turn and notifies nothing, and a second ready detector firing for one turn finds the turn already closed.
+- **Suppressed while watched** — no push when a WebSocket client is subscribed to that session. Mobile subscribes while the session screen is open and the socket dies on backgrounding, so this is the "the user is already looking" signal.
+- **Payload** — `title: projectName`, `body: "Waiting for your input"`, `data: { sessionId, serverId }` (mobile routes the tap from those two). Deliberately **no `lastOutput` and no `sessionName`**: raw terminal output and a prompt-derived title are exactly what the privacy policy says notifications exclude — see [docs/guides/waiting-input-push.md](docs/guides/waiting-input-push.md) before adding a field.
+- **Dead tokens** — an Expo ticket of `DeviceNotRegistered` revokes the token, mirroring how `LiveActivitySender` expires a dead APNs one. Every other error only counts toward the failure streak. Tickets are per-token in one batched response, so one dead device never silences the rest.
 
 ## iOS Live Activity push
 

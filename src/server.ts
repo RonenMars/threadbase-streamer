@@ -126,9 +126,11 @@ import {
   describeMissingApnsCredentials,
   readApnsCredentialsFromEnv,
 } from "./services/push/apnsClient";
+import { ExpoPushSender } from "./services/push/expoPushSender";
 import { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import { LiveActivityRenewalScheduler } from "./services/push/liveActivityRenewal";
 import { LiveActivitySender } from "./services/push/liveActivitySender";
+import { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
 import { permissionContentKey } from "./services/questions/detectPermissionGate";
 import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
 import { parseStatusLine } from "./services/questions/parseStatusLine";
@@ -621,6 +623,10 @@ export class StreamerServer {
   private apnsClient: ApnsClient | null = null;
   private liveActivityNotifier: LiveActivityNotifier | null = null;
   private liveActivityRenewal: LiveActivityRenewalScheduler | null = null;
+  // "Your turn" notifications over Expo's relay (#528). Needs no credential of
+  // its own, so unlike the Live Activity path it is on wherever the cache DB
+  // opened — with no registered device it simply sends nothing.
+  private waitingInputNotifier: WaitingInputNotifier | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
     fetchedAt: number;
@@ -1047,6 +1053,9 @@ export class StreamerServer {
         // Fire-and-forget: the notifier logs its own failures, and a push must
         // never delay or fail a session transition. No-op when APNs is off.
         void this.liveActivityNotifier?.onStatusChange(session, previousStatus);
+        // And tell the phone its turn is up, if nobody is watching this session
+        // already. Same funnel, same fire-and-forget contract as above.
+        void this.waitingInputNotifier?.onStatusChange(session, previousStatus);
         // The session object rides along: SessionStore's copy is a partial
         // merge that does not carry failureReason/failureCode, so a startup
         // handshake reading the store could not tell WHY a session went idle.
@@ -1442,6 +1451,33 @@ export class StreamerServer {
       host: creds.host,
       topic: `${creds.bundleId}.push-type.liveactivity`,
     });
+  }
+
+  /**
+   * Bring up "your turn" notifications over Expo's relay (#528).
+   *
+   * Unconditional, unlike Live Activity push: Expo holds the app's APNs and FCM
+   * credentials, so a self-hosted streamer needs no credential of its own. The
+   * access token is optional and only relevant if the Expo project has enhanced
+   * security enabled — requiring one would lock out every self-hoster, since
+   * they do not own the project. It is never logged.
+   */
+  private initWaitingInputPush(pushRepo: PushRepository): void {
+    const sender = new ExpoPushSender(pushRepo, process.env.THREADBASE_EXPO_ACCESS_TOKEN);
+    const serverId = process.env.THREADBASE_INSTANCE_ID ?? hostname();
+    this.waitingInputNotifier = new WaitingInputNotifier(sender, serverId, (id) =>
+      this.hasSessionSubscriber(id),
+    );
+  }
+
+  /** Whether any live socket is subscribed to this session — "someone is looking". */
+  private hasSessionSubscriber(sessionId: string): boolean {
+    const subs = this.sessionSubscribers.get(sessionId);
+    if (!subs) return false;
+    for (const ws of subs) {
+      if (ws.readyState === ws.OPEN) return true;
+    }
+    return false;
   }
 
   /**
@@ -2192,6 +2228,7 @@ export class StreamerServer {
 
           this.devicesRepo = new DevicesRepository(db);
           this.initLiveActivityPush(this.pushRepo);
+          this.initWaitingInputPush(this.pushRepo);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
           // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
           this.cacheMonitor = new CacheIntegrityMonitor(
