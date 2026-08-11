@@ -23,6 +23,8 @@ A regression in any of those was invisible to a Linux-only matrix until a user h
 2. Runs `npm test` — the **whole** suite, the same command the Linux `Test` jobs run.
 3. Verifies `require('node-pty')` succeeds.
 
+Node version is pinned **per OS**: macOS on 24 (the major `.nvmrc` pins), Windows on 22. See [Node version, and why the two platforms differ](#node-version-and-why-the-two-platforms-differ).
+
 Step 3 is the one a Linux-only matrix can never catch: an ABI mismatch or a missing prebuild produces a server that starts fine and then fails the moment anyone opens a session.
 
 **The job is still named `Smoke (…)` and no longer runs a smoke subset.** That is deliberate: both context names are required checks in ruleset `17561930`, and a required context that no workflow emits is never reported and never satisfied — renaming the job makes every PR permanently unmergeable. That has happened here once already (see the warning further down). The misnomer is the cheaper of the two problems.
@@ -56,6 +58,23 @@ It used to be a curated allowlist of eight files, on the reasoning that most of 
 | Windows | ends t+149s | ends ~t+246s | **289s** |
 
 The critical path is owned by `Warm cache (Node 20)` (208s) feeding `Test (Node 24)`. Both platform jobs finished inside that slack before the change and still do after it, so **run wall-clock is unchanged**. The repo is public, so macOS's 10× and Windows's 2× runner multipliers bill nothing either. The saving was imaginary; the cost was two real bugs.
+
+### Node version, and why the two platforms differ
+
+**Widening the job to the whole suite was necessary and not sufficient.** With the allowlist gone but the job still on its hardcoded `node-version: 22`, reintroducing #523 on a branch produced a **passing** `Smoke (macos-latest)`. The bug was running and not being caught.
+
+The reason is that `sun_path` enforcement is Node-version-dependent, not only OS-dependent. Instrumenting the socket path inside the macOS job on 2026-08-11 (runner macOS 26.5.2, build 25F84 — the same OS *and build* as the dev box) gave an identical 114-byte path on both, and:
+
+| Node | libuv | 114-byte AF_UNIX path |
+|---|---|---|
+| v24.15.0 (what `.nvmrc` pins) | 1.51.0 | **EINVAL** |
+| v22.23.1 (what the job used) | older | **binds cleanly** |
+
+libuv tightened the length check between the two. Because the Node-24 legs of `Test` are ubuntu-only, **macOS × Node 24 — the exact combination that reproduces #523 — was covered by nothing at all.** Two gaps, not one, and only fixing both makes the demonstration go red.
+
+**Windows is deliberately held at 22.** Raising it to 24 kills six vitest fork workers with `Worker exited unexpectedly` — 0 test failures, 6 unhandled errors, 190/199 files completing. Deterministic: twice out of twice, on `011122a` and `72a6272`. The cause is unidentified and looks like a native addon under Node 24's Windows ABI rather than anything in the test logic.
+
+Since `Smoke (windows-latest)` is a required check, pinning 22 there is what stops that crash blocking every PR in the repo. **This is a known gap, not a fix**: Windows is not exercised on the Node the project pins, and a Node-24-specific Windows defect would still be invisible. It is also not a regression — Windows was never on 24. Raise it once the worker crash is understood, and `__tests__/ci-workflow.test.ts` asserts the current pin so doing so is a visible edit.
 
 ### What stays out, and how
 
@@ -139,6 +158,7 @@ Stated plainly so this doc is not mistaken for a completeness claim:
 - **Migration validation.** There is no job that applies migrations to a database from an older release and asserts the result. Migrations are additive so far, which is why this has not bitten.
 - **WebSocket replay and runtime-restart tests.** Both exist as unit and integration tests; neither runs against a real long-lived server in CI.
 - **Windows production restart.** The smoke job qualifies real ConPTY host lifetime and named-pipe reconnect, but it does not launch Claude or Codex or invoke Task Scheduler.
+- **Windows on Node 24.** The Windows leg runs Node 22, so the Node the project pins in `.nvmrc` is never exercised on Windows. Node 24 there crashes six vitest workers outright; until that is understood, any Node-24-specific Windows defect is invisible. Detail above.
 - **Performance regression.** Nothing tracks query timing or scan duration over time. `/api/search` now returns `tookMs`, which is the raw material for it.
 
 ## When a platform-specific failure appears

@@ -148,20 +148,47 @@ jobs:
     # Not advisory. A Windows or macOS regression makes the PR fail rather
     # than reporting a green check. Evidence and history:
     # docs/testing/cross-platform-ci.md.
+    # Per-OS Node pin, and the asymmetry is deliberate and measured.
+    #
+    # macOS runs 24, the major .nvmrc pins, because libuv tightened AF_UNIX
+    # `sun_path` enforcement between 22 and 24: #523's 114-byte socket path
+    # raises EINVAL on 24 and binds silently on 22, so only the 24 leg can
+    # catch that class. Verified by reintroducing #523 on this branch — five
+    # EINVAL failures on macOS while all three ubuntu Test legs stayed green.
+    #
+    # Windows stays on 22 because 24 kills six vitest fork workers there with
+    # "Worker exited unexpectedly" — deterministic, twice out of twice, on
+    # runs 011122a and 72a6272, and unrelated to any test assertion (0 failed,
+    # 6 unhandled errors). Almost certainly a native addon under Node 24's
+    # Windows ABI. Since `Smoke (windows-latest)` is a required check, pinning
+    # 22 here is what keeps that crash from blocking every PR in the repo.
+    #
+    # This is not a regression: Windows was never tested on 24. It is a known
+    # gap, recorded in docs/testing/cross-platform-ci.md. Raise Windows to 24
+    # once the worker crash is understood.
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            node: 24
+          - os: windows-latest
+            node: 22
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
 
+      # Per-OS, see the matrix comment above. macOS 24 (the major .nvmrc pins),
+      # Windows 22. Measured on macos-latest (macOS 26.5.2 / 25F84) on
+      # 2026-08-11 by instrumenting the path in CI: an identical 114-byte
+      # socket path raises EINVAL under v24.15.0 and binds cleanly under
+      # v22.23.1.
       - name: Set up Node
         if: needs.gate.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
 
       - name: Install
         if: needs.gate.outputs.skip != 'true'

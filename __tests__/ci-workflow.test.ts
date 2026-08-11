@@ -68,6 +68,38 @@ describe("cross-platform smoke", () => {
     expect(commands.filter((c) => c.includes("__tests__/"))).toEqual([]);
   });
 
+  // Running the whole suite is not enough on its own if it runs under a Node
+  // the project does not use. The job hardcoded `node-version: 22` while
+  // .nvmrc pinned v24.15.0, and libuv tightened AF_UNIX sun_path enforcement
+  // between the two — #523's 114-byte socket path raises EINVAL on Node 24 and
+  // binds silently on Node 22. Since the Node-24 legs of `Test` are
+  // ubuntu-only, macOS x Node 24 was covered by nothing.
+  //
+  // The workflow pins the major literally, so this compares it against .nvmrc
+  // rather than trusting it: the two drifting apart is the actual defect, and
+  // a literal pin cannot notice that on its own.
+  //
+  // macOS must track .nvmrc, since that is the leg that catches the sun_path
+  // class. Windows is deliberately held at 22 — Node 24 kills six vitest fork
+  // workers there — so it is asserted separately rather than left free, and
+  // raising it is then a visible edit here rather than a silent one.
+  it("runs the macOS leg on the Node major .nvmrc pins", () => {
+    const smoke = WORKFLOW.slice(
+      WORKFLOW.indexOf("  smoke:"),
+      WORKFLOW.indexOf("  test:", WORKFLOW.indexOf("  smoke:")),
+    );
+    const nvmrcMajor = readFileSync(join(__dirname, "..", ".nvmrc"), "utf8")
+      .trim()
+      .replace(/^v/, "")
+      .split(".")[0];
+
+    expect(nvmrcMajor).toMatch(/^\d+$/);
+    expect(smoke).toMatch(new RegExp(`os:\\s*macos-latest\\s*\\n\\s*node:\\s*${nvmrcMajor}\\b`));
+    expect(smoke).toMatch(/os:\s*windows-latest\s*\n\s*node:\s*22\b/);
+    // The step must read the matrix rather than reintroduce a single hardcode.
+    expect(smoke).toMatch(/node-version:\s*\$\{\{\s*matrix\.node\s*\}\}/);
+  });
+
   // The fast subset still exists for the pre-commit hook, where local speed is
   // the point. It must not be what CI treats as platform coverage; the
   // rename off "smoke" is what keeps the two from being confused again.
