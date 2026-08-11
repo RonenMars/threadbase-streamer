@@ -44,9 +44,68 @@ describe("cross-platform smoke", () => {
     expect(WORKFLOW).toMatch(/require\('node-pty'\)/);
   });
 
-  it("qualifies the pty-host transport and Windows ConPTY lifetime", () => {
-    expect(PACKAGE.scripts["test:smoke"]).toContain("__tests__/pty-host-process.test.ts");
-    expect(PACKAGE.scripts["test:smoke"]).toContain("__tests__/pty-host-windows.test.ts");
+  // THE load-bearing assertion in this file. The platform jobs used to run a
+  // hand-curated list of eight files, which made "not covered on
+  // macOS/Windows" the default for every test added afterwards — the author
+  // got no signal they were meant to enrol. #523 shipped a macOS-breaking
+  // socket-path overflow through a fully green board that way, and a Windows
+  // 8.3 short-path bug in server.test.ts sat undetected for the same reason.
+  //
+  // Running the whole suite is what makes a new test covered by default, so
+  // narrowing it back to a subset has to be a test failure rather than a
+  // quiet YAML edit. This also subsumes the old explicit assertion that the
+  // pty-host socket/named-pipe and ConPTY-lifetime files run cross-platform:
+  // they do, because everything does.
+  it("runs the whole suite on macOS and Windows, not a curated subset", () => {
+    const smoke = WORKFLOW.slice(
+      WORKFLOW.indexOf("  smoke:"),
+      WORKFLOW.indexOf("  test:", WORKFLOW.indexOf("  smoke:")),
+    );
+    const commands = [...smoke.matchAll(/^\s*run:\s*(.+)$/gm)].map((m) => m[1].trim());
+
+    expect(commands).toContain("npm test");
+    // No step may name individual test files — that is the allowlist returning.
+    expect(commands.filter((c) => c.includes("__tests__/"))).toEqual([]);
+  });
+
+  // Running the whole suite is not enough on its own if it runs under a Node
+  // the project does not use. The job hardcoded `node-version: 22` while
+  // .nvmrc pinned v24.15.0, and libuv tightened AF_UNIX sun_path enforcement
+  // between the two — #523's 114-byte socket path raises EINVAL on Node 24 and
+  // binds silently on Node 22. Since the Node-24 legs of `Test` are
+  // ubuntu-only, macOS x Node 24 was covered by nothing.
+  //
+  // The workflow pins the major literally, so this compares it against .nvmrc
+  // rather than trusting it: the two drifting apart is the actual defect, and
+  // a literal pin cannot notice that on its own.
+  //
+  // macOS must track .nvmrc, since that is the leg that catches the sun_path
+  // class. Windows is deliberately held at 22 — Node 24 kills six vitest fork
+  // workers there — so it is asserted separately rather than left free, and
+  // raising it is then a visible edit here rather than a silent one.
+  it("runs the macOS leg on the Node major .nvmrc pins", () => {
+    const smoke = WORKFLOW.slice(
+      WORKFLOW.indexOf("  smoke:"),
+      WORKFLOW.indexOf("  test:", WORKFLOW.indexOf("  smoke:")),
+    );
+    const nvmrcMajor = readFileSync(join(__dirname, "..", ".nvmrc"), "utf8")
+      .trim()
+      .replace(/^v/, "")
+      .split(".")[0];
+
+    expect(nvmrcMajor).toMatch(/^\d+$/);
+    expect(smoke).toMatch(new RegExp(`os:\\s*macos-latest\\s*\\n\\s*node:\\s*${nvmrcMajor}\\b`));
+    expect(smoke).toMatch(/os:\s*windows-latest\s*\n\s*node:\s*22\b/);
+    // The step must read the matrix rather than reintroduce a single hardcode.
+    expect(smoke).toMatch(/node-version:\s*\$\{\{\s*matrix\.node\s*\}\}/);
+  });
+
+  // The fast subset still exists for the pre-commit hook, where local speed is
+  // the point. It must not be what CI treats as platform coverage; the
+  // rename off "smoke" is what keeps the two from being confused again.
+  it("keeps the fast subset local-only", () => {
+    expect(PACKAGE.scripts["test:precommit"]).toBeTruthy();
+    expect(PACKAGE.scripts).not.toHaveProperty("test:smoke");
   });
 
   // Promoted once the expanded pty-host set cleared its documented threshold.

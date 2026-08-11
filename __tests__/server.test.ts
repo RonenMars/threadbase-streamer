@@ -3,7 +3,7 @@ import {
   appendFileSync,
   mkdirSync,
   mkdtempSync,
-  realpathSync,
+  realpathSync as nodeRealpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -16,6 +16,15 @@ import { ConversationCache } from "../src/conversation-cache";
 import { FEATURE_FLAGS } from "../src/feature-flags";
 import { PTYManager } from "../src/pty-manager";
 import { GRACE_MAX_DEFERS, IDLE_REAP_AFTER_MS, StreamerServer } from "../src/server";
+
+// On Windows `fs.realpathSync` is a JS implementation that resolves symlinks
+// but PRESERVES 8.3 short names, so `os.tmpdir()` stays
+// `C:\Users\RUNNER~1\AppData\Local\Temp\…`. The server canonicalizes its
+// browse root with `fs/promises.realpath` (src/server.ts:727), which is
+// libuv-backed and EXPANDS them to `C:\Users\runneradmin\…`. Comparing one
+// against the other fails on Windows and nowhere else. `.native` is the same
+// libuv call the server makes; on POSIX it behaves identically to the JS one.
+const realpathSync = nodeRealpathSync.native;
 
 const FIXTURE_PROFILES = [
   {

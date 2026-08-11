@@ -124,11 +124,19 @@ jobs:
           name: dist
           path: dist/
 
-  # Cross-platform smoke (C10). Every other job runs ubuntu-only, yet the repo
-  # ships Windows and macOS deploy scripts, has Windows-specific process
+  # Cross-platform coverage (C10). Every other job runs ubuntu-only, yet the
+  # repo ships Windows and macOS deploy scripts, has Windows-specific process
   # discovery (wmic/CIM), and depends on node-pty — a native addon whose
   # prebuilds differ per platform. A regression there is invisible to a
   # Linux-only matrix until a user hits it.
+  #
+  # The job id and both context names — `Smoke (macos-latest)` and
+  # `Smoke (windows-latest)` — are REQUIRED CHECKS in ruleset 17561930. A
+  # required context that no workflow emits is never reported and never
+  # satisfied, so renaming this job makes every PR permanently unmergeable.
+  # It has happened once already; see docs/testing/cross-platform-ci.md. The
+  # name is now a slight misnomer (it runs the whole suite, not a smoke
+  # subset) and that is the cheaper of the two problems.
   #
   # Deliberately NOT reusing the run-ci composite action: its cache key has no
   # OS component, so sharing it would let a Linux node_modules (with Linux
@@ -137,37 +145,78 @@ jobs:
     name: Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: [gate, lint]
-    # No longer advisory. The expanded pty-host set reached the documented
-    # five-clean-run threshold on both platforms on 2026-08-01, so a Windows or
-    # macOS regression now makes the PR visibly unstable instead of reporting a
-    # green check. Evidence and history: docs/testing/cross-platform-ci.md.
+    # Not advisory. A Windows or macOS regression makes the PR fail rather
+    # than reporting a green check. Evidence and history:
+    # docs/testing/cross-platform-ci.md.
+    # Per-OS Node pin, and the asymmetry is deliberate and measured.
+    #
+    # macOS runs 24, the major .nvmrc pins, because libuv tightened AF_UNIX
+    # `sun_path` enforcement between 22 and 24: #523's 114-byte socket path
+    # raises EINVAL on 24 and binds silently on 22, so only the 24 leg can
+    # catch that class. Verified by reintroducing #523 on this branch — five
+    # EINVAL failures on macOS while all three ubuntu Test legs stayed green.
+    #
+    # Windows stays on 22 because 24 kills six vitest fork workers there with
+    # "Worker exited unexpectedly" — deterministic, twice out of twice, on
+    # runs 011122a and 72a6272, and unrelated to any test assertion (0 failed,
+    # 6 unhandled errors). Almost certainly a native addon under Node 24's
+    # Windows ABI. Since `Smoke (windows-latest)` is a required check, pinning
+    # 22 here is what keeps that crash from blocking every PR in the repo.
+    #
+    # This is not a regression: Windows was never tested on 24. It is a known
+    # gap, recorded in docs/testing/cross-platform-ci.md. Raise Windows to 24
+    # once the worker crash is understood.
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        include:
+          - os: macos-latest
+            node: 24
+          - os: windows-latest
+            node: 22
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
 
+      # Per-OS, see the matrix comment above. macOS 24 (the major .nvmrc pins),
+      # Windows 22. Measured on macos-latest (macOS 26.5.2 / 25F84) on
+      # 2026-08-11 by instrumenting the path in CI: an identical 114-byte
+      # socket path raises EINVAL under v24.15.0 and binds cleanly under
+      # v22.23.1.
       - name: Set up Node
         if: needs.gate.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
 
       - name: Install
         if: needs.gate.outputs.skip != 'true'
         run: npm ci --ignore-scripts=false
         shell: bash
 
-      # The smoke suite is the platform-sensitive subset: native ABI, path
-      # handling, and process discovery. Running the full suite on three
-      # platforms would triple CI time for coverage that is mostly
-      # platform-independent.
-      - name: Smoke tests
+      # The FULL suite, not a subset. This used to run a hand-curated allowlist
+      # of eight files, which made "not covered on macOS/Windows" the default
+      # for every test written afterwards — an author got no signal they were
+      # meant to enrol. #523 shipped a macOS-breaking socket-path overflow
+      # through a fully green board that way, and a Windows 8.3 short-path bug
+      # in server.test.ts sat undetected for the same reason.
+      #
+      # What this costs, measured 2026-08-11 and not rounded in our favour:
+      # with a COLD node_modules cache, `Warm cache (Node 20)` takes ~208s and
+      # owns a ~289s critical path, so these jobs finish inside the slack and
+      # add nothing. With a WARM cache the Linux side finishes in ~132s and
+      # these jobs become the critical path instead: 145s -> 216s, about +71s.
+      # So the honest number is "up to ~70s, often zero", not "free".
+      # It is free in money — public repo, so the 10x/2x runner multipliers
+      # bill nothing.
+      #
+      # A test that genuinely cannot run on a platform guards itself in-file
+      # with `describe.skipIf(process.platform === …)`, which is visible to
+      # whoever writes it, rather than in a central list nobody remembers.
+      - name: Tests
         if: needs.gate.outputs.skip != 'true'
-        run: npm run test:smoke
+        run: npm test
         shell: bash
 
       # node-pty is the dependency most likely to break per-platform, and a

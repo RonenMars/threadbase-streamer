@@ -57,7 +57,12 @@ The streamer currently forwards a `hasImages` boolean per message, which is suff
 
 `tb-streamer prod logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. Task Scheduler has no native redirection, so on Windows the `launch.cmd` that `scripts/deploy.ps1` generates carries it instead: cmd's `>>` appends to the same `~/.threadbase/logs/{stdout,stderr}.log` layout, and `getLogPaths()` on the Task Scheduler backend returns those paths. Both sides read them from `logPaths()` in `src/lifecycle/constants.ts` rather than repeating string literals, and `Repair-LaunchCmd` rewrites any pre-existing `launch.cmd` that has no `>>` in it.
 
-The redirection is unverified on a real Windows box — it is covered only by content assertions in `__tests__/deploy-windows-script.test.ts` and by the `Smoke (windows-latest)` CI job.
+The redirection is unverified on a real Windows box — it is covered only by content assertions in `__tests__/deploy-windows-script.test.ts`, which now do run on Windows.
+
+That last clause was false when written on 2026-08-10, and the correction is the point.
+`Smoke (windows-latest)` was cited here as covering this, but at the time that job ran a hand-curated allowlist of eight files and `deploy-windows-script.test.ts` was not one of them — so the assertions ran on Linux only and nothing about them was Windows-verified.
+Since 2026-08-11 the job runs the whole suite on both platforms, so the claim holds; it did not before.
+Content assertions against a generated `launch.cmd` are still not an end-to-end check — nothing invokes Task Scheduler or reads a log the service actually wrote.
 
 ---
 
