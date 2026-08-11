@@ -5,7 +5,7 @@ import { EventEmitter, once } from "events";
 import { mkdirSync, mkdtempSync, rmSync } from "fs";
 import type { Server } from "net";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
 import WebSocket from "ws";
 import type { ManagedSessionRow } from "../src/db/repositories/managed-sessions.repository";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
@@ -112,7 +112,14 @@ describe("pty-host reconnect on boot", () => {
 
   beforeEach(() => {
     rootDir = mkdtempSync(join(tmpdir(), "tph-"));
-    instanceId = `s8-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // Per-test, because the Windows named pipe is NOT scoped by
+    // THREADBASE_CONFIG_DIR: a shared id makes a pipe the previous test has not
+    // finished releasing collide with this one's listen(). Reuse mkdtemp's
+    // suffix rather than minting a new random — it is already unique, and it is
+    // short. A longer id pushes the POSIX socket path (config dir +
+    // /run/pty-host-<id>.sock) past the 104-byte sun_path limit on macOS, where
+    // os.tmpdir() alone is 48 chars, and every listen() fails with EINVAL.
+    instanceId = basename(rootDir);
     projectDir = join(rootDir, "project");
     mkdirSync(projectDir);
     cacheDir = join(rootDir, "cache");
@@ -345,6 +352,14 @@ describe("pty-host reconnect on boot", () => {
     first.dispose();
     host?.dispose();
     await closeSocketServer();
+    // Nothing is listening now, so the real connectOrSpawnHost would spawn a
+    // detached node process and poll it for the full 5s ready timeout before
+    // giving up — under vitest that child is argv[1] of the pool worker, i.e. an
+    // orphan nothing reaps. Rejecting is the same end state (no host attached)
+    // without either cost.
+    vi.spyOn(hostSpawner, "connectOrSpawnHost").mockRejectedValue(
+      new Error("pty-host did not accept a connection"),
+    );
 
     const store = RuntimeStore.open(runtimeDbPath);
     try {

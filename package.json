@@ -142,7 +142,7 @@
   },
   "overrides": {
     "@threadbase-sh/scanner": {
-      "better-sqlite3": "12.11.1"
+      "better-sqlite3": "$better-sqlite3"
     },
     "@hono/node-ws": {
       "@hono/node-server": "$@hono/node-server"

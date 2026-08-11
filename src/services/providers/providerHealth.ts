@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { isWindows } from "../../platform";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "../../providers";
 import { capabilitiesFor, type ProviderCapabilities, type VerifiedAgainst } from "./capabilities";
 
@@ -60,15 +61,23 @@ export function parseVersionOutput(output: string): string | null {
 }
 
 function runVersion(exe: string): Promise<string | null> {
+  // Since the CVE-2024-27980 fix, node refuses to spawn a .cmd/.bat without a
+  // shell and throws EINVAL synchronously. npm installs the CLIs as claude.cmd
+  // and resolveClaudeExe() returns exactly that, so on Windows the shell is the
+  // only way to read a version at all. `--version` is a fixed literal and the
+  // resolved path is quoted, so the shell adds no injection surface.
+  const viaShell = isWindows && /\.(?:cmd|bat)$/i.test(exe);
+  const file = viaShell ? `"${exe}"` : exe;
   return new Promise((resolve) => {
-    try {
-      execFile(exe, ["--version"], { timeout: VERSION_TIMEOUT_MS }, (err, stdout, stderr) => {
+    execFile(
+      file,
+      ["--version"],
+      { timeout: VERSION_TIMEOUT_MS, shell: viaShell, windowsHide: true },
+      (err, stdout, stderr) => {
         if (err && !stdout && !stderr) return resolve(null);
         resolve(parseVersionOutput(`${stdout}${stderr}`));
-      });
-    } catch {
-      resolve(null);
-    }
+      },
+    );
   });
 }
 
@@ -168,9 +177,17 @@ export async function providerHealth(
     };
   }
 
-  const version = await detect(exe);
   // A version we cannot read does not prove the CLI is missing — resolveExe
-  // found it. Report it available and flag the compatibility unknown.
+  // found it. Report it available and flag the compatibility unknown. The guard
+  // sits here rather than inside runVersion because `detect` is an injected
+  // seam: a throwing detector must degrade to "unverified" whichever
+  // implementation is behind it, not take GET /api/providers down with it.
+  let version: string | null = null;
+  try {
+    version = await detect(exe);
+  } catch {
+    version = null;
+  }
   const warning = compareToVerified(version, verifiedAgainst);
 
   return {

@@ -49,6 +49,10 @@ export function extractDemoCwds(projectsRoot: string): string[] {
       if (!line.trim()) continue;
       try {
         const obj = JSON.parse(line) as { cwd?: unknown };
+        // Absolute-only, to skip relative or garbage cwds we must not mkdir.
+        // This runs on Linux (the demo container), where isAbsolute is exactly
+        // startsWith("/"); it is written portably so the unit tests can drive it
+        // with native temp paths on Windows.
         if (typeof obj.cwd === "string" && obj.cwd.length > 0 && isAbsolute(obj.cwd)) {
           cwds.add(obj.cwd);
         }

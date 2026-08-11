@@ -101,6 +101,9 @@ describe("claude_flags persistence", () => {
   });
 
   // server.yaml holds the API key, so the atomic write must not widen its mode.
+  // Skipped on Windows, which has no POSIX permission bits — chmod(0o600) is a
+  // no-op there and statSync reports 0o666 regardless. The chmod call is real
+  // and enforced on Unix (where CI runs); only the assertion is meaningless.
   it.skipIf(process.platform === "win32")("writes with 0600 permissions", async () => {
     const { setClaudeFlags } = await auth();
     setClaudeFlags({ model: "opus" });

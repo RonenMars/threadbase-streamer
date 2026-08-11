@@ -102,6 +102,20 @@ describe("providerHealth", () => {
     expect(health.warnings[0].code).toBe("version_undetectable");
   });
 
+  // `detect` is an injected seam, so the guard has to hold for whatever is
+  // behind it — including a detector that throws rather than resolving null.
+  // Before the guard this rejection escaped providerHealth and took the whole
+  // GET /api/providers response down with it.
+  it("stays available when the detector throws", async () => {
+    const health = await providerHealth("claude-code", found, async () => {
+      throw new Error("spawn EINVAL");
+    });
+
+    expect(health.available).toBe(true);
+    expect(health.version).toBeNull();
+    expect(health.warnings[0].code).toBe("version_undetectable");
+  });
+
   it("still reports capabilities for an unverified version", async () => {
     const health = await providerHealth("codex-cli", found, async () => "9.9.9");
 
