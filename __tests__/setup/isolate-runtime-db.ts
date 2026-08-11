@@ -27,6 +27,8 @@ import { beforeEach } from "vitest";
 const RUNTIME_DB = join(mkdtempSync(join(tmpdir(), "tb-test-runtime-")), "runtime.db");
 
 process.env.THREADBASE_RUNTIME_DB = RUNTIME_DB;
+delete process.env.THREADBASE_DATABASE_URL;
 beforeEach(() => {
   process.env.THREADBASE_RUNTIME_DB = RUNTIME_DB;
+  delete process.env.THREADBASE_DATABASE_URL;
 });
