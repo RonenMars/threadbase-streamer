@@ -139,8 +139,6 @@ case 'B': this.row = Math.min(this.row + n, this.viewportTop() + VIEWPORT_ROWS -
 
 ### 4. The viewport origin is DERIVED, never stored
 
-### 3. The viewport origin is DERIVED, never stored
-
 Add this as a comment in the file, and treat it as the invariant the whole design rests on:
 
 > The viewport origin is **derived**, never stored — `grid.length` is the single source of truth. Do not introduce a `viewTop` field. The model holds as long as `grid.length` changes only by appending at the bottom.
@@ -276,7 +274,9 @@ So: hard-code `VIEWPORT_ROWS = 40` with a comment naming both streamer constants
    - invariant: `CSI 40;1H` on a >40-row grid does not change `getRawLines().length`.
 
    Build the fixture as the production path does: 200 escape-free rows joined with `\n` — what `feedHistory` receives at `useTerminalStream.ts:202` — then one live frame carrying `\x1b[40;1H`.
-3. **A clamp test.** `CSI 200;1H` on a >40-row grid leaves `getRawLines().length` unchanged. Without it the clamp gets dropped in review and nothing fails.
+3. **A clamp test — and not the obvious one, which discriminates nothing.** The naive assertion ("`CSI 200;1H` on a >40-row grid leaves `getRawLines().length` unchanged") **passes on clamped and unclamped code alike.** Verified by building both variants and running it: unclamped appends ~160 *blank* rows, and `getRawLines()` drops empty rows, so the growth is invisible to the very assertion meant to catch it. The plan's own warning about `getRawLines()` applies to the guard test itself.
+
+   Assert the actual harm instead: **70 repetitions**, past the eviction cliff at 62, where the grid crosses `MAX_ROWS` and the trim evicts real transcript. Measured — clamped 200/200 survivors, unclamped **0/200**.
 4. **Validate the constant itself, not just the implementation.** Every other step tests the code against the assumption that the viewport is 40 rows. Feed a **real captured PTY log** and assert the footer rows land contiguously at the bottom. A wrong constant shows up immediately as a fixed offset. Since the constant is hard-coded, this is the check that earns it.
 5. **The HTTP fallback path, concretely.** Feed a chunk that *begins inside a CSI* — the byte-level `subarray` at `tb-streamer/src/pty-manager.ts:820-825` can start mid-escape and mid-UTF-8 — and assert only that nothing throws and no transcript row is lost. Note `useTerminalStream.ts:77` swaps to `getRawLines()` at low parse confidence, the likely state on that path.
 6. **Run the consumer suites, not just `--testPathPattern "virtual-terminal"`.** That pattern is a path regex and matches no consumer test — it excludes `__tests__/unit/hooks/useTerminalStream.{emptyReplay,seq,userMessages,watchdog}.test.tsx`, `__tests__/integration/components/TerminalView.test.tsx`, `__tests__/unit/components/terminal/`, and `__tests__/unit/utils/terminalSession.test.ts`, and `emptyReplay` exercises the very replay path this plan names as the production trigger. Use `--testPathPattern "useTerminalStream|TerminalView|terminal"`. Prototype baseline: **152 passed across 11 suites**, `tsc --noEmit` clean.
@@ -360,3 +360,116 @@ It also confirmed the deferral is **safe, not merely defensible**: leaving the o
 Final state independently re-verified on the worktree: all three handlers as specified, `tsc --noEmit` clean, 11 suites / 152 tests green.
 
 **Both reviewers approved. Ready to commit.**
+
+### Round 6 — implementation, 2026-08-12
+
+Implemented as specified. Two of this plan's own verification steps turned out to be wrong, both for the same reason.
+
+- **The clamp test specified in verification item 3 discriminated nothing.** Independently confirmed by building clamped and unclamped variants: the naive length assertion passes on both, because unclamped growth is *blank* rows and `getRawLines()` drops those. Rewritten to 70 repetitions past the eviction cliff — 200/200 survivors clamped, **0/200** unclamped.
+- **Item 2's third assertion was unsatisfiable as written.** "`CSI 40;1H` does not change `getRawLines().length`" is false once the footer is painted: the move targets a blank bottom row, which only becomes visible after it has content, so the count legitimately rises by one. Assert the invariant on the *move alone*, then paint, then assert content.
+
+Both are the `getRawLines()` filter blind spot — the same property this plan warns about for the regression test, applied to the guard tests. The general lesson: **a test written against a filtered view can be blind to exactly the growth it is meant to detect.**
+
+The practice that caught it, stated the way the implementer corrected it rather than the flattering way: **run the broken variant *before* deciding what a test proves, because the label a green run suggests is frequently wrong.** The `CSI B` test was nearly shipped labelled a regression test on the strength of a green run; it is actually a guard — it passes pre-fix, because pre-fix saturates rather than growing. That was found by accident, not foresight. Written as "verify your tests fail correctly" this sounds like generic diligence; written as a step performed *before* labelling, it is a specific action with a specific failure it prevents, which is the form that survives contact with someone in a hurry.
+
+**Build the variant from the final source, not from `main`.** Comparing pre-fix against post-fix confounds the clamp with everything else that changed. Comparing clamped against unclamped *built from the same final file* isolates the one variable, and it is what makes the 200/200-vs-0/200 result attributable to the clamp rather than to anything else in the diff.
+
+Which tests discriminate, verified individually rather than assumed:
+
+| test | pre-fix | H clamp removed | B clamp removed |
+|---|---|---|---|
+| footer lands at bottom | FAIL | — | — |
+| cursor-up (`CSI A`) clamp | FAIL | — | — |
+| out-of-range row clamp | pass | **FAIL** | — |
+| cursor-down (`CSI B`) clamp | pass | — | **FAIL** |
+| chunk begins inside an escape | pass | pass | pass |
+
+Two reproduce the original bug, two guard clamps against being dropped in review, one is a no-throw contract test. The comments say which is which so nobody later reads a guard as a regression test.
+
+### Round 7 — validated against a real capture, 2026-08-12
+
+A capture was produced: Claude Code **v2.1.228**, spawned by the streamer at its real 120x40, one complete turn, 1,123,773 bytes, durable at `~/.threadbase/captures/` with a provenance README.
+
+**Verification item 4 is DISCHARGED, and the fix is confirmed correct against a reference emulator.** The capture was rendered three ways — by `@xterm/headless` at 120x40 (the emulator this streamer itself trusts for replay, so its rendering *is* the correct answer), by `origin/main`, and by the fix:
+
+| emulator | visible rows | footer distance from end |
+|---|---|---|
+| `@xterm/headless` @120x40 — **reference** | 38 | 5 |
+| **with the fix** | **37** | **4** |
+| `origin/main` | 64 | 31 |
+
+The fix reproduces the reference; `main` does not. The single-row delta is the `────` separator row, which mobile's `BOX_BORDER_RE` filter deliberately drops — fully accounting for the difference. Had `VIEWPORT_ROWS` been wrong, the two would diverge by the error.
+
+Corroborating: **CUP targets exactly two absolute rows in the whole turn — 37 and 40**, 1456 times each. A 40-row screen is the only geometry consistent with that, and nothing addresses a row beyond 40.
+
+*Caveats, scoped per statistic — this matters, see below:* the raw file is snapshot-concatenated, so **frequencies are inflated**. But **the maximum and the distinct set are exact**: replaying bytes cannot introduce a row that was never addressed, nor raise a maximum. `max = 40` is therefore not a weak number, it is the strongest one here, and it is what the constant rests on. Confirmed per-snapshot independently of the concatenation. The emulator comparison is unaffected either way — all three received identical input. The separate, real caveat is one turn with no tool use.
+
+**A garbled tail appears in the output and is not a defect.** Rows like `"❯ 7Gof  ed list witspatial dimensions…"` appear identically in the `@xterm/headless` rendering, so they are an artifact of overlapping snapshots in the capture, not of any emulator.
+
+### The CSI histogram settles the deferred family
+
+Measured over the same capture, with a positive control:
+
+| final | count | consequence |
+|---|---|---|
+| `G` | 51327 | column addressing, unaffected |
+| `B` | 10075 | **load-bearing** — the `B` clamp matters |
+| `C` | 8222 | column, unaffected |
+| `m` | 8213 | SGR, ignored by design |
+| `H` | 4395 | the fix's primary target |
+| `K` | 3805 | line erase |
+| `J` | **30** | **all `2J`** — see below |
+| `r` | **30** | all bare `ESC[r` — see below |
+| `A` `D` `f` `L` `M` `S` `T` | **0** | never emitted |
+
+#### Ask per statistic whether it is sensitive to how the file was assembled
+
+Not "trust this table" or "distrust it" — the answer differs *between statistics on the same line of evidence*:
+
+| statistic | sensitive to snapshot duplication? |
+|---|---|
+| frequencies (the counts below) | **yes** — inflated, never read as traffic |
+| maximum, distinct set (e.g. `max row = 40`) | **no** — exact; replay cannot add a value or raise a max |
+| presence / absence | **no** — reliable |
+
+This is the mirror of the mistake that produced the whole correction chain. First all three of us over-trusted counts that duplication had inflated; then the caveat written to fix that was applied so broadly it would have discounted `max = 40`, the one figure the constant rests on. **Under-trusting is the quieter failure** — it never produces a wrong answer, it just discards a right one, and nobody goes back to check.
+
+`turn.raw` is a concatenation of 36 snapshots, each a **full ring-buffer dump**, so every snapshot replays the session's startup bytes. Verified: each `snap-NNN.raw` contains exactly one `CSI 2J`, all at the same offset 59, and the first gap between `2J` occurrences in `turn.raw` is 4742 bytes — precisely `snap-000.raw`'s length.
+
+**So every count of ~30 in this table is one startup event replayed once per snapshot, not thirty events during the turn.** Counts in the thousands are inflated by the same overlap. Absence is still absence and a maximum is still a maximum, which is why the item-4 and `CSI S` results survive; nothing else about magnitude does.
+
+- **`CSI S` is never emitted.** The deferral was correct, and its follow-up can be downgraded or closed. `L`, `M`, `T` likewise.
+- **`CSI A` is never emitted**, so the `A` clamp that shipped is defensive rather than reachable — the same category as `CSI S`, except that fixing it cost nothing and it rode along free. `CSI f` likewise: only `H` is used. Worth knowing before anyone treats the `A` test as a regression test rather than a guard.
+- **`CSI 2J` does NOT fire 30 times per turn — it fires once, at startup, on an empty grid.** An earlier revision of this entry read the union count as mid-turn traffic and promoted the follow-up on that basis. That was wrong. Startup `2J` on an empty grid is harmless, so `2J` stays deferred at its original priority, and its frequency remains genuinely unverified pending a capture that is a true byte stream.
+- **`CSI r` is always bare `ESC[r`** — *reset* margins to full screen, not a region setup. **Close this follow-up rather than promoting it.** The emulator models only the full screen, so `case 'r': break` reaches the correct end state. No parameterised `r` appears anywhere.
+- **`ESC 7` / `ESC 8` (DECSC/DECRC) are the same artifact, not a separate finding.** A draft of this entry recorded them as "the one deferred item confirmed reachable." They are not. The first twelve bytes of every snapshot are `ESC7 ESC[r ESC8 ESC[?25…` — an eight-byte startup restore that *brackets* the `CSI r`. All three are one event.
+
+#### The corrected picture
+
+```
+during the turn:   G 51327   B 10075   C 8222   m 8213   H 4395   K 3805
+startup only (1x): r   J   c   ESC7   ESC8
+never emitted:     S   T   L   M   A   D   f
+```
+
+**Nothing in the deferred family is reachable mid-turn.** Downgrade the follow-up queue uniformly rather than reordering it — reordering is motion without movement.
+
+Three successive attempts to promote something out of that queue — `2J`, then `CSI r`, then `ESC7`/`ESC8` — were the same artifact wearing different labels, proposed by three different people. Each time, the proposer applied the artifact test to *someone else's* item and not to their own replacement. The `ESC7 ESC[r ESC8` bytes are contiguous at offsets 0, 2 and 5: one item was dismissed as a startup artifact in the same message that proposed its immediate neighbour as the reachable alternative, on evidence that condemns both equally.
+
+**That is the standing rule firing a fourth time, and it needs restating as a construction practice rather than a review one:**
+
+> **Run the test that killed the thing you are replacing, before you propose the replacement.**
+
+The original form — *any input used to reject an alternative must be run against the accepted design* — reads as something a reviewer does. Stated that way it caught the unclamped-CUP regression only because a reviewer happened to apply it. Stated as a construction practice it belongs to whoever proposes, which is where the failure actually occurs. Note also that stating the caveat is not applying it: every one of these three proposals was made by someone who had *written down* the overlap caveat in the same message.
+
+**The mechanism that let the rule survive a reviewer who did not apply it: each disagreement was handed over as evidence rather than as a conclusion.** Byte offsets and per-snapshot counts can be re-run by the recipient; an unfalsifiable claim can only be accepted or rejected. That is also what makes a claim cheap to test *against yourself*, which is the step every one of these three proposals skipped.
+
+The 30-of-36 split has a mechanism too: six snapshots are exactly 65536 bytes (`OUTPUT_BUFFER_MAX`), so their ring buffer had wrapped and lost the startup prefix. Thirty retained it.
+
+**Absence in one capture is not absence in general** — one turn, one version, and **no tool use**, so anything tool-triggered is unsampled. A tool-heavy capture is the only thing that can change this table, and it would simultaneously close `↑`, `hooks…` and the thinking state for the indicator plan. **That makes it the single highest-value artifact still outstanding across both plans.**
+
+#### Method note, since two of us were bitten
+
+`grep -c` counts matching *lines*, not occurrences, and this capture is nearly a single line. `grep -acoE $'\033\\[r'` returns 1 where the true count is 30. Zero lines does imply zero occurrences, so the `CSI S` = 0 result is unaffected — but **every non-zero count must use `grep -aoE … | wc -l`.** One of the counts in the first draft of this entry was taken the wrong way.
+
+Final: 157/157 across eleven terminal suites (up from 152), `tsc` and `eslint` clean.
