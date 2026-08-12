@@ -3,12 +3,24 @@ name: CI
 on:
   push:
     branches: [main, 'integration/**']
-  # Task branches are developed against, and merged into, the integration
-  # branches rather than main. Without them listed here a PR targeting an
-  # integration branch runs no CI at all — only the Snyk check reports, which
-  # looks green while lint/type/test never executed.
+  # DELIBERATELY UNFILTERED — every pull request runs CI, whatever its base.
+  #
+  # `pull_request.branches` filters on the BASE branch, so the only thing it can
+  # do is withhold CI from a PR. That has never been wanted here, and it has now
+  # produced the same silent failure twice: with no matching base the workflow
+  # does not trigger, only the Snyk check reports, and GitHub shows the PR as
+  # CLEAN because nothing required is pending. Lint, type-check, test and smoke
+  # never ran, and the PR looks greener than a fully-tested one.
+  #
+  # First it was task branches merging into `integration/**`, fixed by listing
+  # that pattern. Then it was a stacked PR based on `feat/live-activity-push-flag`
+  # (#551): `feat/**` was absent, so the same false green returned. Extending the
+  # list again would only defer it — a stack based on a `refactor/**` or `fix/**`
+  # branch is the next hole, and the failure mode gives no signal that it applied.
+  #
+  # `push` stays filtered: that one is a real cost control, keeping branch pushes
+  # from duplicating the run a PR already performs.
   pull_request:
-    branches: [main, 'integration/**']
 
 jobs:
   # Decide whether to skip the heavy CI work. The required status checks
