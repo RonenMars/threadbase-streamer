@@ -25,6 +25,19 @@ Sending one to the wrong transport fails only at send time, with nothing at regi
 
 ## Configuration
 
+**The `liveActivityPush` feature flag gates the whole surface, and it is off by default.**
+Credentials alone no longer bring this up: `initLiveActivityPush()` checks the flag before it reads the environment, so a box with a valid p8 configured logs `live_activity.disabled` at boot and constructs no sender.
+Turn it on with `THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH=1`, `--feature liveActivityPush=true`, or `feature_flags: {"liveActivityPush":true}` in `server.yaml`, then restart — feature flags resolve once, at boot.
+
+The flag governs the client half too.
+tb-mobile reads it over `GET /api/config/feature-flags` and, when it is off, skips its own local ActivityKit path — and the Android ongoing-notification equivalent — so one switch turns the feature off end to end.
+That coupling is deliberate: the client half on its own starts an activity locally from WebSocket frames, which means it only updates while the app is foregrounded, freezes the moment the app backgrounds, and expires silently at iOS's ~8h cap.
+Half the feature is worse than none of it.
+A server too old to serve `/api/config/feature-flags` reads as off, on the grounds that it is also too old to have been asked — and it is the one case where surfaces stop appearing without anyone choosing that, so tb-mobile logs `liveActivity.legacyServer` when it happens.
+From the phone the absence looks identical to a server that answered `false`; that log line is what separates "upgrade the streamer" from "check the flag".
+
+Turn the flag on where a `liveactivity_start` token is actually registered; without one, the push half has nothing to send to and only the degraded local path remains.
+
 All credentials come from the environment.
 No key, key id, or team id is committed, and neither the key nor any device token is ever logged.
 

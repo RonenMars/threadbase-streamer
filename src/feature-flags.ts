@@ -48,6 +48,17 @@ export const FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     env: "THREADBASE_FEATURE_SESSION_REHYDRATION",
   },
   {
+    id: "liveActivityPush",
+    description:
+      "Drive iOS Live Activity surfaces for running sessions. Off by default: the streamer half " +
+      "needs an APNs p8 and a registered push-to-start token, and without both, mobile falls back " +
+      "to starting the activity locally — which freezes the moment the app backgrounds and " +
+      "expires silently after ~8h. Mobile reads this flag and skips its local path too, so one " +
+      "switch turns the whole surface off.",
+    default: false,
+    env: "THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH",
+  },
+  {
     id: "ptyHost",
     description:
       "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +
