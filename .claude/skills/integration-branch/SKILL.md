@@ -228,6 +228,14 @@ branch is taken.
    ran and only a security scanner reports — that is *unverified*, not green. Compare any failure against
    the Step 3 baseline: a test already red on `main` is not this branch's fault, and the log should say so.
 
+   **A short name list can also mean you read too early.** For a few seconds after a push the rollup still
+   carries only the previous run's stale contexts, which looks identical to "the suite never ran". Confirm
+   the run exists before drawing a conclusion, and re-read once it has registered:
+   ```bash
+   gh run list --branch <head-branch> --limit 3 \
+     --json headSha,status,conclusion,workflowName
+   ```
+
 3. **If CI is red or never ran: tell the user — do not ask.** One message naming the branch, the failing
    checks, and that the run is continuing. No approval, no pause. Log it.
 
