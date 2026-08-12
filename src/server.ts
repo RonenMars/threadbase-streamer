@@ -63,9 +63,12 @@ import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { RuntimeStore } from "./db/runtime-store";
 import { type ExternalTailEntry, ExternalTailManager } from "./external-tails";
 import {
+  describeFeatureFlags,
   FEATURE_FLAGS,
-  type FeatureFlagValues,
+  type FeatureFlagId,
+  type FeatureFlagSource,
   nonDefaultFeatureFlags,
+  type ResolvedFeatureFlags,
   resolveFeatureFlags,
 } from "./feature-flags";
 import { LiveSessionManager } from "./live-session-manager";
@@ -353,7 +356,11 @@ export class StreamerServer {
   private defaultSystemPrompt: string;
   // Resolved once at boot; see src/feature-flags.ts. Total map — every registry
   // id is present, so indexing it never yields undefined.
-  private featureFlags: FeatureFlagValues;
+  private featureFlags: ResolvedFeatureFlags;
+  // Which rung of the precedence chain decided each flag. Reported at boot and
+  // over GET /api/config/feature-flags — the resolved boolean alone cannot say
+  // whether a value came from the environment, the CLI, server.yaml or nowhere.
+  private featureFlagSources: Record<FeatureFlagId, FeatureFlagSource>;
   // Derived from featureFlags.codexSystemPrompt. Kept as its own field so the
   // read site in startFresh() is unchanged.
   private codexSystemPromptEnabled: boolean;
@@ -475,10 +482,16 @@ export class StreamerServer {
     this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     // env > CLI > server.yaml > registry default, then the legacy explicit
     // field on top (see ServerConfig.codexSystemPromptEnabled).
-    this.featureFlags = resolveFeatureFlags({ cli: config.featureFlags, yaml: loadFeatureFlags() });
-    if (config.codexSystemPromptEnabled !== undefined) {
-      this.featureFlags.codexSystemPrompt = config.codexSystemPromptEnabled;
-    }
+    const flagResolution = resolveFeatureFlags({
+      override:
+        config.codexSystemPromptEnabled === undefined
+          ? undefined
+          : { codexSystemPrompt: config.codexSystemPromptEnabled },
+      cli: config.featureFlags,
+      yaml: loadFeatureFlags(),
+    });
+    this.featureFlags = flagResolution.values;
+    this.featureFlagSources = flagResolution.sources;
     this.codexSystemPromptEnabled = this.featureFlags.codexSystemPrompt;
     this.defaultPermissionMode =
       config.defaultPermissionMode ?? loadDefaultPermissionMode() ?? "acceptEdits";
@@ -533,15 +546,20 @@ export class StreamerServer {
     this.includeAgents = parseIncludeAgentsEnv(process.env.THREADBASE_INCLUDE_AGENTS);
     this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
 
-    // Log only what differs from the registry defaults: on a normal boot this is
-    // silent, so a line here always means someone turned something on.
-    const enabledFlags = nonDefaultFeatureFlags(this.featureFlags);
-    if (enabledFlags.length > 0) {
-      this.log.info(`Feature flags active: ${enabledFlags.join(", ")}`, {
-        event: "config.feature_flags_active",
-        flags: enabledFlags,
-      });
-    }
+    // Every flag, every boot, with its value and the rung that decided it.
+    //
+    // This used to print only the ids differing from their defaults, under the
+    // heading "Feature flags active" — which stated the opposite of the truth
+    // for a flag defaulting ON: disabling sessionRehydration listed it as
+    // active. It also went silent on a stock boot, so the log could never
+    // answer "what was this process actually running with", only hint at it.
+    // One line for four booleans is affordable; being wrong is not.
+    this.log.info(`Feature flags: ${describeFeatureFlags(flagResolution)}`, {
+      event: "config.feature_flags",
+      values: this.featureFlags,
+      sources: this.featureFlagSources,
+      nonDefault: nonDefaultFeatureFlags(this.featureFlags),
+    });
 
     const rawRoot = process.env.THREADBASE_BROWSE_ROOT ?? loadBrowseRoot() ?? config.browseRoot;
     if (rawRoot) {
@@ -1886,9 +1904,17 @@ export class StreamerServer {
    */
   private getFeatureFlagsConfig(): {
     registry: typeof FEATURE_FLAGS;
-    values: FeatureFlagValues;
+    values: ResolvedFeatureFlags;
+    sources: Record<FeatureFlagId, FeatureFlagSource>;
   } {
-    return { registry: FEATURE_FLAGS, values: this.featureFlags };
+    // `sources` is additive — older clients ignore it. It exists so a support
+    // question ("why is this on?") is answerable over HTTP instead of requiring
+    // shell access to read the environment, the argv and server.yaml by hand.
+    return {
+      registry: FEATURE_FLAGS,
+      values: this.featureFlags,
+      sources: this.featureFlagSources,
+    };
   }
 
   private getClaudeFlagsConfig(): {

@@ -13,7 +13,12 @@ import type { ProjectsRepository } from "../../db/repositories/projects.reposito
 import type { PushRepository } from "../../db/repositories/push.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
 import type { RuntimeStore } from "../../db/runtime-store";
-import type { FeatureFlagDefinition, FeatureFlagValues } from "../../feature-flags";
+import type {
+  FeatureFlagDefinition,
+  FeatureFlagId,
+  FeatureFlagSource,
+  ResolvedFeatureFlags,
+} from "../../feature-flags";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
 import type { ReconcileVerdict } from "../../services/sessions/reconcileSessions";
@@ -37,7 +42,8 @@ export type ApiDeps = {
   ) => { values: ClaudeFlagValues; extraArgs: string | null; persisted: boolean };
   featureFlagsConfig: () => {
     registry: readonly FeatureFlagDefinition[];
-    values: FeatureFlagValues;
+    values: ResolvedFeatureFlags;
+    sources: Record<FeatureFlagId, FeatureFlagSource>;
   };
   publicUrl: string | null;
   browseRoot: string | null;
