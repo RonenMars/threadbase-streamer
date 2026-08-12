@@ -56,6 +56,17 @@ A recovered session's `status` has to report `idle` (it holds no PTY, and a nove
 This field carries that one bit separately, so a client can say "interrupted mid-response" instead of "idle".
 Purely additive and safe to ignore: nothing keys off it server-side, and a client that never reads it behaves exactly as it does today.
 Adopting it is tracked as tb-mobile PR M2.
+- Session — new field `subStatus`: the agent's phase *within* a running turn (`"thinking" | "streaming" | "hooks" | "acting" | "working"`), scraped from the rendered PTY screen.
+**Unlike every other addition on this list it is NOT optional — it is always serialised, and is `null` when there is no phase.**
+That is deliberate and must not be "tidied" into the `...(x != null && { x })` block that the neighbouring optional fields use: `!=` catches `null` as well as `undefined`, so an explicit clear would become an absent key.
+Mobile merges session frames (`{...prev, ...next}`), and a merge cannot express a removed key, so an absent field keeps its previous value and the indicator latches on a finished turn — the failure tb-mobile PR #647 shipped.
+A client that ignores the field behaves exactly as today; a client that renders it must treat an unrecognised value as "no phase" rather than coercing it, because the union will grow.
+It deliberately does **not** add a `SessionStatus` value: `VALID_STATUSES` rejects unknown values and `?status=` filtering would make those sessions vanish from already-shipped apps.
+- WebSocket — new event `session_phase`: `{ type, sessionId, phase: AgentPhase | null, updatedAt }`, scoped to that session's subscribers rather than broadcast globally.
+Purely additive; a client that never handles it behaves as today, and `subStatus` on the session object stays the source of truth for the GET path and for reconnect.
+It is a minimal frame rather than a `SessionResponse` copy on purpose: `managedToResponse` recomputes `elapsedMs` from `new Date()` on every call for a live session, so a session-copy frame would differ on every tick whether or not the phase changed, and a merging client would get a fresh object identity several times a second for the whole turn.
+`phase` follows the same always-present/nullable contract as the field.
+- **pty-host protocol version 3** (private streamer-to-host protocol; no mobile-visible change): adds the `phase-change` event. The detectors run in the host, so without it the indicator silently no-ops when `THREADBASE_FEATURE_PTY_HOST=1`.
 - Session — new value on the existing optional `lifecycle` field: `"starting"`, for a managed session this run holds no PTY for and has observed no exit for (no `completedAt`, no `failureReason`).
 It replaces the `"completed"` those sessions used to report, which made "has not attached yet" and "has ended" the same value on the wire — the ambiguity tb-mobile #508 needs resolved.
 `status`, `ptyAttached` and every other field are unchanged, and `lifecycle` was already optional, so a client that does not know the value behaves exactly as it does today; adopting it is tracked in tb-mobile #508.

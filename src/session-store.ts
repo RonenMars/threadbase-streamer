@@ -300,6 +300,13 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     promptCount: s.promptCount,
     startedAt: s.startedAt.toISOString(),
     completedAt: s.completedAt?.toISOString() ?? null,
+    // Unconditional, like completedAt above — do NOT move this into the
+    // `...(x != null && { x })` block below. That guard uses loose `!=`, which
+    // catches null as well as undefined, and would turn an explicit "no phase"
+    // back into an absent key. The client merges session frames, so an absent
+    // key keeps the previous value and the indicator latches on a finished
+    // turn — the tb-mobile PR #647 bug, arriving through the serialiser.
+    subStatus: s.subStatus ?? null,
     ptyAttached,
     ...(s.projectId != null && { projectId: s.projectId }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
@@ -351,6 +358,10 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
     // cannot see the process's prompt state.
     lifecycle: "detached",
     lifecycleSource: "probe",
+    // No PTY here, so nothing to scrape and no phase to report. Emitted
+    // explicitly rather than omitted, for the same reason as in
+    // managedToResponse: absence must never be a third state on the wire.
+    subStatus: null,
     projectPath: d.projectPath,
     projectName: d.projectName,
     branch: d.branch,

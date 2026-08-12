@@ -326,6 +326,18 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         seq,
       });
     },
+    onPhaseChange: (sessionId, phase) => {
+      // Scoped to this session's subscribers and sent as a minimal frame —
+      // NOT routed through onStatusChange's handler, which writes a DB row,
+      // refreshes the scanner index, broadcasts globally and pokes the APNs
+      // and push notifiers on every call. This can fire every scrape tick.
+      deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(sessionId) ?? [], {
+        type: "session_phase",
+        sessionId,
+        phase,
+        updatedAt: new Date().toISOString(),
+      });
+    },
     onUserMessage: (sessionId, text, ts) => {
       deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(sessionId) ?? [], {
         type: "user_message",
