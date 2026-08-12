@@ -14,7 +14,7 @@ import {
 } from "../src/pty-host/protocol";
 import { RemoteSessionRunner } from "../src/pty-host/remote-session-runner";
 import { SessionStore } from "../src/session-store";
-import type { ManagedSession, PTYManagerOptions } from "../src/types";
+import type { ManagedSession, PTYManagerOptions, SessionResponse } from "../src/types";
 
 const STARTED = new Date("2026-08-12T10:00:00Z");
 
@@ -56,6 +56,15 @@ function mkHost() {
   return { transport, emit: (e: HostEvent) => onLine(encodeMessage(e)) };
 }
 
+/** Serialise one session and hand back a definitely-present response. */
+function responseFor(over: Partial<ManagedSession>): Readonly<SessionResponse> {
+  const store = new SessionStore();
+  store.addManaged(mkSession(over));
+  const resp = store.get("sess-1", new Set());
+  if (resp === null) throw new Error("session was not stored");
+  return resp;
+}
+
 describe("agent phase — wire contract", () => {
   // The load-bearing one. managedToResponse guards ~19 optional fields with
   // `...(x != null && { x })`, and `!=` catches null as well as undefined. If
@@ -64,33 +73,28 @@ describe("agent phase — wire contract", () => {
   // key keeps its previous value. That is how tb-mobile PR #647's indicator
   // latched onto finished turns.
   it("serialises an explicit null rather than omitting the key", () => {
-    const store = new SessionStore();
-    store.addManaged(mkSession({ subStatus: null }));
+    const resp = responseFor({ subStatus: null });
 
-    const resp = store.get("sess-1", new Set());
-
-    expect(resp).not.toBeNull();
-    expect("subStatus" in resp!).toBe(true);
-    expect(resp!.subStatus).toBeNull();
+    expect("subStatus" in resp).toBe(true);
+    expect(resp.subStatus).toBeNull();
     // The distinction a merge cannot express: absent !== null.
     expect(JSON.stringify(resp)).toContain('"subStatus":null');
   });
 
   it("serialises a set phase", () => {
-    const store = new SessionStore();
-    store.addManaged(mkSession({ subStatus: "working" }));
-    expect(store.get("sess-1", new Set())!.subStatus).toBe("working");
+    expect(responseFor({ subStatus: "working" }).subStatus).toBe("working");
   });
 
   it("emits null for a session that predates the field", () => {
     const store = new SessionStore();
-    const s = mkSession();
-    delete (s as Partial<ManagedSession>).subStatus;
-    store.addManaged(s);
+    const stored = mkSession();
+    delete (stored as Partial<ManagedSession>).subStatus;
+    store.addManaged(stored);
 
     const resp = store.get("sess-1", new Set());
-    expect("subStatus" in resp!).toBe(true);
-    expect(resp!.subStatus).toBeNull();
+    if (resp === null) throw new Error("session was not stored");
+    expect("subStatus" in resp).toBe(true);
+    expect(resp.subStatus).toBeNull();
   });
 });
 
