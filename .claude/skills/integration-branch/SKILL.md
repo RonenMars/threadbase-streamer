@@ -122,6 +122,10 @@ discovered at merge 12, not merge 1.
 Carry a **standing exclusion list**. Ask the user for one if the repo has none; anything excluded goes
 in the log with its reason.
 
+Also capture one option here, because it changes whether the run can stop later: **may a red CI halt the
+run?** If the user says up front that it must not — "don't stop for red CI", "merge them regardless" —
+record that and honour it in Step 6's check. Absent that, the default is to stop and ask.
+
 ## Step 2 — Preflight
 
 ```bash
@@ -202,6 +206,48 @@ git fetch origin "pull/<n>/head:refs/integration/pr/<n>"
 survives it.
 
 ## Step 6 — Merge, one PR at a time
+
+### Before each merge — check that branch's CI
+
+Applies to **every** member of the set, the earliest one included, and runs immediately before that
+branch is taken.
+
+1. **Does the head branch exist on `origin`?**
+   ```bash
+   git ls-remote --heads origin <head-branch>
+   ```
+   A local-only branch has no CI to read. Record that in the log — "no remote, unverified" is a real
+   state and must not look like a pass — and continue.
+
+2. **If it exists, read its checks.**
+   ```bash
+   gh pr view <n> --json statusCheckRollup,mergeStateStatus     # PR
+   gh api repos/{owner}/{repo}/commits/<sha>/check-runs         # branch with no PR
+   ```
+   Count the check **names**, not the conclusions. A `DIRTY` PR has no merge ref, so the real suite never
+   ran and only a security scanner reports — that is *unverified*, not green. Compare any failure against
+   the Step 3 baseline: a test already red on `main` is not this branch's fault, and the log should say so.
+
+3. **If CI is red or never ran: tell the user — do not ask.** One message naming the branch, the failing
+   checks, and that the run is continuing. No approval, no pause. Log it.
+
+4. **Then look for the fix inside the integration set**, since the most common cause is a PR that another
+   PR in the same set repairs — one introduces a lint error, the next clears it:
+   ```bash
+   gh pr view <n> --json body,comments        # "depends on #N", "fixed by #N", "needs #N first"
+   gh pr diff <m> --name-only                 # per candidate: does it touch the failing file/test?
+   ```
+   If a member of the set fixes it, that is a **forced-order constraint**, not a problem: record it in the
+   log's §4 with the reason, order the fixer accordingly — before, if it unblocks; immediately after, if
+   the failure only clears once both are in — and carry on **without asking**.
+
+5. **If nothing in the set fixes it, stop and ask.** Present the options rather than a bare question: drop
+   the branch from the set, merge it and accept a red checkpoint, wait for its author, or pull in an
+   out-of-set fix. Log the answer as a decision in §11.
+
+6. **The exception:** if the user said up front that a red CI must not stop the run (Step 1), never stop.
+   Steps 1–4 still run and still get logged — the opt-out removes the halt, not the check. A run that
+   skipped the check entirely cannot tell later which failures it inherited.
 
 **Rebase first, then merge.** Every PR after the earliest one — and every extra non-PR branch — rebases
 onto the *current integration tip*, not onto `main`. The tip already carries everything merged before

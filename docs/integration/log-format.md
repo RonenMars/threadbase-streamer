@@ -82,6 +82,10 @@ fails later is caused by the integration.
 
 - `mergeable` from a bulk `gh pr list` returns `UNKNOWN` — query each PR individually or the column is noise.
 - `isDraft` is invisible in the readiness fields; ask for it by name or a draft looks perfectly mergeable.
+- A branch with no remote counterpart has no CI to read. Write "no remote — unverified"; an empty cell
+  reads as green.
+- Where a red CI was cleared by another member of the set, the pair belongs in §4 as a forced-order
+  constraint, not just as a note here.
 
 ### Deliberate exclusions
 
