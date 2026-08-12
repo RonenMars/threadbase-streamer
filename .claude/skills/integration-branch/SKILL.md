@@ -169,6 +169,22 @@ gh pr view <n> --json mergeable,mergeStateStatus,isDraft,statusCheckRollup
 ```
 
 - `isDraft` is invisible in the readiness fields — a draft reads as `MERGEABLE`/`CLEAN` and still will not merge.
+
+**Drafts are the user's call, never yours.** As soon as the set is resolved, list every draft in it and
+ask whether this run includes them — before cutting the branch, not at the merge that hits one:
+
+```bash
+gh pr list --state open --json number,title,isDraft --jq '.[]|select(.isDraft)|"#\(.number) \(.title)"'
+```
+
+Do not infer the answer in either direction. A PR is draft because it is unfinished, or because its
+author is blocked on something with nothing to do with the code, and those want opposite treatment.
+Record the answer in the log's §3 — included drafts flagged as such, declined ones in the exclusions
+table as "draft — user declined".
+
+Including a draft does **not** require flipping it ready: this skill merges the PR's head locally, and
+GitHub's draft flag only gates merging on GitHub. Leave the flag alone — flipping a batch of PRs ready
+so an integration branch can be built is a change to their state that nobody asked for.
 - `DIRTY` means the merge ref is missing, so CI never ran on it: a lone green Snyk check is not "CI passed".
 
 Detect two things that override chronological order:
@@ -347,7 +363,7 @@ merge PRs to `main` as part of this skill.
 | Stale `origin/main` | Branch is not from today's `main`, no error anywhere | `git fetch` immediately before the cut; state the SHA |
 | `git fetch --prune` | Deletes `origin/pr/*` mid-run | Fetch heads to `refs/integration/pr/*` |
 | Bulk `mergeable` query | Every row `UNKNOWN` | Per-PR `gh pr view` |
-| Draft PRs | Read as mergeable, will not merge | Request `isDraft` explicitly |
+| Draft PRs | Read as mergeable, will not merge | Request `isDraft` explicitly, then ask the user whether the run includes them |
 | Stacked child | Does not auto-restack when its base merges; goes `DIRTY` | Merge base first, verify the child's unique commits survive |
 | `main` not green | Every count misattributed | Baseline in Step 3 |
 | Commit hooks rejecting merge commits | The whole shell call aborts, not just the commit | Expect it; ask the user how to proceed rather than reaching for `--no-verify` |
