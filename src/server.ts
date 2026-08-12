@@ -58,6 +58,7 @@ import {
   BrowsePathNotFoundError,
   createDirectory,
   listDirectories,
+  listFiles,
   resolveBrowsePath,
 } from "./browse";
 import {
@@ -6180,8 +6181,11 @@ export class StreamerServer {
     const relativePath = url.searchParams.get("path") ?? "";
     try {
       const resolved = await resolveBrowsePath(this.browseRoot, relativePath);
-      const directories = await listDirectories(resolved);
-      json(res, 200, { path: relativePath, directories });
+      const [directories, files] = await Promise.all([
+        listDirectories(resolved),
+        listFiles(resolved),
+      ]);
+      json(res, 200, { path: relativePath, directories, files });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Browse failed";
       if (err instanceof BrowsePathNotFoundError) {
