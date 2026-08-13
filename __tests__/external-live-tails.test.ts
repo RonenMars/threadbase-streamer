@@ -231,7 +231,7 @@ describe("external live tails", () => {
     writeFileSync(filePath, userLine(convId, "first", projectPath, "2026-07-21T13:00:00.000Z"));
     (server as any).sessionFileMap.set("managed-session", filePath);
 
-    (server as any).maybeAttachExternalTail(filePath);
+    (server as any).externalTailManager.maybeAttachExternalTail(filePath);
 
     expect(externalTails().size).toBe(0);
   });
@@ -244,7 +244,7 @@ describe("external live tails", () => {
     const stale = new Date(Date.now() - 10 * 60_000);
     utimesSync(filePath, stale, stale);
 
-    (server as any).maybeAttachExternalTail(filePath);
+    (server as any).externalTailManager.maybeAttachExternalTail(filePath);
 
     expect(externalTails().size).toBe(0);
   });
@@ -264,7 +264,7 @@ describe("external live tails", () => {
     }
     expect(tails.size).toBe(EXTERNAL_TAIL_MAX);
 
-    (server as any).evictExternalTailsIfNeeded();
+    (server as any).externalTailManager.evictExternalTailsIfNeeded();
 
     expect(tails.size).toBe(EXTERNAL_TAIL_MAX - 1);
     expect(tails.has("/tmp/ext-7.jsonl")).toBe(false);
@@ -284,7 +284,7 @@ describe("external live tails", () => {
     });
     tails.set("/tmp/busy.jsonl", { conversationId: "busy", lastActivityAt: now });
 
-    (server as any).sweepIdleExternalTails(now);
+    (server as any).externalTailManager.sweepIdleExternalTails(now);
 
     expect(tails.has("/tmp/idle.jsonl")).toBe(false);
     expect(tails.has("/tmp/busy.jsonl")).toBe(true);
@@ -312,7 +312,7 @@ describe("external live tails", () => {
     expect(await waitFor(() => externalTails().size === 1)).toBe(true);
 
     rmSync(filePath, { force: true });
-    (server as any).handleJsonlDeleted(filePath);
+    (server as any).externalTailManager.handleJsonlDeleted(filePath);
 
     expect(externalTails().size).toBe(0);
   });
