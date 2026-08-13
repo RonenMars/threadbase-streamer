@@ -58,6 +58,14 @@ export async function listDirectories(absolutePath: string): Promise<Array<{ nam
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export async function listFiles(absolutePath: string): Promise<Array<{ name: string }>> {
+  const entries = await readdir(absolutePath, { withFileTypes: true });
+  return entries
+    .filter((e) => e.isFile())
+    .map((e) => ({ name: e.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function createDirectory(parentAbsolutePath: string, name: string): Promise<string> {
   if (name.includes("/") || name.includes("\\") || name === ".." || name === ".") {
     throw new Error("Invalid directory name");

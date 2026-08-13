@@ -1,10 +1,11 @@
-import { mkdirSync, rmSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
   BrowsePathNotFoundError,
   createDirectory,
   listDirectories,
+  listFiles,
   resolveBrowsePath,
 } from "../src/browse";
 
@@ -15,6 +16,8 @@ beforeEach(() => {
   mkdirSync(join(TEST_ROOT, "projectA", "src"), { recursive: true });
   mkdirSync(join(TEST_ROOT, "projectA", "tests"), { recursive: true });
   mkdirSync(join(TEST_ROOT, "projectB"), { recursive: true });
+  writeFileSync(join(TEST_ROOT, "projectA", "README.md"), "hi");
+  writeFileSync(join(TEST_ROOT, "projectA", "package.json"), "{}");
 });
 
 afterAll(() => {
@@ -94,6 +97,23 @@ describe("listDirectories", () => {
   it("returns empty array for leaf directory", async () => {
     const dirs = await listDirectories(join(TEST_ROOT, "projectB"));
     expect(dirs).toEqual([]);
+  });
+
+  it("excludes files", async () => {
+    const dirs = await listDirectories(join(TEST_ROOT, "projectA"));
+    expect(dirs).toEqual([{ name: "src" }, { name: "tests" }]);
+  });
+});
+
+describe("listFiles", () => {
+  it("lists immediate files sorted alphabetically, excluding directories", async () => {
+    const files = await listFiles(join(TEST_ROOT, "projectA"));
+    expect(files).toEqual([{ name: "package.json" }, { name: "README.md" }]);
+  });
+
+  it("returns empty array for a directory with no files", async () => {
+    const files = await listFiles(TEST_ROOT);
+    expect(files).toEqual([]);
   });
 });
 
