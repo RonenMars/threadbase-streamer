@@ -71,7 +71,15 @@ describe("push capability over HTTP", () => {
   let baseUrl: string;
   let cacheDir: string;
 
-  const boot = async () => {
+  // Live Activity capability is gated on the liveActivityPush feature flag as
+  // well as the credentials, so the flag has to be stated here rather than left
+  // to its default — otherwise this asserts whatever that default happens to be.
+  const boot = async (liveActivityPush = false) => {
+    // The env var outranks the config rung (feature-flags.ts), so a real
+    // THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH in the developer's shell would
+    // silently decide both cases and make this pass or fail off-machine-state.
+    // Each block's afterEach restores the whole env, so deleting here is enough.
+    delete process.env.THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH;
     cacheDir = mkdtempSync(join(tmpdir(), "threadbase-push-cap-"));
     server = new StreamerServer({
       ...HOST_ISOLATION,
@@ -82,6 +90,7 @@ describe("push capability over HTTP", () => {
       disableDb: true,
       cacheDir,
       scanProfiles: [],
+      featureFlags: { liveActivityPush },
     });
     await server.listen(0, { awaitReady: true });
     baseUrl = `http://localhost:${server.port}`;
@@ -124,7 +133,7 @@ describe("push capability over HTTP", () => {
     const saved = { ...process.env };
     beforeEach(async () => {
       Object.assign(process.env, FULL_APNS_ENV);
-      await boot();
+      await boot(true);
     });
     afterEach(() => {
       process.env = { ...saved };
