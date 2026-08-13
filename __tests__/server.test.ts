@@ -17,6 +17,21 @@ import { FEATURE_FLAGS } from "../src/feature-flags";
 import { PTYManager } from "../src/pty-manager";
 import { GRACE_MAX_DEFERS, IDLE_REAP_AFTER_MS, StreamerServer } from "../src/server";
 
+// The ScannerManager StreamerServer owns (src/scanner-manager.ts). These suites
+// drive scanner staleness directly rather than waiting on chokidar, so they
+// reach into it the same way they used to reach into the server's own fields.
+type ScannerManagerView = {
+  stale: boolean;
+  staleFiles: Set<string>;
+  current: unknown;
+  ready: Promise<unknown> | null;
+  get: (skipStaleRescan?: boolean) => Promise<unknown>;
+  rescanForRefresh: () => Promise<unknown>;
+  isConversationSnapshotStale: (conv: unknown) => boolean;
+  startBackgroundReconcile: (mode?: string) => void;
+  markStaleDebounced: { (): void; flush(): void; cancel(): void };
+};
+
 // On Windows `fs.realpathSync` is a JS implementation that resolves symlinks
 // but PRESERVES 8.3 short names, so `os.tmpdir()` stays
 // `C:\Users\RUNNER~1\AppData\Local\Temp\…`. The server canonicalizes its
@@ -3205,7 +3220,7 @@ describe("StreamerServer", () => {
         convLine("auto-a", "2026-06-07T11:00:00.000Z", "alpha continued externally"),
       );
       // Simulate directory-watcher dirty bit without waiting on chokidar.
-      (autoServer as unknown as { scannerStale: boolean }).scannerStale = true;
+      (autoServer as unknown as { scannerManager: ScannerManagerView }).scannerManager.stale = true;
 
       const after = await listCachedUntil((r) =>
         Boolean(r.conversations.find((c) => c.id === "auto-a")?.preview?.includes("externally")),
@@ -3223,13 +3238,10 @@ describe("StreamerServer", () => {
       // 5MB history) while the per-file paginated path stayed at ~20ms.
       await listCached();
       const srv = autoServer as unknown as {
-        scannerStale: boolean;
-        staleFiles: Set<string>;
-        scanner: unknown;
+        scannerManager: ScannerManagerView;
         fileWatcher: { unwatchDirectory(directory: string): void };
-        markScannerStaleDebounced: { cancel(): void };
       };
-      const scannerBefore = srv.scanner;
+      const scannerBefore = srv.scannerManager.current;
       expect(scannerBefore).toBeTruthy();
 
       // Take the real directory watcher out of the window. This test drives the
@@ -3256,7 +3268,7 @@ describe("StreamerServer", () => {
       // drained by an earlier poll, and an armed flag with no paths falls back to
       // a full rescan in startBackgroundConversationReconcile — which is the exact
       // scan this test asserts does not happen.
-      srv.markScannerStaleDebounced.cancel();
+      srv.scannerManager.markStaleDebounced.cancel();
 
       // Spy after the write so the counts scope to the reconcile below.
       //
@@ -3272,15 +3284,13 @@ describe("StreamerServer", () => {
       // shouldRefreshProjectsFromHdd. So record the mode the background reconcile
       // was started with; that one field is what separates them.
       const reconcileModes: string[] = [];
-      const realStart = (
-        autoServer as unknown as {
-          startBackgroundConversationReconcile: (mode?: string) => void;
-        }
-      ).startBackgroundConversationReconcile;
-      vi.spyOn(
-        autoServer as unknown as { startBackgroundConversationReconcile: (mode?: string) => void },
-        "startBackgroundConversationReconcile",
-      ).mockImplementation(function (this: unknown, mode?: string) {
+      const reconcileMgr = (autoServer as unknown as { scannerManager: ScannerManagerView })
+        .scannerManager;
+      const realStart = reconcileMgr.startBackgroundReconcile;
+      vi.spyOn(reconcileMgr, "startBackgroundReconcile").mockImplementation(function (
+        this: unknown,
+        mode?: string,
+      ) {
         reconcileModes.push(mode ?? "full(default)");
         return realStart.call(this, mode);
       });
@@ -3304,8 +3314,8 @@ describe("StreamerServer", () => {
 
       // What onConversationChanged now records: the flag AND the path it is
       // about. Poked directly rather than waiting on chokidar's debounce.
-      srv.staleFiles.add(changed);
-      srv.scannerStale = true;
+      srv.scannerManager.staleFiles.add(changed);
+      srv.scannerManager.stale = true;
 
       // Freshness is preserved for the file that actually changed.
       const after = await listCachedUntil((r) =>
@@ -3323,7 +3333,7 @@ describe("StreamerServer", () => {
         scanSpy.mock.calls.length,
         `scan() ran during the per-file reconcile window.\nreconcile modes: ${reconcileModes.join(", ") || "(none recorded — the mode capture is broken, not the code)"}\ncallers:\n${scanCallers.join("\n") || "(none recorded — the stack capture is broken, not the code)"}`,
       ).toBe(0);
-      expect(srv.scanner).toBe(scannerBefore);
+      expect(srv.scannerManager.current).toBe(scannerBefore);
       const refreshed = new Set(refreshSpy.mock.calls.map((c) => c[0]));
       expect([...refreshed]).toEqual([changed]);
 
@@ -3338,23 +3348,18 @@ describe("StreamerServer", () => {
       // reconcile entirely. Driven through getScanner() rather than the list
       // endpoint so chokidar can't record a path mid-test and quietly route it
       // down the per-file branch instead.
-      const srv = autoServer as unknown as {
-        scannerStale: boolean;
-        staleFiles: Set<string>;
-        scanner: unknown;
-        getScanner: (skipStaleRescan?: boolean) => Promise<unknown>;
-      };
-      await srv.getScanner();
-      const before = srv.scanner;
+      const srv = autoServer as unknown as { scannerManager: ScannerManagerView };
+      await srv.scannerManager.get();
+      const before = srv.scannerManager.current;
       expect(before).toBeTruthy();
 
-      srv.staleFiles.clear();
-      srv.scannerStale = true;
-      await srv.getScanner();
+      srv.scannerManager.staleFiles.clear();
+      srv.scannerManager.stale = true;
+      await srv.scannerManager.get();
 
       // Discarded and rebuilt — a fresh instance, flag disarmed.
-      expect(srv.scanner).not.toBe(before);
-      expect(srv.scannerStale).toBe(false);
+      expect(srv.scannerManager.current).not.toBe(before);
+      expect(srv.scannerManager.stale).toBe(false);
     });
 
     it("does not re-arm scannerStale when the debounce fires after paths were drained", async () => {
@@ -3363,28 +3368,22 @@ describe("StreamerServer", () => {
       // the late fire must NOT set scannerStale with an empty set (that would
       // upgrade the next "files" reconcile into a full-tree rescan).
       await listCached();
-      const srv = autoServer as unknown as {
-        scannerStale: boolean;
-        staleFiles: Set<string>;
-        scannerReady: Promise<unknown> | null;
-        markScannerStaleDebounced: { (): void; flush(): void; cancel(): void };
-        startBackgroundConversationReconcile: (mode?: string) => void;
-      };
-      expect(srv.scannerReady).toBeTruthy();
+      const srv = autoServer as unknown as { scannerManager: ScannerManagerView };
+      expect(srv.scannerManager.ready).toBeTruthy();
 
       const changed = join(projDir, "auto-a.jsonl");
-      srv.staleFiles.add(changed);
-      srv.markScannerStaleDebounced();
+      srv.scannerManager.staleFiles.add(changed);
+      srv.scannerManager.markStaleDebounced();
 
       // Drain before the debounce fires — the correct per-file reconcile path.
-      srv.startBackgroundConversationReconcile("files");
-      expect(srv.staleFiles.size).toBe(0);
-      expect(srv.scannerStale).toBe(false);
+      srv.scannerManager.startBackgroundReconcile("files");
+      expect(srv.scannerManager.staleFiles.size).toBe(0);
+      expect(srv.scannerManager.stale).toBe(false);
 
       // Late debounce fire: must stay disarmed when no paths remain.
-      srv.markScannerStaleDebounced.flush();
-      expect(srv.scannerStale).toBe(false);
-      expect(srv.staleFiles.size).toBe(0);
+      srv.scannerManager.markStaleDebounced.flush();
+      expect(srv.scannerManager.stale).toBe(false);
+      expect(srv.scannerManager.staleFiles.size).toBe(0);
     });
 
     it("serves the cached list immediately while a routine reconcile runs in the background", async () => {
@@ -3398,20 +3397,19 @@ describe("StreamerServer", () => {
       const scanGate = new Promise<void>((r) => {
         releaseScan = r;
       });
-      const orig = (autoServer as unknown as { rescanForRefresh: () => Promise<unknown> })
-        .rescanForRefresh;
-      const spy = vi
-        .spyOn(
-          autoServer as unknown as { rescanForRefresh: () => Promise<unknown> },
-          "rescanForRefresh",
-        )
-        .mockImplementation(async function (this: unknown, ...args: unknown[]) {
-          await scanGate;
-          return (orig as (...a: unknown[]) => Promise<unknown>).apply(this, args);
-        });
+      const rescanMgr = (autoServer as unknown as { scannerManager: ScannerManagerView })
+        .scannerManager;
+      const orig = rescanMgr.rescanForRefresh;
+      const spy = vi.spyOn(rescanMgr, "rescanForRefresh").mockImplementation(async function (
+        this: unknown,
+        ...args: unknown[]
+      ) {
+        await scanGate;
+        return (orig as (...a: unknown[]) => Promise<unknown>).apply(this, args);
+      });
 
       writeConv("auto-slow", "delta", "2026-06-07T12:00:00.000Z");
-      (autoServer as unknown as { scannerStale: boolean }).scannerStale = true;
+      (autoServer as unknown as { scannerManager: ScannerManagerView }).scannerManager.stale = true;
 
       const t0 = Date.now();
       const res = await listCached();
@@ -3876,7 +3874,8 @@ describe("StreamerServer", () => {
       // is marked stale. Pre-fix, the detail request would honor this and pay a
       // full-tree rescan (the 14–78s stall). Post-fix it must reuse the indexed
       // scanner and never call scan().
-      (reuseServer as unknown as { scannerStale: boolean }).scannerStale = true;
+      (reuseServer as unknown as { scannerManager: ScannerManagerView }).scannerManager.stale =
+        true;
 
       const res = await fetch(
         `http://localhost:${reusePort}/api/conversations/${convId}?msg_limit=80`,
@@ -3890,7 +3889,9 @@ describe("StreamerServer", () => {
       // The request still serves correct content (not an empty/error body).
       expect(body.messages.length).toBe(2);
       // The global stale flag stays set so the next list-level call still rescans.
-      expect((reuseServer as unknown as { scannerStale: boolean }).scannerStale).toBe(true);
+      expect(
+        (reuseServer as unknown as { scannerManager: ScannerManagerView }).scannerManager.stale,
+      ).toBe(true);
     });
 
     it("serves a detail fetch mid-fullRescan without waiting for the scan (#368)", async () => {
@@ -3928,12 +3929,8 @@ describe("StreamerServer", () => {
       await reuseServer.listen(reusePort, { awaitReady: true });
       reusePort = reuseServer.port;
 
-      const srv = reuseServer as unknown as {
-        scanner: unknown;
-        scannerReady: Promise<unknown> | null;
-        rescanForRefresh: () => Promise<unknown>;
-      };
-      const scannerBefore = srv.scanner;
+      const srv = reuseServer as unknown as { scannerManager: ScannerManagerView };
+      const scannerBefore = srv.scannerManager.current;
       expect(scannerBefore).toBeTruthy();
 
       // Gate the shadow scan so it stays in flight while we hit the detail path.
@@ -3954,12 +3951,12 @@ describe("StreamerServer", () => {
       });
 
       // Kick a full rescan in the background (do not await).
-      const rescanPromise = srv.rescanForRefresh();
+      const rescanPromise = srv.scannerManager.rescanForRefresh();
       // Give the gated scan a tick to assign scannerReady.
       await new Promise((r) => setTimeout(r, 20));
-      expect(srv.scannerReady).toBeTruthy();
+      expect(srv.scannerManager.ready).toBeTruthy();
       // Previous generation still installed — shadow has not swapped yet.
-      expect(srv.scanner).toBe(scannerBefore);
+      expect(srv.scannerManager.current).toBe(scannerBefore);
 
       const t0 = Date.now();
       const res = await fetch(
@@ -4006,10 +4003,7 @@ describe("StreamerServer", () => {
       reusePort = reuseServer.port;
 
       const srv = reuseServer as unknown as {
-        scannerStale: boolean;
-        scannerReady: Promise<unknown> | null;
-        scanner: unknown;
-        isConversationSnapshotStale: (conv: unknown) => boolean;
+        scannerManager: ScannerManagerView;
         findConversationByUuid: (uuid: string) => Promise<unknown>;
         inFlightCacheWrites: Set<Promise<unknown>>;
       };
@@ -4032,10 +4026,10 @@ describe("StreamerServer", () => {
       const refreshSpy = vi
         .spyOn(ConversationScanner.prototype, "refreshFile")
         .mockResolvedValue({ id: convId, messageCount: 3 } as never);
-      vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+      vi.spyOn(srv.scannerManager, "isConversationSnapshotStale").mockReturnValue(true);
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(false);
 
-      srv.scannerStale = true;
+      srv.scannerManager.stale = true;
       // Stale-while-revalidate: the response is the current snapshot, served
       // synchronously without awaiting the parse. scan() must never be called;
       // the single-file refresh runs in the background (tracked so close()
@@ -4048,7 +4042,7 @@ describe("StreamerServer", () => {
       await Promise.all([...srv.inFlightCacheWrites]);
       expect(refreshSpy).toHaveBeenCalledWith("/tmp/drift.jsonl");
       // Stale flag untouched: a subsequent list-level getScanner() still rescans.
-      expect(srv.scannerStale).toBe(true);
+      expect(srv.scannerManager.stale).toBe(true);
       void getConvSpy;
     });
 
@@ -4074,7 +4068,7 @@ describe("StreamerServer", () => {
       reusePort = reuseServer.port;
 
       const srv = reuseServer as unknown as {
-        isConversationSnapshotStale: (conv: unknown) => boolean;
+        scannerManager: ScannerManagerView;
         findConversationByUuid: (uuid: string) => Promise<unknown>;
         inFlightCacheWrites: Set<Promise<unknown>>;
       };
@@ -4102,7 +4096,7 @@ describe("StreamerServer", () => {
           await gate;
           return { id: convId, messageCount: 3 } as never;
         });
-      vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+      vi.spyOn(srv.scannerManager, "isConversationSnapshotStale").mockReturnValue(true);
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(false);
 
       const results = await Promise.all(
@@ -4137,7 +4131,7 @@ describe("StreamerServer", () => {
       reusePort = reuseServer.port;
 
       const srv = reuseServer as unknown as {
-        isConversationSnapshotStale: (conv: unknown) => boolean;
+        scannerManager: ScannerManagerView;
         findConversationByUuid: (uuid: string) => Promise<unknown>;
       };
 
@@ -4155,7 +4149,9 @@ describe("StreamerServer", () => {
       const refreshSpy = vi.spyOn(ConversationScanner.prototype, "refreshFile");
       // Even though the on-disk file looks stale, a live session must bypass the
       // stale-check entirely.
-      const staleSpy = vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+      const staleSpy = vi
+        .spyOn(srv.scannerManager, "isConversationSnapshotStale")
+        .mockReturnValue(true);
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
 
       const result = (await srv.findConversationByUuid(convId)) as { messageCount: number };
@@ -4184,7 +4180,7 @@ describe("StreamerServer", () => {
       reusePort = reuseServer.port;
 
       const srv = reuseServer as unknown as {
-        isConversationSnapshotStale: (conv: unknown) => boolean;
+        scannerManager: ScannerManagerView;
         findConversationByUuid: (uuid: string) => Promise<unknown>;
         inFlightCacheWrites: Set<Promise<unknown>>;
       };
@@ -4203,7 +4199,7 @@ describe("StreamerServer", () => {
       const refreshSpy = vi
         .spyOn(ConversationScanner.prototype, "refreshFile")
         .mockResolvedValue({ id: convId, messageCount: 3 } as never);
-      vi.spyOn(srv, "isConversationSnapshotStale").mockReturnValue(true);
+      vi.spyOn(srv.scannerManager, "isConversationSnapshotStale").mockReturnValue(true);
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(false);
 
       // First request refreshes; drain it so its completedAt is stamped.
