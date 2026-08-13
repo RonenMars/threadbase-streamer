@@ -125,7 +125,9 @@ describe("auto-resume eligibility", () => {
 });
 
 type AutoResumeInternals = {
-  autoResumePreviousSessions(rows: ManagedSessionRow[]): Promise<void>;
+  registryBoot: {
+    autoResumePreviousSessions(rows: ManagedSessionRow[]): Promise<void>;
+  };
   resumeSession: ReturnType<typeof vi.fn>;
   log: {
     debug: ReturnType<typeof vi.fn>;
@@ -175,7 +177,7 @@ describe("auto-resume orchestration", () => {
     const server = makePolicyServer(false, cacheDir);
     server.resumeSession = vi.fn();
 
-    await server.autoResumePreviousSessions([mkRow({ project_path: projectDir })]);
+    await server.registryBoot.autoResumePreviousSessions([mkRow({ project_path: projectDir })]);
 
     expect(server.resumeSession).not.toHaveBeenCalled();
   });
@@ -184,7 +186,7 @@ describe("auto-resume orchestration", () => {
     const server = makePolicyServer(true, cacheDir);
     server.resumeSession = vi.fn();
 
-    await server.autoResumePreviousSessions([
+    await server.registryBoot.autoResumePreviousSessions([
       mkRow({
         project_path: projectDir,
         status: "idle",
@@ -237,7 +239,7 @@ describe("auto-resume orchestration", () => {
       }),
     );
 
-    const run = server.autoResumePreviousSessions(rows);
+    const run = server.registryBoot.autoResumePreviousSessions(rows);
     await vi.advanceTimersByTimeAsync(0);
     expect(server.resumeSession).toHaveBeenCalledTimes(1);
 
@@ -280,7 +282,7 @@ describe("auto-resume orchestration", () => {
       likelyOwner: "external",
     });
 
-    await server.autoResumePreviousSessions([
+    await server.registryBoot.autoResumePreviousSessions([
       mkRow({ project_path: projectDir, status_updated_at: Date.now() }),
     ]);
 
@@ -418,7 +420,9 @@ describe("boot auto-resume integration", () => {
       releaseReconcile = resolve;
     });
     const server = await startServer(true, (instance) => {
-      (instance as any).reconcilePreviousSessions = vi.fn().mockReturnValue(reconcileGate);
+      (instance as any).registryBoot.reconcilePreviousSessions = vi
+        .fn()
+        .mockReturnValue(reconcileGate);
     });
     const ws = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`);
 
