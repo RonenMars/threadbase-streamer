@@ -1421,6 +1421,19 @@ export class StreamerServer {
    * on disk; neither it nor any device token is ever logged.
    */
   private initLiveActivityPush(pushRepo: PushRepository): void {
+    // Logged rather than returned silently: a box with APNS_KEY configured used
+    // to print "Live Activity push enabled" here, so an operator who flips the
+    // flag off needs the credential to look ignored on purpose, not missing.
+    if (!this.featureFlags.liveActivityPush) {
+      this.log.info(
+        "Live Activity push is disabled by the liveActivityPush feature flag. " +
+          "Enable it with THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH=1, --feature liveActivityPush=true, " +
+          "or feature_flags: in server.yaml.",
+        { event: "live_activity.disabled" },
+      );
+      return;
+    }
+
     const creds = readApnsCredentialsFromEnv();
     if (!creds) {
       const why = describeMissingApnsCredentials();
