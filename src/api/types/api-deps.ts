@@ -49,6 +49,13 @@ export type ApiDeps = {
   cacheMonitor: () => CacheIntegrityMonitor | null;
   /** Push registration + delivery state (C7). Null when the cache DB is unavailable. */
   pushRepo: () => PushRepository | null;
+  /**
+   * Whether Live Activity push is actually running on this server — the same
+   * fact the boot log reports as `live_activity.enabled`. Asked of the server
+   * rather than re-derived from the environment, because APNs credentials alone
+   * do not enable it: the sender is only wired when the token store opened too.
+   */
+  liveActivityPushEnabled: () => boolean;
 
   /** Paired-device registry (C5). Null when the cache DB is unavailable. */
   devicesRepo: () => DevicesRepository | null;
