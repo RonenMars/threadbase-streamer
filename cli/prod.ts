@@ -177,9 +177,59 @@ function toPowerShellLiteral(value: string): string {
 }
 
 /**
- * Default tail implementation — spawns `tail` (-F follows files across rotation;
- * macOS BSD tail and GNU tail both support -F and -n). Streams to the parent's
- * stdout/stderr and resolves when the child exits.
+ * Windows follow loop, standing in for `tail -F a b`.
+ *
+ * `Get-Content -Wait` cannot do this: given several paths it blocks inside the
+ * first one's read loop forever, so the second file is never opened — not even
+ * its seed lines. On the default `prod logs` (stdout + stderr) that hid stderr
+ * entirely, which is the one stream a crashed boot leaves anything in.
+ *
+ * It also cannot recover from truncation. `-F` was chosen on POSIX precisely
+ * because `prod logs --clear` and the boot log-cap both empty these files; a
+ * `-Wait` follower keeps its stored offset, sits past the new EOF and silently
+ * never prints again. Here a shrunk file resets the offset to 0.
+ *
+ * `$ErrorActionPreference = 'Stop'` covers the seed reads, so an unreadable
+ * path exits non-zero instead of powershell.exe's default "non-terminating
+ * error, exit 0" — which `runProdLogs` would otherwise report as success with
+ * no output. The poll body deliberately swallows its errors instead: a file
+ * that vanishes mid-follow is what `-F` is for, and must not kill the follower.
+ */
+function windowsFollowScript(paths: string[], lines: number): string {
+  const list = `@(${paths.map(toPowerShellLiteral).join(", ")})`;
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$paths = ${list}`,
+    `foreach ($f in $paths) { Get-Content -LiteralPath $f -Tail ${lines} }`,
+    "$offsets = @{}",
+    "foreach ($f in $paths) { $offsets[$f] = (Get-Item -LiteralPath $f).Length }",
+    "while ($true) {",
+    "  foreach ($f in $paths) {",
+    "    try {",
+    "      $len = (Get-Item -LiteralPath $f).Length",
+    "      if ($len -lt $offsets[$f]) { $offsets[$f] = 0 }",
+    "      if ($len -gt $offsets[$f]) {",
+    "        $stream = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite')",
+    "        [void]$stream.Seek($offsets[$f], 'Begin')",
+    "        $reader = New-Object IO.StreamReader($stream)",
+    "        $reader.ReadToEnd()",
+    "        $reader.Dispose(); $stream.Dispose()",
+    "        $offsets[$f] = $len",
+    "      }",
+    "    } catch { }",
+    "  }",
+    "  Start-Sleep -Milliseconds 400",
+    "}",
+  ].join("; ");
+}
+
+/**
+ * Default tail implementation. POSIX spawns `tail` (-F follows files across
+ * rotation; macOS BSD tail and GNU tail both support -F and -n). Windows has no
+ * `tail`, so it spawns `powershell.exe`: a plain `Get-Content -Tail` when not
+ * following, and `windowsFollowScript` when following — see there for why
+ * `Get-Content -Wait` is not usable for either of this command's two files.
+ * Streams to the parent's stdout/stderr and resolves when the child exits.
  */
 export const defaultSpawnTail: SpawnTail = ({ files, lines, follow }) => {
   const existing = files.filter((f) => existsSync(f));
@@ -196,14 +246,19 @@ export const defaultSpawnTail: SpawnTail = ({ files, lines, follow }) => {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        `Get-Content -LiteralPath @(${existing.map(toPowerShellLiteral).join(", ")}) -Tail ${lines}${follow ? " -Wait" : ""}`,
+        follow
+          ? windowsFollowScript(existing, lines)
+          : `$ErrorActionPreference = 'Stop'; Get-Content -LiteralPath @(${existing.map(toPowerShellLiteral).join(", ")}) -Tail ${lines}`,
       ]
     : ["-n", String(lines), ...(follow ? ["-F"] : []), ...existing];
+  const program = isWindows ? "powershell.exe" : "tail";
   return new Promise<SpawnTailResult>((resolve) => {
-    const child = spawn(isWindows ? "powershell.exe" : "tail", args, {
+    const child = spawn(program, args, {
       stdio: ["ignore", "inherit", "inherit"],
     });
-    child.on("error", (err) => resolve({ ok: false, message: `tail failed: ${err.message}` }));
+    child.on("error", (err) =>
+      resolve({ ok: false, message: `${program} failed: ${err.message}` }),
+    );
     child.on("exit", (code) => resolve({ ok: code === 0 }));
   });
 };

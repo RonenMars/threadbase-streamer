@@ -31,7 +31,14 @@ vi.mock("../../src/lifecycle/platform", () => ({
   getSupervisor: () => mockSup,
 }));
 
-vi.mock("node:child_process", () => ({
+// Spread the real module rather than replacing it. A bare factory blanks every
+// other export, and `conflict-check.ts` imports `execFileSync` from here and
+// calls it inside try/catch — so an undefined `execFileSync` threw TypeError,
+// was swallowed, and made `detectConflictingAgents()` return [] unconditionally.
+// The `prod doctor` cases below then asserted against a detector that could not
+// detect anything.
+vi.mock("node:child_process", async () => ({
+  ...(await vi.importActual<typeof import("node:child_process")>("node:child_process")),
   spawn: vi.fn(),
 }));
 
@@ -259,17 +266,28 @@ describe("prod commands", () => {
         child.emit("exit", 0);
         const result = await resultPromise;
         expect(result.ok).toBe(true);
-        expect(spawn).toHaveBeenCalledWith(
-          "powershell.exe",
-          expect.arrayContaining([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            expect.stringContaining("Get-Content -LiteralPath"),
-            expect.stringContaining("-Tail 20 -Wait"),
-          ]),
-          { stdio: ["ignore", "inherit", "inherit"] },
+        const script = vi.mocked(spawn).mock.calls[0]?.[1] as string[];
+        expect(vi.mocked(spawn).mock.calls[0]?.[0]).toBe("powershell.exe");
+        expect(script).toEqual(
+          expect.arrayContaining(["-NoProfile", "-NonInteractive", "-Command"]),
         );
+        const command = script[script.length - 1] as string;
+
+        // Both files must be reachable. `Get-Content -Wait` over two paths
+        // blocks in the first one's read loop and never opens the second, so
+        // stderr — the only stream a crashed boot writes to — was invisible.
+        expect(command).toContain(stdoutLog);
+        expect(command).toContain(stderrLog);
+        expect(command).not.toContain("-Wait");
+
+        expect(command).toContain("-Tail 20");
+        // Resets the offset when a file shrinks, which is what `tail -F` gives
+        // POSIX. Without it `prod logs --clear` or the boot log-cap leaves the
+        // follower parked past EOF, alive-looking and permanently silent.
+        expect(command).toContain("if ($len -lt $offsets[$f]) { $offsets[$f] = 0 }");
+        // A non-terminating Get-Content error otherwise exits 0 and is reported
+        // as success with no output.
+        expect(command).toContain("$ErrorActionPreference = 'Stop'");
       } finally {
         Object.defineProperty(process, "platform", { value: platform });
       }

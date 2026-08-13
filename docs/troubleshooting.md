@@ -192,7 +192,7 @@ $psArg  = "… `$env:THREADBASE_DATABASE_URL='$dbUrl'; `$env:THREADBASE_INSTANCE
 
 ### `EACCES` on port 5432 (not `ECONNREFUSED`)
 
-**When:** `%TEMP%\threadbase.err` shows `EACCES` on port 5432.
+**When:** `~/.threadbase/logs/stderr.log` (via `tb-streamer prod logs --errors-only`) shows `EACCES` on port 5432.
 **Cause:** The env var `THREADBASE_DATABASE_URL` is missing from the task action. The server starts on port 8766 but crashes when the DB client tries to parse an undefined connection string.
 **Diagnosis:** First confirm TCP reachability: `Test-NetConnection -ComputerName <host> -Port 5432`. If that succeeds, the problem is the missing env var, not a firewall rule.
 **Fix:** See "Newly set env vars not picked up by the scheduled task" above.
