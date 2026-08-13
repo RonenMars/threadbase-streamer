@@ -72,9 +72,9 @@ describe("handlePermissionChange — broadcast dedup", () => {
       cursor: 1,
     };
 
-    (server as any).handlePermissionChange(SID, gate);
-    (server as any).handlePermissionChange(SID, { ...gate });
-    (server as any).handlePermissionChange(SID, { ...gate });
+    (server as any).sessionHandlers.handlePermissionChange(SID, gate);
+    (server as any).sessionHandlers.handlePermissionChange(SID, { ...gate });
+    (server as any).sessionHandlers.handlePermissionChange(SID, { ...gate });
 
     expect(broadcasts.filter((b) => b.type === "permission")).toHaveLength(1);
   });
@@ -89,8 +89,8 @@ describe("handlePermissionChange — broadcast dedup", () => {
       ],
     };
 
-    (server as any).handlePermissionChange(SID, { ...base, cursor: 1 });
-    (server as any).handlePermissionChange(SID, { ...base, cursor: 2 });
+    (server as any).sessionHandlers.handlePermissionChange(SID, { ...base, cursor: 1 });
+    (server as any).sessionHandlers.handlePermissionChange(SID, { ...base, cursor: 2 });
 
     expect(broadcasts.filter((b) => b.type === "permission")).toHaveLength(2);
   });
@@ -98,11 +98,11 @@ describe("handlePermissionChange — broadcast dedup", () => {
   it("re-broadcasts when the gate content actually changes", () => {
     const SID = "content-change-sess";
 
-    (server as any).handlePermissionChange(SID, {
+    (server as any).sessionHandlers.handlePermissionChange(SID, {
       prompt: "Do you want to proceed?",
       options: [{ index: 1, label: "Yes" }],
     });
-    (server as any).handlePermissionChange(SID, {
+    (server as any).sessionHandlers.handlePermissionChange(SID, {
       prompt: "Different prompt now",
       options: [{ index: 1, label: "Yes" }],
     });
@@ -112,14 +112,14 @@ describe("handlePermissionChange — broadcast dedup", () => {
 
   it("broadcasts permission_cancelled once when the gate closes, not on repeated nulls", () => {
     const SID = "close-sess";
-    (server as any).handlePermissionChange(SID, {
+    (server as any).sessionHandlers.handlePermissionChange(SID, {
       prompt: "Do you want to proceed?",
       options: [{ index: 1, label: "Yes" }],
     });
     broadcasts = [];
 
-    (server as any).handlePermissionChange(SID, null);
-    (server as any).handlePermissionChange(SID, null);
+    (server as any).sessionHandlers.handlePermissionChange(SID, null);
+    (server as any).sessionHandlers.handlePermissionChange(SID, null);
 
     expect(broadcasts.filter((b) => b.type === "permission_cancelled")).toHaveLength(1);
   });
@@ -131,9 +131,9 @@ describe("handlePermissionChange — broadcast dedup", () => {
       options: [{ index: 1, label: "Yes" }],
     };
 
-    (server as any).handlePermissionChange(SID, gate);
-    (server as any).handlePermissionChange(SID, null);
-    (server as any).handlePermissionChange(SID, { ...gate });
+    (server as any).sessionHandlers.handlePermissionChange(SID, gate);
+    (server as any).sessionHandlers.handlePermissionChange(SID, null);
+    (server as any).sessionHandlers.handlePermissionChange(SID, { ...gate });
 
     expect(broadcasts.filter((b) => b.type === "permission")).toHaveLength(2);
   });
