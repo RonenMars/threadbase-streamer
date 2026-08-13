@@ -102,9 +102,11 @@ Two entries for one id collide on the React key. (`hooks/useConversations.ts:53`
 
 `SETSID` and controlling-terminal hangup are POSIX semantics; ConPTY teardown differs. Assert **observed** behaviour, do not assume parity, and document whichever way it resolves — **including "the host buys nothing on Windows", if that is the answer.**
 
-**Established already, do not re-derive.** In `.github/workflows/ci.yml`: the full suite (`Test (Node 20/22/24)`) runs on **ubuntu-latest only**. There is a `windows-latest` runner but it runs only `npm run test:smoke`, and it is `continue-on-error: true` — informational, never a merge gate.
+**Corrected 2026-08-11 — the paragraph below said the opposite and was wrong on every clause.** In `.github/workflows/ci.yml`: `Test (Node 20/22/24)` still runs on **ubuntu-latest only**, but the `macos-latest` and `windows-latest` legs of `smoke` now run the **whole** suite via `npm test`, not `npm run test:smoke`, and they are **required checks** in ruleset `17561930` — a red one blocks the merge. `continue-on-error` was removed on 2026-08-01 (#340 lineage) and the eight-file allowlist on 2026-08-11 (#527). Node is pinned per OS: macOS 24, Windows 22 (#530). See [docs/testing/cross-platform-ci.md](docs/testing/cross-platform-ci.md).
 
-So "observed behaviour" is reachable by adding assertions to the smoke suite and reading that job's output: real observation, ~5 min per round trip, cannot block a merge. **State plainly which Windows claims were observed and which are assumed.**
+~~**Established already, do not re-derive.** In `.github/workflows/ci.yml`: the full suite (`Test (Node 20/22/24)`) runs on **ubuntu-latest only**. There is a `windows-latest` runner but it runs only `npm run test:smoke`, and it is `continue-on-error: true` — informational, never a merge gate.~~
+
+So "observed behaviour" is reachable by adding assertions to any test file and reading the `Smoke (windows-latest)` output: real observation, ~5 min per round trip. Since #527 there is no allowlist to enrol in — every test file runs on both platforms — and since 2026-08-01 a red result **does** block the merge, so a Windows assertion you add is a gate, not a note. **State plainly which Windows claims were observed and which are assumed.**
 
 ---
 
