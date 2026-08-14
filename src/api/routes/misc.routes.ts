@@ -10,6 +10,7 @@ import {
   PUSH_TOKEN_KINDS,
 } from "../../db/repositories/push.repository";
 import { getLogger } from "../../logger";
+import { serverIdentityPublicKey } from "../../server-identity";
 import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
@@ -114,6 +115,40 @@ export function describePushCapability(
   };
 }
 
+// One line per process, not one per request: `/api/info` is polled, and this
+// module has a 261 MB unrotated-log precedent to respect (CLAUDE.md).
+let identityKeyFailureLogged = false;
+
+/**
+ * This server's identity public key, or `undefined` when the key file cannot be
+ * read — which `JSON.stringify` renders as an absent field, exactly what the
+ * `/api/info` contract says absent means.
+ *
+ * Deliberately different from the CLI's answer to the same failure. `/api/info`
+ * is how a client discovers capabilities and renders its server list, so a
+ * corrupt key file must cost verification and nothing else; turning it into a
+ * 500 would take down the whole endpoint over a file unrelated to the rest of
+ * the response. The pair banner throws instead, because a QR that cannot carry
+ * `spk` is a QR worth refusing to print — and `serve` already degrades that
+ * into a warn plus a QR-less banner (`cli/index.ts`).
+ */
+export function describeServerIdentityKey(): string | undefined {
+  try {
+    return serverIdentityPublicKey();
+  } catch (err) {
+    if (!identityKeyFailureLogged) {
+      identityKeyFailureLogged = true;
+      // Safe to interpolate: every error this can throw carries the file path
+      // and fixed text, never the file's contents.
+      getLogger("identity").error(
+        `Server identity key unavailable, so /api/info will omit it: ${err instanceof Error ? err.message : String(err)}`,
+        { event: "identity.unavailable" },
+      );
+    }
+    return undefined;
+  }
+}
+
 const clientLog = getLogger("client");
 
 type ClientLogEntry = {
@@ -169,6 +204,12 @@ export const createMiscRoutes = (
       // registering tokens nothing will ever send to. Absent on older servers,
       // which a client should read as "unknown", not "unavailable".
       push: describePushCapability(deps.liveActivityPushEnabled()),
+      // This server's long-term X25519 public key, base64url. The same value the
+      // pair QR carries as `spk`, served here so an already-paired client can
+      // learn it without re-scanning. Additive: absent means a server with no
+      // readable identity key, which a client must read as "cannot verify this
+      // server" — never as a reason to fail the rest of this response.
+      serverIdentityKey: describeServerIdentityKey(),
     });
   });
 
