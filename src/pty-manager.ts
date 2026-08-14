@@ -1152,6 +1152,11 @@ export class PTYManager implements SessionRunner {
     this.clearReadyFallback(sessionId);
     session.lastActivityAt = new Date();
     session.status = "waiting_input";
+    // C3: record HOW we concluded this, not just that we did. A
+    // `timeout-fallback` here means no marker ever appeared and we assumed —
+    // previously indistinguishable on the wire from an observed marker.
+    session.statusSource = source;
+    session.statusUpdatedAt = new Date();
     // Turn end clears the phase. This is the only place it can happen
     // correctly: the exit edge is not an output event, so it cannot be read off
     // the screen — Claude's TUI does differential repaints and a return to idle
@@ -1160,12 +1165,10 @@ export class PTYManager implements SessionRunner {
     // is the bug tb-mobile PR #647 shipped. markReady is the single idempotent
     // running -> waiting_input transition, and it is driven by the waiting-for-
     // input OSC, which arrives even when no further chunk will.
+    // Kept below the source assignment so it stays inside the window
+    // status-confidence.test.ts scans, and so onPhaseChange never observes a
+    // session whose status has moved but whose statusSource has not.
     this.setPhase(sessionId, session, null);
-    // C3: record HOW we concluded this, not just that we did. A
-    // `timeout-fallback` here means no marker ever appeared and we assumed —
-    // previously indistinguishable on the wire from an observed marker.
-    session.statusSource = source;
-    session.statusUpdatedAt = new Date();
     // Log retained on purpose: `reason=fallback:timeout` would be the only
     // signal that Claude's TUI introduced a new boot variant our markers miss.
     const elapsedMs = Date.now() - (this.firstChunkAt.get(sessionId) ?? Date.now());

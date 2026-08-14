@@ -23,10 +23,10 @@
 // which is not an output event; that is why the phase is cleared out-of-band in
 // markReady() rather than inferred from the screen going quiet.
 
-import { CODEX_BUSY_STATUS_RE, codexStatusBarLine } from "../../codex-pty-runner";
 import type { ProviderName } from "../../providers";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "../../providers";
 import type { AgentPhase } from "../../types";
+import { CODEX_BUSY_STATUS_RE, codexStatusBarLine } from "./codexScreen";
 
 /**
  * Codex's status bar is binary: a turn walks Ready → Working → Ready with no

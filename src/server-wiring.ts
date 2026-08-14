@@ -327,6 +327,11 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
       });
     },
     onPhaseChange: (sessionId, phase) => {
+      // Mirror into SessionStore so the REST field carries it too. The runner
+      // mutates its own InternalSession and toPublicSession does not forward
+      // subStatus, so without this `GET /api/sessions/:id` reports null for the
+      // whole turn and only a subscribed socket ever sees a phase.
+      deps.sessionStore.updateManaged(sessionId, { subStatus: phase });
       // Scoped to this session's subscribers and sent as a minimal frame —
       // NOT routed through onStatusChange's handler, which writes a DB row,
       // refreshes the scanner index, broadcasts globally and pokes the APNs
