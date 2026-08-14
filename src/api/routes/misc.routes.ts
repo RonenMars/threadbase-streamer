@@ -10,6 +10,7 @@ import {
   PUSH_TOKEN_KINDS,
 } from "../../db/repositories/push.repository";
 import { getLogger } from "../../logger";
+import { serverIdentityPublicKey } from "../../server-identity";
 import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
@@ -169,6 +170,11 @@ export const createMiscRoutes = (
       // registering tokens nothing will ever send to. Absent on older servers,
       // which a client should read as "unknown", not "unavailable".
       push: describePushCapability(deps.liveActivityPushEnabled()),
+      // This server's long-term X25519 public key, base64url. The same value the
+      // pair QR carries as `spk`, served here so an already-paired client can
+      // learn it without re-scanning. Additive: absent means a server with no
+      // identity key, which a client must read as "cannot verify this server".
+      serverIdentityKey: serverIdentityPublicKey(),
     });
   });
 

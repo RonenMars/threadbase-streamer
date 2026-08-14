@@ -29,6 +29,7 @@ import { type FeatureFlagValues, parseFeatureFlagArgs } from "../src/feature-fla
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
+import { serverIdentityPublicKey } from "../src/server-identity";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
 import { appendUpdateLog } from "../src/updater/update-log";
@@ -808,7 +809,17 @@ async function printServerBanner({
   };
 
   const expSeconds = Math.floor(expiresAt / 1000);
-  const payload = `threadbase://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}`;
+  // `spk` is this server's identity public key (src/server-identity.ts): 43
+  // base64url characters, so URL-safe unencoded. `v` is the envelope version,
+  // per design §2.3. Neither is load-bearing yet — no handshake reads them —
+  // and a client must take capability from `GET /api/info`, never from `v`
+  // alone, because a QR relayed by an attacker is not an authenticated source
+  // for that question (design §6.3).
+  // Additive: parsePairUri on the client reads named parameters and ignores the
+  // rest, so an older app scanning this QR behaves exactly as it does today.
+  const payload =
+    `threadbase://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}` +
+    `&spk=${serverIdentityPublicKey()}&v=1`;
   const qr = await generateQr(payload);
 
   log.info(printUrlBanner({ url, qr, expiresAt }), undefined, "console");
