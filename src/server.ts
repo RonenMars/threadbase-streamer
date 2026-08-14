@@ -74,7 +74,12 @@ import {
 import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
-import { CLAUDE_CODE_PROVIDER, coerceProviderForRunner, type ProviderName } from "./providers";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  coerceProviderForRunner,
+  type ProviderName,
+} from "./providers";
 import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
 import { ScannerManager } from "./scanner-manager";
@@ -124,7 +129,7 @@ import type {
   SessionResponse,
 } from "./types";
 
-import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
+import { canonicalizeFilePath, toNativeFilePath } from "./utils/canonicalizeFilePath";
 import { toClientConversationLines } from "./utils/codexConversationLine";
 import { parseIsoDateOrNull } from "./utils/dates";
 import { createScanProgressThrottle } from "./utils/scanProgressThrottle";
@@ -542,6 +547,7 @@ export class StreamerServer {
       watchConversationFile: (sessionId, historyId) =>
         this.sessionWatchers.watchConversationFile(sessionId, historyId),
       broadcastSessionList: () => this.wsHub.broadcast(this.sessionListPayload()),
+      resolveConversationTarget: (sessionId) => this.resolveConversationTarget(sessionId),
     });
     this.includeAgents = parseIncludeAgentsEnv(process.env.THREADBASE_INCLUDE_AGENTS);
     this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
@@ -2159,13 +2165,31 @@ export class StreamerServer {
       }
     }
 
+    // Cold boot resolves nothing through the scanner yet, so a persisted Codex
+    // rollout has to come from the cache. Without this a boot-time resume of a
+    // Codex session reads as history_file_missing purely because the warm-up
+    // has not run, and auto-resume permanently skips a session that is fine.
+    const cachedConvMeta = this.cache?.getMetaById(historyId);
+    const cachedPath = cachedConvMeta?.filePath ? toNativeFilePath(cachedConvMeta.filePath) : null;
+    const cachedCodexPath =
+      (registryProvider === CODEX_CLI_PROVIDER ||
+        cachedConvMeta?.provider === CODEX_CLI_PROVIDER) &&
+      cachedPath != null &&
+      existsSync(cachedPath)
+        ? cachedPath
+        : null;
     const jsonlCwd = jsonlPath ? await this.conversationHandlers.readCwdFromJsonl(jsonlPath) : null;
-    const projectPath: string = jsonlCwd ?? (conv as any)?.projectPath;
+    const projectPath: string =
+      jsonlCwd ??
+      (conv as any)?.projectPath ??
+      (cachedCodexPath ? cachedConvMeta?.projectPath : null);
     if (!projectPath) {
       // Nothing at all resolved — the history file is gone, not merely
       // unreadable. Distinguished from "path unknown" because it is permanent:
       // the caller must not retry it.
-      if (!conv && !jsonlPath) return { ok: false, reason: "history_file_missing" };
+      if (!conv && !jsonlPath && !cachedCodexPath) {
+        return { ok: false, reason: "history_file_missing" };
+      }
       return { ok: false, reason: "no_project_path" };
     }
 
@@ -2175,7 +2199,6 @@ export class StreamerServer {
     // …and, when the fallback above fired, the registry row's own provider as a
     // last resort: neither lookup is keyed by the placeholder id, so without it
     // a Codex placeholder would default to Claude and spawn the wrong CLI.
-    const cachedConvMeta = this.cache?.getMetaById(historyId);
     const provider = coerceProviderForRunner(
       (conv as any)?.provider ?? cachedConvMeta?.provider ?? registryProvider,
     );
@@ -2190,7 +2213,8 @@ export class StreamerServer {
       // conversation. Kept separate from `jsonlPath` deliberately: feeding it to
       // conversationBusy() would newly arm the mtime heuristic for Codex, which
       // is exactly the over-broad signal the report ruled out.
-      historyPath: jsonlPath ?? ((conv as any)?.filePath as string | undefined) ?? null,
+      historyPath:
+        jsonlPath ?? ((conv as any)?.filePath as string | undefined) ?? cachedCodexPath ?? null,
       conv,
       projectPath,
       provider,

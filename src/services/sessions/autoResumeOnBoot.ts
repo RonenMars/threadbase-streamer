@@ -18,11 +18,13 @@ export type AutoResumeSkipReason =
   | "not_interrupted"
   | "too_old"
   | "project_missing"
-  | "resume_identity_missing";
+  | "resume_identity_missing"
+  | "history_missing";
 
 export interface AutoResumeOptions {
   now: number;
   projectExists: (projectPath: string) => boolean;
+  historyExists: (row: ManagedSessionRow) => boolean;
 }
 
 /** Why a persisted row must remain a user-driven resume, or null when eligible. */
@@ -35,6 +37,7 @@ export function autoResumeSkipReason(
   if (opts.now - row.status_updated_at > AUTO_RESUME_WINDOW_MS) return "too_old";
   if (!opts.projectExists(row.project_path)) return "project_missing";
   if (resumeIdForRow(row) == null) return "resume_identity_missing";
+  if (!opts.historyExists(row)) return "history_missing";
   return null;
 }
 
