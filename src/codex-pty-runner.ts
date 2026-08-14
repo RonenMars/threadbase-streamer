@@ -1,10 +1,18 @@
-import { Terminal } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
 import { getLogger, type Logger } from "./logger";
 import { clearCodexExeCache, resolveCodexExe } from "./platform";
 import { CODEX_CLI_PROVIDER } from "./providers";
+import {
+  createScreen,
+  digestBytes,
+  type InternalSession,
+  loadPty,
+  PTY_COLS,
+  PTY_ROWS,
+  stripAnsi,
+} from "./pty-shared";
 import {
   type CodexGateType,
   rememberedGateDigit,
@@ -29,13 +37,8 @@ const OUTPUT_BUFFER_MAX = 65536;
 // pty-manager.ts INPUT_HISTORY_MAX.
 const INPUT_HISTORY_MAX = 50;
 
-// PTY geometry — same as pty-manager.ts. The headless render terminal
-// (session.screen) MUST match these so Codex's absolute cursor moves
-// (ESC[<row>;<col>H) resolve to the same screen coordinates the real TUI is
-// painting against.
-const PTY_COLS = 120;
-const PTY_ROWS = 40;
-const SCREEN_SCROLLBACK = 1000;
+// PTY geometry, the render terminal, node-pty loading, the session shape and
+// ANSI stripping are shared with pty-manager.ts — see pty-shared.ts.
 
 // Phase 0 findings (live PTY probe, not spec): Codex's status bar renders
 // "Ready" (case-sensitive) once the session is actually usable, e.g.
@@ -221,16 +224,6 @@ export function codexScreenLooksIdle(lines: string[]): boolean {
   return lines.some((l) => /^\s*[›>]\s/.test(l) || l.includes("›"));
 }
 
-function digestBytes(s: string): string {
-  const escaped = s
-    .replace(new RegExp(String.fromCharCode(0x1b), "g"), "\\x1b")
-    .replace(/\r/g, "\\r")
-    .replace(/\n/g, "\\n")
-    .replace(/\t/g, "\\t");
-  if (escaped.length <= 200) return escaped;
-  return `${escaped.slice(0, 100)}…[${escaped.length - 200}B omitted]…${escaped.slice(-100)}`;
-}
-
 // Build the question card for a gate, broadcast over the existing `permission`
 // WS transport (mobile already renders these as tappable cards). Real options
 // keep their literal on-screen digits; the synthetic "remember" variants
@@ -279,45 +272,6 @@ function gateCard(
       { index: 3, label: "Yes, continue (remember for all projects)", answerKeys: "3\r" },
     ],
   };
-}
-
-// node-pty is a native addon — import dynamically to allow graceful failure
-let pty: typeof import("node-pty") | null = null;
-
-async function loadPty(): Promise<typeof import("node-pty")> {
-  if (pty) return pty;
-  try {
-    pty = await import("node-pty");
-    return pty;
-  } catch (err) {
-    throw new Error(
-      "node-pty is required for PTY management but failed to load. " +
-        "Ensure it is installed: npm install node-pty\n" +
-        `Original error: ${err}`,
-    );
-  }
-}
-
-interface InternalSession extends ManagedSession {
-  process: any; // node-pty IPty
-  outputBuffer: Buffer;
-  // Headless terminal rendering the raw PTY stream into a real screen grid —
-  // same rationale as pty-manager.ts: Codex's absolute-cursor repaints
-  // scramble raw byte order, so readiness/trust-gate detection reads the
-  // rendered screen, not the raw chunk.
-  screen: Terminal;
-  // Ground-truth user messages submitted to this PTY, oldest-first, capped at
-  // INPUT_HISTORY_MAX. Recorded in writeSubmit(); replayed via getInputHistory().
-  inputHistory: UserMessage[];
-}
-
-function createScreen(): Terminal {
-  return new Terminal({
-    cols: PTY_COLS,
-    rows: PTY_ROWS,
-    scrollback: SCREEN_SCROLLBACK,
-    allowProposedApi: true,
-  });
 }
 
 export class CodexPtyRunner implements SessionRunner {
@@ -1343,11 +1297,4 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
   };
-}
-
-// Strip ANSI escape sequences for clean text preview — identical to
-// pty-manager.ts's stripAnsi.
-function stripAnsi(str: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI stripping
-  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
 }

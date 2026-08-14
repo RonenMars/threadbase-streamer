@@ -1,4 +1,3 @@
-import { Terminal } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
@@ -6,6 +5,14 @@ import { buildFlagArgs, buildSettingsJson } from "./claude-flags";
 import { getLogger, type Logger } from "./logger";
 import { clearClaudeExeCache, resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
+import {
+  createScreen,
+  digestBytes,
+  type InternalSession,
+  loadPty,
+  PTY_ROWS,
+  stripAnsi,
+} from "./pty-shared";
 import {
   detectGateScreen,
   hasPermissionOsc,
@@ -36,14 +43,8 @@ const OUTPUT_BUFFER_MAX = 65536;
 // long-lived session; replay only needs the recent tail for ownership.
 const INPUT_HISTORY_MAX = 50;
 
-// PTY geometry. The headless render terminal (session.screen) MUST match these
-// so Claude's absolute cursor moves (ESC[<row>;<col>H) resolve to the same
-// screen coordinates the real TUI is painting against.
-const PTY_COLS = 120;
-const PTY_ROWS = 40;
-// Scrollback depth for the render terminal. Replay reads up to maxLines (200)
-// from the rendered buffer, so keep enough history above the viewport.
-const SCREEN_SCROLLBACK = 1000;
+// PTY geometry, the render terminal, node-pty loading, the session shape and
+// ANSI stripping are shared with codex-pty-runner.ts — see pty-shared.ts.
 
 // Markers that indicate Claude has reached an interactive prompt and is ready
 // for user input. The TUI has at least two startup variants:
@@ -128,58 +129,6 @@ const SUBMIT_DELAY_MS = 16;
 // the redraw race this closes. Cap the wait so a genuinely wedged/silent PTY
 // still gets its \r rather than hanging forever.
 const SUBMIT_MAX_WAIT_MS = 500;
-
-function digestBytes(s: string): string {
-  // Replace control chars with their hex form so logs are grep-able.
-  // Building the regex via RegExp() sidesteps a Biome lint rule that flags
-  // literal control characters in regex literals.
-  const escaped = s
-    .replace(new RegExp(String.fromCharCode(0x1b), "g"), "\\x1b")
-    .replace(/\r/g, "\\r")
-    .replace(/\n/g, "\\n")
-    .replace(/\t/g, "\\t");
-  if (escaped.length <= 200) return escaped;
-  return `${escaped.slice(0, 100)}…[${escaped.length - 200}B omitted]…${escaped.slice(-100)}`;
-}
-
-// node-pty is a native addon — import dynamically to allow graceful failure
-let pty: typeof import("node-pty") | null = null;
-
-async function loadPty(): Promise<typeof import("node-pty")> {
-  if (pty) return pty;
-  try {
-    pty = await import("node-pty");
-    return pty;
-  } catch (err) {
-    throw new Error(
-      "node-pty is required for PTY management but failed to load. " +
-        "Ensure it is installed: npm install node-pty\n" +
-        `Original error: ${err}`,
-    );
-  }
-}
-
-interface InternalSession extends ManagedSession {
-  process: any; // node-pty IPty
-  outputBuffer: Buffer;
-  // Headless terminal that renders the raw PTY stream into a real screen grid.
-  // getOutputLines() reads its rendered buffer so replay reflects true screen
-  // order rather than raw byte order (which Claude's absolute-cursor repaints
-  // scramble — see getOutputLines for the desync this fixes).
-  screen: Terminal;
-  // Ground-truth user messages submitted to this PTY, oldest-first, capped at
-  // INPUT_HISTORY_MAX. Recorded in writeSubmit(); replayed via getInputHistory().
-  inputHistory: UserMessage[];
-}
-
-function createScreen(): Terminal {
-  return new Terminal({
-    cols: PTY_COLS,
-    rows: PTY_ROWS,
-    scrollback: SCREEN_SCROLLBACK,
-    allowProposedApi: true,
-  });
-}
 
 // Build the environment for a spawned `claude` process. The Anthropic API key
 // is injected only here — never exported into the streamer's global process
@@ -1254,10 +1203,4 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.sessionName != null && { sessionName: s.sessionName }),
     ...(s.firstMessageText != null && { firstMessageText: s.firstMessageText }),
   };
-}
-
-// Strip ANSI escape sequences for clean text preview
-function stripAnsi(str: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI stripping
-  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
 }
