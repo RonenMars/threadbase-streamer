@@ -452,6 +452,66 @@ describe("SessionStore", () => {
       expect(page.sessions.map((s) => s.projectName)).toEqual(["a-proj", "b-proj", "c-proj"]);
     });
 
+    it("sorts by status rank — live statuses first, most recently active first", () => {
+      const at = (min: number) => new Date(Date.UTC(2026, 0, 1, 0, min));
+      store.addManaged(
+        makeManagedSession({ id: "id-idle-new", status: "idle", lastActivityAt: at(50) }),
+      );
+      store.addManaged(
+        makeManagedSession({ id: "id-run-old", status: "running", lastActivityAt: at(10) }),
+      );
+      store.addManaged(
+        makeManagedSession({ id: "id-wait-new", status: "waiting_input", lastActivityAt: at(40) }),
+      );
+      store.addManaged(
+        makeManagedSession({ id: "id-idle-old", status: "idle", lastActivityAt: at(5) }),
+      );
+
+      const asc = store.paginate(noPty, { limit: 10, sortBy: "status", order: "asc" });
+      expect(asc.sessions.map((s) => s.id)).toEqual([
+        "id-wait-new", // live bucket, newest activity
+        "id-run-old", // live bucket — `running` and `waiting_input` rank equally
+        "id-idle-new",
+        "id-idle-old",
+      ]);
+
+      // `desc` reverses the whole ordering: idle first, oldest first.
+      const desc = store.paginate(noPty, { limit: 10, sortBy: "status", order: "desc" });
+      expect(desc.sessions.map((s) => s.id)).toEqual([
+        "id-idle-old",
+        "id-idle-new",
+        "id-run-old",
+        "id-wait-new",
+      ]);
+    });
+
+    it("paginates by status rank without skipping or duplicating a stable list", () => {
+      const at = (min: number) => new Date(Date.UTC(2026, 0, 1, 0, min));
+      for (let i = 0; i < 4; i++) {
+        store.addManaged(
+          makeManagedSession({
+            id: `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`,
+            status: i % 2 === 0 ? "running" : "idle",
+            lastActivityAt: at(i),
+          }),
+        );
+      }
+      const all = store.paginate(noPty, { limit: 10, sortBy: "status", order: "asc" });
+
+      const page1 = store.paginate(noPty, { limit: 2, sortBy: "status", order: "asc" });
+      if (!page1.nextCursor) throw new Error("expected page1.nextCursor");
+      const page2 = store.paginate(noPty, {
+        limit: 2,
+        sortBy: "status",
+        order: "asc",
+        cursor: page1.nextCursor,
+      });
+
+      expect([...page1.sessions, ...page2.sessions].map((s) => s.id)).toEqual(
+        all.sessions.map((s) => s.id),
+      );
+    });
+
     it("encodeCursor/decodeCursor round-trip preserves values", () => {
       const cursor = { k: "2026-01-01T00:00:00.000Z", id: UUID_A };
       const encoded = encodeCursor(cursor);

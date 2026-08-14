@@ -170,8 +170,30 @@ function getSortValue(s: SessionResponse, key: SessionSortKey): string | number 
     case "projectName":
       return s.projectName;
     case "status":
-      return s.status;
+      return statusSortValue(s);
   }
+}
+
+// `sortBy=status` sorts by an explicit rank, not by the status string: the two
+// live statuses (`running`, `waiting_input`) rank ahead of `idle` as one bucket,
+// and inside a bucket the most recently active session comes first — the order a
+// client renders anyway. A lexicographic sort put `idle` first on `asc`.
+//
+// Both halves are folded into ONE ascending string rather than a rank plus a
+// secondary comparator key, because `findCursorBoundary` resumes a page from
+// `{k, id}` alone: a secondary key it cannot see would put the boundary scan and
+// the sort in disagreement. (Pagination over `status` is still racy by nature —
+// the key mutates and the list is re-derived per request — that is unchanged and
+// out of scope here.)
+//
+// `order=desc` therefore reverses the whole thing: `idle` first, oldest first.
+function statusSortValue(s: SessionResponse): string {
+  const rank = s.status === "idle" ? 1 : 0;
+  const activeAt = Date.parse(s.lastActivityAt ?? s.startedAt);
+  // Complement so newest sorts first under an ascending compare. Fixed width so
+  // the comparison stays lexicographic-safe.
+  const recency = String(1e15 - (Number.isNaN(activeAt) ? 0 : activeAt)).padStart(16, "0");
+  return `${rank}:${recency}`;
 }
 
 function compareValues(a: string | number | undefined, b: string | number | undefined): number {
