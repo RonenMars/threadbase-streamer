@@ -76,10 +76,20 @@ export function hasCapability(principal: Principal, required: Capability): boole
  * Capability required to reach a route.
  *
  * Matching is longest-prefix so a specific rule beats a general one. Returning
- * `null` means "no rule" — and the caller DENIES in that case rather than
- * allowing, so a newly added route is inaccessible until someone classifies it.
- * Failing closed is the whole point: a forgotten mapping should surface as a
- * broken feature in review, never as an unguarded endpoint in production.
+ * `null` means "no rule".
+ *
+ * **The caller ALLOWS in that case — it does not deny.** `authMiddleware` calls
+ * `next()` for an unclassified path so an unknown route still 404s, because a
+ * 403 would tell an authenticated caller that a path it cannot name might
+ * exist. This comment previously claimed the opposite, which mattered: a reader
+ * trusting it would believe a route was guarded by omission when it is not.
+ *
+ * The fail-closed guarantee is therefore a BUILD-TIME one, enforced by
+ * `__tests__/capabilities.test.ts` ("every mounted route is classified"), which
+ * reads both the mount prefixes in `api/app.ts` and the path literals in
+ * `api/routes/*.ts`. A new endpoint with no mapping fails that test rather than
+ * being denied at runtime. If you change this function's contract, change that
+ * test and this comment together — they are the whole guarantee.
  */
 const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]> = [
   // Most specific first for readability; matching sorts by length anyway.

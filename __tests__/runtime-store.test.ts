@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
+import { DevicesRepository } from "../src/db/repositories/devices.repository";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
 import type { ManagedSession } from "../src/types";
@@ -58,10 +59,11 @@ describe("RuntimeStore", () => {
     const applied = store.getDatabase().prepare("SELECT id FROM schema_migrations").all() as Array<{
       id: string;
     }>;
-    // Only the runtime tree ran here — none of the cache's 001..014.
+    // Only the runtime tree ran here — none of the cache's 001..015.
     expect(applied.map((r) => r.id)).toEqual([
       "001_create_managed_sessions.sql",
       "002_add_managed_session_boot_token.sql",
+      "003_create_devices.sql",
     ]);
     store.close();
 
@@ -206,6 +208,128 @@ describe("RuntimeStore", () => {
       expect(store.importLegacyManagedSessions(cache.getDatabase())).toBe(0);
       store.close();
       cache.close();
+    });
+  });
+
+  /**
+   * The device registry makes the same move, and for a sharper reason: cache.db
+   * is what `tb-streamer cache clear` deletes and what the integrity monitor
+   * rebuilds, and losing the devices table invalidates every device token ever
+   * issued. While it lived there, no client could safely present the device
+   * token as its only credential.
+   */
+  describe("importLegacyDevices", () => {
+    /** A cache.db carrying the 011 devices table. */
+    function seedLegacyDevices(rows: number): Database.Database {
+      const db = new Database(join(baseDir, "legacy-devices.db"));
+      db.exec(`
+        CREATE TABLE devices (
+          device_id TEXT PRIMARY KEY, public_key TEXT NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE, name TEXT, capabilities TEXT NOT NULL,
+          created_at INTEGER NOT NULL, last_seen_at INTEGER, revoked_at INTEGER
+        );
+      `);
+      const insert = db.prepare(`
+        INSERT INTO devices (device_id, public_key, token_hash, name, capabilities, created_at)
+        VALUES (?, 'pk', ?, ?, '["history:read"]', 0)
+      `);
+      for (let i = 0; i < rows; i++) insert.run(`dev-${i}`, `hash-${i}`, `phone-${i}`);
+      return db;
+    }
+
+    // Unlike managed_sessions this MOVES: a device row carries a user-supplied
+    // label, so a second copy is not left sitting in the cache.
+    it("moves rows across and deletes the cache-side copy", () => {
+      const legacy = seedLegacyDevices(2);
+
+      const first = openRuntime();
+      expect(first.importLegacyDevices(legacy)).toEqual({ copied: 2, purged: true });
+      // Read through the repository, not raw SQL: the point of the move is that
+      // DevicesRepository works against the runtime handle.
+      expect(new DevicesRepository(first.getDatabase()).get("dev-1")?.name).toBe("phone-1");
+      first.close();
+
+      // The user-supplied labels are gone from the cache, not duplicated there.
+      const left = legacy.prepare("SELECT COUNT(*) AS n FROM devices").get() as { n: number };
+      expect(left.n).toBe(0);
+
+      // Second boot imports nothing — both because the destination is non-empty
+      // and because the source is now empty — so a device revoked since stays
+      // revoked rather than being resurrected with working credentials.
+      const second = openRuntime();
+      new DevicesRepository(second.getDatabase()).revoke("dev-0");
+      expect(second.importLegacyDevices(legacy)).toEqual({ copied: 0, purged: false });
+      expect(new DevicesRepository(second.getDatabase()).get("dev-0")?.revoked_at).not.toBeNull();
+      second.close();
+      legacy.close();
+    });
+
+    // Deleting the source is conditional on an import having actually run. This
+    // is the reachable half of that: a non-empty destination makes the import
+    // decline, and nothing may then be deleted on the strength of a copy that
+    // never happened.
+    //
+    // The other half — `landed !== copied` after a partial INSERT OR IGNORE —
+    // is deliberately unreachable today, because importLegacyTable only runs
+    // against an empty destination and the source's own UNIQUE constraint rules
+    // out intra-source collisions. It is kept as an interlock for whoever
+    // relaxes that guard: the cost of the check is one COUNT, and the cost of
+    // getting it wrong is deleting a device registry that was not fully copied.
+    it("does not delete the cache-side copy when no import ran", () => {
+      const legacy = seedLegacyDevices(2);
+      const store = openRuntime();
+      store
+        .getDatabase()
+        .prepare(
+          `INSERT INTO devices (device_id, public_key, token_hash, name, capabilities, created_at)
+           VALUES ('squatter', 'pk', 'squatter-hash', 'other', '["history:read"]', 0)`,
+        )
+        .run();
+      expect(store.importLegacyDevices(legacy)).toEqual({ copied: 0, purged: false });
+
+      const left = legacy.prepare("SELECT COUNT(*) AS n FROM devices").get() as { n: number };
+      expect(left.n).toBe(2);
+      store.close();
+      legacy.close();
+    });
+
+    it("is a no-op against a source with no devices table at all", () => {
+      const bare = new Database(join(baseDir, "bare.db"));
+      const store = openRuntime();
+      expect(store.importLegacyDevices(bare)).toEqual({ copied: 0, purged: false });
+      store.close();
+      bare.close();
+    });
+
+    it("is a no-op against a cache whose devices table is empty", () => {
+      // The ordinary case on every machine that pairs after the move: cache.db
+      // still creates the 011 table, it is just never populated.
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"));
+      const store = openRuntime();
+      expect(store.importLegacyDevices(cache.getDatabase())).toEqual({
+        copied: 0,
+        purged: false,
+      });
+      store.close();
+      cache.close();
+    });
+
+    // The whole reason for the move, asserted rather than described: deleting
+    // cache.db is documented support advice, and it must no longer cost the
+    // device registry.
+    it("keeps devices after cache.db is deleted", () => {
+      const cachePath = join(cacheDir, "cache.db");
+      const cache = ConversationCache.open(cachePath);
+      const store = openRuntime();
+      const repo = new DevicesRepository(store.getDatabase());
+      const { deviceToken } = repo.register({ publicKey: "pk", name: "phone", preset: "full" });
+      cache.close();
+
+      rmSync(cachePath, { force: true });
+      expect(existsSync(cachePath)).toBe(false);
+
+      expect(repo.authenticate(deviceToken)?.name).toBe("phone");
+      store.close();
     });
   });
 });

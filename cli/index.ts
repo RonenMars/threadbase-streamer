@@ -447,6 +447,106 @@ program
       }),
   );
 
+/**
+ * Paired-device management from the shell.
+ *
+ * Talks to runtime.db directly rather than to the HTTP API, so it works with
+ * the server stopped — an erasure tool that needs the thing you are erasing
+ * from to be running is not much of an erasure tool. Device auth re-reads the
+ * row on every request with no cache (see 011/003), so removing one from under
+ * a live server takes effect immediately rather than going stale.
+ */
+program
+  .command("devices")
+  .description("List, revoke and erase paired devices")
+  .addCommand(
+    new Command("list")
+      .description("Show every paired device, including revoked ones")
+      .option("--db <path>", "runtime.db path (default: ~/.threadbase/runtime.db)")
+      .action(async (opts) => {
+        const { RuntimeStore, resolveRuntimeDbPath } = await import("../src/db/runtime-store");
+        const { DevicesRepository } = await import("../src/db/repositories/devices.repository");
+        const store = RuntimeStore.open(resolveRuntimeDbPath(opts.db));
+        const devices = new DevicesRepository(store.getDatabase()).list();
+        store.close();
+        if (devices.length === 0) {
+          log.info("No paired devices.", undefined, "console");
+          return;
+        }
+        for (const d of devices) {
+          const state = d.revokedAt ? "revoked" : "active";
+          const seen = d.lastSeenAt ? new Date(d.lastSeenAt).toISOString() : "never";
+          log.info(
+            `${d.deviceId}  ${state.padEnd(7)}  ${d.name ?? "(unnamed)"}  last seen ${seen}  [${d.capabilities.join(", ")}]`,
+            undefined,
+            "console",
+          );
+        }
+      }),
+  )
+  .addCommand(
+    new Command("revoke")
+      .argument("<deviceId>")
+      .description("Refuse this device's token, keeping its record for the audit trail")
+      .option("--db <path>", "runtime.db path (default: ~/.threadbase/runtime.db)")
+      .action(async (deviceId: string, opts) => {
+        const { RuntimeStore, resolveRuntimeDbPath } = await import("../src/db/runtime-store");
+        const { DevicesRepository } = await import("../src/db/repositories/devices.repository");
+        const store = RuntimeStore.open(resolveRuntimeDbPath(opts.db));
+        const ok = new DevicesRepository(store.getDatabase()).revoke(deviceId);
+        store.close();
+        log.info(ok ? `Revoked ${deviceId}.` : `No such device: ${deviceId}`, undefined, "console");
+        if (!ok) process.exitCode = 1;
+      }),
+  )
+  .addCommand(
+    new Command("delete")
+      .argument("[deviceId]")
+      .description("Erase a device record. With --revoked, erase every revoked device instead")
+      .option("--revoked", "Erase all revoked devices rather than one by id")
+      .option("--force", "Erase an ACTIVE device (revoking first is the safe order)")
+      .option("--db <path>", "runtime.db path (default: ~/.threadbase/runtime.db)")
+      .action(async (deviceId: string | undefined, opts) => {
+        const { RuntimeStore, resolveRuntimeDbPath } = await import("../src/db/runtime-store");
+        const { DevicesRepository } = await import("../src/db/repositories/devices.repository");
+        const store = RuntimeStore.open(resolveRuntimeDbPath(opts.db));
+        const repo = new DevicesRepository(store.getDatabase());
+
+        if (opts.revoked) {
+          const n = repo.deleteRevoked();
+          store.close();
+          log.info(`Erased ${n} revoked device record(s).`, undefined, "console");
+          return;
+        }
+        if (!deviceId) {
+          store.close();
+          log.error("Pass a device id, or --revoked to erase all revoked devices.");
+          process.exitCode = 1;
+          return;
+        }
+        const existing = repo.get(deviceId);
+        if (!existing) {
+          store.close();
+          log.info(`No such device: ${deviceId}`, undefined, "console");
+          process.exitCode = 1;
+          return;
+        }
+        // Erasing an active device frees its token_hash without telling the
+        // device anything, so it stops being known rather than being refused.
+        if (existing.revoked_at == null && !opts.force) {
+          store.close();
+          log.error(
+            `${deviceId} is still active. Run 'devices revoke ${deviceId}' first, or pass --force.`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        repo.delete(deviceId);
+        store.close();
+        log.info(`Erased ${deviceId}.`, undefined, "console");
+      }),
+  );
+
 program
   .command("pair")
   .description("Print a pairing QR code (server must already be running)")

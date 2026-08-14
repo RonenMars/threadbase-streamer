@@ -44,7 +44,15 @@ export function loadOrCreateApiKey(): string {
 
   const key = generateApiKey();
   mkdirSync(configDir(), { recursive: true });
-  writeFileSync(configFile(), `api_key: ${key}\n`, "utf-8");
+  // 0600 + chmod, matching setConfigValue and setApiKey below. Without the mode
+  // this line created the file at the process umask — typically 0644 — so the
+  // FIRST server.yaml on a machine held the API key world-readable until some
+  // later write happened to rewrite it at 0600. A server that never rotates its
+  // key never gets that write.
+  writeFileSync(configFile(), `api_key: ${key}\n`, { encoding: "utf-8", mode: 0o600 });
+  // writeFileSync's mode only applies when it CREATES the file, and it is
+  // masked by the umask; chmod is what makes the permission unconditional.
+  chmodSync(configFile(), 0o600);
   return key;
 }
 

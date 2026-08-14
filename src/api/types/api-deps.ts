@@ -21,6 +21,7 @@ import type {
 } from "../../feature-flags";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
+import type { Principal } from "../../services/security/capabilities";
 import type { ReconcileVerdict } from "../../services/sessions/reconcileSessions";
 import type { SessionStore } from "../../session-store";
 import type { WSHub } from "../../ws-hub";
@@ -125,9 +126,11 @@ export type ApiDeps = {
   handlePairExchange: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleBrowse: (url: URL, res: ServerResponse) => Promise<void>;
   handleMkdir: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
-  // WebSocket lifecycle delegates
+  // WebSocket lifecycle delegates. `principal` is captured at the upgrade and
+  // is what lets a frame be authorized; null means the request took a bypass
+  // path (today only --local-no-auth) and carries that path's full authority.
   handleWsOpen: (ws: WebSocket) => void;
-  handleWsMessage: (ws: WebSocket, raw: unknown) => void;
+  handleWsMessage: (ws: WebSocket, raw: unknown, principal: Principal | null) => void;
   handleWsClose: (ws: WebSocket) => void;
   // Multi-agent mode. Null when MULTI_AGENT_FLOW is OFF.
   agentClient: AgentClient | null;
