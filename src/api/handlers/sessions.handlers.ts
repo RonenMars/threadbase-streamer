@@ -567,7 +567,7 @@ export class SessionHandlers {
             detectedBy: outcome.detectedBy,
             lastActivityMs: outcome.lastActivityMs,
             likelyOwner: outcome.likelyOwner,
-            // Additive capability hints (see docs/compatibility/tb-mobile.md).
+            // Additive capability hints.
             // Older clients ignore them and keep deriving the same actions from
             // `likelyOwner`; newer ones must honour these instead of guessing.
             canForce: true,
