@@ -24,8 +24,18 @@ export function isCapability(value: unknown): value is Capability {
 }
 
 /**
- * Everything except `admin`. What a normal driving device gets — it can run the
- * agent, but not rotate credentials or revoke other devices.
+ * Every capability, `admin` included. What a normal driving device gets.
+ *
+ * It withheld `admin` originally, on the reasoning that a device should run the
+ * agent without being able to rotate credentials or revoke its siblings. That is
+ * a sound rule for a server shared between people, and this one is not: the
+ * phone IS the administration surface. Mobile's paired-devices screen
+ * (`GET /api/devices`), backup and restore (`/api/backup/*`) and the model and
+ * effort settings (`/api/config/claude-flags`) are all admin-gated, so a device
+ * without `admin` loses four working screens the moment it starts presenting its
+ * own token instead of the shared key.
+ *
+ * `read-only` is where the narrowing lives, and it still does.
  */
 export const FULL_CAPABILITIES: Capability[] = [
   "history:read",
@@ -33,6 +43,7 @@ export const FULL_CAPABILITIES: Capability[] = [
   "fs:browse",
   "fs:upload",
   "notifications",
+  "admin",
 ];
 
 /**
@@ -65,7 +76,7 @@ export function legacyPrincipal(): Principal {
   // and rotates the key itself. It therefore holds `admin` in addition to the
   // full preset. Devices are the things that get scoped; the key that mints
   // them cannot be, or the owner could no longer administer their own server.
-  return { kind: "legacy", capabilities: [...FULL_CAPABILITIES, "admin"] };
+  return { kind: "legacy", capabilities: [...FULL_CAPABILITIES] };
 }
 
 export function hasCapability(principal: Principal, required: Capability): boolean {
