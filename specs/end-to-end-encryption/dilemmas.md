@@ -1,5 +1,7 @@
 # Dilemmas — end-to-end-encryption
 
+**Status:** Approved for implementation 2026-08-14 — see [plan.md](./plan.md), tracked in [threadbase-streamer#590](https://github.com/RonenMars/threadbase-streamer/issues/590) and [threadbase-mobile#698](https://github.com/RonenMars/threadbase-mobile/issues/698).
+
 Decisions parked for later. Each entry has options and a working assumption.
 
 Everything here is a decision [understanding.md](./understanding.md) left open.

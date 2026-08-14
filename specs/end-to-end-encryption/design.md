@@ -1,7 +1,7 @@
 # End-to-end encryption — Streamer design
 
 **Date:** 2026-08-14
-**Status:** Evaluation — archived 2026-08-14. Not scheduled for implementation; see [../../docs/security/2026-08-14-streamer-review.md](../../docs/security/2026-08-14-streamer-review.md).
+**Status:** Approved for implementation 2026-08-14 — see [plan.md](./plan.md), tracked in [threadbase-streamer#590](https://github.com/RonenMars/threadbase-streamer/issues/590) and [threadbase-mobile#698](https://github.com/RonenMars/threadbase-mobile/issues/698).
 **Scope:** tb-streamer. The client half is [mobile-design.md](./mobile-design.md).
 **Seed:** [understanding.md](./understanding.md) (authoritative) · **Current state:** [context.md](./context.md)
 

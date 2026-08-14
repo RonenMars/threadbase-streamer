@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-14
 **Found by:** the STRIDE review in [../../docs/security/2026-08-14-streamer-review.md](../../docs/security/2026-08-14-streamer-review.md) and `tb-mobile/docs/security/2026-08-14-mobile-review.md`
-**Status:** all six fixed. Streamer on `fix/review-defects`, mobile on `fix/review-defects`.
+**Status:** all six fixed — [threadbase-streamer#579](https://github.com/RonenMars/threadbase-streamer/pull/579) and [threadbase-mobile#684](https://github.com/RonenMars/threadbase-mobile/pull/684), both merged 2026-08-14. The `fix/review-defects` branches were deleted on squash-merge.
 
 None of these are E2EE work. They are things the review found wrong in the code **as it exists today**, while establishing what the design would have to change.
 They are listed here rather than in the design docs because fixing them does not depend on E2EE shipping — and four of the six are exploitable now.
