@@ -9,7 +9,6 @@ import { handleSendAgentInput } from "../../agent/handle-send-agent-input";
 import { handleStartAgentSession } from "../../agent/handle-start-agent-session";
 import { resolveBrowsePath } from "../../browse";
 import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "../../claude-flags";
-import { CODEX_ACTIVE_WRITER_CODE } from "../../codex-pty-runner";
 import type { ConversationCache } from "../../conversation-cache";
 import type { createPool } from "../../db";
 import { recordUpload } from "../../db/upload-records";
@@ -25,6 +24,7 @@ import {
 } from "../../providers";
 import type { ScannerManager } from "../../scanner-manager";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
+import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
 import { permissionContentKey } from "../../services/questions/detectPermissionGate";
 import { questionContentKey } from "../../services/questions/detectQuestionFromScreen";
 import { parseStatusLine } from "../../services/questions/parseStatusLine";
