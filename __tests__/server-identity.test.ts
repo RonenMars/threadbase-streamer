@@ -196,4 +196,23 @@ describe("server identity key over HTTP", () => {
 
     expect(second.serverIdentityKey).toBe(first.serverIdentityKey);
   });
+
+  // A key file that cannot be read must cost verification and nothing else.
+  // `/api/info` is how a client discovers capabilities and renders its server
+  // list, so throwing here would take the whole endpoint down over a file that
+  // has nothing to do with the rest of the response.
+  it("omits the key rather than failing /api/info when the key file is unreadable", async () => {
+    mkdirSync(join(configDir, "keys"), { recursive: true });
+    writeFileSync(serverIdentityKeyPath(), "{ not json", "utf-8");
+
+    const res = await fetch(`${await boot()}/api/info`, { headers: AUTH });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect("serverIdentityKey" in body).toBe(false);
+    // The rest of the response is untouched — that is the whole point.
+    expect(body.version).toBeTruthy();
+    expect(body.push).toBeTruthy();
+    expect(body.devicesDurable).toBe(true);
+  });
 });
