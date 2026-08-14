@@ -4007,7 +4007,7 @@ describe("StreamerServer", () => {
 
       const srv = reuseServer as unknown as {
         scannerManager: ScannerManagerView;
-        findConversationByUuid: (uuid: string) => Promise<unknown>;
+        conversationHandlers: { findConversationByUuid: (uuid: string) => Promise<unknown> };
         inFlightCacheWrites: Set<Promise<unknown>>;
       };
 
@@ -4037,7 +4037,9 @@ describe("StreamerServer", () => {
       // synchronously without awaiting the parse. scan() must never be called;
       // the single-file refresh runs in the background (tracked so close()
       // awaits it) rather than blocking the request behind a full-tree scan.
-      const result = (await srv.findConversationByUuid(convId)) as { messageCount: number };
+      const result = (await srv.conversationHandlers.findConversationByUuid(convId)) as {
+        messageCount: number;
+      };
       expect(result.messageCount).toBe(2);
       expect(scanSpy.mock.calls.length).toBe(0);
 
@@ -4072,7 +4074,7 @@ describe("StreamerServer", () => {
 
       const srv = reuseServer as unknown as {
         scannerManager: ScannerManagerView;
-        findConversationByUuid: (uuid: string) => Promise<unknown>;
+        conversationHandlers: { findConversationByUuid: (uuid: string) => Promise<unknown> };
         inFlightCacheWrites: Set<Promise<unknown>>;
       };
 
@@ -4103,7 +4105,7 @@ describe("StreamerServer", () => {
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(false);
 
       const results = await Promise.all(
-        Array.from({ length: 20 }, () => srv.findConversationByUuid(convId)),
+        Array.from({ length: 20 }, () => srv.conversationHandlers.findConversationByUuid(convId)),
       );
       // Every request got the snapshot immediately (SWR), before any refresh
       // completed.
@@ -4135,7 +4137,7 @@ describe("StreamerServer", () => {
 
       const srv = reuseServer as unknown as {
         scannerManager: ScannerManagerView;
-        findConversationByUuid: (uuid: string) => Promise<unknown>;
+        conversationHandlers: { findConversationByUuid: (uuid: string) => Promise<unknown> };
       };
 
       const snapshot = {
@@ -4157,7 +4159,9 @@ describe("StreamerServer", () => {
         .mockReturnValue(true);
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
 
-      const result = (await srv.findConversationByUuid(convId)) as { messageCount: number };
+      const result = (await srv.conversationHandlers.findConversationByUuid(convId)) as {
+        messageCount: number;
+      };
       expect(result.messageCount).toBe(2);
       expect(refreshSpy).not.toHaveBeenCalled();
       // The stale-check itself is skipped on the live path.
@@ -4184,7 +4188,7 @@ describe("StreamerServer", () => {
 
       const srv = reuseServer as unknown as {
         scannerManager: ScannerManagerView;
-        findConversationByUuid: (uuid: string) => Promise<unknown>;
+        conversationHandlers: { findConversationByUuid: (uuid: string) => Promise<unknown> };
         inFlightCacheWrites: Set<Promise<unknown>>;
       };
 
@@ -4206,12 +4210,12 @@ describe("StreamerServer", () => {
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(false);
 
       // First request refreshes; drain it so its completedAt is stamped.
-      await srv.findConversationByUuid(convId);
+      await srv.conversationHandlers.findConversationByUuid(convId);
       await Promise.all([...srv.inFlightCacheWrites]);
       expect(refreshSpy).toHaveBeenCalledTimes(1);
 
       // Second request within REFRESH_TTL_MS (2s) → skipped, no new refresh.
-      await srv.findConversationByUuid(convId);
+      await srv.conversationHandlers.findConversationByUuid(convId);
       await Promise.all([...srv.inFlightCacheWrites]);
       expect(refreshSpy).toHaveBeenCalledTimes(1);
 
@@ -4221,7 +4225,7 @@ describe("StreamerServer", () => {
       vi.useFakeTimers();
       vi.setSystemTime(Date.now() + 2000 + 1);
       try {
-        await srv.findConversationByUuid(convId);
+        await srv.conversationHandlers.findConversationByUuid(convId);
         await Promise.all([...srv.inFlightCacheWrites]);
       } finally {
         vi.useRealTimers();

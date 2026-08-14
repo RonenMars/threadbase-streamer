@@ -142,7 +142,7 @@ describe("handleResume — cwd from JSONL", () => {
 
     try {
       const jsonlPath = join(claudeProjectsDir, "-Test-foo-bar", `${TEST_UUID}.jsonl`);
-      const cwd = await (server as any).readCwdFromJsonl(jsonlPath);
+      const cwd = await (server as any).conversationHandlers.readCwdFromJsonl(jsonlPath);
       expect(cwd).toBe(CORRECT_CWD);
     } finally {
       process.env.HOME = originalHome;
@@ -164,7 +164,7 @@ describe("handleResume — cwd from JSONL", () => {
     writeFileSync(noCwdPath, `${JSON.stringify({ type: "user", message: "hello" })}\n`);
 
     try {
-      const cwd = await (server as any).readCwdFromJsonl(noCwdPath);
+      const cwd = await (server as any).conversationHandlers.readCwdFromJsonl(noCwdPath);
       expect(cwd).toBeNull();
     } finally {
       await server.close();
