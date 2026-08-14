@@ -35,7 +35,7 @@ node dist/cli.cjs serve --verbose --local-no-auth
 
 #### Server address
 
-The server listens on `http://localhost:8766` (WebSocket at `ws://localhost:8766/ws`).
+By default, the server listens on port `8766` on all interfaces (WebSocket path: `/ws`).
 
 #### Automatic updates
 
@@ -43,7 +43,7 @@ npm and Homebrew installs can auto-update: [docs/guides/auto-update.md](docs/gui
 
 ## Remote Access
 
-The server listens on port 8766 on all interfaces, so devices on the same LAN can already reach it. To let the mobile app reach it from *outside* your LAN, expose it via a tunnel — the fastest is a Cloudflare quick-tunnel (no account needed):
+The server listens on port 8766 on all interfaces by default, so devices on the same LAN can already reach it. To restrict it to this machine, start it with `tb-streamer serve --host 127.0.0.1`. To let the mobile app reach it from *outside* your LAN, expose it via a tunnel — the fastest is a Cloudflare quick-tunnel (no account needed):
 
 > **Before you do this, read [Security](#security--read-this-before-exposing-the-server).** A tunnel makes the server reachable from the public internet, and the API key is the only thing between a stranger and a shell on this machine.
 
@@ -72,11 +72,15 @@ npm run db:validate       # check for missing/duplicate/orphaned project_id data
 
 The key lives at `~/.threadbase/server.yaml` as plaintext (`chmod 0600`), which is the same posture as `~/.aws/credentials` or `~/.npmrc`. Rotate it with `POST /api/auth/rotate` if it leaks; re-pair your devices afterwards.
 
-**The server listens on all network interfaces**, not just loopback — `httpServer.listen(port)` is called without a host, which is Node's listen-everywhere default, and there is currently no flag to narrow it. So every device on your LAN can already reach port 8766, and the API key is the only thing stopping them. On a home network that is usually fine; on café Wi-Fi, a co-working space, or a corporate VLAN it is not.
+**The server listens on all network interfaces by default**, not just loopback. So every device on your LAN can already reach port 8766, and the API key is the only thing stopping them. On a home network that is usually fine; on café Wi-Fi, a co-working space, or a corporate VLAN it is not. To bind only to loopback, run:
+
+```bash
+tb-streamer serve --host 127.0.0.1
+```
 
 **A tunnel extends that to the entire internet.** From that moment the key is the only thing between a stranger and your filesystem.
 
-If you need it strictly local today, bind it yourself at the firewall or run it inside a network namespace — the server will not do it for you. Tracked as [#517](https://github.com/RonenMars/threadbase-streamer/issues/517).
+For stricter network policies, also use your firewall or a network namespace.
 
 ### There is no spend limit
 

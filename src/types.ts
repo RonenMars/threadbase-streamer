@@ -478,6 +478,7 @@ export interface SessionCursor {
 
 export interface ServerConfig {
   port: number;
+  host?: string;
   apiKey?: string;
   /** 'cli' when --api-key was passed; rotation persists in-memory only and reverts on restart */
   apiKeySource?: "config" | "cli";

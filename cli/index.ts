@@ -48,6 +48,7 @@ program
   .command("serve")
   .description("Start the streamer server")
   .option("-p, --port <number>", "Port to listen on", "8766")
+  .option("--host <address>", "Host/address to bind the server to (default: all interfaces)")
   .option("--api-key <key>", "API key for authentication")
   .option("--local-no-auth", "Skip auth for localhost requests", false)
   .option("-v, --verbose", "Verbose output", false)
@@ -329,6 +330,7 @@ program
 
     const server = new StreamerServer({
       port: resolvedPort,
+      host: opts.host,
       apiKey,
       apiKeySource: opts.apiKey ? "cli" : "config",
       localNoAuth: opts.localNoAuth,
