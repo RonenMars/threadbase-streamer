@@ -141,7 +141,8 @@ export async function runProdDoctor(
     }
   }
 
-  const featureFlags = deps.featureFlags ?? resolveFeatureFlags({ yaml: loadFeatureFlags() });
+  const featureFlags =
+    deps.featureFlags ?? resolveFeatureFlags({ yaml: loadFeatureFlags() }).values;
   if (featureFlags.ptyHost) {
     const probe = deps.probePtyHost ?? (() => probePtyHostStatus(hostSocketPath(getInstanceId())));
     try {

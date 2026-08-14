@@ -231,11 +231,19 @@ Resolution is **boot-time only** — changing a flag needs a restart, same as `p
 4. `feature_flags: {"codexSystemPrompt":true}` in server.yaml — one line of JSON, same encoding as `claude_flags`. Unknown ids and non-boolean values are dropped with a warning (never coerced, never fatal): a hand-edited typo must cost the flag, not the boot.
 5. The registry `default`.
 
-`resolveFeatureFlags()` returns a **total** map — every registry id present, defaults filled — so callers index it without `?? default` and a newly-added flag can't reach a boolean branch as `undefined` on an older server.yaml.
+`resolveFeatureFlags()` returns `{ values, sources }`, both **total** — every registry id present, defaults filled — so callers index them without `?? default` and a newly-added flag can't reach a boolean branch as `undefined` on an older server.yaml.
+
+`sources[id]` names the rung that decided each flag (`"override" | "env" | "cli" | "yaml" | "default"`). It exists because the resolved boolean alone cannot answer "why is this on?", which is the only question anyone asks of a surprising flag. The legacy `codexSystemPromptEnabled` override is a real rung inside the resolver rather than a mutation applied to the finished map afterwards — the old shape meant the resolver was not actually the single source of truth, and an override was invisible to any reporting.
+
+**Flag ids are a derived type, not strings.** `FeatureFlagId` is `(typeof FEATURE_FLAGS)[number]["id"]`, so `flags.ptyHsot` is a compile error rather than `undefined` read as falsy — a typo in a consumer used to silently disable the feature it was meant to gate. `FeatureFlagValues` (what a config source supplies) is deliberately **partial**; `ResolvedFeatureFlags` (what the resolver returns) is total. `findFeatureFlag()`'s return type is inferred, not annotated, so the definition it hands back carries a literal `id` — that is what lets the yaml and CLI validators turn an arbitrary key into a typed one. Annotating it `FeatureFlagDefinition | undefined` widens `id` back to `string` and breaks both call sites.
+
+**Boot log.** Every flag, every boot, as `id=value(source)` under `event: "config.feature_flags"`. It previously printed only the ids differing from their defaults under the heading "Feature flags active" — which stated the opposite of the truth for a flag defaulting ON (disabling `sessionRehydration` listed it as *active*), and went silent on a stock boot, so the log could never say what a process was actually running with.
+
+**A flag that gates nothing is caught by a test.** `__tests__/feature-flags.test.ts` scans `src/` and `cli/` for each registry id and fails if one appears nowhere. Without it a flag can be declared, validated, persisted to server.yaml and served over HTTP while affecting nothing — every layer reporting success. That exact bug shipped once in `claude-flags` (see [Model & effort](#model--effort)).
 
 For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args are fixed and never pass `--feature`), set `THREADBASE_FEATURE_<ID>` in the plist's `EnvironmentVariables` block or `feature_flags:` in `server.yaml`, then run `tb-streamer prod restart`; the `--feature <id=bool>` flag is the path for ad-hoc `serve` runs.
 
-`GET /api/config/feature-flags` returns `{ registry, values }`. It is **read-only** — there is no PUT, and the absence of a `persisted` field is the signal (contrast `/api/config/claude-flags`). `/api/config` is admin-scoped, so `GET /api/info` carries `featureFlags: true` to let a read-only client discover support without reading values.
+`GET /api/config/feature-flags` returns `{ registry, values, sources }`. It is **read-only** — there is no PUT, and the absence of a `persisted` field is the signal (contrast `/api/config/claude-flags`). `sources` is additive (older clients ignore it) and exists so "why is this flag on?" is answerable over HTTP instead of needing shell access to read the environment, the argv and server.yaml by hand. `/api/config` is admin-scoped, so `GET /api/info` carries `featureFlags: true` to let a read-only client discover support without reading values.
 
 Current flags:
 

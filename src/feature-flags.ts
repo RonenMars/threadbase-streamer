@@ -26,9 +26,31 @@ export interface FeatureFlagDefinition {
   env: string;
 }
 
-export type FeatureFlagValues = Record<string, boolean>;
+/**
+ * Values arriving from a config source. PARTIAL on purpose: server.yaml, the
+ * CLI and ServerConfig each speak about the flags they mention and stay silent
+ * on the rest, which is what lets the precedence chain fall through.
+ */
+export type FeatureFlagValues = Partial<Record<FeatureFlagId, boolean>>;
 
-export const FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
+/** Every flag, resolved. Total — see resolveFeatureFlags(). */
+export type ResolvedFeatureFlags = Record<FeatureFlagId, boolean>;
+
+/**
+ * Which rung of the precedence chain decided a flag.
+ *
+ * Kept because the resolved boolean alone cannot answer "why is this on?", and
+ * that is the first question asked of a flag that is on when nobody expected it.
+ * `override` is the legacy ServerConfig field (see resolveFeatureFlags).
+ */
+export type FeatureFlagSource = "override" | "env" | "cli" | "yaml" | "default";
+
+export interface FeatureFlagResolution {
+  values: ResolvedFeatureFlags;
+  sources: Record<FeatureFlagId, FeatureFlagSource>;
+}
+
+export const FEATURE_FLAGS = [
   {
     id: "codexSystemPrompt",
     description:
@@ -66,9 +88,29 @@ export const FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     default: false,
     env: "THREADBASE_FEATURE_PTY_HOST",
   },
-];
+] as const satisfies readonly FeatureFlagDefinition[];
 
-export function findFeatureFlag(id: string): FeatureFlagDefinition | undefined {
+/**
+ * The registry's ids as a union, derived rather than declared.
+ *
+ * This is what makes `flags.ptyHsot` a compile error instead of `undefined`.
+ * Under the old `Record<string, boolean>` an index signature accepted any key,
+ * so a typo in a consumer read as falsy and silently disabled the feature it
+ * was meant to gate — the exact failure the "total map" contract exists to
+ * prevent, reachable through the one door that contract left open.
+ */
+export type FeatureFlagId = (typeof FEATURE_FLAGS)[number]["id"];
+
+/**
+ * Look a flag up by an unvalidated string.
+ *
+ * The return type is INFERRED, not annotated, so the definition it hands back
+ * carries a literal `id`. That is what lets the two writers below turn an
+ * arbitrary yaml/CLI key into a typed one — `out[def.id] = …` narrows where
+ * `out[id] = …` cannot. Annotating this `FeatureFlagDefinition | undefined`
+ * would widen `id` back to `string` and break both call sites.
+ */
+export function findFeatureFlag(id: string) {
   return FEATURE_FLAGS.find((f) => f.id === id);
 }
 
@@ -109,11 +151,12 @@ export function validateFeatureFlagValues(raw: unknown): FeatureFlagValues {
   const out: FeatureFlagValues = {};
   const dropped: string[] = [];
   for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!findFeatureFlag(id) || typeof value !== "boolean") {
+    const def = findFeatureFlag(id);
+    if (!def || typeof value !== "boolean") {
       dropped.push(id);
       continue;
     }
-    out[id] = value;
+    out[def.id] = value;
   }
   if (dropped.length > 0) {
     getLogger("feature-flags").warn(
@@ -156,7 +199,8 @@ export function parseFeatureFlagArgs(entries: string[]): {
             .trim()
             .toLowerCase();
 
-    if (!findFeatureFlag(id)) {
+    const def = findFeatureFlag(id);
+    if (!def) {
       errors.push(
         `Unknown feature flag "${id}". Known flags: ${FEATURE_FLAGS.map((f) => f.id).join(", ")}`,
       );
@@ -166,7 +210,7 @@ export function parseFeatureFlagArgs(entries: string[]): {
       errors.push(`Invalid value "${rawValue}" for feature flag "${id}" — expected true/false`);
       continue;
     }
-    values[id] = rawValue === "true";
+    values[def.id] = rawValue === "true";
   }
 
   return { values, errors };
@@ -175,34 +219,68 @@ export function parseFeatureFlagArgs(entries: string[]): {
 /**
  * Resolve every flag once, at boot. Precedence, highest first:
  *
- *   env  →  CLI  →  server.yaml  →  registry default
+ *   override  →  env  →  CLI  →  server.yaml  →  registry default
  *
  * Env beats the CLI so an operator can flip a flag on a supervised instance
  * (launchd/systemd/Task Scheduler) whose argv is fixed — the same reason
  * THREADBASE_ALLOW_BROWSER_CORS overrides browser_cors: in server.yaml.
  *
- * The returned map is TOTAL: every registry id is present, defaults filled in.
- * Callers therefore index it without a `?? default`, and a flag added later
- * cannot reach a boolean branch as `undefined` just because an older
- * server.yaml predates it.
+ * `override` is the legacy explicit ServerConfig field (codexSystemPromptEnabled),
+ * kept so embedders and tests that set it directly keep working. It is a real
+ * rung here rather than a mutation applied to the finished map afterwards: the
+ * old shape meant the resolver was not actually the single source of truth, and
+ * an override was invisible to anything reporting where a value came from.
+ *
+ * The returned `values` map is TOTAL: every registry id is present, defaults
+ * filled in. Callers therefore index it without a `?? default`, and a flag added
+ * later cannot reach a boolean branch as `undefined` just because an older
+ * server.yaml predates it. `sources` is total for the same reason.
  */
 export function resolveFeatureFlags(opts?: {
+  override?: FeatureFlagValues;
   cli?: FeatureFlagValues;
   yaml?: FeatureFlagValues;
   env?: NodeJS.ProcessEnv;
-}): FeatureFlagValues {
+}): FeatureFlagResolution {
   const env = opts?.env ?? process.env;
-  const out: FeatureFlagValues = {};
+  const values = {} as ResolvedFeatureFlags;
+  const sources = {} as Record<FeatureFlagId, FeatureFlagSource>;
 
   for (const def of FEATURE_FLAGS) {
-    out[def.id] =
-      parseBooleanEnv(env[def.env]) ?? opts?.cli?.[def.id] ?? opts?.yaml?.[def.id] ?? def.default;
+    // Written as an ordered list rather than a `??` chain because the chain
+    // discards which rung won, and that is the answer to the only question
+    // anyone asks of a surprising flag.
+    const rungs: ReadonlyArray<[FeatureFlagSource, boolean | undefined]> = [
+      ["override", opts?.override?.[def.id]],
+      ["env", parseBooleanEnv(env[def.env])],
+      ["cli", opts?.cli?.[def.id]],
+      ["yaml", opts?.yaml?.[def.id]],
+    ];
+    const won = rungs.find(([, v]) => v !== undefined);
+    values[def.id] = won ? (won[1] as boolean) : def.default;
+    sources[def.id] = won ? won[0] : "default";
   }
 
-  return out;
+  return { values, sources };
 }
 
 /** Registry ids whose resolved value differs from the registry default. */
-export function nonDefaultFeatureFlags(values: FeatureFlagValues): string[] {
+export function nonDefaultFeatureFlags(values: ResolvedFeatureFlags): FeatureFlagId[] {
   return FEATURE_FLAGS.filter((f) => values[f.id] !== f.default).map((f) => f.id);
+}
+
+/**
+ * One line describing the whole resolution: `id=value(source)`, every flag.
+ *
+ * Replaces a boot log that printed only the ids differing from their defaults
+ * under the heading "Feature flags active". That heading was wrong for any
+ * flag whose default is ON — disabling `sessionRehydration` made it appear in
+ * a list of active flags, stating the opposite of what had happened. Printing
+ * the value removes the ambiguity, and printing every flag means the log
+ * answers "what was this process running with" instead of only ever hinting.
+ */
+export function describeFeatureFlags(resolution: FeatureFlagResolution): string {
+  return FEATURE_FLAGS.map(
+    (f) => `${f.id}=${resolution.values[f.id]}(${resolution.sources[f.id]})`,
+  ).join(" ");
 }
