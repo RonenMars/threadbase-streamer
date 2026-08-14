@@ -1450,6 +1450,20 @@ describe("StreamerServer", () => {
         lastOutput: "",
       }) as any;
 
+    // Unconditional teardown. These tests install fake timers and spy on
+    // PTYManager.prototype, which is process-global; when a restore sits at the
+    // end of the test body, one failed assertion skips it and leaves every
+    // later test in this file running on fake timers against a spied
+    // prototype. That turns a single real failure into a wall of unrelated
+    // timeouts — the flake signature this file has been re-run for.
+    afterEach(() => {
+      const t = (server as any).ptyGraceTimers.get(SID);
+      if (t) clearTimeout(t);
+      (server as any).ptyGraceDeferCounts.delete(SID);
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
     it("does NOT hold a running session before the defer cap, and re-arms the timer", () => {
       vi.useFakeTimers();
       vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
@@ -1466,13 +1480,6 @@ describe("StreamerServer", () => {
       expect(armSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
       // defer count is tracked and still under the cap
       expect((server as any).ptyGraceDeferCounts.get(SID)).toBeLessThanOrEqual(GRACE_MAX_DEFERS);
-
-      // stop the re-armed timer so it doesn't fire after restore
-      const t = (server as any).ptyGraceTimers.get(SID);
-      if (t) clearTimeout(t);
-      (server as any).ptyGraceDeferCounts.delete(SID);
-      vi.useRealTimers();
-      vi.restoreAllMocks();
     });
 
     it("holds a running session anyway once GRACE_MAX_DEFERS is exceeded", () => {
@@ -1488,8 +1495,6 @@ describe("StreamerServer", () => {
       expect(holdSpy).toHaveBeenCalledWith(SID);
       // count is cleared once it holds
       expect((server as any).ptyGraceDeferCounts.has(SID)).toBe(false);
-      vi.useRealTimers();
-      vi.restoreAllMocks();
     });
 
     it("holds a waiting_input session when the grace timer fires", () => {
@@ -1502,8 +1507,6 @@ describe("StreamerServer", () => {
       vi.advanceTimersByTime(10);
 
       expect(holdSpy).toHaveBeenCalledWith(SID);
-      vi.useRealTimers();
-      vi.restoreAllMocks();
     });
   });
 
