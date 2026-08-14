@@ -14,11 +14,11 @@ import { EventEmitter } from "events";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { CodexPtyRunner } from "../src/codex-pty-runner";
 import {
   CODEX_ACTIVE_WRITER_CODE,
   CODEX_ACTIVE_WRITER_RE,
-  CodexPtyRunner,
-} from "../src/codex-pty-runner";
+} from "../src/services/questions/codexScreen";
 import type { CodexRolloutOwner } from "../src/services/sessions/codexRolloutOwner";
 import type { ManagedSession } from "../src/types";
 

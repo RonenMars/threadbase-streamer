@@ -3,14 +3,14 @@ import { mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { spawn as mockSpawn } from "node-pty";
 import { tmpdir } from "os";
 import { join } from "path";
+import { CodexPtyRunner } from "../src/codex-pty-runner";
 import {
-  CodexPtyRunner,
   codexScreenBlocksComposer,
   codexScreenLooksIdle,
   codexScreenShowsReady,
   detectCodexBlockingPrompt,
   parseCodexNumberedOptions,
-} from "../src/codex-pty-runner";
+} from "../src/services/questions/codexScreen";
 import type { ManagedSession, PermissionOption } from "../src/types";
 
 vi.mock("node-pty", () => {
