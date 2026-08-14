@@ -1573,12 +1573,15 @@ describe("StreamerServer", () => {
     };
 
     it("uses the session id for Claude — always in argv via --resume/--session-id", () => {
-      const token = (server as any).spawnArgvToken({ ...base, provider: "claude-code" });
+      const token = (server as any).registryBoot.spawnArgvToken({
+        ...base,
+        provider: "claude-code",
+      });
       expect(token).toBe("sess-abc");
     });
 
     it("uses the rollout id for a bound Codex session — `codex resume <id>`", () => {
-      const token = (server as any).spawnArgvToken({
+      const token = (server as any).registryBoot.spawnArgvToken({
         ...base,
         provider: "codex-cli",
         boundConversationId: "rollout-5",
@@ -1589,7 +1592,7 @@ describe("StreamerServer", () => {
     // A fresh Codex spawn is `codex --cd <path> --no-alt-screen` — the local
     // placeholder id appears nowhere in argv, so matching on it would never hit.
     it("falls back to the project path for an unbound fresh Codex session", () => {
-      const token = (server as any).spawnArgvToken({ ...base, provider: "codex-cli" });
+      const token = (server as any).registryBoot.spawnArgvToken({ ...base, provider: "codex-cli" });
       expect(token).toBe("/work/repo");
       expect(token).not.toBe("sess-abc");
     });
