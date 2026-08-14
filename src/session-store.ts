@@ -35,6 +35,16 @@ export class SessionStore {
     const session = this.managed.get(sessionId);
     if (!session) return null;
     Object.assign(session, updates);
+    // A phase only exists *within* a running turn, so leaving `running` clears
+    // it. Enforced here rather than at each transition because only markReady
+    // (running -> waiting_input) clears it in the runners: every other exit —
+    // handleExit, putOnHold, failStartup, in both runners — would otherwise
+    // leave a dead session reporting `{status:"idle", subStatus:"working"}`
+    // forever, and a merging client cannot express a removed key. Keyed off
+    // `updates.status` rather than the merged status so a phase write (which
+    // carries no status) can never be dropped by a store copy that has not yet
+    // seen the running transition.
+    if (updates.status != null && updates.status !== "running") session.subStatus = null;
     return session;
   }
 

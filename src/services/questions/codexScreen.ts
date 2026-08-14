@@ -23,6 +23,12 @@ export const CODEX_PROMPT_READY_TEXT = "Ready";
 // as whole words so a project path containing "Working" does not false-hit.
 export const CODEX_BUSY_STATUS_RE = /\b(?:Starting|Working)\b/;
 
+// The busy half that actually means "a turn is in flight". "Starting" is MCP
+// boot, not a turn, so the two must not be conflated wherever the distinction
+// matters (agent phase); for composer gating they are the same and
+// CODEX_BUSY_STATUS_RE covers both.
+export const CODEX_WORKING_STATUS_RE = /\bWorking\b/;
+
 // Boot progress lines that appear *above* the status bar while MCP servers
 // are still loading. The status bar may already omit "Starting" (or truncate
 // "Ready") during this window — treating quiet as ready here is what stranded
@@ -127,16 +133,27 @@ export function codexStatusBarLine(lines: string[]): string {
 }
 
 /**
+ * True while the screen shows something that precedes a turn rather than being
+ * one: a blocking gate dialog, or MCP boot progress. Both keep the composer
+ * shut, but neither is the agent doing work — the status-bar half of
+ * codexScreenBlocksComposer cannot tell them apart on its own, and reading
+ * only that half is how the agent phase reported "working" during boot.
+ */
+export function codexScreenPreTurn(lines: string[]): boolean {
+  const screenText = lines.join("\n");
+  if (CODEX_HOOKS_GATE_REGEX.test(screenText) || CODEX_TRUST_GATE_REGEX.test(screenText)) {
+    return true;
+  }
+  return CODEX_MCP_BOOT_RE.test(screenText);
+}
+
+/**
  * True while Codex must not receive composer keystrokes: gate dialogs, MCP
  * boot progress, or a Starting/Working status bar. Shared by boot detection,
  * the flat fallback, and mid-session idle re-detect.
  */
 export function codexScreenBlocksComposer(lines: string[]): boolean {
-  const screenText = lines.join("\n");
-  if (CODEX_HOOKS_GATE_REGEX.test(screenText) || CODEX_TRUST_GATE_REGEX.test(screenText)) {
-    return true;
-  }
-  if (CODEX_MCP_BOOT_RE.test(screenText)) return true;
+  if (codexScreenPreTurn(lines)) return true;
   return CODEX_BUSY_STATUS_RE.test(codexStatusBarLine(lines));
 }
 

@@ -6,6 +6,8 @@
 // and neither throws.
 
 import { describe, expect, it, vi } from "vitest";
+import { conversationToResumableSession } from "../src/api/handlers/http-helpers";
+import type { ConversationListItem } from "../src/conversation-cache";
 import {
   encodeMessage,
   type HostEvent,
@@ -95,6 +97,67 @@ describe("agent phase — wire contract", () => {
     if (resp === null) throw new Error("session was not stored");
     expect("subStatus" in resp).toBe(true);
     expect(resp.subStatus).toBeNull();
+  });
+
+  // conversationToResumableSession is the third emitter of this shape, and the
+  // one the required-field typing cannot police: it returns an inferred object
+  // literal, so tsc never checks it against SessionResponse. It is what
+  // `GET /api/sessions/:id` serves when the id is a conversation rather than a
+  // live session — the path older mobile builds take from a recents entry.
+  it("emits null from the resumable-conversation shape", () => {
+    const resp = conversationToResumableSession({
+      id: "conv-1",
+      projectPath: "/repo",
+      projectName: "repo",
+      messageCount: 3,
+      lastActivity: STARTED.toISOString(),
+      filePath: "/repo/.claude/conv-1.jsonl",
+    } as unknown as ConversationListItem);
+
+    expect("subStatus" in resp).toBe(true);
+    expect(resp.subStatus).toBeNull();
+    expect(JSON.stringify(resp)).toContain('"subStatus":null');
+  });
+});
+
+describe("agent phase — cleared when the turn ends", () => {
+  // Only markReady (running -> waiting_input) clears the phase in the runners.
+  // Every other way out of `running` — handleExit, putOnHold, failStartup, in
+  // both runners — reaches the store as a status update and nothing more, so
+  // without this invariant a crashed or held session serves
+  // `{status:"idle", subStatus:"working"}` for as long as it is listed.
+  for (const status of ["idle", "waiting_input"] as const) {
+    it(`clears the phase when status becomes ${status}`, () => {
+      const store = new SessionStore();
+      store.addManaged(mkSession({ subStatus: "working" }));
+
+      store.updateManaged("sess-1", { status, completedAt: new Date() });
+
+      expect(store.getManaged("sess-1")?.subStatus).toBeNull();
+      expect(store.get("sess-1", new Set())?.subStatus).toBeNull();
+    });
+  }
+
+  // The guard keys off the incoming status, not the merged one, so a phase
+  // write — which carries no status — is never dropped by a store copy that has
+  // not yet seen the running transition. setPhase's change guard means the
+  // runner would not re-send it, so a drop here would be permanent for the turn.
+  it("does not drop a phase write that carries no status", () => {
+    const store = new SessionStore();
+    store.addManaged(mkSession({ status: "waiting_input" }));
+
+    store.updateManaged("sess-1", { subStatus: "working" });
+
+    expect(store.getManaged("sess-1")?.subStatus).toBe("working");
+  });
+
+  it("keeps the phase across a running-to-running update", () => {
+    const store = new SessionStore();
+    store.addManaged(mkSession({ subStatus: "working" }));
+
+    store.updateManaged("sess-1", { status: "running", promptCount: 2 });
+
+    expect(store.getManaged("sess-1")?.subStatus).toBe("working");
   });
 });
 

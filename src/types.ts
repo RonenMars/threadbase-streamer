@@ -118,7 +118,12 @@ export interface ManagedSession {
    * managedToResponse emits it unconditionally as `?? null` — on the wire
    * absence must never be a third state, because the client merges session
    * frames and a merge cannot express a removed key.
-   * Cleared in markReady(), the one turn-end transition.
+   *
+   * Cleared in markReady() for the running -> waiting_input turn end, which is
+   * the only exit a runner observes on screen. Every other way out of `running`
+   * — handleExit, putOnHold, failStartup — is enforced by SessionStore
+   * .updateManaged() instead: a phase exists only while the status is
+   * `running`, so leaving it clears the field.
    */
   subStatus?: AgentPhase | null;
   filePath?: string;

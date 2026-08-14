@@ -26,15 +26,22 @@
 import type { ProviderName } from "../../providers";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "../../providers";
 import type { AgentPhase } from "../../types";
-import { CODEX_BUSY_STATUS_RE, codexStatusBarLine } from "./codexScreen";
+import { CODEX_WORKING_STATUS_RE, codexScreenPreTurn, codexStatusBarLine } from "./codexScreen";
 
 /**
  * Codex's status bar is binary: a turn walks Ready → Working → Ready with no
  * intermediate state observed on a live PTY probe, so reporting anything finer
  * would be invention. `working` is the only phase this provider can support.
+ *
+ * Two screens keep the composer shut without a turn being in flight, and both
+ * would otherwise read as `working` before the user has submitted anything:
+ * a blocking startup gate (directory trust, hooks review), and MCP boot — whose
+ * status bar says "Starting", which is why this tests Working alone rather than
+ * the composer-gating CODEX_BUSY_STATUS_RE that covers both words.
  */
 function codexPhase(lines: string[]): AgentPhase | null {
-  return CODEX_BUSY_STATUS_RE.test(codexStatusBarLine(lines)) ? "working" : null;
+  if (codexScreenPreTurn(lines)) return null;
+  return CODEX_WORKING_STATUS_RE.test(codexStatusBarLine(lines)) ? "working" : null;
 }
 
 /**

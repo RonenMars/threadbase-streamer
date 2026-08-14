@@ -1142,5 +1142,9 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.statusSource != null && { statusSource: s.statusSource }),
     ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
+    // Unconditional — see PTYManager's toPublicSession: a streamer re-adopting
+    // a surviving pty-host's sessions mid-turn has no other source for the
+    // phase, and the host's change guard will not re-emit it.
+    subStatus: s.subStatus ?? null,
   };
 }

@@ -1243,5 +1243,10 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.filePath != null && { filePath: s.filePath }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
     ...(s.firstMessageText != null && { firstMessageText: s.firstMessageText }),
+    // Unconditional: this shape crosses the pty-host boundary, and a streamer
+    // re-adopting a surviving host's sessions mid-turn has no other source for
+    // the phase — no snapshot or replay event carries it, and setPhase's change
+    // guard means the host will never re-emit it for the rest of that turn.
+    subStatus: s.subStatus ?? null,
   };
 }

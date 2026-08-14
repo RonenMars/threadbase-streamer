@@ -46,9 +46,9 @@ type MockProc = { _emit: (event: string, data: string) => void };
 // queue). Give the microtask and the write callback a tick.
 const settle = (ms = 10) => new Promise((r) => setTimeout(r, ms));
 
-// getSession() returns toPublicSession(), which does not forward subStatus —
-// that is exactly why the server mirrors the phase into SessionStore. Read the
-// runner's own copy when asserting on the runner.
+// The runner's own record, for assertions that need the live object rather
+// than the toPublicSession() copy getSession() hands back (e.g. mutating it to
+// set up a transition).
 function internalOf(runner: unknown, sessionId: string): InternalSession {
   const session = (runner as { sessions: Map<string, InternalSession> }).sessions.get(sessionId);
   if (!session) throw new Error(`no live session ${sessionId}`);
@@ -199,6 +199,30 @@ describe("agent phase — setPhase / markReady", () => {
         runner.dispose();
       }
     }, 15000);
+
+    // toPublicSession is what crosses the pty-host boundary, so this is the
+    // only channel by which a streamer re-adopting a surviving host's sessions
+    // mid-turn can learn the phase: no snapshot or replay event carries it, and
+    // setPhase's change guard means the host will never re-emit it for the rest
+    // of that turn. Dropping it here leaves the indicator dead until turn end.
+    it(`${name}: toPublicSession carries the phase across the host boundary`, async () => {
+      const runner = make();
+      try {
+        const session = await runner.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+        const internal = internalOf(runner, session.id);
+        internal.subStatus = "working";
+
+        expect(runner.getSession(session.id)?.subStatus).toBe("working");
+
+        internal.subStatus = null;
+        const cleared = runner.getSession(session.id);
+        expect(cleared).not.toBeNull();
+        expect("subStatus" in (cleared as object)).toBe(true);
+        expect(cleared?.subStatus).toBeNull();
+      } finally {
+        runner.dispose();
+      }
+    }, 15000);
   }
 });
 
@@ -286,7 +310,7 @@ describe("agent phase — server wiring", () => {
     }
   });
 
-  it("stores the phase and broadcasts a scoped session_phase frame", async () => {
+  it("stores the phase, broadcasts a scoped frame, and clears it when the PTY dies", async () => {
     const { StreamerServer } = await import("../src/server");
     const port = await getRandomPort();
     const server = new StreamerServer({
@@ -355,6 +379,23 @@ describe("agent phase — server wiring", () => {
         phase: "working",
       });
       expect(typeof phaseFrame?.updatedAt).toBe("string");
+
+      // The turn never reaches Ready — the process dies mid-flight, which is
+      // what a crash, a `prod restart` or an exiting `codex` looks like. Only
+      // markReady clears the phase in the runner, and handleExit reaches the
+      // store as a status update carrying no phase, so nothing here re-reads
+      // the screen: the session must not keep reporting a live phase.
+      proc._emit("exit", { exitCode: 1 } as unknown as string);
+      await settle();
+
+      const after = await fetch(`http://localhost:${port}/api/sessions/${session.id}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(after.status).toBe(200);
+      const dead = (await after.json()) as Record<string, unknown>;
+      expect(dead.status).toBe("idle");
+      expect("subStatus" in dead).toBe(true);
+      expect(dead.subStatus).toBeNull();
     } finally {
       await server.close();
     }
