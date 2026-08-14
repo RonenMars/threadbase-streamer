@@ -44,19 +44,21 @@ export const authMiddleware =
       return;
     }
 
-    if (deps.localNoAuth) {
-      if (isLocalRequest(remoteAddr)) {
-        await next();
-        return;
-      }
-    }
+    // `--local-no-auth` gives any loopback caller the owner's authority. It used
+    // to grant that by returning next() right here — before the capability check
+    // below and before c.set("principal") — so the capability layer saw no
+    // principal at all, and the WebSocket guard took its null-principal path
+    // instead of an authorization decision. Resolving the caller to the owner
+    // principal leaves the access identical and puts it through the same checks
+    // as every other caller.
+    const loopbackOwner = deps.localNoAuth && isLocalRequest(remoteAddr);
 
     const authorization = c.req.header("authorization");
     const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
     const queryKey = c.req.query("key") ?? undefined;
     const presented = bearer ?? queryKey;
 
-    if (!presented) {
+    if (!presented && !loopbackOwner) {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
@@ -68,7 +70,7 @@ export const authMiddleware =
     // lets this ship without breaking every already-paired device.
     let principal: Principal | null = null;
 
-    const device = deps.devicesRepo()?.authenticate(presented) ?? null;
+    const device = presented ? (deps.devicesRepo()?.authenticate(presented) ?? null) : null;
     if (device) {
       principal = {
         kind: "device",
@@ -81,7 +83,11 @@ export const authMiddleware =
       } catch {
         // ignore
       }
-    } else if (validateApiKey(presented, deps.apiKey)) {
+    } else if (presented && validateApiKey(presented, deps.apiKey)) {
+      principal = legacyPrincipal();
+    } else if (loopbackOwner) {
+      // No credential needed from loopback under the flag — and a wrong one does
+      // not demote it either, which is what the old unconditional bypass did.
       principal = legacyPrincipal();
     }
 
