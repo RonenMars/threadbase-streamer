@@ -420,9 +420,9 @@ describe("auto-resume orchestration", () => {
     await server.registryBoot.autoResumePreviousSessions(rows);
 
     expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(AUTO_RESUME_MAX);
-    expect(server.sessionHandlers.resumeSession.mock.calls.map(([options]) => options.sessionId)).toEqual(
-      rows.slice(1).map((row) => row.session_id),
-    );
+    expect(
+      server.sessionHandlers.resumeSession.mock.calls.map(([options]) => options.sessionId),
+    ).toEqual(rows.slice(1).map((row) => row.session_id));
     expect(
       server.log.debug.mock.calls.some(
         ([, fields]) =>
@@ -442,7 +442,9 @@ describe("auto-resume orchestration", () => {
       ok: false,
       reason: "no_project_path",
     });
-    server.sessionHandlers.resumeSession = vi.fn().mockResolvedValue({ ok: false, reason: "no_project_path" });
+    server.sessionHandlers.resumeSession = vi
+      .fn()
+      .mockResolvedValue({ ok: false, reason: "no_project_path" });
 
     await server.registryBoot.autoResumePreviousSessions([
       mkRow({ project_path: projectDir, status_updated_at: Date.now() }),
@@ -478,9 +480,9 @@ describe("auto-resume orchestration", () => {
     await server.registryBoot.autoResumePreviousSessions(rows);
 
     expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(2);
-    expect(server.sessionHandlers.resumeSession.mock.calls.map(([options]) => options.sessionId)).toEqual(
-      rows.map((row) => row.session_id),
-    );
+    expect(
+      server.sessionHandlers.resumeSession.mock.calls.map(([options]) => options.sessionId),
+    ).toEqual(rows.map((row) => row.session_id));
   });
 });
 
