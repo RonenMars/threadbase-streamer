@@ -2,7 +2,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { Connection, Client as TemporalClient } from "@temporalio/client";
 import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
-import { existsSync, statSync } from "fs";
+import { existsSync } from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -18,7 +18,6 @@ import { json, readBody, writeHonoResponse } from "./api/handlers/http-helpers";
 import { SessionHandlers } from "./api/handlers/sessions.handlers";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { createWsRoutes } from "./api/routes/ws.routes";
-import type { ApiDeps } from "./api/types/api-deps";
 import {
   generateApiKey,
   loadBrowseRoot,
@@ -69,7 +68,6 @@ import {
   nonDefaultFeatureFlags,
   resolveFeatureFlags,
 } from "./feature-flags";
-import { handleListProjects } from "./handlers/handleListProjects";
 import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
@@ -78,6 +76,11 @@ import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
 import { ScannerManager } from "./scanner-manager";
 import { seal } from "./seal";
+import {
+  createApiDeps,
+  createConversationWatcherEvents,
+  createLiveSessionOptions,
+} from "./server-wiring";
 import { setCacheMetadata } from "./services/cache/cacheMetadata";
 import { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import { ConversationWatcher } from "./services/conversations/conversationWatcher";
@@ -567,160 +570,24 @@ export class StreamerServer {
     this.sessionStore = new SessionStore();
     this.wsHub = new WSHub();
 
-    this.fileWatcher = new ConversationWatcher({
-      onNewLineSpans: (filePath, spans, readFrom, endOffset) => {
-        // Offset index: extend the per-message byte-span index with this read's
-        // lines. Fires alongside onNewLines (which writes the tail); both
-        // consume the same read. Best-effort — a failure here must never break
-        // the tail write or WS broadcast.
-        if (!this.cache) return;
-        const cache = this.cache;
-        // No stale seqs from a prior read may leak into this one's WS stamping.
-        this.pendingLineSeqs.delete(filePath);
-        try {
-          const seqs = cache.extendMessageIndex(
-            filePath,
-            spans,
-            statSync(filePath),
-            readFrom,
-            endOffset,
-          );
-          if (seqs === null) {
-            // Non-contiguous read (watcher attached at EOF after downtime, or an
-            // append raced a backfill): drop the file's index and rebuild from
-            // scratch. Single-flighted, tracked so close() awaits it. No seqs
-            // are stamped for this read — the client refetches on reconcile.
-            cache.deleteFileIndex(filePath, ConversationCache.conversationIdForFile(filePath));
-            cache.clearIndexParseState(filePath);
-            this.trackCacheWrite(
-              cache.backfillIndex(filePath).catch((err) => {
-                this.log.warn("offset-index.backfill_failed", {
-                  event: "offset_index.backfill_failed",
-                  filePath,
-                  trigger: "noncontiguous-append",
-                  err,
-                });
-              }),
-            );
-            return;
-          }
-          // Stash for the onNewLines handler (fires next for the same read) to
-          // stamp WS `seq`. spans and lines are the same set in the same order.
-          this.pendingLineSeqs.set(filePath, seqs);
-        } catch (err) {
-          this.log.warn("offset-index.extend_failed", {
-            event: "offset_index.extend_failed",
-            filePath,
-            err,
-          });
-        }
-      },
-      onNewLines: (filePath, lines) => {
-        // One transactional cache write for the whole batch instead of per line.
-        this.cache?.updateFromLines(filePath, lines);
-        let managed = false;
-        for (const [sessionId, watchedPath] of this.sessionFileMap) {
-          if (watchedPath === filePath) {
-            managed = true;
-            this.processJsonlQuestions(sessionId, lines);
-            // Additive batched event (one socket write) for newer clients. When
-            // the offset index assigned seqs for this read, carry them parallel
-            // to lines so a client can map each event to its message_index.
-            // Codex rollout lines are normalized to Claude shape here — mobile
-            // parseLineToMessage only understands type:user|assistant.
-            const seqs = this.pendingLineSeqs.get(filePath);
-            this.broadcastConversationLines(sessionId, lines, seqs);
-            break;
-          }
-        }
-        // No PTY owns this file: it's an external tail (or nothing at all, in
-        // which case the call is a no-op). Transcript push only — never the
-        // managed-session events, and never a question card.
-        if (!managed) {
-          this.externalTailManager.broadcastExternalTailLines(
-            filePath,
-            lines,
-            this.pendingLineSeqs.get(filePath),
-          );
-        }
-        // Seqs are consumed for this read; drop them so a later read for a file
-        // with no watched session can't reuse a stale mapping.
-        this.pendingLineSeqs.delete(filePath);
-      },
-      onConversationChanged: (filePath) => {
-        // Directory unlink is the survivor when the per-file watcher's unlink
-        // is dropped (delete inside a write-finish window, or a dead handle).
-        // Detect gone-on-disk here and take the same detach + invalidate path
-        // as onFileDeleted — otherwise an external tail stays attached until
-        // the 5 min idle sweep (#393).
-        try {
-          statSync(filePath);
-        } catch {
-          this.externalTailManager.handleJsonlDeleted(filePath);
-          return;
-        }
-        // A new JSONL appeared (or changed) in a watched project directory.
-        // If we hold a per-file tail for it, re-drive the tail read from here
-        // too: per-file fs.watch handles can die silently (2026-07-01 incident
-        // — tails went permanently quiet while directory events kept flowing),
-        // and the directory watcher is the survivor that can heal them.
-        const tailed = this.fileWatcher.poke(filePath);
-        // Nobody is tailing it yet — if an external agent is actively writing
-        // it, attach a tail so its transcript is pushed instead of silently
-        // waiting for the client to poll.
-        if (!tailed) this.externalTailManager.maybeAttachExternalTail(filePath);
-        this.externalTailManager.sweepIdleExternalTails();
-        // Upsert-or-leave: a change event NEVER deletes the cache row (skipIfTailed).
-        // This same append also drives the live-tail watcher's updateFromLines
-        // upsert; the two fire with no ordering guarantee, so deleting here would
-        // wipe a row the live tail just wrote (CRITICAL #2) — and a refresh-created
-        // untailed row would vanish on its next append. The debounced rescan below
-        // re-derives metadata, so leaving the row loses nothing.
-        this.cache?.invalidateByFilePath(filePath, { skipIfTailed: true });
-        // Debounce the scanner-staleness flip so a burst of directory events
-        // during active sessions collapses into one reconcile trigger after a
-        // quiet period. The debounced callback still checks scannerReady at
-        // fire time, preserving the anti-infinite-loop rule (never null
-        // scannerReady mid-scan). Record the path before debouncing so the
-        // reconcile can refresh exactly this file instead of the whole tree.
-        this.scannerManager.staleFiles.add(filePath);
-        this.scannerManager.markStaleDebounced();
-        this.log.debug?.(`Scanner invalidated by directory event: ${filePath}`, {
-          filePath,
-          event: "cache.directory_change",
-        });
-      },
-      onTruncated: (filePath) => {
-        // The file shrank below our offset — it is a different generation of
-        // content now, so every byte span we recorded for it is meaningless.
-        // Drop the index (and its parse state); the next read rebuilds from 0.
-        this.cache?.deleteFileIndex(filePath, ConversationCache.conversationIdForFile(filePath));
-        this.cache?.clearIndexParseState(filePath);
-        this.log.warn(`JSONL truncated/replaced; offset index dropped: ${filePath}`, {
-          filePath,
-          event: "tail.truncated",
-        });
-      },
-      onFileDeleted: (filePath) => this.externalTailManager.handleJsonlDeleted(filePath),
-      onError: (filePath, err) => {
-        // Was unwired, so every watcher error was dropped on the floor. The one
-        // that matters is ENOSPC from a directory watch: chokidar takes one
-        // OS-level watch handle PER FILE under a watched root (see
-        // watchDirectory's note), so on Linux the conversation corpus is spent
-        // directly against inotify's per-user max_user_watches — a ceiling as
-        // low as 8192 on some distros, shared with every other watcher the user
-        // is running. Past it the watch never attaches: tails go quiet and new
-        // conversations stop being discovered, with nothing in the log tying it
-        // to the fd budget. Name the cause here so it isn't re-derived.
-        const enospc = (err as NodeJS.ErrnoException).code === "ENOSPC";
-        this.log.error(
-          enospc
-            ? `Watcher hit the OS watch-handle limit on ${filePath} — raise fs.inotify.max_user_watches (Linux) or the process fd limit; conversation discovery and live tails are degraded until then`
-            : `Watcher error on ${filePath}: ${err.message}`,
-          { filePath, err, event: enospc ? "watcher.limit_exhausted" : "watcher.error" },
-        );
-      },
-    });
+    this.fileWatcher = new ConversationWatcher(
+      createConversationWatcherEvents({
+        sessionFileMap: this.sessionFileMap,
+        pendingLineSeqs: this.pendingLineSeqs,
+        scannerManager: this.scannerManager,
+        // Thunks, not values: the cache is opened during listen(),
+        // externalTailManager is constructed below, and fileWatcher is the
+        // watcher these very events are being handed to.
+        cache: () => this.cache,
+        log: () => this.log,
+        fileWatcher: () => this.fileWatcher,
+        externalTailManager: () => this.externalTailManager,
+        trackCacheWrite: (task) => this.trackCacheWrite(task),
+        processJsonlQuestions: (sessionId, lines) => this.processJsonlQuestions(sessionId, lines),
+        broadcastConversationLines: (sessionId, lines, seqs) =>
+          this.broadcastConversationLines(sessionId, lines, seqs),
+      }),
+    );
 
     this.externalTailManager = new ExternalTailManager({
       tails: this.externalTails,
@@ -735,161 +602,35 @@ export class StreamerServer {
         this.broadcastConversationLines(sessionId, lines, seqs),
     });
 
-    this.ptyManager = new LiveSessionManager({
-      logger: getLogger("pty"),
-      onOutput: (sessionId, data) => {
-        // Agent-activity stamp for the idle reaper. Fires for every provider
-        // (both runners call onOutput), so the reaper needs no per-runner
-        // bookkeeping. Distinct from ManagedSession.lastActivityAt, which only
-        // moves on *user* input — an agent grinding through a long task is
-        // active even when nobody has touched it.
-        this.lastAgentChunkAt.set(sessionId, Date.now());
-        const seq = (this.terminalSeq.get(sessionId) ?? 0) + 1;
-        this.terminalSeq.set(sessionId, seq);
-        this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], {
-          type: "terminal_output",
-          sessionId,
-          data,
-          seq,
-        });
-      },
-      onUserMessage: (sessionId, text, ts) => {
-        this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], {
-          type: "user_message",
-          sessionId,
-          text,
-          ts,
-        });
-      },
-      onPermissionChange: (sessionId, gate) => {
-        this.sessionHandlers.handlePermissionChange(sessionId, gate);
-      },
-      onLiveQuestion: (sessionId, questions) => {
-        this.sessionHandlers.handleLiveQuestion(sessionId, questions);
-      },
-      onLiveQuestionGone: (sessionId) => {
-        // The rendered AskUserQuestion menu closed. Clear the screen-dedupe key
-        // and cancel the pending question so the answered card is dismissed and
-        // a later repaint can't re-broadcast it. Only acts on a screen-scoped
-        // question — once the JSONL flush recorded the real toolUseId, the
-        // answer path (handleSendAnswer) already cleared it.
-        this.pendingQuestionKey.delete(sessionId);
-        const pq = this.pendingQuestions.get(sessionId);
-        if (pq?.toolUseId.startsWith("screen:")) {
-          this.cancelPendingQuestion(sessionId);
-        }
-      },
-      onReady: (session) => {
-        const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
-        if (resp) this.wsHub.broadcast({ type: "session_ready", session: resp });
-      },
-      onStatusChange: (session) => {
-        // Captured before the update below overwrites it — the Live Activity
-        // notifier needs the pre-transition status to tell a genuine
-        // waiting_input↔running edge apart from a same-status re-emit.
-        const previousStatus = this.sessionStore.getManaged(session.id)?.status;
-        this.sessionStore.updateManaged(session.id, {
-          status: session.status,
-          completedAt: session.completedAt,
-          ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
-          // The runner derives this from the first user message, on its own
-          // copy of the session. Without mirroring it here SessionStore never
-          // learns it, so a fresh live session is served with no sessionName
-          // even though the registry has one — the name only appeared after a
-          // restart rebuilt the row as a stub. Guarded so a runner that has not
-          // derived one yet cannot blank a name set by enrichResumedSessionAsync.
-          ...(session.sessionName != null && { sessionName: session.sessionName }),
-          // Without mirroring this, SessionStore's copy is frozen at whatever
-          // `addManaged` saw at spawn ("spawn") forever, because updateManaged
-          // is a partial merge — so managedToResponse can never tell a
-          // grace-timer/idle-reaper hold (statusSource "shutdown") apart from a
-          // genuine process exit ("process-exit"), and reports both as
-          // `lifecycle: "completed"`. See managedToResponse in session-store.ts.
-          ...(session.statusSource != null && { statusSource: session.statusSource }),
-        });
-        // Mirror the transition into the durable registry. Both runners funnel
-        // every status change through this callback, so this is the one place
-        // that needs to know. `exit` vs `transition` is the distinction the
-        // reconciler cares about: a row with a recorded exit needs no probe.
-        this.managedSessionsRepo?.recordStatus(
-          session.id,
-          session.status,
-          session.completedAt != null ? "exit" : "transition",
-          {
-            completedAt: session.completedAt,
-            lastActivityAt: session.lastActivityAt ?? null,
-            promptCount: session.promptCount,
-            failureReason: session.failureReason ?? null,
-            // Derived from the first user message, so it does not exist yet at
-            // recordSpawn. The input that produces it also flips
-            // waiting_input→running, which lands here.
-            sessionName: session.sessionName ?? null,
-          },
-        );
-        // Refresh the scanner index at the end of each Claude turn so the
-        // conversation is searchable with up-to-date content immediately.
-        if (session.status === "waiting_input" || session.status === "idle") {
-          const filePath = this.sessionFileMap.get(session.id);
-          if (filePath) {
-            this.scannerManager
-              .get()
-              .then((scanner) => this.scannerManager.refreshFileGuarded(scanner, filePath))
-              .then((meta) => {
-                // meta === null means the guard coalesced/skipped this refresh
-                // (already in flight or within the TTL) — not a real result.
-                this.log.info("scanner.refreshFile: ok", {
-                  event: "scanner.refresh",
-                  sessionId: session.id,
-                  filePath,
-                  trigger: session.status,
-                  messageCount: meta?.messageCount,
-                });
-              })
-              .catch((err) => {
-                this.log.warn("scanner.refreshFile: failed", {
-                  event: "scanner.refresh_failed",
-                  sessionId: session.id,
-                  filePath,
-                  trigger: session.status,
-                  err,
-                });
-              });
-          }
-        }
-        // Stop watching JSONL when PTY exits (session goes idle)
-        if (session.status === "idle") {
-          const filePath = this.sessionFileMap.get(session.id);
-          if (filePath) {
-            this.fileWatcher.unwatch(filePath);
-            this.sessionFileMap.delete(session.id);
-            this.cancelPendingQuestion(session.id);
-          }
-          // A gone PTY can never have an open gate; clear silently.
-          this.pendingPermission.delete(session.id);
-          this.pendingPermissionKey.delete(session.id);
-          this.contendedSessions.delete(session.id);
-          // Remember that WE owned this conversation up to now, so a resume that
-          // follows a hold isn't mistaken for a collision with someone else
-          // (see conversationBusy's selfPtyEndedAt).
-          this.rememberSelfPtyEnded(session.id);
-        }
-        const resp = this.sessionStore.get(session.id, this.ptyAttachedIds());
-        if (resp) {
-          this.wsHub.broadcast({ type: "session_update", session: resp });
-        }
-        // Push the transition to any iOS Live Activity watching this session.
-        // Fire-and-forget: the notifier logs its own failures, and a push must
-        // never delay or fail a session transition. No-op when APNs is off.
-        void this.liveActivityNotifier?.onStatusChange(session, previousStatus);
-        // And tell the phone its turn is up, if nobody is watching this session
-        // already. Same funnel, same fire-and-forget contract as above.
-        void this.waitingInputNotifier?.onStatusChange(session, previousStatus);
-        // The session object rides along: SessionStore's copy is a partial
-        // merge that does not carry failureReason/failureCode, so a startup
-        // handshake reading the store could not tell WHY a session went idle.
-        this.sessionStatusBus.emit(`status:${session.id}`, session.status, session);
-      },
-    });
+    this.ptyManager = new LiveSessionManager(
+      createLiveSessionOptions({
+        sessionStore: this.sessionStore,
+        wsHub: this.wsHub,
+        fileWatcher: this.fileWatcher,
+        scannerManager: this.scannerManager,
+        sessionStatusBus: this.sessionStatusBus,
+        sessionFileMap: this.sessionFileMap,
+        sessionSubscribers: this.sessionSubscribers,
+        lastAgentChunkAt: this.lastAgentChunkAt,
+        terminalSeq: this.terminalSeq,
+        pendingQuestions: this.pendingQuestions,
+        pendingQuestionKey: this.pendingQuestionKey,
+        pendingPermission: this.pendingPermission,
+        pendingPermissionKey: this.pendingPermissionKey,
+        contendedSessions: this.contendedSessions,
+        // Thunks, not values: sessionHandlers is constructed below, the
+        // registry repo and the push notifiers are bound during listen(), and
+        // tests swap `log` on the server instance.
+        log: () => this.log,
+        sessionHandlers: () => this.sessionHandlers,
+        managedSessionsRepo: () => this.managedSessionsRepo,
+        liveActivityNotifier: () => this.liveActivityNotifier,
+        waitingInputNotifier: () => this.waitingInputNotifier,
+        ptyAttachedIds: () => this.ptyAttachedIds(),
+        cancelPendingQuestion: (sessionId) => this.cancelPendingQuestion(sessionId),
+        rememberSelfPtyEnded: (conversationId) => this.rememberSelfPtyEnded(conversationId),
+      }),
+    );
 
     this.sessionWatchers = new SessionWatchers({
       ptyManager: this.ptyManager,
@@ -1023,29 +764,33 @@ export class StreamerServer {
       readCwdFromJsonl: (filePath) => this.conversationHandlers.readCwdFromJsonl(filePath),
     });
 
-    const self = this;
-    const apiDeps: ApiDeps = {
-      // ponytail: getter so rotateApiKey() takes effect without restarting the server
-      get apiKey() {
-        return self.apiKey;
-      },
+    const apiDeps = createApiDeps({
+      // Values where the literal captured values: publicUrl/browseRoot are the
+      // construction-time reads they always were (realpath resolves later and
+      // deliberately does not update these).
+      apiKey: () => this.apiKey,
       localNoAuth: this.localNoAuth,
       logMenubarRequests: this.logMenubarRequests,
+      publicUrl: this.publicUrl,
+      browseRoot: this.browseRoot,
+      browserCors: this.browserCors,
+      ptyGracePeriodMs: this.ptyGracePeriodMs,
       rotateApiKey: () => this.rotateApiKey(),
       claudeFlagsConfig: () => this.getClaudeFlagsConfig(),
       featureFlagsConfig: () => this.getFeatureFlagsConfig(),
       setClaudeFlagsConfig: (values, extraArgs) => this.setClaudeFlagsConfig(values, extraArgs),
-      publicUrl: this.publicUrl,
-      browseRoot: this.browseRoot,
-      browserCors: this.browserCors,
       ptyManager: this.ptyManager,
       sessionStore: this.sessionStore,
       wsHub: this.wsHub,
+      sessionHandlers: this.sessionHandlers,
+      conversationHandlers: this.conversationHandlers,
+      // Thunks for the same reason the handler classes take them: the stores
+      // open during listen() and are rebound by the integrity monitor's
+      // reset-and-rescan, and tests swap methods on the server instance.
       cache: () => this.cache,
       cacheMonitor: () => this.cacheMonitor,
       pushRepo: () => this.pushRepo,
       liveActivityPushEnabled: () => this.liveActivityNotifier !== null,
-
       devicesRepo: () => this.devicesRepo,
       projectsRepo: () => this.projectsRepo,
       conversationsRepo: () => this.conversationsRepo,
@@ -1054,154 +799,29 @@ export class StreamerServer {
       runtimeStore: () => this.runtimeStore,
       managedSessionsRepo: () => this.managedSessionsRepo,
       sessionVerdicts: () => this.sessionVerdicts,
+      log: () => this.log,
       ptyAttachedIds: () => this.ptyAttachedIds(),
-      handleListSessions: (url, res) => this.sessionHandlers.handleListSessions(url, res),
+      withReconciledLifecycle: (sessions) => this.withReconciledLifecycle(sessions),
+      currentWarmupState: () => this.currentWarmupState(),
+      addSessionSubscriber: (sessionId, ws) => this.addSessionSubscriber(sessionId, ws),
+      startGraceTimer: (sessionId, delayMs) => this.startGraceTimer(sessionId, delayMs),
       handleSessionsCount: (res) => this.handleSessionsCount(res),
-      handleGetRecentSessions: (url, res) =>
-        this.conversationHandlers.handleGetRecentSessions(url, res),
-      handleGetSessionNames: (res) => this.sessionHandlers.handleGetSessionNames(res),
-      handleGetSession: (id, res) => this.sessionHandlers.handleGetSession(id, res),
-      handleGetOutput: (id, res) => this.sessionHandlers.handleGetOutput(id, res),
-      handleSendInput: (id, req, res) => this.sessionHandlers.handleSendInput(id, req, res),
-      handleSendAnswer: (id, req, res) => this.sessionHandlers.handleSendAnswer(id, req, res),
-      handleCancel: (id, res) => this.sessionHandlers.handleCancel(id, res),
-      handleStopSession: (id, res) => this.sessionHandlers.handleStopSession(id, res),
-      handleSetSessionName: (id, req, res) =>
-        this.sessionHandlers.handleSetSessionName(id, req, res),
-      handleSetSessionModel: (id, req, res) => this.applyLiveSessionSetting(id, req, res, "model"),
-      handleSetSessionEffort: (id, req, res) =>
-        this.applyLiveSessionSetting(id, req, res, "effort"),
-      handleUploadFile: (id, req, res) => this.sessionHandlers.handleUploadFile(id, req, res),
-      handleAdopt: (id, res) => this.sessionHandlers.handleAdopt(id, res),
-      handleFork: (id, req, res) => this.sessionHandlers.handleFork(id, req, res),
-      handleResume: (req, res) => this.sessionHandlers.handleResume(req, res),
-      handleStartSession: (req, res) => this.sessionHandlers.handleStartSession(req, res),
-      handleListConversations: (url, res) =>
-        this.conversationHandlers.handleListConversations(url, res),
-      handleConversationsCount: (url, res) =>
-        this.conversationHandlers.handleConversationsCount(url, res),
-      handleGetConversation: (id, url, res, ifNoneMatch) =>
-        this.conversationHandlers.handleGetConversation(id, url, res, ifNoneMatch),
-      handleSearch: (url, res) => this.conversationHandlers.handleSearch(url, res),
-      handleSearchTarget: (id, req, res) =>
-        this.conversationHandlers.handleSearchTarget(id, req, res),
-      handleListProjects: (url, res) => handleListProjects(url, res),
-      handleGetPopularProjects: (url, res) =>
-        this.conversationHandlers.handleGetPopularProjects(url, res),
-      handleGetProjectSummaries: (url, res) =>
-        this.conversationHandlers.handleGetProjectSummaries(url, res),
+      applyLiveSessionSetting: (id, req, res, setting) =>
+        this.applyLiveSessionSetting(id, req, res, setting),
       handlePairStart: (res) => this.handlePairStart(res),
       handlePairExchange: (req, res) => this.handlePairExchange(req, res),
       handleBrowse: (url, res) => this.handleBrowse(url, res),
       handleMkdir: (req, res) => this.handleMkdir(req, res),
-      handleWsOpen: (ws) => {
-        this.wsHub.addClient(ws);
-        const sessions = this.withReconciledLifecycle(
-          this.sessionStore.list(this.ptyAttachedIds()),
-        );
-        ws.send(JSON.stringify({ type: "session_list", sessions }));
-        if (!this.currentWarmupState()) {
-          ws.send(JSON.stringify({ type: "cache_ready" }));
-        }
-        // Re-surface a pending cache-integrity alert to every connecting client
-        // (covers the startup warm-up window and every reconnect).
-        const alertMsg = this.cacheMonitor?.wsMessage();
-        if (alertMsg) this.wsHub.unicast(ws, alertMsg);
-      },
-      handleWsMessage: async (ws, raw) => {
-        try {
-          const msg = JSON.parse(String(raw));
-          if (msg.type === "register" && typeof msg.clientId === "string") {
-            const oldClientId = this.wsToClientId.get(ws);
-            if (oldClientId) this.clientIdToWs.delete(oldClientId);
-            this.clientIdToWs.set(msg.clientId, ws);
-            this.wsToClientId.set(ws, msg.clientId);
-          }
-          if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
-            this.addSessionSubscriber(msg.sessionId, ws);
-            if (this.ptyManager.hasSession(msg.sessionId)) {
-              const lines = await this.ptyManager.getOutputLines(msg.sessionId, 200);
-              const userMessages = this.ptyManager.getInputHistory(msg.sessionId);
-              ws.send(
-                JSON.stringify({
-                  type: "terminal_replay",
-                  sessionId: msg.sessionId,
-                  lines,
-                  userMessages,
-                  seq: this.terminalSeq.get(msg.sessionId),
-                }),
-              );
-            }
-            // A gate/question can open before the client finishes subscribing
-            // (Codex's startup gates fire within ~500ms of spawn) — broadcast()
-            // only reaches already-subscribed sockets, so a card that opened in
-            // that window is otherwise lost forever. Replay pending state the
-            // same way terminal_replay does above.
-            const pendingGate = this.pendingPermission.get(msg.sessionId);
-            if (pendingGate) {
-              this.log.info(`[ws.replay_permission] ${msg.sessionId.slice(0, 8)}`, {
-                event: "ws.replay_permission",
-                sessionId: msg.sessionId,
-              });
-              ws.send(
-                JSON.stringify({
-                  type: "permission",
-                  sessionId: msg.sessionId,
-                  ...(pendingGate.prompt ? { prompt: pendingGate.prompt } : {}),
-                  ...(pendingGate.detail ? { detail: pendingGate.detail } : {}),
-                  options: pendingGate.options,
-                  ...(pendingGate.cursor !== undefined ? { cursor: pendingGate.cursor } : {}),
-                }),
-              );
-            }
-            const pendingQuestion = this.pendingQuestions.get(msg.sessionId);
-            if (pendingQuestion) {
-              this.log.info(`[ws.replay_question] ${msg.sessionId.slice(0, 8)}`, {
-                event: "ws.replay_question",
-                sessionId: msg.sessionId,
-              });
-              ws.send(
-                JSON.stringify({
-                  type: "question",
-                  sessionId: msg.sessionId,
-                  toolUseId: pendingQuestion.toolUseId,
-                  questions: pendingQuestion.questions,
-                }),
-              );
-            }
-          }
-          if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
-            this.startGraceTimer(msg.sessionId, this.ptyGracePeriodMs);
-          }
-        } catch {
-          // malformed JSON, ignore
-        }
-      },
-      handleWsClose: (ws) => {
-        const clientId = this.wsToClientId.get(ws);
-        if (clientId) {
-          this.clientIdToWs.delete(clientId);
-          this.wsToClientId.delete(ws);
-        }
-        for (const subscribers of this.sessionSubscribers.values()) {
-          subscribers.delete(ws);
-          // Deliberately does NOT arm a kill timer. A socket closing is not a
-          // request to stop the agent: phones sleep, signal drops, Wi-Fi hands
-          // off to cellular. Killing the PTY because nobody is watching means a
-          // long agent task cannot outlive a backgrounded app — the failure this
-          // runtime exists to prevent (see
-          // docs/architecture/2026-07-24-durable-session-runtime.md).
-          //
-          // Unbounded PTY growth is bounded by the idle reaper instead, which
-          // measures agent inactivity rather than subscriber absence. An
-          // explicit hold_session from the client still terminates immediately
-          // (see the hold_session handler above) — that one IS a user intent.
-        }
-      },
+      clientIdToWs: this.clientIdToWs,
+      wsToClientId: this.wsToClientId,
+      sessionSubscribers: this.sessionSubscribers,
+      terminalSeq: this.terminalSeq,
+      pendingPermission: this.pendingPermission,
+      pendingQuestions: this.pendingQuestions,
       agentClient,
       conversationWriter,
       agentConfig,
-    };
+    });
 
     this.httpServer = createServer((req, res) => this.handleRequest(req, res));
 
