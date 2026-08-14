@@ -125,7 +125,10 @@ describe("processJsonlQuestions — P0.2 suppression + anti-clobber", () => {
   it("(b) a foreign JSONL question does not clobber a different PTY-screen question", () => {
     const SID = "pty-owned-sess";
     // A genuine live question originates from the PTY-screen path.
-    (server as any).handleLiveQuestion(SID, qParsed("Ready to ship?", ["ship", "wait"]));
+    (server as any).sessionHandlers.handleLiveQuestion(
+      SID,
+      qParsed("Ready to ship?", ["ship", "wait"]),
+    );
     const screenToolUseId = (server as any).pendingQuestions.get(SID).toolUseId;
     expect(screenToolUseId.startsWith("screen:")).toBe(true);
     broadcasts = []; // ignore the screen broadcast
@@ -145,7 +148,10 @@ describe("processJsonlQuestions — P0.2 suppression + anti-clobber", () => {
 
   it("re-sync: the SAME question's JSONL flush updates the toolUseId, origin stays pty", () => {
     const SID = "resync-sess";
-    (server as any).handleLiveQuestion(SID, qParsed("Merge now?", ["merge", "hold"]));
+    (server as any).sessionHandlers.handleLiveQuestion(
+      SID,
+      qParsed("Merge now?", ["merge", "hold"]),
+    );
     broadcasts = [];
 
     // JSONL flush of the same question carries the real toolUseId.

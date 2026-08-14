@@ -128,7 +128,9 @@ type AutoResumeInternals = {
   registryBoot: {
     autoResumePreviousSessions(rows: ManagedSessionRow[]): Promise<void>;
   };
-  resumeSession: ReturnType<typeof vi.fn>;
+  sessionHandlers: {
+    resumeSession: ReturnType<typeof vi.fn>;
+  };
   log: {
     debug: ReturnType<typeof vi.fn>;
     info: ReturnType<typeof vi.fn>;
@@ -175,16 +177,16 @@ describe("auto-resume orchestration", () => {
 
   it("does nothing when the preference is false", async () => {
     const server = makePolicyServer(false, cacheDir);
-    server.resumeSession = vi.fn();
+    server.sessionHandlers.resumeSession = vi.fn();
 
     await server.registryBoot.autoResumePreviousSessions([mkRow({ project_path: projectDir })]);
 
-    expect(server.resumeSession).not.toHaveBeenCalled();
+    expect(server.sessionHandlers.resumeSession).not.toHaveBeenCalled();
   });
 
   it("summarizes ineligible rows at info and keeps per-row reasons at debug", async () => {
     const server = makePolicyServer(true, cacheDir);
-    server.resumeSession = vi.fn();
+    server.sessionHandlers.resumeSession = vi.fn();
 
     await server.registryBoot.autoResumePreviousSessions([
       mkRow({
@@ -200,7 +202,7 @@ describe("auto-resume orchestration", () => {
       }),
     ]);
 
-    expect(server.resumeSession).not.toHaveBeenCalled();
+    expect(server.sessionHandlers.resumeSession).not.toHaveBeenCalled();
     const infoLogs = server.log.info.mock.calls.filter(
       ([, fields]) => fields?.event === "sessions.auto_resume_skipped",
     );
@@ -220,7 +222,7 @@ describe("auto-resume orchestration", () => {
     const releases: Array<() => void> = [];
     let active = 0;
     let maxActive = 0;
-    server.resumeSession = vi.fn(
+    server.sessionHandlers.resumeSession = vi.fn(
       () =>
         new Promise((resolve) => {
           active++;
@@ -241,27 +243,27 @@ describe("auto-resume orchestration", () => {
 
     const run = server.registryBoot.autoResumePreviousSessions(rows);
     await vi.advanceTimersByTimeAsync(0);
-    expect(server.resumeSession).toHaveBeenCalledTimes(1);
+    expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(AUTO_RESUME_STAGGER_MS - 1);
-    expect(server.resumeSession).toHaveBeenCalledTimes(1);
+    expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
-    expect(server.resumeSession).toHaveBeenCalledTimes(2);
+    expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(2);
 
     for (let expected = 3; expected <= AUTO_RESUME_MAX; expected++) {
       releases.shift()?.();
       await vi.advanceTimersByTimeAsync(AUTO_RESUME_STAGGER_MS - 1);
-      expect(server.resumeSession).toHaveBeenCalledTimes(expected - 1);
+      expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(expected - 1);
       await vi.advanceTimersByTimeAsync(1);
-      expect(server.resumeSession).toHaveBeenCalledTimes(expected);
+      expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(expected);
     }
 
     for (const release of releases.splice(0)) release();
     await run;
 
     expect(maxActive).toBe(2);
-    expect(server.resumeSession).toHaveBeenCalledTimes(AUTO_RESUME_MAX);
-    for (const [options] of server.resumeSession.mock.calls) {
+    expect(server.sessionHandlers.resumeSession).toHaveBeenCalledTimes(AUTO_RESUME_MAX);
+    for (const [options] of server.sessionHandlers.resumeSession.mock.calls) {
       expect(options).not.toHaveProperty("force");
     }
     expect(
@@ -274,7 +276,7 @@ describe("auto-resume orchestration", () => {
 
   it("logs a busy conversation as skipped instead of forcing it", async () => {
     const server = makePolicyServer(true, cacheDir);
-    server.resumeSession = vi.fn().mockResolvedValue({
+    server.sessionHandlers.resumeSession = vi.fn().mockResolvedValue({
       ok: false,
       reason: "conversation_busy",
       detectedBy: ["jsonl_mtime"],
@@ -286,7 +288,7 @@ describe("auto-resume orchestration", () => {
       mkRow({ project_path: projectDir, status_updated_at: Date.now() }),
     ]);
 
-    expect(server.resumeSession.mock.calls[0][0]).not.toHaveProperty("force");
+    expect(server.sessionHandlers.resumeSession.mock.calls[0][0]).not.toHaveProperty("force");
     expect(
       server.log.info.mock.calls.some(
         ([, fields]) =>
