@@ -18,16 +18,25 @@ const PACKAGE = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "
 };
 
 describe("CI triggers", () => {
-  // Task branches are developed against and merged into integration/**. When
-  // the workflow only triggered on main, PRs against an integration branch ran
-  // NO ci at all — lint, types, and tests never executed, while the Snyk check
-  // still reported green and read as "CI passed".
-  it("runs on pull requests targeting integration branches", () => {
-    expect(WORKFLOW).toMatch(/pull_request:[\s\S]*?branches:.*integration/);
+  // `pull_request.branches` filters on the BASE branch, so the only thing it can
+  // ever do is withhold CI from a PR. That produced the same silent failure
+  // twice: with no matching base the workflow does not trigger at all, only the
+  // Snyk check reports, and GitHub shows the PR as CLEAN because nothing
+  // required is pending — so an untested PR reads greener than a tested one.
+  //
+  // The trigger is therefore deliberately unfiltered, and this test is the guard
+  // against a filter being reintroduced. Listing more branches is not a fix:
+  // the next base nobody thought of fails the same silent way.
+  it("runs on every pull request, whatever its base", () => {
+    const onBlock = WORKFLOW.split(/^jobs:/m)[0];
+    const prBlock = onBlock.slice(onBlock.indexOf("pull_request:"));
+    expect(prBlock).toContain("pull_request:");
+    expect(prBlock).not.toMatch(/^\s+branches:/m);
   });
 
-  it("still runs on main", () => {
-    expect(WORKFLOW).toMatch(/pull_request:[\s\S]*?branches:.*main/);
+  it("still runs on pushes to main and integration branches", () => {
+    expect(WORKFLOW).toMatch(/push:[\s\S]*?branches:.*main/);
+    expect(WORKFLOW).toMatch(/push:[\s\S]*?branches:.*integration/);
   });
 });
 
