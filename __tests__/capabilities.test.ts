@@ -8,6 +8,7 @@ import {
   hasCapability,
   isCapability,
   legacyPrincipal,
+  type Principal,
   READ_ONLY_CAPABILITIES,
   requiredCapability,
 } from "../src/services/security/capabilities";
@@ -18,11 +19,19 @@ import {
  */
 
 describe("presets", () => {
-  // A driving device must not be able to revoke other devices or rotate the
-  // credential every device depends on.
-  it("excludes admin from the full preset", () => {
-    expect(FULL_CAPABILITIES).not.toContain("admin");
-    expect(capabilitiesForPreset("full")).not.toContain("admin");
+  // The full preset holds admin, because on this product the phone IS the
+  // administration surface: the paired-devices screen, backup and restore, and
+  // the model and effort settings are all admin-gated routes that mobile calls.
+  // A driving device without admin loses them the moment it presents its own
+  // token instead of the shared key.
+  it("includes admin in the full preset", () => {
+    expect(FULL_CAPABILITIES).toContain("admin");
+    expect(capabilitiesForPreset("full")).toContain("admin");
+  });
+
+  // The narrowing lives in read-only, and that is the whole of it.
+  it("withholds admin from read-only", () => {
+    expect(capabilitiesForPreset("read-only")).not.toContain("admin");
   });
 
   it("grants read-only devices history and nothing else", () => {
@@ -39,10 +48,17 @@ describe("presets", () => {
     );
   });
 
+  // The sentinel is a non-capability rather than "admin", which the full preset
+  // now legitimately holds — pushing a value the preset already contains would
+  // pass whether or not a copy was returned.
   it("returns copies so a caller cannot mutate the shared preset", () => {
     const a = capabilitiesForPreset("full");
-    a.push("admin");
-    expect(capabilitiesForPreset("full")).not.toContain("admin");
+    (a as string[]).push("not-a-capability");
+    expect(capabilitiesForPreset("full")).not.toContain("not-a-capability");
+
+    const b = capabilitiesForPreset("read-only");
+    b.pop();
+    expect(capabilitiesForPreset("read-only")).toEqual(["history:read"]);
   });
 });
 
@@ -115,12 +131,50 @@ describe("hasCapability", () => {
     expect(hasCapability(legacy, "admin")).toBe(true);
   });
 
-  // A device, by contrast, never gets admin from a preset — that is the whole
-  // point of scoping.
-  it("never grants admin through a device preset", () => {
-    for (const preset of ["full", "read-only"] as const) {
-      expect(capabilitiesForPreset(preset)).not.toContain("admin");
-    }
+  // A full device now holds exactly what the shared key holds. That is the
+  // model this product actually has — one person, many of their own devices —
+  // and it is what keeps mobile's admin-gated screens working once a device
+  // presents its own token (#684) rather than the shared key.
+  it("gives a full device the same authority as the shared key", () => {
+    expect(new Set(capabilitiesForPreset("full"))).toEqual(new Set(legacyPrincipal().capabilities));
+  });
+
+  // The routes that broke without this. Each is a real endpoint mobile calls:
+  // the paired-devices screen, backup and restore, and the model/effort
+  // settings. Asserted through requiredCapability so a change to the route
+  // table is caught here rather than as a 403 on someone's phone.
+  it.each([
+    ["/api/devices", "GET"],
+    ["/api/backup/export", "GET"],
+    ["/api/backup/restore", "POST"],
+    ["/api/config/claude-flags", "GET"],
+    ["/api/config/claude-flags", "PUT"],
+  ])("lets a full device reach %s %s", (path, method) => {
+    const required = requiredCapability(path, method);
+    expect(required).not.toBeNull();
+    const device: Principal = {
+      kind: "device",
+      deviceId: "dev-1",
+      capabilities: capabilitiesForPreset("full"),
+    };
+    expect(hasCapability(device, required as Capability)).toBe(true);
+  });
+
+  // The positive control for the case above: a read-only device is still
+  // refused those same routes, so the assertions prove a capability check
+  // rather than an absent one.
+  it.each([
+    ["/api/devices", "GET"],
+    ["/api/backup/export", "GET"],
+    ["/api/config/claude-flags", "PUT"],
+  ])("still refuses a read-only device %s %s", (path, method) => {
+    const required = requiredCapability(path, method);
+    const device: Principal = {
+      kind: "device",
+      deviceId: "dev-2",
+      capabilities: capabilitiesForPreset("read-only"),
+    };
+    expect(hasCapability(device, required as Capability)).toBe(false);
   });
 });
 
