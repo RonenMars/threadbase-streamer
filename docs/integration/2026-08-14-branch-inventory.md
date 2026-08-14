@@ -21,7 +21,7 @@ Seven branches survived that had no `origin` counterpart. All seven were pushed 
 | `feat/claude-open-file-collision` | 20 | **#465** | **already merged** |
 | `fix/codex-active-writer-resume` | 21 | **#463** | **already merged** |
 | `docs/readme-security-posture` | 2 | **#518** | **already merged** |
-| `fix/windows-supervised-logs` | 2 | **#520** | **already merged** |
+| `fix/windows-supervised-logs` | 2 | **#520** | **merged except one file** — all code is byte-identical to `main`; `docs/prompts/2026-08-10-verify-windows-logs.md` (150 lines) exists nowhere else |
 | `pr523-review` | 1 | — | **never opened** — `fix(windows): stabilize native dependency and test compatibility`, 6 files incl. `package.json` / `package-lock.json` |
 | `stack/lifecycle-starting-on-448` | 2 | — | **never opened** — `fix(sessions): scope lifecycle-starting gate to the PTY path`, 7 files incl. `docs/compatibility/tb-mobile.md` |
 | `feat/end-to-end-encryption` | 1 | — | **deliberate** — spec notes started 2026-08-14, `specs/end-to-end-encryption/` |
@@ -43,6 +43,18 @@ This is the same shape as the other failures recorded in the log §18: a clean, 
 
 ## Consequence for rebasing
 
-Rebasing the four merged branches onto today's `main` would replay ~20 commits of already-merged content onto a tree where `src/server.ts` has since gone 6,557 → 2,501 lines. That is the `--onto` failure from log §17, for no gain. They are duplicate refs and can be deleted once their remote copies are no longer wanted as backups.
+Rebasing the four merged branches onto today's `main` would replay ~20 commits of already-merged content onto a tree where `src/server.ts` has since gone 6,557 → 2,501 lines. That is the `--onto` failure from log §17, for no gain. They are duplicate refs and can be deleted once their remote copies are no longer wanted as backups — **except `fix/windows-supervised-logs`**, whose one unmerged doc must be salvaged first (see the table above).
+
+### Diffing a pre-refactor branch against post-refactor `main` invents work
+
+Checked 2026-08-14, while deciding whether #559 conflicted with `fix/windows-supervised-logs`.
+
+`git diff --stat origin/main..<branch>` on a branch cut before the `src/server.ts` split reports **every module the split extracted as a deletion** — `src/scanner-manager.ts`, `src/session-watchers.ts`, `src/external-tails.ts` and the rest, ~5,900 lines of them. The branch never touched those files; it is simply older than they are. That reads as a large, conflicting change and it is entirely an artifact of the base.
+
+It produced a wrong call here: the branch looked like it held 8 files of rival work over `scripts/deploy.ps1` and blocked #559 on a which-is-authoritative decision. Diffing each side against **its own merge-base** instead showed the real content — 12 files, of which 11 were already byte-identical to `main`.
+
+**Diff a branch against its own merge-base, or restrict the pathspec to the files the branch actually touches. Never against a `main` that has moved structurally underneath it.**
+
+One caveat on the pathspec form, because it fails silently in this repo's shell: `F="a.md b.md"; git diff main..br -- $F` passes the whole string as **one** pathspec under zsh — no word-splitting — so it matches nothing and prints an empty diff that reads as "no differences". Pass the paths as literal arguments or a real array.
 
 Only `pr523-review` and `stack/lifecycle-starting-on-448` are candidates for real rebase work. Both date from 2026-08-09, predate the refactor, and touch files the split moved, so both need genuine conflict resolution rather than a mechanical replay.
