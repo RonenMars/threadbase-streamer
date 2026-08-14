@@ -56,7 +56,7 @@ waiting_input / idle ──(idle reaper, 6h of agent silence)───► idle  
 - **`idle`**: no live PTY. Reached on process exit or via `PTYManager.putOnHold()` (SIGINT + screen disposal). History intact; resume via `POST /api/sessions/resume` with the same `conversationId`.
 - **Grace/hold**: a WebSocket disconnect arms nothing. The only caller of `startGraceTimer` is an explicit `{ type: "hold_session", sessionId }`, which waits `ptyGracePeriodMs` (default 270 000 ms) and then calls `putOnHold()`; a `running` session defers up to `GRACE_MAX_DEFERS` (4) so a turn is never cut mid-response.
 - **Idle reaper**: holds any PTY whose agent has been silent for `IDLE_REAP_AFTER_MS` (6 h), swept every 5 min. Never touches a `running` session. This is the resource bound that replaced kill-on-disconnect.
-- **Codex resume is authoritative, not optimistic.** Codex enforces a single writer per rollout and only reports it after the process starts (`already has an active writer (code -32600)`), so a Codex resume/fork waits for a bounded ready-or-failed outcome (`CODEX_STARTUP_TIMEOUT_MS`, 4 s, env `THREADBASE_CODEX_STARTUP_TIMEOUT_MS`) before answering. A refusal — found either by the pre-spawn open-file probe (`services/sessions/codexRolloutOwner.ts`, bounded `lsof` on the exact rollout, POSIX only) or by the rendered error afterwards — is a `409` whose `code` stays `CONVERSATION_BUSY` with an additive `reasonCode: "CODEX_SESSION_ACTIVE"`. `force` does **not** bypass it: force only ever overrode our own heuristic. Recovery is `POST /api/sessions/:id/fork` (`codex fork`), which starts a second conversation and leaves the owner running. Contract: [docs/compatibility/codex-collision-and-fork.md](docs/compatibility/codex-collision-and-fork.md).
+- **Codex resume is authoritative, not optimistic.** Codex enforces a single writer per rollout and only reports it after the process starts (`already has an active writer (code -32600)`), so a Codex resume/fork waits for a bounded ready-or-failed outcome (`CODEX_STARTUP_TIMEOUT_MS`, 4 s, env `THREADBASE_CODEX_STARTUP_TIMEOUT_MS`) before answering. A refusal — found either by the pre-spawn open-file probe (`services/sessions/codexRolloutOwner.ts`, bounded `lsof` on the exact rollout, POSIX only) or by the rendered error afterwards — is a `409` whose `code` stays `CONVERSATION_BUSY` with an additive `reasonCode: "CODEX_SESSION_ACTIVE"`. `force` does **not** bypass it: force only ever overrode our own heuristic. Recovery is `POST /api/sessions/:id/fork` (`codex fork`), which starts a second conversation and leaves the owner running.
 - An instant non-zero exit (<2 s, no output) gets a diagnosed `failureReason` (missing project dir, or Claude binary not found).
 - **Mobile mapping**: historical conversations are returned as resumable shapes with `status: "on_hold"` (`conversationToResumableSession` in `server.ts`); mobile treats `idle` and `on_hold` as the same.
 
@@ -172,16 +172,9 @@ Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP ser
 
 ## Backward compatibility with tb-mobile
 
-`tb-mobile` is a released iOS/Android app that cannot be force-updated — a breaking server change silently breaks any user who hasn't updated. The streamer must stay backward-compatible with older mobile clients.
+**Backward compatibility is suspended.** `docs/compatibility/` has been removed and the streamer is developed without it for now — a change is free to rename or drop an endpoint, a response field, a status value or a WS event type.
 
-**Before changing any API response shape, endpoint path, query parameter, status value, or WebSocket event, read [docs/compatibility/tb-mobile.md](docs/compatibility/tb-mobile.md)** — it enumerates every path, field name, and event string mobile depends on.
-
-The hard rules:
-
-- Never rename or remove endpoints, response fields (casing matters), query params, session status strings, or WS event types. Additive changes only (new optional fields, new endpoints, new event types — mobile ignores unknowns).
-- Session statuses mobile switches on: `running`, `waiting_input`, `completed`, `failed`, `on_hold`, `idle` (alias of `on_hold`). The server currently emits `running`/`waiting_input`/`idle` for live sessions and `on_hold` for resumable conversations; `completed`/`failed` are legacy values older streamers emitted — don't reuse them with new semantics.
-- Auth: `Authorization: Bearer <token>` AND `/ws?key=<token>` must both keep working; API key format `tb_<32-hex-chars>` is load-bearing in pairing.
-- For a risky change: keep the old shape alongside the new one, or open a coordinated tb-mobile PR and document the minimum required app version in the commit message.
+What replaces it is a check, not a gate. When a change touches the wire contract, look at the client in `../tb-mobile/` (`services/`, `hooks/`, `stores/`) for uses of the shape you are changing, and **tell the user what would break**. Then carry on: a hit there is information for the user to act on, never a reason to block, revise or abandon the change.
 
 ## Menubar app (vendor/menubar)
 
