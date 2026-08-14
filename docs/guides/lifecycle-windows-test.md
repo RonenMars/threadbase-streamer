@@ -201,7 +201,7 @@ Test-Path $env:USERPROFILE\.threadbase\prod-suspended.json
 ### Where to look
 
 - `$env:USERPROFILE\.threadbase\logs\*.log` — main streamer log + stderr.
-- `$env:TEMP\threadbase.err` — only if the task action explicitly redirects there; otherwise empty (see troubleshooting "Service starts but immediately exits").
+- `~/.threadbase/logs/stderr.log` — written by `launch.cmd`'s `2>>` redirection, and what `tb-streamer prod logs --errors-only` reads. (Installs predating that redirection wrote nowhere at all; `Repair-LaunchCmd` rewrites them on the next deploy.)
 - Task Scheduler GUI: `Win+R` → `taskschd.msc` → find "Threadbase" task → **Last Run Result** + **History** tab.
 - `Get-ScheduledTaskInfo -TaskName Threadbase` — shows last run result code.
 

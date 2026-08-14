@@ -291,8 +291,17 @@ function Repair-LaunchCmd {
 
   if (-not $needsRewrite) { return }
 
+  # Guarded like Invoke-Setup's lookup. The `>>` condition above makes this path
+  # fire on every install that predates the redirection, so an unguarded
+  # Get-Command now aborts the whole deploy with a raw CommandNotFoundException
+  # (ErrorActionPreference is Stop) instead of a readable message.
+  $nodeBin = (Get-Command node -ErrorAction SilentlyContinue)?.Source
+  if (-not $nodeBin) {
+    Write-Err "node not found in PATH; cannot heal launch.cmd"
+    return
+  }
+
   Copy-Item -Path $cmdPath -Destination "$cmdPath.bak.$(Get-Date -Format yyyyMMddHHmmss)" -Force
-  $nodeBin = (Get-Command node).Source
   Set-Content -Path $cmdPath -Value (Get-LaunchCmdLines -NodeBin $nodeBin) -Encoding Ascii
   Write-Ok "launch.cmd healed (backup saved alongside)"
 }
