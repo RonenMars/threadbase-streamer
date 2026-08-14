@@ -23,7 +23,7 @@ Seven branches survived that had no `origin` counterpart. All seven were pushed 
 | `docs/readme-security-posture` | 2 | **#518** | **already merged** |
 | `fix/windows-supervised-logs` | 2 | **#520** | **merged except one file** — all code is byte-identical to `main`; `docs/prompts/2026-08-10-verify-windows-logs.md` (150 lines) exists nowhere else |
 | `pr523-review` | 1 | — | **never opened** — `fix(windows): stabilize native dependency and test compatibility`, 6 files incl. `package.json` / `package-lock.json` |
-| `stack/lifecycle-starting-on-448` | 2 | — | **never opened** — `fix(sessions): scope lifecycle-starting gate to the PTY path`, 7 files incl. `docs/compatibility/tb-mobile.md` |
+| `stack/lifecycle-starting-on-448` | 3 | — | **superseded, deleted 2026-08-14** — never opened; every symbol it added had already shipped. See the correction below |
 | `feat/end-to-end-encryption` | 1 | — | **deliberate** — spec notes started 2026-08-14, `specs/end-to-end-encryption/` |
 
 ## The trap: `git cherry` cannot see through a squash
@@ -57,4 +57,16 @@ It produced a wrong call here: the branch looked like it held 8 files of rival w
 
 One caveat on the pathspec form, because it fails silently in this repo's shell: `F="a.md b.md"; git diff main..br -- $F` passes the whole string as **one** pathspec under zsh — no word-splitting — so it matches nothing and prints an empty diff that reads as "no differences". Pass the paths as literal arguments or a real array.
 
-Only `pr523-review` and `stack/lifecycle-starting-on-448` are candidates for real rebase work. Both date from 2026-08-09, predate the refactor, and touch files the split moved, so both need genuine conflict resolution rather than a mechanical replay.
+`stack/lifecycle-starting-on-448` was named here as a rebase candidate. **It was fully superseded**, and was deleted (remote ref and worktree) on 2026-08-14 after validation. This entry was wrong in the same way §"Diffing a pre-refactor branch" describes, so it is corrected rather than removed.
+
+What settled it, and what to copy for the next branch like it:
+
+1. Every symbol the branch introduces is already on `main` — `isLiveMultiAgent`, `lifecycleSource`, the `"starting"` member of `SessionLifecycle`, the `tb-mobile #508` comment. Grepping `origin/main` for them is decisive and costs one command.
+2. The only `src/` difference ran the other way: `main` has `forkedFromConversationId` in `managedToResponse` and the branch does not. `main` was a strict superset.
+3. `main`'s `__tests__/session-store.test.ts` already carries the `"starting"` assertions, and the branch's test tree was 3,229 lines behind across 38 files.
+
+Merging it as written would have deleted four shipped features — Codex fork support (`forkedFromConversationId`, `StartForkSessionOptions`), the `failureCode` active-writer 409 mapping, and `ServerConfig.host` from #560, merged the same day. `forkedFromConversationId` is in the tb-mobile compatibility contract, so that deletion is a released-client break, not just a revert.
+
+**A branch that predates a large refactor is superseded until proven otherwise.** Check whether `main` already has its symbols *before* planning conflict resolution; the conflicts are the expensive part and they are often work to re-delete live code.
+
+That leaves `pr523-review` as the only branch that may hold real unmerged work, and it has not been checked this way yet.
