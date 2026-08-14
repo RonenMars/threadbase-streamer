@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "fs";
+import { readFileSync } from "fs";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 import {
@@ -132,9 +132,18 @@ describe("hasCapability", () => {
  * authenticated caller that a path it cannot name might exist). That is only
  * safe if every route the app actually mounts is classified — which is what
  * this test enforces. A new endpoint added without a mapping fails here.
+ *
+ * The guarantee is build-time, not runtime, so this test IS the control. It
+ * used to scan the route files for literals already beginning `/api`,
+ * `/internal` or `/ws` — which silently skipped every sub-app mounted at a
+ * prefix, because those files write their paths RELATIVE to the mount
+ * (`sessions.routes.ts` says `"/:id/input"`, not `"/api/sessions/:id/input"`).
+ * A whole new mount prefix added to `app.ts` therefore passed without ever
+ * being classified. Reconstructing the full path from mount + literal is what
+ * closes that.
  */
 describe("every mounted route is classified", () => {
-  const ROUTES_DIR = join(__dirname, "..", "src", "api", "routes");
+  const API_DIR = join(__dirname, "..", "src", "api");
 
   // Paths the middleware deliberately serves without a capability check.
   const EXEMPT = [
@@ -145,21 +154,71 @@ describe("every mounted route is classified", () => {
     "/api/logs", // localhost-only, bypassed earlier in the middleware
   ];
 
-  it("maps a capability for every /api and /ws path in the route files", () => {
-    const mounted = new Set<string>();
-    for (const file of readdirSync(ROUTES_DIR)) {
-      const src = readFileSync(join(ROUTES_DIR, file), "utf8");
-      for (const m of src.matchAll(/"(\/(?:api|internal|ws)[^"]*)"/g)) {
-        // Strip Hono param/regex segments — only the static prefix matters for
-        // longest-prefix classification.
-        const path = m[1].split("/:")[0].split("{")[0];
-        if (path.length > 1) mounted.add(path);
-      }
+  /** Join a mount prefix with a sub-app's own literal, as Hono does. */
+  function joinPath(prefix: string, sub: string): string {
+    const base = prefix === "/" ? "" : prefix.replace(/\/+$/, "");
+    if (sub === "/" || sub === "") return base || "/";
+    return `${base}${sub.startsWith("/") ? sub : `/${sub}`}`;
+  }
+
+  /** Strip Hono param/regex segments — only the static prefix classifies. */
+  function staticPrefix(path: string): string {
+    return path.split("/:")[0].split("{")[0].replace(/\/+$/, "") || "/";
+  }
+
+  /**
+   * Every path the Hono app can actually serve, reconstructed as
+   * `mount prefix + the sub-app's own literal`.
+   */
+  function collectMountedPaths(): string[] {
+    const appSrc = readFileSync(join(API_DIR, "app.ts"), "utf8");
+
+    // `import { createSessionRoutes } from "./routes/sessions.routes";`
+    const fileForFactory = new Map<string, string>();
+    for (const m of appSrc.matchAll(
+      /import\s*\{\s*(create\w+)\s*\}\s*from\s*"\.\/(routes\/[\w.-]+)"/g,
+    )) {
+      fileForFactory.set(m[1], `${m[2]}.ts`);
     }
 
-    expect(mounted.size).toBeGreaterThan(5);
+    // `app.route("/api/sessions", createSessionRoutes(deps));`
+    const mounts: Array<[prefix: string, factory: string]> = [];
+    for (const m of appSrc.matchAll(/app\.route\(\s*"([^"]*)"\s*,\s*(create\w+)\s*\(/g)) {
+      mounts.push([m[1], m[2]]);
+    }
 
-    const unclassified = [...mounted].filter(
+    const paths = new Set<string>();
+    for (const [prefix, factory] of mounts) {
+      const file = fileForFactory.get(factory);
+      // A mount whose factory we cannot resolve to a file would silently
+      // contribute nothing, which is the exact failure this test exists to
+      // prevent — so surface it instead of skipping it.
+      expect(file, `no import found for ${factory} mounted at ${prefix}`).toBeDefined();
+      const routeSrc = readFileSync(join(API_DIR, file as string), "utf8");
+      for (const r of routeSrc.matchAll(
+        /app\.(?:get|post|put|patch|delete|options|all|on)\(\s*"([^"]*)"/g,
+      )) {
+        paths.add(staticPrefix(joinPath(prefix, r[1])));
+      }
+    }
+    return [...paths];
+  }
+
+  it("resolves every mount in app.ts to real paths", () => {
+    const mounted = collectMountedPaths();
+
+    // Positive control: the reconstruction must actually find the paths whose
+    // classification matters most. Without this, a regex that matched nothing
+    // would make the assertion below pass vacuously.
+    expect(mounted).toContain("/api/sessions"); // from mount + "/:id/input"
+    expect(mounted).toContain("/api/conversations");
+    expect(mounted).toContain("/api/pair/exchange"); // relative "/exchange"
+    expect(mounted).toContain("/ws"); // mounted at "/"
+    expect(mounted.length).toBeGreaterThan(15);
+  });
+
+  it("maps a capability for every mounted path", () => {
+    const unclassified = collectMountedPaths().filter(
       (p) => !EXEMPT.some((e) => p.startsWith(e)) && requiredCapability(p, "GET") === null,
     );
 

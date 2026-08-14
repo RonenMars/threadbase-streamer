@@ -1,25 +1,23 @@
 -- Paired-device registry (C5 scoped device capabilities).
 -- See docs/architecture/2026-07-24-device-identity-and-capabilities.md.
 --
--- SUPERSEDED. The live registry is now `runtime-migrations/003_create_devices.sql`
--- in runtime.db; this table is no longer read or written after boot.
+-- MOVED HERE from cache.db (migration 011_create_devices.sql), which was the
+-- wrong file for it. Everything in cache.db is rebuildable from ~/.claude and
+-- ~/.codex, which is why "delete the cache and restart" is reasonable support
+-- advice, why `tb-streamer cache clear` deletes it outright, and why the
+-- integrity monitor offers a reset-and-rescan action. A device registry is
+-- rebuildable from nothing: losing it invalidates every device token issued so
+-- far. Leaving it there made every paired device one documented troubleshooting
+-- step away from having to re-pair — which is why the narrower device
+-- credential could not safely be adopted by the client while it lived in the
+-- cache.
 --
--- It is still CREATED on a fresh cache, but it is left EMPTY:
--- RuntimeStore.importLegacyDevices() moves any rows into runtime.db on the first
--- boot after the move and then deletes them here. A `devices` row carries a
--- user-supplied device label, and keeping a second copy of that indefinitely —
--- in the one file users are told to delete when something goes wrong — retains
--- more personal data than the rollback path is worth.
---
--- Consequence, deliberate: rolling back to a streamer older than the move means
--- re-pairing, because this table will be empty. That costs a QR scan.
---
--- Do not add columns here — add them to the runtime migration instead.
---
--- Pairing exchanged a short-lived token for the streamer's API key — the SAME
--- string for every device that ever paired. Nothing recorded that a device
--- existed, so there was no attribution, no per-device revocation (rotating the
--- key de-authenticated everyone at once), and no way to scope authority.
+-- The pre-split table in cache.db is MOVED here once by
+-- RuntimeStore.importLegacyDevices(): copied, verified by row count, then
+-- deleted from the cache. Unlike managed_sessions, no second copy is left
+-- behind — a device row carries a user-supplied label, and duplicating that on
+-- disk indefinitely retains more personal data than a rollback path whose
+-- recovery is re-scanning a pairing QR.
 CREATE TABLE IF NOT EXISTS devices (
   -- Minted server-side. A client-supplied id would let one device claim
   -- another's identity.

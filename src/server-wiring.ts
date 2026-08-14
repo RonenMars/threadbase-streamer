@@ -29,6 +29,7 @@ import type {
 } from "./services/conversations/conversationWatcher";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import type { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
+import { type Capability, hasCapability, type Principal } from "./services/security/capabilities";
 import type { ReconcileVerdict } from "./services/sessions/reconcileSessions";
 import type { SessionStore } from "./session-store";
 import type {
@@ -39,6 +40,23 @@ import type {
   SessionResponse,
 } from "./types";
 import type { WSHub } from "./ws-hub";
+
+/**
+ * Whether a socket's principal may send a given frame.
+ *
+ * A null principal means authMiddleware never set one, which for `/ws` — a
+ * route it classifies as `history:read` — happens only on a bypass path. Today
+ * that is `--local-no-auth`, which grants unauthenticated full access to
+ * loopback callers by design, so allowing it here keeps the socket telling the
+ * same story as the HTTP routes rather than being stricter than them.
+ *
+ * Deliberately local rather than exported: it is a fail-OPEN helper, correct
+ * only where the caller has already established that a null principal means a
+ * deliberate bypass.
+ */
+function wsAllows(principal: Principal | null, required: Capability): boolean {
+  return principal === null || hasCapability(principal, required);
+}
 
 /** The permission gate currently open for a session (scraped via OSC 777). */
 export type PendingPermission = {
@@ -604,7 +622,20 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
       const alertMsg = deps.cacheMonitor()?.wsMessage();
       if (alertMsg) deps.wsHub.unicast(ws, alertMsg);
     },
-    handleWsMessage: async (ws, raw) => {
+    handleWsMessage: async (ws, raw, principal) => {
+      // A refused frame is dropped and logged rather than answered: the
+      // server→client union has no error type (types.ts), and adding one is a
+      // contract change older clients would ignore anyway. Dropping matches how
+      // this handler already treats malformed JSON; the log is what makes the
+      // refusal diagnosable.
+      const deny = (type: string, required: Capability): void => {
+        deps.log().warn(`[ws.capability_denied] ${type} requires ${required}`, {
+          event: "ws.capability_denied",
+          type,
+          required,
+          ...(principal?.deviceId ? { deviceId: principal.deviceId } : {}),
+        });
+      };
       try {
         const msg = JSON.parse(String(raw));
         if (msg.type === "register" && typeof msg.clientId === "string") {
@@ -614,6 +645,15 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           deps.wsToClientId.set(ws, msg.clientId);
         }
         if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
+          // Reading a session's stream is the same authority as reading its
+          // history over HTTP. Checked per frame rather than inherited from the
+          // upgrade, so this is the seam any future per-project scoping hangs
+          // off — it does not add scoping today, and every preset holds
+          // history:read, so no client's behaviour changes.
+          if (!wsAllows(principal, "history:read")) {
+            deny(msg.type, "history:read");
+            return;
+          }
           deps.addSessionSubscriber(msg.sessionId, ws);
           if (deps.ptyManager.hasSession(msg.sessionId)) {
             const lines = await deps.ptyManager.getOutputLines(msg.sessionId, 200);
@@ -667,6 +707,14 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           }
         }
         if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
+          // Holding a session SIGINTs the agent and disposes its screen, which
+          // is control, not reading — a read-only device could previously stop
+          // any session by id with a single frame, because the only check this
+          // path ever had was the upgrade's `history:read`.
+          if (!wsAllows(principal, "session:control")) {
+            deny(msg.type, "session:control");
+            return;
+          }
           deps.startGraceTimer(msg.sessionId, deps.ptyGracePeriodMs);
         }
       } catch {

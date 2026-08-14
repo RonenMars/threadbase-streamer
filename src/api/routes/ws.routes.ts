@@ -9,7 +9,13 @@ export const createWsRoutes = (deps: ApiDeps, upgradeWebSocket: UpgradeWebSocket
 
   app.get(
     "/ws",
-    upgradeWebSocket(() => {
+    // The principal is read here, at the upgrade, and captured for the life of
+    // the socket. authMiddleware sets it because /ws is classified
+    // `history:read`, but it only ever reaches the HTTP request — without
+    // capturing it the socket has no principal at all, so every frame after
+    // the upgrade is unauthorized-by-omission.
+    upgradeWebSocket((c) => {
+      const principal = c.get("principal") ?? null;
       let openWs: WebSocket | null = null;
       return {
         onOpen(_evt, ws) {
@@ -19,7 +25,7 @@ export const createWsRoutes = (deps: ApiDeps, upgradeWebSocket: UpgradeWebSocket
           deps.handleWsOpen(raw);
         },
         onMessage(evt, _ws) {
-          if (openWs) deps.handleWsMessage(openWs, evt.data);
+          if (openWs) deps.handleWsMessage(openWs, evt.data, principal);
         },
         onClose(_evt, _ws) {
           if (openWs) deps.handleWsClose(openWs);

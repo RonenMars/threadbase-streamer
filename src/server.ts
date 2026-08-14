@@ -60,7 +60,7 @@ import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.re
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
-import { RuntimeStore } from "./db/runtime-store";
+import { RuntimeStore, resolveRuntimeDbPath } from "./db/runtime-store";
 import { type ExternalTailEntry, ExternalTailManager } from "./external-tails";
 import {
   describeFeatureFlags,
@@ -507,10 +507,7 @@ export class StreamerServer {
     this.claudeExtraArgs = config.claudeExtraArgs ?? loadClaudeExtraArgs();
     this.cacheDir = config.cacheDir ?? loadCacheDir() ?? join(homedir(), ".threadbase", "cache");
     // Sibling of server.yaml, deliberately NOT under cache/ — see runtime-store.ts.
-    this.runtimeDbPath =
-      config.runtimeDbPath ??
-      process.env.THREADBASE_RUNTIME_DB ??
-      join(process.env.THREADBASE_CONFIG_DIR ?? join(homedir(), ".threadbase"), "runtime.db");
+    this.runtimeDbPath = resolveRuntimeDbPath(config.runtimeDbPath);
     this.tailSize = config.tailSize ?? loadTailSize() ?? 10;
     this.directoryDebounceMs =
       parseDirScanDebounceEnv(process.env.THREADBASE_DIR_SCAN_DEBOUNCE_MS) ??
@@ -1323,6 +1320,13 @@ export class StreamerServer {
         try {
           this.runtimeStore = RuntimeStore.open(this.runtimeDbPath);
           this.managedSessionsRepo = new ManagedSessionsRepository(this.runtimeStore.getDatabase());
+          // Devices live here, not in the cache. Two consequences beyond
+          // surviving `cache clear`: the registry no longer depends on the
+          // conversation cache opening at all — a cache failure used to null
+          // devicesRepo and silently drop every device to the shared-key path —
+          // and it is now durable enough for a client to present the device
+          // token as its only credential.
+          this.devicesRepo = new DevicesRepository(this.runtimeStore.getDatabase());
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           const abiMismatch =
@@ -1377,27 +1381,56 @@ export class StreamerServer {
           this.projectsRepo = new ProjectsRepository(db);
           this.conversationsRepo = new ConversationsRepository(this.cache);
           this.sessionsRepo = new SessionsRepository(this.sessionStore);
-          // One-time, non-destructive lift of a pre-split registry out of
-          // cache.db. Never fatal: a failed copy costs one boot of post-restart
-          // visibility, not the cache.
+          // One-time lift of pre-split tables out of cache.db. Never fatal: a
+          // failed copy costs one boot of post-restart visibility, not the
+          // cache. The two are no longer symmetric — managed_sessions is copied
+          // and left behind, devices are MOVED (see importLegacyDevices) — so
+          // they are handled separately rather than through one loop.
           try {
             const copied = this.runtimeStore?.importLegacyManagedSessions(db) ?? 0;
             if (copied > 0) {
               this.log.info(`Copied ${copied} managed session row(s) from cache.db to runtime.db`, {
                 copied,
+                table: "managed_sessions",
                 event: "runtime.legacy_import",
               });
             }
           } catch (err) {
             this.log.warn("[registry] legacy managed_sessions copy failed", {
               event: "runtime.legacy_import_failed",
+              table: "managed_sessions",
+              err,
+            });
+          }
+          try {
+            const result = this.runtimeStore?.importLegacyDevices(db);
+            if (result && result.copied > 0) {
+              // Says whether the source rows were removed, because this is the
+              // one import that deletes user data — a device label is
+              // user-supplied — and an erasure should leave a trace.
+              this.log.info(
+                `Moved ${result.copied} device row(s) from cache.db to runtime.db` +
+                  (result.purged
+                    ? "; removed the cache-side copy"
+                    : "; KEPT the cache-side copy (row count did not match after copy)"),
+                {
+                  copied: result.copied,
+                  purged: result.purged,
+                  table: "devices",
+                  event: "runtime.legacy_import",
+                },
+              );
+            }
+          } catch (err) {
+            this.log.warn("[registry] legacy devices move failed", {
+              event: "runtime.legacy_import_failed",
+              table: "devices",
               err,
             });
           }
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
           this.pushRepo = new PushRepository(db);
 
-          this.devicesRepo = new DevicesRepository(db);
           this.initLiveActivityPush(this.pushRepo);
           this.initWaitingInputPush(this.pushRepo);
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh

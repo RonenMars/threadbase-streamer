@@ -157,6 +157,13 @@ export const createMiscRoutes = (
       // Same contract: this server serves GET /api/projects/summary, which the
       // Hub's grouped views need before they can draw a tree.
       projectSummary: true,
+      // The paired-device registry lives in runtime.db, so it survives
+      // `tb-streamer cache clear` and the integrity monitor's reset-and-rescan.
+      // A client may only prefer its scoped device token over the shared API
+      // key when this is true: on an older server the registry is inside
+      // cache.db, where a documented troubleshooting step deletes it and every
+      // device token with it. Absent means "old server, assume not durable".
+      devicesDurable: true,
       // Delivery capability, not endpoint support: whether this server can
       // actually send a push, so mobile can hide an affordance instead of
       // registering tokens nothing will ever send to. Absent on older servers,

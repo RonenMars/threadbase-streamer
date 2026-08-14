@@ -103,6 +103,83 @@ describe("revocation", () => {
   });
 });
 
+/**
+ * Erasure, as distinct from revocation.
+ *
+ * `revoke` is a soft delete that keeps the row so `list()` can show what
+ * happened. That left a `devices` row — including the user-supplied `name` —
+ * with no removal path at all once the registry moved to runtime.db, which no
+ * command deletes. These are that path.
+ */
+describe("erasure", () => {
+  it("removes the row outright, unlike revoke", () => {
+    const { deviceId } = repo.register({ publicKey: "pk", name: "Ronen's iPhone" });
+
+    // Positive control: revoke leaves it behind, which is the behaviour that
+    // made a delete necessary in the first place.
+    repo.revoke(deviceId);
+    expect(repo.get(deviceId)).not.toBeNull();
+    expect(repo.list().map((d) => d.deviceId)).toContain(deviceId);
+
+    expect(repo.delete(deviceId)).toBe(true);
+    expect(repo.get(deviceId)).toBeNull();
+    expect(repo.list().map((d) => d.deviceId)).not.toContain(deviceId);
+  });
+
+  it("erases the user-supplied name with the row", () => {
+    const { deviceId } = repo.register({ publicKey: "pk", name: "Ronen's iPhone" });
+    repo.delete(deviceId);
+    expect(repo.list().some((d) => d.name === "Ronen's iPhone")).toBe(false);
+  });
+
+  it("leaves other devices untouched", () => {
+    const a = repo.register({ publicKey: "pk-a" });
+    const b = repo.register({ publicKey: "pk-b" });
+
+    repo.delete(a.deviceId);
+
+    expect(repo.authenticate(b.deviceToken)?.device_id).toBe(b.deviceId);
+  });
+
+  it("reports false for an unknown device", () => {
+    expect(repo.delete("no-such-device")).toBe(false);
+  });
+
+  // Erasure is not revocation. Deleting a live row frees its token_hash without
+  // telling the device anything — it stops being KNOWN rather than being
+  // REFUSED. Asserted so nobody later "simplifies" revoke into delete.
+  it("makes a live token unknown rather than refused", () => {
+    const { deviceId, deviceToken } = repo.register({ publicKey: "pk" });
+    repo.delete(deviceId);
+    // Both end at null here, but for different reasons — the row is gone, not
+    // marked revoked. The distinction is why the API and CLI both insist on
+    // revoking first unless forced.
+    expect(repo.authenticate(deviceToken)).toBeNull();
+    expect(repo.get(deviceId)).toBeNull();
+  });
+
+  describe("deleteRevoked", () => {
+    it("erases every revoked device and keeps the active ones", () => {
+      const a = repo.register({ publicKey: "pk-a", name: "old phone" });
+      const b = repo.register({ publicKey: "pk-b", name: "current phone" });
+      const c = repo.register({ publicKey: "pk-c", name: "old tablet" });
+      repo.revoke(a.deviceId);
+      repo.revoke(c.deviceId);
+
+      expect(repo.deleteRevoked()).toBe(2);
+
+      expect(repo.list().map((d) => d.deviceId)).toEqual([b.deviceId]);
+      expect(repo.authenticate(b.deviceToken)?.device_id).toBe(b.deviceId);
+    });
+
+    it("returns 0 when nothing is revoked", () => {
+      repo.register({ publicKey: "pk" });
+      expect(repo.deleteRevoked()).toBe(0);
+      expect(repo.list()).toHaveLength(1);
+    });
+  });
+});
+
 describe("listing", () => {
   // An audit surface must never hand out a credential.
   it("never exposes a token or hash", () => {

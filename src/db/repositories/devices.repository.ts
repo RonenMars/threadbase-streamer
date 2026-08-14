@@ -96,6 +96,8 @@ export class DevicesRepository {
   private listStmt: Database.Statement;
   private revokeStmt: Database.Statement;
   private touchStmt: Database.Statement;
+  private deleteStmt: Database.Statement;
+  private deleteRevokedStmt: Database.Statement;
 
   constructor(db: Database.Database) {
     this.insertStmt = db.prepare(`
@@ -110,6 +112,8 @@ export class DevicesRepository {
     this.listStmt = db.prepare("SELECT * FROM devices ORDER BY created_at DESC");
     this.revokeStmt = db.prepare("UPDATE devices SET revoked_at = ? WHERE device_id = ?");
     this.touchStmt = db.prepare("UPDATE devices SET last_seen_at = ? WHERE device_id = ?");
+    this.deleteStmt = db.prepare("DELETE FROM devices WHERE device_id = ?");
+    this.deleteRevokedStmt = db.prepare("DELETE FROM devices WHERE revoked_at IS NOT NULL");
   }
 
   /**
@@ -169,6 +173,35 @@ export class DevicesRepository {
   /** Revoke one device. Others are untouched — no key rotation, no collateral. */
   revoke(deviceId: string, now: number = Date.now()): boolean {
     return this.revokeStmt.run(now, deviceId).changes > 0;
+  }
+
+  /**
+   * Erase one device's record outright.
+   *
+   * Deliberately separate from `revoke`, which is a soft delete that keeps the
+   * row so `list()` can show what happened. That audit trail is the right
+   * default — but it meant a `devices` row, including the user-supplied `name`
+   * ("Ronen's iPhone"), had no removal path at all once the registry moved to
+   * runtime.db, which no command deletes. This is that path.
+   *
+   * Erasure is NOT revocation: deleting a row frees its `token_hash`, so a
+   * device whose token is still on a phone somewhere stops being *known* rather
+   * than being *refused*. Revoke first, delete second, is the safe order, and
+   * `deleteRevoked()` exists so that is the easy thing to do.
+   */
+  delete(deviceId: string): boolean {
+    return this.deleteStmt.run(deviceId).changes > 0;
+  }
+
+  /**
+   * Erase every already-revoked device. The bulk companion to `delete`, and the
+   * one that is safe by construction: a revoked device is already refused, so
+   * removing its row cannot restore access to anything.
+   *
+   * Returns the number of rows removed.
+   */
+  deleteRevoked(): number {
+    return this.deleteRevokedStmt.run().changes;
   }
 
   touch(deviceId: string, now: number = Date.now()): void {
