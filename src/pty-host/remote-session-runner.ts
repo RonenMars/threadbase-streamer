@@ -288,6 +288,9 @@ export class RemoteSessionRunner implements SessionRunner {
       case "permission-change":
         this.options.onPermissionChange?.(event.sessionId, event.gate);
         break;
+      case "phase-change":
+        this.options.onPhaseChange?.(event.sessionId, event.phase);
+        break;
       case "live-question":
         this.options.onLiveQuestion?.(event.sessionId, event.questions);
         break;

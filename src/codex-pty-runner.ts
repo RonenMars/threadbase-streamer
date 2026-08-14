@@ -32,7 +32,9 @@ import {
   detectCodexBlockingPrompt,
   gateCard,
 } from "./services/questions/codexScreen";
+import { parseAgentPhase } from "./services/questions/parseAgentPhase";
 import type {
+  AgentPhase,
   ManagedSession,
   PTYManagerOptions,
   SessionRunner,
@@ -92,6 +94,7 @@ export class CodexPtyRunner implements SessionRunner {
   private sessions = new Map<string, InternalSession>();
   private onOutput: PTYManagerOptions["onOutput"];
   private onStatusChange: PTYManagerOptions["onStatusChange"];
+  private onPhaseChange: PTYManagerOptions["onPhaseChange"];
   private onReady: PTYManagerOptions["onReady"];
   // Broadcasts Codex's blocking startup gates (directory trust, hooks review)
   // as question cards; null dismisses the card once the gate leaves the screen.
@@ -141,6 +144,7 @@ export class CodexPtyRunner implements SessionRunner {
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
     this.onStatusChange = options.onStatusChange;
+    this.onPhaseChange = options.onPhaseChange;
     this.onReady = options.onReady;
     this.onPermissionChange = options.onPermissionChange;
     this.onLiveQuestion = options.onLiveQuestion;
@@ -811,6 +815,15 @@ export class CodexPtyRunner implements SessionRunner {
       return;
     }
 
+    // Phase refinement, off the screen read the detectors below already share.
+    // Only while running: markReady clears the phase at turn end, and reading
+    // it in any other state would let a stale screen re-assert one after that
+    // clear. Placed after the writer-lock return so a refused startup, which
+    // never reaches waiting_input, cannot leave a phase behind.
+    if (session.status === "running") {
+      this.setPhase(sessionId, session, parseAgentPhase(lines, CODEX_CLI_PROVIDER));
+    }
+
     // ── Gates ──────────────────────────────────────────────────────
     const gate: CodexGateType | null = CODEX_HOOKS_GATE_REGEX.test(screenText)
       ? "hooks"
@@ -986,6 +999,20 @@ export class CodexPtyRunner implements SessionRunner {
     this.onPermissionChange?.(sessionId, card);
   }
 
+  /**
+   * Record the agent's phase and notify only on a real change. The guard is
+   * load-bearing, not an optimisation: detectScreenState runs on every chunk,
+   * so an unguarded setter would fire the WS frame behind this several times a
+   * second for a whole turn while reporting the same value. Same contract as
+   * PTYManager.setPhase — the two runners deliberately stay separate classes.
+   */
+  private setPhase(sessionId: string, session: InternalSession, phase: AgentPhase | null): void {
+    const next = phase ?? null;
+    if ((session.subStatus ?? null) === next) return;
+    session.subStatus = next;
+    this.onPhaseChange?.(sessionId, next);
+  }
+
   private markReady(
     sessionId: string,
     session: InternalSession,
@@ -998,6 +1025,11 @@ export class CodexPtyRunner implements SessionRunner {
     // must be distinguishable from one reached by observing a marker.
     session.statusSource = source;
     session.statusUpdatedAt = new Date();
+    // Turn end clears the phase. The exit edge is not an output event, so it
+    // cannot be read off the screen — without this the phase latches on any
+    // session that stops emitting, the bug tb-mobile PR #647 shipped. Below the
+    // source assignment for the same reason as PTYManager.markReady.
+    this.setPhase(sessionId, session, null);
     // `reason=fallback:timeout`/`quiet:soft-idle` in volume would mean the
     // status-bar Ready marker regressed (e.g. a Codex TUI redesign) — keep logged.
     this.log.info(`[codex.ready] ${sessionId.slice(0, 8)} ${reason}`, {
@@ -1110,5 +1142,9 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.statusSource != null && { statusSource: s.statusSource }),
     ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
+    // Unconditional — see PTYManager's toPublicSession: a streamer re-adopting
+    // a surviving pty-host's sessions mid-turn has no other source for the
+    // phase, and the host's change guard will not re-emit it.
+    subStatus: s.subStatus ?? null,
   };
 }

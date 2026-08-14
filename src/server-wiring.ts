@@ -326,6 +326,23 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         seq,
       });
     },
+    onPhaseChange: (sessionId, phase) => {
+      // Mirror into SessionStore so the REST field carries it too. The runner
+      // mutates its own InternalSession and toPublicSession does not forward
+      // subStatus, so without this `GET /api/sessions/:id` reports null for the
+      // whole turn and only a subscribed socket ever sees a phase.
+      deps.sessionStore.updateManaged(sessionId, { subStatus: phase });
+      // Scoped to this session's subscribers and sent as a minimal frame —
+      // NOT routed through onStatusChange's handler, which writes a DB row,
+      // refreshes the scanner index, broadcasts globally and pokes the APNs
+      // and push notifiers on every call. This can fire every scrape tick.
+      deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(sessionId) ?? [], {
+        type: "session_phase",
+        sessionId,
+        phase,
+        updatedAt: new Date().toISOString(),
+      });
+    },
     onUserMessage: (sessionId, text, ts) => {
       deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(sessionId) ?? [], {
         type: "user_message",

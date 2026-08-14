@@ -25,7 +25,9 @@ import {
   questionContentKey,
 } from "./services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "./services/questions/detectShellPrompt";
+import { parseAgentPhase } from "./services/questions/parseAgentPhase";
 import type {
+  AgentPhase,
   ManagedSession,
   PTYManagerOptions,
   SessionRunner,
@@ -160,6 +162,7 @@ export class PTYManager implements SessionRunner {
   private onStatusChange: PTYManagerOptions["onStatusChange"];
   private onReady: PTYManagerOptions["onReady"];
   private onPermissionChange: PTYManagerOptions["onPermissionChange"];
+  private onPhaseChange: PTYManagerOptions["onPhaseChange"];
   private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
   private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
   private onUserMessage: PTYManagerOptions["onUserMessage"];
@@ -222,6 +225,7 @@ export class PTYManager implements SessionRunner {
     this.onStatusChange = options.onStatusChange;
     this.onReady = options.onReady;
     this.onPermissionChange = options.onPermissionChange;
+    this.onPhaseChange = options.onPhaseChange;
     this.onLiveQuestion = options.onLiveQuestion;
     this.onLiveQuestionGone = options.onLiveQuestionGone;
     this.onUserMessage = options.onUserMessage;
@@ -890,6 +894,16 @@ export class PTYManager implements SessionRunner {
 
     const lines = await this.getOutputLines(sessionId, 60);
 
+    // Phase refinement, off the screen read the detectors below already share.
+    // Only while the turn is running: the phase describes what the agent is
+    // doing *within* `running`, and markReady clears it at turn end. Reading it
+    // in any other state would let a stale screen re-assert a phase after the
+    // clear, which is the latch this design exists to prevent.
+    const phaseSession = this.sessions.get(sessionId);
+    if (phaseSession?.status === "running") {
+      this.setPhase(sessionId, phaseSession, parseAgentPhase(lines, CLAUDE_CODE_PROVIDER));
+    }
+
     // Authoritative footer test on the FULL rendered screen (not just the
     // trigger chunk). The "Enter to select · Tab/Arrow keys to navigate" footer
     // is unique to an AskUserQuestion menu; a permission gate uses "Tab to amend
@@ -1114,6 +1128,21 @@ export class PTYManager implements SessionRunner {
 
   // Transition a session from "running" to "waiting_input", clear pendingReady,
   // and flush any queued input. Idempotent: callers can invoke at any chunk.
+  /**
+   * Record the agent's phase and notify only on a real change.
+   *
+   * The change guard is load-bearing, not an optimisation: the scrape pass runs
+   * on every chunk, so an unguarded setter would fire the callback — and the
+   * WS frame behind it — several times a second for the entire duration of a
+   * turn while reporting the same value.
+   */
+  private setPhase(sessionId: string, session: InternalSession, phase: AgentPhase | null): void {
+    const next = phase ?? null;
+    if ((session.subStatus ?? null) === next) return;
+    session.subStatus = next;
+    this.onPhaseChange?.(sessionId, next);
+  }
+
   private markReady(
     sessionId: string,
     session: InternalSession,
@@ -1128,6 +1157,18 @@ export class PTYManager implements SessionRunner {
     // previously indistinguishable on the wire from an observed marker.
     session.statusSource = source;
     session.statusUpdatedAt = new Date();
+    // Turn end clears the phase. This is the only place it can happen
+    // correctly: the exit edge is not an output event, so it cannot be read off
+    // the screen — Claude's TUI does differential repaints and a return to idle
+    // can go undetected forever if the last chunk didn't carry the marker.
+    // Without this the phase latches on any session that stops emitting, which
+    // is the bug tb-mobile PR #647 shipped. markReady is the single idempotent
+    // running -> waiting_input transition, and it is driven by the waiting-for-
+    // input OSC, which arrives even when no further chunk will.
+    // Kept below the source assignment so it stays inside the window
+    // status-confidence.test.ts scans, and so onPhaseChange never observes a
+    // session whose status has moved but whose statusSource has not.
+    this.setPhase(sessionId, session, null);
     // Log retained on purpose: `reason=fallback:timeout` would be the only
     // signal that Claude's TUI introduced a new boot variant our markers miss.
     const elapsedMs = Date.now() - (this.firstChunkAt.get(sessionId) ?? Date.now());
@@ -1202,5 +1243,10 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.filePath != null && { filePath: s.filePath }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
     ...(s.firstMessageText != null && { firstMessageText: s.firstMessageText }),
+    // Unconditional: this shape crosses the pty-host boundary, and a streamer
+    // re-adopting a surviving host's sessions mid-turn has no other source for
+    // the phase — no snapshot or replay event carries it, and setPhase's change
+    // guard means the host will never re-emit it for the rest of that turn.
+    subStatus: s.subStatus ?? null,
   };
 }

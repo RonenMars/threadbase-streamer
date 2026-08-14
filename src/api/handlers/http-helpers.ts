@@ -51,6 +51,12 @@ export function conversationToResumableSession(c: ConversationListItem) {
     branch: c.branch ?? undefined,
     lastOutput: "",
     elapsedMs: 0,
+    // No PTY behind a cached conversation, so there is no phase — emitted
+    // explicitly for the same reason as in managedToResponse/discoveredToResponse:
+    // the client merges session frames, so an absent key keeps the previous
+    // value and the indicator latches. `GET /api/sessions/:id` serves this
+    // shape whenever the id is a conversation rather than a live session.
+    subStatus: null,
     promptCount: c.messageCount,
     startedAt: c.lastActivity,
     completedAt: null,

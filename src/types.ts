@@ -9,6 +9,25 @@ import type { ProviderName } from "./providers";
 export type SessionStatus = "running" | "waiting_input" | "idle";
 
 /**
+ * Phase axis *inside* `status === "running"` — what the agent is doing during a
+ * turn. Deliberately a separate field rather than new SessionStatus members:
+ * VALID_STATUSES rejects unknown values and the store drops sessions outside
+ * the requested set, so a new status string would make those sessions vanish
+ * from already-shipped apps. Additive fields are safe; additive values in a
+ * union a shipped client filters on are not.
+ *
+ * The full set is defined here even though Codex only ever emits `working`
+ * (its status bar is binary — Ready/Working, and claiming otherwise would be
+ * invention). Defining it up front keeps a two-valued provider from fixing the
+ * field's shape before Claude's richer footer lands. Consumers must ignore an
+ * unrecognised value rather than coerce it.
+ *
+ * This union lives in exactly one place. Two independently-maintained copies of
+ * a TUI-derived grammar have already drifted once (tb-mobile PR #647).
+ */
+export type AgentPhase = "thinking" | "streaming" | "hooks" | "acting" | "working";
+
+/**
  * Process-lifetime axis for a managed session (C1 durable session runtime).
  * Orthogonal to SessionStatus — see SessionResponse.lifecycle for why the two
  * are separate, and docs/architecture/2026-07-24-durable-session-runtime.md.
@@ -93,6 +112,20 @@ export interface ManagedSession {
    */
   statusSource?: StatusSource;
   statusUpdatedAt?: Date;
+  /**
+   * Agent phase within a running turn, scraped from the rendered screen.
+   * Optional internally (every existing construction site predates it), but
+   * managedToResponse emits it unconditionally as `?? null` — on the wire
+   * absence must never be a third state, because the client merges session
+   * frames and a merge cannot express a removed key.
+   *
+   * Cleared in markReady() for the running -> waiting_input turn end, which is
+   * the only exit a runner observes on screen. Every other way out of `running`
+   * — handleExit, putOnHold, failStartup — is enforced by SessionStore
+   * .updateManaged() instead: a phase exists only while the status is
+   * `running`, so leaving it clears the field.
+   */
+  subStatus?: AgentPhase | null;
   filePath?: string;
   resumedFromConversationId?: string;
 
@@ -230,6 +263,28 @@ export type WSMessage =
       stage?: Stage | string;
       stalledSinceMs?: number;
       reworkAttempt?: number;
+    }
+  /**
+   * Agent phase changed within a running turn. Scoped to that session's
+   * subscribers, like terminal_output and user_message.
+   *
+   * A minimal frame rather than a SessionResponse copy, deliberately:
+   * managedToResponse recomputes `elapsedMs` from `new Date()` on every call
+   * for a live session, so a session copy would differ on every tick whether
+   * or not the phase changed — and a client that merges frames would get a
+   * fresh object identity several times a second, re-rendering every consumer
+   * for the whole turn.
+   *
+   * `phase` is always present and is `null` when there is no phase. Absence
+   * must never carry meaning: clients merge session state, and a merge cannot
+   * express a removed key, so an omitted field would keep its previous value
+   * and the indicator would latch on a finished turn.
+   */
+  | {
+      type: "session_phase";
+      sessionId: string;
+      phase: AgentPhase | null;
+      updatedAt: string; // ISO 8601
     }
   | { type: "session_list"; sessions: readonly SessionResponse[] }
   | { type: "conversation_event"; sessionId: string; line: string }
@@ -392,6 +447,20 @@ export interface SessionResponse {
    * Live sessions only.
    */
   permissionMode?: string;
+  /**
+   * Agent phase within a running turn, scraped from the rendered PTY screen.
+   *
+   * NOT optional, and always serialised — `null` when there is no phase. A
+   * client that merges session frames (`{...prev, ...next}`) cannot express a
+   * removed key, so an omitted field would keep its previous value and the
+   * indicator would latch on a finished turn. That is the bug tb-mobile PR #647
+   * shipped; absence must never carry meaning here.
+   *
+   * Consequently this must NOT be moved into the `...(x != null && { x })`
+   * guard block in managedToResponse: `!= null` catches null and undefined
+   * alike and would convert an explicit clear back into absence.
+   */
+  subStatus: AgentPhase | null;
   account?: string;
   messageCount?: number;
   preview?: string;
@@ -576,6 +645,24 @@ export interface PTYManagerOptions {
       cursor?: number;
     } | null,
   ) => void;
+  /**
+   * Fired when the agent's phase within a running turn changes, including to
+   * `null` at turn end. Additive; absent in tests that omit it.
+   *
+   * Deliberately NOT routed through onStatusChange, even though that callback
+   * already exists and is already relayed across the pty-host boundary. Its
+   * handler writes a DB row per invocation with no same-status guard, refreshes
+   * the scanner index, broadcasts globally, and pokes the APNs and push
+   * notifiers — machinery built for a handful of transitions per session, not
+   * for a signal that can fire every SCRAPE_THROTTLE_MS.
+   *
+   * The server must broadcast this to that session's subscribers only
+   * (wsHub.broadcastToClients), as a minimal frame rather than a SessionResponse
+   * copy: managedToResponse recomputes elapsedMs on every call, so a session
+   * copy would differ every tick and re-render every client consumer of that
+   * session for the whole turn.
+   */
+  onPhaseChange?: (sessionId: string, phase: AgentPhase | null) => void;
   // Fired when an AskUserQuestion menu is detected on the rendered screen (before
   // the JSONL tool_use block flushes). The server de-dupes against the JSONL path.
   onLiveQuestion?: (sessionId: string, questions: AskQuestion[]) => void;

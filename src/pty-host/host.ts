@@ -87,6 +87,8 @@ export class SessionHost {
       onReady: (session) => this.emit({ type: "event", event: "ready", session }),
       onPermissionChange: (sessionId, gate) =>
         this.emit({ type: "event", event: "permission-change", sessionId, gate }),
+      onPhaseChange: (sessionId, phase) =>
+        this.emit({ type: "event", event: "phase-change", sessionId, phase }),
       onLiveQuestion: (sessionId, questions) =>
         this.emit({ type: "event", event: "live-question", sessionId, questions }),
       onLiveQuestionGone: (sessionId) =>

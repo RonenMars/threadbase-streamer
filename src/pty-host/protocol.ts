@@ -1,5 +1,6 @@
 import type { ProviderName } from "../providers";
 import type {
+  AgentPhase,
   AskQuestion,
   ManagedSession,
   PermissionOption,
@@ -43,9 +44,12 @@ import type {
 
 /**
  * Bumped on any incompatible change to the shapes below. Version 2 adds the
- * heartbeat and shutdown controls required for host supervision.
+ * heartbeat and shutdown controls required for host supervision. Version 3
+ * adds the `phase-change` event — the detector runs in the host, so without a
+ * verb here the agent-phase indicator silently stops working when the flag is
+ * on, which is exactly the failure this file's header warns about.
  */
-export const PTY_HOST_PROTOCOL_VERSION = 2;
+export const PTY_HOST_PROTOCOL_VERSION = 3;
 
 export interface HostHeartbeatState {
   registryState: "known" | "unknown";
@@ -119,6 +123,12 @@ export type HostEvent =
         cursor?: number;
       } | null;
     }
+  /**
+   * Agent phase changed within a running turn, including to `null` at turn
+   * end. Carries the same always-present/nullable contract as the wire field:
+   * absence must never mean "cleared", because the consumer merges state.
+   */
+  | { type: "event"; event: "phase-change"; sessionId: string; phase: AgentPhase | null }
   | { type: "event"; event: "live-question"; sessionId: string; questions: AskQuestion[] }
   | { type: "event"; event: "live-question-gone"; sessionId: string }
   | { type: "event"; event: "user-message"; sessionId: string; text: string; ts: number }
