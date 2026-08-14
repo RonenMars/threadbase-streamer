@@ -172,9 +172,28 @@ Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP ser
 
 ## Backward compatibility with tb-mobile
 
-**Backward compatibility is suspended.** `docs/compatibility/` has been removed and the streamer is developed without it for now — a change is free to rename or drop an endpoint, a response field, a status value or a WS event type.
+**Compatibility is advisory, not a gate.** `docs/compatibility/` — a hand-maintained list of every path, field and event mobile depended on — has been removed. It rotted between updates and turned every wire change into a negotiation. Nothing in this section blocks a change: it decides what you *report*.
 
-What replaces it is a check, not a gate. When a change touches the wire contract, look at the client in `../tb-mobile/` (`services/`, `hooks/`, `stores/`) for uses of the shape you are changing, and **tell the user what would break**. Then carry on: a hit there is information for the user to act on, never a reason to block, revise or abandon the change.
+**The client source is the compatibility doc.** It cannot go stale, and it answers the only question that matters — does anything actually use this? When a change renames or removes something on the wire, grep the checkout next door:
+
+```bash
+rg -n "<identifier>" ../tb-mobile/{services,hooks,stores,components,types}
+```
+
+Report what you find — file and line, and whether the call site is in a shipped build or only on `main` — and then carry on. A hit is information for the user to act on, never a reason to revise or abandon the change.
+
+**Tier the check by what the change does**, so the common case costs nothing:
+
+- **Additive** (new optional field, new endpoint, new event type) — no check. Mobile ignores what it doesn't know.
+- **Rename, removal, or a changed status/event vocabulary** — grep, report, proceed.
+
+**What a grep cannot tell you.** These are contractual because builds are already on users' devices, not because a file says so:
+
+- Released builds cannot be force-updated. A user on an old app meets whatever the server does today.
+- Auth: `Authorization: Bearer <token>` and `/ws?key=<token>` are both live paths, and the `tb_<32-hex-chars>` key format is load-bearing in pairing.
+- Statuses mobile switches on: `running`, `waiting_input`, `completed`, `failed`, `on_hold`, `idle` (alias of `on_hold`). The server emits `running`/`waiting_input`/`idle` for live sessions and `on_hold` for resumable conversations; `completed`/`failed` are legacy values older streamers emitted — don't reuse them with new semantics.
+
+The durable half of this lives in tb-mobile, not here: the client parses defensively and degrades rather than throwing, so a server that moved ahead costs a degraded screen instead of a crash. See the "Server contract — degrade, don't break" section in tb-mobile's `CLAUDE.md`.
 
 ## Menubar app (vendor/menubar)
 
