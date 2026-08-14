@@ -191,7 +191,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
     writeFileSync(jsonlPath, `${JSON.stringify({ sessionId, cwd: projectPath, type: "user" })}\n`);
 
     // Drive tryWire() synchronously rather than depending on fsWatch timing.
-    (server as any).watchForJsonl(sessionId, projectPath);
+    (server as any).sessionWatchers.watchForJsonl(sessionId, projectPath);
 
     // sessionFileMap is set synchronously during wiring (the pino wired-log
     // flushes asynchronously, so assert the in-memory state instead).
@@ -204,15 +204,15 @@ describe("watchForJsonl — conversation_event wiring", () => {
 
     const withId = join(dir, "with-id.jsonl");
     writeFileSync(withId, `${JSON.stringify({ sessionId: "sid-123", type: "user" })}\nmore\n`);
-    expect((server as any).readFirstLineSessionId(withId)).toBe("sid-123");
+    expect((server as any).sessionWatchers.readFirstLineSessionId(withId)).toBe("sid-123");
 
     const withoutId = join(dir, "without-id.jsonl");
     writeFileSync(withoutId, `${JSON.stringify({ type: "user", uuid: "x" })}\n`);
-    expect((server as any).readFirstLineSessionId(withoutId)).toBeNull();
+    expect((server as any).sessionWatchers.readFirstLineSessionId(withoutId)).toBeNull();
 
     const malformed = join(dir, "malformed.jsonl");
     writeFileSync(malformed, "not json at all\n");
-    expect((server as any).readFirstLineSessionId(malformed)).toBeNull();
+    expect((server as any).sessionWatchers.readFirstLineSessionId(malformed)).toBeNull();
   });
 
   it("seeds the tail-watcher offset AFTER the pre-broadcast dump (no double-broadcast)", async () => {
@@ -233,7 +233,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
       .mockImplementation(() => {});
     const watchSpy = vi.spyOn((server as any).fileWatcher, "watch").mockImplementation(() => {});
 
-    (server as any).watchForJsonl(sessionId, projectPath);
+    (server as any).sessionWatchers.watchForJsonl(sessionId, projectPath);
 
     expect(dumpSpy).toHaveBeenCalled();
     expect(watchSpy).toHaveBeenCalledWith(jsonlPath);
