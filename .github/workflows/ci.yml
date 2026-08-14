@@ -18,11 +18,19 @@ jobs:
   # and would leave the PR un-mergeable forever. Instead each job checks out
   # (cheap, and required so the local composite action exists) and then runs a
   # single guarded `run-ci` step. When the bracketed tag `[skip-ci]` is present
-  # in the latest commit message, the PR title, or the PR body, that one step
-  # is skipped, the job still succeeds, and the check context goes green in
-  # seconds. The tag is bracketed (not a bare `--skip-ci`) so prose that merely
-  # mentions it — like this comment, or a PR describing the feature — does not
-  # accidentally trip the skip.
+  # in the latest commit message or the PR title, that one step is skipped, the
+  # job still succeeds, and the check context goes green in seconds.
+  #
+  # The PR *body* is deliberately NOT searched. Bracketing alone was assumed to
+  # stop prose from tripping the skip; it does not. PR #522 changed cli/index.ts
+  # and src/claude-flags.ts, carried no tag in its title or commit, and still
+  # skipped every test — its body happened to say "…since it is docs-only and
+  # `[skip-ci]`" while describing a *different* PR. All 12 checks reported green
+  # in 39 seconds with lint, tests and both smoke jobs skipped, and nothing
+  # distinguished that from a real pass. See issue #563.
+  #
+  # Title-and-commit-only also matches the documented convention: CLAUDE.md says
+  # "Put the suffix in the title, not the body."
   gate:
     name: Gate
     runs-on: ubuntu-latest
@@ -32,18 +40,16 @@ jobs:
       - id: decide
         env:
           # On pull_request, github.event.head_commit is null, so fall back to
-          # the PR title/body. On push to main, the PR fields are empty and we
-          # use the head commit message.
+          # the PR title. On push to main, the PR fields are empty and we use
+          # the head commit message.
           HEAD_COMMIT_MSG: ${{ github.event.head_commit.message }}
           PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           haystack="${HEAD_COMMIT_MSG}
-          ${PR_TITLE}
-          ${PR_BODY}"
+          ${PR_TITLE}"
           if printf '%s' "$haystack" | grep -qF -- '[skip-ci]'; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=CI skipped::'[skip-ci]' found in commit message / PR title / PR body — run-ci step skipped, check reported green."
+            echo "::notice title=CI skipped::'[skip-ci]' found in commit message / PR title — run-ci step skipped, check reported green."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
