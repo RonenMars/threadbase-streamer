@@ -88,13 +88,24 @@ describe("watchForJsonl — conversation_event wiring", () => {
   });
 
   afterEach(async () => {
-    await server.close();
-    rmSync(projectPath, { recursive: true, force: true });
-    rmSync(cacheDir, { recursive: true, force: true });
-    if (origBrowseRoot === undefined) {
-      delete process.env.THREADBASE_BROWSE_ROOT;
-    } else {
-      process.env.THREADBASE_BROWSE_ROOT = origBrowseRoot;
+    // The cleanup runs in `finally`: when server.close() exceeds the hook
+    // timeout the await throws, and anything after it never runs — which is
+    // how these directories accumulated in $HOME for a month. The
+    // ~/.claude/projects mirror the tests create themselves is removed here
+    // too; nothing else ever did, and ConversationWatcher costs roughly one
+    // watch handle per file under that root, so the pile slowed every
+    // server.close() in the suite, not just this file's.
+    try {
+      await server.close();
+    } finally {
+      rmSync(claudeProjectsDir(projectPath), { recursive: true, force: true });
+      rmSync(projectPath, { recursive: true, force: true });
+      rmSync(cacheDir, { recursive: true, force: true });
+      if (origBrowseRoot === undefined) {
+        delete process.env.THREADBASE_BROWSE_ROOT;
+      } else {
+        process.env.THREADBASE_BROWSE_ROOT = origBrowseRoot;
+      }
     }
   });
 
