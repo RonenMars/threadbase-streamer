@@ -94,6 +94,7 @@ import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { RuntimeStore } from "./db/runtime-store";
 import { recordUpload } from "./db/upload-records";
+import { type ExternalTailEntry, ExternalTailManager } from "./external-tails";
 import {
   FEATURE_FLAGS,
   type FeatureFlagValues,
@@ -164,7 +165,6 @@ import { type CodexOwnerSource, findRolloutOwner } from "./services/sessions/cod
 import {
   type BusySignal,
   conversationBusy,
-  RESUME_BUSY_WINDOW_MS,
   resolveResumeBusyWindowMs,
 } from "./services/sessions/conversationBusy";
 import { IdempotencyStore, readIdempotencyKey } from "./services/sessions/idempotency";
@@ -189,7 +189,6 @@ import type {
   ServerConfig,
   ServerWarmingUpResponse,
   ServerWarmupState,
-  SessionActivity,
   SessionResponse,
 } from "./types";
 
@@ -293,29 +292,15 @@ function resolveCodexStartupTimeoutMs(env: NodeJS.ProcessEnv = process.env): num
 const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 // ─── External (non-PTY) live tails ───────────────────────────────────────────
-// A JSONL that changes in a watched project directory while NOT owned by any
-// PTY session belongs to an external agent (a terminal `claude`, another
-// streamer, an IDE). Tail it explicitly so mobile gets pushed transcript lines
-// for it instead of nothing.
-
-// A directory event only attaches a tail when the file was touched this
-// recently — the same "actively owned right now" window the resume collision
-// probe uses, so both features agree on what "live" means.
-export const EXTERNAL_TAIL_RECENCY_MS = RESUME_BUSY_WINDOW_MS;
-
-// Hard cap on concurrent external tails; attaching past it LRU-evicts the
-// least recently active one. Bounds chokidar handles on a machine with a large
-// project tree (an unbounded map would attach one per touched JSONL).
-export const EXTERNAL_TAIL_MAX = 32;
-
-// An external tail with no appended lines for this long is detached — the
-// external agent finished or moved on, and the directory watcher re-attaches
-// if it starts writing again.
-export const EXTERNAL_TAIL_IDLE_MS = 300_000; // 5 minutes
-
-// A JSONL that grew within this window reads as "active_writing"; older reads as
-// "quiet". Deliberately short — this is an inferred hint, not a status.
-export const EXTERNAL_ACTIVE_WRITING_MS = 30_000;
+// Constants and behaviour live in ./external-tails with the manager that uses
+// them; re-exported here because callers (and tests) import them from this
+// module.
+export {
+  EXTERNAL_ACTIVE_WRITING_MS,
+  EXTERNAL_TAIL_IDLE_MS,
+  EXTERNAL_TAIL_MAX,
+  EXTERNAL_TAIL_RECENCY_MS,
+} from "./external-tails";
 
 // Default OFF. Set to "1" or "true" to show Claude Agent SDK / claude-mem
 // runs in /api/conversations and /project-chats.
@@ -427,7 +412,10 @@ export class StreamerServer {
   // agent is writing it). Deliberately separate from sessionFileMap so managed
   // session semantics — terminal_output, session_update, question cards — are
   // untouched: an external tail only ever pushes transcript lines.
-  private externalTails = new Map<string, { conversationId: string; lastActivityAt: number }>();
+  private externalTails = new Map<string, ExternalTailEntry>();
+  // Drives the map above; the map itself stays a server field because it is
+  // also read directly here (agent-file eviction, close()).
+  private externalTailManager: ExternalTailManager;
   // Per-file seq assignments from the most recent onNewLineSpans (offset index),
   // handed to the immediately-following onNewLines so it can stamp WS `seq` on
   // the matching conversation_events entries. Same read → same lines order.
@@ -778,7 +766,11 @@ export class StreamerServer {
         // which case the call is a no-op). Transcript push only — never the
         // managed-session events, and never a question card.
         if (!managed) {
-          this.broadcastExternalTailLines(filePath, lines, this.pendingLineSeqs.get(filePath));
+          this.externalTailManager.broadcastExternalTailLines(
+            filePath,
+            lines,
+            this.pendingLineSeqs.get(filePath),
+          );
         }
         // Seqs are consumed for this read; drop them so a later read for a file
         // with no watched session can't reuse a stale mapping.
@@ -793,7 +785,7 @@ export class StreamerServer {
         try {
           statSync(filePath);
         } catch {
-          this.handleJsonlDeleted(filePath);
+          this.externalTailManager.handleJsonlDeleted(filePath);
           return;
         }
         // A new JSONL appeared (or changed) in a watched project directory.
@@ -805,8 +797,8 @@ export class StreamerServer {
         // Nobody is tailing it yet — if an external agent is actively writing
         // it, attach a tail so its transcript is pushed instead of silently
         // waiting for the client to poll.
-        if (!tailed) this.maybeAttachExternalTail(filePath);
-        this.sweepIdleExternalTails();
+        if (!tailed) this.externalTailManager.maybeAttachExternalTail(filePath);
+        this.externalTailManager.sweepIdleExternalTails();
         // Upsert-or-leave: a change event NEVER deletes the cache row (skipIfTailed).
         // This same append also drives the live-tail watcher's updateFromLines
         // upsert; the two fire with no ordering guarantee, so deleting here would
@@ -838,7 +830,7 @@ export class StreamerServer {
           event: "tail.truncated",
         });
       },
-      onFileDeleted: (filePath) => this.handleJsonlDeleted(filePath),
+      onFileDeleted: (filePath) => this.externalTailManager.handleJsonlDeleted(filePath),
       onError: (filePath, err) => {
         // Was unwired, so every watcher error was dropped on the floor. The one
         // that matters is ENOSPC from a directory watch: chokidar takes one
@@ -857,6 +849,19 @@ export class StreamerServer {
           { filePath, err, event: enospc ? "watcher.limit_exhausted" : "watcher.error" },
         );
       },
+    });
+
+    this.externalTailManager = new ExternalTailManager({
+      tails: this.externalTails,
+      sessionFileMap: this.sessionFileMap,
+      fileWatcher: this.fileWatcher,
+      wsHub: this.wsHub,
+      // Thunks, not values: these are opened during listen() and rebound by
+      // the integrity monitor's reset-and-rescan.
+      cache: () => this.cache,
+      cacheMonitor: () => this.cacheMonitor,
+      broadcastConversationLines: (sessionId, lines, seqs) =>
+        this.broadcastConversationLines(sessionId, lines, seqs),
     });
 
     this.ptyManager = new LiveSessionManager({
@@ -3164,201 +3169,6 @@ export class StreamerServer {
     }
   }
 
-  // ─── External (non-PTY) live tails ───────────────────────────────
-
-  /** True when a managed (PTY) session owns the tail for this canonical path. */
-  private isManagedTailPath(key: string): boolean {
-    for (const watchedPath of this.sessionFileMap.values()) {
-      if (canonicalizeFilePath(watchedPath) === key) return true;
-    }
-    return false;
-  }
-
-  /**
-   * Attach a live tail to a JSONL nobody is tailing yet, when it was touched
-   * recently enough to look actively written by an external agent. Capped at
-   * EXTERNAL_TAIL_MAX with LRU eviction.
-   */
-  private maybeAttachExternalTail(filePath: string): void {
-    if (!filePath.endsWith(".jsonl")) return;
-    const key = canonicalizeFilePath(filePath);
-    if (this.externalTails.has(key)) return;
-    // A managed session's tail is owned by the PTY path; never shadow it.
-    if (this.isManagedTailPath(key)) return;
-
-    let mtimeMs: number;
-    try {
-      mtimeMs = statSync(filePath).mtimeMs;
-    } catch {
-      return; // unlink event, or unreadable — nothing to tail
-    }
-    const now = Date.now();
-    // Only the UPPER bound matters: a just-written file can carry an mtime a
-    // few ms in the future (timestamp granularity / clock skew).
-    if (now - mtimeMs > EXTERNAL_TAIL_RECENCY_MS) return;
-
-    this.evictExternalTailsIfNeeded();
-    // The real conversation id is resolved from the cache row on the first
-    // broadcast (codex rollout files aren't named after their id); the filename
-    // stem is only a placeholder until then.
-    this.externalTails.set(key, {
-      conversationId: ConversationCache.conversationIdForFile(key),
-      lastActivityAt: now,
-    });
-    this.fileWatcher.watch(filePath);
-    this.log.debug?.(`External tail attached: ${filePath}`, {
-      filePath,
-      tails: this.externalTails.size,
-      event: "external_tail.attach",
-    });
-  }
-
-  /** Stop tailing an external file and drop its bookkeeping. */
-  private detachExternalTail(key: string): void {
-    if (!this.externalTails.delete(key)) return;
-    this.fileWatcher.unwatch(key);
-    this.log.debug?.(`External tail detached: ${key}`, {
-      filePath: key,
-      event: "external_tail.detach",
-    });
-  }
-
-  /**
-   * Shared unlink path for the per-file watcher and the directory watcher.
-   * Detaches any external tail and drops the cache row (unless an integrity
-   * alert is freezing deletes).
-   */
-  private handleJsonlDeleted(filePath: string): void {
-    // The file is gone; an external tail on it can never fire again.
-    this.detachExternalTail(canonicalizeFilePath(filePath));
-    // While an alert is pending, freeze: queue the deletion instead of
-    // invalidating the row, so an rm -rf mid-freeze can't drain the cache.
-    if (this.cacheMonitor?.pending) {
-      this.cacheMonitor.deferUnlink(filePath);
-      return;
-    }
-    const id = this.cache?.invalidateByFilePath(filePath);
-    if (id)
-      this.log.info(`Cache row invalidated after JSONL delete: ${id}`, {
-        id,
-        filePath,
-        event: "cache.invalidate_on_unlink",
-      });
-    // Feed the storm detector — a burst of unlinks re-triggers detection.
-    this.cacheMonitor?.recordUnlink(filePath);
-  }
-
-  /** Make room for one more tail by evicting the least recently active ones. */
-  private evictExternalTailsIfNeeded(): void {
-    while (this.externalTails.size >= EXTERNAL_TAIL_MAX) {
-      let lruKey: string | null = null;
-      let lruAt = Number.POSITIVE_INFINITY;
-      for (const [key, entry] of this.externalTails) {
-        // A path a PTY session has since adopted is no longer ours: release the
-        // bookkeeping WITHOUT closing the watcher the managed path now owns.
-        if (this.isManagedTailPath(key)) {
-          this.externalTails.delete(key);
-          return;
-        }
-        if (entry.lastActivityAt < lruAt) {
-          lruAt = entry.lastActivityAt;
-          lruKey = key;
-        }
-      }
-      if (!lruKey) return;
-      this.detachExternalTail(lruKey);
-    }
-  }
-
-  /**
-   * INFERRED activity for an externally-owned conversation, derived purely from
-   * how recently its JSONL grew (the external tail's bookkeeping). Returns
-   * undefined when we hold no tail for it, so a session we know nothing about
-   * reports no activity rather than a fabricated "quiet".
-   *
-   * This can never distinguish a generating agent from one blocked on a
-   * permission gate — gates render on the PTY screen and never reach the JSONL —
-   * which is why it is a separate field and not folded into `status`.
-   */
-  private externalActivityFor(
-    conversationId: string,
-    now = Date.now(),
-  ): SessionActivity | undefined {
-    for (const entry of this.externalTails.values()) {
-      if (entry.conversationId !== conversationId) continue;
-      return {
-        state:
-          now - entry.lastActivityAt <= EXTERNAL_ACTIVE_WRITING_MS ? "active_writing" : "quiet",
-        lastEventAt: new Date(entry.lastActivityAt).toISOString(),
-        source: "jsonl",
-      };
-    }
-    return undefined;
-  }
-
-  /** Attach inferred `activity` to externally-owned sessions in a response set. */
-  private withExternalActivity(sessions: readonly SessionResponse[]): readonly SessionResponse[] {
-    if (this.externalTails.size === 0) return sessions;
-    const now = Date.now();
-    return sessions.map((s) => {
-      if (s.ownership !== "external") return s;
-      const activity = this.externalActivityFor(s.conversationId ?? s.id, now);
-      return activity ? { ...s, activity } : s;
-    });
-  }
-
-  /** Detach external tails idle past EXTERNAL_TAIL_IDLE_MS. */
-  private sweepIdleExternalTails(now = Date.now()): void {
-    for (const [key, entry] of [...this.externalTails]) {
-      if (this.isManagedTailPath(key)) {
-        // Adopted by a PTY session — release bookkeeping, keep the watcher.
-        this.externalTails.delete(key);
-        continue;
-      }
-      if (now - entry.lastActivityAt > EXTERNAL_TAIL_IDLE_MS) this.detachExternalTail(key);
-    }
-  }
-
-  /**
-   * Push appended lines from an externally-owned conversation. Reuses the exact
-   * conversation_events / conversation_event shapes mobile already consumes,
-   * keyed by the conversation UUID — an external session has no PTY, so it must
-   * never produce terminal_output / terminal_replay / session_ready, and never a
-   * session_update whose session.id is a conversation UUID (that would mint a
-   * phantom session row in the mobile cache). Question cards are likewise never
-   * derived here: with no PTY there is nothing that could deliver an answer.
-   */
-  private broadcastExternalTailLines(
-    filePath: string,
-    lines: string[],
-    seqs?: (number | null)[] | null,
-  ): void {
-    const key = canonicalizeFilePath(filePath);
-    const entry = this.externalTails.get(key);
-    if (!entry) return;
-    entry.lastActivityAt = Date.now();
-
-    // Resolve the id from the cache row updateFromLines just wrote. Absent means
-    // nothing recordable landed (or the batch was an agent JSONL, whose row is
-    // deleted) — either way there is nothing to push.
-    const conversationId = this.cache?.getIdByFilePath(key);
-    if (!conversationId) return;
-    entry.conversationId = conversationId;
-
-    this.broadcastConversationLines(conversationId, lines, seqs);
-
-    // List-row refresh hint so clients don't have to poll ?refresh=1 to notice
-    // an external conversation advancing.
-    const meta = this.cache?.getMetaById(conversationId);
-    this.wsHub.broadcast({
-      type: "conversation_updated",
-      conversationId,
-      messageCount: meta?.messageCount ?? 0,
-      lastActivity: meta?.lastActivity ?? new Date().toISOString(),
-      ownership: "external",
-    });
-  }
-
   private async findConversationByUuid(uuid: string): Promise<Conversation | null> {
     const lookupId = this.resolveConversationLookupId(uuid);
 
@@ -4033,7 +3843,7 @@ export class StreamerServer {
       json(
         res,
         200,
-        this.withExternalActivity(
+        this.externalTailManager.withExternalActivity(
           this.withReconciledLifecycle(this.sessionStore.list(this.ptyAttachedIds())),
         ),
       );
@@ -4048,7 +3858,9 @@ export class StreamerServer {
 
     try {
       const page = this.sessionStore.paginate(this.ptyAttachedIds(), parsed.query);
-      page.sessions = this.withExternalActivity(this.withReconciledLifecycle(page.sessions));
+      page.sessions = this.externalTailManager.withExternalActivity(
+        this.withReconciledLifecycle(page.sessions),
+      );
       json(res, 200, page);
     } catch (err) {
       if (err instanceof Error && err.message === "INVALID_CURSOR") {
