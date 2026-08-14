@@ -195,6 +195,21 @@ not pinned && unsupported                →  today's plaintext path, unchanged.
 
 The pinned bit lives in SecureStore beside the server record, never in AsyncStorage — AsyncStorage is exactly where an attacker with file access would go to clear it.
 
+### 6.1 The pin is set two ways, not one
+
+Pinning on first successful encrypted connection leaves one case uncovered, and it is the case an attacker picks: a server that has **never** been seen encrypted has no pinned bit to contradict, so a stripped `/api/info` on the very first connection is believed. That is trust-on-first-use, and §3.2's QR key only closes it on the QR path.
+
+So the pin is also **user-settable, ahead of any connection** — a per-server "Require encryption" control (§7). The user knows out of band that their own streamer does E2EE; that knowledge is not on the wire, so it is not the attacker's to modify.
+
+- **Auto-set** on the first successful encrypted connection. Most people will never open the settings screen, and a protection that only exists once someone ticks a box protects almost nobody.
+- **User-set** before the first connection, which is what beats first-connection TOFU on the deep-link and paste paths.
+
+Both write the same bit and produce the same hard failure. The control is phrased as a demand — "Require encryption for this server" — and never as a description like "this server is E2EE": a description invites a wrong answer that silently does nothing, while a demand states what happens when the server disagrees.
+
+Clearing it is a deliberate act with a plain-language confirmation naming what is lost. It is legitimate — an operator who has genuinely run `--no-e2ee` needs it — but it is the one control that turns encryption off, so it must never be a stray tap. This does not contradict "no *connect anyway* button" above: the failure screen still has no downgrade affordance. The user has to leave the connection attempt, open that server's settings, and clear the requirement knowing what it means.
+
+**What this does not defend against.** A pin says "this connection must be encrypted", not "this must be *my* server". Repoint the app at a different machine and "require encryption" is satisfied by that machine's encryption. The QR carrying the server's static public key (§3.2) is what binds the identity; the two together are what make either one meaningful.
+
 The hard-failure message has to be specific enough to be actionable and honest enough not to over-claim: name the server, say that it previously supported encryption and now does not, and offer two paths — *retry* and *forget this server and re-pair* — with no "connect anyway" button. A "connect anyway" affordance is the downgrade, wearing a consent dialog.
 
 ---
@@ -204,10 +219,10 @@ The hard-failure message has to be specific enough to be actionable and honest e
 Minimal by intent. Encryption that demands attention is encryption people turn off.
 
 - **Pairing** — one line confirming the connection is encrypted, plus the server's identity fingerprint. On the QR path it is confirmation; on the deep-link and paste paths it is the confirmation gate from §3.3.
-- **Settings → server** — an encryption row: state, protocol version, fingerprint, and paired-at date. Read-only.
+- **Settings → server** — an encryption row: state, protocol version, fingerprint, and paired-at date, all read-only, plus the one control on this surface: **Require encryption for this server** (§6.1). It backs the pinned bit in SecureStore, is set automatically on the first successful encrypted connection, and can be set by the user beforehand. Lives on the server record in `stores/servers.ts` beside the device token, surfaced in `components/ServerEditModal.tsx`. Clearing it takes a confirmation naming what is lost.
 - **Paired devices** (`app/paired-devices.tsx`, backed by `services/devices.ts`) — mark which devices are E2EE-pinned. This is where a user who suspects a photographed QR goes to find the extra device, so it must show `createdAt` prominently.
 - **The hard-failure screen** from §6.
-- **Nothing else.** No toggle, no per-session indicator, no badge on the terminal. The `--no-e2ee` opt-out is a server-operator decision and has no mobile control (design.md §6.4).
+- **Nothing else.** No per-session indicator, no badge on the terminal. The one control is the requirement toggle above; the `--no-e2ee` opt-out itself stays a server-operator decision with no mobile control (design.md §6.4) — the toggle governs what *this device* accepts, not what the server does.
 
 Wording constraint, from design.md §1.2: every string says **which** ends. "Encrypted from this device to your computer" is true. "Only you can read your conversations" is false — the streamer, the agent, and the model provider all read them.
 
