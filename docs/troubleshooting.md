@@ -1149,3 +1149,36 @@ Observed 2026-08-11: three consecutive sends returned `ok` and advanced `last_su
 4. **Build vs. Expo credentials** — a development build's token does not route through a production Expo project's credentials, or vice versa.
 
 **Why the server cannot tell you which.** Expo's tickets are receipts for *acceptance*; the delivery outcome lives behind a second call, `getPushNotificationReceiptsAsync`, which the streamer does not make today. Until it does, treat `healthy` as "handed to the relay" and debug the device side from the list above. Adding receipt polling would let `push_tokens.last_failure_code` carry the real reason (`DeviceNotRegistered`, `MessageRateExceeded`, an APNs rejection) instead of stopping at the relay boundary.
+
+## I paired to a LAN address and the app is on the tunnel
+
+**Symptom.** You type a LAN address at pairing — `http://192.168.68.125:8766` — and the app pairs successfully, but every request afterwards goes through your public URL. Nothing told you the address changed, and the server list shows the public hostname rather than the one you entered.
+
+**Cause.** `public_url:` in `~/.threadbase/server.yaml` is returned in the pair-exchange response, and the client treats it as authoritative:
+
+```ts
+// tb-mobile/services/pair-exchange.ts:220
+const resolvedUrl = body.publicUrl ?? trimmedUrl
+```
+
+The address you typed is only a **fallback**. If the server advertises a public URL at all, whatever you entered is discarded — no comparison, no prompt, no signal. The value is then persisted as that server's address for the life of the pairing.
+
+`assertHttpServerUrl` runs on the *next* line and checks only that the scheme is `http:`/`https:`, so it validates the substituted value rather than guarding the substitution.
+
+**Fix.** There is no per-device way to express this today. To pair a device to a LAN address, remove or change `public_url:` in `~/.threadbase/server.yaml` and restart the streamer:
+
+```bash
+# comment out or change the line
+public_url: https://tb.example.com
+
+tb-streamer prod restart
+```
+
+Pair the device, then restore `public_url:` if you still want new pairings to use the tunnel — existing pairings keep whatever address they resolved at the time.
+
+**When this actually matters.** Mostly it does not: the public URL is usually the address you want, which is why it is the default. It bites in two cases.
+
+- **Measuring performance.** A tunnel in the path is latency and frame batching you did not ask for. Any throughput measurement taken over the tunnel is a measurement of the tunnel too.
+- **The LAN is genuinely faster or the tunnel is down.** A device on the same Wi-Fi has no reason to leave the network, and cannot be told to stay.
+
+**Tracked as** [#598](https://github.com/RonenMars/threadbase-streamer/issues/598) (server half) and [RonenMars/threadbase-mobile#720](https://github.com/RonenMars/threadbase-mobile/issues/720) (client half), where it is TB-S-13 from the 2026-08-14 security review. It is a contract question — who owns the client's address — rather than a bug with an obvious patch, so it is parked with the E2EE Phase 2 work rather than fixed in isolation.

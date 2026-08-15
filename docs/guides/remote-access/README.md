@@ -18,6 +18,8 @@ Three things are always true regardless of which provider you pick:
 2. **The streamer doesn't know or care which tunnel sits in front of it.** Provider choice is purely an ops decision. Swapping Cloudflare for Tailscale Funnel doesn't touch a single line of `src/`.
 3. **`public_url` in `~/.threadbase/server.yaml` is the only place the streamer "sees" the public hostname** — it gets embedded into the pairing QR so mobile dials the public URL instead of `localhost`. If you don't set it, the QR shows the LAN IP, which only works on the same Wi-Fi.
 
+> **`public_url` also overrides what a user types.** It is returned in the pair-exchange response, and the client treats it as authoritative — `const resolvedUrl = body.publicUrl ?? trimmedUrl` in `tb-mobile/services/pair-exchange.ts:220`. So a device that pairs by typing a LAN address on a server advertising a public URL will pair successfully and then use the public URL, with no signal that the address changed. There is no per-device way to opt out: to pair something to the LAN, unset `public_url` and restart, pair, then restore it. See [I paired to a LAN address and the app is on the tunnel](../../troubleshooting.md#i-paired-to-a-lan-address-and-the-app-is-on-the-tunnel), and [#598](https://github.com/RonenMars/threadbase-streamer/issues/598) for why this is a contract question rather than a bug.
+
 ## Start here: 5-minute Cloudflare quick-tunnel
 
 The fastest path from "streamer is running on my machine" to "mobile app paired over the internet" is a Cloudflare quick-tunnel. No Cloudflare account, no domain, no DNS. You get a random `*.trycloudflare.com` URL that rotates every time you run it — perfect for proving the pairing flow works, **not** for persistent exposure.
