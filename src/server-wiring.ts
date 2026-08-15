@@ -358,16 +358,16 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
       deps.sessionHandlers().handleLiveQuestion(sessionId, questions);
     },
     onLiveQuestionGone: (sessionId) => {
-      // The rendered AskUserQuestion menu closed. Clear the screen-dedupe key
-      // and cancel the pending question so the answered card is dismissed and
-      // a later repaint can't re-broadcast it. Only acts on a screen-scoped
-      // question — once the JSONL flush recorded the real toolUseId, the
-      // answer path (handleSendAnswer) already cleared it.
+      // The rendered AskUserQuestion menu closed on this streamer's own live
+      // PTY — authoritative regardless of whether pendingQuestions still holds
+      // the screen-synthesized id or the real toolUseId a JSONL flush swapped
+      // in later. Gating on the "screen:" prefix (as this used to) assumed the
+      // JSONL id meant handleSendAnswer had already cleared it, which only
+      // holds when the menu closed BECAUSE we answered it — not when it closed
+      // via Esc, an answer typed at the host keyboard, /clear, or the model
+      // giving up, all of which leave pendingQuestions holding the real id.
       deps.pendingQuestionKey.delete(sessionId);
-      const pq = deps.pendingQuestions.get(sessionId);
-      if (pq?.toolUseId.startsWith("screen:")) {
-        deps.cancelPendingQuestion(sessionId);
-      }
+      deps.cancelPendingQuestion(sessionId);
     },
     onReady: (session) => {
       const resp = deps.sessionStore.get(session.id, deps.ptyAttachedIds());
