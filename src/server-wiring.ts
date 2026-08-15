@@ -21,6 +21,7 @@ import type { ExternalTailManager } from "./external-tails";
 import { handleListProjects } from "./handlers/handleListProjects";
 import type { LiveSessionManager } from "./live-session-manager";
 import { getLogger, type Logger } from "./logger";
+import { REPLAY_MAX_LINES } from "./pty-shared";
 import type { ScannerManager } from "./scanner-manager";
 import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import type {
@@ -673,7 +674,12 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           }
           deps.addSessionSubscriber(msg.sessionId, ws);
           if (deps.ptyManager.hasSession(msg.sessionId)) {
-            const lines = await deps.ptyManager.getOutputLines(msg.sessionId, 200);
+            // Replay everything the session's render terminal still holds; it
+            // caps itself (REPLAY_MAX_LINES) and the client keeps its own,
+            // larger, retention cap. The old fixed 200 was under a fifth of
+            // that, so most of a live session's scrollback was unreachable on
+            // the client however far back it could scroll.
+            const lines = await deps.ptyManager.getOutputLines(msg.sessionId, REPLAY_MAX_LINES);
             const userMessages = deps.ptyManager.getInputHistory(msg.sessionId);
             ws.send(
               JSON.stringify({
