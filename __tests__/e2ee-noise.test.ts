@@ -28,6 +28,15 @@ import vectors from "./fixtures/noise-ikpsk1-vectors.json";
  *
  * Plus the interop contract: fixed keys produce exactly the committed bytes, so
  * tb-mobile's independent implementation can be checked against the same file.
+ *
+ * WHEN ADDING A NEGATIVE TEST HERE, the obvious shape is the broken one.
+ * An assertion placed inside exception-handling control flow cannot distinguish
+ * "failed correctly" from "never ran" — the catch block executes only on
+ * failure, so it is silent about the case where nothing failed at all. The
+ * "fails before the initiator's payload is ever decrypted" test below was
+ * written that way first and would have passed against an implementation with
+ * no server authentication whatsoever. Every negative test here therefore pairs
+ * with a positive control that proves the observation fires when it should.
  */
 
 const b64 = (s: string) => Buffer.from(s, "base64");
