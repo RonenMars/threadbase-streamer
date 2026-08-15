@@ -1859,9 +1859,16 @@ export class StreamerServer {
       return;
     }
 
-    const result = this.pairTokens.consume(token);
-    if (!result.ok) {
-      json(res, 401, { error: `Pair token ${result.reason}` });
+    // Reject a bad token before doing any work, but do NOT spend it yet.
+    //
+    // Spending a token that a later step then fails on costs the user their
+    // whole pairing: the token is single-use, so their retry gets `401 Pair
+    // token used` — which is the signal design.md §2.6 designates as QR-replay
+    // detection. Giving that signal a common benign cause is how it stops being
+    // believed, and a malformed `clientPublicKey` was enough to trigger it.
+    const precheck = this.pairTokens.verify(token);
+    if (!precheck.ok) {
+      json(res, 401, { error: `Pair token ${precheck.reason}` });
       return;
     }
 
@@ -1869,8 +1876,30 @@ export class StreamerServer {
     try {
       sealed = seal(this.apiKey, clientPublicKey);
     } catch (err) {
+      // The token is deliberately still unspent here. The client can fix its
+      // key and retry with the same QR.
       const message = err instanceof Error ? err.message : "Invalid clientPublicKey";
       json(res, 400, { error: message });
+      return;
+    }
+
+    // Spend it, now that everything that can fail on client input has passed.
+    //
+    // Consuming late grants an attacker nothing: a token that is not the live
+    // one fails `verify`'s `unknown` branch above, before any cryptography
+    // runs, and `checkExchangeRateLimit` already bounds attempts to five per
+    // minute per IP. Anyone who reaches this line was holding the real token
+    // when they started.
+    //
+    // EVERYTHING BETWEEN `verify` AND `consume` MUST STAY SYNCHRONOUS.
+    // `PairTokenStore` takes no lock, so the single-use guarantee here rests
+    // entirely on Node's single thread: one `await` in this gap lets two
+    // concurrent requests carrying the same token both pass `verify` and both
+    // pair. `seal` is synchronous for that reason, and anything added between
+    // these two calls has to be too.
+    const result = this.pairTokens.consume(token);
+    if (!result.ok) {
+      json(res, 401, { error: `Pair token ${result.reason}` });
       return;
     }
 

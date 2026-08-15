@@ -50,7 +50,39 @@ export class PairTokenStore {
     };
   }
 
+  /**
+   * Whether `consume` would succeed right now, WITHOUT spending the token.
+   *
+   * Exists so a caller can reject a bad token before doing any work, and still
+   * spend the token only once the work has succeeded. A pair token is
+   * single-use and lives 180 seconds, so spending it on a request that then
+   * fails costs the user a whole new QR — and, worse, makes their retry
+   * indistinguishable from an attacker replaying a photographed code, which is
+   * the one signal `design.md` §2.6 designates as replay detection.
+   *
+   * Advisory, not a reservation: it takes no lock and holds nothing. The
+   * authoritative answer is still `consume`'s.
+   */
+  verify(token: string): ConsumeResult {
+    const result = this.check(token);
+    return result.ok ? { ok: true } : result;
+  }
+
   consume(token: string): ConsumeResult {
+    const result = this.check(token);
+    if (!result.ok) return result;
+    result.record.used = true;
+    return { ok: true };
+  }
+
+  /**
+   * The shared predicate behind `verify` and `consume`.
+   *
+   * One implementation on purpose: two copies of "is this token usable" is two
+   * places for the expiry or single-use rule to drift, and a drift in this
+   * direction fails open.
+   */
+  private check(token: string): { ok: true; record: PairTokenRecord } | ConsumeErr {
     const record = this.current;
     if (!record || record.token !== token) return { ok: false, reason: "unknown" };
     if (Date.now() > record.expiresAt) {
@@ -58,8 +90,7 @@ export class PairTokenStore {
       return { ok: false, reason: "expired" };
     }
     if (record.used) return { ok: false, reason: "used" };
-    record.used = true;
-    return { ok: true };
+    return { ok: true, record };
   }
 
   peek(): PairTokenRecord | null {
