@@ -22,11 +22,15 @@ import {
   isProviderName,
   type ProviderName,
 } from "../../providers";
+import { PTY_ROWS } from "../../pty-shared";
 import type { ScannerManager } from "../../scanner-manager";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
 import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
 import { permissionContentKey } from "../../services/questions/detectPermissionGate";
-import { questionContentKey } from "../../services/questions/detectQuestionFromScreen";
+import {
+  isQuestionMenuOnScreen,
+  questionContentKey,
+} from "../../services/questions/detectQuestionFromScreen";
 import { parseStatusLine } from "../../services/questions/parseStatusLine";
 import { resolveAnswer } from "../../services/questions/resolveAnswer";
 import { type CodexOwnerSource, findRolloutOwner } from "../../services/sessions/codexRolloutOwner";
@@ -1110,6 +1114,19 @@ export class SessionHandlers {
     }
     // pending is guaranteed defined when resolution.ok is true (resolveAnswer guards it)
     const toolUseId = pending?.toolUseId ?? "";
+    // A menu can close without this route answering it — Esc via /input { keys },
+    // an answer typed at the host keyboard, /clear, the model giving up. Nothing
+    // clears pendingQuestions in those cases (onLiveQuestionGone has no producer),
+    // so the client keeps a live-looking card and these keystrokes would be typed
+    // into the prompt box instead of the picker. The rendered screen is the only
+    // authority on whether the picker is still up.
+    if (!(await this.questionMenuStillOpen(sessionId))) {
+      this.pendingQuestions.delete(sessionId);
+      this.pendingQuestionKey.delete(sessionId);
+      this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId });
+      json(res, 409, { ok: false, reason: "question_gone" });
+      return;
+    }
     try {
       this.ptyManager.sendKeys(sessionId, resolution.keys);
     } catch (err) {
@@ -1120,6 +1137,17 @@ export class SessionHandlers {
     this.pendingQuestions.delete(sessionId);
     this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId });
     json(res, 200, { ok: true });
+  }
+
+  // Best-effort: a session we don't own a PTY for, or one that raced away
+  // mid-read, is not ours to veto — say yes and let the write decide.
+  private async questionMenuStillOpen(sessionId: string): Promise<boolean> {
+    if (!this.ptyManager.hasSession(sessionId)) return true;
+    try {
+      return isQuestionMenuOnScreen(await this.ptyManager.getOutputLines(sessionId, PTY_ROWS));
+    } catch {
+      return true;
+    }
   }
 
   async handleUploadFile(
