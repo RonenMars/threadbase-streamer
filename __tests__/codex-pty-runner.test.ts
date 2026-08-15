@@ -9,6 +9,7 @@ import {
   codexScreenLooksIdle,
   codexScreenShowsReady,
   detectCodexBlockingPrompt,
+  detectCodexCommandApproval,
   parseCodexNumberedOptions,
 } from "../src/services/questions/codexScreen";
 import type { ManagedSession, PermissionOption } from "../src/types";
@@ -56,6 +57,15 @@ const HOOKS_GATE_SCREEN =
   "  3. Continue without trusting (hooks won't run)\r\n" +
   "\r\n" +
   "  Press enter to confirm or esc to go back\r\n";
+
+const COMMAND_APPROVAL_SCREEN =
+  "E X E C\r\n" +
+  "Environment: local\r\n" +
+  "Reason: Run the focused test suite\r\n" +
+  "$ npx vitest run __tests__/codex-pty-runner.test.ts\r\n" +
+  "› 1. Yes\r\n" +
+  "  2. No\r\n" +
+  "Press Enter to confirm\r\n";
 
 // Isolate the persisted gate-answer store per test — rememberedGateDigit /
 // saveGateAnswer resolve the config dir at call time, so pointing the env var
@@ -262,6 +272,58 @@ describe("CodexPtyRunner — hooks-review gate", () => {
     expect(cards).toHaveLength(0);
     expect(proc.write).toHaveBeenCalledTimes(1);
     expect(proc.write).toHaveBeenCalledWith("3");
+  });
+});
+
+describe("CodexPtyRunner — command approval", () => {
+  it("detects the rendered EXEC card with literal yes and escape answers", () => {
+    expect(detectCodexCommandApproval(COMMAND_APPROVAL_SCREEN.split("\r\n"))).toEqual({
+      prompt: "Codex requests command approval",
+      detail:
+        "Environment: local\nReason: Run the focused test suite\n$ npx vitest run __tests__/codex-pty-runner.test.ts",
+      options: [
+        { index: 1, label: "Yes", answerKeys: "y" },
+        { index: 2, label: "No", answerKeys: "\x1b" },
+      ],
+    });
+  });
+
+  it("rejects incomplete cards, startup gates, and usage-limit menus", () => {
+    const lines = COMMAND_APPROVAL_SCREEN.split("\r\n");
+    expect(detectCodexCommandApproval(lines.filter((line) => !/^Reason:/.test(line)))).toBeNull();
+    expect(detectCodexCommandApproval(TRUST_GATE_SCREEN.split("\r\n"))).toBeNull();
+    expect(
+      detectCodexCommandApproval([
+        "E X E C",
+        "Environment: local",
+        "Reason: usage limit",
+        "1. Yes",
+        "2. No",
+        "Press Enter to confirm",
+        "You've hit your usage limit",
+      ]),
+    ).toBeNull();
+  });
+
+  it("broadcasts once per repaint and clears only after the card leaves the screen", async () => {
+    const { runner, cards } = gateRunner();
+    const session = await spawnFresh(runner);
+    const proc = getMockProc(runner, session.id);
+
+    proc._emit("data", COMMAND_APPROVAL_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    proc._emit("data", COMMAND_APPROVAL_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.options).toEqual([
+      { index: 1, label: "Yes", answerKeys: "y" },
+      { index: 2, label: "No", answerKeys: "\x1b" },
+    ]);
+
+    proc._emit("data", `\x1b[2J\x1b[H${READY_STATUS_BAR}`);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cards).toEqual([cards[0], null]);
   });
 });
 
