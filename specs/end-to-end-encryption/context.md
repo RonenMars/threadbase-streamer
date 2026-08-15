@@ -77,7 +77,7 @@ Everything the streamer keeps is plaintext on disk.
 - `cache.db` holds conversation content directly: `conversation_meta` stores `title`, `first_message`, `last_message`, `preview` (`src/conversation-cache.ts:178-193`), and `conversation_tail.messages_json` stores the last N messages verbatim (`:198-203`).
   A byte-offset index into the source JSONLs sits alongside it (`src/db/migrations/009_create_offset_index.sql`).
 - `runtime.db` holds `managed_sessions`, including `session_name` derived from the user's first message and the full `cmdline` of each agent process (`src/db/runtime-migrations/001_create_managed_sessions.sql`).
-- `devices` stores only the SHA-256 of each device token (`src/db/migrations/011_create_devices.sql`), which is the one place credential-at-rest is already handled correctly.
+- `devices` stores only the SHA-256 of each device token (`src/db/runtime-migrations/003_create_devices.sql`), which is the one place credential-at-rest is already handled correctly.
 - SQLite runs in WAL mode, so `-wal` and `-shm` sidecars hold recent writes; the CLI's `clear-cache` deletes all three explicitly (`cli/index.ts:437`), which is the clearest statement that all three carry data.
 - Uploads are written into the user's own project tree at `<projectPath>/.threadbase-uploads/<sessionId>/` (`src/uploads.ts:6`, `:60`), unencrypted, up to 25 MB each (`:7`).
 - Logs are pino JSON to `~/.threadbase/logs/` under a supervisor (`src/logger.ts:39-41`). Redaction covers exactly three request headers (`src/logger.ts:10-13`).
@@ -142,7 +142,7 @@ Calling it "end-to-end" is accurate only against that definition of the ends, an
 |---|---|
 | Transport | Authenticated encryption of REST bodies/responses and all WebSocket payloads, independent of TLS. Covers `https://` via tunnel and plain `http://`/`ws://` on the LAN equally. |
 | Pairing | Server authentication at pairing, so the client learns *which* streamer it is talking to; key agreement that binds the transport keys to that identity and to the device record. |
-| Key lifecycle | Derivation, per-connection forward secrecy, rotation, and revocation that composes with the existing `devices.revoked_at` (`src/db/migrations/011_create_devices.sql`). |
+| Key lifecycle | Derivation, per-connection forward secrecy, rotation, and revocation that composes with the existing `devices.revoked_at` (`src/db/runtime-migrations/003_create_devices.sql`). |
 | At rest | `cache.db`, `runtime.db`, their WAL/SHM sidecars, cache backups, and uploads. |
 | Logs | Ensuring the envelope does not put plaintext into the request log, and that the existing `summarizeQuery` protection (`src/api/app.ts:53-57`) is preserved. |
 | Negotiation | Capability discovery, the `--no-e2ee` startup opt-out, and downgrade prevention for pairings both sides can do E2EE on. |
