@@ -62,7 +62,8 @@ Paths and query parameters stay plaintext ([D-7](./dilemmas.md#d-7--rest-paths-s
 
 What that pulls in, when Phase 2–4 ships rather than now:
 
-- flipping the flag, which changes what App Store Connect asks at every submission thereafter
+- flipping the flag in `app.json`, which changes what App Store Connect asks at every submission thereafter
+- **updating the declaration in App Store Connect itself, for both TestFlight and the App Store.** The plist key and the portal answer are two separate records of the same fact, and changing one does not change the other. A build whose plist says `true` while the portal still carries the old answer is the failure mode — TestFlight is where it bites first, because internal testers get builds long before a review sees one, and export compliance is asked per build there.
 - an export self-classification under the mass-market provisions, and potentially an annual report
 - the separate French declaration Apple prompts for
 
