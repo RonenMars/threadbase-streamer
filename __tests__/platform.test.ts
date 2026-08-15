@@ -1,5 +1,12 @@
 import { vi } from "vitest";
 
+// This file tests platform.ts itself, so it must see the real module rather
+// than the "both provider CLIs are installed" stand-in every other suite gets
+// from __tests__/setup/provider-installed.ts — that stand-in resolves the real
+// module before the fs/os mocks below are in place, so resolution would run
+// against the actual machine instead of the fixtures.
+vi.unmock("../src/platform");
+
 vi.mock("os", async () => {
   const actual = await vi.importActual<typeof import("os")>("os");
   return { ...actual, platform: () => "darwin", homedir: () => "/Users/test" };
