@@ -164,6 +164,86 @@ describe("Pair endpoints", () => {
       expect(second.status).toBe(401);
     });
 
+    /**
+     * A pair token must survive a request that fails on the client's own input.
+     *
+     * It used to be consumed before anything validated the rest of the body, so
+     * a malformed `clientPublicKey` spent the token and the user's retry got
+     * `401 Pair token used` — the exact response design.md §2.6 designates as
+     * QR-replay detection. A signal with a common benign cause is a signal
+     * nobody acts on, so this is a security property rather than a convenience.
+     */
+    it("keeps the token spendable when the exchange fails on a bad client key", async () => {
+      const token = await mintToken();
+
+      const rejected = await fetch(`${baseUrl}/api/pair/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Well-formed base64, wrong length — reaches `seal` and throws there,
+        // which is the failure that used to burn the token.
+        body: JSON.stringify({ token, clientPublicKey: naclUtil.encodeBase64(new Uint8Array(8)) }),
+      });
+      expect(rejected.status).toBe(400);
+
+      const recipient = nacl.box.keyPair();
+      const retried = await fetch(`${baseUrl}/api/pair/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          clientPublicKey: naclUtil.encodeBase64(recipient.publicKey),
+        }),
+      });
+      expect(retried.status).toBe(200);
+    });
+
+    // The other half of the same property: surviving a failure must not make
+    // the token reusable after it has actually been spent.
+    it("still burns the token once the exchange succeeds", async () => {
+      const token = await mintToken();
+      const good = JSON.stringify({
+        token,
+        clientPublicKey: naclUtil.encodeBase64(nacl.box.keyPair().publicKey),
+      });
+
+      await fetch(`${baseUrl}/api/pair/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, clientPublicKey: naclUtil.encodeBase64(new Uint8Array(8)) }),
+      });
+      const first = await fetch(`${baseUrl}/api/pair/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: good,
+      });
+      expect(first.status).toBe(200);
+
+      const second = await fetch(`${baseUrl}/api/pair/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: good,
+      });
+      expect(second.status).toBe(401);
+      expect(((await second.json()) as { error?: string }).error).toContain("used");
+    });
+
+    // An unknown token is refused before any cryptography runs, which is what
+    // makes consuming late safe: reaching `seal` at all requires the real token.
+    it("refuses an unknown token without reporting a key problem", async () => {
+      const res = await fetch(`${baseUrl}/api/pair/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // A key that WOULD fail in `seal`, paired with a token that never
+        // reaches it. The 401 proves the order.
+        body: JSON.stringify({
+          token: "pt_unknown",
+          clientPublicKey: naclUtil.encodeBase64(new Uint8Array(8)),
+        }),
+      });
+      expect(res.status).toBe(401);
+      expect(((await res.json()) as { error?: string }).error).toContain("unknown");
+    });
+
     it("rate-limits repeated attempts from the same IP", async () => {
       const recipient = nacl.box.keyPair();
       const body = JSON.stringify({
