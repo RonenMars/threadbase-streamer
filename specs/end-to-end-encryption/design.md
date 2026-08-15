@@ -112,8 +112,12 @@ POST /api/pair/exchange          (existing endpoint, existing token consumption)
               e2ee: { v: 1, noise: base64(msg2) } }            ← additive
 
   msg2 = Noise IK message 2: e, ee, se
-         payload: { deviceId, rootKeyConfirm, serverVersion, e2eeRequired: true }
+         payload: { v, deviceId, serverVersion, e2eeRequired: true }
 ```
+
+**There is no `rootKeyConfirm`, and there deliberately is not.**
+This flow originally listed one. Noise's handshake hash already commits to both static keys, both ephemerals, the PSK and the protocol name, and it is the AAD for the payload's own AEAD — so a payload that decrypts *is* proof that both sides derived the same keys from the same transcript.
+A separate confirmation value would confirm nothing `h` has not, and inventing one is exactly the hand-rolled addition [D-1](./dilemmas.md#d-1--handshake-pattern-noise-ikpsk1-vs-alternatives) warns against: easy to get subtly wrong, impossible to test for.
 
 The existing sealed-API-key fields are **still returned**, unchanged, because `docs/compatibility/tb-mobile.md:115` flags changing that format as risky and because an old app must still pair.
 A new app ignores them and uses the Noise result.
