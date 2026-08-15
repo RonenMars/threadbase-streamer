@@ -1,6 +1,7 @@
 import { createServer } from "http";
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
+import { PairTokenStore } from "../src/pair-store";
 import { StreamerServer } from "../src/server";
 
 async function getRandomPort(): Promise<number> {
@@ -225,6 +226,70 @@ describe("Pair endpoints", () => {
       });
       expect(second.status).toBe(401);
       expect(((await second.json()) as { error?: string }).error).toContain("used");
+    });
+
+    /**
+     * The single-use guarantee rests on nothing yielding between the check and
+     * the spend — so prove that, rather than asserting it in a comment.
+     *
+     * `wouldConsume` queues a microtask that sets a flag. If the handler runs
+     * straight through to `consume`, that microtask cannot have run yet and the
+     * flag is still false. Any yield in the gap flips it, because suspending on
+     * an `await` drains the microtask queue first — so this catches a macrotask
+     * yield (I/O, a timer) and a microtask-only one alike.
+     *
+     * The microtask-only case is the one worth having, and it is not the
+     * obvious `await Promise.resolve()`. It is an `await cache.get(...)` that
+     * hits and returns an already-resolved promise: harmless in review,
+     * exploitable by nothing today, and it falsifies the comment above
+     * `consume` — which claims *nothing* yields, without qualification.
+     * A test that only caught macrotasks would protect the exploitability
+     * argument rather than the invariant, and the two have already drifted
+     * apart once. Today's non-exploitability rests on every path reaching here
+     * through `readBody`'s socket I/O, which is a fact about the current call
+     * graph rather than a structural guarantee.
+     */
+    it("does not yield between checking the token and spending it", async () => {
+      let drained = false;
+      let observed = 0;
+
+      const store = PairTokenStore.prototype;
+      const realWould = store.wouldConsume;
+      const realConsume = store.consume;
+      store.wouldConsume = function (t: string) {
+        observed++;
+        Promise.resolve().then(() => {
+          drained = true;
+        });
+        return realWould.call(this, t);
+      };
+      store.consume = function (t: string) {
+        observed++;
+        // Read at the moment of the spend, not after the request settles —
+        // by then the microtask has long since run for ordinary reasons.
+        expect(drained).toBe(false);
+        return realConsume.call(this, t);
+      };
+
+      try {
+        const token = await mintToken();
+        const res = await fetch(`${baseUrl}/api/pair/exchange`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token,
+            clientPublicKey: naclUtil.encodeBase64(nacl.box.keyPair().publicKey),
+          }),
+        });
+        expect(res.status).toBe(200);
+      } finally {
+        store.wouldConsume = realWould;
+        store.consume = realConsume;
+      }
+
+      // Both patches ran, so the assertion inside `consume` was actually
+      // reached. Without this the test passes when neither is ever called.
+      expect(observed).toBe(2);
     });
 
     // An unknown token is refused before any cryptography runs, which is what

@@ -1904,8 +1904,23 @@ export class StreamerServer {
     // token used` — which is the signal design.md §2.6 designates as QR-replay
     // detection. Giving that signal a common benign cause is how it stops being
     // believed, and a malformed `clientPublicKey` was enough to trigger it.
-    const precheck = this.pairTokens.verify(token);
+    const precheck = this.pairTokens.wouldConsume(token);
     if (!precheck.ok) {
+      if (precheck.reason === "used") {
+        // The §2.6 detection signal, made observable. Until now a replayed
+        // token reached the client as a 401 and reached the operator's log as
+        // silence — and the operator is the one who can act on it, since a user
+        // whose pairing failed is not reading HTTP status codes.
+        //
+        // Carries `ip` and nothing else the request log does not already have.
+        // The token is deliberately absent: it is live credential material
+        // until it expires.
+        this.log.warn(
+          "[pair] a pair token was replayed. If you did not just pair a device, " +
+            "check the paired-devices list and revoke anything you do not recognise.",
+          { event: "pair.token_replayed", ip },
+        );
+      }
       json(res, 401, { error: `Pair token ${precheck.reason}` });
       return;
     }
@@ -1924,19 +1939,27 @@ export class StreamerServer {
     // Spend it, now that everything that can fail on client input has passed.
     //
     // Consuming late grants an attacker nothing: a token that is not the live
-    // one fails `verify`'s `unknown` branch above, before any cryptography
-    // runs, and `checkExchangeRateLimit` already bounds attempts to five per
-    // minute per IP. Anyone who reaches this line was holding the real token
-    // when they started.
+    // one fails `wouldConsume`'s `unknown` branch above, before any
+    // cryptography runs, and `checkExchangeRateLimit` already bounds attempts
+    // to five per minute per IP. Anyone who reaches this line was holding the
+    // real token when they started.
     //
-    // EVERYTHING BETWEEN `verify` AND `consume` MUST STAY SYNCHRONOUS.
+    // EVERYTHING BETWEEN `wouldConsume` AND `consume` MUST STAY SYNCHRONOUS.
     // `PairTokenStore` takes no lock, so the single-use guarantee here rests
-    // entirely on Node's single thread: one `await` in this gap lets two
-    // concurrent requests carrying the same token both pass `verify` and both
-    // pair. `seal` is synchronous for that reason, and anything added between
-    // these two calls has to be too.
+    // entirely on Node running one callback to completion: a single `await` in
+    // this gap returns control to the event loop and lets two concurrent
+    // requests carrying the same token both pass the check and both pair.
+    // `seal` is synchronous for that reason, and anything added between these
+    // two calls has to be too — an `await auditLog(...)` with an excellent
+    // justification is the shape this breaks in.
+    // `__tests__/pair-endpoints.test.ts` asserts no macrotask runs in the gap.
     const result = this.pairTokens.consume(token);
     if (!result.ok) {
+      // Cannot fail today: nothing yields between the check above and here, so
+      // no other request can have spent this token in the gap. Checked anyway
+      // because if that invariant is ever broken the failure is silent — two
+      // devices paired from one single-use token, no error, no log — and three
+      // lines is a cheap price for making it loud instead.
       json(res, 401, { error: `Pair token ${result.reason}` });
       return;
     }
