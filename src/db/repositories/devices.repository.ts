@@ -25,6 +25,11 @@ export interface DeviceRow {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  /** Noise static public key, base64. Null on every row that predates E2EE. */
+  e2ee_static_pub: string | null;
+  /** The downgrade lock. 1 once this device has completed a handshake. */
+  e2ee_required: number;
+  e2ee_version: number | null;
 }
 
 /** A device as reported over the API. Deliberately carries no credential. */
@@ -35,6 +40,16 @@ export interface DeviceView {
   createdAt: number;
   lastSeenAt: number | null;
   revokedAt: number | null;
+  /**
+   * Whether this device is pinned to encryption.
+   *
+   * A boolean, never the key and never a hash of it: `GET /api/devices` exists
+   * so a user can spot a device they did not pair, and answering "is this one
+   * encrypted" needs no key material to do it. Publishing the static key would
+   * hand an attacker who reached this endpoint the value that identifies a
+   * device.
+   */
+  e2ee: boolean;
 }
 
 export interface RegisteredDevice {
@@ -86,6 +101,11 @@ export function toDeviceView(row: DeviceRow): DeviceView {
     createdAt: row.created_at,
     lastSeenAt: row.last_seen_at,
     revokedAt: row.revoked_at,
+    // Reported from `e2ee_required` rather than from the key's presence. The
+    // two agree today, but they answer different questions — the key is what a
+    // handshake is checked against, `e2ee_required` is whether plaintext is
+    // refused — and it is the second one a user is asking about.
+    e2ee: row.e2ee_required === 1,
   };
 }
 
@@ -98,14 +118,42 @@ export class DevicesRepository {
   private touchStmt: Database.Statement;
   private deleteStmt: Database.Statement;
   private deleteRevokedStmt: Database.Statement;
+  private byE2eeStaticPubStmt: Database.Statement;
+  private repairStmt: Database.Statement;
 
   constructor(db: Database.Database) {
     this.insertStmt = db.prepare(`
       INSERT INTO devices (
-        device_id, public_key, token_hash, name, capabilities, created_at
+        device_id, public_key, token_hash, name, capabilities, created_at,
+        e2ee_static_pub, e2ee_required, e2ee_version
       ) VALUES (
-        @device_id, @public_key, @token_hash, @name, @capabilities, @created_at
+        @device_id, @public_key, @token_hash, @name, @capabilities, @created_at,
+        @e2ee_static_pub, @e2ee_required, @e2ee_version
       )
+    `);
+    this.byE2eeStaticPubStmt = db.prepare("SELECT * FROM devices WHERE e2ee_static_pub = ?");
+    // A re-pair of a device we already know by its static key.
+    //
+    // `created_at` is deliberately NOT touched: it is what a user reads on the
+    // paired-devices screen to spot a device they did not pair, and refreshing
+    // it would erase the evidence that screen exists for.
+    //
+    // `revoked_at` IS cleared, which is the one debatable line here. The
+    // alternative — leaving it set — makes a pairing that visibly succeeds
+    // produce a device whose every request 401s, with nothing explaining why.
+    // Re-pairing requires a live pair token minted on that machine, so it is an
+    // authorized act by the same person who revoked it. design.md does not
+    // cover this case; flagged rather than assumed.
+    this.repairStmt = db.prepare(`
+      UPDATE devices SET
+        public_key = @public_key,
+        token_hash = @token_hash,
+        name = @name,
+        capabilities = @capabilities,
+        e2ee_required = 1,
+        e2ee_version = @e2ee_version,
+        revoked_at = NULL
+      WHERE device_id = @device_id
     `);
     this.byTokenHashStmt = db.prepare("SELECT * FROM devices WHERE token_hash = ?");
     this.byIdStmt = db.prepare("SELECT * FROM devices WHERE device_id = ?");
@@ -127,21 +175,63 @@ export class DevicesRepository {
     name?: string | null;
     preset?: CapabilityPreset;
     now?: number;
+    /**
+     * The device's Noise static public key, base64, when pairing completed a
+     * handshake. Absent on a plaintext pairing, which stays exactly as it is
+     * today: no key, no pin, no behaviour change.
+     */
+    e2eeStaticPub?: string;
+    e2eeVersion?: number;
   }): RegisteredDevice {
-    const deviceId = randomUUID();
     const deviceToken = generateDeviceToken();
     const capabilities = capabilitiesForPreset(args.preset ?? "full");
+    const now = args.now ?? Date.now();
 
+    // A re-pair from the same phone presents the same static key, and the
+    // unique index makes a second row impossible — so this updates rather than
+    // inserts. Doing it as look-up-then-write rather than an upsert because the
+    // existing device_id has to be returned, and because `ON CONFLICT` against
+    // a PARTIAL index needs its WHERE clause repeated, which is a thing to get
+    // wrong for no gain. Safe without a transaction: better-sqlite3 is
+    // synchronous and nothing yields between the two statements.
+    const existing = args.e2eeStaticPub
+      ? (this.byE2eeStaticPubStmt.get(args.e2eeStaticPub) as DeviceRow | undefined)
+      : undefined;
+
+    if (existing) {
+      this.repairStmt.run({
+        device_id: existing.device_id,
+        public_key: args.publicKey,
+        token_hash: hashDeviceToken(deviceToken),
+        name: args.name ?? null,
+        capabilities: JSON.stringify(capabilities),
+        e2ee_version: args.e2eeVersion ?? null,
+      });
+      return { deviceId: existing.device_id, deviceToken, capabilities };
+    }
+
+    const deviceId = randomUUID();
     this.insertStmt.run({
       device_id: deviceId,
       public_key: args.publicKey,
       token_hash: hashDeviceToken(deviceToken),
       name: args.name ?? null,
       capabilities: JSON.stringify(capabilities),
-      created_at: args.now ?? Date.now(),
+      created_at: now,
+      e2ee_static_pub: args.e2eeStaticPub ?? null,
+      // The downgrade lock, set in the same write that records the key. Once
+      // set, nothing a client can send clears it (design.md §6.3) — which is
+      // what makes it a lock rather than a preference.
+      e2ee_required: args.e2eeStaticPub ? 1 : 0,
+      e2ee_version: args.e2eeVersion ?? null,
     });
 
     return { deviceId, deviceToken, capabilities };
+  }
+
+  /** The device that owns a Noise static key, or null. */
+  getByE2eeStaticPub(staticPub: string): DeviceRow | null {
+    return (this.byE2eeStaticPubStmt.get(staticPub) as DeviceRow | undefined) ?? null;
   }
 
   /**
