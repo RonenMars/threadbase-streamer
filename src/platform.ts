@@ -226,10 +226,18 @@ function isExecutableFile(path: string): boolean {
 export function locateExecutable(exe: string): string | null {
   if (/[\\/]/.test(exe)) return isExecutableFile(exe) ? exe : null;
 
-  // Windows resolves a bare name through an extension list. Restrict it to the
-  // same set the where.exe lookup above filters on: anything else is a file
-  // CreateProcess cannot launch even when it is sitting on PATH.
-  const names = isWindows ? [...WINDOWS_EXECUTABLE_EXTENSIONS].map((ext) => `${exe}${ext}`) : [exe];
+  // Windows resolves a bare name through an extension list, and tries the name
+  // as written first — `node.exe` must not be searched for as `node.exe.exe`.
+  // The literal is only tried when it already carries an extension CreateProcess
+  // can launch, which is the same filter the where.exe lookup above applies:
+  // an extension-less shim sitting on PATH is not a launchable command, however
+  // executable its permissions look.
+  const names = isWindows
+    ? [
+        ...(isWindowsExecutablePath(exe) ? [exe] : []),
+        ...[...WINDOWS_EXECUTABLE_EXTENSIONS].map((ext) => `${exe}${ext}`),
+      ]
+    : [exe];
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {
     if (!dir) continue;
     for (const name of names) {

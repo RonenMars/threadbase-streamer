@@ -69,9 +69,15 @@ describe("locateExecutable", () => {
   describe("with a controlled PATH", () => {
     const dir = mkdtempSync(join(tmpdir(), "tb-locate-"));
     const previous = process.env.PATH;
+    // Windows resolves a bare name by appending an extension, and cannot launch
+    // an extension-less file however its permissions read — so the fixture has
+    // to be shaped like a command that platform can actually run. The query
+    // stays bare on both, which is what exercises the append.
+    const isWindows = process.platform === "win32";
+    const fauxFile = isWindows ? "faux-cli.cmd" : "faux-cli";
 
     beforeAll(() => {
-      writeFileSync(join(dir, "faux-cli"), "#!/bin/sh\n", { mode: 0o755 });
+      writeFileSync(join(dir, fauxFile), "#!/bin/sh\n", { mode: 0o755 });
       writeFileSync(join(dir, "not-executable"), "#!/bin/sh\n", { mode: 0o644 });
       process.env.PATH = dir;
     });
@@ -82,13 +88,15 @@ describe("locateExecutable", () => {
     });
 
     it("finds a bare name in the only PATH entry", () => {
-      expect(locateExecutable("faux-cli")).toBe(join(dir, "faux-cli"));
+      expect(locateExecutable("faux-cli")).toBe(join(dir, fauxFile));
     });
 
     it("misses a bare name that is nowhere on PATH", () => {
       expect(locateExecutable("claude")).toBeNull();
     });
 
+    // On POSIX this is the X_OK check; on Windows it is the extension filter,
+    // since an extension-less file is not a launchable command there either.
     it("does not accept a non-executable file as the command", () => {
       expect(locateExecutable("not-executable")).toBeNull();
     });
