@@ -48,6 +48,12 @@ import { classifyResumability, intParam, json, readBody } from "./http-helpers";
 const SEARCH_OVERFETCH = 4;
 const SEARCH_MAX_SCAN = 1000;
 
+// Ceiling on the `max_bytes` page budget. The number a client asks for is its
+// own business — this only stops a typo'd extra zero from turning into a
+// multi-hundred-MB response. Above the largest conversation observed locally
+// (22.8 MB), so it clamps mistakes rather than legitimate requests.
+const MAX_BYTES_CEILING = 32 * 1024 * 1024;
+
 /**
  * Everything ConversationHandlers reads from the server. Collaborators
  * constructed once in the server constructor are passed by reference; anything
@@ -676,6 +682,7 @@ export class ConversationHandlers {
     const usePaging =
       url.searchParams.has("msg_limit") ||
       url.searchParams.has("before_index") ||
+      url.searchParams.has("max_bytes") ||
       hasAnchor ||
       hasAfter;
 
@@ -856,6 +863,49 @@ export class ConversationHandlers {
         content,
       };
     });
+
+    // Byte budget. A page is bounded by `msg_limit` (capped at 500), but a
+    // count says nothing about what actually lands in a phone's heap: locally
+    // measured conversations run p50 315 KB and max 22.8 MB, so the same 500
+    // messages can be two orders of magnitude apart in size. `max_bytes` drops
+    // the OLDEST messages of the page until the rest fit, keeping the newest —
+    // the client wants the tail, and it pages backward from there.
+    //
+    // No `truncated` flag: a trimmed page is exactly a page with older messages
+    // behind it, which `has_more_older`/`next_before_index` already say. The
+    // only genuinely new fact is what the budget spent, so that is all that is
+    // added.
+    const requestedMaxBytes = intParam(url, "max_bytes", 0);
+    if (requestedMaxBytes > 0 && messagesPayload.length > 0) {
+      const budget = Math.min(requestedMaxBytes, MAX_BYTES_CEILING);
+      let used = 0;
+      let firstKept = messagesPayload.length - 1;
+      for (let i = messagesPayload.length - 1; i >= 0; i--) {
+        // Bytes, not string length: a Hebrew or emoji-heavy conversation is up
+        // to 4x its UTF-16 length on the wire, and undercounting is how a
+        // budget silently stops binding for exactly the users it matters to.
+        const size = Buffer.byteLength(JSON.stringify(messagesPayload[i]));
+        // The newest message is served whatever its size — a blank screen is
+        // worse than an over-budget one, and there is no smaller page to fall
+        // back to.
+        if (i < messagesPayload.length - 1 && used + size > budget) break;
+        used += size;
+        firstKept = i;
+      }
+      if (firstKept > 0) {
+        messagesPayload.splice(0, firstKept);
+        // message_index is absolute (fromIdx + localIdx at map time), so the
+        // remaining entries keep their correct indices; only the page's own
+        // start moves, and with it the cursor a client pages older from.
+        if (messagePagination) {
+          const newFrom = fromIdx + firstKept;
+          messagePagination.from_index = newFrom;
+          messagePagination.has_more_older = newFrom > 0;
+          messagePagination.next_before_index = newFrom > 0 ? newFrom : null;
+        }
+      }
+      if (messagePagination) messagePagination.served_bytes = used;
+    }
 
     const conv = conversation as any;
     const cachedConvMeta = this.cache?.getMetaById(id);
