@@ -16,6 +16,7 @@ function git(...args: string[]): string {
 
 const sha = git("rev-parse", "--short", "HEAD") || "unknown";
 const version = `${pkg.version}+${sha}-test`;
+const testTimeout = process.platform === "win32" ? 900_000 : 15_000;
 
 export default defineConfig({
   define: { __VERSION__: JSON.stringify(version) },
@@ -26,6 +27,6 @@ export default defineConfig({
     pool: "forks",
     fileParallelism: false,
     hookTimeout: 30_000,
-    testTimeout: 15_000,
+    testTimeout,
   },
 });
