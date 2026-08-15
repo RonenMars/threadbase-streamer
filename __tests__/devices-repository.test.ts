@@ -2,30 +2,38 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import {
   DevicesRepository,
   hashDeviceToken,
   parseCapabilities,
 } from "../src/db/repositories/devices.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 
 /**
  * Paired-device registry (C5).
  * See docs/architecture/2026-07-24-device-identity-and-capabilities.md.
+ *
+ * Backed by RuntimeStore, which is where `devices` actually lives. This opened
+ * a ConversationCache until the E2EE work added columns to the runtime
+ * migration and every test here went red at once: the table also still exists
+ * in cache.db, created for rollback and as the one-time copy source, and
+ * nothing reads or writes it after boot. So these had been exercising the
+ * abandoned copy since the split, and passing only because the two schemas were
+ * identical — the same stale assumption design.md §2.5 carried.
  */
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: DevicesRepository;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tb-devices-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new DevicesRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new DevicesRepository(store.getDatabase());
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
