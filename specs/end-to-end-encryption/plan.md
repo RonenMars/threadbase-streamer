@@ -66,14 +66,38 @@ Paths and query parameters stay plaintext ([D-7](./dilemmas.md#d-7--rest-paths-s
 
 **E2EE almost certainly makes it `true.`** The design has the client implementing its own cryptography — a Noise handshake, X25519, ChaCha20-Poly1305, through `@stablelib` or a native module ([D-3](./dilemmas.md#d-3--mobile-crypto-library-pure-js-vs-native-module)). That is not the OS's TLS, and it is not one of the narrow exemptions Apple lists (authentication only, DRM, copy protection). It protects user data with the app's own crypto, which is the case the declaration exists for.
 
+**Confirmed 2026-08-15**, as this section asked. The conclusion holds and two of the consequences below were wrong; both are corrected in place.
+
 What that pulls in, when Phase 2–4 ships rather than now:
 
-- flipping the flag in `app.json`, which changes what App Store Connect asks at every submission thereafter
-- **updating the declaration in App Store Connect itself, for both TestFlight and the App Store.** The plist key and the portal answer are two separate records of the same fact, and changing one does not change the other. A build whose plist says `true` while the portal still carries the old answer is the failure mode — TestFlight is where it bites first, because internal testers get builds long before a review sees one, and export compliance is asked per build there.
-- an export self-classification under the mass-market provisions, and potentially an annual report
+- flipping the flag in `app.json`. **The boolean has no second record — but there is a second obligation, and it is an upload rather than an answer.**
+  - *The boolean:* ASC reads it out of the uploaded binary and shows it as read-only build metadata (TestFlight → Builds → *build* → Build Metadata → "App Uses Non-Exempt Encryption", reading `No` on build 1.0 (203) today). There is nothing to keep in sync and no portal answer that can drift. The failure mode is deleting the key, not forgetting to mirror it — when the key is *absent*, ASC prompts per build and stores its own answer, which is the only way the two-records problem arises.
+  - *The documentation:* **Distribution → App Information → App Encryption Documentation**, which takes a file upload, is app-level rather than per-build, and can be provided before a build is submitted. Apple's criterion there, verbatim: documentation is required if the app contains *"Standard encryption algorithms instead of, or in addition to, using or accessing the encryption within Apple's operating system."* That is exactly this design — standard algorithms, in addition to the OS's TLS — so the requirement is triggered by the second bullet rather than the first, which covers proprietary algorithms. The section is empty today and correctly so.
+- **an annual self-classification report is required, and a CCATS review is not.** The earlier "potentially an annual report" can be firmed up, in our favour: because the algorithms are published standards (X25519, ChaCha20-Poly1305, Noise) rather than proprietary, the app self-classifies under License Exception ENC §740.17(b)(1). That path requires a report to BIS and the ENC Encryption Request Coordinator — `.csv` only, twelve fields per item — and explicitly excludes items for which a CCATS is issued. The two are alternatives; we are on the reporting side of the fork, which is the lighter one. The standard-versus-proprietary distinction does not change the plist boolean, only what follows it.
 - the separate French declaration Apple prompts for
 
-**Stated with its uncertainty:** this is read from Apple's published guidance, not legal advice, and export control is an area where confident inference is worth less than checking. Confirm before Phase 2 ships rather than at submission time.
+**The trigger has not fired yet, and this was checked rather than assumed.** The Noise client merged to tb-mobile `main` in #758, so the natural worry is that the obligation already attached. It has not: outside tests, nothing imports `services/e2ee/*`, so the module is not reachable from Metro's entry graph and is not in a shipped bundle. The trigger is still the pairing wiring, as written above. Worth re-checking at that point, because TestFlight distributes builds to internal testers long before a review sees one.
+
+**The artifact is the French encryption declaration, and only that.** Apple's [reference page](https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption/) splits it three ways: encryption limited to the operating system needs nothing; **an industry-standard algorithm not provided by the OS needs the French declaration**; a proprietary algorithm needs a CCATS *and* the French declaration.
+
+We are in the middle case. **No CCATS** — that is for proprietary algorithms, and every algorithm here is an IETF standard (X25519 RFC 7748, ChaCha20-Poly1305 RFC 8439, SHA-256, HMAC, HKDF). Noise not being an IETF standard does not move us into the proprietary bucket: the criterion is about *algorithms*, and the framework only composes standard ones.
+
+The French declaration applies only when distributing in France, and this app does — France (EUR) is in its 175-region availability list, checked rather than inferred from the count.
+
+The form is **"Déclaration et demande d'autorisation d'opérations relatives à un moyen de cryptologie"**, annexe 1, at `https://cyber.gouv.fr/documents/330/crypto_declaration-demande_autorisation_operations_annexe1_v2.pdf` (verified live, 2.3 MB). Note the annexe number: annexe 2 of décret 2007-663 is the classification criteria, not a form, and a widely-copied link to a `crypto_form_fourniture_prestation_annexe2` PDF is dead. Submission is email to `controle@ssi.gouv.fr` with subject `[formalités] <brand> – <product name>`, attaching the completed electronic form and a signed scan, or two copies by post. There is no online portal.
+
+**The lead time is real, and it is Apple's rather than ANSSI's.** [Apple's overview](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance) gives the sequence as: determine requirements, submit documentation, **await approval**, then attach the approved documentation to a beta build or an app version build. Apple reviews the upload before any build can carry it, and that gate covers **TestFlight as well as App Review** — TestFlight is the earlier of the two, so it is the one that binds.
+
+Two distinct gates are easy to conflate here. ANSSI's acknowledgement of the declaration may not be needed at all; Apple's approval of the uploaded document is separate, is stated in Apple's current text, and cannot be skipped. **Start this in parallel with the wiring, not after it.**
+
+Apple also describes the French declaration as covering categories including "Secure Communications", which is what this is.
+
+**Two things still open:**
+
+- **Whether ANSSI's acknowledgement is required before uploading to Apple**, or whether the completed form suffices. Several write-ups say the latter, but the clearest source is from 2016 and is not in Apple's current text. Resolvable at no cost through App Store Connect's own questionnaire (the **+** beside App Encryption Documentation), which walks through the questions and names the forms it wants; it is more authoritative than any third party and commits to nothing.
+- **The self-classification report deadline.** Believed to be 1 February covering the prior calendar year, but eCFR blocks automated access to §740.17(e)(3) and a compliance date should not be asserted from memory. Low risk to settle late — annual reporting, not a gate on shipping.
+
+**Stated with its uncertainty:** this is read from Apple's and BIS's published guidance, not legal advice. The classification is unremarkable for a mass-market app using standard algorithms, but export control is an area where confident inference is worth less than a lawyer's ten minutes.
 
 It is recorded here because it is the kind of obligation discovered when a release is already cut, and because it is the first cost of this feature that no amount of engineering removes.
 
