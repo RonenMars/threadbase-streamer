@@ -152,6 +152,16 @@ export function isSubmitConfirmationScreen(lines: string[]): boolean {
 }
 
 /**
+ * True when an AskUserQuestion menu is still painted on the rendered screen.
+ * Cheaper and far more forgiving than detectQuestionFromScreen: it asks only
+ * "is the picker up?", so a menu whose options wrap oddly still reads as
+ * present. Used to reject an answer for a menu that already closed. Pure.
+ */
+export function isQuestionMenuOnScreen(lines: string[]): boolean {
+  return lines.some((line) => ASK_FOOTER_RE.test(line));
+}
+
+/**
  * Stable content key for de-duping a screen-scraped question against the JSONL
  * detection of the same question (they share no toolUseId). Keyed on the
  * question text + option labels.
