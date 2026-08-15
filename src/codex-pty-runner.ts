@@ -30,6 +30,7 @@ import {
   codexScreenShowsReady,
   codexStatusBarLine,
   detectCodexBlockingPrompt,
+  detectCodexCommandApproval,
   gateCard,
 } from "./services/questions/codexScreen";
 import { parseAgentPhase } from "./services/questions/parseAgentPhase";
@@ -133,6 +134,10 @@ export class CodexPtyRunner implements SessionRunner {
   private turnBusy = new Set<string>();
   // Usage-limit / rate-limit menus — content key for deduped permission cards.
   private openBlockingPrompt = new Map<string, string>();
+  // Command-approval cards are independent of quota cards: both use the
+  // permission transport, but a repaint/removal of one must not suppress the
+  // other detector's state.
+  private openCommandApproval = new Map<string, string>();
   // Last codex.screen fingerprint per session — only emit when it changes so
   // MCP boot redraw storms don't flood the log.
   private lastScreenLog = new Map<string, string>();
@@ -412,10 +417,14 @@ export class CodexPtyRunner implements SessionRunner {
     if (session.status === "idle") {
       throw new Error(`Session is idle (no active PTY): ${sessionId}`);
     }
-    // Hold input while booting OR while a gate dialog owns the screen — a
-    // digit flushed into a trust/hooks card would confirm an option; plain
-    // text mid-boot lands as compose newlines once \r is treated as Enter.
-    if (this.pendingReady.has(sessionId) || this.openGate.has(sessionId)) {
+    // Hold input while booting OR while a dialog owns the screen — a digit
+    // flushed into a Codex approval card would confirm an option; plain text
+    // mid-boot lands as compose newlines once \r is treated as Enter.
+    if (
+      this.pendingReady.has(sessionId) ||
+      this.openGate.has(sessionId) ||
+      this.openCommandApproval.has(sessionId)
+    ) {
       const queue = this.queuedInputs.get(sessionId) ?? [];
       queue.push(input);
       this.queuedInputs.set(sessionId, queue);
@@ -555,7 +564,13 @@ export class CodexPtyRunner implements SessionRunner {
   // pendingReady (markReady drains it) — the gate-close path re-drives it for
   // the ready-with-gate-open case.
   private flushQueuedInputs(sessionId: string): void {
-    if (this.openGate.has(sessionId) || this.pendingReady.has(sessionId)) return;
+    if (
+      this.openGate.has(sessionId) ||
+      this.openCommandApproval.has(sessionId) ||
+      this.pendingReady.has(sessionId)
+    ) {
+      return;
+    }
     const queue = this.queuedInputs.get(sessionId);
     if (!queue || queue.length === 0) return;
     this.queuedInputs.delete(sessionId);
@@ -639,6 +654,9 @@ export class CodexPtyRunner implements SessionRunner {
     this.gateActioned.delete(`${sessionId}:trust`);
     this.turnBusy.delete(sessionId);
     if (this.openBlockingPrompt.delete(sessionId)) {
+      this.onPermissionChange?.(sessionId, null);
+    }
+    if (this.openCommandApproval.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
     }
     this.lastScreenLog.delete(sessionId);
@@ -731,6 +749,7 @@ export class CodexPtyRunner implements SessionRunner {
     this.lastChunkAt.clear();
     this.turnBusy.clear();
     this.openBlockingPrompt.clear();
+    this.openCommandApproval.clear();
     this.lastScreenLog.clear();
   }
 
@@ -836,6 +855,18 @@ export class CodexPtyRunner implements SessionRunner {
     } else if (this.openGate.delete(sessionId)) {
       // The dialog left the screen (answered via card, keys, or desktop) —
       // dismiss the card and release inputs held while it was open.
+      this.onPermissionChange?.(sessionId, null);
+      this.flushQueuedInputs(sessionId);
+    }
+
+    // ── Command approval ──────────────────────────────────────────
+    // Trust/hooks dialogs own the screen before this one can appear. Do not
+    // inspect their rendered content as an approval card, even if an old
+    // command-approval repaint remains in the scrollback buffer.
+    const commandApproval = gate ? null : detectCodexCommandApproval(lines);
+    if (commandApproval) {
+      this.handleCommandApproval(sessionId, commandApproval);
+    } else if (this.openCommandApproval.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
       this.flushQueuedInputs(sessionId);
     }
@@ -961,6 +992,21 @@ export class CodexPtyRunner implements SessionRunner {
       this.turnBusy.delete(sessionId);
       this.markReady(sessionId, session, "quiet-fallback", "usage-limit");
     }
+  }
+
+  // Surface Codex's EXEC card through the existing permission event. The
+  // rendered screen is authoritative: keying it by content suppresses TUI
+  // repaint repeats and the absence path above clears it only after the card
+  // has left the screen.
+  private handleCommandApproval(sessionId: string, approval: CodexBlockingPrompt): void {
+    const key = `${approval.detail ?? ""}\0${approval.options.map((o) => o.answerKeys).join(",")}`;
+    if (this.openCommandApproval.get(sessionId) === key) return;
+    this.openCommandApproval.set(sessionId, key);
+    this.log.info(`[codex.command_approval] ${sessionId.slice(0, 8)}`, {
+      event: "codex.command_approval",
+      sessionId,
+    });
+    this.onPermissionChange?.(sessionId, approval);
   }
 
   // Answer a gate from the persisted remember-store, or surface it as a

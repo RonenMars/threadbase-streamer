@@ -89,6 +89,72 @@ export interface CodexBlockingPrompt {
   soft?: boolean;
 }
 
+// Codex command approvals are rendered as an EXEC card. Unlike the startup
+// gates above, selecting approval is a literal `y` and rejecting is Escape;
+// the numbered rows are presentation only. Require all of the card's stable
+// chrome so a command or approval word left in transcript scrollback cannot
+// become a permission card.
+const CODEX_COMMAND_APPROVAL_HEADING_RE = /^\s*E\s*X\s*E\s*C\s*$/i;
+const CODEX_COMMAND_APPROVAL_ENV_RE = /^\s*Environment:\s*.+/i;
+const CODEX_COMMAND_APPROVAL_REASON_RE = /^\s*Reason:\s*.+/i;
+const CODEX_COMMAND_APPROVAL_CONFIRM_RE =
+  /(?:enter|return) to (?:confirm|approve)|press (?:enter|return) to (?:confirm|approve)/i;
+const CODEX_COMMAND_APPROVAL_YES_RE = /^\s*›?\s*\d+\.\s*yes\b/i;
+const CODEX_COMMAND_APPROVAL_NO_RE = /^\s*›?\s*\d+\.\s*no\b/i;
+
+/**
+ * Detect Codex's rendered command-approval card. This deliberately does not
+ * reuse parseCodexNumberedOptions: the visible 1/2 rows do not answer this
+ * dialog, while `y` and Escape do.
+ */
+export function detectCodexCommandApproval(lines: string[]): CodexBlockingPrompt | null {
+  // The newest dialog is the last EXEC heading in the rendered buffer; an
+  // earlier one may be stale transcript content above a repaint.
+  let heading = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (CODEX_COMMAND_APPROVAL_HEADING_RE.test(lines[i])) heading = i;
+  }
+  if (heading < 0) return null;
+  if (
+    lines.some((line) => CODEX_USAGE_LIMIT_RE.test(line) || CODEX_RATE_LIMIT_MENU_RE.test(line))
+  ) {
+    return null;
+  }
+
+  const card = lines.slice(heading);
+  if (
+    !card.some((line) => CODEX_COMMAND_APPROVAL_ENV_RE.test(line)) ||
+    !card.some((line) => CODEX_COMMAND_APPROVAL_REASON_RE.test(line)) ||
+    !card.some((line) => CODEX_COMMAND_APPROVAL_YES_RE.test(line)) ||
+    !card.some((line) => CODEX_COMMAND_APPROVAL_NO_RE.test(line)) ||
+    !card.some((line) => CODEX_COMMAND_APPROVAL_CONFIRM_RE.test(line))
+  ) {
+    return null;
+  }
+
+  const detail = card
+    .filter((line) => {
+      const trimmed = line.trim();
+      return (
+        trimmed.length > 0 &&
+        !CODEX_COMMAND_APPROVAL_HEADING_RE.test(line) &&
+        !CODEX_COMMAND_APPROVAL_YES_RE.test(line) &&
+        !CODEX_COMMAND_APPROVAL_NO_RE.test(line) &&
+        !CODEX_COMMAND_APPROVAL_CONFIRM_RE.test(line)
+      );
+    })
+    .join("\n");
+
+  return {
+    prompt: "Codex requests command approval",
+    ...(detail ? { detail } : {}),
+    options: [
+      { index: 1, label: "Yes", answerKeys: "y" },
+      { index: 2, label: "No", answerKeys: "\x1b" },
+    ],
+  };
+}
+
 /** Parse Codex's numbered TUI menus (`1. …`, `› 2. …`). */
 export function parseCodexNumberedOptions(lines: string[]): PermissionOption[] {
   const options: PermissionOption[] = [];
