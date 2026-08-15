@@ -53,7 +53,9 @@ Nothing here is a requirement — the requirements are in `understanding.md`.
 
 **Where:** [mobile-design.md §2](./mobile-design.md#2-cryptographic-dependency)
 
-**Working assumption:** `@stablelib/*` — pure TypeScript, no native module, works on iOS, Android, and the `web` target with one code path.
+**RESOLVED 2026-08-15 by measurement: `@stablelib` stands.** The assumption held. Numbers and method below; the alternatives are kept because a future device class could reopen it.
+
+**Working assumption (confirmed):** `@stablelib/*` — pure TypeScript, no native module, works on iOS, Android, and the `web` target with one code path.
 
 **Alternatives:**
 
@@ -63,8 +65,25 @@ Nothing here is a requirement — the requirements are in `understanding.md`.
 | **Expo's `expo-crypto`** | Already in the Expo ecosystem. | Digest and random only — no AEAD, no X25519. Does not cover the requirement. |
 | **`tweetnacl` alone** | Already a dependency, on both sides. | `secretbox` has no AAD, so it cannot bind the envelope header. Would force the header fields inside the ciphertext and leave the plaintext copy unauthenticated. |
 
-**This is the assumption most likely to be overturned, and by evidence rather than argument.**
-The measurement that decides it: seal/unseal throughput for `terminal_output`-sized chunks at realistic PTY rates, on a mid-range Android device, with the JS thread already doing terminal rendering. If pure JS cannot keep up, the decision flips to a native module and the `web` target gets a documented reduced-capability path.
+### The measurement, 2026-08-15
+
+`@stablelib/chacha20poly1305@2.0.1`, in Hermes, on a **Xiaomi 11 Lite** — a release build, minified and Hermes-compiled, which is the *weaker* case to pass. 50 warm-up plus 500 measured seal+unseal pairs per size, fixed key, `direction(4) || counter(8)` counter nonce, 16-byte AAD.
+
+| chunk | median | p95 | throughput |
+|---|---|---|---|
+| 1 KB | 693.1 µs | 739.2 µs | 1.48 MB/s |
+| 4 KB | 2469.5 µs | 2517.1 µs | 1.66 MB/s |
+| 16 KB | 9595.4 µs | 9675.6 µs | 1.71 MB/s |
+
+**Read it as throughput, not as operations per second.** ChaCha20's cost is linear in bytes, and the three sizes agree to within 15% — so "N ops/sec" is meaningless without a size attached, and a budget expressed that way silently varies the workload by 16×. The invariant is **~1.6 MB/s of seal+unseal**.
+
+Terminal output is one-directional, so a client only *unseals* what the server sends. The practical figure is therefore roughly **3.2 MB/s**, since the benchmark timed both halves of a pair.
+
+**The verdict.** At a 20% JS-thread budget that is about **650 KB/s** of terminal output. Heavy output during a flooding test run is on the order of 100–200 KB/s, so the realistic case sits near 10% of the thread with roughly 3–6× headroom. p95 tracks median at every size, so there is no GC-pause tail hiding in it.
+
+**What would still flip it:** a device class materially slower than a 2021 mid-range Snapdragon, or a use case that sustains far more than 200 KB/s of terminal output. Neither is today's product. If either appears, the alternatives above are unchanged and the native-module path is still open — with the `web` target needing a documented reduced-capability path, as before.
+
+**How this was measured, because the first three attempts failed.** Watching terminal output render on the device cannot produce this number: an agent's commands are tool calls and get collapsed, a model's own output has a token ceiling, and Claude Code's TUI truncates command output before the PTY sees it. The question is about a *function's* throughput, not the renderer's, and it is answerable directly — a throwaway benchmark screen in a release build, run on the device, deleted afterwards.
 
 ---
 
