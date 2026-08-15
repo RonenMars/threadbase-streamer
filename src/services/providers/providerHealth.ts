@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { isWindows } from "../../platform";
+import { isWindows, locateProviderExe } from "../../platform";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "../../providers";
 import { capabilitiesFor, type ProviderCapabilities, type VerifiedAgainst } from "./capabilities";
 
@@ -60,7 +60,29 @@ export function parseVersionOutput(output: string): string | null {
   return match ? match[0] : null;
 }
 
+/**
+ * Versions already read, keyed by the executable they were read from.
+ *
+ * `--version` is the only part of a health check that costs a process spawn
+ * (measured on macOS: claude 85ms, codex 13ms), and mobile re-asks every 60s
+ * while a user browses. A version cannot change without someone replacing the
+ * binary, so this is a fact about the machine rather than about the request.
+ *
+ * Deliberately no TTL, and deliberately NOT extended to `available`. A stale
+ * version can only misword the compatibility warning; a stale `available` would
+ * grey out the provider button for a user who just installed the CLI to fix the
+ * error telling them it was missing. Availability is re-derived on every call
+ * for exactly that reason — it is a PATH walk of stats, and costs nothing.
+ *
+ * Only successful reads are cached, so a probe that lost to a timeout under
+ * load is retried rather than latched as "unverifiable" until restart.
+ */
+const versionByExe = new Map<string, string>();
+
 function runVersion(exe: string): Promise<string | null> {
+  const cached = versionByExe.get(exe);
+  if (cached !== undefined) return Promise.resolve(cached);
+
   // Since the CVE-2024-27980 fix, node refuses to spawn a .cmd/.bat without a
   // shell and throws EINVAL synchronously. npm installs the CLIs as claude.cmd
   // and resolveClaudeExe() returns exactly that, so on Windows the shell is the
@@ -75,7 +97,9 @@ function runVersion(exe: string): Promise<string | null> {
       { timeout: VERSION_TIMEOUT_MS, shell: viaShell, windowsHide: true },
       (err, stdout, stderr) => {
         if (err && !stdout && !stderr) return resolve(null);
-        resolve(parseVersionOutput(`${stdout}${stderr}`));
+        const version = parseVersionOutput(`${stdout}${stderr}`);
+        if (version !== null) versionByExe.set(exe, version);
+        resolve(version);
       },
     );
   });
@@ -147,21 +171,36 @@ export function compareSemver(a: string, b: string): number {
 }
 
 /**
- * Resolve health for one provider. `resolveExe` is injected so tests can drive
- * detection without depending on what happens to be installed on the machine.
+ * Resolve health for one provider. `locateExe` is injected so tests can drive
+ * detection without depending on what happens to be installed on the machine;
+ * it defaults to the same `locateProviderExe` the session-start pre-flight
+ * uses. Sharing that one entry point is load-bearing rather than tidy: it
+ * clears the memoized resolution on a miss, so a health check and a start
+ * attempt cannot reach opposite conclusions about the same machine — which is
+ * what happened when this called `locateExecutable(resolveExe())` directly and
+ * left a stale absolute path (the normal case under launchd) in place.
  */
 export async function providerHealth(
   name: ProviderName,
-  resolveExe: () => string,
+  locateExe: () => string | null = () => locateProviderExe(name),
   detect: (exe: string) => Promise<string | null> = runVersion,
 ): Promise<ProviderHealth> {
   const verifiedAgainst = VERIFIED_AGAINST[name];
   const capabilities = capabilitiesFor(name);
 
-  let exe: string;
+  let exe: string | null = null;
   try {
-    exe = resolveExe();
+    // Located, not merely resolved: neither resolver can fail — each falls back
+    // to the bare command name — so this used to be gated on a throw that never
+    // happens, and `available` was true for a CLI not on the machine at all.
+    // Mobile greys a provider out on `available === false`, so the button
+    // stayed enabled and the failure only surfaced as a session that died
+    // milliseconds after starting.
+    exe = locateExe();
   } catch {
+    exe = null;
+  }
+  if (exe === null) {
     return {
       name,
       available: false,

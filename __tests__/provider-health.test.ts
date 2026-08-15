@@ -1,10 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { execFile } from "child_process";
+import { describe, expect, it, vi } from "vitest";
 import {
   compareSemver,
   compareToVerified,
   parseVersionOutput,
   providerHealth,
 } from "../src/services/providers/providerHealth";
+
+// Only the version probe reaches child_process; every test below that cares
+// about a version injects its own detector instead.
+vi.mock("child_process", () => ({
+  execFile: vi.fn((_file, _args, _opts, cb) => cb(null, "2.1.214 (Claude Code)", "")),
+  execFileSync: vi.fn(() => ""),
+}));
 
 describe("parseVersionOutput", () => {
   // Providers format --version differently and change it between releases, so
@@ -71,7 +79,9 @@ describe("compareToVerified", () => {
 });
 
 describe("providerHealth", () => {
-  const found = () => "/usr/local/bin/claude";
+  // A real executable: availability is now a filesystem fact, not the absence
+  // of a throw, so a made-up path would report the provider as missing.
+  const found = () => process.execPath;
   const missing = () => {
     throw new Error("not found");
   };
@@ -91,6 +101,39 @@ describe("providerHealth", () => {
     expect(health.available).toBe(false);
     expect(health.version).toBeNull();
     expect(health.warnings[0].code).toBe("provider_not_found");
+  });
+
+  // The case that actually happens, and the one this endpoint used to get
+  // wrong: nothing throws when a CLI is absent — `resolveClaudeExe()` exhausts
+  // its lookups and returns the bare name — so gating availability on a throw
+  // reported a missing CLI as available:true, and mobile (which greys a
+  // provider out on available === false) left the button live. Whether a given
+  // path or bare name resolves to anything is `locateExecutable`'s question,
+  // covered in provider-not-installed.test.ts; here it arrives as null.
+  it("reports a provider that cannot be located as unavailable", async () => {
+    const health = await providerHealth("claude-code", () => null);
+
+    expect(health.available).toBe(false);
+    expect(health.version).toBeNull();
+    expect(health.warnings[0].code).toBe("provider_not_found");
+  });
+
+  // `--version` is the only part of a health check that spawns a process (85ms
+  // for claude on macOS), and mobile re-asks every 60s while a user browses.
+  // The binary cannot change under a running streamer without someone
+  // replacing it, so it is read once per executable. Availability is
+  // deliberately NOT cached with it — see the memo's comment.
+  it("reads --version once per executable, not once per request", async () => {
+    const spawned = vi.mocked(execFile);
+    spawned.mockClear();
+    const locate = () => process.execPath;
+
+    const first = await providerHealth("claude-code", locate);
+    const second = await providerHealth("claude-code", locate);
+
+    expect(spawned).toHaveBeenCalledOnce();
+    expect(first.version).toBe("2.1.214");
+    expect(second.version).toBe("2.1.214");
   });
 
   // An unreadable version is not evidence the CLI is broken — resolveExe found

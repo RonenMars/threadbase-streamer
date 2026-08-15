@@ -1,6 +1,7 @@
 import { existsSync } from "fs";
 import { Hono } from "hono";
-import { resolveClaudeExe, resolveCodexExe } from "../../platform";
+import { locateProviderExe } from "../../platform";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "../../providers";
 import {
   buildReport,
   type DiagnosticCheck,
@@ -29,26 +30,35 @@ import type { ApiDeps } from "../types/api-deps";
  * before serialization.
  */
 
-function providerCheck(name: string, resolve: () => string): DiagnosticCheck {
+function providerCheck(name: ProviderName): DiagnosticCheck {
   try {
-    const exe = resolve();
-    // Report only that it resolved and roughly where — never the full path,
-    // which carries the username and home layout.
-    return {
-      id: `provider:${name}`,
-      status: "ok",
-      summary: `${name} CLI is installed.`,
-      remediation: "NONE",
-      detail: { location: redactPath(exe) },
-    };
+    // Located, not merely resolved, and through the same entry point the
+    // session-start pre-flight uses so the two cannot disagree: neither
+    // resolver can fail — each falls back to the bare command name — so the
+    // failed branch below was unreachable, and this endpoint, whose entire job
+    // is explaining why a session will not start, reported a missing CLI as
+    // installed.
+    const exe = locateProviderExe(name);
+    if (exe !== null) {
+      // Report only that it resolved and roughly where — never the full path,
+      // which carries the username and home layout.
+      return {
+        id: `provider:${name}`,
+        status: "ok",
+        summary: `${name} CLI is installed.`,
+        remediation: "NONE",
+        detail: { location: redactPath(exe) },
+      };
+    }
   } catch {
-    return {
-      id: `provider:${name}`,
-      status: "failed",
-      summary: `${name} CLI could not be located. Sessions for this provider cannot start.`,
-      remediation: "PROVIDER_NOT_INSTALLED",
-    };
+    // Fall through to the not-installed answer below.
   }
+  return {
+    id: `provider:${name}`,
+    status: "failed",
+    summary: `${name} CLI could not be located. Sessions for this provider cannot start.`,
+    remediation: "PROVIDER_NOT_INSTALLED",
+  };
 }
 
 export const createDiagnosticsRoutes = (deps: ApiDeps) => {
@@ -65,8 +75,8 @@ export const createDiagnosticsRoutes = (deps: ApiDeps) => {
       detail: { version: getVersion(), uptimeSeconds: Math.floor(process.uptime()) },
     });
 
-    checks.push(providerCheck("claude-code", resolveClaudeExe));
-    checks.push(providerCheck("codex-cli", resolveCodexExe));
+    checks.push(providerCheck(CLAUDE_CODE_PROVIDER));
+    checks.push(providerCheck(CODEX_CLI_PROVIDER));
 
     // The cache backs conversation reads; without it every request falls back
     // to slower disk-only scans, which is degraded rather than broken.
