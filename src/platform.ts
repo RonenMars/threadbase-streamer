@@ -1,7 +1,8 @@
 import { execFileSync } from "child_process";
-import { existsSync } from "fs";
+import { accessSync, constants, existsSync, statSync } from "fs";
 import { homedir, platform } from "os";
-import { join } from "path";
+import { delimiter, join } from "path";
+import { CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
 
 export const isWindows = platform() === "win32";
 
@@ -186,6 +187,71 @@ export function resolveCodexExe(): string {
 
   _codexExe = "codex";
   return _codexExe;
+}
+
+// ─── Is the provider actually installed? ──────────────────────────────────────
+// Neither resolver above can fail. Each exhausts its lookups and then returns
+// the bare command name, which is handed to execvp/CreateProcess to try its own
+// luck against PATH. That fallback is load-bearing — a box whose /usr/bin/which
+// is absent (slim containers) resolves nothing here yet spawns perfectly well —
+// so "resolution returned a bare name" is NOT evidence the CLI is missing, and
+// must not be used to answer "is this provider installed?".
+//
+// The consequence of having no answer at all: a missing CLI spawns "fine" on
+// POSIX (execvp fails inside the forked child), the session exits ~12ms later
+// with code 1 and no output, and every caller reports something other than the
+// one fact that matters. Both provider-availability endpoints were gated on a
+// throw that cannot happen, so they reported a CLI that is not on the machine
+// as installed.
+
+function isExecutableFile(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) return false;
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where `exe` — a resolver's output — actually lives, or null if nowhere.
+ *
+ * A value carrying a path separator is checked directly; a bare command name is
+ * searched along PATH exactly the way execvp will search it. node-pty inherits
+ * the streamer's own environment (`buildSpawnEnv`), so the PATH walked here is
+ * the PATH the spawned child gets — which is what makes this predictive of the
+ * spawn rather than merely correlated with it.
+ */
+export function locateExecutable(exe: string): string | null {
+  if (/[\\/]/.test(exe)) return isExecutableFile(exe) ? exe : null;
+
+  // Windows resolves a bare name through an extension list. Restrict it to the
+  // same set the where.exe lookup above filters on: anything else is a file
+  // CreateProcess cannot launch even when it is sitting on PATH.
+  const names = isWindows ? [...WINDOWS_EXECUTABLE_EXTENSIONS].map((ext) => `${exe}${ext}`) : [exe];
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    for (const name of names) {
+      const candidate = join(dir, name);
+      if (isExecutableFile(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+/** Where this provider's CLI lives on this machine, or null if it is absent. */
+export function locateProviderExe(provider: ProviderName): string | null {
+  const isCodex = provider === CODEX_CLI_PROVIDER;
+  const found = locateExecutable(isCodex ? resolveCodexExe() : resolveClaudeExe());
+  if (found === null) {
+    // Resolution is memoized for the process lifetime, so a path that has since
+    // been uninstalled would otherwise keep answering "missing" until the next
+    // restart — including after the user reinstalls to fix exactly this.
+    if (isCodex) clearCodexExeCache();
+    else clearClaudeExeCache();
+  }
+  return found;
 }
 
 // ─── execHidden ────────────────────────────────────────────────────────────────

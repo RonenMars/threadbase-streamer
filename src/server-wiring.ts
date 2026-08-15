@@ -397,6 +397,14 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         // genuine process exit ("process-exit"), and reports both as
         // `lifecycle: "completed"`. See managedToResponse in session-store.ts.
         ...(session.statusSource != null && { statusSource: session.statusSource }),
+        // Why a session died, not just that it did. Without this the store's
+        // copy has no failureReason, so managedToResponse falls through to
+        // `lifecycle: "completed"` (see session-store.ts) and a session that
+        // never started — missing CLI, missing project dir — is reported to
+        // every client as one that finished normally. Guarded like its
+        // neighbours: a later transition must not blank a recorded failure.
+        ...(session.failureReason != null && { failureReason: session.failureReason }),
+        ...(session.failureCode != null && { failureCode: session.failureCode }),
       });
       // Mirror the transition into the durable registry. Both runners funnel
       // every status change through this callback, so this is the one place
