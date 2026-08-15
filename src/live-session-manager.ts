@@ -1,5 +1,6 @@
 import { basename } from "path";
 import { CodexPtyRunner } from "./codex-pty-runner";
+import { locateProviderExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
 import type { HostHeartbeatState, HostTransport } from "./pty-host/protocol";
 import { RemoteSessionRunner } from "./pty-host/remote-session-runner";
@@ -51,6 +52,7 @@ export class LiveSessionManager {
   ): Promise<ManagedSession> {
     const provider = options.provider ?? CLAUDE_CODE_PROVIDER;
     const runner = this.assertSupportedProvider(provider, options.projectPath);
+    this.assertProviderInstalled(provider);
     return runner.start(sessionId, options);
   }
 
@@ -59,6 +61,7 @@ export class LiveSessionManager {
   ): Promise<ManagedSession> {
     const provider = options.provider ?? CLAUDE_CODE_PROVIDER;
     const runner = this.assertSupportedProvider(provider, options.projectPath);
+    this.assertProviderInstalled(provider);
     return runner.startFresh(options);
   }
 
@@ -82,6 +85,7 @@ export class LiveSessionManager {
       (err as Error & { statusCode?: number }).statusCode = 501;
       throw err;
     }
+    this.assertProviderInstalled(provider);
     return runner.startFork(options);
   }
 
@@ -176,6 +180,36 @@ export class LiveSessionManager {
       if (runner.hasSession(sessionId) || runner.getSession(sessionId)) return runner;
     }
     throw new Error(`Session not found: ${sessionId}`);
+  }
+
+  /**
+   * Refuse before spawning when the provider's CLI is not on this machine.
+   *
+   * Without this the spawn "succeeds": on POSIX execvp fails inside the forked
+   * child, so a session appears, exits ~12ms later with code 1 and no output,
+   * and the caller is told only that it "exited before becoming ready" — or,
+   * on the Claude resume path, is told nothing at all, since that path answers
+   * 200 before the process has had a chance to die. Every start route funnels
+   * through here, so one check covers start, resume, adopt and fork.
+   *
+   * 503, not 500: the request was well-formed and the fault is this machine's
+   * environment. `code` is what mobile branches on (it reads `errBody.code`),
+   * and `PROVIDER_NOT_INSTALLED` is a remediation string it already knows.
+   */
+  private assertProviderInstalled(provider: ProviderName): void {
+    if (locateProviderExe(provider) !== null) return;
+    // Written to be read by a person, not parsed: mobile shows `error` verbatim
+    // in its "Failed to start" alert, so it names the command to install and
+    // the other thing that produces this — a CLI the streamer's PATH cannot
+    // see, which is the usual shape under launchd/Task Scheduler.
+    const command = provider === CODEX_CLI_PROVIDER ? "codex" : "claude";
+    const err = new Error(
+      `The ${command} command was not found on this server. Install the ${provider} CLI, ` +
+        "or make sure it is on the PATH the streamer runs with.",
+    );
+    (err as Error & { statusCode?: number; code?: string }).statusCode = 503;
+    (err as Error & { statusCode?: number; code?: string }).code = "PROVIDER_NOT_INSTALLED";
+    throw err;
   }
 
   private assertSupportedProvider(provider: ProviderName, projectPath: string): SessionRunner {
