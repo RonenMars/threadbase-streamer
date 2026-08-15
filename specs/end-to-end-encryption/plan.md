@@ -54,6 +54,23 @@ Paths and query parameters stay plaintext ([D-7](./dilemmas.md#d-7--rest-paths-s
 
 ---
 
+## App Store export compliance — the first non-engineering cost
+
+`tb-mobile/app.json` declares `ITSAppUsesNonExemptEncryption: false`. That is the correct answer **today**, because the app's only cryptography is the platform's own TLS, which Apple exempts.
+
+**E2EE almost certainly makes it `true.`** The design has the client implementing its own cryptography — a Noise handshake, X25519, ChaCha20-Poly1305, through `@stablelib` or a native module ([D-3](./dilemmas.md#d-3--mobile-crypto-library-pure-js-vs-native-module)). That is not the OS's TLS, and it is not one of the narrow exemptions Apple lists (authentication only, DRM, copy protection). It protects user data with the app's own crypto, which is the case the declaration exists for.
+
+What that pulls in, when Phase 2–4 ships rather than now:
+
+- flipping the flag in `app.json`, which changes what App Store Connect asks at every submission thereafter
+- **updating the declaration in App Store Connect itself, for both TestFlight and the App Store.** The plist key and the portal answer are two separate records of the same fact, and changing one does not change the other. A build whose plist says `true` while the portal still carries the old answer is the failure mode — TestFlight is where it bites first, because internal testers get builds long before a review sees one, and export compliance is asked per build there.
+- an export self-classification under the mass-market provisions, and potentially an annual report
+- the separate French declaration Apple prompts for
+
+**Stated with its uncertainty:** this is read from Apple's published guidance, not legal advice, and export control is an area where confident inference is worth less than checking. Confirm before Phase 2 ships rather than at submission time.
+
+It is recorded here because it is the kind of obligation discovered when a release is already cut, and because it is the first cost of this feature that no amount of engineering removes.
+
 ## Not in this work
 
 | Item | Why separate |
