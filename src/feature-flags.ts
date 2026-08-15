@@ -81,6 +81,16 @@ export const FEATURE_FLAGS = [
     env: "THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH",
   },
   {
+    id: "e2ee",
+    description:
+      "Application-layer encryption between a paired device and this server, independent of TLS, " +
+      "so a tunnel or a LAN observer on the path carries ciphertext. Off by default: it is " +
+      "negotiated per device, never forced, because released mobile builds cannot be " +
+      "force-updated and a server that demanded it would break every one of them.",
+    default: false,
+    env: "THREADBASE_FEATURE_E2EE",
+  },
+  {
     id: "ptyHost",
     description:
       "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +

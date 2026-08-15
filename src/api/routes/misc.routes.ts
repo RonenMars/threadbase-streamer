@@ -115,6 +115,68 @@ export function describePushCapability(
   };
 }
 
+/** Envelope version this build speaks. The same number the pair QR carries as `v`. */
+export const E2EE_PROTOCOL_VERSION = 1;
+
+/**
+ * Whether this build has the E2EE code path at all.
+ *
+ * Deliberately a constant rather than the `e2ee` feature flag. `supported` means
+ * "this build speaks the envelope" (specs/end-to-end-encryption/design.md §6.2),
+ * and right now the capability negotiation exists while the handshake does not.
+ * Reporting the flag here would let an operator who switches it on advertise a
+ * handshake this build cannot perform — a client would offer to re-pair for
+ * encryption and then fail, which is exactly the half-landed break this
+ * negotiation exists to remove. Phase 2 flips it when the handshake lands.
+ *
+ * Typed `boolean` rather than inferred `false` so the `&&` below stays a real
+ * branch instead of narrowing to a constant.
+ */
+const E2EE_SUPPORTED: boolean = false;
+
+/**
+ * Whether a client should encrypt to this server, and why not when it should not.
+ *
+ * The contract is `push`'s: additive, and **absent means "older server,
+ * unknown"** rather than "unsupported". A client reads `enabled` to decide
+ * whether to attempt a handshake — never `supported` alone, which only says the
+ * code path exists.
+ *
+ * `required` is the stage-3 bit (refuse plaintext from *any* client) and is
+ * false until that is an explicit product decision. It is reported rather than
+ * omitted because an absent field means "unknown", and "unknown" is the wrong
+ * answer to a question this server can answer.
+ */
+export interface E2eeCapability {
+  supported: boolean;
+  enabled: boolean;
+  version: number;
+  required: boolean;
+  /** Why `enabled` is false while `supported` is true; absent otherwise. */
+  reason?: string;
+}
+
+export function describeE2eeCapability(flagEnabled: boolean): E2eeCapability {
+  const enabled = E2EE_SUPPORTED && flagEnabled;
+  const base = {
+    supported: E2EE_SUPPORTED,
+    enabled,
+    version: E2EE_PROTOCOL_VERSION,
+    required: false,
+  };
+  if (enabled) return base;
+  return {
+    ...base,
+    // Always says why, including when `supported` is false. An operator who set
+    // the flag and saw nothing happen has exactly one question, and a field that
+    // goes absent in the case they hit is the field not answering it.
+    reason: E2EE_SUPPORTED
+      ? "disabled by the e2ee feature flag — set THREADBASE_FEATURE_E2EE=1, --feature e2ee=true, " +
+        "or feature_flags: in server.yaml"
+      : "this build carries the capability negotiation but not yet the handshake it gates",
+  };
+}
+
 // One line per process, not one per request: `/api/info` is polled, and this
 // module has a 261 MB unrotated-log precedent to respect (CLAUDE.md).
 let identityKeyFailureLogged = false;
@@ -169,6 +231,7 @@ export const createMiscRoutes = (
     | "localNoAuth"
     | "pushRepo"
     | "liveActivityPushEnabled"
+    | "featureFlagsConfig"
   >,
 ) => {
   const app = new Hono<AppEnv>();
@@ -210,6 +273,10 @@ export const createMiscRoutes = (
       // readable identity key, which a client must read as "cannot verify this
       // server" — never as a reason to fail the rest of this response.
       serverIdentityKey: describeServerIdentityKey(),
+      // Whether to encrypt to this server. Additive, same contract as `push`:
+      // absent means an older server, which a client must read as "unknown" and
+      // resolve as today's plaintext path — never as a reason to fail.
+      e2ee: describeE2eeCapability(deps.featureFlagsConfig().values.e2ee),
     });
   });
 
