@@ -17,9 +17,15 @@ import type { ManagedSession, UserMessage } from "./types";
 // screen coordinates the real TUI is painting against.
 export const PTY_COLS = 120;
 export const PTY_ROWS = 40;
-// Scrollback depth for the render terminal. Replay reads up to maxLines (200)
-// from the rendered buffer, so keep enough history above the viewport.
+// Scrollback depth for the render terminal.
 export const SCREEN_SCROLLBACK = 1000;
+// Everything the render terminal can hold: its scrollback plus the viewport.
+// This is what `subscribe_session` replays — "as much scrollback as the session
+// still has", not a number picked independently of it. The client keeps its own
+// retention cap (tb-mobile's VirtualTerminal, 10 000 rows), which is larger, so
+// this terminal is the binding limit on both ends and neither side has to know
+// the other's number.
+export const REPLAY_MAX_LINES = SCREEN_SCROLLBACK + PTY_ROWS;
 
 export function digestBytes(s: string): string {
   // Replace control chars with their hex form so logs are grep-able.
