@@ -93,7 +93,7 @@ QR density: the payload grows by ~50 characters. `qrcode-terminal` at `{ small: 
 **Pattern:** `Noise_IKpsk1_25519_ChaChaPoly_SHA256`.
 
 - **`IK`** — the initiator (phone) already knows the responder's static key, from the QR. That is precisely the situation, and `IK` is the pattern designed for it: the responder is authenticated in the first message, and the initiator's static key is transmitted encrypted.
-- **`psk1`** — the pair token is mixed in as a pre-shared key on the first message. It binds the handshake to *this* QR, so a valid handshake proves the initiator scanned *this* code, not merely that it reached the server.
+- **`psk1`** — a value derived from the pair token is mixed in as a pre-shared key on the first message. It binds the handshake to *this* QR, so a valid handshake proves the initiator scanned *this* code, not merely that it reached the server. The token is **not** the PSK directly — see [PSK derivation](#psk-derivation) below.
 - Adopting a specified pattern rather than hand-rolling `X25519 → HKDF` is the point. The transcript hash, the key-mixing order, and the identity-hiding properties are all decided by the pattern rather than by us.
 
 **Message flow, replacing nothing:**
@@ -103,7 +103,7 @@ POST /api/pair/exchange          (existing endpoint, existing token consumption)
   body: { token, clientPublicKey, deviceName?, readOnly?,     ← unchanged fields
           e2ee: { v: 1, noise: base64(msg1) } }               ← additive
 
-  msg1 = Noise IK message 1: e, es, s, ss  + psk(pair token)
+  msg1 = Noise IK message 1: e, es, s, ss  + psk(derived from pair token)
          payload: { deviceName, capabilitiesRequested, clientIdentityPub }
 
   response: { ciphertext, nonce, ephemeralPublicKey,          ← unchanged, still sent
@@ -119,6 +119,24 @@ The existing sealed-API-key fields are **still returned**, unchanged, because `d
 A new app ignores them and uses the Noise result.
 
 **Why reuse `/api/pair/exchange` rather than add `/api/e2ee/pair`:** the endpoint is already public, already rate-limited, already consumes the token exactly once, and already registers the device. A second endpoint would duplicate all four and create a second place for the token to be consumed.
+
+#### PSK derivation
+
+Noise requires the PSK to be **exactly 32 bytes**. A pair token is `pt_` followed by 32 hexadecimal characters — 35 bytes of ASCII — so it cannot be used directly, and every implementation must derive the same 32 bytes from it or the handshake fails with no diagnostic beyond a decryption error.
+
+```
+psk = SHA256("threadbase-e2ee/1 psk" ‖ token)
+```
+
+Three details are load-bearing and all three have been got wrong at least once:
+
+- **`‖` is plain concatenation, not HMAC.** The label is hashed first, then the token, with no separator between them.
+- **`token` is the full `pt_`-prefixed string, as ASCII.** Not the 32 hex characters alone, and not the 16 bytes they decode to.
+- **The label is exact,** including the space and the `/1`. It is a domain separator: it keeps this value from colliding with any other use of the same token elsewhere in the system, and the `/1` moves if the derivation ever changes.
+
+Reference implementation: `pskFromPairToken` in `src/e2ee/noise.ts`.
+
+**This rule must be asserted against the interop vectors on both sides**, as `derivePsk(vector.pairToken) === vector.psk`, not merely satisfied by them. A vector that pins only the resulting `psk` proves the two implementations agree without recording *what* they agree on — which is how this construction came to be recovered by brute force from a single input/output pair rather than read from this document. See [threadbase-streamer#621](https://github.com/RonenMars/threadbase-streamer/issues/621) and [threadbase-mobile#756](https://github.com/RonenMars/threadbase-mobile/issues/756).
 
 ### 2.5 Binding the device identity to the key
 
