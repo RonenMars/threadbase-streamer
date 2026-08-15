@@ -74,6 +74,7 @@ import {
 import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
+import { locateProviderExe } from "./platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
@@ -1220,6 +1221,42 @@ export class StreamerServer {
     return true;
   }
 
+  /**
+   * Say which provider CLIs this machine can actually launch.
+   *
+   * The operator cannot discover this case unaided: under launchd/Task
+   * Scheduler the service inherits a stripped PATH, so a CLI that works
+   * perfectly in their terminal is invisible to the service, and every session
+   * start dies milliseconds in. `/api/diagnostics` answers it too, but only for
+   * someone who already suspects it.
+   *
+   * Availability only, never a version — `--version` costs a process spawn per
+   * provider (85ms for claude here) and belongs on the first request that wants
+   * it, not on boot.
+   *
+   * Called AFTER the port is bound, which is not cosmetic. This is the first
+   * caller of the exe resolvers in the process, so the memo is cold by
+   * definition and each provider pays one synchronous `which` / `where.exe`
+   * (platform.ts) with a 3s timeout. On POSIX that is 3ms found, 7ms missing.
+   * Windows is the risk — `where.exe` is slower, `execFileSync` blocks the
+   * event loop, and Task Scheduler's stripped PATH is exactly where a miss
+   * pays the full timeout — so the worst case is ~6s of two blocking lookups.
+   * After `listen()` that delays the first requests on a box that cannot start
+   * a session anyway; before it, it would have delayed binding the port.
+   */
+  private logProviderAvailability(): void {
+    for (const provider of [CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER] as const) {
+      if (locateProviderExe(provider)) {
+        this.log.info(`Provider ${provider}: found`, { event: "config.provider", provider });
+      } else {
+        this.log.warn(`Provider ${provider}: not found on PATH — sessions cannot start`, {
+          event: "config.provider_missing",
+          provider,
+        });
+      }
+    }
+  }
+
   async listen(port: number, opts?: { awaitReady?: boolean }): Promise<void> {
     if (this.featureFlags.ptyHost) {
       // Degrade to in-process runners rather than refusing to boot.
@@ -1311,6 +1348,7 @@ export class StreamerServer {
           event: "server.listening",
           ...(this.host !== undefined && { host: this.host }),
         });
+        this.logProviderAvailability();
         // Opened BEFORE and INDEPENDENTLY of the conversation cache. These two
         // used to share a handle, so the documented better-sqlite3 ABI mismatch
         // — which the cache catch below tolerates by design — silently took the

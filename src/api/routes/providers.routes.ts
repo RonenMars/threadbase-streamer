@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { resolveClaudeExe, resolveCodexExe } from "../../platform";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "../../providers";
 import { providerHealth } from "../../services/providers/providerHealth";
 import type { AppEnv } from "../app";
@@ -24,8 +23,8 @@ export const createProviderRoutes = () => {
 
   app.get("/", async (c) => {
     const providers = await Promise.all([
-      providerHealth(CLAUDE_CODE_PROVIDER, resolveClaudeExe),
-      providerHealth(CODEX_CLI_PROVIDER, resolveCodexExe),
+      providerHealth(CLAUDE_CODE_PROVIDER),
+      providerHealth(CODEX_CLI_PROVIDER),
     ]);
 
     return c.json({ providers });

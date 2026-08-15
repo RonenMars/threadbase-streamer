@@ -1501,16 +1501,23 @@ export class SessionHandlers {
       // Races against the same fallback window pty-manager itself uses for
       // prompt-marker detection, plus margin — if neither settles in time we
       // fall back to the old fire-and-forget shape rather than hang the request.
-      const { outcome } = await this.deps.waitForStartupOutcome(session.id, START_READY_TIMEOUT_MS);
+      const { outcome, session: settled } = await this.deps.waitForStartupOutcome(
+        session.id,
+        START_READY_TIMEOUT_MS,
+      );
       const current = this.sessionStore.get(session.id, this.deps.ptyAttachedIds());
 
       if (outcome === "ready" && current) {
         json(res, 200, { session: current });
       } else if (outcome === "failed" && current) {
+        // The diagnosed reason rides on the settled session, not on the store
+        // copy — same as the Codex resume path below. Reading only the store
+        // here is what turned "the Claude binary is not accessible" into a
+        // bare "exited before becoming ready".
         json(res, 502, {
           id: session.id,
           status: "idle",
-          error: current.failureReason ?? "Session exited before becoming ready",
+          error: settled?.failureReason ?? "Session exited before becoming ready",
         });
       } else {
         // Timeout, or session vanished from the store — old async contract.
@@ -1532,11 +1539,16 @@ export class SessionHandlers {
         typeof (err as Error & { statusCode?: unknown }).statusCode === "number"
           ? (err as Error & { statusCode: number }).statusCode
           : 500;
+      const code = (err as Error & { code?: unknown }).code;
       this.log.error(`[start] failed to start session: ${message}`, {
         event: "session.start_failed",
         error: message,
       });
-      json(res, statusCode, { error: message });
+      json(
+        res,
+        statusCode,
+        typeof code === "string" ? { error: message, code } : { error: message },
+      );
     }
   }
 
