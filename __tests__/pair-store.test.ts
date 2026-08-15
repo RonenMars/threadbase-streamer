@@ -25,33 +25,33 @@ describe("PairTokenStore", () => {
   });
 
   /**
-   * `verify` answers the same question as `consume` and spends nothing.
+   * `wouldConsume` answers the same question as `consume` and spends nothing.
    *
    * The exchange handler checks a token before doing work and spends it only
    * once the work succeeded, so that a request failing on the client's own
-   * input leaves the token usable. If `verify` spent it, that whole ordering
+   * input leaves the token usable. If it spent the token, that whole ordering
    * would silently do nothing.
    */
-  it("verify reports the same verdicts as consume without spending the token", () => {
+  it("wouldConsume reports the same verdicts as consume without spending the token", () => {
     const store = new PairTokenStore({ ttlSeconds: 180, autoSweep: false });
     const { token } = store.mint();
 
-    expect(store.verify(token)).toEqual({ ok: true });
-    expect(store.verify(token)).toEqual({ ok: true });
-    expect(store.verify("pt_does_not_exist")).toEqual({ ok: false, reason: "unknown" });
+    expect(store.wouldConsume(token)).toEqual({ ok: true });
+    expect(store.wouldConsume(token)).toEqual({ ok: true });
+    expect(store.wouldConsume("pt_does_not_exist")).toEqual({ ok: false, reason: "unknown" });
     // Still spendable after any number of verifications.
     expect(store.consume(token)).toEqual({ ok: true });
     // And agrees with consume once it has been spent, which is what lets the
     // handler answer 401 "used" from either call.
-    expect(store.verify(token)).toEqual({ ok: false, reason: "used" });
+    expect(store.wouldConsume(token)).toEqual({ ok: false, reason: "used" });
     store.dispose();
   });
 
-  it("verify rejects an expired token", async () => {
+  it("wouldConsume rejects an expired token", async () => {
     const store = new PairTokenStore({ ttlSeconds: 0.05, autoSweep: false });
     const { token } = store.mint();
     await new Promise((r) => setTimeout(r, 80));
-    expect(store.verify(token)).toEqual({ ok: false, reason: "expired" });
+    expect(store.wouldConsume(token)).toEqual({ ok: false, reason: "expired" });
     store.dispose();
   });
 

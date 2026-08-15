@@ -61,6 +61,19 @@ import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { PushRepository } from "./db/repositories/push.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { RuntimeStore, resolveRuntimeDbPath } from "./db/runtime-store";
+import {
+  type HandshakeResponderState,
+  keyPairFrom,
+  pskFromPairToken,
+  readMessage1,
+  writeMessage2,
+} from "./e2ee/noise";
+import {
+  E2EE_EXCHANGE_VERSION,
+  type E2eeExchangeRequest,
+  type E2eeRequestError,
+  parseE2eeRequest,
+} from "./e2ee/pair-request";
 import { type ExternalTailEntry, ExternalTailManager } from "./external-tails";
 import {
   describeFeatureFlags,
@@ -85,6 +98,7 @@ import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
 import { ScannerManager } from "./scanner-manager";
 import { seal } from "./seal";
+import { loadOrCreateServerIdentity } from "./server-identity";
 import {
   createApiDeps,
   createConversationWatcherEvents,
@@ -129,11 +143,11 @@ import type {
   ServerWarmupState,
   SessionResponse,
 } from "./types";
-
 import { canonicalizeFilePath, toNativeFilePath } from "./utils/canonicalizeFilePath";
 import { toClientConversationLines } from "./utils/codexConversationLine";
 import { parseIsoDateOrNull } from "./utils/dates";
 import { createScanProgressThrottle } from "./utils/scanProgressThrottle";
+import { getVersion } from "./version";
 import { WSHub } from "./ws-hub";
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -1897,6 +1911,20 @@ export class StreamerServer {
       return;
     }
 
+    // Optional, and its absence is the ordinary case. A released tb-mobile
+    // build sends no `e2ee` at all and must pair exactly as it does today, so
+    // this is an explicit branch rather than an optional-chaining accident —
+    // a silent skip reads as a bug to the next person, who tightens it into a
+    // rejection and breaks every old app in the field.
+    let e2eeRequest: E2eeExchangeRequest | null;
+    try {
+      e2eeRequest = parseE2eeRequest(body?.e2ee);
+    } catch (err) {
+      const e = err as E2eeRequestError;
+      json(res, 400, { error: e.message, code: e.code });
+      return;
+    }
+
     // Reject a bad token before doing any work, but do NOT spend it yet.
     //
     // Spending a token that a later step then fails on costs the user their
@@ -1904,10 +1932,63 @@ export class StreamerServer {
     // token used` — which is the signal design.md §2.6 designates as QR-replay
     // detection. Giving that signal a common benign cause is how it stops being
     // believed, and a malformed `clientPublicKey` was enough to trigger it.
-    const precheck = this.pairTokens.verify(token);
+    const precheck = this.pairTokens.wouldConsume(token);
     if (!precheck.ok) {
+      if (precheck.reason === "used") {
+        // The §2.6 detection signal, made observable. Until now a replayed
+        // token reached the client as a 401 and reached the operator's log as
+        // silence — and the operator is the one who can act on it, since a user
+        // whose pairing failed is not reading HTTP status codes.
+        //
+        // Carries `ip` and nothing else the request log does not already have.
+        // The token is deliberately absent: it is live credential material
+        // until it expires.
+        this.log.warn(
+          "[pair] a pair token was replayed. If you did not just pair a device, " +
+            "check the paired-devices list and revoke anything you do not recognise.",
+          { event: "pair.token_replayed", ip },
+        );
+      }
       json(res, 401, { error: `Pair token ${precheck.reason}` });
       return;
+    }
+
+    // The handshake runs BEFORE `seal`, for two reasons that both matter.
+    //
+    // `seal` materialises this machine's shared API key in memory. Doing that
+    // for a caller who has not authenticated is worse than not doing it, even
+    // though the response is never sent — so an E2EE client proves itself
+    // first, and only then is the legacy credential built for it.
+    //
+    // And a failing handshake must not spend the token. A malformed or hostile
+    // `msg1` would otherwise hand anyone who photographed the QR a denial of
+    // service they did not have: burn the token, and the legitimate phone's
+    // pairing dies with it. Same spine as the ordering above — the token is
+    // spent when the exchange succeeds, not when it is attempted.
+    let handshake: HandshakeResponderState | null = null;
+    if (e2eeRequest) {
+      try {
+        handshake = readMessage1({
+          staticKeyPair: keyPairFrom(loadOrCreateServerIdentity().privateKey),
+          // The pair token binds this handshake to the scanned QR. Derivation
+          // is specified in design.md §2.4 and pinned by a committed vector
+          // that tb-mobile checks against independently.
+          psk: pskFromPairToken(token),
+          message1: e2eeRequest.message1,
+        });
+      } catch {
+        // Deliberately one code for every handshake failure. Distinguishing
+        // "wrong static key" from "wrong PSK" from "tampered ciphertext" would
+        // tell an attacker which half of their guess was right, and the client
+        // has the same remedy in all three: scan a fresh code.
+        //
+        // The caught error is dropped rather than surfaced, for the same reason.
+        json(res, 400, {
+          error: "E2EE handshake failed. Scan a fresh pairing code and try again.",
+          code: "E2EE_HANDSHAKE_FAILED",
+        });
+        return;
+      }
     }
 
     let sealed: ReturnType<typeof seal>;
@@ -1924,19 +2005,27 @@ export class StreamerServer {
     // Spend it, now that everything that can fail on client input has passed.
     //
     // Consuming late grants an attacker nothing: a token that is not the live
-    // one fails `verify`'s `unknown` branch above, before any cryptography
-    // runs, and `checkExchangeRateLimit` already bounds attempts to five per
-    // minute per IP. Anyone who reaches this line was holding the real token
-    // when they started.
+    // one fails `wouldConsume`'s `unknown` branch above, before any
+    // cryptography runs, and `checkExchangeRateLimit` already bounds attempts
+    // to five per minute per IP. Anyone who reaches this line was holding the
+    // real token when they started.
     //
-    // EVERYTHING BETWEEN `verify` AND `consume` MUST STAY SYNCHRONOUS.
+    // EVERYTHING BETWEEN `wouldConsume` AND `consume` MUST STAY SYNCHRONOUS.
     // `PairTokenStore` takes no lock, so the single-use guarantee here rests
-    // entirely on Node's single thread: one `await` in this gap lets two
-    // concurrent requests carrying the same token both pass `verify` and both
-    // pair. `seal` is synchronous for that reason, and anything added between
-    // these two calls has to be too.
+    // entirely on Node running one callback to completion: a single `await` in
+    // this gap returns control to the event loop and lets two concurrent
+    // requests carrying the same token both pass the check and both pair.
+    // `seal` is synchronous for that reason, and anything added between these
+    // two calls has to be too — an `await auditLog(...)` with an excellent
+    // justification is the shape this breaks in.
+    // `__tests__/pair-endpoints.test.ts` asserts no macrotask runs in the gap.
     const result = this.pairTokens.consume(token);
     if (!result.ok) {
+      // Cannot fail today: nothing yields between the check above and here, so
+      // no other request can have spent this token in the gap. Checked anyway
+      // because if that invariant is ever broken the failure is silent — two
+      // devices paired from one single-use token, no error, no log — and three
+      // lines is a cheap price for making it loud instead.
       json(res, 401, { error: `Pair token ${result.reason}` });
       return;
     }
@@ -1960,7 +2049,23 @@ export class StreamerServer {
     try {
       const name = typeof body?.deviceName === "string" ? body.deviceName.slice(0, 100) : null;
       const preset = body?.readOnly === true ? "read-only" : "full";
-      device = this.devicesRepo?.register({ publicKey: clientPublicKey, name, preset }) ?? null;
+      device =
+        this.devicesRepo?.register({
+          publicKey: clientPublicKey,
+          name,
+          preset,
+          // Recorded only when the handshake authenticated it. The static key
+          // comes out of the transcript, never off the wire as a claim — that
+          // is the difference between a device identified by a key it proved
+          // it holds and one identified by a string it sent.
+          //
+          // Setting it also sets `e2ee_required`, so a device that has once
+          // paired encrypted is pinned and never served plaintext again.
+          ...(handshake && {
+            e2eeStaticPub: handshake.initiatorStaticPub.toString("base64"),
+            e2eeVersion: E2EE_EXCHANGE_VERSION,
+          }),
+        }) ?? null;
     } catch (err) {
       this.log.warn("[pair] device registration failed; pairing continues", {
         event: "pair.device_register_failed",
@@ -1968,7 +2073,46 @@ export class StreamerServer {
       });
     }
 
+    // Message 2, written last because its payload carries the `deviceId` and
+    // the device row cannot exist until the token has been spent.
+    //
+    // Failing here would be a server fault rather than a client one, and it
+    // comes after the token is already gone — so it must not 500 the pairing
+    // and lose the device the client is about to be told about. The client
+    // sees a reply with no `e2ee` field, which its own pin turns into a
+    // visible refusal rather than a silent plaintext pairing.
+    let e2eeResponse: { v: number; noise: string } | null = null;
+    if (handshake) {
+      try {
+        const { message2 } = writeMessage2(
+          handshake,
+          Buffer.from(
+            JSON.stringify({
+              v: E2EE_EXCHANGE_VERSION,
+              deviceId: device?.deviceId ?? null,
+              serverVersion: getVersion(),
+              // Always true on this path: completing a handshake is what pins
+              // the device, and design.md §6.3 says nothing a client sends
+              // ever clears it.
+              e2eeRequired: true,
+            }),
+            "utf-8",
+          ),
+        );
+        e2eeResponse = { v: E2EE_EXCHANGE_VERSION, noise: message2.toString("base64") };
+      } catch (err) {
+        this.log.warn("[pair] E2EE response could not be written; pairing continues", {
+          event: "pair.e2ee_response_failed",
+          err,
+        });
+      }
+    }
+
     json(res, 200, {
+      // Unchanged and still sent on the E2EE path, deliberately. An older app
+      // is the only thing that can read these and it cannot be force-updated
+      // (docs/compatibility/tb-mobile.md); a new app ignores them and uses the
+      // Noise result. The response grows a field, it never loses one.
       ciphertext: sealed.ciphertext,
       nonce: sealed.nonce,
       ephemeralPublicKey: sealed.ephemeralPublicKey,
@@ -1992,6 +2136,10 @@ export class StreamerServer {
         deviceToken: device.deviceToken,
         capabilities: device.capabilities,
       }),
+      // Additive. Absent means this pairing is plaintext — either the client
+      // never asked, or writing the reply failed — and a client that asked for
+      // encryption must treat its absence as a refusal, not as consent.
+      ...(e2eeResponse && { e2ee: e2eeResponse }),
     });
   }
 

@@ -51,7 +51,7 @@ export class PairTokenStore {
   }
 
   /**
-   * Whether `consume` would succeed right now, WITHOUT spending the token.
+   * What `consume` would answer right now, WITHOUT spending the token.
    *
    * Exists so a caller can reject a bad token before doing any work, and still
    * spend the token only once the work has succeeded. A pair token is
@@ -60,10 +60,14 @@ export class PairTokenStore {
    * indistinguishable from an attacker replaying a photographed code, which is
    * the one signal `design.md` §2.6 designates as replay detection.
    *
-   * Advisory, not a reservation: it takes no lock and holds nothing. The
-   * authoritative answer is still `consume`'s.
+   * **Named for its relationship to `consume`, deliberately.** It reserves
+   * nothing and takes no lock, so two callers can both be told `{ ok: true }`
+   * for the same token. A name like `verify` would read as a gate that had
+   * decided something, and inviting a caller to act on this alone is precisely
+   * the misuse the ordering it enables exists to prevent. A reader who sees
+   * `wouldConsume` asks where the `consume` is, which is the right question.
    */
-  verify(token: string): ConsumeResult {
+  wouldConsume(token: string): ConsumeResult {
     const result = this.check(token);
     return result.ok ? { ok: true } : result;
   }

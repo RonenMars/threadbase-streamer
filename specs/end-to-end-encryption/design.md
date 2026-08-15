@@ -112,8 +112,12 @@ POST /api/pair/exchange          (existing endpoint, existing token consumption)
               e2ee: { v: 1, noise: base64(msg2) } }            ← additive
 
   msg2 = Noise IK message 2: e, ee, se
-         payload: { deviceId, rootKeyConfirm, serverVersion, e2eeRequired: true }
+         payload: { v, deviceId, serverVersion, e2eeRequired: true }
 ```
+
+**There is no `rootKeyConfirm`, and there deliberately is not.**
+This flow originally listed one. Noise's handshake hash already commits to both static keys, both ephemerals, the PSK and the protocol name, and it is the AAD for the payload's own AEAD — so a payload that decrypts *is* proof that both sides derived the same keys from the same transcript.
+A separate confirmation value would confirm nothing `h` has not, and inventing one is exactly the hand-rolled addition [D-1](./dilemmas.md#d-1--handshake-pattern-noise-ikpsk1-vs-alternatives) warns against: easy to get subtly wrong, impossible to test for.
 
 The existing sealed-API-key fields are **still returned**, unchanged, because `docs/compatibility/tb-mobile.md:115` flags changing that format as risky and because an old app must still pair.
 A new app ignores them and uses the Noise result.
@@ -186,7 +190,10 @@ This is the question `understanding.md` asks by name, so it is answered as a tab
 Three mitigations that do not require changing that fact:
 
 - Every successful pairing writes a `pair.device_paired` log line carrying `deviceId`, `ip`, and the static-key fingerprint. Today the pairing log records `ip` and `ts` only (`src/server.ts:1799-1803`).
-- A *failed* consume with reason `used` is logged at **warn** with an explicit "a pair token was replayed — if you did not just pair a device, revoke it" message. Today `consume()` failures produce a 401 with the reason in the body (`src/server.ts:1784-1787`) and no log at all.
+- A *failed* consume with reason `used` is logged at **warn** as `pair.token_replayed`, carrying the caller's `ip` and never the token, which stays live credential material until it expires.
+  The message names where to act rather than only what happened — "a pair token was replayed. If you did not just pair a device, check the paired-devices list and revoke anything you do not recognise." — because "revoke it" assumes a reader who already knows where, which is the reader who did not need the warning.
+  The 401 alone does not deliver this signal: the person who can act on it is the operator, and the user whose pairing failed is not reading HTTP status codes.
+  `unknown` and `expired` stay quiet: they are an ordinary mistyped or stale token, and warning on those buries the one line that means a device may have been paired without the user's knowledge.
 - `GET /api/devices` already lists every device with `createdAt` (`docs/architecture/2026-07-24-device-identity-and-capabilities.md:124`), so the recovery path — see the extra device, revoke it — exists and needs only to be surfaced.
 
 ---

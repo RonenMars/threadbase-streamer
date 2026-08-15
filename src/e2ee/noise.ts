@@ -115,6 +115,19 @@ export function generateKeyPair(): KeyPair {
 }
 
 /**
+ * A `KeyPair` around a private key this process already holds.
+ *
+ * The bridge from `loadOrCreateServerIdentity()`, which owns the key file and
+ * returns a bare `KeyObject`, to the handshake, which needs the public half
+ * alongside it. Kept here rather than in server-identity.ts so that module
+ * stays about storing a key rather than about the protocol that uses it.
+ */
+export function keyPairFrom(privateKey: KeyObject): KeyPair {
+  const publicKey = createPublicKey(privateKey);
+  return { publicKey, privateKey, publicKeyRaw: rawPublicKey(publicKey) };
+}
+
+/**
  * Raw 32 bytes out of a KeyObject. JWK OKP `x` is base64url of exactly that.
  *
  * Accepts either half: `createPublicKey` derives the public key from a private
@@ -442,28 +455,45 @@ export interface ResponderResult {
 }
 
 /**
- * The responder's whole handshake: read message 1, write message 2.
+ * Half-completed responder state, between reading message 1 and writing 2.
  *
- * One function rather than two because the server has nothing to do between
- * them — and because a split would leave a half-completed handshake state
- * reachable from a public endpoint, which is a thing to allocate and expire
- * rather than a thing that never exists.
+ * Deliberately only ever a local: it is handed straight back into
+ * `writeMessage2` within the same synchronous stretch of one request, never
+ * stored, never keyed by anything a caller supplies. A responder state that
+ * outlived a request would be a thing to allocate and expire on a public
+ * endpoint, which is what the single-call shape originally avoided.
+ */
+export interface HandshakeResponderState {
+  symmetric: SymmetricState;
+  /** The initiator's static public key, authenticated by message 1. */
+  initiatorStaticPub: Buffer;
+  /** Message 1's decrypted payload. */
+  payload: Buffer;
+  initiatorEphemeral: KeyObject;
+  initiatorStatic: KeyObject;
+  staticKeyPair: KeyPair;
+}
+
+/**
+ * Read message 1. Authenticates the initiator and recovers its static key.
+ *
+ * Split from `writeMessage2` because the server DOES now have something to do
+ * between them: message 2's payload carries the `deviceId`, and the device row
+ * cannot be written until the pair token has been spent, which cannot happen
+ * until this half has succeeded. The original single-call shape assumed nothing
+ * sat in the middle; the pairing handler is the caller that proved otherwise.
  *
  * SYNCHRONOUS on purpose, and it must stay that way: the caller runs this
  * between validating the pair token and consuming it, and `PairTokenStore` has
  * no lock. An `await` in that gap would let two concurrent requests with the
  * same token both pass validation.
  */
-export function respond(args: {
+export function readMessage1(args: {
   staticKeyPair: KeyPair;
   psk: Buffer;
   message1: Buffer;
-  /** Built from the authenticated message-1 payload; sealed into message 2. */
-  buildPayload: (initiatorStaticPub: Buffer, payload: Buffer) => Buffer;
   prologue?: Buffer;
-  /** Test seam only. */
-  ephemeral?: KeyPair;
-}): ResponderResult {
+}): HandshakeResponderState {
   assertMessageSize(args.message1, NOISE_MESSAGE_1_OVERHEAD);
 
   const state = new SymmetricState(NOISE_PROTOCOL_NAME);
@@ -493,22 +523,62 @@ export function respond(args: {
 
   const payload = state.decryptAndHash(args.message1.subarray(DHLEN + DHLEN + TAGLEN));
 
-  // ── message 2 ──
-  const e = args.ephemeral ?? generateKeyPair();
-  state.mixHash(e.publicKeyRaw);
-  state.mixKey(e.publicKeyRaw);
-  state.mixKey(dh(e.privateKey, re)); // ee
-  state.mixKey(dh(e.privateKey, rs)); // se
-
-  const responsePayload = args.buildPayload(initiatorStaticPub, payload);
-  const encryptedPayload = state.encryptAndHash(responsePayload);
-
   return {
+    symmetric: state,
     initiatorStaticPub,
     payload,
-    message2: Buffer.concat([e.publicKeyRaw, encryptedPayload]),
-    keys: finish(state),
+    initiatorEphemeral: re,
+    initiatorStatic: rs,
+    staticKeyPair: args.staticKeyPair,
   };
+}
+
+/** Write message 2 and derive the transport keys. Completes the handshake. */
+export function writeMessage2(
+  state: HandshakeResponderState,
+  responsePayload: Buffer,
+  /** Test seam only. Production always generates a fresh ephemeral. */
+  ephemeral?: KeyPair,
+): { message2: Buffer; keys: HandshakeKeys } {
+  const e = ephemeral ?? generateKeyPair();
+  state.symmetric.mixHash(e.publicKeyRaw);
+  state.symmetric.mixKey(e.publicKeyRaw);
+  state.symmetric.mixKey(dh(e.privateKey, state.initiatorEphemeral)); // ee
+  state.symmetric.mixKey(dh(e.privateKey, state.initiatorStatic)); // se
+
+  const encryptedPayload = state.symmetric.encryptAndHash(responsePayload);
+  return {
+    message2: Buffer.concat([e.publicKeyRaw, encryptedPayload]),
+    keys: finish(state.symmetric),
+  };
+}
+
+/**
+ * Both halves in one call.
+ *
+ * Kept because most callers — every test, and any future responder with nothing
+ * to do in the middle — want the whole handshake, and because the two halves
+ * being separable should not force every one of them to sequence it by hand.
+ */
+export function respond(args: {
+  staticKeyPair: KeyPair;
+  psk: Buffer;
+  message1: Buffer;
+  /** Built from the authenticated message-1 payload; sealed into message 2. */
+  buildPayload: (initiatorStaticPub: Buffer, payload: Buffer) => Buffer;
+  prologue?: Buffer;
+  /** Test seam only. */
+  ephemeral?: KeyPair;
+}): ResponderResult {
+  const state = readMessage1(args);
+  const { initiatorStaticPub, payload } = state;
+  const { message2, keys } = writeMessage2(
+    state,
+    args.buildPayload(initiatorStaticPub, payload),
+    args.ephemeral,
+  );
+
+  return { initiatorStaticPub, payload, message2, keys };
 }
 
 function finish(state: SymmetricState): HandshakeKeys {
