@@ -97,11 +97,19 @@ export class CodexPtyRunner implements SessionRunner {
   private onStatusChange: PTYManagerOptions["onStatusChange"];
   private onPhaseChange: PTYManagerOptions["onPhaseChange"];
   private onReady: PTYManagerOptions["onReady"];
-  // Broadcasts Codex's blocking startup gates (directory trust, hooks review)
-  // as question cards; null dismisses the card once the gate leaves the screen.
+  // Every Codex prompt the client can answer — startup gates (directory trust,
+  // hooks review), command approvals, and the rate-limit model picker — is
+  // broadcast through this one channel; null dismisses the card once the prompt
+  // leaves the screen.
+  //
+  // Deliberately NOT onLiveQuestion/onLiveQuestionGone, which is Claude's
+  // AskUserQuestion transport. Both channels land on the same mobile
+  // QuestionCard, and the permission one is the correct fit for Codex: its menus
+  // are answered by the option's real on-screen number (parseCodexNumberedOptions
+  // emits `answerKeys: "2\r"`), which is exactly what `permissionIndices` carries
+  // and what AskUserQuestion's down-arrow-count model cannot express. Wiring the
+  // question channel as well would be a second path to the same card.
   private onPermissionChange: PTYManagerOptions["onPermissionChange"];
-  private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
-  private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
   private onUserMessage: PTYManagerOptions["onUserMessage"];
   private log: Logger;
   // Tracks sessions whose PTY has spawned but Codex hasn't yet reached its
@@ -152,8 +160,6 @@ export class CodexPtyRunner implements SessionRunner {
     this.onPhaseChange = options.onPhaseChange;
     this.onReady = options.onReady;
     this.onPermissionChange = options.onPermissionChange;
-    this.onLiveQuestion = options.onLiveQuestion;
-    this.onLiveQuestionGone = options.onLiveQuestionGone;
     this.onUserMessage = options.onUserMessage;
     this.log = options.logger ?? getLogger("codex-pty");
   }
