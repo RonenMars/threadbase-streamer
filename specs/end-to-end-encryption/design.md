@@ -186,7 +186,10 @@ This is the question `understanding.md` asks by name, so it is answered as a tab
 Three mitigations that do not require changing that fact:
 
 - Every successful pairing writes a `pair.device_paired` log line carrying `deviceId`, `ip`, and the static-key fingerprint. Today the pairing log records `ip` and `ts` only (`src/server.ts:1799-1803`).
-- A *failed* consume with reason `used` is logged at **warn** with an explicit "a pair token was replayed — if you did not just pair a device, revoke it" message. Today `consume()` failures produce a 401 with the reason in the body (`src/server.ts:1784-1787`) and no log at all.
+- A *failed* consume with reason `used` is logged at **warn** as `pair.token_replayed`, carrying the caller's `ip` and never the token, which stays live credential material until it expires.
+  The message names where to act rather than only what happened — "a pair token was replayed. If you did not just pair a device, check the paired-devices list and revoke anything you do not recognise." — because "revoke it" assumes a reader who already knows where, which is the reader who did not need the warning.
+  The 401 alone does not deliver this signal: the person who can act on it is the operator, and the user whose pairing failed is not reading HTTP status codes.
+  `unknown` and `expired` stay quiet: they are an ordinary mistyped or stale token, and warning on those buries the one line that means a device may have been paired without the user's knowledge.
 - `GET /api/devices` already lists every device with `createdAt` (`docs/architecture/2026-07-24-device-identity-and-capabilities.md:124`), so the recovery path — see the extra device, revoke it — exists and needs only to be surfaced.
 
 ---
