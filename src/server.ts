@@ -1905,6 +1905,19 @@ export class StreamerServer {
       ciphertext: sealed.ciphertext,
       nonce: sealed.nonce,
       ephemeralPublicKey: sealed.ephemeralPublicKey,
+      // Advertises, does not dictate. This is what the server believes its
+      // public address to be; the address the client talks to is the one its
+      // user typed or scanned. Do not build anything on the assumption that a
+      // client adopts this.
+      //
+      // Mobile used to resolve its server address as `publicUrl ?? typedUrl`,
+      // so this field silently replaced what the user entered — and since the
+      // reply is unauthenticated before E2EE, one response could relocate a
+      // device permanently (TB-S-13). Fixed client-side in threadbase-mobile#720;
+      // still sent, now recorded rather than applied.
+      //
+      // Released builds that predate that fix DO still adopt it, so changing
+      // this value moves where old devices talk. It is not a free field.
       publicUrl: this.publicUrl,
       machineName: hostname(),
       ...(device && {
