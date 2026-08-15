@@ -29,7 +29,13 @@ One measurement decides the library for both repos. Take it before writing proto
 
 ### Phase 2 — Handshake and pairing ([design §2.4](./design.md), [§2.6](./design.md))
 
-`Noise_IKpsk1_25519_ChaChaPoly_SHA256`. The QR gains the server's static public key; the pair token is mixed as PSK, so a handshake proves the client scanned *this* QR. Closes the window where nothing lets the client verify which server answered. The QR format moves, so streamer and mobile ship together.
+`Noise_IKpsk1_25519_ChaChaPoly_SHA256`. The QR gains the server's static public key; the pair token is mixed as PSK, so a handshake proves the client scanned *this* QR. Closes the window where nothing lets the client verify which server answered.
+
+The QR format moves, and so does the pairing exchange, across two repos that cannot merge atomically. Rather than shipping them together, the **capability negotiation from Phase 5 is built first** — `GET /api/info` carries `e2ee`, the client attempts a handshake only when the server advertises one at a version it understands, and everything Phase 2 adds sits behind that. A half-landed state is then inert rather than broken, and the two repos can merge independently in any order. The cost is small and it is not extra work: Phase 5 requires this negotiation regardless.
+
+**Phase 2 carries a cost the phase order did not budget for: there is no Noise library to adopt.** [D-1](./dilemmas.md#d-1--handshake-pattern-noise-ikpsk1-vs-alternatives) named its own flip condition — no maintained implementation that works in React Native *and* Node without a native module — and that condition holds as of 2026-08-15. `noise-protocol` and `noise-handshake` both depend on `sodium-universal` (native on Node, WASM in a browser), which Hermes cannot run. `@niomon/noise-js` is 8 downloads a week and was last published in 2022. `salty-crypto` is a single-author `1.0.0-rc` at ~50 downloads a week, which is not what belongs in a pre-auth code path. `@chainsafe/libp2p-noise` is genuinely pure JS but is a libp2p component — protobuf handshake payloads, peer-id semantics, no generic `IKpsk1` API.
+
+So the handshake is written twice against the spec: Node `crypto` on the server, `@stablelib` on the client, with shared test vectors and a cross-implementation interop test proving the two agree on the transcript. This is D-1's own prescribed fallback rather than a departure from it, but it is the second non-engineering-free cost this feature carries after export compliance, and it is recorded here for the same reason.
 
 ### Phase 3 — Record layer, WebSocket first ([design §3.3](./design.md), [§4.3](./design.md))
 

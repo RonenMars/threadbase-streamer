@@ -27,6 +27,10 @@ Nothing here is a requirement — the requirements are in `understanding.md`.
 
 **What would flip it:** no maintained Noise implementation that works in React Native *and* Node without a native module. Then the fallback is a hand-rolled `IK`-shaped exchange, written against the Noise spec and reviewed as such — not an ad-hoc design.
 
+**It flipped, 2026-08-15.** Surveyed: `noise-protocol` (1 921 downloads/week) and `noise-handshake` both depend on `sodium-universal`, which resolves to `sodium-native` on Node and WASM in a browser — neither runs in Hermes. `@niomon/noise-js` and `@harrier_/noise-js` are the same GitLab source at 8 downloads/week, last published 2022. `salty-crypto` is pure TypeScript with no dependencies and does implement `IKpsk1`, but it is a `1.0.0-rc` from one author at ~50 downloads/week, which is not a supply chain to put in a pre-auth code path. `@chainsafe/libp2p-noise` is genuinely pure JS over `@noble/*`, but it is a libp2p component — protobuf handshake payloads, peer-id semantics, no generic `IKpsk1` API to call.
+
+The pattern is unchanged; only the implementation is ours. Node `crypto` on the server, `@stablelib` on the client ([D-3](#d-3--mobile-crypto-library-pure-js-vs-native-module)), shared test vectors, and a cross-implementation interop test — because two independent implementations of one transcript is the failure this arrangement invites, and the only thing that catches it is making them talk to each other in CI. Cost recorded in [plan.md](./plan.md).
+
 ---
 
 ## D-2 — AEAD and nonce discipline: counter ChaCha20-Poly1305 vs. random-nonce XChaCha20
@@ -179,6 +183,10 @@ Terminal output is one-directional, so a client only *unseals* what the server s
 | **Flag only (working assumption)** | Highest friction for the most dangerous setting. Consistent with the flag being reported to clients as a *reason*, not a silent state. | A supervised instance genuinely cannot pass it without editing the service definition — which is the point, but is also a real operator cost. |
 
 **Open, and worth asking the team:** if a supervised prod instance needs to disable E2EE without a plist edit, the env-var escape hatch has to exist and this decision flips. The prod-instance escape hatch is documented as the standard pattern for exactly this situation (`CLAUDE.md`, Feature flags).
+
+**Open, and it does not compose with §6.5 at stage 2.** The `e2ee` feature flag is in the registry as of the capability work, and *every* registry entry carries a `THREADBASE_FEATURE_<ID>` variable by construction (`src/feature-flags.ts`) — so `THREADBASE_FEATURE_E2EE=0` already exists and is exactly the persistent, invisible off switch this decision forbids for `--no-e2ee`. It is harmless while the flag defaults off, because turning encryption *off* is then the same as leaving it alone. It becomes real at stage 2, when the default flips to on and that variable starts meaning "plaintext, permanently, set once and forgotten".
+
+§6.5 does distinguish the two controls deliberately — the flag says "this build's E2EE code path is off", the CLI flag says "this operator chose plaintext for this run" — so this is not a contradiction so much as two decisions that were correct separately and collide once the default moves. Three ways out, none of them due yet: exempt `e2ee` from the env rung, accept the variable and drop D-8's no-env-var rule as unenforceable, or keep both and make the boot warning fire on either. Decide before stage 2 rather than during it.
 
 ---
 

@@ -122,13 +122,19 @@ A new app ignores them and uses the Noise result.
 
 ### 2.5 Binding the device identity to the key
 
-**Today:** the `devices` row stores `public_key` — the `clientPublicKey` from the exchange — plus `token_hash`, `capabilities`, and `revoked_at` (`src/db/migrations/011_create_devices.sql`).
+**Today:** the `devices` row stores `public_key` — the `clientPublicKey` from the exchange — plus `token_hash`, `capabilities`, and `revoked_at` (`src/db/runtime-migrations/003_create_devices.sql`).
 The public key is recorded but nothing ever checks a signature against it; it was a sealing target (`docs/architecture/2026-07-24-device-identity-and-capabilities.md:15`).
 
-**Becomes:** the device's **Noise static public key** is recorded in the same row and becomes the authoritative identity.
+**Which database, because this section originally named the wrong one.** `devices` lived in `cache.db` as `src/db/migrations/011_create_devices.sql` when this design was written, and moved to `~/.threadbase/runtime.db` in the split; the cache-side table is still created for rollback and as the one-time copy source, but is never read or written after boot.
+The distinction is load-bearing rather than cosmetic: `cache.db` is the file `tb-streamer cache clear` deletes and the integrity monitor rebuilds, because everything in it is regenerable from `~/.claude`/`~/.codex`.
+A pinned static key is not.
+Adding `e2ee_static_pub` to the cache side would mean a routine cache clear silently dropped every device's pinned key while leaving that device's *authentication* intact in `runtime.db` — so the devices keep working, unencrypted, with nothing anywhere reporting an error.
+That is the worst available failure shape for this feature: it degrades security silently and looks healthy.
+Add device columns to a **runtime** migration, never to `011`.
 
 ```sql
--- 016_add_device_e2ee.sql (additive; nothing altered, nothing backfilled)
+-- src/db/runtime-migrations/004_add_device_e2ee.sql
+-- (additive; nothing altered, nothing backfilled)
 ALTER TABLE devices ADD COLUMN e2ee_static_pub  TEXT;    -- base64, the Noise static key
 ALTER TABLE devices ADD COLUMN e2ee_required    INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE devices ADD COLUMN e2ee_version     INTEGER;
@@ -310,7 +316,7 @@ Grace/hold interacts here: a `hold_session` is an explicit message (`src/server-
 
 ### 4.4 Revocation
 
-**Today:** `revoked_at` is checked per request, uncached, and takes effect on the device's next request (`src/db/migrations/011_create_devices.sql`, `docs/architecture/2026-07-24-device-identity-and-capabilities.md:112`). But a *live WebSocket* is authenticated once at upgrade (`src/api/app.ts:121` → `src/services/security/capabilities.ts:120`) and never re-checked, so revoking a device does not close its open socket.
+**Today:** `revoked_at` is checked per request, uncached, and takes effect on the device's next request (`src/db/runtime-migrations/003_create_devices.sql`, `docs/architecture/2026-07-24-device-identity-and-capabilities.md:112`). But a *live WebSocket* is authenticated once at upgrade (`src/api/app.ts:121` → `src/services/security/capabilities.ts:120`) and never re-checked, so revoking a device does not close its open socket.
 
 **Becomes:** revocation is enforced at three points, because a long-lived encrypted socket makes the current single check insufficient.
 
