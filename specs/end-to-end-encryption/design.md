@@ -76,21 +76,27 @@ The streamer gains one long-term X25519 keypair, its **server identity key** `(S
 
 **Today:** `threadbase://pair?url=<url>&token=<pt_...>&exp=<unix-seconds>` (`cli/index.ts:709`).
 
-**Becomes:** the same, plus two additive parameters.
+**Becomes:** the same, plus two additive parameters **only while the pairing handshake is enabled**.
 
 ```
 threadbase://pair?url=<url>&token=pt_<hex>&exp=<unix>&spk=<base64url(S_pub)>&v=1
 ```
 
 - `spk` — the server identity public key, 32 bytes, 43 base64url characters. This is the whole fix: it makes the QR an authenticated out-of-band channel for the server's identity.
-- `v` — envelope version. `v=1` means "this server speaks E2EE v1". Absent means a pre-E2EE server.
+- `v` — envelope version. `v=1` means "this QR offers E2EE v1". Absent means this QR offers only the legacy pairing path, either because the server predates E2EE or because this build has it disabled.
 - Additive by construction: `parsePairUri` reads named parameters and ignores unknown ones (`tb-mobile/services/pair-exchange.ts:70-80`), so an old app scanning a new QR behaves exactly as it does today.
+
+The QR and the pair exchange use the same capability decision. When `describeE2eeCapability(...).enabled` is false, a newly printed QR omits both `spk` and `v`, and the exchange ignores an `e2ee` request. When it is true, the QR includes both and the exchange accepts the handshake. This is the cross-repository compatibility gate: pairing creates the credential required by `GET /api/info`, so that authenticated endpoint cannot be consulted before the pair exchange.
+
+For a new client, a valid `spk` is therefore the complete pairing-time offer. Once it sends msg1, an absent msg2 is a hard failure, never consent to plaintext. This keeps capability-off distinct from a server or intermediary dropping the authenticated reply without adding an unauthenticated fallback signal.
 
 QR density: the payload grows by ~50 characters. `qrcode-terminal` at `{ small: true }` (`cli/index.ts:642`) must still render legibly in an 80-column terminal — this is a **verification item**, not an assumption, and it is the one thing that could force `spk` to become a truncated fingerprint instead of a full key.
 
-### 2.4 Handshake: Noise `IK` over the pair token **[Assumption]**
+### 2.4 Handshake: Noise `IK` over the pair token
 
 **Pattern:** `Noise_IKpsk1_25519_ChaChaPoly_SHA256`.
+
+No longer an assumption. [D-1](./dilemmas.md#d-1--handshake-pattern-noise-ikpsk1-vs-alternatives) is settled: the pattern held, and its own flip condition fired on the *implementation* rather than the choice — no maintained Noise library works in both Hermes and Node, so the handshake is written against the specification on each side. The two implementations were written independently and agree on every byte of the interop vectors. That proves cross-runtime agreement on the committed fixture; it does not by itself prove conformance to the Noise specification or rule out a shared misreading.
 
 - **`IK`** — the initiator (phone) already knows the responder's static key, from the QR. That is precisely the situation, and `IK` is the pattern designed for it: the responder is authenticated in the first message, and the initiator's static key is transmitted encrypted.
 - **`psk1`** — a value derived from the pair token is mixed in as a pre-shared key on the first message. It binds the handshake to *this* QR, so a valid handshake proves the initiator scanned *this* code, not merely that it reached the server. The token is **not** the PSK directly — see [PSK derivation](#psk-derivation) below.
@@ -104,7 +110,7 @@ POST /api/pair/exchange          (existing endpoint, existing token consumption)
           e2ee: { v: 1, noise: base64(msg1) } }               ← additive
 
   msg1 = Noise IK message 1: e, es, s, ss  + psk(derived from pair token)
-         payload: { deviceName, capabilitiesRequested, clientIdentityPub }
+         payload: { v: 1, deviceName?, readOnly }
 
   response: { ciphertext, nonce, ephemeralPublicKey,          ← unchanged, still sent
               publicUrl, machineName,                          ← unchanged
@@ -112,15 +118,21 @@ POST /api/pair/exchange          (existing endpoint, existing token consumption)
               e2ee: { v: 1, noise: base64(msg2) } }            ← additive
 
   msg2 = Noise IK message 2: e, ee, se
-         payload: { v, deviceId, serverVersion, e2eeRequired: true }
+         payload: { v, deviceId, deviceToken, capabilities,
+                    publicUrl, machineName, serverVersion,
+                    e2eeRequired: true }
 ```
+
+The payloads are the authenticated product contract, not examples. On the E2EE path, device registration uses `deviceName` and `readOnly` from msg1 rather than the attacker-modifiable outer JSON. The initiator static public key is already authenticated by the Noise transcript and is not duplicated as a payload claim.
+
+Msg2 contains every pairing result a new client persists or presents as verified. It validates the complete shape, requires `e2eeRequired === true`, and uses these authenticated values rather than their compatibility copies in the outer response. Device registration is therefore mandatory for an E2EE success: if no `deviceId` and `deviceToken` can be produced, the server fails the pairing instead of returning a key-pinned result with no usable device. The implementation must preserve the single-use-token and no-orphan-row invariants while doing so.
 
 **There is no `rootKeyConfirm`, and there deliberately is not.**
 This flow originally listed one. Noise's handshake hash already commits to both static keys, both ephemerals, the PSK and the protocol name, and it is the AAD for the payload's own AEAD — so a payload that decrypts *is* proof that both sides derived the same keys from the same transcript.
 A separate confirmation value would confirm nothing `h` has not, and inventing one is exactly the hand-rolled addition [D-1](./dilemmas.md#d-1--handshake-pattern-noise-ikpsk1-vs-alternatives) warns against: easy to get subtly wrong, impossible to test for.
 
-The existing sealed-API-key fields are **still returned**, unchanged, because `docs/compatibility/tb-mobile.md:115` flags changing that format as risky and because an old app must still pair.
-A new app ignores them and uses the Noise result.
+The existing sealed-API-key fields and outer device fields are **still returned**, unchanged, because `docs/compatibility/tb-mobile.md:115` flags changing that format as risky and because an old app must still pair.
+A new app treats them as compatibility-only and untrusted, ignores the sealed shared API key, and uses the device-scoped credential from msg2.
 
 **Why reuse `/api/pair/exchange` rather than add `/api/e2ee/pair`:** the endpoint is already public, already rate-limited, already consumes the token exactly once, and already registers the device. A second endpoint would duplicate all four and create a second place for the token to be consumed.
 
@@ -325,7 +337,7 @@ Derivation is the Noise spec's own `Split()` — no bespoke HKDF ladder, because
 | Key | Lifetime | Rotation trigger |
 |---|---|---|
 | `S_priv` | Machine lifetime | Manual only (`tb-streamer identity --rotate`), which **unpairs every device** and must say so before doing it. |
-| `D_priv` | App-install lifetime | Reinstall, or explicit re-pair. |
+| `D_priv` | Per-server pairing identity within the app install | Explicitly forgetting or replacing that server identity. A retry or re-pair loads and reuses it; a label-only edit never clears it. |
 | `k_c2s` / `k_s2c` | One transport context | 24 h wall clock, 1 GiB sealed, or an explicit rekey — whichever first. |
 | Transport context | ≤ 24 h; destroyed on streamer restart, on socket close after a grace window, and on device revocation. | |
 | WS ticket | 30 s, single use | — |
@@ -350,6 +362,8 @@ Grace/hold interacts here: a `hold_session` is an explicit message (`src/server-
 3. **Live sockets, new** — `POST /api/devices/:id/revoke` destroys every transport context for that device and terminates its sockets. `WSHub.dispose()` already has the `terminate()`-not-`close()` reasoning worked out for exactly this "do not wait for the peer" case (`src/ws-hub.ts:114-120`); revocation reuses it for one device's sockets.
 
 Point 3 is a **behaviour change to revocation**, not merely to E2EE: it fixes a live socket outliving its revocation today. It is called out here because it is the kind of improvement that gets attributed to the wrong PR later.
+
+**Re-pairing a revoked device is allowed and clears `revoked_at`.** Re-pairing requires a fresh, live pair token minted on that machine, so it is an authorised recovery action by the operator who can already create devices. Refusing it would let the pair exchange appear to succeed and then leave every request failing with no recovery path. The same `D_priv` still identifies the device, so the existing row is restored rather than duplicated.
 
 ---
 
@@ -410,8 +424,8 @@ Feature flags resolve at boot only; precedence is `ServerConfig` → env → `--
 
 Three surfaces, each for a different moment:
 
-1. **The QR** — `v=1` and `spk=` (§2.3). This is discovery *before any connection exists*, and it is the only one an attacker cannot strip without also breaking the pairing, because the phone reads it off a photon path rather than a network.
-2. **`GET /api/info`** — additive `e2ee` object, same contract as `push`:
+1. **The QR** — `v=1` and `spk=` (§2.3), present only while the handshake is enabled. This is discovery *before any connection exists*, and the pair exchange gates on it because it creates the credential needed for the next surface. A camera scan is an out-of-band photon path; deep links and pasted values require the confirmation gate in mobile-design.md §3.3.
+2. **`GET /api/info`** — additive post-pairing `e2ee` object, same contract as `push`:
    ```jsonc
    "e2ee": {
      "supported": true,        // this build speaks the envelope
@@ -464,7 +478,7 @@ The resolution is that **plaintext acceptance is per-device, not per-server**. A
 
 | Stage | Server default | Server accepts | Pins on pair? | Client behaviour | Exit criterion |
 |---|---|---|---|---|---|
-| **0 — capability** | flag off | plaintext only | no | New clients see `e2ee.supported: true, enabled: false` and stay plaintext. | Handshake, envelope, and at-rest all merged behind the flag with tests. QR grows `spk`/`v` (inert while the flag is off) so field QRs are already forward-compatible. |
+| **0 — capability** | flag off | plaintext only | no | Newly printed QRs omit `spk`/`v`; paired clients see `e2ee.enabled: false`. | Handshake, envelope, and at-rest all merged behind the flag with tests. |
 | **1 — opt-in** | flag off, operators can enable | both | **yes**, when enabled | E2EE-capable clients use it where offered; old clients unaffected. | A real pairing + a real session over the tunnel and over LAN `http://`, on iOS and Android. Query timings still under threshold. |
 | **2 — default on** | flag on | both | yes | Same. Pinned devices are now the majority. | Telemetry shows the plaintext path is only unpinned/old devices. `--no-e2ee` exercised and its warning verified. |
 | **3 — required** | flag on, `e2ee.required: true` | E2EE only | n/a | An unpinned old client gets `426 E2EE_REQUIRED` and a message telling it to update and re-pair. | An explicit product decision with a minimum app version, never an automatic consequence of stage 2. |
@@ -495,6 +509,8 @@ New error:  426 { error, code: "E2EE_REQUIRED" }
 
 Nothing renamed, nothing removed, no field retyped, no WS event string changed, no new `SessionStatus` value. Every existing path, parameter, and event in `docs/compatibility/tb-mobile.md` keeps working unchanged for an unpinned device.
 
+Inside the Noise fields, msg1 authenticates `{ v, deviceName?, readOnly }`; msg2 authenticates `{ v, deviceId, deviceToken, capabilities, publicUrl, machineName, serverVersion, e2eeRequired }`. These are versioned payload contracts even though the outer request and response remain additive for old clients.
+
 ---
 
 ## 9. Test plan
@@ -504,7 +520,11 @@ Nothing renamed, nothing removed, no field retyped, no WS event string changed, 
 | Server authentication | A handshake against a *different* `spk` than the QR's fails, and fails before any payload is decrypted. |
 | QR compatibility | An old `parsePairUri` fed a new QR ignores `spk`/`v` and pairs as today. |
 | QR legibility | The `{ small: true }` QR with `spk` renders inside 80 columns. |
+| Capability-off QR | A disabled server prints no `spk`/`v`; a new client takes the byte-identical legacy path. |
 | Pair-token binding | A handshake with a valid static key but a wrong/absent PSK fails. |
+| Authenticated registration | Changing outer `deviceName`/`readOnly` cannot change an E2EE device row; changing outer reply metadata or credentials cannot change what the new client stores. |
+| Missing msg2 | Once msg1 was sent, a response without msg2 fails visibly and never adds a plaintext server. |
+| Stable device identity | A response-loss retry and a later re-pair reuse `D_priv` and the same device row. |
 | Single-use replay | A second exchange with the same token 401s **and** emits the `pair.token_replayed` warn line. |
 | Nonce discipline | A counter is never reused within a context; a forced repeat is rejected and closes the socket. |
 | WS strict ordering | Out-of-order, duplicate, and gapped counters each close the socket with `e2ee.sequence_violation`. |

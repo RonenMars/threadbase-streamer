@@ -31,15 +31,28 @@ One measurement decides the library for both repos. Take it before writing proto
 
 `Noise_IKpsk1_25519_ChaChaPoly_SHA256`. The QR gains the server's static public key; the pair token is mixed as PSK, so a handshake proves the client scanned *this* QR. Closes the window where nothing lets the client verify which server answered.
 
-The QR format moves, and so does the pairing exchange, across two repos that cannot merge atomically. Rather than shipping them together, the **capability negotiation from Phase 5 is built first** — `GET /api/info` carries `e2ee`, the client attempts a handshake only when the server advertises one at a version it understands, and everything Phase 2 adds sits behind that. A half-landed state is then inert rather than broken, and the two repos can merge independently in any order. The cost is small and it is not extra work: Phase 5 requires this negotiation regardless.
+The QR format moves, and so does the pairing exchange, across two repos that cannot merge atomically. `GET /api/info` cannot gate pairing: it is authenticated, and pairing is the operation that creates the credential needed to call it. The pairing-time gate is therefore the QR itself. The streamer emits `spk`/`v` only when the handshake is enabled; a valid `spk` makes a new client offer msg1; no `spk` takes the byte-identical legacy path. Once msg1 was offered, a missing msg2 is a hard failure rather than a plaintext fallback.
+
+That makes merge order a dependency rather than “either repo first”: land the server exchange gate and conditional QR, then the authenticated msg1/msg2 contract, then the client call site. `GET /api/info` remains the post-pairing capability and rollout surface Phase 5 needs.
 
 **Phase 2 carries a cost the phase order did not budget for: there is no Noise library to adopt.** [D-1](./dilemmas.md#d-1--handshake-pattern-noise-ikpsk1-vs-alternatives) named its own flip condition — no maintained implementation that works in React Native *and* Node without a native module — and that condition holds as of 2026-08-15. `noise-protocol` and `noise-handshake` both depend on `sodium-universal` (native on Node, WASM in a browser), which Hermes cannot run. `@niomon/noise-js` is 8 downloads a week and was last published in 2022. `salty-crypto` is a single-author `1.0.0-rc` at ~50 downloads a week, which is not what belongs in a pre-auth code path. `@chainsafe/libp2p-noise` is genuinely pure JS but is a libp2p component — protobuf handshake payloads, peer-id semantics, no generic `IKpsk1` API.
 
 So the handshake is written twice against the spec: Node `crypto` on the server, `@stablelib` on the client, with shared test vectors and a cross-implementation interop test proving the two agree on the transcript. This is D-1's own prescribed fallback rather than a departure from it, but it is the second non-engineering-free cost this feature carries after export compliance, and it is recorded here for the same reason.
 
+**The two implementations agree on every byte, which is strong interoperability evidence.**
+They were written from the specification by separate authors who could not see each other's code, on different runtimes and different crypto libraries, and checked against the same committed fixture: both handshake messages, the transcript hash, both traffic keys and the PSK derivation all match exactly.
+
+Read the result for exactly what it is. It establishes that the two sides agree on the committed fixture; it does not independently establish conformance to the Noise specification or rule out a shared misreading. Every defect found in the client implementation sat underneath correct output, and the vectors were blind to all of them. Phase 3 repeats this arrangement for the record layer and should repeat the caution with it.
+
 ### Phase 3 — Record layer, WebSocket first ([design §3.3](./design.md), [§4.3](./design.md))
 
 ChaCha20-Poly1305, 96-bit nonce as `direction(4) || counter(8)`, never random — reuse is then a violated invariant a test can assert on rather than a probability argued about in review. The counter surviving a rekey is the rule to test hardest.
+
+**Three things Phase 2 learned that Phase 3 would otherwise rediscover.** The record layer is two independent implementations again, so these belong here rather than in a session transcript.
+
+- **The record nonce is big-endian; the handshake's is not.** Noise's ChaChaPoly nonce is 4 zero bytes then an 8-byte **little-endian** counter (spec §12.3). The record layer's is `direction(4) ‖ counter(8)` **big-endian** (§3.3). Two layers, two encodings, both correct for their own specification. Do not reuse the handshake's helper, and do not "unify" them.
+- **The counter's type is a decision, not an inheritance.** The streamer's handshake counter is a `bigint`; the client's is a `number`. That divergence is harmless at handshake volumes — two messages — and is not harmless at record volumes, where a `number` silently loses integer precision above 2^53. Phase 3 should choose deliberately on both sides rather than copy what the handshake happened to do.
+- **A rejected frame must not consume a counter slot** (spec §5.1). Both sides now have a test asserting a failed decryption leaves the nonce unadvanced. The record layer needs the same property and the same test, because getting it wrong desynchronises the two counters and every subsequent frame fails for a reason that points at the wrong place.
 
 ### Phase 4 — REST envelope and unseal middleware ([design §3.6](./design.md), [D-9](./dilemmas.md#d-9--where-e2ee-sits-relative-to-the-auth-middleware))
 
@@ -51,8 +64,8 @@ Paths and query parameters stay plaintext ([D-7](./dilemmas.md#d-7--rest-paths-s
 
 **This is the compatibility risk in the whole build.** tb-mobile is released and cannot be force-updated, so a server that *demands* an encrypted handshake breaks every older install the day its streamer updates.
 
-- The server advertises capability additively on `GET /api/info`.
-- The client encrypts when both sides support it and falls back to plaintext otherwise.
+- The server advertises capability additively on authenticated `GET /api/info` after pairing.
+- At pairing, a QR without `spk` takes the legacy path; a valid `spk` requires a completed authenticated handshake and never falls back silently.
 - `--no-e2ee` is a `serve` flag only — no `server.yaml` key, no env var ([D-8](./dilemmas.md#d-8---no-e2ee-has-no-serveryaml-key-and-no-env-var)) — so disabling encryption is a deliberate act at every boot.
 - Only once old versions have drained does the server refuse plaintext.
 

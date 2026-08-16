@@ -15,7 +15,7 @@ Decisions `understanding.md` left open are marked **[Assumption]** and carried i
 
 The mobile app is one of the two endpoints. It holds:
 
-- its **device static key** `D_priv` — the thing that makes it *this* device rather than any holder of a string;
+- its per-server **device static key** `D_priv` — the thing that makes it *this* device rather than any holder of a string;
 - the **server identity key** `S_pub` it pinned at pairing, which is what lets it detect an impostor server;
 - per-context traffic keys, in memory only;
 - the legacy shared API key and the device token, both already in SecureStore (`stores/servers.ts:162-165`).
@@ -76,20 +76,28 @@ export interface PairUri {
 }
 ```
 
-- Absent `spk` ⇒ pre-E2EE server ⇒ today's path exactly, no behaviour change.
+- Absent `spk` ⇒ this QR offers legacy pairing, either because the server predates E2EE or has the handshake disabled ⇒ today's path exactly, no behaviour change.
 - Present `spk` ⇒ run `Noise_IKpsk1_25519_ChaChaPoly_SHA256` with `S_pub = spk` and the pair token as PSK, carried in the additive `e2ee` field of the same request/response (design.md §2.4).
 - **A malformed or wrong-length `spk` is a hard error, not a fallback to plaintext.** A downgrade must never be reachable by corrupting one QR parameter.
 
-`ExchangeResult` gains `serverPublicKey`, `deviceStaticKey`, and `e2eeRequired`, and `addServer` persists the first and third to SecureStore beside the existing credentials (`stores/servers.ts:162-165`). `D_priv` goes to SecureStore under its own key and is never returned to a caller.
+`GET /api/info` is not part of this decision. It requires authentication, and this exchange is what creates the credential. The streamer therefore emits `spk`/`v` only while the handshake is enabled. Once a valid `spk` caused the client to send msg1, an absent msg2 is a hard, visible failure; the client never reinterprets that same attempt as plaintext.
 
-**The `publicUrl` relocation is closed as a side effect, and deliberately.** Under E2EE, `body.publicUrl` arrives inside the authenticated handshake payload, so only the server holding `S_priv` can set it. For a non-E2EE server the current behaviour is unchanged — but it is now the *only* path with that property, which is a reason to prefer the E2EE path rather than a new risk.
+`D_priv` is load-or-create, not generate-and-overwrite. A new value goes to SecureStore with `WHEN_UNLOCKED_THIS_DEVICE_ONLY` before msg1 is built or sent; a response-loss retry and a later re-pair to the same server load and reuse it. A label-only edit does not clear it. Explicitly forgetting or replacing the server identity clears `D_priv`, `S_pub`, and the encryption requirement as one deliberate state transition.
+
+Msg1's authenticated payload is `{ v: 1, deviceName?, readOnly }`. The server uses those values, not the outer compatibility copies, to register an E2EE device. Msg2's authenticated payload is `{ v, deviceId, deviceToken, capabilities, publicUrl, machineName, serverVersion, e2eeRequired }`. The client validates the entire shape, requires `e2eeRequired === true`, and uses only these values on the E2EE path. The outer sealed API key and duplicated device fields remain for released clients and are ignored by a new client.
+
+`ExchangeResult` gains the authenticated `serverPublicKey` and `e2eeRequired`; `D_priv` is never returned to a caller. The client pin is written only after msg2 has been fully authenticated and validated, which is the same pairing event at which the server pins the device.
+
+**The `publicUrl` relocation is closed deliberately.** The address the user typed or scanned stays authoritative even though msg2 authenticates the server's advertised `publicUrl`; it may be recorded and displayed, never silently substituted. For a non-E2EE server the current behaviour is unchanged.
+
+`E2EE_VERSION_UNSUPPORTED` is visible and non-retryable with the same QR. It never triggers an automatic plaintext retry. An unpinned user who intentionally wants the legacy path must leave the failed attempt and use a QR without `spk` or the separately labelled manual API-key path.
 
 ### 3.3 The deep-link and paste paths
 
 `app/pair.tsx:74` means a `threadbase://pair?...` link in a message, an email, or a web page reaches `parsePairUri` with no camera and no user-visible server identity.
 That is not new and this design does not remove it — but under E2EE it changes character: a link *without* `spk` can only ever produce an unpinned, plaintext pairing, and a link *with* an attacker's `spk` pairs the user to the attacker's server, which is what the attacker wanted anyway.
 
-The mitigation is not cryptographic, it is a confirmation step: **for a deep link or a pasted credential — never for a camera scan — show the server's identity fingerprint and machine name and require an explicit confirm before `addServer` runs.**
+The mitigation is not cryptographic, it is a confirmation step: **for a deep link or a pasted credential — never for a camera scan — show the server's identity fingerprint and the authenticated machine name and require an explicit confirm before `addServer` runs.**
 A camera scan is exempt because pointing a camera at a screen *is* the out-of-band channel; a tapped link has no such channel and must borrow the user's attention instead.
 
 The `api-key` paste branch (`services/pair-exchange.ts:43`) produces a server record with no device row and no static key, so it can never be pinned. It stays as the manual escape hatch and is labelled as such in the UI.
@@ -165,13 +173,13 @@ The React Query persist allow-list is `session`, `conversation`, `project`, `ser
 
 Three changes, smallest first:
 
-1. **`D_priv` goes to SecureStore**, under a per-server key alongside the existing credentials, with `keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY`. `THIS_DEVICE_ONLY` matters: the default Keychain class syncs to iCloud and restores to a new device, which would make "revoke this lost phone" incomplete. It also intentionally means a device restore requires re-pairing — the correct trade for a key that is a device's identity.
+1. **`D_priv` goes to SecureStore**, under a per-server key alongside the existing credentials, with `keychainAccessible: WHEN_UNLOCKED_THIS_DEVICE_ONLY`. `THIS_DEVICE_ONLY` matters: the default Keychain class syncs to iCloud and restores to a new device, which would make "revoke this lost phone" incomplete. It also intentionally means a device restore requires re-pairing — the correct trade for a key that is a device's identity. The operation is load-or-create and preserves the same key across retries and re-pairs.
 2. **The persist allow-list flips from allow-root to allow-query.** `shouldPersistQuery` (`services/query-client.ts:213-218`) currently persists anything whose root is in the set unless it opts out with `meta: { persist: false }`. Invert it: persist only what opts **in** with `meta: { persist: true }`. Same four roots in practice, but a new conversation query then defaults to *not* persisted, which is what the comment already claims.
 3. **`persistBuster` bumps** (`services/query-client.ts:195`) so existing plaintext cache entries are dropped rather than read back.
 
 **Not doing: encrypting AsyncStorage wholesale.** It would mean an encrypted key-value shim under React Query's persister, a key in SecureStore, and a migration — to protect data that, after change 2, is conversation *titles and previews* rather than bodies. On a device with a passcode, iOS and Android already encrypt app data at rest. The honest statement is that this is protection against a *jailbroken or rooted* device, which SecureStore also does not fully survive. Recorded as dilemmas.md D-5 rather than silently skipped.
 
-**Web is explicitly weaker and must say so.** `secure-store.web.ts` puts keys in `localStorage`, readable by any script that achieves XSS on the origin. The web target should either refuse E2EE pairing outright or display a persistent "keys are not hardware-protected on web" banner. It must not silently claim the same guarantee as the native apps.
+**Web refuses E2EE pairing.** `secure-store.web.ts` puts values in `localStorage`, readable by any script that achieves XSS on the origin, so it cannot hold `D_priv` under the guarantee this design makes. A pair URI with `spk` fails with a persistent explanation that E2EE pairing requires the native app; it never drops to plaintext. Legacy no-`spk` pairing and the separately labelled manual API-key path remain available on web.
 
 ---
 
@@ -197,11 +205,13 @@ The pinned bit lives in SecureStore beside the server record, never in AsyncStor
 
 ### 6.1 The pin is set two ways, not one
 
-Pinning on first successful encrypted connection leaves one case uncovered, and it is the case an attacker picks: a server that has **never** been seen encrypted has no pinned bit to contradict, so a stripped `/api/info` on the very first connection is believed. That is trust-on-first-use, and §3.2's QR key only closes it on the QR path.
+Pinning only after a later encrypted transport connection would leave an avoidable split state: the server pins when the pairing handshake completes, while the client could exit before recording the same fact. The automatic client pin is therefore set after msg2 is fully authenticated and validated, in the same pairing operation. This is earlier than the Phase 3 record layer and does not depend on `/api/e2ee/open`.
+
+That still leaves one case uncovered, and it is the case an attacker picks: a server that has **never** been seen encrypted and is added without an authenticated QR has no pinned identity to contradict. That is trust-on-first-use, and §3.2's QR key closes it only on the QR path.
 
 So the pin is also **user-settable, ahead of any connection** — a per-server "Require encryption" control (§7). The user knows out of band that their own streamer does E2EE; that knowledge is not on the wire, so it is not the attacker's to modify.
 
-- **Auto-set** on the first successful encrypted connection. Most people will never open the settings screen, and a protection that only exists once someone ticks a box protects almost nobody.
+- **Auto-set** on the first fully authenticated and validated encrypted pairing. Most people will never open the settings screen, and a protection that only exists once someone ticks a box protects almost nobody.
 - **User-set** before the first connection, which is what beats first-connection TOFU on the deep-link and paste paths.
 
 Both write the same bit and produce the same hard failure. The control is phrased as a demand — "Require encryption for this server" — and never as a description like "this server is E2EE": a description invites a wrong answer that silently does nothing, while a demand states what happens when the server disagrees.
@@ -219,7 +229,7 @@ The hard-failure message has to be specific enough to be actionable and honest e
 Minimal by intent. Encryption that demands attention is encryption people turn off.
 
 - **Pairing** — one line confirming the connection is encrypted, plus the server's identity fingerprint. On the QR path it is confirmation; on the deep-link and paste paths it is the confirmation gate from §3.3.
-- **Settings → server** — an encryption row: state, protocol version, fingerprint, and paired-at date, all read-only, plus the one control on this surface: **Require encryption for this server** (§6.1). It backs the pinned bit in SecureStore, is set automatically on the first successful encrypted connection, and can be set by the user beforehand. Lives on the server record in `stores/servers.ts` beside the device token, surfaced in `components/ServerEditModal.tsx`. Clearing it takes a confirmation naming what is lost.
+- **Settings → server** — an encryption row: state, protocol version, fingerprint, and paired-at date, all read-only, plus the one control on this surface: **Require encryption for this server** (§6.1). It backs the pinned bit in SecureStore, is set automatically after a fully validated msg2, and can be set by the user beforehand. Lives on the server record in `stores/servers.ts` beside the device token, surfaced in `components/ServerEditModal.tsx`. Clearing it takes a confirmation naming what is lost.
 - **Paired devices** (`app/paired-devices.tsx`, backed by `services/devices.ts`) — mark which devices are E2EE-pinned. This is where a user who suspects a photographed QR goes to find the extra device, so it must show `createdAt` prominently.
 - **The hard-failure screen** from §6.
 - **Nothing else.** No per-session indicator, no badge on the terminal. The one control is the requirement toggle above; the `--no-e2ee` opt-out itself stays a server-operator decision with no mobile control (design.md §6.4) — the toggle governs what *this device* accepts, not what the server does.
@@ -236,7 +246,7 @@ The app must keep working against every streamer version, and older app versions
 |---|---|
 | New app + old streamer | No `spk` in the QR, no `e2ee` in `/api/info` ⇒ today's plaintext path, unchanged. Never pinned, so never a hard failure. |
 | Old app + new streamer | Ignores `spk`/`v` in the QR (`parsePairUri` reads named params, `services/pair-exchange.ts:70-80`), ignores `e2ee` in the exchange response and in `/api/info`, uses the still-present sealed API key. Server does not pin it. Unchanged. |
-| New app + new streamer, `--no-e2ee` | `/api/info` reports `enabled: false` with a reason. An unpinned app pairs plaintext with a warning. A pinned app gets `426` and the hard-failure screen — correct, and the reason the server prints a boot warning naming the pinned-device count. |
+| New app + new streamer, E2EE disabled | Newly printed QRs omit `spk`/`v`, so an unpinned app takes the legacy path. A previously pinned app still gets the hard failure on connection; disabling the server never clears either pin. |
 | New app + new streamer, normal | Full path. |
 | Any app + streamer at stage 3 | An unpinned client gets `426 E2EE_REQUIRED`. Old apps cannot render that; they will show a generic error. This is why stage 3 is an explicit product decision with a minimum app version (design.md §7). |
 
@@ -251,6 +261,9 @@ Nothing in `docs/compatibility/tb-mobile.md` is renamed, removed, or retyped by 
 | Server authentication | A handshake whose responder key differs from the QR's `spk` fails; the app shows the impostor-server error, not a generic network error. |
 | Old QR | A QR without `spk` pairs exactly as today. |
 | Malformed `spk` | Rejected as an error; never a silent plaintext pairing. |
+| Missing msg2 | A client that sent msg1 rejects a response with no `e2ee`; no server is added and no plaintext retry occurs. |
+| Authenticated result | Outer request fields cannot change the registered E2EE device, and outer response fields cannot change the credentials or identity data the client stores. |
+| Stable device key | A response-loss retry and a later re-pair reuse `D_priv` and the same server device row. |
 | Deep-link gate | A `threadbase://pair` deep link shows the confirmation step; a camera scan does not. |
 | Envelope | Every `api-client` call and every `ws-client` frame is sealed; a unit test asserts no plaintext body leaves either module on a pinned server. |
 | WS ordering | A duplicated or out-of-order frame closes and reconnects rather than being accepted. |
@@ -260,7 +273,7 @@ Nothing in `docs/compatibility/tb-mobile.md` is renamed, removed, or retyped by 
 | Persist inversion | A query with no `meta.persist` does not reach AsyncStorage; `persistBuster` drops the old cache. |
 | Rekey | Foreground after the threshold rekeys; counters reset only as part of it. |
 | Revocation | A revoked device's live socket closes without the app retrying into a loop. |
-| Web target | Web either refuses E2EE pairing or shows the weaker-storage banner. |
+| Web target | A QR with `spk` is refused with the native-app explanation and never writes `D_priv` to localStorage or falls back to plaintext. |
 | No regression | The full existing suite passes: unit, integration, and the Maestro mock suite (`npm run test:e2e:mock`) — all three, per the repo's own guidance that `test:unit` alone is a false green. |
 
 ---
@@ -269,7 +282,7 @@ Nothing in `docs/compatibility/tb-mobile.md` is renamed, removed, or retyped by 
 
 - **A compromised phone defeats this.** The app renders plaintext; jailbreak/root reaches it.
 - **Pure-JS ChaCha20 throughput on the terminal stream is unproven.** The single most likely reason this design changes (dilemmas.md D-3).
-- **Web is materially weaker** — `localStorage`, no enclave (`services/secure-store.web.ts`).
+- **Web cannot make the device-key guarantee**, so E2EE pairing is native-only; legacy and manual pairing remain weaker by definition.
 - **The deep-link pairing path remains reachable** and is mitigated by a confirmation step, which is a human control, not a cryptographic one.
 - **The `api-key` paste path can never be pinned**, by construction — there is no exchange and no device row.
 - **Metadata is visible to the ingress** (design.md §3.2). The app cannot fix that.
