@@ -12,7 +12,7 @@ Nothing here is a requirement — the requirements are in `understanding.md`.
 
 ## D-1 — Handshake pattern: Noise `IKpsk1` vs. alternatives
 
-**Where:** [design.md §2.4](./design.md#24-handshake-noise-ik-over-the-pair-token-assumption)
+**Where:** [design.md §2.4](./design.md#24-handshake-noise-ik-over-the-pair-token)
 
 **Working assumption:** `Noise_IKpsk1_25519_ChaChaPoly_SHA256`. The QR carries the server's static public key (`spk`), so the initiator knows the responder up front — the exact situation `IK` is specified for — and the pair token is mixed as a PSK so a handshake proves the initiator scanned *this* QR.
 
