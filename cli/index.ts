@@ -560,6 +560,20 @@ program
   });
 
 program
+  .command("identity")
+  .description("Print this server's identity fingerprint for out-of-band verification")
+  .action(async () => {
+    const { runIdentity } = await import("./identity");
+    const code = runIdentity({
+      log: {
+        info: (msg) => log.info(msg, undefined, "console"),
+        error: (msg) => log.error(msg, undefined, "console"),
+      },
+    });
+    process.exit(code);
+  });
+
+program
   .command("set-key [key]")
   .description("Set the streamer API key in ~/.threadbase/server.yaml")
   .action(async (key: string | undefined) => {

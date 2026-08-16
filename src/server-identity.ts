@@ -12,7 +12,13 @@
 // handshake uses the key yet. That scoping is deliberate: publishing a public
 // key is additive and cannot break a released client.
 
-import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from "crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  type KeyObject,
+} from "crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
@@ -92,6 +98,26 @@ export function loadOrCreateServerIdentity(): ServerIdentity {
 /** The public half alone, for callers that must never hold the private key. */
 export function serverIdentityPublicKey(): string {
   return loadOrCreateServerIdentity().publicKey;
+}
+
+/**
+ * The fingerprint a user compares out of band (design.md §2.2): SHA-256 over
+ * the raw 32 public-key bytes, truncated to the first 16, printed as 8
+ * space-separated groups of 4 lowercase hex characters.
+ *
+ * Pure function of the base64url string `serverIdentityPublicKey()` returns —
+ * decode that, not the JWK or any other encoding, or this hashes different
+ * bytes than the phone does and the two fingerprints never match.
+ */
+export function serverIdentityFingerprint(publicKeyBase64url: string): string {
+  const raw = Buffer.from(publicKeyBase64url, "base64url");
+  const hex = createHash("sha256").update(raw).digest().subarray(0, 16).toString("hex");
+  return hex.match(/.{4}/g)?.join(" ") ?? hex;
+}
+
+/** Convenience over the real, on-disk identity key. */
+export function currentServerIdentityFingerprint(): string {
+  return serverIdentityFingerprint(serverIdentityPublicKey());
 }
 
 function generateIdentity(path: string): ServerIdentity {

@@ -18,6 +18,7 @@ import {
   type PtyHostStatusProbe,
   probePtyHostStatus,
 } from "../src/pty-host/socket";
+import { currentServerIdentityFingerprint, serverIdentityKeyPath } from "../src/server-identity";
 
 const log = getLogger("prod");
 
@@ -100,6 +101,7 @@ export async function runProdStatus(): Promise<ProdStatus> {
 export type DoctorReport = {
   findings: string[];
   repairs: string[];
+  identity?: string;
   ptyHost?: PtyHostStatusProbe;
 };
 
@@ -108,10 +110,18 @@ export async function runProdDoctor(
   deps: {
     featureFlags?: FeatureFlagValues;
     probePtyHost?: () => Promise<PtyHostStatusProbe>;
+    // No default here, unlike probePtyHost: that one is gated behind the
+    // (off-by-default) ptyHost feature flag, so tests that don't pass it never
+    // reach it. The identity key has no such gate, so a default that reads the
+    // real on-disk file would make every existing doctor test touch the
+    // developer's actual ~/.threadbase/keys/server-identity.key. The real
+    // function is supplied by registerProdCommands' `doctor` action instead.
+    serverIdentityFingerprint?: () => string;
   } = {},
 ): Promise<DoctorReport> {
   const findings: string[] = [];
   const repairs: string[] = [];
+  let identity: string | undefined;
   let ptyHost: PtyHostStatusProbe | undefined;
 
   const marker = readMarker();
@@ -125,6 +135,17 @@ export async function runProdDoctor(
 
   if (!getSupervisor().isAgentLoaded()) {
     findings.push("launchd agent is not loaded — prod is fully down");
+  }
+
+  if (deps.serverIdentityFingerprint) {
+    try {
+      identity = deps.serverIdentityFingerprint();
+    } catch (err) {
+      findings.push(
+        `server identity key at ${serverIdentityKeyPath()} is unreadable: ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
   }
 
   // Detect conflicting Threadbase streamer agents (Homebrew vs deploy.sh)
@@ -159,7 +180,7 @@ export async function runProdDoctor(
     }
   }
 
-  return { findings, repairs, ...(ptyHost ? { ptyHost } : {}) };
+  return { findings, repairs, ...(identity ? { identity } : {}), ...(ptyHost ? { ptyHost } : {}) };
 }
 
 export type LogsOptions = {
@@ -394,7 +415,13 @@ export function registerProdCommands(program: Command): void {
     .description("Detect stale markers, missing agents, and pty-host health")
     .option("--fix", "Apply repairs (default is dry-run)", false)
     .action(async (opts) => {
-      const r = await runProdDoctor({ fix: opts.fix === true });
+      const r = await runProdDoctor(
+        { fix: opts.fix === true },
+        { serverIdentityFingerprint: currentServerIdentityFingerprint },
+      );
+      if (r.identity) {
+        log.info(`identity: ${r.identity}`, undefined, "console");
+      }
       if (r.ptyHost) {
         log.info(
           r.ptyHost.reachable

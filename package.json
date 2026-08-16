@@ -1,6 +1,6 @@
 {
   "name": "@threadbase-sh/streamer",
-  "version": "1.59.0",
+  "version": "1.61.0",
   "description": "PTY session management, WebSocket streaming, and REST API server for Claude Code conversations",
   "license": "MIT",
   "author": "Ronen Mars",
@@ -26,7 +26,8 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "threadbase-streamer": "dist/cli.cjs"
+    "threadbase-streamer": "dist/cli.cjs",
+    "tb-streamer": "dist/cli.cjs"
   },
   "exports": {
     ".": {
