@@ -460,7 +460,7 @@ export class ConversationCache {
         "SELECT id, project_path, project_id, last_activity FROM conversation_meta WHERE project_path IS NOT NULL",
       ),
       hasOrphanProjectId: db.prepare(
-        "SELECT 1 FROM conversation_meta WHERE project_id IS NULL AND project_path IS NOT NULL LIMIT 1",
+        "SELECT 1 FROM conversation_meta WHERE project_id IS NULL AND project_path IS NOT NULL AND project_path != '' LIMIT 1",
       ),
       popularProjects: db.prepare(
         `SELECT project_path, project_name, COUNT(*) as cnt
@@ -1300,10 +1300,16 @@ export class ConversationCache {
           continue;
         }
         const scannerMetaJson = JSON.stringify(m);
+        // A JSONL with no `cwd` line yields "" from the scanner, not
+        // undefined — `?? null` doesn't catch that, so it used to persist as
+        // an empty string. project_id IS NULL AND project_path IS NOT NULL
+        // matches "", which becomes an orphan the backfill can never clear
+        // (it refuses to overwrite a falsy-but-non-null projectPath).
+        const projectPath = m.projectPath?.trim() || null;
         this.stmts.upsertFull.run({
           id,
           file_path: canonicalPath,
-          project_path: m.projectPath ?? null,
+          project_path: projectPath,
           project_name: m.projectName ?? null,
           title: m.title ?? m.sessionName ?? m.projectName ?? null,
           model: m.model ?? null,

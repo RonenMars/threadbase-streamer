@@ -61,4 +61,13 @@ describe("ConversationsRepository.hasOrphanRows", () => {
     cache.upsertFromScannerMeta([META("c1", null) as never]);
     expect(repo.hasOrphanRows()).toBe(false);
   });
+
+  it("never becomes a permanent orphan from a JSONL with no cwd line", () => {
+    // The scanner reports projectPath as "" (not undefined) when a JSONL
+    // carries no `cwd`. `?? null` doesn't catch that, so this used to
+    // persist as an empty string — an unrepairable orphan, since the
+    // backfill path refuses to overwrite a falsy-but-non-null projectPath.
+    cache.upsertFromScannerMeta([META("c1", "") as never]);
+    expect(repo.hasOrphanRows()).toBe(false);
+  });
 });
