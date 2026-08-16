@@ -227,7 +227,19 @@ function chachaNonce(n: bigint): Buffer {
   return nonce;
 }
 
-class CipherState {
+/**
+ * Noise's `CipherState` (spec §5.1).
+ *
+ * Exported for two reasons, neither of them scaffolding. Phase 3's record layer
+ * has to build a transport cipher from the buffers `split()` returns, so this is
+ * the type it will construct. And the §5.1 rule that a failed decryption must
+ * not advance `n` is unobservable through the handshake API — every AEAD
+ * operation there runs at `n = 0`, because each is preceded by a `MixKey` that
+ * calls `initializeKey`. Without a way to reach a cipher state directly, that
+ * rule is protected by nothing: a "simplification" that advances before
+ * verifying passes every other test in the suite.
+ */
+export class CipherState {
   private k: Buffer | null = null;
   private n = 0n;
 

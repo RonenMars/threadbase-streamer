@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import {
+  CipherState,
   generateKeyPair,
   keyPairFromRawPrivate,
   NOISE_MAX_MESSAGE_BYTES,
@@ -217,6 +218,45 @@ describe("the pair token actually binds the handshake", () => {
     // Not the bare token hash — the label is what stops this value colliding
     // with any other use of the same token.
     expect(pskFromPairToken(token).equals(createHash("sha256").update(token).digest())).toBe(false);
+  });
+});
+
+describe("cipher state (spec §5.1)", () => {
+  /**
+   * A decryption that fails authentication must NOT advance `n`.
+   *
+   * Nothing else in this file can catch a regression here. The tampering tests
+   * below build fresh state for every iteration on purpose — reusing one would
+   * test a corrupted state rather than a corrupted message — so the
+   * reuse-after-failure path is the one they never exercise. And the handshake
+   * API cannot reach it either: every AEAD operation there runs at `n = 0`,
+   * because each is preceded by a `MixKey` that calls `initializeKey`. Verified
+   * by breaking it: moving the `this.n += 1n` in `decryptWithAd` above the
+   * try/catch fails this test and leaves the other 17 in this file green.
+   *
+   * The property only becomes load-bearing in Phase 3, when a transport cipher
+   * outlives a single frame and a rejected record must not cost a counter slot.
+   * It is asserted now because that is when it is cheap.
+   */
+  it("does not advance the nonce when a frame fails to authenticate", () => {
+    const key = createHash("sha256").update("§5.1 nonce-advance fixture").digest();
+    const ad = Buffer.from("transcript-derived AAD");
+
+    const sender = new CipherState();
+    sender.initializeKey(key);
+    const opener = new CipherState();
+    opener.initializeKey(key);
+
+    const frame = sender.encryptWithAd(ad, Buffer.from("first record"));
+
+    const corrupted = Buffer.from(frame);
+    corrupted[0] ^= 0x01;
+    expect(() => opener.decryptWithAd(ad, corrupted)).toThrow(NoiseError);
+
+    // The genuine frame was sealed at counter 0. If the rejected one had burned
+    // that slot, this runs at counter 1 and fails — so this line, not the throw
+    // above, is what asserts the rule.
+    expect(opener.decryptWithAd(ad, frame).toString()).toBe("first record");
   });
 });
 
