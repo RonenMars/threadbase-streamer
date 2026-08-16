@@ -3,7 +3,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as miscRoutes from "../src/api/routes/misc.routes";
 import {
   generateKeyPair,
   type KeyPair,
@@ -30,6 +31,14 @@ import { loadOrCreateServerIdentity } from "../src/server-identity";
  *   3. A failing handshake does not spend the token, so a photographed QR does
  *      not become a denial of service against the legitimate phone.
  *   4. A device that paired encrypted is pinned, by a key it proved it holds.
+ *
+ * `handlePairExchange` only runs the handshake when
+ * `describeE2eeCapability(...).enabled` is true, which is
+ * `E2EE_SUPPORTED && flagEnabled` (misc.routes.ts) — and `E2EE_SUPPORTED` is
+ * currently the hardcoded constant `false`, flipped by Phase 2, step 4, once
+ * this handshake lands. This suite is about the handshake itself, not the
+ * gate, so it stubs the capability on directly; the on/off boundary of the
+ * gate is `__tests__/pair-exchange-e2ee-gate.test.ts`.
  */
 
 const API_KEY = "tb_test_key_for_e2ee_exchange";
@@ -64,9 +73,20 @@ describe("pair exchange with a Noise handshake", () => {
     });
     await server.listen(0, { awaitReady: true });
     baseUrl = `http://localhost:${server.port}`;
+
+    // See the file header: this suite exercises the handshake, not the gate
+    // in front of it, so the capability is stubbed on directly rather than
+    // through any configuration this build can actually reach today.
+    vi.spyOn(miscRoutes, "describeE2eeCapability").mockReturnValue({
+      supported: true,
+      enabled: true,
+      version: 1,
+      required: false,
+    });
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await server.close();
     if (savedConfigDir === undefined) delete process.env.THREADBASE_CONFIG_DIR;
     else process.env.THREADBASE_CONFIG_DIR = savedConfigDir;

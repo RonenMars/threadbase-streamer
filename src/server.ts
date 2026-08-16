@@ -16,6 +16,7 @@ import { type AppEnv, createHonoApp } from "./api/app";
 import { ConversationHandlers } from "./api/handlers/conversations.handlers";
 import { json, readBody, writeHonoResponse } from "./api/handlers/http-helpers";
 import { SessionHandlers } from "./api/handlers/sessions.handlers";
+import { describeE2eeCapability } from "./api/routes/misc.routes";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { createWsRoutes } from "./api/routes/ws.routes";
 import {
@@ -1911,18 +1912,34 @@ export class StreamerServer {
       return;
     }
 
+    // GET /api/info already answers whether this build can perform the Noise
+    // handshake (describeE2eeCapability, design.md §6.2/§6.3) — this endpoint
+    // just never consulted it, so a build reporting `enabled: false` would
+    // still run the handshake below if a request carried an `e2ee` field.
+    // Reuse the same function rather than a second constant or expression:
+    // if the two answers can drift, they eventually will.
+    const e2eeEnabled = describeE2eeCapability(this.featureFlags.e2ee).enabled;
+
     // Optional, and its absence is the ordinary case. A released tb-mobile
     // build sends no `e2ee` at all and must pair exactly as it does today, so
     // this is an explicit branch rather than an optional-chaining accident —
     // a silent skip reads as a bug to the next person, who tightens it into a
     // rejection and breaks every old app in the field.
-    let e2eeRequest: E2eeExchangeRequest | null;
-    try {
-      e2eeRequest = parseE2eeRequest(body?.e2ee);
-    } catch (err) {
-      const e = err as E2eeRequestError;
-      json(res, 400, { error: e.message, code: e.code });
-      return;
+    //
+    // When the capability is off, the field is ignored outright rather than
+    // parsed and validated: this endpoint is public and unauthenticated, and
+    // `parseE2eeRequest`'s header comment is explicit that everything it does
+    // runs on bytes an attacker chose before anything has authenticated them.
+    // A build with nothing to gain from that field should not run it either.
+    let e2eeRequest: E2eeExchangeRequest | null = null;
+    if (e2eeEnabled) {
+      try {
+        e2eeRequest = parseE2eeRequest(body?.e2ee);
+      } catch (err) {
+        const e = err as E2eeRequestError;
+        json(res, 400, { error: e.message, code: e.code });
+        return;
+      }
     }
 
     // Reject a bad token before doing any work, but do NOT spend it yet.
