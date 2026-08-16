@@ -250,6 +250,43 @@ describe("prod commands", () => {
     expect(report.ptyHost).toBeUndefined();
   });
 
+  it("prod doctor: reports the identity fingerprint when the check is supplied", async () => {
+    const report = await runProdDoctor(
+      { fix: false },
+      { serverIdentityFingerprint: () => "aaaa bbbb cccc dddd eeee ffff 0000 1111" },
+    );
+
+    expect(report.identity).toBe("aaaa bbbb cccc dddd eeee ffff 0000 1111");
+    expect(report.findings.filter((f) => f.includes("identity"))).toEqual([]);
+  });
+
+  it("prod doctor: reports an unreadable identity key as a finding", async () => {
+    const report = await runProdDoctor(
+      { fix: false },
+      {
+        serverIdentityFingerprint: () => {
+          throw new Error("boom");
+        },
+      },
+    );
+
+    expect(report.identity).toBeUndefined();
+    expect(
+      report.findings.some((f) => f.includes("server identity key") && f.includes("boom")),
+    ).toBe(true);
+  });
+
+  // Safety net for the DI shape itself: omitting the check must never fall
+  // back to reading the real ~/.threadbase/keys/server-identity.key, or every
+  // other doctor test above (none of which pass this dep) would start
+  // touching the developer's actual filesystem.
+  it("prod doctor: does not touch the identity key when the check is omitted", async () => {
+    const report = await runProdDoctor({ fix: false });
+
+    expect(report.identity).toBeUndefined();
+    expect(report.findings.filter((f) => f.includes("identity"))).toEqual([]);
+  });
+
   describe("prod logs", () => {
     it("uses PowerShell to read Windows log files", async () => {
       const platform = process.platform;

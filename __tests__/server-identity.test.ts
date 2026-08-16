@@ -4,10 +4,13 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
 import {
+  currentServerIdentityFingerprint,
   loadOrCreateServerIdentity,
+  serverIdentityFingerprint,
   serverIdentityKeyPath,
   serverIdentityPublicKey,
 } from "../src/server-identity";
+import fixtureVectors from "./fixtures/noise-ikpsk1-vectors.json";
 
 /**
  * The server identity key (E2EE phase 2 groundwork, #590).
@@ -105,6 +108,51 @@ describe("server identity key", () => {
     });
 
     expect(() => loadOrCreateServerIdentity()).toThrow(/not an X25519 key/);
+  });
+
+  /**
+   * The fingerprint printed by `tb-streamer identity` / `prod doctor` and
+   * compared against the phone (design.md §2.2). Both the input key and the
+   * expected fingerprint are read from noise-ikpsk1-vectors.json, not pasted
+   * as literals here: hashing the raw 32 bytes vs. the base64url string is the
+   * same divergence risk the Noise vectors exist to catch (two plausible,
+   * different, silently-wrong answers), so the fixture — shared byte-for-byte
+   * with tb-mobile's copy — is the record, and this test reads it rather than
+   * duplicating it.
+   *
+   * `keys.serverStaticPublic` is standard base64 (has both `+` and `/`), so
+   * converting it here exercises the same alphabet-substitution-plus-padding
+   * path `serverIdentityPublicKey()` relies on in production — a test input
+   * that happened to lack those characters could pass without ever touching
+   * that conversion.
+   */
+  describe("server identity fingerprint", () => {
+    const toBase64Url = (standardBase64: string): string =>
+      Buffer.from(standardBase64, "base64").toString("base64url");
+
+    const serverStaticPublicB64Url = toBase64Url(fixtureVectors.keys.serverStaticPublic);
+    const expectedFingerprint = fixtureVectors.fingerprintOfServerStaticPublic;
+
+    // Exact-string match, not a shape regex: a regex like /^[0-9a-f ]+$/ would
+    // pass on a 6-group or double-spaced value just as happily. Doubles as the
+    // format check — 8 groups of 4 lowercase hex, single-space separated is
+    // exactly what the fixture string is.
+    it("matches the pinned vector in noise-ikpsk1-vectors.json", () => {
+      expect(serverIdentityFingerprint(serverStaticPublicB64Url)).toBe(expectedFingerprint);
+    });
+
+    // The positive control the pinned-vector test alone can't provide: a
+    // stubbed implementation that ignores its argument and always returns the
+    // vector would still pass the assertion above.
+    it("produces a different fingerprint for a different key", () => {
+      const clientStaticPublicB64Url = toBase64Url(fixtureVectors.keys.clientStaticPublic);
+      expect(serverIdentityFingerprint(clientStaticPublicB64Url)).not.toBe(expectedFingerprint);
+    });
+
+    it("currentServerIdentityFingerprint() hashes the real on-disk public key", () => {
+      const publicKey = serverIdentityPublicKey();
+      expect(currentServerIdentityFingerprint()).toBe(serverIdentityFingerprint(publicKey));
+    });
   });
 
   function writeKeyFile(contents: unknown): void {
