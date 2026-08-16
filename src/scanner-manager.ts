@@ -74,6 +74,12 @@ export class ScannerManager {
   private allScanners = new Set<ConversationScanner>();
   private stalePaths = new Set<string>();
   private reconcileInFlight: Promise<void> | null = null;
+  private lastAutoFullReconcileAt = 0;
+  // reconcileMode() returns "full" on every poll while a permanent drift
+  // condition holds (e.g. an orphan row) — without a cooldown each poll
+  // re-walks the whole corpus back-to-back. refresh=1 and per-file
+  // reconciles go through other paths and are unaffected.
+  private static readonly AUTO_FULL_RECONCILE_COOLDOWN_MS = 60_000;
   private refreshInFlight = new Map<string, { promise: Promise<unknown>; completedAt: number }>();
   private log = getLogger("server");
 
@@ -494,6 +500,13 @@ export class ScannerManager {
   // in-flight cache write before shutting the DB.
   startBackgroundReconcile(mode: ConversationReconcileMode = "full"): void {
     if (this.reconcileInFlight) return;
+    if (mode === "full") {
+      const now = Date.now();
+      if (now - this.lastAutoFullReconcileAt < ScannerManager.AUTO_FULL_RECONCILE_COOLDOWN_MS) {
+        return;
+      }
+      this.lastAutoFullReconcileAt = now;
+    }
     const paths = mode === "files" ? this.takeStaleFiles() : [];
     const task = (
       paths.length > 0 ? this.reconcileStaleFilesFromDisk(paths) : this.reconcileFromDisk()
