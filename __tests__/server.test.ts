@@ -2283,6 +2283,25 @@ describe("StreamerServer", () => {
       expect(body.total).toBeGreaterThanOrEqual(body.conversations.length);
     });
 
+    // The adapter used to map each match through an explicit
+    // { field, snippet } literal, silently dropping the scanner's highlight
+    // ranges. Offsets are only useful if they index into the snippet we ship
+    // alongside them, so assert that and not merely their presence.
+    it("forwards body-hit highlight ranges that index into the snippet", async () => {
+      const res = await fetch(`${baseUrl}/api/search?q=README`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      const body = await res.json();
+      const match = body.conversations
+        .flatMap((c: { matches: { field: string }[] }) => c.matches)
+        .find((m: { field: string }) => m.field === "content");
+
+      expect(match).toBeDefined();
+      expect(match.highlights.length).toBeGreaterThan(0);
+      const { start, end } = match.highlights[0];
+      expect(match.snippet.slice(start, end).toLowerCase()).toContain("readme");
+    });
+
     it("honours offset", async () => {
       const res = await fetch(`${baseUrl}/api/search?q=test&limit=5&offset=3`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
