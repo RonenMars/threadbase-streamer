@@ -26,7 +26,8 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "threadbase-streamer": "dist/cli.cjs"
+    "threadbase-streamer": "dist/cli.cjs",
+    "tb-streamer": "dist/cli.cjs"
   },
   "exports": {
     ".": {
