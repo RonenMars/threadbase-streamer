@@ -43,7 +43,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=20 <25"
+    "node": ">=22 <25"
   },
   "scripts": {
     "build": "tsup && node -e \"const{cpSync}=require('fs');cpSync('src/db/migrations','dist/migrations',{recursive:true});cpSync('src/db/runtime-migrations','dist/runtime-migrations',{recursive:true});cpSync('src/db/pg-migrations','dist/pg-migrations',{recursive:true})\"",
