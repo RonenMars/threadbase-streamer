@@ -24,7 +24,7 @@ on:
 
 jobs:
   # Decide whether to skip the heavy CI work. The required status checks
-  # (Lint, Test (Node 20), Test (Node 22)) are enforced by branch protection,
+  # (Lint, Test (Node 22), Test (Node 24)) are enforced by branch protection,
   # so the jobs below must ALWAYS run and report success — a job skipped via a
   # job-level `if:` reports "skipped", which does NOT satisfy a required check
   # and would leave the PR un-mergeable forever. Instead each job checks out
@@ -81,16 +81,16 @@ jobs:
         with:
           node-version: 22
 
-  # Warm the node-20 and node-24 caches in parallel with `setup` so the matching
-  # Test jobs get a cache hit and skip npm ci + better-sqlite3 rebuild (~3min →
-  # ~40s each). Not a required check; node 22 is warmed by `setup` above.
+  # Warm the node-24 cache in parallel with `setup` so the matching Test job
+  # gets a cache hit and skips npm ci + better-sqlite3 rebuild (~3min → ~40s).
+  # Not a required check; node 22 is warmed by `setup` above.
   warm-caches:
     name: Warm cache (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     needs: gate
     strategy:
       matrix:
-        node-version: [20, 24]
+        node-version: [24]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -221,7 +221,7 @@ jobs:
       # in server.test.ts sat undetected for the same reason.
       #
       # What this costs, measured 2026-08-11 and not rounded in our favour:
-      # with a COLD node_modules cache, `Warm cache (Node 20)` takes ~208s and
+      # with a COLD node_modules cache, `Warm cache (Node 24)` takes ~208s and
       # owns a ~289s critical path, so these jobs finish inside the slack and
       # add nothing. With a WARM cache the Linux side finishes in ~132s and
       # these jobs become the critical path instead: 145s -> 216s, about +71s.
@@ -250,7 +250,7 @@ jobs:
     needs: [gate, lint, setup, warm-caches]
     strategy:
       matrix:
-        node-version: [20, 22, 24]
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
         with:

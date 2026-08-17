@@ -39,7 +39,7 @@ runs:
 
     # Rebuild the native binary for THIS node version before saving, so the
     # test job's cache-hit path (which runs `npx vitest` without rebuilding)
-    # gets an ABI-correct better-sqlite3 for node 20/24, not just node 22.
+    # gets an ABI-correct better-sqlite3 for node 24, not just node 22.
     - name: Rebuild native modules
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
