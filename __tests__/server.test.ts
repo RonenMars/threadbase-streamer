@@ -13,7 +13,7 @@ import { join } from "path";
 import WebSocket from "ws";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
-import { FEATURE_FLAGS } from "../src/feature-flags";
+import { FEATURE_FLAG_LIST } from "../src/feature-flags";
 import { PTYManager } from "../src/pty-manager";
 import { GRACE_MAX_DEFERS, IDLE_REAP_AFTER_MS, StreamerServer } from "../src/server";
 
@@ -635,9 +635,9 @@ describe("StreamerServer", () => {
       };
 
       // The registry ships with the values so a client renders from one round-trip.
-      expect(body.registry.map((f) => f.id)).toEqual(FEATURE_FLAGS.map((f) => f.id));
+      expect(body.registry.map((f) => f.id)).toEqual(FEATURE_FLAG_LIST.map((f) => f.id));
       // Total map: exactly the registry's keys, nothing more or less.
-      expect(Object.keys(body.values).sort()).toEqual(FEATURE_FLAGS.map((f) => f.id).sort());
+      expect(Object.keys(body.values).sort()).toEqual(FEATURE_FLAG_LIST.map((f) => f.id).sort());
       expect(body.values.codexSystemPrompt).toBe(false);
       // Read-only endpoint: no `persisted` field, unlike claude-flags.
       expect(body).not.toHaveProperty("persisted");

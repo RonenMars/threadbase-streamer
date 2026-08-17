@@ -70,7 +70,7 @@ waiting_input / idle ──(idle reaper, 6h of agent silence)───► idle  
 | `THREADBASE_FILTER_AGENT_CONVERSATIONS` | Hide non-interactive Claude runs from `/api/conversations` + `/project-chats`. Default on. Toggling triggers a one-time prune-or-rescan on next restart. |
 | `THREADBASE_AGENT_ENTRYPOINTS` | JSONL `entrypoint` values treated as agent traffic. Default `sdk-cli,claude-vscode`. |
 | `MULTI_AGENT_FLOW` | Routes `POST /api/sessions/start` + `/input` to the multi-agent path instead of PTY. `AGENT_*` tuning vars: see [docs/multi-agent-mode.md](docs/multi-agent-mode.md). |
-| `THREADBASE_FEATURE_*` | One var per server feature flag (`THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT`, …). Highest-precedence source; registry in `src/feature-flags.ts`. Resolved at boot only. |
+| `THREADBASE_FEATURE_*` | One var per server feature flag (`THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT`, …). Highest-precedence source; registry is the `FEATURE_FLAGS` object in `src/feature-flags.ts`. YAML/`--feature` ids are those object keys (`ptyHost`), not the env names. Resolved at boot only. |
 
 ## Multi-agent mode
 
@@ -82,7 +82,7 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 
 Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
 
-Feature flags (`src/feature-flags.ts`) resolve at boot from env → `--feature <id=bool>` → `feature_flags:` (one line of JSON) → registry default, and are readable at `GET /api/config/feature-flags`. Full detail in CLAUDE.md.
+Feature flags (`src/feature-flags.ts`) resolve at boot from env → `--feature <id=bool>` → `feature_flags:` (one line of JSON) → registry default, and are readable at `GET /api/config/feature-flags`. YAML and `--feature` ids are the `FEATURE_FLAGS` object keys (`ptyHost`), not `THREADBASE_FEATURE_*`. Full detail in CLAUDE.md; operator guide: [docs/guides/feature-flags.md](docs/guides/feature-flags.md).
 
 `permissionMode`, `model` and `effort` are claude-flags that the spawn paths pass as explicit positionals, so `buildFlagArgs` skips them (`SPAWN_POSITIONAL_FLAG_IDS`) and `StreamerServer.spawnFlagOverrides()` resolves them instead — flag value over `--default-*` CLI fallback. Skipping an id without reading it there makes the API a silent no-op. Server default is `PUT /api/config/claude-flags`; a live session is retargeted by `PATCH /api/sessions/:id/model` / `:id/effort`, which type Claude's `/model` / `/effort` slash command into the PTY (202, validated as a trust boundary — the value becomes raw terminal bytes). Full detail in CLAUDE.md.
 

@@ -27,7 +27,7 @@ Sending one to the wrong transport fails only at send time, with nothing at regi
 
 **The `liveActivityPush` feature flag gates the whole surface, and it is off by default.**
 Credentials alone no longer bring this up: `initLiveActivityPush()` checks the flag before it reads the environment, so a box with a valid p8 configured logs `live_activity.disabled` at boot and constructs no sender.
-Turn it on with `THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH=1`, `--feature liveActivityPush=true`, or `feature_flags: {"liveActivityPush":true}` in `server.yaml`, then restart — feature flags resolve once, at boot.
+Turn it on with `THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH=1`, `--feature liveActivityPush=true`, or `feature_flags: {"liveActivityPush":true}` in `server.yaml`, then restart — feature flags resolve once, at boot. The yaml/CLI id is the `FEATURE_FLAGS` object key (`liveActivityPush`), not the env var name. Details: [feature-flags.md](feature-flags.md).
 
 The flag governs the client half too.
 tb-mobile reads it over `GET /api/config/feature-flags` and, when it is off, skips its own local ActivityKit path — and the Android ongoing-notification equivalent — so one switch turns the feature off end to end.
