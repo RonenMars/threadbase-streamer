@@ -252,6 +252,7 @@ export type SessionHandlersDeps = {
     sessionId: string,
     timeoutMs: number,
   ) => Promise<{ outcome: "ready" | "failed" | "timeout"; session: ManagedSession | null }>;
+  forgetSession: (sessionId: string) => void;
   abandonFailedStart: (sessionId: string) => void;
   enrichResumedSessionAsync: (sessionId: string, projectPath: string, conv: any) => void;
   findJsonlPath: (uuid: string) => string | null;
@@ -1248,7 +1249,13 @@ export class SessionHandlers {
       return;
     }
 
+    // Capture before putOnHold: the runner deletes the live session on hold,
+    // and onStatusChange then writes selfPtyEndedAt / a registry idle row that
+    // forgetSession has to clear afterwards.
+    const shouldForget = this.shouldForgetEmptySession(session);
+
     if (session.status === "idle") {
+      if (shouldForget) this.forgetEmptyStoppedSession(sessionId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "already_idle", sessionId }));
       return;
@@ -1281,6 +1288,8 @@ export class SessionHandlers {
 
     const outcome = await Promise.race([idlePromise, timeoutPromise]);
 
+    if (shouldForget) this.forgetEmptyStoppedSession(sessionId);
+
     if (outcome === "idle") {
       res.write(`${JSON.stringify({ event: "stopped", sessionId })}\n`);
     } else {
@@ -1291,6 +1300,48 @@ export class SessionHandlers {
     }
 
     res.end();
+  }
+
+  /**
+   * An unused start: the user never submitted a prompt, and the conversation
+   * cache has no row for this id (empty Codex/Claude often never write a JSONL).
+   * `conversationId === sessionId` is not evidence of history — only the cache
+   * is. promptCount > 0 or a cache hit keeps today's hold path.
+   */
+  private shouldForgetEmptySession(session: ManagedSession): boolean {
+    const stored = this.sessionStore.getManaged(session.id);
+    const promptCount = Math.max(session.promptCount, stored?.promptCount ?? 0);
+    if (promptCount > 0) return false;
+    return !this.hasCachedConversationFor(session, stored);
+  }
+
+  private hasCachedConversationFor(
+    session: ManagedSession,
+    stored: ManagedSession | null,
+  ): boolean {
+    const cache = this.cache;
+    if (!cache) return false;
+    const ids = new Set<string>([session.id]);
+    if (session.boundConversationId) ids.add(session.boundConversationId);
+    if (session.resumedFromConversationId) ids.add(session.resumedFromConversationId);
+    if (stored?.boundConversationId) ids.add(stored.boundConversationId);
+    if (stored?.resumedFromConversationId) ids.add(stored.resumedFromConversationId);
+    for (const id of ids) {
+      if (cache.hasConversation(id)) return true;
+    }
+    return false;
+  }
+
+  private forgetEmptyStoppedSession(sessionId: string): void {
+    this.log.info(`[stop] forgetting empty session ${sessionId.slice(0, 8)}`, {
+      event: "session.forget_empty",
+      sessionId,
+    });
+    this.deps.forgetSession(sessionId);
+    this.wsHub.broadcast({
+      type: "session_list",
+      sessions: this.sessionStore.list(this.deps.ptyAttachedIds()),
+    });
   }
 
   async handleAdopt(sessionId: string, res: ServerResponse): Promise<void> {
