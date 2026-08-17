@@ -143,7 +143,7 @@ Don't break without coordination: the marker shape is versioned (`shimVersion` �
 
 ## Windows-specific notes
 
-- **`npm install` before first deploy** — fresh clones fail lint/build with "Cannot find module" otherwise; `postinstall` also patches `qrcode-terminal` and node-pty prebuild permissions.
+- **`npm install` before first deploy** — fresh clones fail lint/build with "Cannot find module" otherwise. Two of our own lifecycle scripts are load-bearing and easy to lose: `prepare` runs `patch-package` (without it `qrcode-terminal` keeps legacy `\033` octal escapes and the tsup build fails), and `postinstall` marks node-pty's `spawn-helper` executable (without it `posix_spawnp` fails and every PTY test dies with no useful error). Anything that installs with `--ignore-scripts` must re-run both by hand — the CI smoke job does exactly that.
 - **Path separators**: use `path.sep` (not `"/"`) for prefix guards on `path.resolve()` output.
 - **File timestamps**: `birthtimeMs` is unaffected by `fs.utimes()`; use `mtimeMs` for cross-platform test assertions.
 - **Task Scheduler log redirection**: no native stdout/stderr redirection — the task action must use `pwsh.exe` and redirect inside the command string (`>> logfile 2>> errfile`).
@@ -209,7 +209,7 @@ Milestone-level release notes live in `docs/release-notes/YYYY-MM-DD-<milestone>
 
 ## Cursor Cloud specific instructions
 
-The Cloud VM runs Node 22 (in `engines: >=20 <25`; a required CI check), even though `.nvmrc` pins v24.15.0. `better-sqlite3` and `node-pty` compile natively against the running Node at install time — the startup update script (`npm install`) handles that. Standard lint/test/build/run commands are in `README.md` and `package.json` scripts; don't duplicate them here. Build before running: you execute the built `dist/cli.cjs`, and `npm run dev` is only the tsup watcher (it does not start a server).
+The Cloud VM runs Node 22 (in `engines: >=22 <25`; a required CI check), even though `.nvmrc` pins v24.15.0. `better-sqlite3` and `node-pty` are native addons, but neither compiles any more — both ship prebuilt binaries in their tarballs, so a plain install is enough. See [docs/troubleshooting.md](docs/troubleshooting.md) for what goes wrong when install scripts run (or don't). Standard lint/test/build/run commands are in `README.md` and `package.json` scripts; don't duplicate them here. Build before running: you execute the built `dist/cli.cjs`, and `npm run dev` is only the tsup watcher (it does not start a server).
 
 Non-obvious gotchas when running the server here (Linux):
 

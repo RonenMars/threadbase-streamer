@@ -134,7 +134,45 @@ runners, same behaviour.
 
 **When:** Deployed CLI crashes with `Error: Cannot find module 'bindings'` when a new native addon (e.g. `better-sqlite3`) was added.
 **Cause:** Native addons declared as `external` in tsup are copied to `~/.threadbase/node_modules/<package>` by the deploy script, but their transitive dependencies (e.g. `bindings`, `file-uri-to-path` for `better-sqlite3`) are not automatically included. Node resolves them from the same `node_modules` tree, so they must also be present.
-**Fix:** Add the missing transitive packages to the deploy script's copy loop alongside the native addon. For `better-sqlite3`, the deploy scripts (`scripts/deploy.ps1` and `scripts/deploy-linux.sh`) now copy `bindings` and `file-uri-to-path` in addition to `better-sqlite3` itself. If you add another native dependency in future, check what it requires with `node -e "require('<package>')"` in the repo root and add any missing modules to the copy loop.
+**Fix:** Add the missing transitive packages to the deploy script's copy loop alongside the native addon. If you add another native dependency in future, check what it requires with `node -e "require('<package>')"` in the repo root and add any missing modules to the copy loop.
+
+**No longer applies to `better-sqlite3`.** v12 needed `bindings` and `file-uri-to-path`; v13 depends only on `node-addon-api`, which is compile-time headers — the prebuilt binary requires nothing but `fs` and `path` at runtime, and works when copied on its own. The `bindings` / `file-uri-to-path` entries still in the deploy loops are dead, and harmless only because each loop guards on the directory existing.
+
+---
+
+### `npm ci` fails on Windows with `gyp ERR! find VS` for `better-sqlite3`
+
+**When:** Any install that lets package install scripts run, on a machine without a C++ toolchain. Seen on `Smoke (windows-latest)`.
+**Cause:** `better-sqlite3` v13 declares **no** `install` script. npm sees the `binding.gyp` it ships and *synthesises* `node-gyp rebuild` as an implicit install step, so it compiles from source and ignores the prebuilt binary already in the tarball. That needs Visual Studio, which the runner does not have. v12 never hit this because its explicit `install: prebuild-install || node-gyp rebuild` overrode the implicit gyp and downloaded a binary instead.
+**Fix:** Install with `--ignore-scripts`, then re-run the two scripts that matter by hand (see below). Nothing in this repo needs a compiler — `better-sqlite3` and `node-pty` both ship prebuilds.
+
+> Note `--ignore-scripts=false` is **not** a workaround: it only forces scripts on. Whether they run by default depends on the npm major (npm 12 blocks package install scripts, npm 10 does not), so the flag's absence guarantees nothing either way.
+
+### Installing with `--ignore-scripts` breaks the build or every PTY test
+
+**When:** After `npm ci --ignore-scripts` (CI smoke job, or a hardened local install).
+**Cause:** `--ignore-scripts` skips the **root package's** lifecycle scripts too, and two of ours are load-bearing:
+
+| script | what it does | symptom when skipped |
+|---|---|---|
+| `prepare` | runs `patch-package` | `qrcode-terminal` keeps its legacy `\033` octal escapes → tsup build fails with *"Legacy octal escape sequences cannot be used in strict mode"* |
+| `postinstall` | `chmod 0755` on node-pty's `spawn-helper` | `posix_spawnp failed` → every PTY test reports 0 output with no useful error |
+
+**Fix:**
+
+```bash
+npm ci --ignore-scripts
+npx patch-package
+chmod +x node_modules/node-pty/prebuilds/*/spawn-helper   # POSIX only; Windows uses conpty
+```
+
+The remaining dependency scripts are safely skipped: `esbuild` resolves its binary from an optional platform package, and `protobufjs`'s postinstall only prints version warnings.
+
+### `Could not locate the bindings file` from a native addon
+
+**When:** A native module imports fine and then throws on first use.
+**Cause:** Almost never an ABI mismatch, despite how it reads. `require()` of these packages only loads the JS entry point; the addon is not touched until you construct something. The path in the message is usually correct for the running Node — the file was simply never produced, because the install script that would have built or fetched it did not run.
+**Fix:** `npm rebuild <package>`, or reinstall. Check `npm install-scripts ls` (npm 12+) to see whether the package's scripts are blocked.
 
 ---
 
