@@ -19,9 +19,11 @@ A regression in any of those was invisible to a Linux-only matrix until a user h
 
 `smoke` runs on `macos-latest` and `windows-latest`:
 
-1. Installs dependencies **with** lifecycle scripts, so the native addon actually builds or fetches its prebuild for that platform.
+1. Installs dependencies **without** lifecycle scripts (`npm ci --ignore-scripts`), then re-runs by hand the two of ours that matter: `npx patch-package`, and a `chmod +x` on node-pty's `spawn-helper` (POSIX only).
 2. Runs `npm test` — the **whole** suite, the same command the Linux `Test` jobs run.
 3. Verifies `require('node-pty')` succeeds.
+
+Step 1 used to install **with** scripts, on the reasoning that a native addon needs them to build or fetch its prebuild. That stopped being true and became actively harmful — see [Why the install skips scripts](#why-the-install-skips-scripts).
 
 Node version is pinned **per OS**: macOS on 24 (the major `.nvmrc` pins), Windows on 22. See [Node version, and why the two platforms differ](#node-version-and-why-the-two-platforms-differ).
 
@@ -57,11 +59,32 @@ It used to be a curated allowlist of eight files, on the reasoning that most of 
 | **cold** (lockfile changed) — run `31461926905` | 289s | ~289s | **none** |
 | **warm** (the common case) — runs `31429429893` → `1cfc9e1` | 145s | 216s | **+71s** |
 
-On a cold cache `Warm cache (Node 20)` alone takes ~208s and owns the critical path, so the platform jobs finish inside the slack and cost nothing. On a warm cache the Linux side is done in ~132s and the platform jobs *become* the critical path.
+On a cold cache `Warm cache (Node 24)` alone takes ~208s and owns the critical path, so the platform jobs finish inside the slack and cost nothing. On a warm cache the Linux side is done in ~132s and the platform jobs *become* the critical path.
 
 So the honest figure is **up to about +70s, often zero** — not "free", and not the tripling the old comment feared. In money it genuinely is free: the repo is public, so macOS's 10× and Windows's 2× runner multipliers bill nothing. Raw runner-minutes, if it were ever private, go from roughly 29 to roughly 50 per run.
 
 Weighed against two real bugs shipped green, ~70s on some runs is a trade worth making. State it accurately rather than rounding it to zero — an over-favourable cost claim in a doc is the same failure mode as an over-favourable coverage claim.
+
+### Why the install skips scripts
+
+`npm ci --ignore-scripts`, then two scripts re-run by hand. Counter-intuitive for a job whose whole point is native addons, and it was the opposite until `better-sqlite3` moved to v13.
+
+**Why scripts had to go.** v13 declares no `install` script. npm sees the `binding.gyp` it ships and synthesises `node-gyp rebuild`, so with scripts enabled it compiles from source and ignores the prebuilt binary already in the tarball. Windows runners have no C++ toolchain, so Install fails outright with `gyp ERR! find VS`. v12 never hit this: its explicit `install: prebuild-install || node-gyp rebuild` overrode the implicit gyp and downloaded a binary.
+
+Nothing here needs a compiler any more — `better-sqlite3` and `node-pty` both ship prebuilds — so skipping scripts costs nothing and removes a whole class of failure.
+
+**Why `--ignore-scripts=false` was not the fix.** Whether scripts run by default depends on the npm major: npm 12 blocks package install scripts, npm 10 does not. The Windows runner is on Node 22, which bundles npm 10, so simply dropping the flag left the implicit gyp firing. The flag's presence or absence guarantees nothing; only `--ignore-scripts` does.
+
+**What has to be re-run, and why.** `--ignore-scripts` skips the root package's lifecycle scripts too, and two of ours are load-bearing:
+
+| script | what it does | symptom when skipped |
+|---|---|---|
+| `prepare` | `patch-package` | `qrcode-terminal` keeps legacy `\033` octal escapes → tsup build fails with *"Legacy octal escape sequences cannot be used in strict mode"* |
+| `postinstall` | `chmod 0755` node-pty's `spawn-helper` | `posix_spawnp failed` → every PTY test reports zero output, with no error naming the cause |
+
+The rest are safely skipped: `esbuild` resolves its binary from an optional platform package, `protobufjs`'s postinstall only prints version warnings.
+
+**A note on the symptom.** A native addon failing this way does not throw cleanly — vitest reports `Worker exited unexpectedly` with 0 test failures and N unhandled errors, because the worker process dies rather than raising. If you see that shape, suspect a native binary before suspecting test logic. It is the same signature as the Windows-on-Node-24 crash described below.
 
 ### Node version, and why the two platforms differ
 
@@ -137,7 +160,9 @@ The documented threshold was five clean runs per platform. Both have reached it,
 
 `main` **is** protected — by a ruleset (`main protection`, id `17561930`), not by classic branch protection, which is why `GET /repos/:owner/:repo/branches/main/protection` answers `404 Branch not protected` and should not be trusted here. The ruleset requires a pull request (0 approvals), enforces linear history, forbids force-push and deletion, and requires these checks with `strict: true`:
 
-`Gate` · `Setup` · `Lint` · `Test (Node 20)` · `Test (Node 22)` · `Test (Node 24)`
+`Gate` · `Setup` · `Lint` · `Test (Node 22)` · `Test (Node 24)`
+
+(`Test (Node 20)` was in this list until Node 20 was dropped. Removing a matrix leg while its context is still required is the exact failure this section warns about — the ruleset had to be edited in the same change.)
 
 `Build` was added on 2026-08-01 and is producible on `main`, so it is safe.
 
