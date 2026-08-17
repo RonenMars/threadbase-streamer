@@ -208,23 +208,36 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      # Plain `npm ci` — no --ignore-scripts=false. Every native module we use
-      # now ships prebuilt binaries in its tarball, so nothing here needs a
-      # compiler, and forcing install scripts on actively breaks better-sqlite3
-      # v13: it has no `install` script of its own, so npm synthesises
-      # `node-gyp rebuild` from its binding.gyp and compiles from source instead
-      # of using the prebuild it already shipped. That needs Visual Studio on
-      # Windows, which this runner does not have. (v12 got away with it because
-      # its explicit `prebuild-install || node-gyp rebuild` overrode the
-      # implicit gyp and downloaded a binary.)
+      # --ignore-scripts, then re-run by hand the two scripts that actually
+      # matter. Not belt-and-braces: better-sqlite3 v13 declares no `install`
+      # script, so npm synthesises `node-gyp rebuild` from its binding.gyp and
+      # compiles from source rather than using the prebuild already in the
+      # tarball. That needs Visual Studio, which this runner does not have, so
+      # any run with scripts enabled fails here. (v12 survived because its
+      # explicit `prebuild-install || node-gyp rebuild` overrode the implicit
+      # gyp and downloaded a binary instead.)
+      #
+      # Nothing else needs a compiler — node-pty ships prebuilds too — and the
+      # remaining dependency scripts are skippable: esbuild resolves its binary
+      # from an optional platform package, and protobufjs's postinstall only
+      # prints version warnings.
       - name: Install
         if: needs.gate.outputs.skip != 'true'
-        run: npm ci
+        run: npm ci --ignore-scripts
         shell: bash
 
-      # node-pty's postinstall is what marks spawn-helper executable, and it no
-      # longer runs. Without the bit, posix_spawnp fails and every PTY test dies
-      # with no useful error. POSIX only — Windows uses conpty and has no
+      # --ignore-scripts also skips our own `prepare`, which is what runs
+      # patch-package. Without it qrcode-terminal keeps its legacy \033 octal
+      # escapes and the tsup build dies with "Legacy octal escape sequences
+      # cannot be used in strict mode".
+      - name: Apply patches
+        if: needs.gate.outputs.skip != 'true'
+        run: npx patch-package
+        shell: bash
+
+      # Likewise our own `postinstall`, which marks node-pty's spawn-helper
+      # executable. Without the bit, posix_spawnp fails and every PTY test dies
+      # with no useful error. POSIX only — Windows uses conpty and ships no
       # spawn-helper.
       - name: Mark node-pty spawn-helper executable
         if: needs.gate.outputs.skip != 'true' && runner.os != 'Windows'
