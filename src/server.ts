@@ -408,6 +408,10 @@ export class StreamerServer {
   // Consecutive grace-timer defers for a still-`running` session (see
   // GRACE_MAX_DEFERS). Reset when a subscriber reconnects or the PTY settles.
   private ptyGraceDeferCounts = new Map<string, number>();
+  // Session ids that should be putOnHold at the next waiting_input/idle.
+  // Same lifetime as ptyGraceTimers: in-memory, dropped on close/restart.
+  // Last writer wins against the grace timer — never both armed.
+  private holdWhenIdle = new Set<string>();
   // Map of sessionId → set of subscribed WS clients
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
   // sessionId → wall-clock ms of the last PTY chunk. Written from onOutput for
@@ -673,6 +677,7 @@ export class StreamerServer {
         ptyAttachedIds: () => this.ptyAttachedIds(),
         cancelPendingQuestion: (sessionId) => this.cancelPendingQuestion(sessionId),
         rememberSelfPtyEnded: (conversationId) => this.rememberSelfPtyEnded(conversationId),
+        maybeFireHoldWhenIdle: (session) => this.maybeFireHoldWhenIdle(session),
       }),
     );
 
@@ -850,6 +855,7 @@ export class StreamerServer {
       currentWarmupState: () => this.currentWarmupState(),
       addSessionSubscriber: (sessionId, ws) => this.addSessionSubscriber(sessionId, ws),
       startGraceTimer: (sessionId, delayMs) => this.startGraceTimer(sessionId, delayMs),
+      armHoldWhenIdle: (sessionId) => this.armHoldWhenIdle(sessionId),
       handleSessionsCount: (res) => this.handleSessionsCount(res),
       applyLiveSessionSetting: (id, req, res, setting) =>
         this.applyLiveSessionSetting(id, req, res, setting),
@@ -1011,6 +1017,13 @@ export class StreamerServer {
       this.ptyGraceTimers.delete(sessionId);
     }
     this.ptyGraceDeferCounts.delete(sessionId);
+    if (this.holdWhenIdle.delete(sessionId)) {
+      this.log.info(
+        `[hold-when-idle] cancelled ${sessionId} (subscribe)`,
+        { sessionId, event: "pty.hold_when_idle_cancel", reason: "subscribe" },
+        "pino",
+      );
+    }
   }
 
   /**
@@ -1146,6 +1159,8 @@ export class StreamerServer {
   }
 
   private startGraceTimer(sessionId: string, delayMs: number): void {
+    // Last writer wins: a bare hold_session clears a waiting_input latch.
+    this.holdWhenIdle.delete(sessionId);
     const existing = this.ptyGraceTimers.get(sessionId);
     if (existing) clearTimeout(existing);
 
@@ -1197,6 +1212,69 @@ export class StreamerServer {
     }, delayMs);
 
     this.ptyGraceTimers.set(sessionId, timer);
+  }
+
+  private clearGrace(sessionId: string): void {
+    const existing = this.ptyGraceTimers.get(sessionId);
+    if (existing) {
+      clearTimeout(existing);
+      this.ptyGraceTimers.delete(sessionId);
+    }
+    this.ptyGraceDeferCounts.delete(sessionId);
+  }
+
+  /**
+   * Arm the in-app "Kill on idle" latch: hold now if already settled, otherwise
+   * on the next running → waiting_input (or idle). No grace delay, no defer cap.
+   * A subscribed leaving socket must not block an immediate hold.
+   */
+  private armHoldWhenIdle(sessionId: string): void {
+    if (!this.ptyManager.hasSession(sessionId)) return;
+    this.clearGrace(sessionId);
+    const status =
+      this.ptyManager.getSession(sessionId)?.status ??
+      this.sessionStore.getManaged(sessionId)?.status;
+    if (status === "waiting_input" || status === "idle") {
+      this.holdWhenIdle.delete(sessionId);
+      this.ptyManager.putOnHold(sessionId);
+      this.forgetIfEmptyUnused(sessionId);
+      return;
+    }
+    this.holdWhenIdle.add(sessionId);
+    this.log.info(
+      `[hold-when-idle] armed ${sessionId}`,
+      { sessionId, event: "pty.hold_when_idle_armed" },
+      "pino",
+    );
+  }
+
+  /**
+   * Fire the Kill-on-idle latch from the shared onStatusChange funnel.
+   * Delete first so the ensuing idle transition cannot re-enter.
+   */
+  private maybeFireHoldWhenIdle(session: { id: string; status: string }): void {
+    if (session.status !== "waiting_input" && session.status !== "idle") return;
+    if (!this.holdWhenIdle.has(session.id)) return;
+    this.holdWhenIdle.delete(session.id);
+    if (this.hasSessionSubscriber(session.id)) {
+      this.log.info(
+        `[hold-when-idle] cancelled ${session.id} (subscriber)`,
+        { sessionId: session.id, event: "pty.hold_when_idle_cancel", reason: "subscriber" },
+        "pino",
+      );
+      return;
+    }
+    this.log.info(
+      `[hold-when-idle] holding ${session.id}`,
+      { sessionId: session.id, event: "pty.hold_when_idle_fire" },
+      "pino",
+    );
+    this.ptyManager.putOnHold(session.id);
+    this.forgetIfEmptyUnused(session.id);
+  }
+
+  private forgetIfEmptyUnused(sessionId: string): void {
+    this.sessionHandlers.forgetIfEmptyUnused(sessionId);
   }
 
   get port(): number {
@@ -1806,6 +1884,7 @@ export class StreamerServer {
   async close(): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
+    this.holdWhenIdle.clear();
     if (this.idleReaperTimer) {
       clearInterval(this.idleReaperTimer);
       this.idleReaperTimer = null;
