@@ -97,7 +97,7 @@
     "@threadbase-sh/agent-types": "^1.0.0",
     "@threadbase-sh/scanner": "^0.13.0",
     "@xterm/headless": "^6.0.0",
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",
     "date-fns": "^4.4.0",
