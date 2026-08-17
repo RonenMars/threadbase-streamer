@@ -32,13 +32,13 @@ jobs:
       should_release: ${{ steps.precheck.outputs.should_release }}
       next_version: ${{ steps.precheck.outputs.next_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
           submodules: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
 
@@ -78,11 +78,11 @@ jobs:
             target: win32-x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
 
@@ -111,7 +111,7 @@ jobs:
       - name: Pack platform tarball
         run: node scripts/pack-platform.mjs --out release-artifacts
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: tarball-${{ matrix.target }}
           path: release-artifacts/threadbase-streamer-*.tgz
@@ -142,13 +142,13 @@ jobs:
       # Also enables automatic provenance attestation on the published package.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
           submodules: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
@@ -160,7 +160,7 @@ jobs:
         run: npm ci
 
       - name: Download all platform tarballs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: release-artifacts
           pattern: tarball-*

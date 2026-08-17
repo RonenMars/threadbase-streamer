@@ -37,12 +37,12 @@ jobs:
     name: Bump @threadbase-sh/scanner
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Use the PAT so the resulting PR triggers CI and can auto-merge.
           token: ${{ secrets.SCANNER_VER_BUMP_PAT || github.token }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
