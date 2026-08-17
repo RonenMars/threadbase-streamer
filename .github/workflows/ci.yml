@@ -208,9 +208,27 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
+      # Plain `npm ci` — no --ignore-scripts=false. Every native module we use
+      # now ships prebuilt binaries in its tarball, so nothing here needs a
+      # compiler, and forcing install scripts on actively breaks better-sqlite3
+      # v13: it has no `install` script of its own, so npm synthesises
+      # `node-gyp rebuild` from its binding.gyp and compiles from source instead
+      # of using the prebuild it already shipped. That needs Visual Studio on
+      # Windows, which this runner does not have. (v12 got away with it because
+      # its explicit `prebuild-install || node-gyp rebuild` overrode the
+      # implicit gyp and downloaded a binary.)
       - name: Install
         if: needs.gate.outputs.skip != 'true'
-        run: npm ci --ignore-scripts=false
+        run: npm ci
+        shell: bash
+
+      # node-pty's postinstall is what marks spawn-helper executable, and it no
+      # longer runs. Without the bit, posix_spawnp fails and every PTY test dies
+      # with no useful error. POSIX only — Windows uses conpty and has no
+      # spawn-helper.
+      - name: Mark node-pty spawn-helper executable
+        if: needs.gate.outputs.skip != 'true' && runner.os != 'Windows'
+        run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
         shell: bash
 
       # The FULL suite, not a subset. This used to run a hand-curated allowlist
