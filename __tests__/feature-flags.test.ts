@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "fs";
 import { join, sep } from "path";
 import {
   describeFeatureFlags,
+  FEATURE_FLAG_IDS,
   FEATURE_FLAG_LIST,
   FEATURE_FLAGS,
   type FeatureFlagValues,
@@ -19,10 +20,11 @@ const FLAG = FEATURE_FLAG_LIST[0];
 
 describe("feature flags registry", () => {
   it("declares unique ids and env vars", () => {
-    const ids = FEATURE_FLAG_LIST.map((f) => f.id);
+    const ids = FEATURE_FLAG_IDS;
     const envs = FEATURE_FLAG_LIST.map((f) => f.env);
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(envs).size).toBe(envs.length);
+    expect(ids).toEqual(FEATURE_FLAG_LIST.map((f) => f.id));
   });
 
   it("names every env var THREADBASE_FEATURE_*", () => {
@@ -82,6 +84,15 @@ describe("validateFeatureFlagValues", () => {
     });
   });
 
+  it("does not treat env var names or snake_case as yaml keys", () => {
+    expect(
+      validateFeatureFlagValues({
+        THREADBASE_FEATURE_PTY_HOST: true,
+        pty_host: true,
+      }),
+    ).toEqual({});
+  });
+
   it("drops an ill-typed value rather than coercing it", () => {
     // "true" as a string means the writer misunderstood the format. Guessing at
     // intent is how a flag silently ends up on.
@@ -115,6 +126,8 @@ describe("parseFeatureFlagArgs", () => {
     expect(result.values).toEqual({});
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("bogus");
+    expect(result.errors[0]).toContain("FEATURE_FLAGS keys");
+    for (const id of FEATURE_FLAG_IDS) expect(result.errors[0]).toContain(id);
   });
 
   it("returns a legible error naming true/false for a non-boolean value", () => {

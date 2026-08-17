@@ -121,15 +121,25 @@ export const FEATURE_FLAGS = {
 export type FeatureFlagId = keyof typeof FEATURE_FLAGS;
 
 /**
+ * The yaml / `--feature` ids, in registry order.
+ *
+ * These are the `FEATURE_FLAGS` object keys — not the `THREADBASE_FEATURE_*`
+ * env names. `feature_flags: {"ptyHost":true}` is valid;
+ * `{"THREADBASE_FEATURE_PTY_HOST":true}` is dropped as unknown.
+ */
+export const FEATURE_FLAG_IDS = Object.keys(FEATURE_FLAGS) as FeatureFlagId[];
+
+/**
  * Ordered list for iteration and the HTTP registry.
  *
  * The wire shape stays an array of `{ id, description, default, env }` so a
  * keyed in-process registry is not a breaking GET /api/config/feature-flags
- * change.
+ * change. Each `id` is the matching `FEATURE_FLAGS` key.
  */
-export const FEATURE_FLAG_LIST: readonly FeatureFlagDefinition[] = (
-  Object.keys(FEATURE_FLAGS) as FeatureFlagId[]
-).map((id) => ({ id, ...FEATURE_FLAGS[id] }));
+export const FEATURE_FLAG_LIST: readonly FeatureFlagDefinition[] = FEATURE_FLAG_IDS.map((id) => ({
+  id,
+  ...FEATURE_FLAGS[id],
+}));
 
 export function isFeatureFlagId(id: string): id is FeatureFlagId {
   return Object.hasOwn(FEATURE_FLAGS, id);
@@ -196,10 +206,12 @@ export function validateFeatureFlagValues(raw: unknown): FeatureFlagValues {
   }
   if (dropped.length > 0) {
     getLogger("feature-flags").warn(
-      `Ignoring unknown or non-boolean feature flags: ${dropped.join(", ")}`,
+      `Ignoring unknown or non-boolean feature flags: ${dropped.join(", ")}. ` +
+        `Known ids (FEATURE_FLAGS keys, not env names): ${FEATURE_FLAG_IDS.join(", ")}`,
       {
         event: "config.feature_flags_dropped",
         dropped,
+        known: FEATURE_FLAG_IDS,
       },
     );
   }
@@ -238,7 +250,7 @@ export function parseFeatureFlagArgs(entries: string[]): {
     const def = findFeatureFlag(id);
     if (!def) {
       errors.push(
-        `Unknown feature flag "${id}". Known flags: ${FEATURE_FLAG_LIST.map((f) => f.id).join(", ")}`,
+        `Unknown feature flag "${id}". Known flags (FEATURE_FLAGS keys, not env names): ${FEATURE_FLAG_IDS.join(", ")}`,
       );
       continue;
     }

@@ -287,6 +287,9 @@ export function setClaudeExtraArgs(text: string | undefined): void {
  *
  *     feature_flags: {"codexSystemPrompt":true}
  *
+ * Keys must match `FEATURE_FLAGS` object keys (`ptyHost`), not env var names
+ * (`THREADBASE_FEATURE_PTY_HOST`). Unknown keys are dropped.
+ *
  * Read-only from this module's perspective: nothing writes this key, because
  * flags resolve at boot and there is no runtime-mutation endpoint. Add a
  * setFeatureFlags() alongside a PUT, if one is ever added.

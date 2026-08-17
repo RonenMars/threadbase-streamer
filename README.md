@@ -160,6 +160,14 @@ Three layers: **core engine** (`src/*.ts`) → **API layer** (`src/api/` + `src/
 
 More detail: [docs/how-it-works.md](docs/how-it-works.md) and [docs/architecture/](docs/architecture/README.md).
 
+## Feature flags
+
+Streamer experiments are the `FEATURE_FLAGS` object in `src/feature-flags.ts`, keyed by name (`ptyHost`, `liveActivityPush`, …). `--feature <id=bool>` and `feature_flags:` in `server.yaml` use **those same camelCase keys**. Env vars are a different spelling (`THREADBASE_FEATURE_PTY_HOST`) and outrank both.
+
+Unknown yaml keys (typos, snake_case, the env name) are dropped with a warning; they do not stop the boot. Flags resolve once at boot — a change needs a restart. List and provenance: `GET /api/config/feature-flags`.
+
+Operator detail: [docs/guides/feature-flags.md](docs/guides/feature-flags.md). Implementation: `CLAUDE.md` § Feature flags.
+
 ## REST API
 
 Full endpoint reference: [docs/api-reference.md](docs/api-reference.md).
