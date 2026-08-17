@@ -111,6 +111,7 @@ POST /api/pair/exchange          (existing endpoint, existing token consumption)
 
   msg1 = Noise IK message 1: e, es, s, ss  + psk(derived from pair token)
          payload: { v: 1, deviceName?, readOnly }
+                            ↑ optional   ↑ required — see below
 
   response: { ciphertext, nonce, ephemeralPublicKey,          ← unchanged, still sent
               publicUrl, machineName,                          ← unchanged
@@ -121,11 +122,18 @@ POST /api/pair/exchange          (existing endpoint, existing token consumption)
          payload: { v, deviceId, deviceToken, capabilities,
                     publicUrl, machineName, serverVersion,
                     e2eeRequired: true }
+                    publicUrl is string | null — see below
 ```
 
 The payloads are the authenticated product contract, not examples. On the E2EE path, device registration uses `deviceName` and `readOnly` from msg1 rather than the attacker-modifiable outer JSON. The initiator static public key is already authenticated by the Noise transcript and is not duplicated as a payload claim.
 
+**Why `deviceName` is optional and `readOnly` is not.** The two are different kinds of thing, and the asymmetry is the contract rather than an oversight. `deviceName` is cosmetic — a label in a device list — so an absent one costs a name, and the server records `null` and carries on. `readOnly` is a capability claim: it decides whether the device is registered with the full preset or the read-only one. A claim that was never made cannot be defaulted, because every possible default is wrong in a way nobody sees. Defaulting to `false` grants the wider preset off silence, which is precisely the substitution the authenticated payload exists to prevent — arrived at through a parser instead of an intermediary. Defaulting to `true` fails safe on capability but silently hands the user a read-only device they did not ask for, which surfaces later as a bug with no error anywhere. So an absent or non-boolean `readOnly` is a refusal: `E2EE_MALFORMED`, before the pair token is consumed, so the client can correct it and retry with the same QR. Absent `deviceName` is not an error; absent `readOnly` is.
+
+This paragraph exists because the shorthand above did not carry it. Three implementations were written against `{ v: 1, deviceName?, readOnly }` — two streamer test clients and tb-mobile's `PAIR_MESSAGE1_PAYLOAD` — and all three sent `{ v: 1 }`, reading the absent `?` as decoration rather than as the only mark of a required field. A fourth reader would have done the same. State the reason, not just the rule.
+
 Msg2 contains every pairing result a new client persists or presents as verified. It validates the complete shape, requires `e2eeRequired === true`, and uses these authenticated values rather than their compatibility copies in the outer response. Device registration is therefore mandatory for an E2EE success: if no `deviceId` and `deviceToken` can be produced, the server fails the pairing instead of returning a key-pinned result with no usable device. The implementation must preserve the single-use-token and no-orphan-row invariants while doing so.
+
+**`publicUrl` is `string | null`, and `null` is the ordinary case.** It is what the server believes its public address to be, which is nothing at all unless an operator set `--public-url`, `THREADBASE_PUBLIC_URL`, or `public_url:` in server.yaml. `src/server.ts` declares `private publicUrl: string | null = null`, and that value is passed into msg2 unchanged. A streamer paired over the LAN therefore sends `"publicUrl": null`, and that is the configuration the first real device test uses, so a client that requires a string here refuses every pairing it is most likely to meet. The key is **always present**: the payload is a typed object literal and `JSON.stringify` drops only `undefined`, never `null`. A client must accept `null` and reject the key being absent — the two are different failures, and collapsing them loses the one that means the server is not speaking this contract. `machineName` is a plain string in every case; `os.hostname()` has no null result.
 
 **There is no `rootKeyConfirm`, and there deliberately is not.**
 This flow originally listed one. Noise's handshake hash already commits to both static keys, both ephemerals, the PSK and the protocol name, and it is the AAD for the payload's own AEAD — so a payload that decrypts *is* proof that both sides derived the same keys from the same transcript.
@@ -510,6 +518,8 @@ New error:  426 { error, code: "E2EE_REQUIRED" }
 Nothing renamed, nothing removed, no field retyped, no WS event string changed, no new `SessionStatus` value. Every existing path, parameter, and event in `docs/compatibility/tb-mobile.md` keeps working unchanged for an unpinned device.
 
 Inside the Noise fields, msg1 authenticates `{ v, deviceName?, readOnly }`; msg2 authenticates `{ v, deviceId, deviceToken, capabilities, publicUrl, machineName, serverVersion, e2eeRequired }`. These are versioned payload contracts even though the outer request and response remain additive for old clients.
+
+Two of those fields are read wrongly if taken from the shorthand alone, and §2.4 gives the reasoning: `readOnly` is **required** — absent or non-boolean is `E2EE_MALFORMED`, because a capability claim that was never made cannot be defaulted in either direction — and `publicUrl` is **`string | null`** rather than a required string, always present but `null` on any server without a configured public address, which is every LAN pairing.
 
 ---
 
