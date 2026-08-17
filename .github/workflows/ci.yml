@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: gate
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
 
@@ -92,7 +92,7 @@ jobs:
       matrix:
         node-version: [24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
 
@@ -109,7 +109,7 @@ jobs:
     steps:
       # Checkout is unguarded and first: the local composite action below only
       # exists on disk after the repo is checked out.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
 
@@ -125,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [gate, setup]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
 
@@ -137,7 +137,7 @@ jobs:
           command: build
 
       - if: needs.gate.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist
           path: dist/
@@ -193,7 +193,7 @@ jobs:
           - os: windows-latest
             node: 22
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
 
@@ -204,7 +204,7 @@ jobs:
       # v22.23.1.
       - name: Set up Node
         if: needs.gate.outputs.skip != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
 
@@ -283,7 +283,7 @@ jobs:
       matrix:
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: false
 

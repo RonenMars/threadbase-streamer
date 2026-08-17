@@ -34,7 +34,7 @@ jobs:
     name: Bump vendor/menubar to latest release tag
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           # Use a PAT if provided so the resulting PR triggers CI; else fall
