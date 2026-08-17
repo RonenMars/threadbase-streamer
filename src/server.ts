@@ -78,7 +78,7 @@ import {
 import { type ExternalTailEntry, ExternalTailManager } from "./external-tails";
 import {
   describeFeatureFlags,
-  FEATURE_FLAGS,
+  FEATURE_FLAG_LIST,
   type FeatureFlagId,
   type FeatureFlagSource,
   nonDefaultFeatureFlags,
@@ -2187,7 +2187,7 @@ export class StreamerServer {
    * the absence of that field is the signal that this endpoint is read-only.
    */
   private getFeatureFlagsConfig(): {
-    registry: typeof FEATURE_FLAGS;
+    registry: typeof FEATURE_FLAG_LIST;
     values: ResolvedFeatureFlags;
     sources: Record<FeatureFlagId, FeatureFlagSource>;
   } {
@@ -2195,7 +2195,7 @@ export class StreamerServer {
     // question ("why is this on?") is answerable over HTTP instead of requiring
     // shell access to read the environment, the argv and server.yaml by hand.
     return {
-      registry: FEATURE_FLAGS,
+      registry: FEATURE_FLAG_LIST,
       values: this.featureFlags,
       sources: this.featureFlagSources,
     };

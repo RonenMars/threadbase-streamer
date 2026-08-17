@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "fs";
 import { join, sep } from "path";
 import {
   describeFeatureFlags,
+  FEATURE_FLAG_LIST,
   FEATURE_FLAGS,
   type FeatureFlagValues,
   findFeatureFlag,
@@ -14,18 +15,18 @@ import {
 
 // The flag under test. Reading it from the registry rather than hardcoding the
 // string keeps these tests honest if the first entry is ever renamed.
-const FLAG = FEATURE_FLAGS[0];
+const FLAG = FEATURE_FLAG_LIST[0];
 
 describe("feature flags registry", () => {
   it("declares unique ids and env vars", () => {
-    const ids = FEATURE_FLAGS.map((f) => f.id);
-    const envs = FEATURE_FLAGS.map((f) => f.env);
+    const ids = FEATURE_FLAG_LIST.map((f) => f.id);
+    const envs = FEATURE_FLAG_LIST.map((f) => f.env);
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(envs).size).toBe(envs.length);
   });
 
   it("names every env var THREADBASE_FEATURE_*", () => {
-    for (const f of FEATURE_FLAGS) {
+    for (const f of FEATURE_FLAG_LIST) {
       expect(f.env).toMatch(/^THREADBASE_FEATURE_[A-Z0-9_]+$/);
     }
   });
@@ -33,23 +34,21 @@ describe("feature flags registry", () => {
   // Pinned literally: this name is a public contract (docs, env.example, and
   // any deployment that already exports it), so a rename must fail loudly here.
   it("keeps codexSystemPrompt's env var name stable", () => {
-    expect(findFeatureFlag("codexSystemPrompt")?.env).toBe(
-      "THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT",
-    );
+    expect(FEATURE_FLAGS.codexSystemPrompt.env).toBe("THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT");
   });
 
   it("keeps sessionRehydration's env var name stable, and its default ON", () => {
-    const flag = findFeatureFlag("sessionRehydration");
-    expect(flag?.env).toBe("THREADBASE_FEATURE_SESSION_REHYDRATION");
+    const flag = FEATURE_FLAGS.sessionRehydration;
+    expect(flag.env).toBe("THREADBASE_FEATURE_SESSION_REHYDRATION");
     // Shipped on: it changes what GET /api/sessions contains, so it exists as a
     // kill switch, not as an opt-in.
-    expect(flag?.default).toBe(true);
+    expect(flag.default).toBe(true);
   });
 
   it("keeps ptyHost's env var name stable, and its default OFF", () => {
-    const flag = findFeatureFlag("ptyHost");
-    expect(flag?.env).toBe("THREADBASE_FEATURE_PTY_HOST");
-    expect(flag?.default).toBe(false);
+    const flag = FEATURE_FLAGS.ptyHost;
+    expect(flag.env).toBe("THREADBASE_FEATURE_PTY_HOST");
+    expect(flag.default).toBe(false);
   });
 
   it("finds a known flag and rejects an unknown one", () => {
@@ -182,52 +181,49 @@ describe("resolveFeatureFlags precedence", () => {
   // A default-ON flag exercises the chain in the opposite direction from FLAG,
   // where every rung has to be able to turn something OFF.
   it("resolves sessionRehydration through the whole chain, in both directions", () => {
-    const on = findFeatureFlag("sessionRehydration");
-    if (!on) throw new Error("sessionRehydration missing from the registry");
-
-    expect(resolveFeatureFlags({ env: NO_ENV }).values[on.id]).toBe(true);
-    expect(resolveFeatureFlags({ yaml: { [on.id]: false }, env: NO_ENV }).values[on.id]).toBe(
-      false,
-    );
+    const on = FEATURE_FLAGS.sessionRehydration;
+    expect(resolveFeatureFlags({ env: NO_ENV }).values.sessionRehydration).toBe(true);
     expect(
-      resolveFeatureFlags({ yaml: { [on.id]: true }, cli: { [on.id]: false }, env: NO_ENV }).values[
-        on.id
-      ],
+      resolveFeatureFlags({ yaml: { sessionRehydration: false }, env: NO_ENV }).values
+        .sessionRehydration,
     ).toBe(false);
     expect(
       resolveFeatureFlags({
-        yaml: { [on.id]: true },
-        cli: { [on.id]: true },
+        yaml: { sessionRehydration: true },
+        cli: { sessionRehydration: false },
+        env: NO_ENV,
+      }).values.sessionRehydration,
+    ).toBe(false);
+    expect(
+      resolveFeatureFlags({
+        yaml: { sessionRehydration: true },
+        cli: { sessionRehydration: true },
         env: { [on.env]: "0" } as NodeJS.ProcessEnv,
-      }).values[on.id],
+      }).values.sessionRehydration,
     ).toBe(false);
   });
 
   it("resolves ptyHost through the whole chain, in both directions", () => {
-    const off = findFeatureFlag("ptyHost");
-    if (!off) throw new Error("ptyHost missing from the registry");
-
-    expect(resolveFeatureFlags({ env: NO_ENV }).values[off.id]).toBe(false);
-    expect(resolveFeatureFlags({ yaml: { [off.id]: true }, env: NO_ENV }).values[off.id]).toBe(
-      true,
-    );
+    const off = FEATURE_FLAGS.ptyHost;
+    expect(resolveFeatureFlags({ env: NO_ENV }).values.ptyHost).toBe(false);
+    expect(resolveFeatureFlags({ yaml: { ptyHost: true }, env: NO_ENV }).values.ptyHost).toBe(true);
     expect(
-      resolveFeatureFlags({ yaml: { [off.id]: false }, cli: { [off.id]: true }, env: NO_ENV })
-        .values[off.id],
+      resolveFeatureFlags({ yaml: { ptyHost: false }, cli: { ptyHost: true }, env: NO_ENV }).values
+        .ptyHost,
     ).toBe(true);
     expect(
       resolveFeatureFlags({
-        yaml: { [off.id]: true },
-        cli: { [off.id]: true },
+        yaml: { ptyHost: true },
+        cli: { ptyHost: true },
         env: { [off.env]: "0" } as NodeJS.ProcessEnv,
-      }).values[off.id],
+      }).values.ptyHost,
     ).toBe(false);
   });
 
   it("returns a total map — every registry id present", () => {
     const { values } = resolveFeatureFlags({ env: NO_ENV });
-    expect(Object.keys(values).sort()).toEqual(FEATURE_FLAGS.map((f) => f.id).sort());
-    for (const f of FEATURE_FLAGS) {
+    expect(Object.keys(values).sort()).toEqual(FEATURE_FLAG_LIST.map((f) => f.id).sort());
+    for (const f of FEATURE_FLAG_LIST) {
       expect(typeof values[f.id]).toBe("boolean");
     }
   });
@@ -243,7 +239,7 @@ describe("resolveFeatureFlags precedence", () => {
   });
 
   it("works with no arguments at all", () => {
-    expect(Object.keys(resolveFeatureFlags().values)).toHaveLength(FEATURE_FLAGS.length);
+    expect(Object.keys(resolveFeatureFlags().values)).toHaveLength(FEATURE_FLAG_LIST.length);
   });
 });
 
@@ -252,9 +248,10 @@ describe("resolveFeatureFlags provenance", () => {
 
   it("reports every rung by name", () => {
     // One flag per rung, so a mix-up between them cannot pass by coincidence.
+    const ptyHost = FEATURE_FLAGS.ptyHost;
     const { sources } = resolveFeatureFlags({
       override: { codexSystemPrompt: true },
-      env: { [findFeatureFlag("ptyHost")!.env]: "1" } as NodeJS.ProcessEnv,
+      env: { [ptyHost.env]: "1" } as NodeJS.ProcessEnv,
       cli: { liveActivityPush: true },
       yaml: { sessionRehydration: false },
     });
@@ -266,7 +263,7 @@ describe("resolveFeatureFlags provenance", () => {
 
   it("says default when nothing spoke", () => {
     const { sources } = resolveFeatureFlags({ env: NO_ENV });
-    for (const f of FEATURE_FLAGS) expect(sources[f.id]).toBe("default");
+    for (const f of FEATURE_FLAG_LIST) expect(sources[f.id]).toBe("default");
   });
 
   // `false` is a real answer, not silence. If a rung's false were treated as
@@ -283,7 +280,7 @@ describe("resolveFeatureFlags provenance", () => {
   });
 
   it("lets the legacy override outrank env, the highest real source", () => {
-    const codex = findFeatureFlag("codexSystemPrompt")!;
+    const codex = FEATURE_FLAGS.codexSystemPrompt;
     const { values, sources } = resolveFeatureFlags({
       override: { codexSystemPrompt: false },
       env: { [codex.env]: "1" } as NodeJS.ProcessEnv,
@@ -294,7 +291,7 @@ describe("resolveFeatureFlags provenance", () => {
 
   it("returns a total sources map", () => {
     const { sources } = resolveFeatureFlags({ env: NO_ENV });
-    expect(Object.keys(sources).sort()).toEqual(FEATURE_FLAGS.map((f) => f.id).sort());
+    expect(Object.keys(sources).sort()).toEqual(FEATURE_FLAG_LIST.map((f) => f.id).sort());
   });
 });
 
@@ -313,7 +310,7 @@ describe("describeFeatureFlags", () => {
     expect(nonDefaultFeatureFlags(resolution.values)).toContain("sessionRehydration");
     expect(line).toContain("sessionRehydration=false(yaml)");
 
-    for (const f of FEATURE_FLAGS) expect(line).toContain(`${f.id}=`);
+    for (const f of FEATURE_FLAG_LIST) expect(line).toContain(`${f.id}=`);
   });
 });
 
@@ -359,7 +356,7 @@ describe("every registry flag is actually read", () => {
       .map((f) => readFileSync(f, "utf-8"))
       .join("\n");
 
-    const unread = FEATURE_FLAGS.filter((f) => !haystack.includes(f.id)).map((f) => f.id);
+    const unread = FEATURE_FLAG_LIST.filter((f) => !haystack.includes(f.id)).map((f) => f.id);
     expect(unread).toEqual([]);
   });
 });
