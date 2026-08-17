@@ -69,12 +69,11 @@ describe("describeE2eeCapability", () => {
 
 describe("the e2ee feature flag", () => {
   it("is registered, off by default, and carries an env override", () => {
-    const def = FEATURE_FLAGS.find((f) => f.id === "e2ee");
-    expect(def).toBeDefined();
+    const def = FEATURE_FLAGS.e2ee;
     // Off by default is GATE 3: tb-mobile is released and cannot be
     // force-updated, so encryption is negotiated per device and never forced.
-    expect(def?.default).toBe(false);
-    expect(def?.env).toBe("THREADBASE_FEATURE_E2EE");
+    expect(def.default).toBe(false);
+    expect(def.env).toBe("THREADBASE_FEATURE_E2EE");
   });
 
   it("resolves off with no configuration at all", () => {

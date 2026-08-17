@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { findFeatureFlag } from "../src/feature-flags";
+import { FEATURE_FLAGS } from "../src/feature-flags";
 import { StreamerServer } from "../src/server";
 
 const h = vi.hoisted(() => ({
@@ -82,9 +82,9 @@ afterEach(async () => {
 
 describe("liveActivityPush feature flag", () => {
   it("keeps its env var name stable, and its default OFF", () => {
-    const flag = findFeatureFlag("liveActivityPush");
-    expect(flag?.env).toBe("THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH");
-    expect(flag?.default).toBe(false);
+    const flag = FEATURE_FLAGS.liveActivityPush;
+    expect(flag.env).toBe("THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH");
+    expect(flag.default).toBe(false);
   });
 
   // The positive control. Without it, the assertion below passes just as

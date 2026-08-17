@@ -4,6 +4,7 @@
 |---|---|
 | Common issues, deploy/runtime problems | [troubleshooting.md](troubleshooting.md) |
 | How to use auto-update | [guides/auto-update.md](guides/auto-update.md) |
+| Server feature flags (`--feature`, `feature_flags:`, env) | [guides/feature-flags.md](guides/feature-flags.md) |
 | Exposing the streamer remotely (tunnels, proxies) | [guides/remote-access/](guides/remote-access/) |
 | Manual Windows lifecycle verification | [guides/lifecycle-windows-test.md](guides/lifecycle-windows-test.md) |
 | How the streamer was designed (per-feature design docs) | [architecture/](architecture/) |

@@ -16,14 +16,19 @@
 
 import { getLogger } from "./logger";
 
-export interface FeatureFlagDefinition {
-  /** Stable config/wire key. Used in server.yaml, on the CLI, and over HTTP. */
-  id: string;
+/** Spec for one flag in the keyed registry. The id is the object key, not a field. */
+export interface FeatureFlagSpec {
   /** Shipped to clients alongside the values so a UI can render it. */
   description: string;
   default: boolean;
   /** Full env var name. */
   env: string;
+}
+
+/** Wire shape: the keyed spec plus its id, for GET /api/config/feature-flags. */
+export interface FeatureFlagDefinition extends FeatureFlagSpec {
+  /** Stable config/wire key. Used in server.yaml, on the CLI, and over HTTP. */
+  id: FeatureFlagId;
 }
 
 /**
@@ -50,9 +55,17 @@ export interface FeatureFlagResolution {
   sources: Record<FeatureFlagId, FeatureFlagSource>;
 }
 
-export const FEATURE_FLAGS = [
-  {
-    id: "codexSystemPrompt",
+/**
+ * The registry, keyed by flag name.
+ *
+ * Prefer `FEATURE_FLAGS.ptyHost` over a string lookup. A typo is a compile
+ * error; `findFeatureFlag("…")` is only for untrusted yaml/CLI tokens.
+ *
+ * `as const` + `keyof` is what makes `flags.ptyHsot` a compile error instead of
+ * `undefined`. A TS enum would add a runtime object without a stronger type.
+ */
+export const FEATURE_FLAGS = {
+  codexSystemPrompt: {
     description:
       "Send the built system prompt to fresh Codex sessions. Off by default: Codex has no " +
       "--system-prompt flag, so the prompt goes in the positional [PROMPT] argument, which " +
@@ -60,8 +73,7 @@ export const FEATURE_FLAGS = [
     default: false,
     env: "THREADBASE_FEATURE_CODEX_SYSTEM_PROMPT",
   },
-  {
-    id: "sessionRehydration",
+  sessionRehydration: {
     description:
       "Seed the session list at boot with sessions a previous streamer run left behind, so a " +
       "restart leaves them one tap from resuming instead of silently gone. On by default, with " +
@@ -69,8 +81,7 @@ export const FEATURE_FLAGS = [
     default: true,
     env: "THREADBASE_FEATURE_SESSION_REHYDRATION",
   },
-  {
-    id: "liveActivityPush",
+  liveActivityPush: {
     description:
       "Drive iOS Live Activity surfaces for running sessions. Off by default: the streamer half " +
       "needs an APNs p8 and a registered push-to-start token, and without both, mobile falls back " +
@@ -80,8 +91,7 @@ export const FEATURE_FLAGS = [
     default: false,
     env: "THREADBASE_FEATURE_LIVE_ACTIVITY_PUSH",
   },
-  {
-    id: "e2ee",
+  e2ee: {
     description:
       "Application-layer encryption between a paired device and this server, independent of TLS, " +
       "so a tunnel or a LAN observer on the path carries ciphertext. Off by default: it is " +
@@ -90,15 +100,14 @@ export const FEATURE_FLAGS = [
     default: false,
     env: "THREADBASE_FEATURE_E2EE",
   },
-  {
-    id: "ptyHost",
+  ptyHost: {
     description:
       "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +
       "restarting the agents. Off by default until cross-platform behavior is qualified.",
     default: false,
     env: "THREADBASE_FEATURE_PTY_HOST",
   },
-] as const satisfies readonly FeatureFlagDefinition[];
+} as const satisfies Record<string, FeatureFlagSpec>;
 
 /**
  * The registry's ids as a union, derived rather than declared.
@@ -109,19 +118,46 @@ export const FEATURE_FLAGS = [
  * was meant to gate — the exact failure the "total map" contract exists to
  * prevent, reachable through the one door that contract left open.
  */
-export type FeatureFlagId = (typeof FEATURE_FLAGS)[number]["id"];
+export type FeatureFlagId = keyof typeof FEATURE_FLAGS;
 
 /**
- * Look a flag up by an unvalidated string.
+ * The yaml / `--feature` ids, in registry order.
  *
- * The return type is INFERRED, not annotated, so the definition it hands back
- * carries a literal `id`. That is what lets the two writers below turn an
- * arbitrary yaml/CLI key into a typed one — `out[def.id] = …` narrows where
- * `out[id] = …` cannot. Annotating this `FeatureFlagDefinition | undefined`
- * would widen `id` back to `string` and break both call sites.
+ * These are the `FEATURE_FLAGS` object keys — not the `THREADBASE_FEATURE_*`
+ * env names. `feature_flags: {"ptyHost":true}` is valid;
+ * `{"THREADBASE_FEATURE_PTY_HOST":true}` is dropped as unknown.
  */
-export function findFeatureFlag(id: string) {
-  return FEATURE_FLAGS.find((f) => f.id === id);
+export const FEATURE_FLAG_IDS = Object.keys(FEATURE_FLAGS) as FeatureFlagId[];
+
+/**
+ * Ordered list for iteration and the HTTP registry.
+ *
+ * The wire shape stays an array of `{ id, description, default, env }` so a
+ * keyed in-process registry is not a breaking GET /api/config/feature-flags
+ * change. Each `id` is the matching `FEATURE_FLAGS` key.
+ */
+export const FEATURE_FLAG_LIST: readonly FeatureFlagDefinition[] = FEATURE_FLAG_IDS.map((id) => ({
+  id,
+  ...FEATURE_FLAGS[id],
+}));
+
+export function isFeatureFlagId(id: string): id is FeatureFlagId {
+  return Object.hasOwn(FEATURE_FLAGS, id);
+}
+
+/** Typed lookup. The flag is always present; unknown names do not type-check. */
+export function getFeatureFlag<K extends FeatureFlagId>(id: K) {
+  return { id, ...FEATURE_FLAGS[id] };
+}
+
+/**
+ * Look a flag up by an unvalidated string (yaml keys, `--feature` tokens).
+ *
+ * In-process code should use `FEATURE_FLAGS.ptyHost` or `getFeatureFlag("ptyHost")`.
+ */
+export function findFeatureFlag(id: string): FeatureFlagDefinition | undefined {
+  if (!isFeatureFlagId(id)) return undefined;
+  return getFeatureFlag(id);
 }
 
 /**
@@ -170,10 +206,12 @@ export function validateFeatureFlagValues(raw: unknown): FeatureFlagValues {
   }
   if (dropped.length > 0) {
     getLogger("feature-flags").warn(
-      `Ignoring unknown or non-boolean feature flags: ${dropped.join(", ")}`,
+      `Ignoring unknown or non-boolean feature flags: ${dropped.join(", ")}. ` +
+        `Known ids (FEATURE_FLAGS keys, not env names): ${FEATURE_FLAG_IDS.join(", ")}`,
       {
         event: "config.feature_flags_dropped",
         dropped,
+        known: FEATURE_FLAG_IDS,
       },
     );
   }
@@ -212,7 +250,7 @@ export function parseFeatureFlagArgs(entries: string[]): {
     const def = findFeatureFlag(id);
     if (!def) {
       errors.push(
-        `Unknown feature flag "${id}". Known flags: ${FEATURE_FLAGS.map((f) => f.id).join(", ")}`,
+        `Unknown feature flag "${id}". Known flags (FEATURE_FLAGS keys, not env names): ${FEATURE_FLAG_IDS.join(", ")}`,
       );
       continue;
     }
@@ -256,7 +294,7 @@ export function resolveFeatureFlags(opts?: {
   const values = {} as ResolvedFeatureFlags;
   const sources = {} as Record<FeatureFlagId, FeatureFlagSource>;
 
-  for (const def of FEATURE_FLAGS) {
+  for (const def of FEATURE_FLAG_LIST) {
     // Written as an ordered list rather than a `??` chain because the chain
     // discards which rung won, and that is the answer to the only question
     // anyone asks of a surprising flag.
@@ -276,7 +314,7 @@ export function resolveFeatureFlags(opts?: {
 
 /** Registry ids whose resolved value differs from the registry default. */
 export function nonDefaultFeatureFlags(values: ResolvedFeatureFlags): FeatureFlagId[] {
-  return FEATURE_FLAGS.filter((f) => values[f.id] !== f.default).map((f) => f.id);
+  return FEATURE_FLAG_LIST.filter((f) => values[f.id] !== f.default).map((f) => f.id);
 }
 
 /**
@@ -290,7 +328,7 @@ export function nonDefaultFeatureFlags(values: ResolvedFeatureFlags): FeatureFla
  * answers "what was this process running with" instead of only ever hinting.
  */
 export function describeFeatureFlags(resolution: FeatureFlagResolution): string {
-  return FEATURE_FLAGS.map(
+  return FEATURE_FLAG_LIST.map(
     (f) => `${f.id}=${resolution.values[f.id]}(${resolution.sources[f.id]})`,
   ).join(" ");
 }

@@ -23,5 +23,5 @@
 | GET | `/api/profiles` | List scan profiles |
 | GET | `/api/config/claude-flags` | Allowlisted Claude CLI flags: `{registry, values, extraArgs, persisted}` (admin) |
 | PUT | `/api/config/claude-flags` | Update those flags; 403 while `--local-no-auth` is active (admin) |
-| GET | `/api/config/feature-flags` | Server feature flags: `{registry, values}`. Read-only — flags resolve at boot (admin) |
+| GET | `/api/config/feature-flags` | Server feature flags: `{registry, values, sources}`. `registry[].id` matches `FEATURE_FLAGS` keys (not env names). Read-only — flags resolve at boot (admin) |
 | POST | `/api/pair/start` / `/api/pair/exchange` | Mobile pairing handshake |
