@@ -297,6 +297,7 @@ export type LiveSessionWiringDeps = {
   ptyAttachedIds: () => Set<string>;
   cancelPendingQuestion: (sessionId: string) => void;
   rememberSelfPtyEnded: (conversationId: string) => void;
+  maybeFireHoldWhenIdle: (session: { id: string; status: string }) => void;
 };
 
 /**
@@ -489,6 +490,11 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
       // merge that does not carry failureReason/failureCode, so a startup
       // handshake reading the store could not tell WHY a session went idle.
       deps.sessionStatusBus.emit(`status:${session.id}`, session.status, session);
+      // Kill-on-idle latch: hold at the next waiting_input/idle if a client
+      // armed `hold_session` with when:"waiting_input". Both runners (and the
+      // pty-host remote runner) funnel status here, so this is the one fire
+      // site. Optional so unit tests that stub LiveSessionWiringDeps stay valid.
+      deps.maybeFireHoldWhenIdle?.(session);
     },
   };
 }
@@ -538,6 +544,7 @@ export type ApiDepsWiring = {
   currentWarmupState: () => ServerWarmupState | null;
   addSessionSubscriber: (sessionId: string, ws: WebSocket) => void;
   startGraceTimer: (sessionId: string, delayMs: number) => void;
+  armHoldWhenIdle: (sessionId: string) => void;
   handleSessionsCount: (res: ServerResponse) => void;
   applyLiveSessionSetting: (
     sessionId: string,
@@ -746,7 +753,25 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             deny(msg.type, "session:control");
             return;
           }
-          deps.startGraceTimer(msg.sessionId, deps.ptyGracePeriodMs);
+          // Additive `when` on the existing frame. Omitted / "grace" is today's
+          // backgrounding path (ptyGracePeriodMs). "waiting_input" latches a
+          // hold at the end of the current turn. Anything else is ignored —
+          // do not fall through to grace, including for read-only (already
+          // returned above).
+          const when = msg.when;
+          if (when === undefined || when === "grace") {
+            deps.startGraceTimer(msg.sessionId, deps.ptyGracePeriodMs);
+            return;
+          }
+          if (when === "waiting_input") {
+            deps.armHoldWhenIdle(msg.sessionId);
+            return;
+          }
+          deps.log().warn(`[pty.hold_when_unknown] hold_session when=${String(when)}`, {
+            event: "pty.hold_when_unknown",
+            sessionId: msg.sessionId,
+            when,
+          });
         }
       } catch {
         // malformed JSON, ignore

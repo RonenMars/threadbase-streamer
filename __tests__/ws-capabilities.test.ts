@@ -24,6 +24,7 @@ import {
 
 type Deps = {
   startGraceTimer: ReturnType<typeof vi.fn>;
+  armHoldWhenIdle: ReturnType<typeof vi.fn>;
   addSessionSubscriber: ReturnType<typeof vi.fn>;
   warn: ReturnType<typeof vi.fn>;
   handleWsMessage: (ws: WebSocket, raw: unknown, principal: Principal | null) => void;
@@ -31,6 +32,7 @@ type Deps = {
 
 function buildDeps(): Deps {
   const startGraceTimer = vi.fn();
+  const armHoldWhenIdle = vi.fn();
   const addSessionSubscriber = vi.fn();
   const warn = vi.fn();
 
@@ -39,6 +41,7 @@ function buildDeps(): Deps {
   // test the wiring rather than the guard.
   const wiring = {
     startGraceTimer,
+    armHoldWhenIdle,
     addSessionSubscriber,
     ptyGracePeriodMs: 1000,
     wsToClientId: new Map(),
@@ -54,7 +57,7 @@ function buildDeps(): Deps {
   } as unknown as ApiDepsWiring;
 
   const { handleWsMessage } = createApiDeps(wiring);
-  return { startGraceTimer, addSessionSubscriber, warn, handleWsMessage };
+  return { startGraceTimer, armHoldWhenIdle, addSessionSubscriber, warn, handleWsMessage };
 }
 
 const fakeWs = { send: () => {} } as unknown as WebSocket;
@@ -118,6 +121,42 @@ describe("hold_session requires session:control", () => {
     const deps = buildDeps();
     send(deps, { type: "hold_session", sessionId: "s1" }, null);
     expect(deps.startGraceTimer).toHaveBeenCalledWith("s1", 1000);
+  });
+
+  it('arms the waiting_input latch instead of grace when when is "waiting_input"', () => {
+    const deps = buildDeps();
+    send(deps, { type: "hold_session", sessionId: "s1", when: "waiting_input" }, full);
+    expect(deps.armHoldWhenIdle).toHaveBeenCalledWith("s1");
+    expect(deps.startGraceTimer).not.toHaveBeenCalled();
+  });
+
+  it('treats when: "grace" as today\'s grace timer', () => {
+    const deps = buildDeps();
+    send(deps, { type: "hold_session", sessionId: "s1", when: "grace" }, full);
+    expect(deps.startGraceTimer).toHaveBeenCalledWith("s1", 1000);
+    expect(deps.armHoldWhenIdle).not.toHaveBeenCalled();
+  });
+
+  it("ignores an unknown when — no hold, no grace", () => {
+    const deps = buildDeps();
+    send(deps, { type: "hold_session", sessionId: "s1", when: "tomorrow" }, full);
+    expect(deps.startGraceTimer).not.toHaveBeenCalled();
+    expect(deps.armHoldWhenIdle).not.toHaveBeenCalled();
+    expect(deps.warn).toHaveBeenCalledWith(
+      expect.stringContaining("hold_when_unknown"),
+      expect.objectContaining({
+        event: "pty.hold_when_unknown",
+        sessionId: "s1",
+        when: "tomorrow",
+      }),
+    );
+  });
+
+  it("still denies a read-only device when when is waiting_input — no latch, no grace", () => {
+    const deps = buildDeps();
+    send(deps, { type: "hold_session", sessionId: "s1", when: "waiting_input" }, readOnly);
+    expect(deps.armHoldWhenIdle).not.toHaveBeenCalled();
+    expect(deps.startGraceTimer).not.toHaveBeenCalled();
   });
 });
 

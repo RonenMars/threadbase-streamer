@@ -86,7 +86,7 @@ Note: mobile treats `on_hold` and `idle` as the same status. The server currentl
 **WebSocket event types** — mobile registers listeners keyed on these strings:
 
 - Server → client: `session_list`, `session_update`, `terminal_output`, `conversation_event`, `ping`
-- Client → server: `{ type: "hold_session", sessionId }`
+- Client → server: `{ type: "hold_session", sessionId }` (additive optional `when`: omitted / `"grace"` arms today's `ptyGracePeriodMs` timer — this is what released apps send on backgrounding; `"waiting_input"` holds at the next `running → waiting_input`, or immediately if already settled; any other value is ignored). In-app “Kill on idle” must send `when: "waiting_input"` **then** navigate (unsubscribe). Do not unsubscribe first.
 
 `conversation_events` (`{ type, sessionId, lines: string[] }`) is an **additive** server→client event that batches all lines from one watcher read into a single message. The server still emits per-line `conversation_event` alongside it, so older clients that only know `conversation_event` are unaffected. Never stop emitting `conversation_event`.
 

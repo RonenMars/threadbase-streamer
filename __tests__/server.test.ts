@@ -14,6 +14,7 @@ import WebSocket from "ws";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
 import { FEATURE_FLAG_LIST } from "../src/feature-flags";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "../src/providers";
 import { PTYManager } from "../src/pty-manager";
 import { GRACE_MAX_DEFERS, IDLE_REAP_AFTER_MS, StreamerServer } from "../src/server";
 
@@ -2013,6 +2014,261 @@ describe("StreamerServer", () => {
         vi.restoreAllMocks();
         await srv.close();
       }
+    });
+  });
+
+  describe("hold_session when: waiting_input", () => {
+    const SID = "hold-when-idle-sess";
+
+    function liveSession(over: Record<string, unknown> = {}) {
+      return {
+        id: SID,
+        status: "waiting_input",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: null,
+        lastOutput: "",
+        provider: "claude-code",
+        ...over,
+      } as any;
+    }
+
+    function seedManaged(session: { id: string } & Record<string, unknown>): void {
+      (server as any).sessionStore.addManaged({ ...session });
+      (server as any).registryBoot.recordSessionSpawn(session);
+    }
+
+    function mockRunner(session: { id: string; status?: string }, runner: "claude" | "codex") {
+      const proto = runner === "codex" ? CodexPtyRunner.prototype : PTYManager.prototype;
+      vi.spyOn(proto, "hasSession").mockReturnValue(true);
+      vi.spyOn(proto, "getSession").mockImplementation(() => session as any);
+      vi.spyOn(proto, "getOutputLines").mockResolvedValue([]);
+      vi.spyOn(proto, "getInputHistory").mockReturnValue([]);
+      return vi.spyOn(proto, "putOnHold").mockImplementation(() => {
+        session.status = "idle";
+        (server as any).sessionStore.updateManaged(session.id, {
+          status: "idle",
+          completedAt: new Date(),
+        });
+      });
+    }
+
+    async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (!cond()) {
+        if (Date.now() > deadline) return;
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    }
+
+    async function openWs(): Promise<WebSocket> {
+      const ws = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`);
+      await new Promise<void>((r) => ws.on("open", () => r()));
+      return ws;
+    }
+
+    function runnerOnStatusChange(
+      provider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER,
+    ) {
+      const runners = (server as any).ptyManager.runners as Map<
+        string,
+        { onStatusChange?: (session: unknown) => void }
+      >;
+      return runners.get(provider)?.onStatusChange;
+    }
+
+    afterEach(() => {
+      (server as any).holdWhenIdle.clear();
+      vi.restoreAllMocks();
+    });
+
+    it("holds immediately when already waiting_input — no grace delay; empty unused is forgotten", async () => {
+      const session = liveSession({ id: SID, status: "waiting_input", promptCount: 0 });
+      seedManaged(session);
+      const holdSpy = mockRunner(session, "claude");
+      (server as any).sessionSubscribers.set(
+        SID,
+        new Set([{ readyState: 1, OPEN: 1 } as unknown as WebSocket]),
+      );
+
+      const ws = await openWs();
+      // Leave is explicit: a still-subscribed socket must not block this hold.
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
+      await waitFor(() => holdSpy.mock.calls.length > 0);
+
+      expect(holdSpy).toHaveBeenCalledWith(SID);
+      expect((server as any).ptyGraceTimers.has(SID)).toBe(false);
+      expect((server as any).holdWhenIdle.has(SID)).toBe(false);
+      expect((server as any).sessionStore.getManaged(SID)).toBeNull();
+      ws.close();
+    });
+
+    it("holds on the next running → waiting_input, not before", async () => {
+      const session = liveSession({ id: SID, status: "running", promptCount: 1 });
+      seedManaged(session);
+      const holdSpy = mockRunner(session, "claude");
+
+      const ws = await openWs();
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
+      await waitFor(() => (server as any).holdWhenIdle.has(SID));
+      expect(holdSpy).not.toHaveBeenCalled();
+
+      (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
+
+      expect(holdSpy).toHaveBeenCalledWith(SID);
+      expect((server as any).holdWhenIdle.has(SID)).toBe(false);
+      ws.close();
+    });
+
+    it("cancels the latch when subscribe_session arrives before waiting_input", async () => {
+      const session = liveSession({ id: SID, status: "running", promptCount: 1 });
+      seedManaged(session);
+      const holdSpy = mockRunner(session, "claude");
+
+      const ws = await openWs();
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
+      await waitFor(() => (server as any).holdWhenIdle.has(SID));
+
+      ws.send(JSON.stringify({ type: "subscribe_session", sessionId: SID }));
+      await waitFor(() => !(server as any).holdWhenIdle.has(SID));
+
+      (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect((server as any).sessionStore.getManaged(SID)).not.toBeNull();
+      ws.close();
+    });
+
+    it("cancels at the edge when a different OPEN subscriber is watching", async () => {
+      const session = liveSession({ id: SID, status: "running", promptCount: 1 });
+      seedManaged(session);
+      const holdSpy = mockRunner(session, "claude");
+
+      const ws = await openWs();
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
+      await waitFor(() => (server as any).holdWhenIdle.has(SID));
+      ws.close();
+      await waitFor(() => ((server as any).sessionSubscribers.get(SID)?.size ?? 0) === 0);
+
+      (server as any).sessionSubscribers.set(
+        SID,
+        new Set([{ readyState: 1, OPEN: 1 } as unknown as WebSocket]),
+      );
+      (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
+
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect((server as any).holdWhenIdle.has(SID)).toBe(false);
+      expect((server as any).sessionStore.getManaged(SID)).not.toBeNull();
+    });
+
+    it("clears the latch and arms grace when a bare hold_session follows", async () => {
+      const session = liveSession({ id: SID, status: "running", promptCount: 1 });
+      seedManaged(session);
+      mockRunner(session, "claude");
+
+      const ws = await openWs();
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
+      await waitFor(() => (server as any).holdWhenIdle.has(SID));
+
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
+      await waitFor(() => (server as any).ptyGraceTimers.has(SID));
+
+      expect((server as any).holdWhenIdle.has(SID)).toBe(false);
+      const t = (server as any).ptyGraceTimers.get(SID);
+      if (t) clearTimeout(t);
+      ws.close();
+    });
+
+    it("clears grace and arms the latch when when: waiting_input follows a bare hold_session", async () => {
+      const session = liveSession({ id: SID, status: "running", promptCount: 1 });
+      seedManaged(session);
+      mockRunner(session, "claude");
+
+      const ws = await openWs();
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
+      await waitFor(() => (server as any).ptyGraceTimers.has(SID));
+
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
+      await waitFor(() => (server as any).holdWhenIdle.has(SID));
+
+      expect((server as any).ptyGraceTimers.has(SID)).toBe(false);
+      ws.close();
+    });
+
+    it("ignores an unknown when — no hold, no grace", async () => {
+      const session = liveSession({ id: SID, status: "waiting_input" });
+      seedManaged(session);
+      const holdSpy = mockRunner(session, "claude");
+      const warn = vi.spyOn((server as any).log, "warn");
+
+      const ws = await openWs();
+      ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "soon" }));
+      await waitFor(() => warn.mock.calls.length > 0);
+
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect((server as any).ptyGraceTimers.has(SID)).toBe(false);
+      expect((server as any).holdWhenIdle.has(SID)).toBe(false);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("hold_when_unknown"),
+        expect.objectContaining({ event: "pty.hold_when_unknown", when: "soon" }),
+      );
+      ws.close();
+    });
+
+    it("is a no-op for an unknown session id", async () => {
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+      const ws = await openWs();
+      ws.send(
+        JSON.stringify({
+          type: "hold_session",
+          sessionId: "does-not-exist",
+          when: "waiting_input",
+        }),
+      );
+      await new Promise((r) => setTimeout(r, 50));
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect((server as any).holdWhenIdle.has("does-not-exist")).toBe(false);
+      expect((server as any).ptyGraceTimers.has("does-not-exist")).toBe(false);
+      ws.close();
+    });
+
+    it("does not hold the first boot waiting_input when the set is empty", () => {
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+      expect((server as any).holdWhenIdle.size).toBe(0);
+      (server as any).maybeFireHoldWhenIdle({ id: "boot-sess", status: "waiting_input" });
+      expect(holdSpy).not.toHaveBeenCalled();
+    });
+
+    it("fires through onStatusChange for both Claude and Codex runners", () => {
+      const fire = vi.spyOn(server as any, "maybeFireHoldWhenIdle");
+      const session = {
+        id: "funnel-sess",
+        status: "waiting_input",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: null,
+        lastOutput: "",
+      };
+
+      const claude = runnerOnStatusChange(CLAUDE_CODE_PROVIDER);
+      const codex = runnerOnStatusChange(CODEX_CLI_PROVIDER);
+      expect(claude).toEqual(expect.any(Function));
+      expect(codex).toEqual(expect.any(Function));
+
+      claude?.(session);
+      expect(fire).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "funnel-sess", status: "waiting_input" }),
+      );
+      fire.mockClear();
+      codex?.(session);
+      expect(fire).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "funnel-sess", status: "waiting_input" }),
+      );
     });
   });
 
