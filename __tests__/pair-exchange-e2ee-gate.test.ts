@@ -92,7 +92,12 @@ describe("the pair exchange refuses the handshake when the build denies the capa
       staticKeyPair: clientStatic,
       responderStaticPub: serverStaticPub,
       psk: pskFromPairToken(token),
-      payload: Buffer.from(JSON.stringify({ v: 1 }), "utf-8"),
+      // `readOnly` is not optional in message 1's payload — only `deviceName`
+      // is (design.md §2.4) — because the server registers the device from
+      // these authenticated values, and defaulting an absent one would grant
+      // the wider capability preset off a claim the device never made. This
+      // payload used to be `{ v: 1 }`, which no longer completes a handshake.
+      payload: Buffer.from(JSON.stringify({ v: 1, readOnly: false }), "utf-8"),
     });
     return message.toString("base64");
   }

@@ -1,7 +1,6 @@
 import "dotenv/config";
 import { stdin } from "node:process";
 import { Command } from "commander";
-import qrcode from "qrcode-terminal";
 import {
   loadAutoResumeOnBoot,
   loadDefaultPermissionMode,
@@ -33,11 +32,11 @@ import {
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
-import { serverIdentityPublicKey } from "../src/server-identity";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
 import { appendUpdateLog } from "../src/updater/update-log";
 import { getVersion } from "../src/version";
+import { printServerBanner, printUrlBanner } from "./pair-banner";
 import { registerProdCommands } from "./prod";
 
 const log = getLogger("cli");
@@ -757,90 +756,3 @@ program
 registerProdCommands(program);
 
 program.parse();
-
-function generateQr(payload: string): Promise<string> {
-  return new Promise((resolve) => {
-    qrcode.generate(payload, { small: true }, resolve);
-  });
-}
-
-function printUrlBanner({
-  url,
-  qr,
-  expiresAt,
-}: {
-  url: string;
-  qr?: string;
-  expiresAt?: number;
-}): string {
-  const contentLines = ["Threadbase Streamer — server address", "", url];
-  if (qr) {
-    contentLines.push("", ...qr.split("\n").filter((l) => l.length > 0));
-    if (expiresAt !== undefined) {
-      contentLines.push(
-        "",
-        `Scan to pair a mobile client (expires ${new Date(expiresAt).toLocaleTimeString()})`,
-      );
-    } else {
-      contentLines.push("", "Scan to pair a mobile client");
-    }
-  }
-
-  const width = Math.max(...contentLines.map((l) => l.length));
-  const pad = (l: string) => `║ ${l}${" ".repeat(width - l.length)} ║`;
-  const top = `╔${"═".repeat(width + 2)}╗`;
-  const bottom = `╚${"═".repeat(width + 2)}╝`;
-
-  return `\n${top}\n${contentLines.map(pad).join("\n")}\n${bottom}\n`;
-}
-
-async function printServerBanner({
-  port,
-  apiKey,
-  publicUrl,
-  includeQr,
-}: {
-  port: number;
-  apiKey: string;
-  publicUrl: string | null;
-  includeQr: boolean;
-}): Promise<void> {
-  const url = resolveServerUrl({ publicUrl, port });
-
-  if (!includeQr) {
-    log.info(printUrlBanner({ url }), undefined, "console");
-    return;
-  }
-
-  const res = await fetch(`http://localhost:${port}/api/pair/start`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: "{}",
-  });
-  if (!res.ok) {
-    throw new Error(`/api/pair/start returned ${res.status}`);
-  }
-  const { token, expiresAt, expiresInSeconds } = (await res.json()) as {
-    token: string;
-    expiresAt: number;
-    expiresInSeconds: number;
-  };
-
-  const expSeconds = Math.floor(expiresAt / 1000);
-  // `spk` is this server's identity public key (src/server-identity.ts): 43
-  // base64url characters, so URL-safe unencoded. `v` is the envelope version,
-  // per design §2.3. Neither is load-bearing yet — no handshake reads them —
-  // and a client must take capability from `GET /api/info`, never from `v`
-  // alone, because a QR relayed by an attacker is not an authenticated source
-  // for that question (design §6.3).
-  // Additive: parsePairUri on the client reads named parameters and ignores the
-  // rest, so an older app scanning this QR behaves exactly as it does today.
-  const payload =
-    `threadbase://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}` +
-    `&spk=${serverIdentityPublicKey()}&v=1`;
-  const qr = await generateQr(payload);
-
-  log.info(printUrlBanner({ url, qr, expiresAt }), undefined, "console");
-  log.info(`Pair URL: ${payload}`, undefined, "console");
-  log.info(`Expires in ${expiresInSeconds}s`, undefined, "console");
-}

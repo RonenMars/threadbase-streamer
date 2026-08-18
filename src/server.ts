@@ -70,6 +70,11 @@ import {
   writeMessage2,
 } from "./e2ee/noise";
 import {
+  type E2eePairRegistration,
+  encodeE2eeMsg2Payload,
+  parseE2eeMsg1Payload,
+} from "./e2ee/pair-payload";
+import {
   E2EE_EXCHANGE_VERSION,
   type E2eeExchangeRequest,
   type E2eeRequestError,
@@ -1984,6 +1989,7 @@ export class StreamerServer {
     // pairing dies with it. Same spine as the ordering above — the token is
     // spent when the exchange succeeds, not when it is attempted.
     let handshake: HandshakeResponderState | null = null;
+    let registration: E2eePairRegistration | null = null;
     if (e2eeRequest) {
       try {
         handshake = readMessage1({
@@ -2005,6 +2011,25 @@ export class StreamerServer {
           error: "E2EE handshake failed. Scan a fresh pairing code and try again.",
           code: "E2EE_HANDSHAKE_FAILED",
         });
+        return;
+      }
+
+      // The registration inputs, taken from inside the AEAD (design.md §2.4).
+      //
+      // Read here rather than after the token is spent, and the placement is
+      // the point: a payload this build cannot read must cost the client a
+      // retry, not their pair token. Same spine as the handshake above — the
+      // token is spent when the exchange succeeds, not when it is attempted.
+      //
+      // The error is surfaced with its code, unlike the handshake failure. It
+      // leaks nothing: reaching this line already proves the caller completed
+      // the handshake, so it is a real client with a shape disagreement, and
+      // telling it which is what lets it be fixed.
+      try {
+        registration = parseE2eeMsg1Payload(handshake.payload);
+      } catch (err) {
+        const e = err as E2eeRequestError;
+        json(res, 400, { error: e.message, code: e.code });
         return;
       }
     }
@@ -2060,13 +2085,30 @@ export class StreamerServer {
     // a client that understands deviceToken can use the narrower credential and
     // become individually revocable.
     //
-    // Best-effort: a registry failure must not break pairing, which would lock
-    // the user out of their own server. Losing the row costs revocability for
-    // that device, not access.
+    // Best-effort on the legacy path: a registry failure must not break pairing,
+    // which would lock the user out of their own server. Losing the row costs
+    // revocability for that device, not access. The E2EE path is the opposite
+    // and is handled just below.
+    //
+    // Where the inputs come from is the whole of GATE 4. `/api/pair/exchange` is
+    // public and unauthenticated, so an intermediary can rename a device or
+    // widen `readOnly` in the outer JSON on the way past; inside the AEAD it
+    // cannot. So a completed handshake means the authenticated payload decides,
+    // and the outer copies are not consulted at all.
+    //
+    // Written as an explicit branch rather than `registration?.deviceName ??
+    // body.deviceName`: the `??` would fall through to the outer name whenever
+    // the authenticated payload deliberately carried none, which is the same
+    // substitution wearing a nullish coalesce.
     let device: { deviceId: string; deviceToken: string; capabilities: string[] } | null = null;
     try {
-      const name = typeof body?.deviceName === "string" ? body.deviceName.slice(0, 100) : null;
-      const preset = body?.readOnly === true ? "read-only" : "full";
+      const name = registration
+        ? registration.deviceName
+        : typeof body?.deviceName === "string"
+          ? body.deviceName.slice(0, 100)
+          : null;
+      const readOnly = registration ? registration.readOnly : body?.readOnly === true;
+      const preset = readOnly ? "read-only" : "full";
       device =
         this.devicesRepo?.register({
           publicKey: clientPublicKey,
@@ -2091,6 +2133,39 @@ export class StreamerServer {
       });
     }
 
+    // On the E2EE path, registration is mandatory rather than best-effort.
+    //
+    // Message 2 carries the `deviceId` and `deviceToken` a new client uses as
+    // its only credential — it ignores the outer compatibility copies — so a
+    // pairing that cannot produce them has nothing to tell the client. Answering
+    // 200 anyway would return a key-pinned result with no usable device: the
+    // server has recorded the static key and set the downgrade lock, the phone
+    // believes it paired, and the failure surfaces in the record layer weeks
+    // later, far from this line.
+    //
+    // Covers a null `devicesRepo` as well as a throwing one — `?? null` above
+    // turns an unopened runtime.db into a quiet `null`, which is the same
+    // half-provisioned outcome by a different route.
+    //
+    // The pair token is already spent by this point and cannot be un-spent: the
+    // consume ordering above is load-bearing for the single-use guarantee, and
+    // the device row cannot exist before it. So the honest cost of refusing here
+    // is that the user scans a fresh code, which is strictly better than a
+    // success they cannot act on.
+    if (handshake && !device) {
+      this.log.error("[pair] E2EE pairing failed: the device could not be registered", {
+        event: "pair.e2ee_registration_failed",
+        ip,
+      });
+      json(res, 500, {
+        error:
+          "Pairing failed: this server could not register the device. " +
+          "Scan a fresh pairing code and try again.",
+        code: "E2EE_REGISTRATION_FAILED",
+      });
+      return;
+    }
+
     // Message 2, written last because its payload carries the `deviceId` and
     // the device row cannot exist until the token has been spent.
     //
@@ -2100,22 +2175,22 @@ export class StreamerServer {
     // sees a reply with no `e2ee` field, which its own pin turns into a
     // visible refusal rather than a silent plaintext pairing.
     let e2eeResponse: { v: number; noise: string } | null = null;
-    if (handshake) {
+    if (handshake && device) {
       try {
         const { message2 } = writeMessage2(
           handshake,
-          Buffer.from(
-            JSON.stringify({
-              v: E2EE_EXCHANGE_VERSION,
-              deviceId: device?.deviceId ?? null,
-              serverVersion: getVersion(),
-              // Always true on this path: completing a handshake is what pins
-              // the device, and design.md §6.3 says nothing a client sends
-              // ever clears it.
-              e2eeRequired: true,
-            }),
-            "utf-8",
-          ),
+          // Every result a new client persists or presents as verified, so it
+          // never has to trust the outer, unauthenticated copy of a credential.
+          // The outer response still carries those copies for released builds;
+          // this is what the new client actually reads.
+          encodeE2eeMsg2Payload({
+            deviceId: device.deviceId,
+            deviceToken: device.deviceToken,
+            capabilities: device.capabilities,
+            publicUrl: this.publicUrl,
+            machineName: hostname(),
+            serverVersion: getVersion(),
+          }),
         );
         e2eeResponse = { v: E2EE_EXCHANGE_VERSION, noise: message2.toString("base64") };
       } catch (err) {

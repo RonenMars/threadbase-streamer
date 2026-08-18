@@ -119,7 +119,12 @@ describe("pair exchange with a Noise handshake", () => {
       staticKeyPair: clientStatic,
       responderStaticPub,
       psk: pskFromPairToken(token),
-      payload: Buffer.from(JSON.stringify({ v: 1 }), "utf-8"),
+      // `readOnly` is not optional in message 1's payload — only `deviceName`
+      // is (design.md §2.4) — because the server registers the device from
+      // these authenticated values, and defaulting an absent one would grant
+      // the wider capability preset off a claim the device never made. This
+      // payload used to be `{ v: 1 }`, which no longer pairs.
+      payload: Buffer.from(JSON.stringify({ v: 1, readOnly: false }), "utf-8"),
     });
   }
 
