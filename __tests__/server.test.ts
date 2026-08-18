@@ -13,7 +13,7 @@ import { join } from "path";
 import WebSocket from "ws";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
-import { FEATURE_FLAGS } from "../src/feature-flags";
+import { FEATURE_FLAG_LIST } from "../src/feature-flags";
 import { PTYManager } from "../src/pty-manager";
 import { GRACE_MAX_DEFERS, IDLE_REAP_AFTER_MS, StreamerServer } from "../src/server";
 
@@ -635,9 +635,9 @@ describe("StreamerServer", () => {
       };
 
       // The registry ships with the values so a client renders from one round-trip.
-      expect(body.registry.map((f) => f.id)).toEqual(FEATURE_FLAGS.map((f) => f.id));
+      expect(body.registry.map((f) => f.id)).toEqual(FEATURE_FLAG_LIST.map((f) => f.id));
       // Total map: exactly the registry's keys, nothing more or less.
-      expect(Object.keys(body.values).sort()).toEqual(FEATURE_FLAGS.map((f) => f.id).sort());
+      expect(Object.keys(body.values).sort()).toEqual(FEATURE_FLAG_LIST.map((f) => f.id).sort());
       expect(body.values.codexSystemPrompt).toBe(false);
       // Read-only endpoint: no `persisted` field, unlike claude-flags.
       expect(body).not.toHaveProperty("persisted");
@@ -1430,6 +1430,196 @@ describe("StreamerServer", () => {
 
       holdSpy.mockRestore();
       getSessionSpy.mockRestore();
+    });
+
+    // Empty unused starts (mobile discard-on-back) must vanish, not sit in
+    // History as an idle stub whose conversation 404s. A session with prompts
+    // or a cache row keeps today's hold.
+    describe("empty unused sessions are forgotten", () => {
+      const auth = { Authorization: `Bearer ${API_KEY}` };
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      function liveSession(over: Record<string, unknown> = {}) {
+        return {
+          id: "empty-stop-sess",
+          status: "waiting_input",
+          projectPath: "/tmp",
+          projectName: "test",
+          branch: "",
+          promptCount: 0,
+          startedAt: new Date(),
+          completedAt: null,
+          lastOutput: "",
+          ...over,
+        } as any;
+      }
+
+      function seedManaged(session: { id: string } & Record<string, unknown>): void {
+        (server as any).sessionStore.addManaged({ ...session });
+        (server as any).registryBoot.recordSessionSpawn(session);
+        (server as any).selfPtyEndedAt.set(session.id, Date.now());
+        (server as any).contendedSessions.add(session.id);
+      }
+
+      function mockRunner(session: { id: string }, runner: "claude" | "codex") {
+        const proto = runner === "codex" ? CodexPtyRunner.prototype : PTYManager.prototype;
+        vi.spyOn(proto, "hasSession").mockReturnValue(true);
+        vi.spyOn(proto, "getSession").mockReturnValue(session as any);
+        return vi.spyOn(proto, "putOnHold").mockImplementation(() => {
+          (server as any).sessionStore.updateManaged(session.id, {
+            status: "idle",
+            completedAt: new Date(),
+          });
+          setImmediate(() => {
+            (server as any).sessionStatusBus.emit(`status:${session.id}`, "idle");
+          });
+        });
+      }
+
+      function seedCacheRow(id: string): void {
+        const cache = (server as any).cache as ConversationCache;
+        cache.upsertFromScannerMeta([
+          {
+            id,
+            sessionId: id,
+            filePath: join(cacheDir, `${id}.jsonl`),
+            projectPath: "/tmp",
+            projectName: "test",
+            title: "test",
+            model: null,
+            account: null,
+            gitBranch: null,
+            messageCount: 1,
+            timestamp: "2026-08-17T00:00:00.000Z",
+            firstMessage: null,
+            lastMessage: null,
+            preview: "hello",
+          },
+        ] as any);
+      }
+
+      async function postStop(sessionId: string): Promise<Response> {
+        return fetch(`${baseUrl}/api/sessions/${sessionId}/stop`, {
+          method: "POST",
+          headers: auth,
+        });
+      }
+
+      async function expectForgotten(sessionId: string): Promise<void> {
+        expect((server as any).sessionStore.getManaged(sessionId)).toBeNull();
+        expect((server as any).managedSessionsRepo?.get(sessionId) ?? null).toBeNull();
+        expect((server as any).selfPtyEndedAt.has(sessionId)).toBe(false);
+        expect((server as any).contendedSessions.has(sessionId)).toBe(false);
+
+        const listRes = await fetch(`${baseUrl}/api/sessions`, { headers: auth });
+        expect(listRes.status).toBe(200);
+        const list = (await listRes.json()) as Array<{ id: string }>;
+        expect(list.find((s) => s.id === sessionId)).toBeUndefined();
+
+        const getRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { headers: auth });
+        expect(getRes.status).toBe(404);
+      }
+
+      async function expectHeld(
+        sessionId: string,
+        holdSpy: { mock: { calls: unknown[] } },
+      ): Promise<void> {
+        expect(holdSpy.mock.calls.length).toBeGreaterThan(0);
+        expect((server as any).sessionStore.getManaged(sessionId)).not.toBeNull();
+        expect((server as any).managedSessionsRepo?.get(sessionId) ?? null).not.toBeNull();
+
+        const listRes = await fetch(`${baseUrl}/api/sessions`, { headers: auth });
+        expect(listRes.status).toBe(200);
+        const list = (await listRes.json()) as Array<{ id: string }>;
+        expect(list.find((s) => s.id === sessionId)).toBeTruthy();
+
+        const getRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { headers: auth });
+        expect(getRes.status).toBe(200);
+      }
+
+      it("forgets a Claude session with promptCount 0 and no cache row", async () => {
+        const session = liveSession({ id: "claude-empty-stop", provider: "claude-code" });
+        seedManaged(session);
+        const holdSpy = mockRunner(session, "claude");
+
+        const res = await postStop(session.id);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-type")).toContain("ndjson");
+        const lines = (await res.text())
+          .trim()
+          .split("\n")
+          .map((l) => JSON.parse(l));
+        expect(lines[0]).toEqual({ event: "stopping", sessionId: session.id });
+        expect(lines[1]).toEqual({ event: "stopped", sessionId: session.id });
+        expect(holdSpy).toHaveBeenCalledWith(session.id);
+
+        await expectForgotten(session.id);
+      });
+
+      it("forgets a Codex session with promptCount 0 and no cache row", async () => {
+        const session = liveSession({ id: "codex-empty-stop", provider: "codex-cli" });
+        seedManaged(session);
+        const holdSpy = mockRunner(session, "codex");
+
+        const res = await postStop(session.id);
+        expect(res.status).toBe(200);
+        expect(holdSpy).toHaveBeenCalledWith(session.id);
+
+        await expectForgotten(session.id);
+      });
+
+      it("holds a session with promptCount > 0 even if the cache has no row", async () => {
+        const session = liveSession({
+          id: "prompted-stop",
+          provider: "claude-code",
+          promptCount: 2,
+        });
+        seedManaged(session);
+        const holdSpy = mockRunner(session, "claude");
+
+        const res = await postStop(session.id);
+        expect(res.status).toBe(200);
+        const lines = (await res.text())
+          .trim()
+          .split("\n")
+          .map((l) => JSON.parse(l));
+        expect(lines[0]).toEqual({ event: "stopping", sessionId: session.id });
+        expect(lines[1]).toEqual({ event: "stopped", sessionId: session.id });
+
+        await expectHeld(session.id, holdSpy);
+      });
+
+      it("holds a promptCount 0 session when the conversation cache has a row", async () => {
+        const session = liveSession({ id: "cached-empty-stop", provider: "claude-code" });
+        seedManaged(session);
+        seedCacheRow(session.id);
+        const holdSpy = mockRunner(session, "claude");
+
+        const res = await postStop(session.id);
+        expect(res.status).toBe(200);
+
+        await expectHeld(session.id, holdSpy);
+      });
+
+      it("holds a Codex session whose bound rollout is in the cache", async () => {
+        const rolloutId = "codex-rollout-in-cache";
+        const session = liveSession({
+          id: "codex-placeholder-stop",
+          provider: "codex-cli",
+          boundConversationId: rolloutId,
+        });
+        seedManaged(session);
+        seedCacheRow(rolloutId);
+        const holdSpy = mockRunner(session, "codex");
+
+        const res = await postStop(session.id);
+        expect(res.status).toBe(200);
+
+        await expectHeld(session.id, holdSpy);
+      });
     });
   });
 

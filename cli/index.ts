@@ -25,7 +25,11 @@ import {
 } from "../src/claude-flags";
 import { loadUpdateConfig, UPDATE_CONFIG_PATH } from "../src/config/update-config";
 import { appendDevSessionMarker } from "../src/devLog";
-import { type FeatureFlagValues, parseFeatureFlagArgs } from "../src/feature-flags";
+import {
+  FEATURE_FLAG_IDS,
+  type FeatureFlagValues,
+  parseFeatureFlagArgs,
+} from "../src/feature-flags";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { StreamerServer } from "../src/server";
@@ -82,7 +86,7 @@ program
   )
   .option(
     "--feature <id=bool>",
-    "Enable or disable a server feature flag, e.g. --feature codexSystemPrompt=true. Repeatable. Overridden by the flag's THREADBASE_FEATURE_* env var; overrides feature_flags: in ~/.threadbase/server.yaml.",
+    `Enable or disable a server feature flag. Ids are the FEATURE_FLAGS keys (${FEATURE_FLAG_IDS.join(", ")}), e.g. --feature ptyHost=true — not the THREADBASE_FEATURE_* env names. Repeatable. Overridden by the flag's env var; overrides feature_flags: in ~/.threadbase/server.yaml.`,
     (value: string, previous: string[] = []) => [...previous, value],
   )
   .option(

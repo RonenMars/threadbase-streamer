@@ -78,7 +78,7 @@ import {
 import { type ExternalTailEntry, ExternalTailManager } from "./external-tails";
 import {
   describeFeatureFlags,
-  FEATURE_FLAGS,
+  FEATURE_FLAG_LIST,
   type FeatureFlagId,
   type FeatureFlagSource,
   nonDefaultFeatureFlags,
@@ -796,6 +796,7 @@ export class StreamerServer {
       resolveConversationTarget: (sessionId) => this.resolveConversationTarget(sessionId),
       waitForStartupOutcome: (sessionId, timeoutMs) =>
         this.waitForStartupOutcome(sessionId, timeoutMs),
+      forgetSession: (sessionId) => this.forgetSession(sessionId),
       abandonFailedStart: (sessionId) => this.abandonFailedStart(sessionId),
       enrichResumedSessionAsync: (sessionId, projectPath, conv) =>
         this.enrichResumedSessionAsync(sessionId, projectPath, conv),
@@ -2187,7 +2188,7 @@ export class StreamerServer {
    * the absence of that field is the signal that this endpoint is read-only.
    */
   private getFeatureFlagsConfig(): {
-    registry: typeof FEATURE_FLAGS;
+    registry: typeof FEATURE_FLAG_LIST;
     values: ResolvedFeatureFlags;
     sources: Record<FeatureFlagId, FeatureFlagSource>;
   } {
@@ -2195,7 +2196,7 @@ export class StreamerServer {
     // question ("why is this on?") is answerable over HTTP instead of requiring
     // shell access to read the environment, the argv and server.yaml by hand.
     return {
-      registry: FEATURE_FLAGS,
+      registry: FEATURE_FLAG_LIST,
       values: this.featureFlags,
       sources: this.featureFlagSources,
     };
@@ -2531,8 +2532,35 @@ export class StreamerServer {
   }
 
   /**
-   * Drop every trace of a session that never became usable, and hand back what
-   * it failed with.
+   * Drop every trace of a managed session: in-memory store, durable registry
+   * row, and the collision-probe markers that would otherwise outlive it.
+   *
+   * Used when a start never became usable (`abandonFailedStart`) and when stop
+   * is asked to discard an empty session that has no cached conversation. The
+   * registry delete is load-bearing — `rehydrateSessions` will bring the row
+   * back on the next boot if it remains.
+   *
+   * Callers that kill the PTY (`putOnHold`) must do that *first*: onStatusChange
+   * on idle writes `selfPtyEndedAt` and a registry status, and those have to
+   * be cleared here afterwards.
+   */
+  private forgetSession(sessionId: string): void {
+    this.sessionStore.removeManaged(sessionId);
+    this.selfPtyEndedAt.delete(sessionId);
+    this.contendedSessions.delete(sessionId);
+    try {
+      this.managedSessionsRepo?.delete(sessionId);
+    } catch (err) {
+      this.log.warn("[registry] failed to drop a session", {
+        event: "registry.forget_failed",
+        sessionId,
+        err,
+      });
+    }
+  }
+
+  /**
+   * Drop every trace of a session that never became usable.
    *
    * The runner has already torn itself down (failStartup / handleExit); what
    * remains is server-side bookkeeping that would otherwise leave a dead
@@ -2541,18 +2569,7 @@ export class StreamerServer {
    * i.e. it would help hide the very owner we just collided with.
    */
   private abandonFailedStart(sessionId: string): void {
-    this.sessionStore.removeManaged(sessionId);
-    this.selfPtyEndedAt.delete(sessionId);
-    this.contendedSessions.delete(sessionId);
-    try {
-      this.managedSessionsRepo?.delete(sessionId);
-    } catch (err) {
-      this.log.warn("[registry] failed to drop a failed start", {
-        event: "registry.forget_failed",
-        sessionId,
-        err,
-      });
-    }
+    this.forgetSession(sessionId);
   }
 
   private enrichResumedSessionAsync(sessionId: string, projectPath: string, conv: any): void {
