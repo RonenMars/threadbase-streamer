@@ -277,6 +277,11 @@ export const createMiscRoutes = (
       // absent means an older server, which a client must read as "unknown" and
       // resolve as today's plaintext path — never as a reason to fail.
       e2ee: describeE2eeCapability(deps.featureFlagsConfig().values.e2ee),
+      // This build samples cheap host signals and pushes `host_pressure` when
+      // the box is starved. Additive capability flag only — live readings stay
+      // off this polled endpoint. Absent means an older server that never
+      // samples. Informational: pressure never holds, kills, or refuses sessions.
+      hostPressure: true,
     });
   });
 

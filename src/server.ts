@@ -117,6 +117,10 @@ import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConver
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { refreshConversationCache } from "./services/conversations/refreshConversationCache";
 import {
+  createHostPressureMonitor,
+  type HostPressureMonitor,
+} from "./services/host-pressure/hostPressure";
+import {
   ApnsClient,
   describeMissingApnsCredentials,
   readApnsCredentialsFromEnv,
@@ -437,6 +441,7 @@ export class StreamerServer {
   private wsToClientId = new Map<WebSocket, string>();
   private cache: ConversationCache | null = null;
   private cacheMonitor: CacheIntegrityMonitor | null = null;
+  private hostPressureMonitor: HostPressureMonitor | null = null;
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
   private sessionsRepo: SessionsRepository | null = null;
@@ -839,6 +844,7 @@ export class StreamerServer {
       // reset-and-rescan, and tests swap methods on the server instance.
       cache: () => this.cache,
       cacheMonitor: () => this.cacheMonitor,
+      hostPressureMonitor: () => this.hostPressureMonitor,
       pushRepo: () => this.pushRepo,
       liveActivityPushEnabled: () => this.liveActivityNotifier !== null,
       devicesRepo: () => this.devicesRepo,
@@ -1440,6 +1446,13 @@ export class StreamerServer {
       this.idleReaperTimer.unref?.();
     }
 
+    // Informational only: samples cheap OS + event-loop signals and broadcasts
+    // host_pressure on a level change. Never holds, kills, or refuses sessions.
+    this.hostPressureMonitor = createHostPressureMonitor(
+      this.wsHub,
+      () => this.ptyAttachedIds().size,
+    );
+
     const warmUp = new Promise<void>((resolveWarm) => {
       {
         this.log.info(`Streamer server listening on port ${port}`, {
@@ -1889,6 +1902,8 @@ export class StreamerServer {
       clearInterval(this.idleReaperTimer);
       this.idleReaperTimer = null;
     }
+    this.hostPressureMonitor?.dispose();
+    this.hostPressureMonitor = null;
     this.lastAgentChunkAt.clear();
     this.terminalSeq.clear();
     // An in-process runner is about to kill its children, so record that before
