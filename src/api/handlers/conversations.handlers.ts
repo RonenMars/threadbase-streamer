@@ -5,6 +5,7 @@ import {
   applySort,
   type Conversation,
   type ConversationMeta,
+  type SearchMatch,
   type SortOrder,
   search,
 } from "@threadbase-sh/scanner";
@@ -1079,9 +1080,12 @@ export class ConversationHandlers {
       // no indication of WHY anything matched.
       score: r.score,
       matches: Array.isArray(r.matches)
-        ? r.matches.map((m: { field: string; snippet: string }) => ({
+        ? r.matches.map((m: SearchMatch) => ({
             field: m.field,
             snippet: m.snippet,
+            // Offsets into `snippet` for the matched tokens. Absent on metadata
+            // hits, and on scanners older than the one that added them.
+            highlights: m.highlights,
           }))
         : [],
     }));
