@@ -366,7 +366,23 @@ export type WSMessage =
       detectedAt: string;
       sample: { id: string; title?: string }[]; // first 20
     }
-  | { type: "cache_alert_resolved"; fingerprint: string; action: CacheAlertResolveAction };
+  | { type: "cache_alert_resolved"; fingerprint: string; action: CacheAlertResolveAction }
+  // Host pressure (server-level, no sessionId). Broadcast on level change and
+  // unicast on WS open while currently warned. Additive; old clients ignore it.
+  | {
+      type: "host_pressure";
+      level: HostPressureLevel;
+      reasons: HostPressureReason[];
+      liveAgents: number;
+      updatedAt: string;
+    }
+  | { type: "host_pressure_cleared"; updatedAt: string };
+
+/** Coarse host-starvation level pushed on `host_pressure`. Never `ok` on the wire. */
+export type HostPressureLevel = "elevated" | "critical";
+
+/** Why the host is starved, worst-first. Enum, not English. */
+export type HostPressureReason = "memory" | "event_loop" | "load" | "agents";
 
 /** The four cache-integrity resolution actions (POST /api/cache/alert/resolve). */
 export type CacheAlertResolveAction = "prune_all" | "prune_selected" | "ignore" | "reset_rescan";

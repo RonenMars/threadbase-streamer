@@ -28,6 +28,7 @@ import type {
   ConversationWatcher,
   ConversationWatcherEvents,
 } from "./services/conversations/conversationWatcher";
+import type { HostPressureMonitor } from "./services/host-pressure/hostPressure";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import type { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
 import { type Capability, hasCapability, type Principal } from "./services/security/capabilities";
@@ -528,6 +529,7 @@ export type ApiDepsWiring = {
   conversationHandlers: ConversationHandlers;
   cache: () => ConversationCache | null;
   cacheMonitor: () => CacheIntegrityMonitor | null;
+  hostPressureMonitor: () => HostPressureMonitor | null;
   pushRepo: () => PushRepository | null;
   liveActivityPushEnabled: () => boolean;
   devicesRepo: () => DevicesRepository | null;
@@ -594,6 +596,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     wsHub: deps.wsHub,
     cache: () => deps.cache(),
     cacheMonitor: () => deps.cacheMonitor(),
+    hostPressureMonitor: () => deps.hostPressureMonitor(),
     pushRepo: () => deps.pushRepo(),
     liveActivityPushEnabled: () => deps.liveActivityPushEnabled(),
 
@@ -654,6 +657,8 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
       // (covers the startup warm-up window and every reconnect).
       const alertMsg = deps.cacheMonitor()?.wsMessage();
       if (alertMsg) deps.wsHub.unicast(ws, alertMsg);
+      const pressureMsg = deps.hostPressureMonitor()?.wsMessage();
+      if (pressureMsg) deps.wsHub.unicast(ws, pressureMsg);
     },
     handleWsMessage: async (ws, raw, principal) => {
       // A refused frame is dropped and logged rather than answered: the
