@@ -860,6 +860,7 @@ export class StreamerServer {
       withReconciledLifecycle: (sessions) => this.withReconciledLifecycle(sessions),
       currentWarmupState: () => this.currentWarmupState(),
       addSessionSubscriber: (sessionId, ws) => this.addSessionSubscriber(sessionId, ws),
+      removeSessionSubscriber: (sessionId, ws) => this.removeSessionSubscriber(sessionId, ws),
       startGraceTimer: (sessionId, delayMs) => this.startGraceTimer(sessionId, delayMs),
       armHoldWhenIdle: (sessionId) => this.armHoldWhenIdle(sessionId),
       handleSessionsCount: (res) => this.handleSessionsCount(res),
@@ -1030,6 +1031,13 @@ export class StreamerServer {
         "pino",
       );
     }
+  }
+
+  private removeSessionSubscriber(sessionId: string, ws: WebSocket): void {
+    const subs = this.sessionSubscribers.get(sessionId);
+    if (!subs) return;
+    subs.delete(ws);
+    if (subs.size === 0) this.sessionSubscribers.delete(sessionId);
   }
 
   /**

@@ -26,6 +26,7 @@ type Deps = {
   startGraceTimer: ReturnType<typeof vi.fn>;
   armHoldWhenIdle: ReturnType<typeof vi.fn>;
   addSessionSubscriber: ReturnType<typeof vi.fn>;
+  removeSessionSubscriber: ReturnType<typeof vi.fn>;
   warn: ReturnType<typeof vi.fn>;
   handleWsMessage: (ws: WebSocket, raw: unknown, principal: Principal | null) => void;
 };
@@ -34,6 +35,7 @@ function buildDeps(): Deps {
   const startGraceTimer = vi.fn();
   const armHoldWhenIdle = vi.fn();
   const addSessionSubscriber = vi.fn();
+  const removeSessionSubscriber = vi.fn();
   const warn = vi.fn();
 
   // Only the fields handleWsMessage actually reads. Casting is deliberate:
@@ -43,6 +45,7 @@ function buildDeps(): Deps {
     startGraceTimer,
     armHoldWhenIdle,
     addSessionSubscriber,
+    removeSessionSubscriber,
     ptyGracePeriodMs: 1000,
     wsToClientId: new Map(),
     clientIdToWs: new Map(),
@@ -57,7 +60,14 @@ function buildDeps(): Deps {
   } as unknown as ApiDepsWiring;
 
   const { handleWsMessage } = createApiDeps(wiring);
-  return { startGraceTimer, armHoldWhenIdle, addSessionSubscriber, warn, handleWsMessage };
+  return {
+    startGraceTimer,
+    armHoldWhenIdle,
+    addSessionSubscriber,
+    removeSessionSubscriber,
+    warn,
+    handleWsMessage,
+  };
 }
 
 const fakeWs = { send: () => {} } as unknown as WebSocket;
@@ -190,5 +200,29 @@ describe("subscribe_session requires history:read", () => {
       );
       expect(deps.addSessionSubscriber).toHaveBeenCalledWith("s1", fakeWs);
     }
+  });
+});
+
+describe("unsubscribe_session requires history:read", () => {
+  it("drops the subscriber for a principal that can subscribe", () => {
+    const deps = buildDeps();
+    send(deps, { type: "unsubscribe_session", sessionId: "s1" }, readOnly);
+    expect(deps.removeSessionSubscriber).toHaveBeenCalledWith("s1", fakeWs);
+  });
+
+  it("refuses a principal holding no capabilities at all", () => {
+    const deps = buildDeps();
+    send(deps, { type: "unsubscribe_session", sessionId: "s1" }, device([]));
+    expect(deps.removeSessionSubscriber).not.toHaveBeenCalled();
+    expect(deps.warn).toHaveBeenCalledWith(
+      expect.stringContaining("unsubscribe_session"),
+      expect.objectContaining({ required: "history:read" }),
+    );
+  });
+
+  it("does not arm a hold — leaving a view is not a request to stop the agent", () => {
+    const deps = buildDeps();
+    send(deps, { type: "unsubscribe_session", sessionId: "s1" }, full);
+    expect(deps.startGraceTimer).not.toHaveBeenCalled();
   });
 });

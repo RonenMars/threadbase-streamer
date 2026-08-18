@@ -545,6 +545,7 @@ export type ApiDepsWiring = {
   withReconciledLifecycle: (sessions: readonly SessionResponse[]) => readonly SessionResponse[];
   currentWarmupState: () => ServerWarmupState | null;
   addSessionSubscriber: (sessionId: string, ws: WebSocket) => void;
+  removeSessionSubscriber: (sessionId: string, ws: WebSocket) => void;
   startGraceTimer: (sessionId: string, delayMs: number) => void;
   armHoldWhenIdle: (sessionId: string) => void;
   handleSessionsCount: (res: ServerResponse) => void;
@@ -748,6 +749,13 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
               }),
             );
           }
+        }
+        if (msg.type === "unsubscribe_session" && typeof msg.sessionId === "string") {
+          if (!wsAllows(principal, "history:read")) {
+            deny(msg.type, "history:read");
+            return;
+          }
+          deps.removeSessionSubscriber(msg.sessionId, ws);
         }
         if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
           // Holding a session SIGINTs the agent and disposes its screen, which
