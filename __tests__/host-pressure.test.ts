@@ -4,7 +4,9 @@ import { resolveFeatureFlags } from "../src/feature-flags";
 import type { ApiDepsWiring } from "../src/server-wiring";
 import { createApiDeps } from "../src/server-wiring";
 import {
+  type CpuTimesSnapshot,
   classifyHostPressure,
+  cpuBusyRatio,
   HOST_PRESSURE_BARS,
   HOST_PRESSURE_SAMPLE_MS,
   HostPressureMonitor,
@@ -37,6 +39,8 @@ describe("HOST_PRESSURE_BARS", () => {
     expect(HOST_PRESSURE_BARS.eventLoopP99Ms.enterCritical).toBe(250);
     expect(HOST_PRESSURE_BARS.loadPerCpu.enterElevated).toBe(0.9);
     expect(HOST_PRESSURE_BARS.loadPerCpu.enterCritical).toBe(1.5);
+    expect(HOST_PRESSURE_BARS.cpuBusy.enterElevated).toBe(0.85);
+    expect(HOST_PRESSURE_BARS.cpuBusy.enterCritical).toBe(0.97);
     expect(HOST_PRESSURE_BARS.liveAgentsPair).toBe(4);
   });
 });
@@ -88,8 +92,43 @@ describe("classifyHostPressure", () => {
     });
   });
 
-  it("ignores load on win32", () => {
+  it("ignores POSIX loadavg on win32", () => {
     expect(classifyHostPressure(sample({ load1: 13, ncpu: 8 }), "ok", WIN32)).toEqual({
+      level: "ok",
+      reasons: [],
+    });
+  });
+
+  it("is elevated on win32 when cpu busy crosses 0.85", () => {
+    expect(classifyHostPressure(sample({ cpuBusyRatio: 0.9 }), "ok", WIN32)).toEqual({
+      level: "elevated",
+      reasons: ["load"],
+    });
+  });
+
+  it("is critical on win32 when cpu busy crosses 0.97", () => {
+    expect(classifyHostPressure(sample({ cpuBusyRatio: 0.99 }), "ok", WIN32)).toEqual({
+      level: "critical",
+      reasons: ["load"],
+    });
+  });
+
+  it("pairs liveAgents >= 4 with win32 cpu busy", () => {
+    expect(classifyHostPressure(sample({ liveAgents: 4, cpuBusyRatio: 0.9 }), "ok", WIN32)).toEqual(
+      {
+        level: "elevated",
+        reasons: ["load", "agents"],
+      },
+    );
+  });
+
+  it("does not use cpuBusyRatio on POSIX", () => {
+    const hotBusy = sample({ cpuBusyRatio: 0.99, load1: 0.2, ncpu: 8 });
+    expect(classifyHostPressure(hotBusy, "ok", POSIX)).toEqual({
+      level: "ok",
+      reasons: [],
+    });
+    expect(classifyHostPressure(hotBusy, "ok", "darwin")).toEqual({
       level: "ok",
       reasons: [],
     });
@@ -156,6 +195,28 @@ describe("classifyHostPressure", () => {
   it("clears to ok after recovering past the leave bar", () => {
     expect(classifyHostPressure(sample({ memFreeRatio: 0.2 }), "elevated", POSIX).level).toBe("ok");
     expect(classifyHostPressure(sample({ memFreeRatio: 0.2 }), "critical", POSIX).level).toBe("ok");
+  });
+});
+
+describe("cpuBusyRatio", () => {
+  const idle: CpuTimesSnapshot = { user: 0, nice: 0, sys: 0, idle: 100, irq: 0 };
+
+  it("is 0 without a previous snapshot", () => {
+    expect(cpuBusyRatio(null, [{ user: 80, nice: 0, sys: 20, idle: 100, irq: 0 }])).toBe(0);
+  });
+
+  it("is 0 when cpu counts differ", () => {
+    expect(cpuBusyRatio([idle], [idle, idle])).toBe(0);
+  });
+
+  it("is 0 when the interval is all idle", () => {
+    const later: CpuTimesSnapshot = { user: 0, nice: 0, sys: 0, idle: 200, irq: 0 };
+    expect(cpuBusyRatio([idle], [later])).toBe(0);
+  });
+
+  it("is 1 when the interval has no idle", () => {
+    const later: CpuTimesSnapshot = { user: 80, nice: 0, sys: 20, idle: 100, irq: 0 };
+    expect(cpuBusyRatio([idle], [later])).toBe(1);
   });
 });
 

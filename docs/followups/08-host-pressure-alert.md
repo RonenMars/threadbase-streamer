@@ -76,7 +76,8 @@ New module, e.g. `src/services/host-pressure/hostPressure.ts`. Do not dump sampl
 | `liveAgents` | `ptyAttachedIds().size` or sessionStore live+ptyAttached | Same notion `/api/info.activeSessions` already exposes |
 | `memFreeRatio` | `os.freemem() / os.totalmem()` | Fine if conservative on macOS |
 | `eventLoopP99Ms` | `perf_hooks.monitorEventLoopDelay({ resolution: 20 })` | Enable once at sampler start; `percentile(99) / 1e6` |
-| `load1` | `os.loadavg()[0]` | **Ignore on win32** (`loadavg` is zeros). Compare to `os.cpus().length`, not a raw number |
+| `load1` | `os.loadavg()[0]` | POSIX only. Compare to `os.cpus().length`, not a raw number. |
+| `cpuBusyRatio` | consecutive `os.cpus()[].times` deltas | **`process.platform === "win32"` only** (covers 32- and 64-bit Windows; Node has no `win64`). Sampler does not snapshot times on linux/darwin. `loadavg` is zeros on Windows. 0–1 busy fraction. Reason on the wire is still `load`. |
 
 **Classifier (lock in unit tests; tune numbers only there):**
 
@@ -84,8 +85,8 @@ Hysteresis: entering a level uses the higher bar; leaving uses the lower bar. No
 
 Starting bars (change only with a test update):
 
-- `critical` if any: `memFreeRatio < 0.08`, `eventLoopP99Ms > 250`, (POSIX) `load1 / ncpu > 1.5`
-- else `elevated` if any: `memFreeRatio < 0.15`, `eventLoopP99Ms > 100`, (POSIX) `load1 / ncpu > 0.9`, **or** `liveAgents >= 4` together with any elevated-or-worse resource signal
+- `critical` if any: `memFreeRatio < 0.08`, `eventLoopP99Ms > 250`, (POSIX) `load1 / ncpu > 1.5`, (win32) `cpuBusyRatio > 0.97`
+- else `elevated` if any: `memFreeRatio < 0.15`, `eventLoopP99Ms > 100`, (POSIX) `load1 / ncpu > 0.9`, (win32) `cpuBusyRatio > 0.85`, **or** `liveAgents >= 4` together with any elevated-or-worse resource signal
 - else `ok`
 
 `liveAgents >= 4` alone is **not** enough (a quiet box with four `waiting_input` sessions). Pair it with a resource signal.
@@ -98,7 +99,7 @@ Add the frames to `WSMessage` in `src/types.ts`.
 
 `__tests__/host-pressure.test.ts`:
 
-- Classifier: ok / elevated / critical, hysteresis (one sample above enter bar, one between bars stays), win32 ignores load.
+- Classifier: ok / elevated / critical, hysteresis (one sample above enter bar, one between bars stays), win32 ignores loadavg and uses cpu busy instead.
 - Sampler: fake clock + injected `HostSample` (pure function — do not spy live `os.freemem()` from production code). A level change calls `broadcast` with the frozen shape; a same-level sample does not.
 - WS open: a warned server unicasts `host_pressure` to the new socket (extend an existing open-replay test if one exists; otherwise a focused `createApiDeps` test).
 - `GET /api/info` includes `hostPressure: true`.
