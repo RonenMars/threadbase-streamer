@@ -1,7 +1,9 @@
-import { cpus, freemem, loadavg, totalmem } from "os";
+import { type CpuInfo, cpus, freemem, loadavg, totalmem } from "os";
 import { type IntervalHistogram, monitorEventLoopDelay } from "perf_hooks";
 import type { HostPressureLevel, HostPressureReason, WSMessage } from "../../types";
 import type { WSHub } from "../../ws-hub";
+
+export type CpuTimesSnapshot = CpuInfo["times"];
 
 export const HOST_PRESSURE_SAMPLE_MS = 5_000;
 
@@ -31,6 +33,14 @@ export const HOST_PRESSURE_BARS = {
     enterCritical: 1.5,
     leaveCritical: 0.9,
   },
+  // win32 has no loadavg. Busy ratio from os.cpus()[].times deltas is 0–1, so
+  // it cannot reuse loadPerCpu's 1.5 critical bar. Reason on the wire stays `load`.
+  cpuBusy: {
+    enterElevated: 0.85,
+    leaveElevated: 0.7,
+    enterCritical: 0.97,
+    leaveCritical: 0.85,
+  },
   liveAgentsPair: 4,
 } as const;
 
@@ -40,6 +50,8 @@ export type HostSample = {
   eventLoopP99Ms: number;
   load1: number;
   ncpu: number;
+  /** 0–1 CPU busy from consecutive os.cpus() times snapshots. Used on win32 only. */
+  cpuBusyRatio?: number;
 };
 
 export type HostPressureState = "ok" | HostPressureLevel;
@@ -108,6 +120,30 @@ function schmittHighIsWorse(
   return "ok";
 }
 
+function timesTotal(times: CpuTimesSnapshot): number {
+  return times.user + times.nice + times.sys + times.idle + times.irq;
+}
+
+/** Fraction of CPU that was busy between two os.cpus() snapshots. 0 when there is no delta. */
+export function cpuBusyRatio(
+  previous: readonly CpuTimesSnapshot[] | null,
+  next: readonly CpuTimesSnapshot[],
+): number {
+  if (!previous || previous.length === 0 || next.length === 0 || previous.length !== next.length) {
+    return 0;
+  }
+  let idle = 0;
+  let total = 0;
+  for (let i = 0; i < next.length; i++) {
+    const dt = timesTotal(next[i]) - timesTotal(previous[i]);
+    if (dt <= 0) continue;
+    total += dt;
+    idle += Math.max(0, next[i].idle - previous[i].idle);
+  }
+  if (total <= 0) return 0;
+  return 1 - idle / total;
+}
+
 export function classifyHostPressure(
   sample: HostSample,
   previous: HostPressureState,
@@ -130,18 +166,18 @@ export function classifyHostPressure(
     HOST_PRESSURE_BARS.eventLoopP99Ms.leaveCritical,
   );
   const ncpu = sample.ncpu > 0 ? sample.ncpu : 1;
-  const loadPerCpu = platform === "win32" ? 0 : sample.load1 / ncpu;
-  const load =
-    platform === "win32"
-      ? "ok"
-      : schmittHighIsWorse(
-          loadPerCpu,
-          previous,
-          HOST_PRESSURE_BARS.loadPerCpu.enterElevated,
-          HOST_PRESSURE_BARS.loadPerCpu.leaveElevated,
-          HOST_PRESSURE_BARS.loadPerCpu.enterCritical,
-          HOST_PRESSURE_BARS.loadPerCpu.leaveCritical,
-        );
+  // Node reports win32 for every Windows build (ia32, x64, arm64). There is no win64.
+  const windows = platform === "win32";
+  const loadValue = windows ? (sample.cpuBusyRatio ?? 0) : sample.load1 / ncpu;
+  const loadBars = windows ? HOST_PRESSURE_BARS.cpuBusy : HOST_PRESSURE_BARS.loadPerCpu;
+  const load = schmittHighIsWorse(
+    loadValue,
+    previous,
+    loadBars.enterElevated,
+    loadBars.leaveElevated,
+    loadBars.enterCritical,
+    loadBars.leaveCritical,
+  );
 
   const resourceLevel = worst([mem, eventLoop, load]);
   const agentsPair =
@@ -225,6 +261,8 @@ export function createHostPressureMonitor(
   liveAgents: () => number,
 ): HostPressureMonitor {
   const histogram = monitorEventLoopDelay({ resolution: 20 });
+  const windows = process.platform === "win32";
+  let prevCpuTimes: CpuTimesSnapshot[] | null = null;
   const monitor = new HostPressureMonitor({
     wsHub,
     histogram,
@@ -232,13 +270,20 @@ export function createHostPressureMonitor(
       const eventLoopP99Ms = histogram.percentile(99) / 1e6;
       histogram.reset();
       const total = totalmem();
-      return {
+      const cpuList = cpus();
+      const sample: HostSample = {
         liveAgents: liveAgents(),
         memFreeRatio: total > 0 ? freemem() / total : 1,
         eventLoopP99Ms,
         load1: loadavg()[0],
-        ncpu: cpus().length,
+        ncpu: cpuList.length,
       };
+      if (windows) {
+        const cpuTimes = cpuList.map((cpu) => cpu.times);
+        sample.cpuBusyRatio = cpuBusyRatio(prevCpuTimes, cpuTimes);
+        prevCpuTimes = cpuTimes;
+      }
+      return sample;
     },
   });
   monitor.start();
