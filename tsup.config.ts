@@ -15,7 +15,10 @@ export default defineConfig([
   {
     entry: ["src/index.ts"],
     format: ["esm", "cjs"],
-    dts: true,
+    // TypeScript 7's native compiler no longer exposes the JS Compiler API
+    // (`ts.sys`), which tsup 8.5's bundled rollup-plugin-dts@6.1.1 reads.
+    // Declarations come from `tsc -p tsconfig.build.json` in the build script.
+    dts: false,
     sourcemap: true,
     clean: true,
     outDir: "dist",
