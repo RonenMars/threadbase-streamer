@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer } from "http";
+import { createServer, request as httpRequest } from "http";
 import { StreamerServer } from "../src/server";
 
 // The rotation assertion below reads the emitted log record rather than console.
@@ -271,12 +271,35 @@ describe("security hardening", () => {
     });
 
     it("omits ACAO when no Origin header is present (mobile requests)", async () => {
-      const res = await fetch(`${baseUrl}/api/info`, {
-        headers: { Authorization: `Bearer ${API_KEY}` },
+      // node:http, not fetch: fetch is a browser-shaped client and some
+      // dispatchers/global stubs attach Origin. Mobile sends none; this is the
+      // actual on-the-wire request.
+      const url = new URL(`${baseUrl}/api/info`);
+      const { status, acao } = await new Promise<{
+        status: number;
+        acao: string | undefined;
+      }>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            hostname: url.hostname,
+            port: url.port,
+            path: url.pathname,
+            headers: { Authorization: `Bearer ${API_KEY}` },
+          },
+          (res) => {
+            res.resume();
+            const raw = res.headers["access-control-allow-origin"];
+            resolve({
+              status: res.statusCode ?? 0,
+              acao: Array.isArray(raw) ? raw[0] : raw,
+            });
+          },
+        );
+        req.on("error", reject);
+        req.end();
       });
-      // Mobile clients send no Origin — must still get a 200, just no CORS headers
-      expect(res.status).toBe(200);
-      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+      expect(status).toBe(200);
+      expect(acao).toBeUndefined();
     });
 
     it("OPTIONS from allowed origin returns 204", async () => {
