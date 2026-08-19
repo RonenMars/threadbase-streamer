@@ -42,6 +42,6 @@ export function formatIdentityBanner(fingerprint: string, keyPath: string): stri
     "",
     `  ${fingerprint}`,
     "",
-    "Compare this with the fingerprint your phone shows when you add this server.",
+    "Compare this with the identity code your phone shows when you add this server.",
   ].join("\n");
 }

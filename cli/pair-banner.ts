@@ -59,7 +59,7 @@ export function printUrlBanner({
   if (fingerprint) {
     contentLines.push(
       "",
-      "Identity fingerprint",
+      "Identity code",
       fingerprint,
       "This should match the code your phone shows after you scan.",
     );
