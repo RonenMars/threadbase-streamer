@@ -1,4 +1,4 @@
-import { resolveTestLogLevel } from "./setup/silence-logs";
+import { applyInjectedLogLevel, resolveTestLogLevel } from "./setup/silence-logs";
 
 describe("resolveTestLogLevel", () => {
   it("silences the default local path", () => {
@@ -23,5 +23,22 @@ describe("resolveTestLogLevel", () => {
     expect(resolveTestLogLevel({ TEST_LOGS: "true", CI: "true", LOG_LEVEL: "debug" })).toBe(
       "debug",
     );
+  });
+});
+
+describe("applyInjectedLogLevel", () => {
+  it("clears an injected level on restore so child processes do not inherit it", () => {
+    const env: { LOG_LEVEL?: string } = {};
+    const restore = applyInjectedLogLevel(env, "silent");
+    expect(env.LOG_LEVEL).toBe("silent");
+    restore();
+    expect(env.LOG_LEVEL).toBeUndefined();
+  });
+
+  it("leaves an explicit LOG_LEVEL in place", () => {
+    const env: { LOG_LEVEL?: string } = { LOG_LEVEL: "error" };
+    const restore = applyInjectedLogLevel(env, "error");
+    restore();
+    expect(env.LOG_LEVEL).toBe("error");
   });
 });
