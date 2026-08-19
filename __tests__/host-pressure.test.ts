@@ -38,8 +38,8 @@ describe("HOST_PRESSURE_BARS", () => {
     expect(HOST_PRESSURE_BARS.memFreeRatio.enterCritical).toBe(0.08);
     expect(HOST_PRESSURE_BARS.eventLoopP99Ms.enterElevated).toBe(100);
     expect(HOST_PRESSURE_BARS.eventLoopP99Ms.enterCritical).toBe(250);
-    expect(HOST_PRESSURE_BARS.loadPerCpu.enterElevated).toBe(0.9);
-    expect(HOST_PRESSURE_BARS.loadPerCpu.enterCritical).toBe(1.5);
+    expect(HOST_PRESSURE_BARS.loadPerCpu.enterElevated).toBe(1.25);
+    expect(HOST_PRESSURE_BARS.loadPerCpu.enterCritical).toBe(2.0);
     expect(HOST_PRESSURE_BARS.cpuBusy.enterElevated).toBe(0.85);
     expect(HOST_PRESSURE_BARS.cpuBusy.enterCritical).toBe(0.97);
     expect(HOST_PRESSURE_BARS.liveAgentsPair).toBe(4);
@@ -65,6 +65,26 @@ describe("classifyHostPressure", () => {
     });
   });
 
+  it("caps Darwin unused-page memory at elevated, never critical", () => {
+    expect(classifyHostPressure(sample({ memFreeRatio: 0.005 }), "ok", "darwin")).toEqual({
+      level: "elevated",
+      reasons: ["memory"],
+    });
+    expect(classifyHostPressure(sample({ memFreeRatio: 0.07 }), "ok", "darwin")).toEqual({
+      level: "elevated",
+      reasons: ["memory"],
+    });
+  });
+
+  it("still allows critical on Darwin from event-loop stall", () => {
+    expect(
+      classifyHostPressure(sample({ memFreeRatio: 0.5, eventLoopP99Ms: 260 }), "ok", "darwin"),
+    ).toEqual({
+      level: "critical",
+      reasons: ["event_loop"],
+    });
+  });
+
   it("is elevated on event-loop p99 above 100ms", () => {
     expect(classifyHostPressure(sample({ eventLoopP99Ms: 120 }), "ok", POSIX)).toEqual({
       level: "elevated",
@@ -79,15 +99,22 @@ describe("classifyHostPressure", () => {
     });
   });
 
-  it("is elevated when POSIX load per cpu crosses 0.9", () => {
-    expect(classifyHostPressure(sample({ load1: 8, ncpu: 8 }), "ok", POSIX)).toEqual({
+  it("is elevated when POSIX load per cpu crosses 1.25", () => {
+    expect(classifyHostPressure(sample({ load1: 11, ncpu: 8 }), "ok", POSIX)).toEqual({
       level: "elevated",
       reasons: ["load"],
     });
   });
 
-  it("is critical when POSIX load per cpu crosses 1.5", () => {
-    expect(classifyHostPressure(sample({ load1: 13, ncpu: 8 }), "ok", POSIX)).toEqual({
+  it("is ok when POSIX load per cpu is 1.0", () => {
+    expect(classifyHostPressure(sample({ load1: 8, ncpu: 8 }), "ok", POSIX)).toEqual({
+      level: "ok",
+      reasons: [],
+    });
+  });
+
+  it("is critical when POSIX load per cpu crosses 2.0", () => {
+    expect(classifyHostPressure(sample({ load1: 17, ncpu: 8 }), "ok", POSIX)).toEqual({
       level: "critical",
       reasons: ["load"],
     });
@@ -159,7 +186,7 @@ describe("classifyHostPressure", () => {
           liveAgents: 4,
           memFreeRatio: 0.07,
           eventLoopP99Ms: 260,
-          load1: 16,
+          load1: 17,
           ncpu: 8,
         }),
         "ok",
