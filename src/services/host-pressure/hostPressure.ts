@@ -28,13 +28,13 @@ export const HOST_PRESSURE_BARS = {
     leaveCritical: 100,
   },
   loadPerCpu: {
-    enterElevated: 0.9,
-    leaveElevated: 0.7,
-    enterCritical: 1.5,
-    leaveCritical: 0.9,
+    enterElevated: 1.25,
+    leaveElevated: 1.05,
+    enterCritical: 2.0,
+    leaveCritical: 1.25,
   },
   // win32 has no loadavg. Busy ratio from os.cpus()[].times deltas is 0–1, so
-  // it cannot reuse loadPerCpu's 1.5 critical bar. Reason on the wire stays `load`.
+  // it cannot reuse loadPerCpu's 2.0 critical bar. Reason on the wire stays `load`.
   cpuBusy: {
     enterElevated: 0.85,
     leaveElevated: 0.7,
@@ -155,7 +155,7 @@ export function classifyHostPressure(
   previous: HostPressureState,
   platform: NodeJS.Platform,
 ): HostPressureClassification {
-  const mem = schmittLowIsWorse(
+  const memRaw = schmittLowIsWorse(
     sample.memFreeRatio,
     previous,
     HOST_PRESSURE_BARS.memFreeRatio.enterElevated,
@@ -163,6 +163,11 @@ export function classifyHostPressure(
     HOST_PRESSURE_BARS.memFreeRatio.enterCritical,
     HOST_PRESSURE_BARS.memFreeRatio.leaveCritical,
   );
+  // os.freemem() on Darwin is unused pages. macOS keeps that near zero on a
+  // healthy, compressor-backed box, so the Linux 8% critical bar would fire
+  // all day. Cap unused-page RAM at elevated; event_loop / load can still go
+  // critical.
+  const mem = platform === "darwin" && memRaw === "critical" ? "elevated" : memRaw;
   const eventLoop = schmittHighIsWorse(
     sample.eventLoopP99Ms,
     previous,
