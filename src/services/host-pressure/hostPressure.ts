@@ -1,6 +1,6 @@
 import { type CpuInfo, cpus, freemem, loadavg, totalmem } from "os";
 import { type IntervalHistogram, monitorEventLoopDelay } from "perf_hooks";
-import type { HostPressureLevel, HostPressureReason, WSMessage } from "../../types";
+import type { HostPressureLevel, HostPressureOs, HostPressureReason, WSMessage } from "../../types";
 import type { WSHub } from "../../ws-hub";
 
 export type CpuTimesSnapshot = CpuInfo["times"];
@@ -124,6 +124,12 @@ function timesTotal(times: CpuTimesSnapshot): number {
   return times.user + times.nice + times.sys + times.idle + times.irq;
 }
 
+/** Node reports win32 for every Windows build. Other platforms are omitted on the wire. */
+export function hostPressureOs(platform: NodeJS.Platform): HostPressureOs | undefined {
+  if (platform === "darwin" || platform === "linux" || platform === "win32") return platform;
+  return undefined;
+}
+
 /** Fraction of CPU that was busy between two os.cpus() snapshots. 0 when there is no delta. */
 export function cpuBusyRatio(
   previous: readonly CpuTimesSnapshot[] | null,
@@ -232,12 +238,14 @@ export class HostPressureMonitor {
       return;
     }
 
+    const os = hostPressureOs(platform);
     const message: HostPressureWsMessage = {
       type: "host_pressure",
       level: classified.level,
       reasons: classified.reasons,
       liveAgents: sample.liveAgents,
       updatedAt,
+      ...(os ? { os } : {}),
     };
     this.lastWarning = message;
     this.opts.wsHub.broadcast(message);

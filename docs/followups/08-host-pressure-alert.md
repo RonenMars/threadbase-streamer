@@ -43,6 +43,7 @@ type HostPressureReason = 'memory' | 'event_loop' | 'load' | 'agents'
   reasons: HostPressureReason[]   // non-empty; worst-first
   liveAgents: number              // PTY-attached live sessions, not historical stubs
   updatedAt: string               // ISO 8601
+  os?: 'darwin' | 'linux' | 'win32'  // additive; Node process.platform of the host
 }
 
 {
