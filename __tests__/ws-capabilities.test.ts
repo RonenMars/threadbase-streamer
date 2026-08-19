@@ -60,7 +60,14 @@ function buildDeps(): Deps {
   } as unknown as ApiDepsWiring;
 
   const { handleWsMessage } = createApiDeps(wiring);
-  return { startGraceTimer, armHoldWhenIdle, addSessionSubscriber, removeSessionSubscriber, warn, handleWsMessage };
+  return {
+    startGraceTimer,
+    armHoldWhenIdle,
+    addSessionSubscriber,
+    removeSessionSubscriber,
+    warn,
+    handleWsMessage,
+  };
 }
 
 const fakeWs = { send: () => {} } as unknown as WebSocket;
