@@ -94,7 +94,7 @@ describe("pairing QR payload", () => {
     // The identity key is never read on this path, so a corrupt key file costs
     // the QR only on a build that would have used it.
     expect(identityKey).not.toHaveBeenCalled();
-    expect(printed.join("\n")).not.toContain("Identity fingerprint");
+    expect(printed.join("\n")).not.toContain("Identity code");
   });
 
   it("emits spk and v when the exchange will accept a handshake", async () => {
@@ -106,7 +106,7 @@ describe("pairing QR payload", () => {
     expect(identityKey).toHaveBeenCalledTimes(1);
     // Same grouped hex the phone shows after scanning this QR.
     const banner = printed.join("\n");
-    expect(banner).toContain("Identity fingerprint");
+    expect(banner).toContain("Identity code");
     expect(banner).toContain(serverIdentityFingerprint(IDENTITY_KEY));
     expect(banner).toContain("This should match the code your phone shows after you scan.");
   });
@@ -149,14 +149,14 @@ describe("printUrlBanner fingerprint lines", () => {
   it("prints the grouped hex under the box when a fingerprint is supplied", () => {
     const fingerprint = "3cfe 00ad 6d01 6dd3 782c 8628 4b1d a1d2";
     const box = printUrlBanner({ url: PUBLIC_URL, fingerprint });
-    expect(box).toContain("Identity fingerprint");
+    expect(box).toContain("Identity code");
     expect(box).toContain(fingerprint);
     expect(box).toContain("This should match the code your phone shows after you scan.");
   });
 
   it("omits those lines when no fingerprint is supplied", () => {
     const box = printUrlBanner({ url: PUBLIC_URL });
-    expect(box).not.toContain("Identity fingerprint");
+    expect(box).not.toContain("Identity code");
     expect(box).toContain(PUBLIC_URL);
   });
 });

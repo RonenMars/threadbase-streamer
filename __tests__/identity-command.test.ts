@@ -38,7 +38,7 @@ describe("runIdentity", () => {
 
     expect(banner).toContain("/tmp/fake/server-identity.key");
     expect(banner).toContain("aaaa bbbb cccc dddd eeee ffff 0000 1111");
-    expect(banner).toContain("Compare this with the fingerprint your phone shows");
+    expect(banner).toContain("Compare this with the identity code your phone shows");
   });
 
   // Deliberately broken and watched fail before the try/catch existed: with
