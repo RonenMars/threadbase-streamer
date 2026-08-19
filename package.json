@@ -147,7 +147,6 @@
     }
   },
   "allowScripts": {
-    "better-sqlite3": true,
     "node-pty": true
   }
 }
