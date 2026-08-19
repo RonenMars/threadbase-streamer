@@ -11,6 +11,7 @@ import {
   HOST_PRESSURE_SAMPLE_MS,
   HostPressureMonitor,
   type HostSample,
+  hostPressureOs,
 } from "../src/services/host-pressure/hostPressure";
 import type { SessionStore } from "../src/session-store";
 import type { HostPressureReason, WSMessage } from "../src/types";
@@ -198,6 +199,18 @@ describe("classifyHostPressure", () => {
   });
 });
 
+describe("hostPressureOs", () => {
+  it("keeps darwin, linux, and win32", () => {
+    expect(hostPressureOs("darwin")).toBe("darwin");
+    expect(hostPressureOs("linux")).toBe("linux");
+    expect(hostPressureOs("win32")).toBe("win32");
+  });
+
+  it("omits platforms the client has no advice for", () => {
+    expect(hostPressureOs("freebsd")).toBeUndefined();
+  });
+});
+
 describe("cpuBusyRatio", () => {
   const idle: CpuTimesSnapshot = { user: 0, nice: 0, sys: 0, idle: 100, irq: 0 };
 
@@ -251,6 +264,7 @@ describe("HostPressureMonitor", () => {
         reasons: ["memory"],
         liveAgents: 2,
         updatedAt: "2026-08-18T12:00:05.000Z",
+        os: "linux",
       },
     ]);
 
@@ -266,6 +280,33 @@ describe("HostPressureMonitor", () => {
     });
 
     monitor.dispose();
+  });
+
+  it("includes os on darwin, linux, and win32 and omits it otherwise", () => {
+    function firstFrame(platform: NodeJS.Platform): WSMessage {
+      const broadcasts: WSMessage[] = [];
+      let current = healthy;
+      const monitor = new HostPressureMonitor({
+        wsHub: { broadcast: (msg) => broadcasts.push(msg) },
+        readSample: () => current,
+        platform,
+        now: () => new Date(),
+      });
+      current = sample({ memFreeRatio: 0.14 });
+      monitor.start();
+      vi.advanceTimersByTime(HOST_PRESSURE_SAMPLE_MS);
+      monitor.dispose();
+      const frame = broadcasts[0];
+      if (!frame) throw new Error("expected a host_pressure frame");
+      return frame;
+    }
+
+    expect(firstFrame("linux")).toMatchObject({ type: "host_pressure", os: "linux" });
+    expect(firstFrame("darwin")).toMatchObject({ type: "host_pressure", os: "darwin" });
+    expect(firstFrame("win32")).toMatchObject({ type: "host_pressure", os: "win32" });
+    const other = firstFrame("freebsd");
+    expect(other).toMatchObject({ type: "host_pressure", level: "elevated", reasons: ["memory"] });
+    expect(other).not.toHaveProperty("os");
   });
 
   it("does not emit host_pressure_cleared on a process that never warned", () => {
@@ -290,6 +331,7 @@ describe("handleWsOpen host_pressure replay", () => {
     reasons: ["memory"],
     liveAgents: 4,
     updatedAt: "2026-08-18T12:00:00.000Z",
+    os: "linux",
   };
 
   function openDeps(wsMessage: WSMessage | null) {
