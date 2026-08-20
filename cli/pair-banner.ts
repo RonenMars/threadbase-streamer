@@ -2,7 +2,7 @@ import qrcode from "qrcode-terminal";
 import type { E2eeCapability } from "../src/api/routes/misc.routes";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
-import { serverIdentityPublicKey } from "../src/server-identity";
+import { serverIdentityFingerprint, serverIdentityPublicKey } from "../src/server-identity";
 
 const cliLog = getLogger("cli");
 
@@ -36,10 +36,13 @@ export function printUrlBanner({
   url,
   qr,
   expiresAt,
+  fingerprint,
 }: {
   url: string;
   qr?: string;
   expiresAt?: number;
+  /** Grouped hex from `serverIdentityFingerprint`. Printed under an E2EE QR. */
+  fingerprint?: string;
 }): string {
   const contentLines = ["Threadbase Streamer — server address", "", url];
   if (qr) {
@@ -52,6 +55,14 @@ export function printUrlBanner({
     } else {
       contentLines.push("", "Scan to pair a mobile client");
     }
+  }
+  if (fingerprint) {
+    contentLines.push(
+      "",
+      "Identity code",
+      fingerprint,
+      "This should match the code your phone shows after you scan.",
+    );
   }
 
   const width = Math.max(...contentLines.map((l) => l.length));
@@ -176,13 +187,18 @@ export async function printServerBanner(
   //
   // `identityKey()` is only called on the enabled path — a corrupt key file
   // costs the QR on a build that would have used it, and costs nothing on one
-  // that would not.
-  const payload =
-    `threadbase://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}` +
-    (e2eeOffered ? `&spk=${identityKey()}&v=1` : "");
+  // that would not. The same read feeds the fingerprint printed under the QR,
+  // so the phone and the computer show the same grouped hex.
+  let fingerprint: string | undefined;
+  let payload = `threadbase://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}`;
+  if (e2eeOffered) {
+    const spk = identityKey();
+    payload += `&spk=${spk}&v=1`;
+    fingerprint = serverIdentityFingerprint(spk);
+  }
   const qr = await generateQr(payload);
 
-  log.info(printUrlBanner({ url, qr, expiresAt }));
+  log.info(printUrlBanner({ url, qr, expiresAt, fingerprint }));
   log.info(`Pair URL: ${payload}`);
   log.info(`Expires in ${expiresInSeconds}s`);
 }

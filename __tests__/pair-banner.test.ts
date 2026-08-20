@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { printServerBanner } from "../cli/pair-banner";
+import { printServerBanner, printUrlBanner } from "../cli/pair-banner";
 import * as miscRoutes from "../src/api/routes/misc.routes";
 import { StreamerServer } from "../src/server";
-import { serverIdentityPublicKey } from "../src/server-identity";
+import { serverIdentityFingerprint, serverIdentityPublicKey } from "../src/server-identity";
 
 /**
  * The pairing QR's `spk`/`v` parameters (design.md §2.3).
@@ -81,7 +81,7 @@ async function printWith(info: unknown, fetchOpts?: { infoStatus?: number; infoT
 
 describe("pairing QR payload", () => {
   it("omits spk and v when the exchange will not accept a handshake", async () => {
-    const { payload, identityKey } = await printWith({
+    const { payload, identityKey, printed } = await printWith({
       e2ee: { supported: false, enabled: false, version: 1, required: false },
     });
 
@@ -94,15 +94,21 @@ describe("pairing QR payload", () => {
     // The identity key is never read on this path, so a corrupt key file costs
     // the QR only on a build that would have used it.
     expect(identityKey).not.toHaveBeenCalled();
+    expect(printed.join("\n")).not.toContain("Identity code");
   });
 
   it("emits spk and v when the exchange will accept a handshake", async () => {
-    const { payload, identityKey } = await printWith({
+    const { payload, identityKey, printed } = await printWith({
       e2ee: { supported: true, enabled: true, version: 1, required: false },
     });
 
     expect(payload).toBe(`${LEGACY_PAYLOAD}&spk=${IDENTITY_KEY}&v=1`);
-    expect(identityKey).toHaveBeenCalled();
+    expect(identityKey).toHaveBeenCalledTimes(1);
+    // Same grouped hex the phone shows after scanning this QR.
+    const banner = printed.join("\n");
+    expect(banner).toContain("Identity code");
+    expect(banner).toContain(serverIdentityFingerprint(IDENTITY_KEY));
+    expect(banner).toContain("This should match the code your phone shows after you scan.");
   });
 
   it("omits spk and v against a server too old to report the capability", async () => {
@@ -136,6 +142,22 @@ describe("pairing QR payload", () => {
       expect.stringContaining("ECONNRESET"),
       expect.objectContaining({ event: "pair.e2ee_capability_unknown" }),
     );
+  });
+});
+
+describe("printUrlBanner fingerprint lines", () => {
+  it("prints the grouped hex under the box when a fingerprint is supplied", () => {
+    const fingerprint = "3cfe 00ad 6d01 6dd3 782c 8628 4b1d a1d2";
+    const box = printUrlBanner({ url: PUBLIC_URL, fingerprint });
+    expect(box).toContain("Identity code");
+    expect(box).toContain(fingerprint);
+    expect(box).toContain("This should match the code your phone shows after you scan.");
+  });
+
+  it("omits those lines when no fingerprint is supplied", () => {
+    const box = printUrlBanner({ url: PUBLIC_URL });
+    expect(box).not.toContain("Identity code");
+    expect(box).toContain(PUBLIC_URL);
   });
 });
 
