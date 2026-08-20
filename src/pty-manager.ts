@@ -1021,7 +1021,7 @@ export class PTYManager implements SessionRunner {
     if (!oscPermission && !askFooterOnScreen && !this.permissionOpen.has(sessionId)) {
       const shell = detectShellPrompt(lines);
       if (shell) {
-        const key = `${shell.prompt} ${shell.options.map((o) => o.label).join(" ")}`;
+        const key = `${shell.prompt}\u0000${shell.options.map((o) => o.label).join("\u0000")}`;
         if (this.shellPromptOpen.get(sessionId) !== key) {
           this.shellPromptOpen.set(sessionId, key);
           this.onPermissionChange?.(sessionId, {

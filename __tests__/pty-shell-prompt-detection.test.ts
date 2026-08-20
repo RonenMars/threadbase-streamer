@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { EventEmitter } from "events";
 import { PTYManager } from "../src/pty-manager";
 import type { PermissionOption } from "../src/services/questions/detectPermissionGate";
@@ -107,5 +109,34 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
     const gate = gates.find((g) => g && g.options.length > 0);
     expect(gate?.options.every((o) => o.answerKeys === undefined)).toBe(true);
     mgr.dispose();
+  });
+});
+
+describe("PTYManager — dedupe key delimiter is a real NUL, not a printable stand-in", () => {
+  it("evaluates the exact source expression to a string containing char code 0", () => {
+    // Read the `key` expression straight out of the source rather than
+    // retyping it, so this test can never drift from the line it protects —
+    // including the failure mode where someone "simplifies" the delimiter to
+    // something printable (a space, say), which a label could then collide
+    // with and silently suppress a distinct shell-prompt card as a duplicate
+    // repaint. See docs on `shellPromptOpen` dedupe in src/pty-manager.ts.
+    const source = readFileSync(resolve(import.meta.dirname, "../src/pty-manager.ts"), "utf8");
+    const matches = [...source.matchAll(/const key = (`.*`);/g)];
+    if (matches.length !== 1) {
+      throw new Error(
+        `expected exactly one \`const key = \\\`...\\\`;\` in src/pty-manager.ts, found ${matches.length} — ` +
+          "this test targets the shell-prompt dedupe key specifically and must be pointed at the right one.",
+      );
+    }
+    const buildKey = new Function("shell", `return ${matches[0][1]};`) as (shell: {
+      prompt: string;
+      options: { label: string }[];
+    }) => string;
+
+    const key = buildKey({ prompt: "Continue?", options: [{ label: "Yes" }, { label: "No" }] });
+
+    const NUL = String.fromCharCode(0);
+    expect(key.includes(NUL)).toBe(true);
+    expect(key.split(NUL)).toEqual(["Continue?", "Yes", "No"]);
   });
 });
