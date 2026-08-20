@@ -211,6 +211,12 @@ CREATE TABLE IF NOT EXISTS session_names (
 
 const cacheLog = getLogger("cache");
 
+// Messages read before a window's start, solely to build parse state that is
+// then discarded. Tool_use -> tool_result distance measures p50 1 and max 4
+// across sampled Claude transcripts; 8 is slack, and each extra row is one
+// byte-range read out of an index we already consulted.
+const PARSE_STATE_LOOKBACK = 8;
+
 export class ConversationCache {
   private db: Database.Database;
   private tailSize: number;
@@ -886,9 +892,18 @@ export class ConversationCache {
     const to = Math.min(toIndex, total);
     if (to <= from) return { messages: [], total, fromIndex: from };
 
+    // Read a short prefix before the window purely to build parse state, then
+    // drop it. `parseJsonlLine` IS state-dependent: `extractToolResultBlocks`
+    // resolves a tool_result's type from `pendingToolUses`, so a window that
+    // opens between a tool_use and its tool_result serves the result as
+    // "generic" — a Bash card rendering with the default icon and label.
+    // Measured at 0.37% of tool_results at the default msg_limit of 80, which
+    // is (tool_result density)/W: short-range pairs still break whenever a
+    // boundary lands between the halves. Pair distance measures p50 1, max 4,
+    // so 8 is slack, and the extra reads are byte-ranges out of the same index.
     const rows = this.getMessageIndexWindow(
       ConversationCache.conversationIdForFile(filePath),
-      from,
+      Math.max(0, from - PARSE_STATE_LOOKBACK),
       to,
     );
     if (rows.length === 0) return { messages: [], total, fromIndex: from };
@@ -896,21 +911,22 @@ export class ConversationCache {
     const messages: ConversationMessage[] = [];
     const fd = openSync(filePath, "r");
     try {
-      // A fresh parse state per window (not seeded by replaying earlier lines —
-      // that would re-read from byte 0 and defeat the index). parseJsonlLine's
-      // per-line ConversationMessage output does not depend on the cross-line
-      // reducer state in the current scanner, so a windowed read is byte-
-      // identical to a full contiguous parse — pinned by
-      // offset-index-read.test.ts ("windowed read of a tool_use → tool_result
-      // pair matches a full contiguous parse"). If a future scanner makes the
-      // per-line shape state-dependent, that test fails rather than silently
-      // serving a slightly-less-enriched payload.
+      // Parse the lookback prefix into `state` and discard its messages; only
+      // rows at or after `from` are served. This is what makes a windowed read
+      // match a full contiguous parse for tool types, rather than the claim
+      // that the per-line shape is state-independent — it is not.
+      //
+      // teamInfo remains the one field a window cannot reproduce: the scanner
+      // applies it in a post-pass from a conversation-wide teamName -> TeamInfo
+      // table, and `applyTeamInfo` is not exported to us at all. No lookback
+      // fixes that; it needs the table carried per conversation. Left as a
+      // known gap rather than papered over — see offset-index-read.test.ts.
       const state = createJsonlParseState();
       for (const row of rows) {
         const buf = Buffer.alloc(row.byte_length);
         readSync(fd, buf, 0, row.byte_length, row.byte_offset);
         const msg = parseJsonlLine(buf.toString("utf-8"), state);
-        if (msg) messages.push(msg);
+        if (msg && row.message_index >= from) messages.push(msg);
       }
     } finally {
       closeSync(fd);

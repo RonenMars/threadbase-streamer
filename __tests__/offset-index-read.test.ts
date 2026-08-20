@@ -181,4 +181,59 @@ describe("ConversationCache.readMessageWindow", () => {
     const windowed = cache.readMessageWindow(jsonlPath, 1, 3);
     expect(windowed?.messages).toEqual(full?.messages.slice(1));
   });
+
+  it("resolves a tool_result's type when its tool_use precedes the window", async () => {
+    // The case above does not actually exercise the gap: its synthetic
+    // tool_result produces no toolResults at all, so both sides compare empty.
+    // A real Claude tool_result carries `toolUseResult` at the entry top level
+    // and `sourceToolAssistantUUID`, and only then does the type resolve —
+    // from `pendingToolUses`, which is cross-line reducer state.
+    //
+    // Verified against a real transcript: with the tool_use seen the type is
+    // "read"; from a fresh state it is "generic". So a window opening between
+    // the pair serves a Read card with the default icon and label, and the same
+    // conversation renders differently depending on whether the index was warm.
+    const use = JSON.stringify({
+      type: "assistant",
+      uuid: "a-use",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      sessionId: "sess",
+      cwd: "/project",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "toolu_pair", name: "Read", input: { file_path: "/f.md" } },
+        ],
+      },
+    });
+    const res = JSON.stringify({
+      type: "user",
+      uuid: "u-res",
+      parentUuid: "a-use",
+      sourceToolAssistantUUID: "a-use",
+      timestamp: "2026-01-01T00:00:01.000Z",
+      sessionId: "sess",
+      cwd: "/project",
+      toolUseResult: { type: "text", file: { filePath: "/f.md" } },
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "toolu_pair", content: "1\thello" }],
+      },
+    });
+    writeFileSync(jsonlPath, `${userLine("u0", "before")}\n${use}\n${res}\n`);
+
+    await cache.backfillIndex(jsonlPath);
+    const full = cache.readMessageWindow(jsonlPath, 0, 999);
+    const fullTypes = (full?.messages[2]?.metadata?.toolResults ?? []).map((r) => r.type);
+    // Guard the guard: if the fixture stops producing a resolved type, this
+    // test would pass vacuously against a window that also produces nothing.
+    expect(fullTypes).toEqual(["read"]);
+
+    // A window opening AT the tool_result, its tool_use outside.
+    const windowed = cache.readMessageWindow(jsonlPath, 2, 3);
+    expect((windowed?.messages[0]?.metadata?.toolResults ?? []).map((r) => r.type)).toEqual([
+      "read",
+    ]);
+    expect(windowed?.messages).toEqual(full?.messages.slice(2));
+  });
 });
