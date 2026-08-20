@@ -184,7 +184,13 @@ function Invoke-Native {
 function Invoke-PredeployCheck {
   Push-Location $repoRoot
   try {
-    $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
+    $branchRaw = (& git rev-parse --abbrev-ref HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $branchRaw) {
+      if ($Force) { Write-Warn "git unavailable in this checkout, forcing"; return }
+      Write-Err "git unavailable in this checkout. Re-run with -Force to override."
+      exit 1
+    }
+    $branch = $branchRaw.Trim()
     $dirty  = (& git diff --name-only HEAD) -ne $null -and (& git diff --name-only HEAD).Length -gt 0
 
     if ($Force) {
@@ -537,9 +543,14 @@ function Invoke-Deploy {
     Write-Log "building"
     Invoke-Native npm @('run', 'build')
 
-    $sha = (& git rev-parse --short HEAD).Trim()
-    if ($Force -and (& git status --porcelain)) {
-      $sha = "$sha-dirty-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+    $shaRaw = (& git rev-parse --short HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $shaRaw) {
+      $sha = "nogit-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+    } else {
+      $sha = $shaRaw.Trim()
+      if ($Force -and (& git status --porcelain)) {
+        $sha = "$sha-dirty-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+      }
     }
     $relFilename = "cli.$sha.cjs"
 
@@ -586,6 +597,10 @@ function Invoke-Deploy {
       $modSrc = Join-Path $repoRoot "node_modules\$mod"
       if (Test-Path $modSrc) {
         $modDst = Join-Path $installDir "node_modules\$mod"
+        # Remove first: Copy-Item -Recurse into an existing dir merges rather than
+        # replaces, so a stale build/Release\*.node from a prior Node version can
+        # survive alongside the new prebuilds\ and get loaded instead.
+        if (Test-Path $modDst) { Remove-Item -Path $modDst -Recurse -Force }
         New-Item -ItemType Directory -Path (Split-Path $modDst) -Force | Out-Null
         Copy-Item -Path $modSrc -Destination $modDst -Recurse -Force
       }
