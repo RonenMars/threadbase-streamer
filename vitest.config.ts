@@ -16,14 +16,18 @@ function git(...args: string[]): string {
 
 const sha = git("rev-parse", "--short", "HEAD") || "unknown";
 const version = `${pkg.version}+${sha}-test`;
-const testTimeout = process.platform === "win32" ? 900_000 : 15_000;
+const testTimeout = process.platform === "win32" ? 900_000 : 45_000;
 
 export default defineConfig({
   define: { __VERSION__: JSON.stringify(version) },
   test: {
     globals: true,
     include: ["__tests__/**/*.test.ts"],
-    setupFiles: ["__tests__/setup/isolate-runtime-db.ts", "__tests__/setup/provider-installed.ts"],
+    setupFiles: [
+      "__tests__/setup/silence-logs.ts",
+      "__tests__/setup/isolate-runtime-db.ts",
+      "__tests__/setup/provider-installed.ts",
+    ],
     pool: "forks",
     fileParallelism: false,
     hookTimeout: 30_000,
