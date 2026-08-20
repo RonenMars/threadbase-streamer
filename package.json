@@ -55,7 +55,7 @@
     "test:verbose": "vitest run --reporter=verbose",
     "test:watch": "vitest",
     "test:precommit": "vitest run __tests__/canonicalize-project-path.test.ts __tests__/dates.test.ts __tests__/debounce.test.ts __tests__/schemas.test.ts __tests__/version.test.ts __tests__/question-types.test.ts __tests__/pty-host-process.test.ts __tests__/pty-host-windows.test.ts",
-    "lint": "tsc --noEmit && npx biome check .",
+    "lint": "tsc --noEmit && npx biome check . && node scripts/check-no-nul-bytes.mjs",
     "lint:changed": "bash scripts/lint-changed.sh",
     "format": "npx biome format --write .",
     "check": "npx biome check --write .",
