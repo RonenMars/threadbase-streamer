@@ -21,6 +21,21 @@ produces the branch and two documents and writes nothing outside the worktree. F
 land the PRs, and may push the integration branch itself — each behind its own approval, neither
 implied by approving the run.
 
+## The branch has an expiry
+
+An integration branch is a **staging area with an expiry, not a parallel trunk.** Everything below
+assumes that, and Step 9 enforces it.
+
+- A branch this skill creates exists to **test a set of PRs together**, and is deleted once `main` holds
+  its content. Deleting it costs nothing while a backup ref points at the same commit.
+- **Never develop on it.** The moment a fix is committed to the integration branch rather than to the PR
+  that needs it, it has stopped being a staging area and become a second trunk — one nobody reviews and
+  nothing lands from. Step 7 says where a fix goes instead.
+- **If the plan is to land PRs one at a time onto `main`, this is the wrong tool.** That is a different
+  procedure and needs no integration branch at all — though it still deserves a log and a summary in
+  these same two formats.
+- Step 9 ends with the expiry: name the condition under which the branch is deleted, and who deletes it.
+
 ## Step 0 — Pick the flow
 
 Two flows, differing only in **what they are allowed to write**. Ask the user which one, unless they
@@ -696,7 +711,7 @@ progress. Delete what this run made; never touch what it merely used.
 | `refs/integration/pr/*` | delete |
 | Backup ref whose PR has landed | delete — the landing step below retires it as its last action |
 | Every other backup ref, and every archive tag | **keep** — until its own PR lands, a backup ref is the entire undo |
-| The integration branch | keep |
+| The integration branch | **delete** once `main` holds its content — see "Retire the branch" below |
 | A PR head, or any branch this run did not create | **never**, without asking each time — including one this run rebased |
 
 ```bash
@@ -750,7 +765,7 @@ Both must hold. Anything else is kept:
 | PR `MERGED` or `CLOSED`, worktree clean | remove |
 | Worktree dirty | **keep**, whatever the PR says — uncommitted work exists nowhere else |
 | No PR found for the branch | **keep** — "no PR" is not "merged"; it is a branch nobody has proposed yet, or one whose PR was opened from a differently-named head |
-| An integration branch's own worktree | **keep** unless named explicitly — it is the rehearsal artefact and the conflict oracle for the next run |
+| An integration branch's own worktree | **keep** unless named explicitly — the rehearsal artefact and the next run's conflict oracle. One whose branch has already been retired (below) is a leftover rather than an oracle: say so instead of sparing it by default |
 | The primary checkout, or the worktree you are standing in | **never** |
 
 Build the table first and read it, then delete — never remove inside the same loop that discovers:
@@ -835,6 +850,26 @@ on `main`, or record in the execution log that it was left unlanded and where it
 Never push `main` directly and never force-push it. Log each landing as it happens: PR number, head
 before and after the rebase, the squash SHA on `main`, and the backup ref retired.
 
+### Retire the branch
+
+The run is not finished when the branch is green; it is finished when the branch is **gone**. Once
+`main` holds the content — however it got there — push a backup ref, delete the branch locally and, if
+it was ever pushed, on `origin` too, and record both in the execution summary.
+
+Audit each ref by **content, not ancestry**: ask *does it hold a file `main` has never had*, rather than
+*is it merged*. Everything here lands as a squash, so no branch is ever an ancestor of `main` and
+`git merge-base --is-ancestor` reports "unmerged" for work that landed in full. It is the same
+principle as Step 8's coverage gate, pointed at refs instead of files.
+
+If the branch is still alive a week later with nothing landed, that is the parallel-trunk failure
+starting. Say so rather than letting it run.
+
+### Coordinating with tb-mobile
+
+Integration runs across the two repos are usually the same piece of work; the merge order in one has no
+bearing on the other. **Each repo logs its own half** — one document spanning both leaves each side
+tracking work it cannot verify. Cross-reference by path and PR number instead.
+
 ### If a dependabot run was deferred, this is where it comes back
 
 When flow C's step 1 recorded a yes to "run the dependabot PRs separately afterwards", say so in the
@@ -858,6 +893,8 @@ finished without returning to it is how the deferral becomes a silent drop.
 | `fixes`/`closes`/`resolves` before a PR number | Closes the PR the fix was waiting for, on merge | Bare `#N` in any dependency note; the keyword ignores the sentence around it |
 | Ticking a box that asserts on-device verification | A green checklist claims a human looked, and nothing records that none did | The `Backed by` table, then stop — Step 6 |
 | PR branch cut from the integration branch | `base=main` hides it; a squash to `main` lands the whole branch | `git merge-base --is-ancestor <int-tip> <pr-head>` before it is merged or ordered |
+| Committing a fix to the integration branch | It stops being a staging area and becomes a parallel trunk | Fix in the PR that needs it (Step 7), then re-merge |
+| Integration branch left alive after landing | The parallel trunk it was never meant to be | Retire it in Step 9; back it up first, then delete local and remote |
 | Commit hooks rejecting merge commits | The whole shell call aborts, not just the commit | Expect it; ask the user how to proceed rather than reaching for `--no-verify` |
 | Copied `node_modules` | Native ABI mismatch, phantom failures | `npm ci` in the worktree |
 | Whole-file conflict resolution | Silently deletes routes/additions; `tsc` stays green | List every one in §8 and diff the losing side |
