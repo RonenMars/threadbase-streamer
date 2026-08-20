@@ -1344,6 +1344,20 @@ export class SessionHandlers {
     });
   }
 
+  /**
+   * Same empty-unused check stop uses (promptCount === 0 and no cache row,
+   * including boundConversationId / resumedFromConversationId). Safe after
+   * putOnHold: the runner may already have dropped the live session.
+   */
+  forgetIfEmptyUnused(sessionId: string): void {
+    const live = this.ptyManager.getSession(sessionId);
+    const stored = this.sessionStore.getManaged(sessionId);
+    const session = live ?? stored;
+    if (!session) return;
+    if (!this.shouldForgetEmptySession(session)) return;
+    this.forgetEmptyStoppedSession(sessionId);
+  }
+
   async handleAdopt(sessionId: string, res: ServerResponse): Promise<void> {
     // Refresh discovery so we have the latest metadata
     const discovered = await discoverClaudeProcesses();
