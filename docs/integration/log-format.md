@@ -3,9 +3,9 @@
 The **log** is written *during* the merge, in real time, one append per action.
 It is the primary record: the [summary](summary-format.md) is derived from it, never the other way round.
 
-Filename: `docs/integration/<YYYY-MM-DD>-<branch-slug>-log.md`, or `…-rehearsal-log.md` for a local
-rehearsal. A real run that replays a rehearsal gets its **own** log citing the rehearsal's, rather than
-editing it — and where the two disagree, the real run wins.
+Filename: `docs/integration/<YYYY-MM-DD>-<branch-slug>-rehearsal-log.md` for a local rehearsal, and
+`…-execution-log.md` for the run that replays it against `origin`. The execution run gets its **own**
+log citing the rehearsal's, rather than editing it — and where the two disagree, the execution wins.
 
 **Rules that make the log worth keeping:**
 
@@ -26,6 +26,15 @@ editing it — and where the two disagree, the real run wins.
 **Goal:** one sentence — what this branch is for and what "done" means.
 **Operator:** <who/which session>  **Repo:** <name>  **Log started:** <YYYY-MM-DD HH:MM TZ>
 ```
+
+An **execution** log carries one more line, first, before the status — the rehearsal it replays:
+
+```markdown
+**Rehearsal:** [<date>-<slug>-rehearsal-log.md](<date>-<slug>-rehearsal-log.md) · [<date>-<slug>-rehearsal-summary.md](<date>-<slug>-rehearsal-summary.md)
+```
+
+This log says what happened; the rehearsal says why it was expected to. Whoever finds one of them a
+month from now has no other way to learn the other exists.
 
 ---
 
