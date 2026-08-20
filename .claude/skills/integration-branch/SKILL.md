@@ -26,6 +26,10 @@ implied by approving the run.
 An integration branch is a **staging area with an expiry, not a parallel trunk.** Everything below
 assumes that, and Step 9 enforces it.
 
+The rule and the ref audit behind it are canonical in
+[`threadbase/docs/integration-branch-lifecycle.md`](https://github.com/RonenMars/threadbase/blob/main/docs/integration-branch-lifecycle.md),
+shared with tb-mobile. Read it before deciding a branch may stay.
+
 - A branch this skill creates exists to **test a set of PRs together**, and is deleted once `main` holds
   its content. Deleting it costs nothing while a backup ref points at the same commit.
 - **Never develop on it.** The moment a fix is committed to the integration branch rather than to the PR
@@ -857,7 +861,9 @@ The run is not finished when the branch is green; it is finished when the branch
 it was ever pushed, on `origin` too, and record both in the execution summary.
 
 Audit each ref by **content, not ancestry**: ask *does it hold a file `main` has never had*, rather than
-*is it merged*. Everything here lands as a squash, so no branch is ever an ancestor of `main` and
+*is it merged* — the script is in
+[`integration-branch-lifecycle.md`](https://github.com/RonenMars/threadbase/blob/main/docs/integration-branch-lifecycle.md),
+along with two checks from that audit that return a confident wrong answer instead of an error. Everything here lands as a squash, so no branch is ever an ancestor of `main` and
 `git merge-base --is-ancestor` reports "unmerged" for work that landed in full. It is the same
 principle as Step 8's coverage gate, pointed at refs instead of files.
 
