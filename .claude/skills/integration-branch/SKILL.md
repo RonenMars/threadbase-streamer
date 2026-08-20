@@ -113,8 +113,12 @@ The gate:
 3. Get an explicit approval for that list. A blanket yes does not carry: re-confirm immediately before
    any force-push of a PR head, any branch deletion, any merge into `main`, and any push of the
    integration branch itself.
-4. Use `--force-with-lease`, never `--force`. Never force-push `main` and never push to it directly —
-   landing goes through `gh pr merge --squash`, nothing else.
+4. Use `--force-with-lease=<branch>:<old-head>`, naming the head you actually read — never `--force`,
+   and never the bare `--force-with-lease`. The bare form compares against whatever the local
+   remote-tracking ref happens to hold, and a background fetch can refresh that into agreeing with a
+   push you never intended to overwrite; naming the head makes the guard mean what it says. Never
+   force-push `main` and never push to it directly — landing goes through `gh pr merge --squash`,
+   nothing else.
 5. Log every write as it happens — the log is the only record that a write occurred.
 
 Then run it:
@@ -501,13 +505,13 @@ replay only those. Same procedure in flow A and flow C; only the last step diffe
 **Flow A stops at the worktree**: the replay stays local and the ledger records how it was rebuilt, so
 the execution run replays the same cherry-picks instead of rediscovering them. **Flow C** publishing a
 replayed branch means force-pushing the PR head, so the Step 0 gate applies in full — backup ref first,
-`--force-with-lease` against the head this run actually read (Step 6's `headRefOid`), re-confirmed
-immediately before.
+`--force-with-lease=<branch>:<old-head>` naming the head this run actually read (Step 6's
+`headRefOid`), re-confirmed immediately before.
 
 **The rebase is local until you decide otherwise.** In flow A it never leaves the worktree. In flow C,
-publishing it means force-pushing the PR's head, which is a write with every consequence listed
-in the Step 0 gate — back it up, use `--force-with-lease`, and re-confirm first. Integrating a PR does
-not require publishing its rebase; only re-pointing the PR itself does.
+publishing it means force-pushing the PR's head, which is a write with every consequence listed in the
+Step 0 gate — back it up, use `--force-with-lease=<branch>:<old-head>`, and re-confirm first.
+Integrating a PR does not require publishing its rebase; only re-pointing the PR itself does.
 
 After **each** merge, before moving on:
 
@@ -523,6 +527,80 @@ After **each** merge, before moving on:
 A `DIRTY` PR is not a special case under this order — it rebases onto the tip like every other one. Log
 the resolution anyway: the conflict is usually a doc line rather than code, and that distinction is
 what tells the next reader whether the PR was actually at odds with the set.
+
+### A PR whose branch was cut from the integration branch
+
+`baseRefName` will not tell you this. A PR can read `base=main` while its head branch was cut from the
+integration branch, and then it carries every commit that branch held at cut time. Test ancestry, and
+treat the commit count as the corroborating tell:
+
+```bash
+git merge-base --is-ancestor <int-tip> <pr-head> && echo "carries the integration branch"
+git rev-list --count origin/main..<pr-head>          # 30+ on a two-file PR is the same finding
+```
+
+Merging one of these to `main` squash-lands the entire integration branch as a single commit —
+including PRs nobody approved for `main`, drafts among them. It is not a merge candidate in any flow.
+Inside a run it is worse than redundant: re-merging the set into the set produces conflicts that look
+like real disagreements between PRs and are not.
+
+Two ways out, cheapest first.
+
+**1 — Rebuild it**, when the PR's own change is a small number of commits. This is the replay ladder
+above ("When the rebase will not replay") pointed at a different target: `git cherry -v origin/main
+<pr-head>` names the commits that are genuinely the PR's, and those are the ones to pick onto a fresh
+checkout of the target.
+
+```bash
+git worktree add --detach ../<repo>-worktrees/rebuild origin/main
+git -C ../<repo>-worktrees/rebuild cherry-pick <sha>...
+git -C ../<repo>-worktrees/rebuild push --force-with-lease=<branch>:<old-head> origin HEAD:refs/heads/<branch>
+```
+
+That explicit `--force-with-lease=<branch>:<old-head>` is the required form everywhere in this skill,
+never the bare one — the reason is in the Step 0 gate.
+
+Confirm the rebuilt diff is the PR's own change and nothing else — `git diff origin/main --stat`
+against `gh pr diff <n> --name-only` — before letting it merge. Publishing a head is a write: it
+carries the Step 0 gate.
+
+**2 — Re-implement it**, when the cherry-pick conflicts across many files because the ground moved
+under it: the PR's version of a component landed differently through another PR, a shared type was
+renamed, a file it edits was split. Do not hand-resolve that. Wide conflict resolution is exactly the
+trap in the table below — take one side wholesale and additions vanish while `tsc` stays green.
+
+Hand it to a coding agent (Claude Code, Codex, Cursor) as a fresh implementation task, and give the
+user the prompt rather than running it silently — re-implementing someone's PR is their call, not the
+run's. Fill every angle bracket; an unfilled one is what makes the agent invent the requirement:
+
+```text
+Re-implement PR #<n> — "<title>" — on a clean branch. Do not cherry-pick or merge the old branch.
+
+Start from a branch cut off <origin/main | the integration tip <sha>>, which already contains
+<what landed there: the PRs by number>.
+
+Read the old work for intent only, never as a patch to apply:
+  gh pr view <n> --json title,body,comments
+  gh pr diff <n>
+
+What the PR set out to do, from its body and not from its diff:
+<one paragraph — the user-visible behaviour, not the implementation>
+
+Ground that moved under it since it was written:
+- <path> — now <how it looks on the target and which PR #N changed it>
+- <path> — <same>
+
+Rebuild that behaviour against the tree as it is now. Match the current shape of each file rather than
+the shape the PR left it in. Keep the PR's tests, port them to the current APIs, and add one for
+anything the new shape changed. Then run `npm run lint` and `npm test`, and report your final file list
+against `gh pr diff <n> --name-only` so the difference between the old PR's scope and the new one is
+visible rather than assumed.
+```
+
+The re-implementation is a new PR **based on `main`** — the integration tip may be a convenient tree to
+develop against, but the PR itself is opened against `main` like every other one this run touches (see
+Step 7). Close the old PR with a comment pointing at the replacement, and record the swap in the log's
+§4 with both numbers: a set whose membership silently changed is not reproducible from the log.
 
 **Do not batch.** Merging three PRs then testing turns one red suite into a three-way bisect.
 
@@ -672,7 +750,9 @@ Landing is its own approval, separate again from the yes to flow C. When it is g
    stacked child that keeps its parent's base cannot land once the parent is gone.
 2. **Push the backup ref first** — `backup/<head>-<date>` and an annotated tag — *before* the rebase,
    not after. It is the only undo for the force-push in step 3.
-3. **Rebase onto current `main`**, then `git push --force-with-lease` (never `--force`).
+3. **Rebase onto current `main`**, then
+   `git push --force-with-lease=<branch>:<old-head> origin HEAD:refs/heads/<branch>`, naming the head
+   recorded in step 2 — never `--force`, never the bare lease.
 4. **Wait for that PR's checks to go green on the rebased head.** This is the one genuine wait in the
    whole run: the rebase moved the head, so every result from before it is stale.
 5. `gh pr merge <n> --squash --delete-branch`.
@@ -710,6 +790,7 @@ finished without returning to it is how the deferral becomes a silent drop.
 | Branch stacked on an old integration branch | A rebase drags in 35 commits of other people's work, or refuses outright | `git cherry -v origin/main <branch>`, replay the `+` commits only |
 | `fixes`/`closes`/`resolves` before a PR number | Closes the PR the fix was waiting for, on merge | Bare `#N` in any dependency note; the keyword ignores the sentence around it |
 | Ticking a box that asserts on-device verification | A green checklist claims a human looked, and nothing records that none did | The `Backed by` table, then stop — Step 6 |
+| PR branch cut from the integration branch | `base=main` hides it; a squash to `main` lands the whole branch | `git merge-base --is-ancestor <int-tip> <pr-head>` before it is merged or ordered |
 | Commit hooks rejecting merge commits | The whole shell call aborts, not just the commit | Expect it; ask the user how to proceed rather than reaching for `--no-verify` |
 | Copied `node_modules` | Native ABI mismatch, phantom failures | `npm ci` in the worktree |
 | Whole-file conflict resolution | Silently deletes routes/additions; `tsc` stays green | List every one in §8 and diff the losing side |
