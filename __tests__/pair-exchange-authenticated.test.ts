@@ -41,7 +41,8 @@ import { capabilitiesForPreset } from "../src/services/security/capabilities";
  * passes against a server that ignores the whole request.
  *
  * The capability is stubbed on for the same reason `pair-exchange-e2ee.test.ts`
- * stubs it: `E2EE_SUPPORTED` is still the hardcoded `false` that Batch D flips.
+ * stubs it: `E2EE_SUPPORTED` is true, but the `e2ee` feature flag defaults off,
+ * so an unstubbed capability resolves to disabled.
  */
 
 const API_KEY = "tb_test_key_for_authenticated_pairing";

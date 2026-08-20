@@ -27,9 +27,8 @@ import { loadOrCreateServerIdentity } from "../src/server-identity";
  * disagree again.
  *
  * `describeE2eeCapability(...).enabled` is `E2EE_SUPPORTED && flagEnabled`
- * (misc.routes.ts), and `E2EE_SUPPORTED` is currently the hardcoded constant
- * `false` — flipped by Phase 2, step 4, once this handshake lands, not by the
- * `e2ee` feature flag this suite could otherwise set. Until that flip, no
+ * (misc.routes.ts). `E2EE_SUPPORTED` is now true, so the remaining gate is the
+ * `e2ee` feature flag, which defaults off. With the capability disabled, no
  * configuration this build can reach produces `enabled: true`. The
  * "capability on" cases below stub `describeE2eeCapability` directly, the
  * same technique other suites in this repo use to isolate one collaborator

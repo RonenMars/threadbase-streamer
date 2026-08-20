@@ -123,16 +123,20 @@ export const E2EE_PROTOCOL_VERSION = 1;
  *
  * Deliberately a constant rather than the `e2ee` feature flag. `supported` means
  * "this build speaks the envelope" (specs/end-to-end-encryption/design.md §6.2),
- * and right now the capability negotiation exists while the handshake does not.
- * Reporting the flag here would let an operator who switches it on advertise a
- * handshake this build cannot perform — a client would offer to re-pair for
- * encryption and then fail, which is exactly the half-landed break this
- * negotiation exists to remove. Phase 2 flips it when the handshake lands.
+ * which is a property of the build; whether a given deployment offers it is the
+ * flag's job, and `describeE2eeCapability` below requires both. Reporting the
+ * flag here would let an operator who switches it on advertise a handshake the
+ * build cannot perform — a client would offer to re-pair for encryption and then
+ * fail, which is exactly the half-landed break this negotiation exists to remove.
  *
- * Typed `boolean` rather than inferred `false` so the `&&` below stays a real
- * branch instead of narrowing to a constant.
+ * True since Phase 2 landed the handshake. Enabling it for a deployment is still
+ * a separate, opt-in act: set `THREADBASE_FEATURE_E2EE=1`, `--feature e2ee=true`,
+ * or `feature_flags:` in server.yaml.
+ *
+ * Typed `boolean` rather than inferred so the `&&` below stays a real branch
+ * instead of narrowing to a constant.
  */
-const E2EE_SUPPORTED: boolean = false;
+const E2EE_SUPPORTED: boolean = true;
 
 /**
  * Whether a client should encrypt to this server, and why not when it should not.
