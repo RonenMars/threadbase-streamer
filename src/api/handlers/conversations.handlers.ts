@@ -11,7 +11,7 @@ import {
 } from "@threadbase-sh/scanner";
 import { createReadStream, existsSync, readdirSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
-import { join } from "path";
+import { basename, join } from "path";
 import { createInterface } from "readline";
 import { ConversationCache } from "../../conversation-cache";
 import type { LiveSessionManager } from "../../live-session-manager";
@@ -378,6 +378,81 @@ export class ConversationHandlers {
     return null;
   }
 
+  /**
+   * Resolve a conversation id to a JSONL path, in order of authority.
+   *
+   * `findJsonlPath` alone answers 64.0% of this machine's 961 conversations and
+   * 0 of 343 Codex ones — it reconstructs `<projectsDir>/<dir>/<uuid>.jsonl`,
+   * which is Claude Code's layout, and a Codex rollout is
+   * `rollout-<ts>-<uuid>.jsonl` under a date path, so that walk cannot match one
+   * by construction. The ladder below answers 99.7%, leaving only the three
+   * whose file is genuinely gone.
+   */
+  async locateJsonlPath(uuid: string, lookupId: string): Promise<string | null> {
+    // A live PTY owns its file; nothing on disk is more current.
+    const live =
+      this.deps.findLiveSessionFilePath(uuid) ?? this.deps.findLiveSessionFilePath(lookupId);
+    if (live) return live;
+
+    // The path the cache already recorded. Verified rather than trusted: 49 of
+    // 961 rows on one machine pointed at a subagent transcript OF the
+    // conversation instead of the conversation, so trusting this outright would
+    // serve a 56-message sidechain as a 1307-message conversation.
+    const cached = this.cache?.getMetaById(lookupId)?.filePath;
+    if (cached && (await this.isJsonlPathFor(cached, lookupId))) return cached;
+
+    // Claude-layout directory walk, kept as the self-heal for ids the cache
+    // never learned about — and for the 49 above, where it happens to be right.
+    return this.findJsonlPath(lookupId);
+  }
+
+  /**
+   * Does `filePath` actually hold the conversation `requestedId` names?
+   *
+   * The filename settles it for both providers: Claude writes `<uuid>.jsonl`
+   * (or `agent-<agentId>.jsonl`), Codex writes `rollout-<ts>-<uuid>.jsonl`.
+   * Only when the name says nothing do we open the file — and there the naive
+   * rule is wrong, because **a Claude subagent transcript carries the PARENT's
+   * `sessionId`**. Matching on `sessionId` alone therefore verifies exactly the
+   * file this check exists to reject, so a sidechain is refused outright unless
+   * it was asked for by its own `agent-<agentId>` name, which the filename
+   * branch above already covers.
+   */
+  async isJsonlPathFor(filePath: string, requestedId: string): Promise<boolean> {
+    if (!existsSync(filePath)) return false;
+    const stem = basename(filePath).replace(/\.jsonl$/, "");
+    if (stem === requestedId || stem.includes(requestedId)) return true;
+
+    const first = await this.readFirstJsonlEntry(filePath);
+    if (!first || first.isSidechain === true) return false;
+    return first.sessionId === requestedId;
+  }
+
+  /** First parseable JSONL line, for identity checks. Null on an empty or unreadable file. */
+  async readFirstJsonlEntry(
+    filePath: string,
+  ): Promise<{ sessionId?: string; isSidechain?: boolean } | null> {
+    return new Promise((resolve) => {
+      const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
+      let done = false;
+      rl.on("line", (line) => {
+        if (done) return;
+        try {
+          const entry = JSON.parse(line);
+          done = true;
+          rl.close();
+          resolve(entry as { sessionId?: string; isSidechain?: boolean });
+        } catch {
+          // skip malformed lines
+        }
+      });
+      rl.on("close", () => {
+        if (!done) resolve(null);
+      });
+      rl.on("error", () => resolve(null));
+    });
+  }
+
   async readCwdFromJsonl(filePath: string): Promise<string | null> {
     return new Promise((resolve) => {
       const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
@@ -413,10 +488,7 @@ export class ConversationHandlers {
     // The warm-up scan keeps running in the background; once it adopts the
     // scanner, subsequent requests use the indexed hot path below.
     if (!this.scannerManager.ready && !this.scanProfiles) {
-      const filePath =
-        this.findJsonlPath(lookupId) ??
-        this.deps.findLiveSessionFilePath(uuid) ??
-        this.deps.findLiveSessionFilePath(lookupId);
+      const filePath = await this.locateJsonlPath(uuid, lookupId);
       if (filePath) {
         const account = this.cache?.getMetaById(lookupId)?.account ?? undefined;
         const coldScanner = this.scannerManager.current ?? this.scannerManager.newScanner();
@@ -518,10 +590,7 @@ export class ConversationHandlers {
 
     if (this.scanProfiles) return null;
 
-    const filePath =
-      this.findJsonlPath(lookupId) ??
-      this.deps.findLiveSessionFilePath(uuid) ??
-      this.deps.findLiveSessionFilePath(lookupId);
+    const filePath = await this.locateJsonlPath(uuid, lookupId);
     if (!filePath) return null;
 
     // Mid-full-rescan (or any in-flight scannerReady): do NOT discard the live
