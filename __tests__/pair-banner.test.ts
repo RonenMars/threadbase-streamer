@@ -269,9 +269,11 @@ describe("the capability probe against a real running server", () => {
    * into today. Revisit when Batch D flips the constant.
    */
   it("prints a legacy QR against the same daemon with the capability at its real default", async () => {
-    // No stub: `E2EE_SUPPORTED` is still the hardcoded `false` Batch D flips, so
-    // this is what every server prints today. The positive control for the case
-    // above — without it, that test also passes on a build that always emits.
+    // No stub: `E2EE_SUPPORTED` is now true, so what keeps this legacy is the
+    // `e2ee` feature flag defaulting off — which is what every server prints
+    // until an operator opts in. The positive control for the case above —
+    // without it, that test also passes on a build that always emits. If the
+    // flag's default ever changes, this is the test that must be re-read first.
     const { payload, log } = await printAgainstServer();
 
     expect(log.warn).not.toHaveBeenCalled();

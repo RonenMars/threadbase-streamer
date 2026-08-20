@@ -39,18 +39,21 @@ describe("describeE2eeCapability", () => {
   });
 
   /**
-   * The GATE 2 guarantee, stated as a property.
+   * The GATE 2 guarantee, restated for a build that now has the handshake.
    *
-   * `supported` means "this build speaks the envelope". Until the handshake
-   * lands it does not, so switching the feature flag on must NOT produce
-   * `enabled: true` — a client that believed it would offer to re-pair for
-   * encryption against a server with no handshake endpoint, which is the exact
-   * half-landed break the negotiation exists to remove.
+   * `supported` means "this build speaks the envelope", and since Phase 2 it
+   * does — so the flag is the only remaining gate and `enabled` must track it
+   * exactly. Asserted as a property over both flag values rather than as one
+   * case, because the failure that matters is the two drifting apart: a build
+   * that reports `enabled` while the operator never opted in, or one that
+   * refuses after they did.
    */
-  it("stays disabled even with the feature flag on, while the handshake is unbuilt", () => {
-    const cap = describeE2eeCapability(true);
-    expect(cap.supported).toBe(false);
-    expect(cap.enabled).toBe(false);
+  it("is supported, and enabled tracks the feature flag exactly", () => {
+    for (const flag of [true, false]) {
+      const cap = describeE2eeCapability(flag);
+      expect(cap.supported).toBe(true);
+      expect(cap.enabled).toBe(flag);
+    }
   });
 
   it("says why it is disabled instead of going silent", () => {
@@ -116,7 +119,7 @@ describe("e2ee capability over HTTP", () => {
     await boot(false);
     const body = await (await fetch(`${baseUrl}/api/info`, { headers: AUTH })).json();
     expect(body.e2ee).toMatchObject({
-      supported: false,
+      supported: true,
       enabled: false,
       version: E2EE_PROTOCOL_VERSION,
       required: false,
@@ -124,14 +127,17 @@ describe("e2ee capability over HTTP", () => {
     expect(typeof body.e2ee.reason).toBe("string");
   });
 
-  // The inertness guarantee end to end: an operator can switch the flag on and
-  // a client still sees `enabled: false`, because this build has no handshake to
-  // offer. Nothing about turning the flag on is reachable by a client.
-  it("still reports enabled:false over HTTP with the flag switched on", async () => {
+  // The reachability guarantee end to end, and the positive control for the
+  // flag-off case above: without this, that test also passes on a build where
+  // the capability can never be enabled by any configuration at all.
+  it("reports enabled:true over HTTP once the operator switches the flag on", async () => {
     await boot(true);
     const body = await (await fetch(`${baseUrl}/api/info`, { headers: AUTH })).json();
-    expect(body.e2ee.enabled).toBe(false);
-    expect(body.e2ee.supported).toBe(false);
+    expect(body.e2ee.supported).toBe(true);
+    expect(body.e2ee.enabled).toBe(true);
+    // Nothing to explain when it is on, and `required` stays a stage-3 decision.
+    expect(body.e2ee.reason).toBeUndefined();
+    expect(body.e2ee.required).toBe(false);
   });
 
   // Additive, in the sense that actually matters: the fields a released mobile
