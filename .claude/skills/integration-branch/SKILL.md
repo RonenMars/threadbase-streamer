@@ -717,6 +717,73 @@ what became of each one by name: merged into the branch or not, still present lo
 present on `origin` or not. A PR carries its own record on GitHub; a bare branch carries none, so one
 that goes unmentioned here is simply lost.
 
+### Stale worktrees from previous runs — only when asked, and only on proof
+
+The section above deliberately refuses to touch anything this run did not create. That refusal is right
+per-run and wrong over time: every integration run, and every PR landed from one, leaves a worktree
+pinned to a branch, and nothing ever removes them. They are not free — each carries its own
+`node_modules`, and `git worktree list` becomes unreadable at thirty entries.
+
+**They accumulate for a specific mechanical reason.** `gh pr merge --delete-branch` deletes the remote
+branch but *fails* to delete the local one when a worktree holds it:
+
+```
+failed to delete local branch feat/host-pressure: cannot delete branch 'feat/host-pressure'
+used by worktree at '.../tb-streamer-worktrees/feat-host-pressure'
+```
+
+That is a warning on an otherwise successful merge, so it scrolls past and the worktree survives its PR
+by months. Read the message rather than the exit code — the merge did succeed.
+
+**This is never part of a run.** It touches state the run did not create, so it happens only on an
+explicit request to clean up worktrees, and never as a tidy-up folded into something else.
+
+**The predicate is two facts about each worktree, both queried, neither inferred:**
+
+1. Its branch's PR is `MERGED` or `CLOSED` — from `gh`, per branch.
+2. `git status --porcelain` in that worktree is **empty**.
+
+Both must hold. Anything else is kept:
+
+| Case | Disposition |
+|---|---|
+| PR `MERGED` or `CLOSED`, worktree clean | remove |
+| Worktree dirty | **keep**, whatever the PR says — uncommitted work exists nowhere else |
+| No PR found for the branch | **keep** — "no PR" is not "merged"; it is a branch nobody has proposed yet, or one whose PR was opened from a differently-named head |
+| An integration branch's own worktree | **keep** unless named explicitly — it is the rehearsal artefact and the conflict oracle for the next run |
+| The primary checkout, or the worktree you are standing in | **never** |
+
+Build the table first and read it, then delete — never remove inside the same loop that discovers:
+
+```bash
+git worktree list --porcelain \
+  | awk '/^worktree /{w=$2} /^branch /{b=$2; sub("refs/heads/","",b); print w"\t"b}' \
+  | while IFS=$'\t' read -r w b; do
+      case "$w" in */<repo>) continue;; esac          # never the primary checkout
+      pr=$(gh pr list --head "$b" --state all --json number,state --jq '.[0]|"\(.number):\(.state)"')
+      printf '%-40s %-44s pr=%-14s dirty=%s\n' \
+        "$(basename "$w")" "$b" "${pr:-none}" "$(git -C "$w" status --porcelain | wc -l | tr -d ' ')"
+    done
+```
+
+Then remove only the rows that satisfy both facts:
+
+```bash
+git worktree remove "$W/$d" || git worktree remove --force "$W/$d"
+```
+
+`git worktree remove` refuses when the tree holds modified or untracked files, which is the guard doing
+its job — **`--force` is for ignored build output only** (`node_modules`, `dist`), never to override a
+refusal caused by real changes. Since the plain form is tried first and only a clean row is ever
+attempted, a `--force` that succeeds here removed nothing but ignored files.
+
+**Removing a worktree does not delete its branch.** The local branch survives, so the operation is
+recoverable and a closed PR's only copy of its commits is not lost. Deleting those branches is a
+separate decision and a separate ask.
+
+Report the counts and name what was kept and why. "Twenty-nine removed" alone does not tell the next
+reader whether the four dirty ones were considered and spared or simply missed.
+
 ### Then write it up
 
 Write the summary from the log using the summary format, and fill the log's §14 — gaps in this log:
