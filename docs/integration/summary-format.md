@@ -4,9 +4,10 @@ The **summary** is written once, at the end, from the [log](log-format.md). It i
 someone reads *instead of* the log: a reviewer deciding whether to merge, or the next operator
 deciding how to run the next integration.
 
-Filename: `docs/integration/<YYYY-MM-DD>-<branch-slug>-summary.md`, or `…-rehearsal-summary.md` for a
-local rehearsal. A rehearsal summary is the input to the real run: its §3 order and §4 resolutions are
-what the real run replays, so write it to be executed, not just read.
+Filename: `docs/integration/<YYYY-MM-DD>-<branch-slug>-rehearsal-summary.md` for a local rehearsal, and
+`…-execution-summary.md` for the run that replays it against `origin`. A rehearsal summary is the input
+to the execution run: its §3 order and §4 resolutions are what that run replays, so write it to be
+executed, not just read.
 
 **Rules:**
 
@@ -27,6 +28,12 @@ what the real run replays, so write it to be executed, not just read.
 **Branch:** `integration/…` @ `abc1234` — <N> PRs, <M> commits ahead of `main` @ `def5678`
 **CI:** <12/12 green | which checks, which failed>
 **Full log:** [<date>-<slug>-log.md](<date>-<slug>-log.md)
+```
+
+An **execution** summary carries the rehearsal pair first, above the verdict:
+
+```markdown
+**Rehearsal:** [<date>-<slug>-rehearsal-log.md](<date>-<slug>-rehearsal-log.md) · [<date>-<slug>-rehearsal-summary.md](<date>-<slug>-rehearsal-summary.md)
 ```
 
 One paragraph: what was integrated, what state it is in, and the single thing a reader must know
