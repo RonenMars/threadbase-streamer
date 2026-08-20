@@ -65,6 +65,25 @@ export function permissionContentKey(gate: {
     .join(",")}::${gate.cursor ?? ""}`;
 }
 
+/**
+ * The gate's IDENTITY key: the content key with the cursor stripped.
+ *
+ * Cursor belongs in the broadcast dedupe key (moving the highlight is a real
+ * update) but never in identity — the same gate with a different highlight is
+ * the same gate. `closedGateKey` in pty-manager.ts already draws exactly this
+ * line; this names it so the answer route and the client agree on one spelling.
+ *
+ * Content-derived, not instance-derived: it distinguishes gates with different
+ * prompt/detail/options, NOT two consecutive gates whose content is identical.
+ */
+export function permissionGateKey(gate: {
+  prompt?: string;
+  detail?: string;
+  options: PermissionOption[];
+}): string {
+  return permissionContentKey({ ...gate, cursor: undefined });
+}
+
 // OSC 777 with the notify command from Claude Code. We match the stable core
 // (`]777;notify;Claude Code`) rather than the whole tmux-passthrough wrapper so
 // detection survives both the wrapped and unwrapped forms.

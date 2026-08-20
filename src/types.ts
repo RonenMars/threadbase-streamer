@@ -316,6 +316,13 @@ export type WSMessage =
       detail?: string;
       options: PermissionOption[];
       cursor?: number;
+      /**
+       * Cursor-stripped identity of this gate (permissionGateKey). Echoed
+       * verbatim, as an opaque token, to POST /:id/permission/answer. Always
+       * present when the server has that route — its absence is how a client
+       * detects an older server and falls back to POST /:id/input.
+       */
+      contentKey: string;
     }
   | { type: "permission_cancelled"; sessionId: string }
   | { type: "ping"; ts: number }

@@ -26,12 +26,17 @@ import { PTY_ROWS } from "../../pty-shared";
 import type { ScannerManager } from "../../scanner-manager";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
 import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
-import { permissionContentKey } from "../../services/questions/detectPermissionGate";
+import {
+  permissionContentKey,
+  permissionGateKey,
+  scrapePermissionGate,
+} from "../../services/questions/detectPermissionGate";
 import {
   isQuestionMenuOnScreen,
   questionContentKey,
 } from "../../services/questions/detectQuestionFromScreen";
 import { parseStatusLine } from "../../services/questions/parseStatusLine";
+import { permissionAnswerKeys } from "../../services/questions/permissionAnswerKeys";
 import { resolveAnswer } from "../../services/questions/resolveAnswer";
 import { type CodexOwnerSource, findRolloutOwner } from "../../services/sessions/codexRolloutOwner";
 import {
@@ -1098,7 +1103,117 @@ export class SessionHandlers {
       ...(gate.detail ? { detail: gate.detail } : {}),
       options: gate.options,
       ...(gate.cursor !== undefined ? { cursor: gate.cursor } : {}),
+      contentKey: permissionGateKey(gate),
     });
+  }
+
+  /**
+   * Answer a permission gate — the validated counterpart of POST /:id/input.
+   *
+   * `/input` is a raw-bytes conduit (arrow-key nav uses it too) and stays that
+   * way; this route is the semantic one, mirroring the /answer split. Two
+   * things make it more than validation theatre:
+   *
+   *   - The client sends `{ contentKey, optionIndex }` and NO keystrokes. The
+   *     keys are derived here from our own copy of the gate, so the client's
+   *     key-derivation can never drift from the server's.
+   *   - `contentKey` binds the answer to a specific gate. `isPermissionAnswer`
+   *     matches structurally, and approval gates repeat constantly ("2. Yes /
+   *     3. No" for every tool call), so without this a delayed answer to gate A
+   *     could be written as gate B's answer — a user approving a bash command
+   *     they never saw, with a 200 and a normal permission_cancelled. Treat the
+   *     check as a security boundary.
+   *
+   * Every refusal happens BEFORE sendKeys. On success we deliberately broadcast
+   * nothing: the PTY-side close (isPermissionAnswer in pty-manager) recognises
+   * the bytes we just wrote and fires permission_cancelled itself.
+   */
+  async handlePermissionAnswer(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await readBody(req);
+    const contentKey = body?.contentKey;
+    const optionIndex = body?.optionIndex;
+    if (typeof contentKey !== "string" || !Number.isInteger(optionIndex) || optionIndex < 0) {
+      json(res, 400, { ok: false, reason: "Expected { contentKey: string, optionIndex: number }" });
+      return;
+    }
+
+    // The client's card is dead. Clear it everywhere — permission_cancelled is
+    // unconditional here (a no-op for clients showing nothing) because a client
+    // that got this far believes a gate is up and must be told it isn't.
+    const gateClosed = (): void => {
+      this.pendingPermission.delete(sessionId);
+      this.pendingPermissionKey.delete(sessionId);
+      this.wsHub.broadcast({ type: "permission_cancelled", sessionId });
+      json(res, 409, { ok: false, reason: "gate_closed" });
+    };
+
+    // Cheapest first, screen scrape last. Every branch below returns before
+    // sendKeys — that ordering is the point of the route.
+    const gate = this.pendingPermission.get(sessionId);
+    if (!gate) {
+      gateClosed();
+      return;
+    }
+    // A DIFFERENT gate is open, and it is legitimately on screen. Refuse, but
+    // broadcast nothing: permission_cancelled is session-wide, so it would
+    // clear a live card on every client, and the pendingPermissionKey dedupe
+    // means the repaint that would restore it may never come — a gate is a
+    // waiting screen. The requesting client clears from the reason instead.
+    // (Same shape as resolveAnswer's tool_use_mismatch, which also stays quiet.)
+    if (permissionGateKey(gate) !== contentKey) {
+      json(res, 409, { ok: false, reason: "gate_mismatch" });
+      return;
+    }
+    const option = gate.options[optionIndex];
+    if (!option) {
+      json(res, 409, { ok: false, reason: "unknown_option" });
+      return;
+    }
+    // Our copy agrees; now ask the screen, which is fresher than the map.
+    if (!(await this.permissionGateStillOpen(sessionId, contentKey))) {
+      gateClosed();
+      return;
+    }
+
+    try {
+      this.ptyManager.sendKeys(sessionId, option.answerKeys ?? permissionAnswerKeys(option.index));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to send answer";
+      json(res, 400, { ok: false, reason: message });
+      return;
+    }
+    json(res, 200, { ok: true });
+  }
+
+  /**
+   * Is THIS gate still the one on screen?
+   *
+   * Deliberately stricter than questionMenuStillOpen's "is a menu up": the
+   * staleness window this exists to cover (the ~300ms scrape throttle plus the
+   * wait for the next PTY chunk) is exactly where pendingPermission still says
+   * gate A while the screen has moved to gate B — and since approval gates
+   * repeat their shape, "some gate is open" would wave that through.
+   *
+   * Reads 60 lines because that is the window the detector that produced the
+   * pending gate uses (pty-manager's scrape); `detail` walks up to 6 lines
+   * above the prompt, so a shorter window can truncate it and manufacture a
+   * mismatch on a healthy gate.
+   *
+   * Best-effort, like questionMenuStillOpen: a session we hold no PTY for, or
+   * one that raced away mid-read, is not ours to veto.
+   */
+  private async permissionGateStillOpen(sessionId: string, contentKey: string): Promise<boolean> {
+    if (!this.ptyManager.hasSession(sessionId)) return true;
+    try {
+      const onScreen = scrapePermissionGate(await this.ptyManager.getOutputLines(sessionId, 60));
+      return onScreen !== null && permissionGateKey(onScreen) === contentKey;
+    } catch {
+      return true;
+    }
   }
 
   async handleSendAnswer(
