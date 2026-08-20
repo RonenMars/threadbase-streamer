@@ -21,6 +21,7 @@ import type {
 } from "../../feature-flags";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
+import type { HostPressureMonitor } from "../../services/host-pressure/hostPressure";
 import type { Principal } from "../../services/security/capabilities";
 import type { ReconcileVerdict } from "../../services/sessions/reconcileSessions";
 import type { SessionStore } from "../../session-store";
@@ -54,6 +55,7 @@ export type ApiDeps = {
   wsHub: WSHub;
   cache: () => ConversationCache | null;
   cacheMonitor: () => CacheIntegrityMonitor | null;
+  hostPressureMonitor: () => HostPressureMonitor | null;
   /** Push registration + delivery state (C7). Null when the cache DB is unavailable. */
   pushRepo: () => PushRepository | null;
   /**
