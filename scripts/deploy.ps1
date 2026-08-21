@@ -341,6 +341,20 @@ function Invoke-Kickstart {
   Start-ScheduledTask -TaskName $taskName
 }
 
+# Stops any running instance before the native-module copy step below. Windows
+# locks a loaded native addon (better-sqlite3's *.node, node-pty's) against
+# deletion/overwrite by the process that dlopen'd it, so copying node_modules
+# while the old server is still up can fail with "Access to the path ... is
+# denied" on the Remove-Item wipe those copies do. A no-op if nothing is running.
+function Invoke-StopServiceForCopy {
+  $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  if (-not $task) { return }
+  Write-Log "stopping '$taskName' before copying native modules (avoids a locked better-sqlite3/node-pty binary)"
+  Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 500
+  Invoke-KillStalePort -Port 8766
+}
+
 function Invoke-Healthcheck {
   param([string]$ExpectedVersion = '')
   # Default the expected version to the just-activated stamp so a stale process
@@ -583,6 +597,10 @@ function Invoke-Deploy {
         Copy-Item -Path $src -Destination $dst -Recurse -Force
       }
     }
+    # Stop any currently-running instance before touching native addons below —
+    # see Invoke-StopServiceForCopy for why.
+    Invoke-StopServiceForCopy
+
     # node-pty is external to the tsup bundle (native addon). Copy it from source
     # node_modules so the deployed cli.js can resolve it without a full node_modules tree.
     $nodePtySrc = Join-Path $repoRoot 'node_modules\node-pty'
