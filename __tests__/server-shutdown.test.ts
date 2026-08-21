@@ -1,5 +1,5 @@
 import { mkdtempSync } from "fs";
-import { createServer } from "http";
+import { createServer, type Server } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { WebSocket } from "ws";
@@ -16,10 +16,62 @@ import { StreamerServer } from "../src/server";
 // :8766 — bound until launchd's SIGKILL. The newly-started instance then hit
 // EADDRINUSE.
 //
-// These tests pin the contract: close() must release the port promptly even
-// with a live, slow-to-ACK WebSocket client.
+// These tests pin the contract: close() must force those sockets down and
+// release the port, even with a live, slow-to-ACK WebSocket client.
 
 const API_KEY = "tb_test_key_for_shutdown_tests";
+
+// A hang guard, not a performance budget. These tests used to bound close() with
+// a fixed 1 000 ms / 3 000 ms stopwatch, which measures the CI runner as much as
+// the code: `Smoke (windows-latest)` reported 8 458 ms tearing down a server that
+// was doing nothing wrong, and reds landed on whichever commit happened to be
+// merging (issue #659). The assertions below check drained state instead, and
+// this bound only has to fire on a genuine regression where close() never
+// resolves at all.
+const CLOSE_HANG_GUARD_MS = 30_000;
+
+function hangGuard(label: string): Promise<never> {
+  return new Promise((_resolve, reject) =>
+    setTimeout(
+      () => reject(new Error(`${label} did not resolve within ${CLOSE_HANG_GUARD_MS}ms`)),
+      CLOSE_HANG_GUARD_MS,
+    ),
+  );
+}
+
+// The falsifiable half of the contract, and the one a stopwatch was standing in
+// for. `httpServer.close(cb)` fires its callback only once every accepted socket
+// is gone, and close() backstops it with a 2 s timer — so "did the callback fire,
+// or did the timer rescue us?" is exactly "were the sockets force-closed?", and
+// it reads off the connection count with no clock involved.
+//
+// Measured both ways on this file (see the PR): with WSHub.dispose() reverted to
+// a graceful client.close() and closeAllConnections() removed, this returns 1 and
+// close() takes 2 013 ms; with the fix in place it returns 0 and close() takes
+// 3 ms. Neither the old duration bounds nor a port-rebind check separates those
+// two — httpServer.close() unbinds the listening socket synchronously, so the
+// port is rebindable in both.
+async function remainingConnections(server: StreamerServer): Promise<number> {
+  // @ts-expect-error — reach past the public API for the listener under test.
+  const httpServer = server.httpServer as Server;
+  return new Promise((resolve) => {
+    httpServer.getConnections((_err, count) => resolve(count ?? -1));
+  });
+}
+
+// close() must leave the port takeable by the next process — the literal
+// EADDRINUSE the header describes. Node does not set SO_REUSEADDR on Windows, so
+// a still-bound listener genuinely fails this there.
+async function expectPortRebindable(port: number): Promise<void> {
+  const probe = createServer();
+  await expect(
+    new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(port, "127.0.0.1", () => resolve());
+    }),
+  ).resolves.toBeUndefined();
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+}
 
 async function getRandomPort(): Promise<number> {
   return new Promise((resolve) => {
@@ -72,14 +124,13 @@ async function connectSlowWs(port: number): Promise<WebSocket> {
 }
 
 describe("StreamerServer.close() port release", () => {
-  it("resolves quickly with no clients connected (common deploy path)", async () => {
+  it("releases the port with no clients connected (common deploy path)", async () => {
     const port = await getRandomPort();
     const server = makeServer(port);
     await server.listen(port);
 
-    const start = Date.now();
-    await server.close();
-    expect(Date.now() - start).toBeLessThan(1000);
+    await Promise.race([server.close(), hangGuard("server.close()")]);
+    await expectPortRebindable(port);
   });
 
   it("releases :PORT even when a WebSocket client withholds its close ACK", async () => {
@@ -89,16 +140,13 @@ describe("StreamerServer.close() port release", () => {
 
     const ws = await connectSlowWs(port);
 
-    const start = Date.now();
     // Before the fix this hangs on the lingering socket; bound it so a
     // regression fails loudly instead of timing out the whole suite.
-    await Promise.race([
-      server.close(),
-      new Promise((_r, reject) =>
-        setTimeout(() => reject(new Error("server.close() did not resolve within 3s")), 3000),
-      ),
-    ]);
-    expect(Date.now() - start).toBeLessThan(3000);
+    await Promise.race([server.close(), hangGuard("server.close()")]);
+    // The regression guard: a graceful-only dispose leaves this socket open and
+    // the count at 1, because close() returned on its 2 s backstop rather than
+    // on httpServer.close()'s drained callback.
+    expect(await remainingConnections(server)).toBe(0);
 
     try {
       ws.terminate();
@@ -135,12 +183,7 @@ describe("StreamerServer.close() port release", () => {
     await server.listen(port);
     const ws = await connectSlowWs(port);
 
-    await Promise.race([
-      server.close(),
-      new Promise((_r, reject) =>
-        setTimeout(() => reject(new Error("server.close() did not resolve within 3s")), 3000),
-      ),
-    ]);
+    await Promise.race([server.close(), hangGuard("server.close()")]);
 
     // Simulate launchd starting the new instance immediately after the kick.
     const next = makeServer(port);
