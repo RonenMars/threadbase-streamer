@@ -31,6 +31,7 @@ import type {
 import type { HostPressureMonitor } from "./services/host-pressure/hostPressure";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import type { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
+import { permissionGateKey } from "./services/questions/detectPermissionGate";
 import { type Capability, hasCapability, type Principal } from "./services/security/capabilities";
 import type { ReconcileVerdict } from "./services/sessions/reconcileSessions";
 import type { SessionStore } from "./session-store";
@@ -619,6 +620,8 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleGetOutput: (id, res) => deps.sessionHandlers.handleGetOutput(id, res),
     handleSendInput: (id, req, res) => deps.sessionHandlers.handleSendInput(id, req, res),
     handleSendAnswer: (id, req, res) => deps.sessionHandlers.handleSendAnswer(id, req, res),
+    handlePermissionAnswer: (id, req, res) =>
+      deps.sessionHandlers.handlePermissionAnswer(id, req, res),
     handleCancel: (id, res) => deps.sessionHandlers.handleCancel(id, res),
     handleStopSession: (id, res) => deps.sessionHandlers.handleStopSession(id, res),
     handleSetSessionName: (id, req, res) => deps.sessionHandlers.handleSetSessionName(id, req, res),
@@ -731,6 +734,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
                 ...(pendingGate.detail ? { detail: pendingGate.detail } : {}),
                 options: pendingGate.options,
                 ...(pendingGate.cursor !== undefined ? { cursor: pendingGate.cursor } : {}),
+                contentKey: permissionGateKey(pendingGate),
               }),
             );
           }
