@@ -313,6 +313,8 @@ Don't break without coordination: the marker shape is versioned (`shimVersion` �
 
 ## Windows-specific notes
 
+**Setting up a Windows dev/deploy machine from scratch (or troubleshooting a broken one)? Start with [docs/guides/windows-setup.md](docs/guides/windows-setup.md).** It covers, in order: the Node-version pitfall, the `npm install` native-module fork-in-the-road (VS Build Tools vs. `--ignore-scripts`), the nested `@threadbase-sh/scanner` `better-sqlite3` gap, why a worktree's `.git` file breaks if copied/synced to another machine, and `deploy.ps1` usage — each with a link to the matching `docs/troubleshooting.md` entry.
+
 - **`npm install` before first deploy** — fresh clones fail lint/build with "Cannot find module" otherwise; `prepare` patches `qrcode-terminal` (dev/source installs only) and `postinstall` fixes node-pty prebuild permissions (all installs).
 - **Path separators**: use `path.sep` (not `"/"`) for prefix guards on `path.resolve()` output.
 - **File timestamps**: `birthtimeMs` is unaffected by `fs.utimes()`; use `mtimeMs` for cross-platform test assertions.

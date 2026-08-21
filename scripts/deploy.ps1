@@ -184,7 +184,13 @@ function Invoke-Native {
 function Invoke-PredeployCheck {
   Push-Location $repoRoot
   try {
-    $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
+    $branchRaw = (& git rev-parse --abbrev-ref HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $branchRaw) {
+      if ($Force) { Write-Warn "git unavailable in this checkout, forcing"; return }
+      Write-Err "git unavailable in this checkout. Re-run with -Force to override."
+      exit 1
+    }
+    $branch = $branchRaw.Trim()
     $dirty  = (& git diff --name-only HEAD) -ne $null -and (& git diff --name-only HEAD).Length -gt 0
 
     if ($Force) {
@@ -333,6 +339,20 @@ function Invoke-Kickstart {
   Start-Sleep -Milliseconds 500
   Invoke-KillStalePort -Port 8766
   Start-ScheduledTask -TaskName $taskName
+}
+
+# Stops any running instance before the native-module copy step below. Windows
+# locks a loaded native addon (better-sqlite3's *.node, node-pty's) against
+# deletion/overwrite by the process that dlopen'd it, so copying node_modules
+# while the old server is still up can fail with "Access to the path ... is
+# denied" on the Remove-Item wipe those copies do. A no-op if nothing is running.
+function Invoke-StopServiceForCopy {
+  $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  if (-not $task) { return }
+  Write-Log "stopping '$taskName' before copying native modules (avoids a locked better-sqlite3/node-pty binary)"
+  Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 500
+  Invoke-KillStalePort -Port 8766
 }
 
 function Invoke-Healthcheck {
@@ -537,9 +557,14 @@ function Invoke-Deploy {
     Write-Log "building"
     Invoke-Native npm @('run', 'build')
 
-    $sha = (& git rev-parse --short HEAD).Trim()
-    if ($Force -and (& git status --porcelain)) {
-      $sha = "$sha-dirty-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+    $shaRaw = (& git rev-parse --short HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $shaRaw) {
+      $sha = "nogit-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+    } else {
+      $sha = $shaRaw.Trim()
+      if ($Force -and (& git status --porcelain)) {
+        $sha = "$sha-dirty-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+      }
     }
     $relFilename = "cli.$sha.cjs"
 
@@ -572,6 +597,10 @@ function Invoke-Deploy {
         Copy-Item -Path $src -Destination $dst -Recurse -Force
       }
     }
+    # Stop any currently-running instance before touching native addons below —
+    # see Invoke-StopServiceForCopy for why.
+    Invoke-StopServiceForCopy
+
     # node-pty is external to the tsup bundle (native addon). Copy it from source
     # node_modules so the deployed cli.js can resolve it without a full node_modules tree.
     $nodePtySrc = Join-Path $repoRoot 'node_modules\node-pty'
@@ -586,6 +615,10 @@ function Invoke-Deploy {
       $modSrc = Join-Path $repoRoot "node_modules\$mod"
       if (Test-Path $modSrc) {
         $modDst = Join-Path $installDir "node_modules\$mod"
+        # Remove first: Copy-Item -Recurse into an existing dir merges rather than
+        # replaces, so a stale build/Release\*.node from a prior Node version can
+        # survive alongside the new prebuilds\ and get loaded instead.
+        if (Test-Path $modDst) { Remove-Item -Path $modDst -Recurse -Force }
         New-Item -ItemType Directory -Path (Split-Path $modDst) -Force | Out-Null
         Copy-Item -Path $modSrc -Destination $modDst -Recurse -Force
       }
