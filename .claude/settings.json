@@ -11,5 +11,9 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "npm-package-owner@ronenmars": true,
+    "npm-registry-manager@ronenmars": true
   }
 }
