@@ -2,6 +2,8 @@
 
 This file provides guidance to Codex (and other coding agents) when working with code in this repository.
 
+Optional AI-assistant tooling this repo declares (plugins, MCP servers, and how to install them for Claude Code or Codex): [docs/agents/tooling.md](docs/agents/tooling.md)
+
 Known deploy/runtime issues and their fixes: [docs/troubleshooting.md](docs/troubleshooting.md)
 
 ## Project
