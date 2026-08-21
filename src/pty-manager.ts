@@ -17,6 +17,7 @@ import {
   detectGateScreen,
   hasPermissionOsc,
   hasWaitingForInputOsc,
+  type PermissionGate,
   permissionContentKey,
   scrapePermissionGate,
 } from "./services/questions/detectPermissionGate";
@@ -26,6 +27,7 @@ import {
 } from "./services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "./services/questions/detectShellPrompt";
 import { parseAgentPhase } from "./services/questions/parseAgentPhase";
+import { isPermissionAnswer } from "./services/questions/permissionAnswerKeys";
 import type {
   AgentPhase,
   ManagedSession,
@@ -166,10 +168,12 @@ export class PTYManager implements SessionRunner {
   private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
   private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
   private onUserMessage: PTYManagerOptions["onUserMessage"];
-  // Per-session permission-gate state. True between an OSC 777 (gate open) and
-  // the next prompt-ready without a fresh 777 (gate closed). Prevents
-  // re-broadcasting open/close on every chunk.
-  private permissionOpen = new Set<string>();
+  // Per-session permission-gate state: the gate currently open on a session's
+  // screen. Set between an OSC 777 / paint-time claim (gate open) and the next
+  // prompt-ready without a fresh 777 (gate closed). Prevents re-broadcasting
+  // open/close on every chunk. Holds the gate itself rather than just the id so
+  // sendKeys can tell whether the bytes it is writing are that gate's answer.
+  private permissionOpen = new Map<string, PermissionGate>();
   // Last chunk's raw tail per session — prepended to the next chunk before
   // the OSC regex test so a split escape still matches. Consumed on match.
   private oscTail = new Map<string, string>();
@@ -448,6 +452,28 @@ export class PTYManager implements SessionRunner {
     );
     session.process.write(keys);
     session.lastActivityAt = new Date();
+    // These bytes answer the gate this session has open, so the box is gone as
+    // soon as Claude reads them. The detector cannot see that: it closes on the
+    // end-of-turn OSC or a prompt marker, and an approved tool run produces
+    // neither until the whole turn ends — which left the card up for the rest of
+    // the turn. Close it here, the one choke point every *card* answer goes
+    // through, so `permissionOpen` and the server's `pendingPermission` retire
+    // together (onPermissionChange(null) is what broadcasts permission_cancelled).
+    //
+    // NOT every way a gate gets answered: `/input` splits on the body field, so
+    // a `{input}` composer send reaches sendInput() instead and still closes the
+    // old way, at end of turn. That is deliberate — pattern-matching composer
+    // prose into a gate answer is the false positive this rule exists to avoid.
+    //
+    // Optimistic by design: `closedGateKey` is deliberately NOT set here. If the
+    // keystroke doesn't take and the box stays painted, the paint-time claim
+    // reopens the card on the next pass — a gate that is still on screen must
+    // never stay hidden. If it did take, the box is gone and nothing reclaims it.
+    const openGate = this.permissionOpen.get(sessionId);
+    if (openGate && isPermissionAnswer(openGate, keys)) {
+      this.permissionOpen.delete(sessionId);
+      this.onPermissionChange?.(sessionId, null);
+    }
   }
 
   sendInput(sessionId: string, input: string): number {
@@ -934,7 +960,7 @@ export class PTYManager implements SessionRunner {
     // notify would otherwise be misread as a permission gate.
     if (oscPermission && !askFooterOnScreen) {
       const gate = scrapePermissionGate(lines);
-      this.permissionOpen.add(sessionId);
+      this.permissionOpen.set(sessionId, gate ?? { options: [] });
       // Broadcast even if options aren't painted yet (gate: empty options) so
       // the client can show "Claude needs permission" immediately; a later
       // repaint with the footer/options re-broadcasts the populated gate.
@@ -964,6 +990,10 @@ export class PTYManager implements SessionRunner {
           this.closedGateKey.delete(sessionId);
         }
       } else if (gate) {
+        // Keep the stored gate the one actually on screen: sendKeys tests the
+        // incoming bytes against its option indices, and a refresh can replace
+        // the box with a different gate.
+        this.permissionOpen.set(sessionId, gate);
         this.onPermissionChange?.(sessionId, gate);
       }
     } else if (!askFooterOnScreen && !oscWaitingForInput) {
@@ -980,7 +1010,7 @@ export class PTYManager implements SessionRunner {
       if (gate) {
         const key = permissionContentKey({ ...gate, cursor: undefined });
         if (this.closedGateKey.get(sessionId) !== key) {
-          this.permissionOpen.add(sessionId);
+          this.permissionOpen.set(sessionId, gate);
           this.onPermissionChange?.(sessionId, gate);
         }
       } else {
