@@ -15,5 +15,13 @@
   "enabledPlugins": {
     "npm-package-owner@ronenmars": true,
     "npm-registry-manager@ronenmars": true
+  },
+  "extraKnownMarketplaces": {
+    "ronenmars": {
+      "source": {
+        "source": "github",
+        "repo": "RonenMars/claude-marketplace"
+      }
+    }
   }
 }
