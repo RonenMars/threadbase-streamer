@@ -2938,6 +2938,63 @@ describe("StreamerServer", () => {
       expect(body.messages[0].text).toContain("hello from the cache");
     });
 
+    it("404s instead of serving tail rows that carry neither text nor content", async () => {
+      const emptyId = "11112222-3333-4444-5555-666677778888";
+      const ghostJsonl = join(cacheDir, `${emptyId}.jsonl`);
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      for (const timestamp of ["2026-05-20T20:00:00.000Z", "2026-05-20T20:00:01.000Z"]) {
+        cache.updateFromLine(
+          ghostJsonl,
+          JSON.stringify({ role: "user", timestamp, message: { content: [] } }),
+        );
+      }
+      expect(cache.getConversationTail(emptyId)?.messages).toHaveLength(2);
+      cache.close();
+
+      const res = await fetch(`${baseUrl}/api/conversations/${emptyId}?msg_limit=80`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+
+      expect(res.status).toBe(404);
+    });
+
+    it("serves and paginates only renderable rows from a mixed cached tail", async () => {
+      const mixedId = "99998888-7777-6666-5555-444433332222";
+      const ghostJsonl = join(cacheDir, `${mixedId}.jsonl`);
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      cache.updateFromLine(
+        ghostJsonl,
+        JSON.stringify({
+          role: "user",
+          timestamp: "2026-05-20T20:00:00.000Z",
+          message: { content: [] },
+        }),
+      );
+      cache.updateFromLine(
+        ghostJsonl,
+        JSON.stringify({
+          role: "user",
+          timestamp: "2026-05-20T20:00:01.000Z",
+          message: { content: [{ type: "text", text: "a real message" }] },
+        }),
+      );
+      cache.close();
+
+      const res = await fetch(`${baseUrl}/api/conversations/${mixedId}?msg_limit=80`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        messages: Array<{ text: string }>;
+        message_pagination: { total: number; before_index: number };
+      };
+      expect(body.messages).toHaveLength(1);
+      expect(body.messages[0].text).toContain("a real message");
+      expect(body.message_pagination.total).toBe(1);
+      expect(body.message_pagination.before_index).toBe(1);
+    });
+
     it("prunes the ghost cache row when scanner + tail both come up empty", async () => {
       const ghostId = "deadbeef-1111-2222-3333-444455556666";
       const ghostJsonl = join(cacheDir, `${ghostId}.jsonl`); // no file, no tail data

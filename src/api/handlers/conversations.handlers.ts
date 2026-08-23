@@ -642,11 +642,14 @@ export class ConversationHandlers {
       const isFirstLoad = !url.searchParams.has("before_index");
       if (isFirstLoad) {
         const tail = this.cache.getConversationTail(id);
-        if (tail && tail.messages.length > 0) {
+        const usableTail = (tail?.messages ?? []).filter(
+          (message) => (message.text ?? "").length > 0 || (message.content?.length ?? 0) > 0,
+        );
+        if (usableTail.length > 0) {
           const cachedMeta = this.cache.getMetaById(id);
           const cachedProvider = cachedMeta?.provider ?? CLAUDE_CODE_PROVIDER;
           const availability = classifyResumability(cachedMeta?.projectPath);
-          const messagesPayload = tail.messages.map((m, idx) => ({
+          const messagesPayload = usableTail.map((m, idx) => ({
             message_index: idx,
             role: m.role,
             timestamp: m.timestamp,
@@ -672,8 +675,8 @@ export class ConversationHandlers {
             },
             messages: messagesPayload,
             message_pagination: {
-              total: tail.tailSize,
-              before_index: tail.tailSize,
+              total: usableTail.length,
+              before_index: usableTail.length,
               from_index: 0,
               has_more_older: false,
               next_before_index: null,
