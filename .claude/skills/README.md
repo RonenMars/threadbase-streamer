@@ -11,17 +11,16 @@ Where `CLAUDE.md` does mention a skill — `deploy-menubar`, `setup-auto-updater
 context at the place that context is needed, not registering anything. Do not add a skill to `CLAUDE.md`
 just to make it visible; it already is.
 
+The same four operational skills are mirrored under `.agents/skills/` for Codex and other runtimes.
+
 ## What is here
 
 | Skill | Use it when |
 |---|---|
-| [`integration-branch`](integration-branch/SKILL.md) | Merging a set of open PRs into one branch to test them together, with a merge log and summary |
 | [`local-deploy`](local-deploy/SKILL.md) | Building, stamping and (re)launching the streamer locally on macOS, Linux or Windows |
 | [`deploy-menubar`](deploy-menubar/SKILL.md) | Building and launching the menubar Electron app from `vendor/menubar`, after the server is healthy |
 | [`setup-auto-updater`](setup-auto-updater/SKILL.md) | Walking a user through enabling the in-place auto-updater on a deployed streamer |
 | [`setup-cloudflare-tunnel`](setup-cloudflare-tunnel/SKILL.md) | Exposing a local streamer to tb-mobile through a Cloudflare quick-tunnel |
-| [`ship`](ship/SKILL.md) | Pushing a committed branch, opening a PR, watching CI, and merging on confirmation |
-| [`verify`](verify/SKILL.md) | Running the full lint + type-check + test suite before committing |
 
 ## Adding one
 
