@@ -1301,7 +1301,22 @@ export class SessionHandlers {
     const pending = this.pendingQuestions.get(sessionId);
     const resolution = resolveAnswer(pending, body);
     if (!resolution.ok) {
-      json(res, 400, { ok: false, reason: resolution.reason });
+      // Shapes this PTY path cannot answer (multi-question, multi-select, or an
+      // answer for a question that was never given) fail closed: nothing is
+      // written, and the client is told where the prompt can still be answered.
+      const unanswerable =
+        resolution.reason === "unsupported_prompt_shape" ||
+        resolution.reason === "incomplete_answer";
+      json(res, 400, {
+        ok: false,
+        reason: resolution.reason,
+        ...(unanswerable
+          ? {
+              error:
+                "This prompt needs an answer the app cannot give yet; answer it in the terminal",
+            }
+          : {}),
+      });
       return;
     }
     // pending is guaranteed defined when resolution.ok is true (resolveAnswer guards it)

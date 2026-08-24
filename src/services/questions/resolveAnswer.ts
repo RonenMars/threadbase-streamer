@@ -1,9 +1,22 @@
 import type { AskQuestion } from "../../types";
-import { answersToKeystrokes, UnknownOptionError } from "./answersToKeystrokes";
+import {
+  answersToKeystrokes,
+  IncompleteAnswerError,
+  UnknownOptionError,
+  UnsupportedPromptShapeError,
+} from "./answersToKeystrokes";
 
 export type AnswerResolution =
   | { ok: true; keys: string }
-  | { ok: false; reason: "no_pending_question" | "tool_use_mismatch" | "unknown_option" };
+  | {
+      ok: false;
+      reason:
+        | "no_pending_question"
+        | "tool_use_mismatch"
+        | "unknown_option"
+        | "unsupported_prompt_shape"
+        | "incomplete_answer";
+    };
 
 export function resolveAnswer(
   pending: { toolUseId: string; questions: AskQuestion[] } | undefined,
@@ -18,6 +31,10 @@ export function resolveAnswer(
     return { ok: true, keys: answersToKeystrokes(pending.questions, answers) };
   } catch (e) {
     if (e instanceof UnknownOptionError) return { ok: false, reason: "unknown_option" };
+    if (e instanceof UnsupportedPromptShapeError) {
+      return { ok: false, reason: "unsupported_prompt_shape" };
+    }
+    if (e instanceof IncompleteAnswerError) return { ok: false, reason: "incomplete_answer" };
     throw e;
   }
 }
