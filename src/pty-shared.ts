@@ -27,19 +27,6 @@ export const SCREEN_SCROLLBACK = 1000;
 // the other's number.
 export const REPLAY_MAX_LINES = SCREEN_SCROLLBACK + PTY_ROWS;
 
-export function digestBytes(s: string): string {
-  // Replace control chars with their hex form so logs are grep-able.
-  // Building the regex via RegExp() sidesteps a Biome lint rule that flags
-  // literal control characters in regex literals.
-  const escaped = s
-    .replace(new RegExp(String.fromCharCode(0x1b), "g"), "\\x1b")
-    .replace(/\r/g, "\\r")
-    .replace(/\n/g, "\\n")
-    .replace(/\t/g, "\\t");
-  if (escaped.length <= 200) return escaped;
-  return `${escaped.slice(0, 100)}…[${escaped.length - 200}B omitted]…${escaped.slice(-100)}`;
-}
-
 // node-pty is a native addon — import dynamically to allow graceful failure
 let pty: typeof import("node-pty") | null = null;
 
