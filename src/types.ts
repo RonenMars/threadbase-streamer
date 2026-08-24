@@ -323,6 +323,14 @@ export type WSMessage =
        * detects an older server and falls back to POST /:id/input.
        */
       contentKey: string;
+      /**
+       * Server-owned id of THIS gate instance. contentKey is content-derived
+       * and cannot tell two consecutive identical gates apart; gateId can.
+       * Echoed as an opaque token to POST /:id/permission/answer, which refuses
+       * an answer whose gateId is not the pending instance. Additive: clients
+       * that omit it fall back to contentKey-only identity.
+       */
+      gateId: string;
     }
   | { type: "permission_cancelled"; sessionId: string }
   | { type: "ping"; ts: number }

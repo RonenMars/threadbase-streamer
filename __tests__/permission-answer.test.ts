@@ -92,6 +92,8 @@ function harness(
     pendingPermission,
     pendingPermissionKey,
     sessionSubscribers: new Map(),
+    // Provider unknown → Claude path (screen freshness), which these cases pin.
+    sessionStore: { getManaged: () => null },
     log: () => ({ info: () => {}, warn: () => {}, debug: () => {} }),
     wsHub: { broadcast: (m: WSMessage) => broadcasts.push(m) },
     ptyManager: {

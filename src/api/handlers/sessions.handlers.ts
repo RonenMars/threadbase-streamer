@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import type { EventEmitter } from "events";
 import { existsSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
@@ -199,7 +200,14 @@ export type SessionHandlersDeps = {
   pendingQuestionKey: Map<string, string>;
   pendingPermission: Map<
     string,
-    { prompt?: string; detail?: string; options: PermissionOption[]; cursor?: number }
+    {
+      prompt?: string;
+      detail?: string;
+      options: PermissionOption[];
+      cursor?: number;
+      /** Server-owned instance id, minted by handlePermissionChange. */
+      gateId: string;
+    }
   >;
   pendingPermissionKey: Map<string, string>;
   contendedSessions: Set<string>;
@@ -1119,7 +1127,14 @@ export class SessionHandlers {
     }
     const key = permissionContentKey(gate);
     if (this.pendingPermissionKey.get(sessionId) === key) return; // unchanged repaint
-    this.pendingPermission.set(sessionId, gate);
+    // Server-owned instance id. permissionGateKey is content-derived and cannot
+    // tell two consecutive identical gates apart; this can. The same identity
+    // as the pending gate (cursor moved, repaint) keeps its id; anything else —
+    // first open, different content, reopen after a close — is a new instance.
+    const prior = this.pendingPermission.get(sessionId);
+    const gateId =
+      prior && permissionGateKey(prior) === permissionGateKey(gate) ? prior.gateId : randomUUID();
+    this.pendingPermission.set(sessionId, { ...gate, gateId });
     this.pendingPermissionKey.set(sessionId, key);
     const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
     this.log.info(
@@ -1134,6 +1149,7 @@ export class SessionHandlers {
       options: gate.options,
       ...(gate.cursor !== undefined ? { cursor: gate.cursor } : {}),
       contentKey: permissionGateKey(gate),
+      gateId,
     });
   }
 
@@ -1166,8 +1182,13 @@ export class SessionHandlers {
     const body = await readBody(req);
     const contentKey = body?.contentKey;
     const optionIndex = body?.optionIndex;
+    const gateId = body?.gateId;
     if (typeof contentKey !== "string" || !Number.isInteger(optionIndex) || optionIndex < 0) {
       json(res, 400, { ok: false, reason: "Expected { contentKey: string, optionIndex: number }" });
+      return;
+    }
+    if (gateId !== undefined && typeof gateId !== "string") {
+      json(res, 400, { ok: false, reason: "Expected gateId to be a string" });
       return;
     }
 
@@ -1188,6 +1209,22 @@ export class SessionHandlers {
       gateClosed();
       return;
     }
+    // Instance check. A stale gateId means the client is answering a gate that
+    // has since closed and reopened — possibly with identical content, which
+    // contentKey alone would wave through. Refuse quietly, exactly like the
+    // content mismatch below: the live gate is fine and must stay up.
+    if (gateId !== undefined && gateId !== gate.gateId) {
+      json(res, 409, { ok: false, reason: "gate_mismatch" });
+      return;
+    }
+    if (gateId === undefined) {
+      // Temporary compatibility path for clients that predate gateId. Logged
+      // (metadata only) so its use is measurable and the path can be retired.
+      this.log.info(`[permission.answer_legacy_identity] ${sessionId.slice(0, 8)}`, {
+        event: "permission.answer_legacy_identity",
+        sessionId,
+      });
+    }
     // A DIFFERENT gate is open, and it is legitimately on screen. Refuse, but
     // broadcast nothing: permission_cancelled is session-wide, so it would
     // clear a live card on every client, and the pendingPermissionKey dedupe
@@ -1203,8 +1240,17 @@ export class SessionHandlers {
       json(res, 409, { ok: false, reason: "unknown_option" });
       return;
     }
-    // Our copy agrees; now ask the screen, which is fresher than the map.
-    if (!(await this.permissionGateStillOpen(sessionId, contentKey))) {
+    // Our copy agrees; now ask the screen, which is fresher than the map — for
+    // Claude. Codex gates are synthesized by its runner from its own TUI
+    // patterns, and the Claude box scraper never matches a Codex screen, so
+    // asking it refused every Codex answer as gate_closed. The Codex runner
+    // clears the pending gate itself when the dialog leaves the screen, so for
+    // Codex the map is the authority and gateId carries instance identity.
+    const provider = this.sessionStore.getManaged(sessionId)?.provider;
+    if (
+      provider !== CODEX_CLI_PROVIDER &&
+      !(await this.permissionGateStillOpen(sessionId, contentKey))
+    ) {
       gateClosed();
       return;
     }

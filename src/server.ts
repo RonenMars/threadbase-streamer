@@ -329,7 +329,14 @@ export class StreamerServer {
   // /input { keys }. Cleared when the gate closes.
   private pendingPermission = new Map<
     string,
-    { prompt?: string; detail?: string; options: PermissionOption[]; cursor?: number }
+    {
+      prompt?: string;
+      detail?: string;
+      options: PermissionOption[];
+      cursor?: number;
+      /** Server-owned instance id, minted by handlePermissionChange. */
+      gateId: string;
+    }
   >();
   // Content key (prompt + detail + options + cursor) of the permission gate
   // currently broadcast for a session — mirrors pendingQuestionKey so a PTY
