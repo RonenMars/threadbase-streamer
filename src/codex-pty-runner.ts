@@ -6,7 +6,6 @@ import { clearCodexExeCache, resolveCodexExe } from "./platform";
 import { CODEX_CLI_PROVIDER } from "./providers";
 import {
   createScreen,
-  digestBytes,
   type InternalSession,
   loadPty,
   PTY_COLS,
@@ -328,17 +327,12 @@ export class CodexPtyRunner implements SessionRunner {
       const lines = await this.getOutputLines(sessionId, PTY_ROWS);
       if (!this.pendingReady.has(sessionId)) return;
       const busy = codexScreenBlocksComposer(lines);
-      const bar = codexStatusBarLine(lines);
-      this.log.info(
-        `[codex.ready_fallback] ${sessionId.slice(0, 8)} busy=${busy} bar=${JSON.stringify(bar.slice(0, 120))}`,
-        {
-          event: "codex.ready_fallback",
-          sessionId,
-          busy,
-          hasReady: codexScreenShowsReady(lines),
-          statusBar: bar.slice(0, 160),
-        },
-      );
+      this.log.info(`[codex.ready_fallback] ${sessionId.slice(0, 8)} busy=${busy}`, {
+        event: "codex.ready_fallback",
+        sessionId,
+        busy,
+        hasReady: codexScreenShowsReady(lines),
+      });
       if (busy) {
         this.armReadyFallback(sessionId);
         return;
@@ -377,10 +371,11 @@ export class CodexPtyRunner implements SessionRunner {
     const gate = this.openGate.get(sessionId);
     const digit = gate ? /^([0-9])\r?$/.exec(keys)?.[1] : undefined;
     const out = gate && digit ? this.resolveGateAnswer(sessionId, gate, digit) : keys;
-    this.log.info(
-      `[codex.keys.write] ${sessionId.slice(0, 8)} bytes=${out.length} digest=${digestBytes(out)}`,
-      { event: "codex.keys_write", sessionId, byteLen: out.length },
-    );
+    this.log.info(`[codex.keys.write] ${sessionId.slice(0, 8)} bytes=${out.length}`, {
+      event: "codex.keys_write",
+      sessionId,
+      byteLen: out.length,
+    });
     session.process.write(out);
     session.lastActivityAt = new Date();
   }
@@ -475,13 +470,12 @@ export class CodexPtyRunner implements SessionRunner {
   ): void {
     this.recordUserMessage(session, input);
     this.log.info(
-      `[codex.input.write] ${sessionId.slice(0, 8)} promptCount=${promptCount} bytes=${input.length} digest=${digestBytes(input)}`,
+      `[codex.input.write] ${sessionId.slice(0, 8)} promptCount=${promptCount} bytes=${input.length}`,
       {
         event: "codex.input_write",
         sessionId,
         promptCount,
         byteLen: input.length,
-        digest: digestBytes(input),
         path,
         phase: "input",
       },
@@ -551,7 +545,6 @@ export class CodexPtyRunner implements SessionRunner {
       this.log.info(`[codex.submit_stale] ${sessionId.slice(0, 8)} recovering`, {
         event: "codex.submit_stale",
         sessionId,
-        statusBar: codexStatusBarLine(lines).slice(0, 160),
       });
       this.markReady(sessionId, session, "quiet-fallback", "submit-stale");
     } catch (err) {
@@ -914,10 +907,11 @@ export class CodexPtyRunner implements SessionRunner {
     ].join("|");
     if (this.lastScreenLog.get(sessionId) !== screenFp) {
       this.lastScreenLog.set(sessionId, screenFp);
+      // Metadata only: the bottom rendered line feeds the fingerprint above but
+      // is screen content and must not be logged.
       this.log.info(
         `[codex.screen] ${sessionId.slice(0, 8)} pending=${this.pendingReady.has(sessionId)} ` +
-          `status=${session.status} ready=${hasReady} busy=${busy} usage=${Boolean(blocking)} ` +
-          `bar=${JSON.stringify(bar.slice(0, 100))}`,
+          `status=${session.status} ready=${hasReady} busy=${busy} usage=${Boolean(blocking)}`,
         {
           event: "codex.screen",
           sessionId,
@@ -928,7 +922,6 @@ export class CodexPtyRunner implements SessionRunner {
           busy,
           usageHit: Boolean(blocking),
           usageSoft: Boolean(blocking?.soft),
-          statusBar: bar.slice(0, 160),
         },
       );
     }
@@ -990,7 +983,6 @@ export class CodexPtyRunner implements SessionRunner {
       this.log.info(`[codex.usage_limit] ${sessionId.slice(0, 8)}`, {
         event: "codex.usage_limit",
         sessionId,
-        prompt: blocking.prompt,
       });
       this.onPermissionChange?.(sessionId, blocking);
     }
@@ -1046,7 +1038,6 @@ export class CodexPtyRunner implements SessionRunner {
       event: "codex.gate_prompt",
       sessionId,
       gate,
-      prompt: card.prompt,
     });
     this.onPermissionChange?.(sessionId, card);
   }

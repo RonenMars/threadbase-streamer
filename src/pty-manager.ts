@@ -5,14 +5,7 @@ import { buildFlagArgs, buildSettingsJson } from "./claude-flags";
 import { getLogger, type Logger } from "./logger";
 import { clearClaudeExeCache, resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
-import {
-  createScreen,
-  digestBytes,
-  type InternalSession,
-  loadPty,
-  PTY_ROWS,
-  stripAnsi,
-} from "./pty-shared";
+import { createScreen, type InternalSession, loadPty, PTY_ROWS, stripAnsi } from "./pty-shared";
 import {
   detectGateScreen,
   hasPermissionOsc,
@@ -446,10 +439,11 @@ export class PTYManager implements SessionRunner {
       session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
     }
-    this.log.info(
-      `[pty.keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length} digest=${digestBytes(keys)}`,
-      { event: "pty.keys_write", sessionId, byteLen: keys.length },
-    );
+    this.log.info(`[pty.keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length}`, {
+      event: "pty.keys_write",
+      sessionId,
+      byteLen: keys.length,
+    });
     session.process.write(keys);
     session.lastActivityAt = new Date();
     // These bytes answer the gate this session has open, so the box is gone as
@@ -543,13 +537,12 @@ export class PTYManager implements SessionRunner {
     this.recordUserMessage(session, input);
     const pasteBytes = buildPasteBytes(input);
     this.log.info(
-      `[pty.input.write] ${sessionId.slice(0, 8)} promptCount=${promptCount} bytes=${pasteBytes.length} digest=${digestBytes(pasteBytes)}`,
+      `[pty.input.write] ${sessionId.slice(0, 8)} promptCount=${promptCount} bytes=${pasteBytes.length}`,
       {
         event: "pty.input_write",
         sessionId,
         promptCount,
         byteLen: pasteBytes.length,
-        digest: digestBytes(pasteBytes),
         path,
         phase: "paste",
       },
@@ -783,7 +776,7 @@ export class PTYManager implements SessionRunner {
     this.lastChunkAt.set(sessionId, now);
     const gapMs = last == null ? 0 : now - last;
     this.log.info(
-      `[pty.chunk] ${sessionId.slice(0, 8)} #${idx} +${chunk.length}B gap=${gapMs}ms status=${session.status} digest=${digestBytes(data)}`,
+      `[pty.chunk] ${sessionId.slice(0, 8)} #${idx} +${chunk.length}B gap=${gapMs}ms status=${session.status}`,
       {
         event: "pty.chunk",
         sessionId,
@@ -792,7 +785,6 @@ export class PTYManager implements SessionRunner {
         gapMs,
         status: session.status,
         pendingReady: this.pendingReady.has(sessionId),
-        digest: digestBytes(data),
       },
     );
 
@@ -938,20 +930,23 @@ export class PTYManager implements SessionRunner {
     // priority over the permission path (Claude emits OSC 777 for BOTH).
     const askFooterOnScreen = lines.some((l) => /Enter to select/i.test(l));
 
-    // Diagnostic: dump the rendered window + detector verdicts when a trigger
-    // fires — the on-device source of truth for prompt detection (e.g. the
-    // multi-question carousel work). At debug level so it's silent under normal
-    // --verbose; enable with LOG_LEVEL=debug.
+    // Diagnostic: detector verdicts when a trigger fires. Metadata only — no
+    // rendered lines, no scraped prompt/question text — so it stays safe at any
+    // log level; prompt and answer content must never enter logs. At debug
+    // level so it's silent under normal --verbose; enable with LOG_LEVEL=debug.
     if (oscPermission || hasAskFooter || askFooterOnScreen) {
+      const permGate = oscPermission && !askFooterOnScreen ? scrapePermissionGate(lines) : null;
+      const askQuestion = askFooterOnScreen ? detectQuestionFromScreen(lines) : null;
       this.log.debug?.(`[pty.prompt_detect] ${sessionId.slice(0, 8)} trigger`, {
         event: "pty.prompt_detect",
         sessionId,
         oscPermission,
         hasAskFooter,
         askFooterOnScreen,
-        permGate: oscPermission && !askFooterOnScreen ? scrapePermissionGate(lines) : undefined,
-        askQuestion: askFooterOnScreen ? detectQuestionFromScreen(lines) : undefined,
-        renderedTail: lines.slice(-25),
+        permGateDetected: permGate !== null,
+        permGateOptionCount: permGate?.options.length ?? 0,
+        askQuestionDetected: askQuestion !== null,
+        askQuestionCount: askQuestion?.questions.length ?? 0,
       });
     }
 

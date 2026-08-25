@@ -103,8 +103,8 @@ The codebase has a pino-backed structured logger (`src/logger.ts`) with a child-
 |------|-----------|----------|---------------|
 | HTTP request log | `api/app.ts:38` | ✅ Every request | method, path, status, duration(ms), user-agent |
 | PTY spawn/resume | `pty-manager.ts` | ✅ | `pty.ready` (reason, elapsedMs), spawn implicit via `start()`/`startFresh()` calls |
-| PTY input | `pty-manager.ts:307,333,366,382,406` | ✅ | `pty.input_write` (bytes, digest, phase=paste/submit), `pty.input_queued`, `pty.flush_queued` |
-| PTY output chunks | `pty-manager.ts:541` | ✅ (verbose) | `pty.chunk` — every chunk: index, bytes, gapMs, status, pendingReady, digest |
+| PTY input | `pty-manager.ts:307,333,366,382,406` | ✅ | `pty.input_write` (bytes, phase=paste/submit), `pty.input_queued`, `pty.flush_queued` — metadata only, never the input text |
+| PTY output chunks | `pty-manager.ts:541` | ✅ (verbose) | `pty.chunk` — every chunk: index, bytes, gapMs, status, pendingReady — metadata only, never the chunk content |
 | PTY exit | `pty-manager.ts#handleExit` | ⚠️ Partial | No log line on exit; `failureReason` set but only surfaced via the session object, not a log event |
 | PTY grace kill | `server.ts:535` | ✅ | `[grace] killing idle PTY for ${sessionId}`, event `pty.grace_kill` |
 | Session start error | `server.ts:2002` | ✅ | `[start] failed to start session`, event `session.start_failed` |
