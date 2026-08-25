@@ -94,6 +94,8 @@ async function liveGate() {
     pendingPermission,
     pendingPermissionKey,
     sessionSubscribers: new Map(),
+    // Provider unknown → Claude path (screen freshness), which this case pins.
+    sessionStore: { getManaged: () => null },
     log: () => ({ info: () => {}, warn: () => {}, debug: () => {} }),
     wsHub: { broadcast: (m: WSMessage) => broadcasts.push(m) },
     ptyManager: mgr,

@@ -67,6 +67,8 @@ export type PendingPermission = {
   detail?: string;
   options: PermissionOption[];
   cursor?: number;
+  /** Server-owned instance id, minted by handlePermissionChange. */
+  gateId: string;
 };
 
 /** The AskUserQuestion card currently broadcast for a session. */
@@ -735,6 +737,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
                 options: pendingGate.options,
                 ...(pendingGate.cursor !== undefined ? { cursor: pendingGate.cursor } : {}),
                 contentKey: permissionGateKey(pendingGate),
+                gateId: pendingGate.gateId,
               }),
             );
           }
