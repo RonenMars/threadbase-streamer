@@ -69,6 +69,7 @@ Do not repurpose these released contracts:
 - GitHub Issues are the worklist. Follow [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md); do not duplicate status into `docs/BACKLOG.md` or `docs/ROADMAP.md`.
 - `CHANGELOG.md` is generated; never edit it manually. Milestone merge PRs carry the `milestone` label and add manually written notes under `docs/release-notes/` using `_template.md`.
 - When setup, deployment, or runtime exposes an undocumented failure, ask before adding it to `docs/troubleshooting.md`; document symptom, cause, and fix alongside the code change.
+- Merging is rebase-then-squash, one PR at a time, only on green CI (full rules: `CLAUDE.md` → "Merging PRs"). Three repo behaviours trip automation: semantic-release pushes a `[skip ci]` release commit to `main` after every merge and protection requires up-to-date branches, so wait for it before the final rebase; GitHub auto-deletes head branches, so check `gh pr view <N> --json state` says `MERGED` before any branch cleanup (deleting the head of a refused merge closes the PR); the push hook in `scripts/git-hooks` rebases and rewrites SHAs, so compare content with `git patch-id`, not SHAs.
 
 ## Headless Linux agents
 
