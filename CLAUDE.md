@@ -359,6 +359,9 @@ Rules:
 - **Dependency order first.** If PR B is stacked on PR A (GitHub shows A's branch as B's base), merge A before B and rebase B onto the updated `main` afterward.
 - **CI gate.** Only squash-merge when required checks are green. If CI is red on a flaky/infra failure, re-run it **once**; if the re-run still fails, stop and report — do not merge red.
 - **Stuck cap.** If any single step hangs for more than ~3–4 minutes (CI not progressing, a rebase that won't resolve cleanly), stop and report rather than waiting indefinitely.
+- **Wait for the release commit before the final rebase.** semantic-release pushes `chore(release): x.y.z [skip ci]` to `main` one to three minutes after every squash-merge, and branch protection requires an up-to-date branch — so a PR rebased the moment the previous one merges goes `BEHIND` again and burns a second CI cycle. Poll `origin/main` until the release commit is there, then rebase → CI → merge.
+- **Check `MERGED` before any branch delete.** GitHub auto-deletes head branches on merge, so `--delete-branch` and `git push origin --delete` report an error afterwards; that is harmless. What is not harmless is chaining a delete after a *refused* `gh pr merge`: deleting the head branch closes the still-open PR. Gate cleanup on `gh pr view <N> --json state` returning `MERGED`. Recovery if it happens: re-push the branch from the worktree, `gh pr reopen <N>`, rebase, CI, merge.
+- **Pushes can rewrite SHAs.** `core.hooksPath=scripts/git-hooks` rebases the branch onto `origin/main` on push, so the commits you just pushed may come back with different SHAs. Verify content with `git diff <base> <head> | git patch-id --stable`, not by SHA. A branch stacked on another PR needs `git rebase --onto origin/main <old-base-sha>` once that base has squash-merged; a plain rebase may not drop the stale base commit.
 
 ## Testing
 
