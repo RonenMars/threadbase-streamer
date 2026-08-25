@@ -97,7 +97,10 @@ async function liveGate() {
     // Provider unknown → Claude path (screen freshness), which this case pins.
     sessionStore: { getManaged: () => null },
     log: () => ({ info: () => {}, warn: () => {}, debug: () => {} }),
-    wsHub: { broadcast: (m: WSMessage) => broadcasts.push(m) },
+    wsHub: {
+      broadcast: (m: WSMessage) => broadcasts.push(m),
+      broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
+    },
     ptyManager: mgr,
   } as unknown as SessionHandlersDeps);
 

@@ -56,6 +56,7 @@ import type {
   ManagedSession,
   PermissionOption,
   SessionResponse,
+  WSMessage,
 } from "../../types";
 import { saveUploadFile } from "../../uploads";
 import type { WSHub } from "../../ws-hub";
@@ -349,6 +350,14 @@ export class SessionHandlers {
 
   private get sessionSubscribers(): Map<string, Set<WebSocket>> {
     return this.deps.sessionSubscribers;
+  }
+
+  // Prompt lifecycle events (question / permission and their cancellations)
+  // carry prompt content and go ONLY to the session's subscribers — never to
+  // every connected socket. A client that subscribes after a prompt opened
+  // gets it from the subscribe replay (server-wiring), not from a broadcast.
+  private broadcastToSession(sessionId: string, message: WSMessage): void {
+    this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], message);
   }
 
   private get agentConfig(): AgentConfig {
@@ -1103,7 +1112,7 @@ export class SessionHandlers {
     const toolUseId = `screen:${sessionId}:${key.length}`;
     this.pendingQuestions.set(sessionId, { toolUseId, questions, origin: "pty" });
     this.pendingQuestionKey.set(sessionId, key);
-    this.wsHub.broadcast({ type: "question", sessionId, toolUseId, questions });
+    this.broadcastToSession(sessionId, { type: "question", sessionId, toolUseId, questions });
   }
 
   // Permission gate opened/closed (OSC 777 + scraped options). Broadcasts the
@@ -1122,7 +1131,7 @@ export class SessionHandlers {
       if (!this.pendingPermission.has(sessionId)) return;
       this.pendingPermission.delete(sessionId);
       this.pendingPermissionKey.delete(sessionId);
-      this.wsHub.broadcast({ type: "permission_cancelled", sessionId });
+      this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
       return;
     }
     const key = permissionContentKey(gate);
@@ -1141,7 +1150,7 @@ export class SessionHandlers {
       `[ws.broadcast_permission] ${sessionId.slice(0, 8)} subscribers=${subscriberCount}`,
       { event: "ws.broadcast_permission", sessionId, subscriberCount },
     );
-    this.wsHub.broadcast({
+    this.broadcastToSession(sessionId, {
       type: "permission",
       sessionId,
       ...(gate.prompt ? { prompt: gate.prompt } : {}),
@@ -1198,7 +1207,7 @@ export class SessionHandlers {
     const gateClosed = (): void => {
       this.pendingPermission.delete(sessionId);
       this.pendingPermissionKey.delete(sessionId);
-      this.wsHub.broadcast({ type: "permission_cancelled", sessionId });
+      this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
       json(res, 409, { ok: false, reason: "gate_closed" });
     };
 
@@ -1330,7 +1339,7 @@ export class SessionHandlers {
     if (!(await this.questionMenuStillOpen(sessionId))) {
       this.pendingQuestions.delete(sessionId);
       this.pendingQuestionKey.delete(sessionId);
-      this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId });
+      this.broadcastToSession(sessionId, { type: "question_cancelled", sessionId, toolUseId });
       json(res, 409, { ok: false, reason: "question_gone" });
       return;
     }
@@ -1342,7 +1351,7 @@ export class SessionHandlers {
       return;
     }
     this.pendingQuestions.delete(sessionId);
-    this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId });
+    this.broadcastToSession(sessionId, { type: "question_cancelled", sessionId, toolUseId });
     json(res, 200, { ok: true });
   }
 

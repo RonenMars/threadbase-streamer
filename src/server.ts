@@ -2869,7 +2869,9 @@ export class StreamerServer {
         priorToolUseId,
       });
       this.pendingQuestionKey.set(sessionId, key);
-      if (broadcast) this.wsHub.broadcast(m);
+      // Prompt content goes to the session's subscribers only; a late
+      // subscriber gets it from the subscribe replay.
+      if (broadcast) this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], m);
     }
   }
 
@@ -2878,7 +2880,11 @@ export class StreamerServer {
     if (!pq) return;
     this.pendingQuestions.delete(sessionId);
     this.pendingQuestionKey.delete(sessionId);
-    this.wsHub.broadcast({ type: "question_cancelled", sessionId, toolUseId: pq.toolUseId });
+    this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], {
+      type: "question_cancelled",
+      sessionId,
+      toolUseId: pq.toolUseId,
+    });
   }
 
   private async handleBrowse(url: URL, res: ServerResponse): Promise<void> {

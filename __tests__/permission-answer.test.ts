@@ -95,7 +95,10 @@ function harness(
     // Provider unknown → Claude path (screen freshness), which these cases pin.
     sessionStore: { getManaged: () => null },
     log: () => ({ info: () => {}, warn: () => {}, debug: () => {} }),
-    wsHub: { broadcast: (m: WSMessage) => broadcasts.push(m) },
+    wsHub: {
+      broadcast: (m: WSMessage) => broadcasts.push(m),
+      broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
+    },
     ptyManager: {
       hasSession: () => opts.hasSession ?? true,
       getOutputLines: async () => liveScreen,
