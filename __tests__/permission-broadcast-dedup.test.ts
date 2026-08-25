@@ -51,9 +51,13 @@ describe("handlePermissionChange — broadcast dedup", () => {
 
   beforeEach(() => {
     broadcasts = [];
-    vi.spyOn((server as any).wsHub, "broadcast").mockImplementation((...args: unknown[]) => {
-      broadcasts.push(args[0] as { type: string });
-    });
+    // Prompt events are subscriber-scoped, so they leave through
+    // broadcastToClients(clients, message); the message is the second arg.
+    vi.spyOn((server as any).wsHub, "broadcastToClients").mockImplementation(
+      (...args: unknown[]) => {
+        broadcasts.push(args[1] as { type: string });
+      },
+    );
   });
 
   afterEach(() => {

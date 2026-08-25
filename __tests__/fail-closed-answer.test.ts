@@ -55,7 +55,11 @@ function harness(questions: AskQuestion[]): Harness {
   const deps = {
     pendingQuestions,
     pendingQuestionKey: new Map<string, string>([[SESSION, "key"]]),
-    wsHub: { broadcast: (m: WSMessage) => broadcasts.push(m) },
+    sessionSubscribers: new Map(),
+    wsHub: {
+      broadcast: (m: WSMessage) => broadcasts.push(m),
+      broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
+    },
     ptyManager: {
       hasSession: () => true,
       getOutputLines: async () => MENU_OPEN,

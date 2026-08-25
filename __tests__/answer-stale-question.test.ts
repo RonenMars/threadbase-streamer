@@ -62,7 +62,11 @@ function harness(screen: string[], opts: { hasSession?: boolean } = {}): Harness
   const deps = {
     pendingQuestions,
     pendingQuestionKey,
-    wsHub: { broadcast: (m: WSMessage) => broadcasts.push(m) },
+    sessionSubscribers: new Map(),
+    wsHub: {
+      broadcast: (m: WSMessage) => broadcasts.push(m),
+      broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
+    },
     ptyManager: {
       hasSession: () => opts.hasSession ?? true,
       getOutputLines: async () => screen,

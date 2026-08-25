@@ -92,7 +92,10 @@ function harness(opts: { provider: ProviderName | null; liveScreen: string[] }):
     sessionSubscribers: new Map(),
     sessionStore: { getManaged: () => (opts.provider ? { provider: opts.provider } : null) },
     log: () => ({ info: record, warn: record, debug: record }),
-    wsHub: { broadcast: (m: WSMessage) => broadcasts.push(m) },
+    wsHub: {
+      broadcast: (m: WSMessage) => broadcasts.push(m),
+      broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
+    },
     ptyManager: {
       hasSession: () => true,
       getOutputLines: async () => opts.liveScreen,
