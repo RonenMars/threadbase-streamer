@@ -27,7 +27,17 @@ function getMockProc(
   return m.sessions.get(sessionId).process;
 }
 
+// Fixed wait for the NEGATIVE assertions only (nothing broadcast, gate did not
+// reopen) — there is no event to await there.
 const settle = () => new Promise((r) => setTimeout(r, 10));
+
+// Positive assertions poll instead: the detection pass awaits an xterm flush
+// before it can broadcast, and a fixed timer races that flush on a loaded
+// runner — delaying the flush callback by 20 ms fails 8/9 tests here (#697).
+const waitForGate = (gates: Gate[]) =>
+  vi.waitFor(() => expect(gates[gates.length - 1]?.options.length).toBe(3));
+const waitForClose = (gates: Gate[]) =>
+  vi.waitFor(() => expect(gates[gates.length - 1]).toBeNull());
 
 // Full gate paint as one chunk — box, prompt, options, gate footer. This is
 // the regression test for the whole feature: NO OSC anywhere in the stream.
@@ -73,10 +83,9 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", GATE_PAINT);
-    await settle();
+    await waitForGate(gates);
 
-    const gate = gates.find((g) => g && g.options.length === 3);
-    expect(gate).toBeTruthy();
+    const gate = gates[gates.length - 1];
     expect(gate?.options.map((o) => o.index)).toEqual([1, 2, 3]);
     expect(gate?.cursor).toBe(1);
     expect(gate?.prompt).toBe("Do you want to proceed?");
@@ -90,16 +99,13 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", GATE_PAINT);
-    await settle();
-    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+    await waitForGate(gates);
 
     proc._emit(
       "data",
       "\x1b[2J\x1b[H\x1b]777;notify;Claude Code;Claude is waiting for your input\x07",
     );
-    await settle();
-
-    expect(gates[gates.length - 1]).toBeNull();
+    await waitForClose(gates);
     mgr.dispose();
   });
 
@@ -166,9 +172,7 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     // broadcast: a real gate paint once the throttle window reopens again.
     await new Promise((r) => setTimeout(r, 310));
     proc._emit("data", GATE_PAINT);
-    await settle();
-    const gate = gates.find((g) => g && g.options.length === 3);
-    expect(gate).toBeTruthy();
+    await waitForGate(gates);
     mgr.dispose();
   });
 
@@ -179,8 +183,7 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", GATE_PAINT);
-    await settle();
-    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+    await waitForGate(gates);
     const broadcastsAfterGate = gates.length;
 
     // User approved; Claude clears the box and answers with a numbered list
@@ -214,9 +217,7 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
       "data",
       "\x1b[2J\x1b[H\x1b]777;notify;Claude Code;Claude is waiting for your input\x07",
     );
-    await settle();
-
-    expect(gates[gates.length - 1]).toBeNull();
+    await waitForClose(gates);
     mgr.dispose();
   });
 
@@ -227,16 +228,14 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", GATE_PAINT);
-    await settle();
-    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+    await waitForGate(gates);
 
     // End-of-turn OSC arrives BEFORE Claude erases the box — the notify and
     // the still-painted gate land in the same chunk.
     const CLOSE_WITH_BOX_STILL_PAINTED = `\x1b]777;notify;Claude Code;Claude is waiting for your input\x07${GATE_PAINT}`;
 
     proc._emit("data", CLOSE_WITH_BOX_STILL_PAINTED);
-    await settle();
-    expect(gates[gates.length - 1]).toBeNull();
+    await waitForClose(gates);
 
     // A duplicate/late notify arrives on the next throttle tick, box still
     // painted (Claude still hasn't erased it) and the gate already closed —
@@ -256,8 +255,7 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", GATE_PAINT);
-    await settle();
-    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+    await waitForGate(gates);
 
     // Mid-repaint tick: Claude clears and repaints the box, but this frame
     // landed BEFORE the footer row ("Esc to cancel...") was redrawn — the
@@ -280,14 +278,12 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", GATE_PAINT);
-    await settle();
-    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+    await waitForGate(gates);
 
     // End-of-turn OSC only — no repaint, box remains exactly as last
     // rendered (the notify itself is invisible on screen).
     proc._emit("data", "\x1b]777;notify;Claude Code;Claude is waiting for your input\x07");
-    await settle();
-    expect(gates[gates.length - 1]).toBeNull();
+    await waitForClose(gates);
 
     // A further ordinary chunk, no notify, no clear — the box is still
     // fully painted on screen. Wait past the throttle window so this tick
@@ -311,12 +307,10 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", GATE_PAINT);
-    await settle();
-    expect(gates.some((g) => g && g.options.length === 3)).toBe(true);
+    await waitForGate(gates);
 
     proc._emit("data", "\x1b]777;notify;Claude Code;Claude is waiting for your input\x07");
-    await settle();
-    expect(gates[gates.length - 1]).toBeNull();
+    await waitForClose(gates);
 
     // Claude erases the box on a later tick — this must clear any
     // suppression recorded at close time.
@@ -330,11 +324,7 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     // permanent.
     await new Promise((r) => setTimeout(r, 310));
     proc._emit("data", GATE_PAINT);
-    await settle();
-
-    const lastGate = gates[gates.length - 1];
-    expect(lastGate).not.toBeNull();
-    expect(lastGate?.options.length).toBe(3);
+    await waitForGate(gates);
     mgr.dispose();
   });
 });
