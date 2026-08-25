@@ -1011,6 +1011,36 @@ export class SessionHandlers {
       return;
     }
 
+    // Semantic input arbitration. While a permission gate or AskUserQuestion
+    // menu is up, the PTY's cursor is on the picker, so composer text would
+    // commit the highlighted option (live capture: prose typed over an open
+    // card approved a tool call). Refuse before ANY write. `{ keys }` above is
+    // deliberately not arbitrated — Esc and arrow nav are how a card is
+    // dismissed or navigated. The pending maps are the same authority the
+    // answer routes use; no screen re-scrape here, because the Claude scraper
+    // would fail open on Codex's synthesized gates. Not recorded in
+    // idempotency: a resend of the same key after the card is answered must go
+    // through, not replay this refusal.
+    const openPrompt = this.pendingPermission.has(sessionId)
+      ? "permission"
+      : this.pendingQuestions.has(sessionId)
+        ? "question"
+        : null;
+    if (openPrompt) {
+      this.log.info(`[input.prompt_pending] ${sessionId.slice(0, 8)} kind=${openPrompt}`, {
+        event: "input.prompt_pending",
+        sessionId,
+        promptKind: openPrompt,
+      });
+      json(res, 409, {
+        ok: false,
+        reason: "prompt_pending",
+        promptKind: openPrompt,
+        error: "A prompt is waiting for an answer; answer or dismiss it before sending text",
+      });
+      return;
+    }
+
     try {
       const promptCount = this.ptyManager.sendInput(sessionId, input);
       this.sessionStore.updateManaged(sessionId, { promptCount });
