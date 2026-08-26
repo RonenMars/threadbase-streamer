@@ -55,6 +55,124 @@ function answer(
 }
 
 describe("PromptRegistry lifecycle", () => {
+  it("expires an unanswered prompt at its scheduled deadline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const events: Array<{ revision: number; state: string }> = [];
+      const registry = new PromptRegistry({
+        createId: ids(),
+        emit: (event) =>
+          events.push({ revision: event.prompt.revision, state: event.prompt.state }),
+      });
+      const opened = registry.open({
+        ...draft(),
+        expiresAt: "2026-08-26T12:00:00.100Z",
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(registry.get(opened.promptId)).toMatchObject({ revision: 2, state: "expired" });
+      expect(events).toEqual([
+        { revision: 1, state: "open" },
+        { revision: 2, state: "expired" },
+      ]);
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reschedules expiration when an update changes the deadline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const registry = new PromptRegistry({ createId: ids() });
+      const opened = registry.open({
+        ...draft(),
+        expiresAt: "2026-08-26T12:00:00.100Z",
+      });
+      await vi.advanceTimersByTimeAsync(50);
+      registry.update(opened.promptId, {
+        ...draft(),
+        expiresAt: "2026-08-26T12:00:00.200Z",
+      });
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(registry.get(opened.promptId)?.state).toBe("updated");
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(registry.get(opened.promptId)?.state).toBe("expired");
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not update a prompt whose prior deadline already elapsed", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const registry = new PromptRegistry({ createId: ids() });
+      const opened = registry.open({
+        ...draft(),
+        expiresAt: "2026-08-26T12:00:00.100Z",
+      });
+      vi.setSystemTime("2026-08-26T12:00:00.101Z");
+
+      expect(() =>
+        registry.update(opened.promptId, {
+          ...draft(),
+          expiresAt: "2026-08-26T12:00:01.000Z",
+        }),
+      ).toThrow(/terminal prompt/);
+      expect(registry.get(opened.promptId)?.state).toBe("expired");
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-arms deadlines longer than one runtime timeout", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const registry = new PromptRegistry({ createId: ids() });
+      const opened = registry.open({
+        ...draft(),
+        expiresAt: "2026-09-26T12:00:00.000Z",
+      });
+
+      await vi.advanceTimersByTimeAsync(24 * 24 * 60 * 60 * 1000);
+      expect(registry.get(opened.promptId)?.state).toBe("open");
+      await vi.advanceTimersByTimeAsync(7 * 24 * 60 * 60 * 1000);
+
+      expect(registry.get(opened.promptId)?.state).toBe("expired");
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires overdue prompts during snapshot access before a delayed timer runs", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const registry = new PromptRegistry({ createId: ids() });
+      registry.open({ ...draft(), expiresAt: "2026-08-26T12:00:00.100Z" });
+
+      vi.setSystemTime("2026-08-26T12:00:00.101Z");
+
+      expect(registry.snapshot("session-1").prompts[0]).toMatchObject({
+        revision: 2,
+        state: "expired",
+      });
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects a draft that cannot produce a valid public prompt", () => {
     const registry = new PromptRegistry({ createId: ids() });
 

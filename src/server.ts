@@ -106,6 +106,7 @@ import { ScannerManager } from "./scanner-manager";
 import { seal } from "./seal";
 import { loadOrCreateServerIdentity } from "./server-identity";
 import {
+  clearExpiredPendingPrompt,
   createApiDeps,
   createConversationWatcherEvents,
   createLiveSessionOptions,
@@ -635,6 +636,18 @@ export class StreamerServer {
     this.promptRegistry = new PromptRegistry({
       emit: (event) =>
         this.wsHub.broadcastToClients(this.sessionSubscribers.get(event.sessionId) ?? [], event),
+      onExpire: (prompt) =>
+        clearExpiredPendingPrompt(
+          {
+            pendingPermission: this.pendingPermission,
+            pendingPermissionKey: this.pendingPermissionKey,
+            pendingQuestions: this.pendingQuestions,
+            pendingQuestionKey: this.pendingQuestionKey,
+            sessionSubscribers: this.sessionSubscribers,
+            wsHub: this.wsHub,
+          },
+          prompt,
+        ),
     });
 
     this.fileWatcher = new ConversationWatcher(
@@ -1956,6 +1969,7 @@ export class StreamerServer {
     if (!this.ptyManager.isRemote()) this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.externalTails.clear();
+    this.promptRegistry.dispose();
     this.wsHub.dispose();
     this.pairTokens.dispose();
     // The APNs HTTP/2 session is long-lived by design, so it keeps the event

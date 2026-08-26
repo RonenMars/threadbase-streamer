@@ -10,6 +10,7 @@ import {
 
 export const PROMPT_TERMINAL_RETENTION_MS = 10 * 60 * 1000;
 export const PROMPT_MAX_RECORDS_PER_SESSION = 200;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 type PromptTerminalState = Extract<
   Prompt["state"],
@@ -85,6 +86,7 @@ interface PromptEntry {
   prompt: Prompt;
   adapter?: PromptAnswerAdapter;
   terminalAt?: number;
+  expiryTimer?: ReturnType<typeof setTimeout>;
   queue: Promise<void>;
   inFlight: Map<string, Promise<PromptAnswerOutcome>>;
   outcomes: Map<string, RecordedOutcome>;
@@ -93,6 +95,7 @@ interface PromptEntry {
 export interface PromptRegistryOptions {
   createId?: () => string;
   emit?: (event: PromptEvent) => void;
+  onExpire?: (prompt: Prompt) => void;
   now?: () => number;
   terminalRetentionMs?: number;
   maxRecordsPerSession?: number;
@@ -128,6 +131,7 @@ export class PromptRegistry {
   private readonly sequences = new Map<string, number>();
   private readonly createId: () => string;
   private readonly emit?: (event: PromptEvent) => void;
+  private readonly onExpire?: (prompt: Prompt) => void;
   private readonly now: () => number;
   private readonly terminalRetentionMs: number;
   private readonly maxRecordsPerSession: number;
@@ -135,6 +139,7 @@ export class PromptRegistry {
   constructor(options: PromptRegistryOptions = {}) {
     this.createId = options.createId ?? randomUUID;
     this.emit = options.emit;
+    this.onExpire = options.onExpire;
     this.now = options.now ?? Date.now;
     this.terminalRetentionMs = options.terminalRetentionMs ?? PROMPT_TERMINAL_RETENTION_MS;
     this.maxRecordsPerSession = options.maxRecordsPerSession ?? PROMPT_MAX_RECORDS_PER_SESSION;
@@ -168,12 +173,14 @@ export class PromptRegistry {
     this.bySession.set(prompt.sessionId, session);
     this.byId.set(prompt.promptId, entry);
     this.publish(entry);
+    this.scheduleExpiration(entry);
     this.enforceCap(prompt.sessionId);
     return copyPrompt(prompt);
   }
 
   update(promptId: string, draft: PromptDraft, adapter?: PromptAnswerAdapter): Prompt {
     const entry = this.requireEntry(promptId);
+    this.expireIfDue(entry, this.now());
     if (entry.prompt.sessionId !== draft.sessionId) throw new Error("Prompt session cannot change");
     if (entry.prompt.state !== "open" && entry.prompt.state !== "updated") {
       throw new Error(`Cannot update terminal prompt ${promptId}`);
@@ -207,6 +214,7 @@ export class PromptRegistry {
     entry.prompt = prompt;
     if (adapter) entry.adapter = adapter;
     this.publish(entry);
+    this.scheduleExpiration(entry);
     return copyPrompt(entry.prompt);
   }
 
@@ -222,6 +230,7 @@ export class PromptRegistry {
       terminalReason: reason,
     };
     entry.terminalAt = this.now();
+    this.clearExpiration(entry);
     this.publish(entry);
     return copyPrompt(entry.prompt);
   }
@@ -263,6 +272,10 @@ export class PromptRegistry {
     };
   }
 
+  dispose(): void {
+    for (const entry of this.byId.values()) this.clearExpiration(entry);
+  }
+
   answer(sessionId: string, answer: PromptAnswer): Promise<PromptAnswerOutcome> {
     this.prune(sessionId);
     const entry = this.byId.get(answer.promptId);
@@ -296,8 +309,7 @@ export class PromptRegistry {
     if (prompt.state !== "open" && prompt.state !== "updated") {
       return { ok: false, code: terminalError(prompt.state) };
     }
-    if (prompt.expiresAt !== null && this.now() >= Date.parse(prompt.expiresAt)) {
-      this.transition(prompt.promptId, "expired", "deadline_elapsed");
+    if (this.expireIfDue(entry, this.now())) {
       return { ok: false, code: "prompt_expired" };
     }
     if (prompt.revision !== answer.revision) {
@@ -378,6 +390,31 @@ export class PromptRegistry {
     });
   }
 
+  private scheduleExpiration(entry: PromptEntry): void {
+    this.clearExpiration(entry);
+    const expiresAt = entry.prompt.expiresAt;
+    if (expiresAt === null) return;
+    const delay = Math.min(MAX_TIMEOUT_MS, Math.max(0, Date.parse(expiresAt) - this.now()));
+    entry.expiryTimer = setTimeout(() => {
+      entry.expiryTimer = undefined;
+      if (!this.expireIfDue(entry, this.now())) this.scheduleExpiration(entry);
+    }, delay);
+    entry.expiryTimer.unref?.();
+  }
+
+  private clearExpiration(entry: PromptEntry): void {
+    if (entry.expiryTimer) clearTimeout(entry.expiryTimer);
+    entry.expiryTimer = undefined;
+  }
+
+  private expireIfDue(entry: PromptEntry, now: number): boolean {
+    if (entry.prompt.state !== "open" && entry.prompt.state !== "updated") return false;
+    if (entry.prompt.expiresAt === null || now < Date.parse(entry.prompt.expiresAt)) return false;
+    const expired = this.transition(entry.prompt.promptId, "expired", "deadline_elapsed");
+    this.onExpire?.(expired);
+    return true;
+  }
+
   private requireEntry(promptId: string): PromptEntry {
     const entry = this.byId.get(promptId);
     if (!entry) throw new Error(`Unknown prompt: ${promptId}`);
@@ -389,7 +426,9 @@ export class PromptRegistry {
     const session = this.bySession.get(sessionId);
     if (!session) return;
     for (const [promptId, entry] of session) {
+      this.expireIfDue(entry, now);
       if (entry.terminalAt !== undefined && now - entry.terminalAt > this.terminalRetentionMs) {
+        this.clearExpiration(entry);
         session.delete(promptId);
         this.byId.delete(promptId);
       }
@@ -404,7 +443,8 @@ export class PromptRegistry {
       .filter(([, entry]) => entry.terminalAt !== undefined)
       .sort((a, b) => (a[1].terminalAt ?? 0) - (b[1].terminalAt ?? 0));
     while (session.size > this.maxRecordsPerSession && terminal.length > 0) {
-      const [promptId] = terminal.shift() as [string, PromptEntry];
+      const [promptId, entry] = terminal.shift() as [string, PromptEntry];
+      this.clearExpiration(entry);
       session.delete(promptId);
       this.byId.delete(promptId);
     }

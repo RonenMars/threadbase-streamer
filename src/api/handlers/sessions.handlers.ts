@@ -1055,6 +1055,7 @@ export class SessionHandlers {
     // would fail open on Codex's synthesized gates. Not recorded in
     // idempotency: a resend of the same key after the card is answered must go
     // through, not replay this refusal.
+    this.promptRegistry.hasActionable(sessionId);
     const openPrompt = this.pendingPermission.has(sessionId)
       ? "permission"
       : this.pendingQuestions.has(sessionId)

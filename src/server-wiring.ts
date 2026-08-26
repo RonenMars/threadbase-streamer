@@ -23,6 +23,7 @@ import type { LiveSessionManager } from "./live-session-manager";
 import { getLogger, type Logger } from "./logger";
 import { REPLAY_MAX_LINES } from "./pty-shared";
 import type { ScannerManager } from "./scanner-manager";
+import type { Prompt } from "./schemas/prompt.schema";
 import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import type {
   ConversationWatcher,
@@ -80,6 +81,38 @@ export type PendingQuestion = {
   origin: "pty" | "jsonl";
   promptId: string;
 };
+
+export type ExpiredPendingPromptDeps = {
+  pendingPermission: Map<string, PendingPermission>;
+  pendingPermissionKey: Map<string, string>;
+  pendingQuestions: Map<string, PendingQuestion>;
+  pendingQuestionKey: Map<string, string>;
+  sessionSubscribers: Map<string, Set<WebSocket>>;
+  wsHub: Pick<WSHub, "broadcastToClients">;
+};
+
+export function clearExpiredPendingPrompt(deps: ExpiredPendingPromptDeps, prompt: Prompt): void {
+  const permission = deps.pendingPermission.get(prompt.sessionId);
+  if (permission?.promptId === prompt.promptId) {
+    deps.pendingPermission.delete(prompt.sessionId);
+    deps.pendingPermissionKey.delete(prompt.sessionId);
+    deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(prompt.sessionId) ?? [], {
+      type: "permission_cancelled",
+      sessionId: prompt.sessionId,
+    });
+  }
+
+  const question = deps.pendingQuestions.get(prompt.sessionId);
+  if (question?.promptId === prompt.promptId) {
+    deps.pendingQuestions.delete(prompt.sessionId);
+    deps.pendingQuestionKey.delete(prompt.sessionId);
+    deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(prompt.sessionId) ?? [], {
+      type: "question_cancelled",
+      sessionId: prompt.sessionId,
+      toolUseId: question.toolUseId,
+    });
+  }
+}
 
 /**
  * Everything the ConversationWatcher callbacks read from the server. Thunks

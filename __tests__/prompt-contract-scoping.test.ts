@@ -47,6 +47,32 @@ const reader: Principal = {
 };
 
 describe("provider-neutral prompt delivery", () => {
+  it("delivers an unanswered prompt's terminal expiration event to its subscriber", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const hub = new WSHub();
+      const subscriber = socket();
+      hub.addClient(subscriber);
+      const subscribers = new Map<string, Set<WebSocket>>([[SESSION, new Set([subscriber])]]);
+      const registry = new PromptRegistry({
+        emit: (event) => hub.broadcastToClients(subscribers.get(event.sessionId) ?? [], event),
+      });
+
+      registry.open({
+        ...promptDraft(),
+        expiresAt: "2026-08-26T12:00:00.100Z",
+      });
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(subscriber.frames.map((frame) => frame.prompt.state)).toEqual(["open", "expired"]);
+      registry.dispose();
+      hub.dispose = () => {};
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sends the prompt snapshot synchronously before awaited terminal replay", async () => {
     let release: (lines: string[]) => void = () => {};
     const replay = new Promise<string[]>((resolve) => {
