@@ -286,6 +286,7 @@ export const createMiscRoutes = (
       // off this polled endpoint. Absent means an older server that never
       // samples. Informational: pressure never holds, kills, or refuses sessions.
       hostPressure: true,
+      promptContract: { schemaVersion: 1, atomicAnswer: true },
     });
   });
 

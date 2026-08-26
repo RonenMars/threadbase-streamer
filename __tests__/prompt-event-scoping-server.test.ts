@@ -81,7 +81,14 @@ async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   }
 }
 
-type Frame = { type: string; sessionId?: string; gateId?: string; toolUseId?: string };
+type Frame = {
+  type: string;
+  sessionId?: string;
+  gateId?: string;
+  toolUseId?: string;
+  prompt?: { intent?: string; message?: string };
+  prompts?: Array<{ intent?: string; message?: string }>;
+};
 type Client = { ws: WebSocket; frames: Frame[] };
 
 async function connect(port: number): Promise<Client> {
@@ -154,10 +161,18 @@ describe("prompt events over real sockets reach only the session's subscribers",
     const livePermission = a.frames.find((f) => f.type === "permission");
     expect(livePermission?.gateId).toBeTruthy(); // positive control: A got the real event
     expect(types(a)).toContain("question");
+    expect(
+      a.frames.some(
+        (frame) => frame.type === "prompt_event" && frame.prompt?.message === "Which language?",
+      ),
+    ).toBe(true);
     expect(prompts(b)).toEqual([]);
     expect(prompts(c)).toEqual([]);
     expect(JSON.stringify(b.frames)).not.toContain("rm -rf");
     expect(JSON.stringify(c.frames)).not.toContain("Which language?");
+    expect(c.frames.some((frame) => frame.type === "prompt_event" && frame.sessionId === SID)).toBe(
+      false,
+    );
 
     // ── late subscriber: B gets both pending prompts from the replay ──
     b.ws.send(JSON.stringify({ type: "subscribe_session", sessionId: SID }));
@@ -165,6 +180,11 @@ describe("prompt events over real sockets reach only the session's subscribers",
     const replayed = b.frames.find((f) => f.type === "permission");
     expect(replayed?.gateId).toBe(livePermission?.gateId); // same instance, not a new one
     expect(b.frames.find((f) => f.type === "question")?.toolUseId).toBe("toolu_scoped");
+    expect(
+      b.frames
+        .find((frame) => frame.type === "prompt_snapshot")
+        ?.prompts?.some((prompt) => prompt.message === "Which language?"),
+    ).toBe(true);
     expect(prompts(c)).toEqual([]); // other session's subscriber still sees nothing
 
     // ── cancel: both subscribers, nobody else ──

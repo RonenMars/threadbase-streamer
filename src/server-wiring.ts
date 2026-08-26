@@ -29,6 +29,7 @@ import type {
   ConversationWatcherEvents,
 } from "./services/conversations/conversationWatcher";
 import type { HostPressureMonitor } from "./services/host-pressure/hostPressure";
+import type { PromptRegistry } from "./services/prompts/promptRegistry";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import type { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
 import { permissionGateKey } from "./services/questions/detectPermissionGate";
@@ -69,6 +70,7 @@ export type PendingPermission = {
   cursor?: number;
   /** Server-owned instance id, minted by handlePermissionChange. */
   gateId: string;
+  promptId?: string;
 };
 
 /** The AskUserQuestion card currently broadcast for a session. */
@@ -76,6 +78,7 @@ export type PendingQuestion = {
   toolUseId: string;
   questions: AskQuestion[];
   origin: "pty" | "jsonl";
+  promptId: string;
 };
 
 /**
@@ -292,6 +295,7 @@ export type LiveSessionWiringDeps = {
   pendingQuestionKey: Map<string, string>;
   pendingPermission: Map<string, PendingPermission>;
   pendingPermissionKey: Map<string, string>;
+  promptRegistry: PromptRegistry;
   contendedSessions: Set<string>;
   log: () => Logger;
   sessionHandlers: () => SessionHandlers;
@@ -357,11 +361,11 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         ts,
       });
     },
-    onPermissionChange: (sessionId, gate) => {
-      deps.sessionHandlers().handlePermissionChange(sessionId, gate);
+    onPermissionChange: (sessionId, gate, occurrenceId) => {
+      deps.sessionHandlers().handlePermissionChange(sessionId, gate, occurrenceId);
     },
-    onLiveQuestion: (sessionId, questions) => {
-      deps.sessionHandlers().handleLiveQuestion(sessionId, questions);
+    onLiveQuestion: (sessionId, questions, occurrenceId) => {
+      deps.sessionHandlers().handleLiveQuestion(sessionId, questions, occurrenceId);
     },
     onLiveQuestionGone: (sessionId) => {
       // The rendered AskUserQuestion menu closed on this streamer's own live
@@ -473,6 +477,7 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         // A gone PTY can never have an open gate; clear silently.
         deps.pendingPermission.delete(session.id);
         deps.pendingPermissionKey.delete(session.id);
+        deps.promptRegistry.invalidateSession(session.id, "session_ended");
         deps.contendedSessions.delete(session.id);
         // Remember that WE owned this conversation up to now, so a resume that
         // follows a hold isn't mistaken for a collision with someone else
@@ -568,6 +573,7 @@ export type ApiDepsWiring = {
   terminalSeq: Map<string, number>;
   pendingPermission: Map<string, PendingPermission>;
   pendingQuestions: Map<string, PendingQuestion>;
+  promptRegistry: PromptRegistry;
   agentClient: AgentClient | null;
   conversationWriter: ConversationWriter | null;
   agentConfig: AgentConfig;
@@ -622,6 +628,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleGetOutput: (id, res) => deps.sessionHandlers.handleGetOutput(id, res),
     handleSendInput: (id, req, res) => deps.sessionHandlers.handleSendInput(id, req, res),
     handleSendAnswer: (id, req, res) => deps.sessionHandlers.handleSendAnswer(id, req, res),
+    handlePromptAnswer: (id, req, res) => deps.sessionHandlers.handlePromptAnswer(id, req, res),
     handlePermissionAnswer: (id, req, res) =>
       deps.sessionHandlers.handlePermissionAnswer(id, req, res),
     handleCancel: (id, res) => deps.sessionHandlers.handleCancel(id, res),
@@ -699,6 +706,9 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             return;
           }
           deps.addSessionSubscriber(msg.sessionId, ws);
+          if (deps.promptRegistry) {
+            ws.send(JSON.stringify(deps.promptRegistry.snapshot(msg.sessionId)));
+          }
           if (deps.ptyManager.hasSession(msg.sessionId)) {
             // Replay everything the session's render terminal still holds; it
             // caps itself (REPLAY_MAX_LINES) and the client keeps its own,

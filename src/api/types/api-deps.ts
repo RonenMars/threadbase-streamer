@@ -88,6 +88,11 @@ export type ApiDeps = {
   handleGetOutput: (sessionId: string, res: ServerResponse) => void;
   handleSendInput: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleSendAnswer: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
+  handlePromptAnswer: (
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => Promise<void>;
   handlePermissionAnswer: (
     sessionId: string,
     req: IncomingMessage,

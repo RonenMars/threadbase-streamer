@@ -151,10 +151,10 @@ describe("isHostEvent", () => {
 
 describe("RemoteSessionRunner — connect", () => {
   it("uses the supervision protocol version rather than accepting a Phase 6c host", () => {
-    // Pinned so a bump is always deliberate. 3 adds the `phase-change` event:
-    // the phase detector runs inside the host, so a streamer talking to a
-    // version-2 host would see no phase at all rather than an error.
-    expect(PTY_HOST_PROTOCOL_VERSION).toBe(3);
+    // Pinned so a bump is always deliberate. 4 adds prompt snapshots and
+    // host-owned occurrence ids: a streamer talking to a version-3 host would
+    // silently lose any prompt that opened before reconnect.
+    expect(PTY_HOST_PROTOCOL_VERSION).toBe(4);
   });
 
   it("shuts down an incompatible host before subscribing", async () => {

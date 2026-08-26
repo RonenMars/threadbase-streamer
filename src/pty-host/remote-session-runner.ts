@@ -23,6 +23,7 @@ import {
   type ReplayResult,
   reviveSession,
   type StatusResult,
+  type SubscribeResult,
 } from "./protocol";
 
 export class PtyHostProtocolMismatchError extends Error {
@@ -111,8 +112,12 @@ export class RemoteSessionRunner implements SessionRunner {
       }
       throw new PtyHostProtocolMismatchError(status.protocolVersion, PTY_HOST_PROTOCOL_VERSION);
     }
-    await runner.request({ type: "subscribe" });
+    const subscribed = (await runner.request({ type: "subscribe" })) as SubscribeResult;
     runner.refreshMirror(status);
+    runner.restorePromptSnapshots({
+      ...status,
+      promptSnapshots: subscribed.promptSnapshots ?? status.promptSnapshots,
+    });
     return runner;
   }
 
@@ -219,6 +224,20 @@ export class RemoteSessionRunner implements SessionRunner {
     }
   }
 
+  private restorePromptSnapshots(status: StatusResult): void {
+    for (const snapshot of status.promptSnapshots ?? []) {
+      if (snapshot.kind === "permission") {
+        this.options.onPermissionChange?.(snapshot.sessionId, snapshot.gate, snapshot.occurrenceId);
+      } else {
+        this.options.onLiveQuestion?.(
+          snapshot.sessionId,
+          snapshot.questions,
+          snapshot.occurrenceId,
+        );
+      }
+    }
+  }
+
   async heartbeat(
     state: HostHeartbeatState,
     timeoutMs: number = HOST_HEARTBEAT_REQUEST_TIMEOUT_MS,
@@ -286,13 +305,13 @@ export class RemoteSessionRunner implements SessionRunner {
         break;
       }
       case "permission-change":
-        this.options.onPermissionChange?.(event.sessionId, event.gate);
+        this.options.onPermissionChange?.(event.sessionId, event.gate, event.occurrenceId);
         break;
       case "phase-change":
         this.options.onPhaseChange?.(event.sessionId, event.phase);
         break;
       case "live-question":
-        this.options.onLiveQuestion?.(event.sessionId, event.questions);
+        this.options.onLiveQuestion?.(event.sessionId, event.questions, event.occurrenceId);
         break;
       case "live-question-gone":
         this.options.onLiveQuestionGone?.(event.sessionId);
