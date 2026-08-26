@@ -88,7 +88,10 @@ export class SessionHost {
         this.lastAgentChunkAt.set(sessionId, Date.now());
         this.emit({ type: "event", event: "output", sessionId, data });
       },
-      onStatusChange: (session) => this.emit({ type: "event", event: "status-change", session }),
+      onStatusChange: (session) => {
+        if (session.status === "idle") this.promptSnapshots.delete(session.id);
+        this.emit({ type: "event", event: "status-change", session });
+      },
       onReady: (session) => this.emit({ type: "event", event: "ready", session }),
       onPermissionChange: (sessionId, gate) => {
         const prior = this.promptSnapshots.get(sessionId);

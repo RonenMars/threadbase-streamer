@@ -147,6 +147,41 @@ describe("PromptRegistry lifecycle", () => {
 });
 
 describe("PromptRegistry atomic answers", () => {
+  it("expires a prompt at its deadline before validating or invoking the adapter", async () => {
+    let now = Date.parse("2026-08-26T12:00:00.000Z") - 1;
+    let writes = 0;
+    const events: Array<{ revision: number; state: string }> = [];
+    const registry = new PromptRegistry({
+      createId: ids(),
+      now: () => now,
+      emit: (event) => events.push({ revision: event.prompt.revision, state: event.prompt.state }),
+    });
+    const opened = registry.open(
+      { ...draft(), expiresAt: "2026-08-26T12:00:00.000Z" },
+      async () => {
+        writes += 1;
+        return { ok: true };
+      },
+    );
+    now += 1;
+
+    const result = await registry.answer("session-1", {
+      ...answer(opened.promptId, opened.revision, "expired"),
+      responses: [],
+    });
+
+    expect(result).toEqual({ ok: false, code: "prompt_expired" });
+    expect(writes).toBe(0);
+    expect(registry.get(opened.promptId)).toMatchObject({
+      revision: 2,
+      state: "expired",
+    });
+    expect(events).toEqual([
+      { revision: 1, state: "open" },
+      { revision: 2, state: "expired" },
+    ]);
+  });
+
   it("rejects a stale revision before calling the provider adapter", async () => {
     let writes = 0;
     const adapter: PromptAnswerAdapter = async () => {

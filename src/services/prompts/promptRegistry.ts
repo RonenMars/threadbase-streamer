@@ -296,6 +296,10 @@ export class PromptRegistry {
     if (prompt.state !== "open" && prompt.state !== "updated") {
       return { ok: false, code: terminalError(prompt.state) };
     }
+    if (prompt.expiresAt !== null && this.now() >= Date.parse(prompt.expiresAt)) {
+      this.transition(prompt.promptId, "expired", "deadline_elapsed");
+      return { ok: false, code: "prompt_expired" };
+    }
     if (prompt.revision !== answer.revision) {
       return {
         ok: false,
