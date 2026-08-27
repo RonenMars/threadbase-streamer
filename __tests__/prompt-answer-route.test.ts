@@ -131,4 +131,74 @@ describe("POST /api/sessions/:id/prompt/answer", () => {
     expect(await wrongSession.json()).toEqual({ ok: false, code: "prompt_not_found" });
     expect(writes).toBe(0);
   });
+
+  // The validation class is 400 here exactly as it is on the legacy /answer
+  // route; only a prompt whose STATE refuses the answer is 409.
+  it("answers 400 for the validation class and 409 only for state conflicts", async () => {
+    let writes = 0;
+    const prompt = registry.open(draft(), async () => {
+      writes += 1;
+      return { ok: true };
+    });
+    const question = prompt.questions[0];
+    const refuse = (patch: Record<string, unknown>, key: string) =>
+      post(SESSION, { ...body(prompt, key), ...patch });
+
+    const unknownQuestion = await refuse(
+      { responses: [{ questionId: "not-a-question", optionIds: [question.options[0].optionId] }] },
+      "unknown-question",
+    );
+    const unknownOption = await refuse(
+      { responses: [{ questionId: question.questionId, optionIds: ["not-an-option"] }] },
+      "unknown-option",
+    );
+    const unsupportedShape = await refuse(
+      {
+        responses: [
+          {
+            questionId: question.questionId,
+            optionIds: [question.options[0].optionId, question.options[1].optionId],
+          },
+        ],
+      },
+      "unsupported-shape",
+    );
+    const incomplete = await refuse(
+      { responses: [{ questionId: question.questionId, text: "neither" }] },
+      "incomplete",
+    );
+
+    expect([
+      unknownQuestion.status,
+      unknownOption.status,
+      unsupportedShape.status,
+      incomplete.status,
+    ]).toEqual([400, 400, 400, 400]);
+    expect(await unknownQuestion.json()).toMatchObject({ code: "unknown_question" });
+    expect(await unknownOption.json()).toMatchObject({ code: "unknown_option" });
+    expect(await unsupportedShape.json()).toMatchObject({ code: "unsupported_prompt_shape" });
+    expect(await incomplete.json()).toMatchObject({ code: "incomplete_answer" });
+    expect(writes).toBe(0);
+
+    // Positive control: the same body the four above mutate settles normally.
+    const accepted = await post(SESSION, body(prompt, "accepted"));
+    expect(accepted.status).toBe(200);
+    expect(writes).toBe(1);
+
+    // …and once settled, the state class stays 409.
+    const late = await post(SESSION, body(prompt, "late"));
+    expect(late.status).toBe(409);
+    expect(await late.json()).toMatchObject({ code: "already_resolved" });
+  });
+
+  it("answers 502 when the provider adapter throws", async () => {
+    const prompt = registry.open(draft(), async () => {
+      throw new Error("pty write failed");
+    });
+
+    const response = await post(SESSION, body(prompt, "provider-error"));
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ ok: false, code: "provider_error" });
+  });
 });

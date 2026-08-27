@@ -248,6 +248,28 @@ describe("PromptRegistry lifecycle", () => {
     );
   });
 
+  it("mints a fresh id when a replayed occurrence id is held by a terminal record", () => {
+    const registry = new PromptRegistry({ createId: ids() });
+    registry.open(draft(), undefined, "host-occurrence");
+    registry.transition("host-occurrence", "cancelled", "provider_closed");
+
+    const reopened = registry.open(draft(), undefined, "host-occurrence");
+
+    expect(reopened.promptId).not.toBe("host-occurrence");
+    expect(reopened.state).toBe("open");
+    // The replaced record stays readable under the id the host still uses.
+    expect(registry.get("host-occurrence")?.state).toBe("cancelled");
+  });
+
+  it("still rejects a duplicate id held by an actionable prompt", () => {
+    const registry = new PromptRegistry({ createId: ids() });
+    registry.open(draft(), undefined, "host-occurrence");
+
+    expect(() => registry.open(draft(), undefined, "host-occurrence")).toThrow(
+      /Prompt id already exists/,
+    );
+  });
+
   it("prunes retained terminal prompts after the configured window", () => {
     let now = 1_000;
     const registry = new PromptRegistry({

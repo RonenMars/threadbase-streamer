@@ -30,6 +30,7 @@ import type { ResumeFailure, ResumeOutcome } from "../../server";
 import {
   type PromptAdapterResult,
   type PromptAnswerAdapter,
+  type PromptAnswerErrorCode,
   PromptRegistry,
 } from "../../services/prompts/promptRegistry";
 import {
@@ -177,6 +178,29 @@ function codexSessionActiveBody(outcome: {
     ...(outcome.ownerPid != null && { ownerPid: outcome.ownerPid }),
     ...(outcome.ownerSource != null && { ownerSource: outcome.ownerSource }),
   };
+}
+
+/**
+ * Prompt-answer taxonomy to HTTP status.
+ *
+ * The validation class is 400, matching what the legacy `/answer` route already
+ * returns for the same "this answer cannot be applied to this prompt" family;
+ * the state class — the prompt moved on, or never existed here — is 409/404.
+ */
+function promptAnswerStatus(code: PromptAnswerErrorCode): number {
+  switch (code) {
+    case "prompt_not_found":
+      return 404;
+    case "provider_error":
+      return 502;
+    case "unknown_question":
+    case "unknown_option":
+    case "incomplete_answer":
+    case "unsupported_prompt_shape":
+      return 400;
+    default:
+      return 409;
+  }
 }
 
 /**
@@ -1055,6 +1079,15 @@ export class SessionHandlers {
     // would fail open on Codex's synthesized gates. Not recorded in
     // idempotency: a resend of the same key after the card is answered must go
     // through, not replay this refusal.
+    //
+    // Called for its SIDE EFFECT, not its answer: hasActionable() prunes, and
+    // pruning expires every overdue prompt, whose onExpire clears the pending
+    // maps (clearExpiredPendingPrompt in server-wiring). Without it a prompt
+    // past its deadline is still in those maps at the moment they are read, so
+    // the refusal below outlives the prompt — the expiry timer would get there
+    // eventually, but "eventually" is after this decision. Deleting this as a
+    // discarded return value turns the expired-prompt cases in
+    // __tests__/input-prompt-arbitration.test.ts red.
     this.promptRegistry.hasActionable(sessionId);
     const openPrompt = this.pendingPermission.has(sessionId)
       ? "permission"
@@ -1591,6 +1624,20 @@ export class SessionHandlers {
     json(res, 200, { ok: true });
   }
 
+  /**
+   * Answer a normalized prompt by its opaque ids.
+   *
+   * Refusals are keyed by `code` — the stable machine taxonomy of the prompt
+   * contract. The released legacy routes (`/answer`, `/permission/answer`) key
+   * theirs by `reason` and keep doing so; a client reads whichever key belongs
+   * to the route it called, and the two vocabularies are not merged.
+   *
+   * Status follows the same split as the legacy routes: a malformed or
+   * unanswerable *request* is 400, a prompt whose *state* refuses the answer is
+   * 409. A retry after PROMPT_TERMINAL_RETENTION_MS answers 404
+   * `prompt_not_found`, not the recorded outcome — the record it would replay
+   * is gone by then.
+   */
   async handlePromptAnswer(
     sessionId: string,
     req: IncomingMessage,
@@ -1606,9 +1653,7 @@ export class SessionHandlers {
       json(res, 200, outcome);
       return;
     }
-    const status =
-      outcome.code === "prompt_not_found" ? 404 : outcome.code === "provider_error" ? 502 : 409;
-    json(res, status, outcome);
+    json(res, promptAnswerStatus(outcome.code), outcome);
   }
 
   // Best-effort: a session we don't own a PTY for, or one that raced away

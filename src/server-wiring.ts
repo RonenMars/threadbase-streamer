@@ -505,8 +505,14 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         if (filePath) {
           deps.fileWatcher.unwatch(filePath);
           deps.sessionFileMap.delete(session.id);
-          deps.cancelPendingQuestion(session.id);
         }
+        // Unconditional, like the permission clear below: a screen-detected
+        // question needs no JSONL mapping to exist, and one left pending here
+        // survives the exit as an unanswerable card whose stale
+        // pendingQuestionKey then suppresses the same menu on resume. Before
+        // invalidateSession, so the prompt ends cancelled/provider_closed
+        // rather than unavailable.
+        deps.cancelPendingQuestion(session.id);
         // A gone PTY can never have an open gate; clear silently.
         deps.pendingPermission.delete(session.id);
         deps.pendingPermissionKey.delete(session.id);

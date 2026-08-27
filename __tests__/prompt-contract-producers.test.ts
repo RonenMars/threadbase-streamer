@@ -314,6 +314,43 @@ describe("legacy and provider-neutral producer events", () => {
     expect(h.registry.get(gate?.promptId ?? "")?.state).toBe("cancelled");
   });
 
+  // The host keeps one occurrence id while its detector sees the same gate, so
+  // a streamer-side clear it never saw (this one, or a question timeout) leaves
+  // that id on a terminal record. The next repaint replays it into open(),
+  // inside a detector callback with no catch above it.
+  it("reopens a host gate whose occurrence id a legacy gate_closed already retired", async () => {
+    const h = harness({ hasSession: true, outputLines: [] });
+    const gate = detectGateScreen(GATE_SCREEN);
+    h.handlers.handlePermissionChange(SESSION, gate, "host-occurrence-c");
+    const pending = h.pendingPermission.get(SESSION);
+    const req = Readable.from([
+      Buffer.from(
+        JSON.stringify({
+          contentKey: permissionGateKey(pending ?? { options: [] }),
+          optionIndex: 0,
+          gateId: pending?.gateId,
+        }),
+      ),
+    ]) as unknown as IncomingMessage;
+    const res = { writeHead: () => {}, end: () => {} } as unknown as ServerResponse;
+    await h.handlers.handlePermissionAnswer(SESSION, req, res);
+    expect(h.registry.get("host-occurrence-c")?.state).toBe("cancelled");
+
+    expect(() =>
+      h.handlers.handlePermissionChange(SESSION, gate, "host-occurrence-c"),
+    ).not.toThrow();
+
+    const reopened = h.pendingPermission.get(SESSION);
+    expect(reopened?.gateId).not.toBe(pending?.gateId);
+    expect(h.registry.get(reopened?.promptId ?? "")?.state).toBe("open");
+    expect(h.frames.filter((frame) => frame.type === "permission")).toHaveLength(2);
+    expect(
+      h.frames.filter(
+        (frame) => frame.type === "prompt_event" && (frame as any).prompt.state === "open",
+      ),
+    ).toHaveLength(2);
+  });
+
   it("does not revise the normalized prompt for a cursor-only repaint", () => {
     const h = harness();
     const gate = detectGateScreen(GATE_SCREEN);
@@ -469,5 +506,30 @@ describe("legacy and provider-neutral producer events", () => {
     await h.handlers.handleSendAnswer(SESSION, req, res);
 
     expect(h.registry.get(pending?.promptId ?? "")?.state).toBe("cancelled");
+  });
+
+  it("reopens a host question whose occurrence id a cancelled menu already retired", async () => {
+    const h = harness({ hasSession: true, outputLines: [] });
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS, "host-question-c");
+    const pending = h.pendingQuestions.get(SESSION);
+    const req = Readable.from([
+      Buffer.from(
+        JSON.stringify({
+          toolUseId: pending?.toolUseId,
+          answers: { "Which language?": "Rust" },
+        }),
+      ),
+    ]) as unknown as IncomingMessage;
+    const res = { writeHead: () => {}, end: () => {} } as unknown as ServerResponse;
+    await h.handlers.handleSendAnswer(SESSION, req, res);
+    expect(h.registry.get("host-question-c")?.state).toBe("cancelled");
+
+    expect(() =>
+      h.handlers.handleLiveQuestion(SESSION, QUESTIONS, "host-question-c"),
+    ).not.toThrow();
+
+    const reopened = h.pendingQuestions.get(SESSION);
+    expect(reopened?.promptId).not.toBe("host-question-c");
+    expect(h.registry.get(reopened?.promptId ?? "")?.state).toBe("open");
   });
 });

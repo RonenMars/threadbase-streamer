@@ -286,6 +286,11 @@ export const createMiscRoutes = (
       // off this polled endpoint. Absent means an older server that never
       // samples. Informational: pressure never holds, kills, or refuses sessions.
       hostPressure: true,
+      // Provider-neutral prompt contract: normalized prompt events, opaque ids
+      // and the atomic /prompt/answer route. A prompt_snapshot on subscribe
+      // carries RETAINED prompts, terminal ones included — render on `state`,
+      // not on presence — and an answer retry after that retention window is
+      // answered 404 prompt_not_found rather than the recorded outcome.
       promptContract: { schemaVersion: 1, atomicAnswer: true },
     });
   });

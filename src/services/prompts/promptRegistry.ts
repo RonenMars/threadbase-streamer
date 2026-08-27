@@ -69,6 +69,17 @@ export interface PromptEvent {
   prompt: Prompt;
 }
 
+/**
+ * Everything the registry still RETAINS for a session, not just what is
+ * actionable: terminal records stay for PROMPT_TERMINAL_RETENTION_MS (capped at
+ * PROMPT_MAX_RECORDS_PER_SESSION) so a reconnecting client can see how a prompt
+ * it was showing ended. A subscriber therefore filters on `state` — presence in
+ * a snapshot is not an open prompt.
+ *
+ * Retention also bounds idempotency: once a record is pruned, an answer retry
+ * that would have replayed its recorded outcome gets `prompt_not_found`
+ * instead (HTTP 404 on the answer route).
+ */
 export interface PromptSnapshot {
   type: "prompt_snapshot";
   schemaVersion: typeof PROMPT_SCHEMA_VERSION;
@@ -147,11 +158,23 @@ export class PromptRegistry {
 
   open(draft: PromptDraft, adapter?: PromptAnswerAdapter, promptId = this.createId()): Prompt {
     this.prune(draft.sessionId);
-    if (this.byId.has(promptId)) throw new Error(`Prompt id already exists: ${promptId}`);
+    const held = this.byId.get(promptId);
+    if (held && (held.prompt.state === "open" || held.prompt.state === "updated")) {
+      throw new Error(`Prompt id already exists: ${promptId}`);
+    }
+    // A RETAINED TERMINAL record under this id is a producer replay, not a
+    // duplicate. The pty-host keeps one occurrence id for as long as its
+    // detector sees the same content, while a streamer-side clear the host
+    // never saw (gate_closed on the legacy answer route, a cancelled question)
+    // leaves that id terminal here for PROMPT_TERMINAL_RETENTION_MS. The next
+    // repaint of the same gate then arrives with an id we still hold — inside
+    // a detector callback with no catch anywhere above it. Mint a fresh id and
+    // open normally; the retained record stays readable under the old one.
+    const id = held ? this.createId() : promptId;
     const prompt = PromptSchema.parse({
       ...draft,
       schemaVersion: PROMPT_SCHEMA_VERSION,
-      promptId,
+      promptId: id,
       revision: 1,
       state: "open",
       questions: draft.questions.map((question) => ({
