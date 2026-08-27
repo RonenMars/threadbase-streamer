@@ -60,6 +60,25 @@ describe("PTY prompt normalization", () => {
     expect(JSON.stringify(draft)).not.toContain('"index"');
   });
 
+  // A PTY prompt carries NO deadline, and that is a contract rule rather than an
+  // oversight: expiresAt is "a nullable absolute timestamp from authoritative
+  // provider behavior", and a scraped prompt has no such authority — Claude
+  // Code never tells us the gate has a lifetime.
+  //
+  // An invented deadline would expire a prompt whose picker is still painted on
+  // screen, and expiry clears the pending maps (clearExpiredPendingPrompt), so
+  // input arbitration would then let composer text through into a live picker,
+  // where the first \r commits whatever option is highlighted. That is the exact
+  // incident arbitration exists to prevent. Pinning it here keeps the question
+  // theoretical instead of a race someone has to re-litigate later.
+  it("gives a PTY-produced prompt no deadline, whatever the source", () => {
+    const gate = detectGateScreen(GATE_SCREEN);
+
+    expect(permissionPromptDraft(SESSION, gate).expiresAt).toBeNull();
+    expect(questionPromptDraft(SESSION, QUESTIONS, "screen").expiresAt).toBeNull();
+    expect(questionPromptDraft(SESSION, QUESTIONS, "transcript").expiresAt).toBeNull();
+  });
+
   it("maps JSONL questions as authoritative transcript provenance", () => {
     const draft = questionPromptDraft(SESSION, QUESTIONS, "transcript");
 
@@ -164,6 +183,25 @@ describe("legacy and provider-neutral producer events", () => {
     expect((legacy as Extract<WSMessage, { type: "permission" }>).gateId).toBe(
       normalized.prompt.promptId,
     );
+  });
+
+  // The same rule one layer up: a deadline added in a handler rather than in the
+  // draft factory would slip past the test above, so assert it on what the
+  // registry actually holds after every PTY producer has run.
+  it("opens no PTY prompt with a deadline, through any producer", () => {
+    const h = harness();
+    h.handlers.handlePermissionChange(SESSION, detectGateScreen(GATE_SCREEN));
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS);
+    h.handlers.handleJsonlQuestion(SESSION, "toolu_pinned", QUESTIONS, "jsonl");
+
+    const prompts = h.registry.snapshot(SESSION).prompts;
+    expect(prompts.map((prompt) => prompt.expiresAt)).toEqual([null, null]);
+    // Positive control: all three producers really ran, so the assertion above
+    // is not passing over an empty or half-populated registry.
+    expect(prompts.map((prompt) => prompt.provenance.source).sort()).toEqual([
+      "screen",
+      "transcript",
+    ]);
   });
 
   it("keeps an optionless OSC fallback legacy-only until the gate is actionable", () => {
