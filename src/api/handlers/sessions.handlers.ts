@@ -25,7 +25,18 @@ import {
 } from "../../providers";
 import { PTY_ROWS } from "../../pty-shared";
 import type { ScannerManager } from "../../scanner-manager";
+import { type Prompt, PromptAnswerSchema } from "../../schemas/prompt.schema";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
+import {
+  type PromptAdapterResult,
+  type PromptAnswerAdapter,
+  type PromptAnswerErrorCode,
+  PromptRegistry,
+} from "../../services/prompts/promptRegistry";
+import {
+  permissionPromptDraft,
+  questionPromptDraft,
+} from "../../services/prompts/ptyPromptAdapter";
 import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
 import {
   permissionContentKey,
@@ -170,6 +181,29 @@ function codexSessionActiveBody(outcome: {
 }
 
 /**
+ * Prompt-answer taxonomy to HTTP status.
+ *
+ * The validation class is 400, matching what the legacy `/answer` route already
+ * returns for the same "this answer cannot be applied to this prompt" family;
+ * the state class — the prompt moved on, or never existed here — is 409/404.
+ */
+function promptAnswerStatus(code: PromptAnswerErrorCode): number {
+  switch (code) {
+    case "prompt_not_found":
+      return 404;
+    case "provider_error":
+      return 502;
+    case "unknown_question":
+    case "unknown_option":
+    case "incomplete_answer":
+    case "unsupported_prompt_shape":
+      return 400;
+    default:
+      return 409;
+  }
+}
+
+/**
  * Everything SessionHandlers reads from the server. Same split as
  * ConversationHandlersDeps: collaborators the server constructor already built
  * are passed by reference (Maps and Sets keep identity, so a mutation here is
@@ -194,9 +228,10 @@ export type SessionHandlersDeps = {
   idempotency: IdempotencyStore;
   sessionStatusBus: EventEmitter;
   sessionFileMap: Map<string, string>;
+  promptRegistry: PromptRegistry;
   pendingQuestions: Map<
     string,
-    { toolUseId: string; questions: AskQuestion[]; origin: "pty" | "jsonl" }
+    { toolUseId: string; questions: AskQuestion[]; origin: "pty" | "jsonl"; promptId: string }
   >;
   pendingQuestionKey: Map<string, string>;
   pendingPermission: Map<
@@ -208,6 +243,9 @@ export type SessionHandlersDeps = {
       cursor?: number;
       /** Server-owned instance id, minted by handlePermissionChange. */
       gateId: string;
+      promptId?: string;
+      /** Host-owned occurrence id; see PendingPermission in server-wiring.ts. */
+      occurrenceId?: string;
     }
   >;
   pendingPermissionKey: Map<string, string>;
@@ -326,6 +364,11 @@ export class SessionHandlers {
 
   private get pendingQuestions(): SessionHandlersDeps["pendingQuestions"] {
     return this.deps.pendingQuestions;
+  }
+
+  private get promptRegistry(): PromptRegistry {
+    if (!this.deps.promptRegistry) this.deps.promptRegistry = new PromptRegistry();
+    return this.deps.promptRegistry;
   }
 
   private get pendingQuestionKey(): Map<string, string> {
@@ -1038,6 +1081,16 @@ export class SessionHandlers {
     // would fail open on Codex's synthesized gates. Not recorded in
     // idempotency: a resend of the same key after the card is answered must go
     // through, not replay this refusal.
+    //
+    // Called for its SIDE EFFECT, not its answer: hasActionable() prunes, and
+    // pruning expires every overdue prompt, whose onExpire clears the pending
+    // maps (clearExpiredPendingPrompt in server-wiring). Without it a prompt
+    // past its deadline is still in those maps at the moment they are read, so
+    // the refusal below outlives the prompt — the expiry timer would get there
+    // eventually, but "eventually" is after this decision. Deleting this as a
+    // discarded return value turns the expired-prompt cases in
+    // __tests__/input-prompt-arbitration.test.ts red.
+    this.promptRegistry.hasActionable(sessionId);
     const openPrompt = this.pendingPermission.has(sessionId)
       ? "permission"
       : this.pendingQuestions.has(sessionId)
@@ -1106,13 +1159,66 @@ export class SessionHandlers {
   // the later JSONL flush of the same question is de-duped. We synthesize a
   // screen-scoped toolUseId; the JSONL path overwrites pendingQuestions with the
   // real toolUseId when it lands, so answering works once JSONL catches up.
-  handleLiveQuestion(sessionId: string, questions: AskQuestion[]): void {
+  handleLiveQuestion(sessionId: string, questions: AskQuestion[], occurrenceId?: string): void {
     const key = questionContentKey(questions);
     if (this.pendingQuestionKey.get(sessionId) === key) return; // already shown
     const toolUseId = `screen:${sessionId}:${key.length}`;
-    this.pendingQuestions.set(sessionId, { toolUseId, questions, origin: "pty" });
+    const prior = this.pendingQuestions.get(sessionId);
+    const priorPrompt = prior ? this.promptRegistry.get(prior.promptId) : null;
+    if (priorPrompt?.state === "open" || priorPrompt?.state === "updated") {
+      this.promptRegistry.transition(priorPrompt.promptId, "cancelled", "replaced");
+    }
+    const prompt = this.promptRegistry.open(
+      questionPromptDraft(sessionId, questions, "screen"),
+      this.questionAnswerAdapter(sessionId),
+      occurrenceId,
+    );
+    this.pendingQuestions.set(sessionId, {
+      toolUseId,
+      questions,
+      origin: "pty",
+      promptId: prompt.promptId,
+    });
     this.pendingQuestionKey.set(sessionId, key);
     this.broadcastToSession(sessionId, { type: "question", sessionId, toolUseId, questions });
+  }
+
+  handleJsonlQuestion(
+    sessionId: string,
+    toolUseId: string,
+    questions: AskQuestion[],
+    origin: "pty" | "jsonl",
+  ): void {
+    const prior = this.pendingQuestions.get(sessionId);
+    const sameQuestion =
+      prior !== undefined && questionContentKey(prior.questions) === questionContentKey(questions);
+    let prompt: Prompt;
+    if (sameQuestion) {
+      const current = this.promptRegistry.get(prior.promptId);
+      prompt =
+        current?.provenance.source === "transcript"
+          ? current
+          : this.promptRegistry.update(
+              prior.promptId,
+              questionPromptDraft(sessionId, questions, "transcript"),
+              this.questionAnswerAdapter(sessionId),
+            );
+    } else {
+      const priorPrompt = prior ? this.promptRegistry.get(prior.promptId) : null;
+      if (priorPrompt?.state === "open" || priorPrompt?.state === "updated") {
+        this.promptRegistry.transition(priorPrompt.promptId, "cancelled", "replaced");
+      }
+      prompt = this.promptRegistry.open(
+        questionPromptDraft(sessionId, questions, "transcript"),
+        this.questionAnswerAdapter(sessionId),
+      );
+    }
+    this.pendingQuestions.set(sessionId, {
+      toolUseId,
+      questions,
+      origin,
+      promptId: prompt.promptId,
+    });
   }
 
   // Permission gate opened/closed (OSC 777 + scraped options). Broadcasts the
@@ -1126,24 +1232,73 @@ export class SessionHandlers {
       options: PermissionOption[];
       cursor?: number;
     } | null,
+    occurrenceId?: string,
   ): void {
     if (gate === null) {
-      if (!this.pendingPermission.has(sessionId)) return;
+      const prior = this.pendingPermission.get(sessionId);
+      if (!prior) return;
+      const prompt = prior.promptId ? this.promptRegistry.get(prior.promptId) : null;
+      if (prompt?.state === "open" || prompt?.state === "updated") {
+        this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
+      }
       this.pendingPermission.delete(sessionId);
       this.pendingPermissionKey.delete(sessionId);
       this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
       return;
     }
     const key = permissionContentKey(gate);
-    if (this.pendingPermissionKey.get(sessionId) === key) return; // unchanged repaint
+    const prior = this.pendingPermission.get(sessionId);
+    const priorPromptId = prior?.promptId;
+    if (
+      this.pendingPermissionKey.get(sessionId) === key &&
+      (occurrenceId === undefined || prior?.occurrenceId === occurrenceId)
+    ) {
+      return; // unchanged repaint
+    }
     // Server-owned instance id. permissionGateKey is content-derived and cannot
     // tell two consecutive identical gates apart; this can. The same identity
     // as the pending gate (cursor moved, repaint) keeps its id; anything else —
     // first open, different content, reopen after a close — is a new instance.
-    const prior = this.pendingPermission.get(sessionId);
-    const gateId =
-      prior && permissionGateKey(prior) === permissionGateKey(gate) ? prior.gateId : randomUUID();
-    this.pendingPermission.set(sessionId, { ...gate, gateId });
+    //
+    // Occurrence is compared to OCCURRENCE, never to promptId. The two were
+    // equal by construction until open() began minting a fresh id for a
+    // replayed occurrence held by a terminal record: after such a reopen the
+    // entry carries the new id while the host still sends the original
+    // occurrence (host.ts keeps it while permissionGateKey is unchanged, and
+    // that key excludes the cursor), so comparing against promptId made every
+    // later repaint a new instance — a cancel+open pair per paint, a new
+    // gateId on the wire, and any in-flight answer settling prompt_cancelled.
+    // `priorPromptId !== undefined` stays: it guards the registry lookup
+    // below, which is a separate question from identity.
+    const samePrompt =
+      prior &&
+      priorPromptId !== undefined &&
+      permissionGateKey(prior) === permissionGateKey(gate) &&
+      (occurrenceId === undefined || prior.occurrenceId === occurrenceId);
+    if (prior && !samePrompt) {
+      const priorPrompt = prior.promptId ? this.promptRegistry.get(prior.promptId) : null;
+      if (priorPrompt?.state === "open" || priorPrompt?.state === "updated") {
+        this.promptRegistry.transition(priorPrompt.promptId, "cancelled", "replaced");
+      }
+    }
+    const prompt =
+      gate.options.length === 0
+        ? null
+        : samePrompt
+          ? this.promptRegistry.get(priorPromptId)
+          : this.promptRegistry.open(
+              permissionPromptDraft(sessionId, gate),
+              this.permissionAnswerAdapter(sessionId),
+              occurrenceId,
+            );
+    if (samePrompt && !prompt) throw new Error("Pending permission prompt disappeared");
+    const gateId = prompt?.promptId ?? occurrenceId ?? prior?.gateId ?? randomUUID();
+    this.pendingPermission.set(sessionId, {
+      ...gate,
+      gateId,
+      ...(prompt ? { promptId: prompt.promptId } : {}),
+      ...(occurrenceId !== undefined ? { occurrenceId } : {}),
+    });
     this.pendingPermissionKey.set(sessionId, key);
     const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
     this.log.info(
@@ -1160,6 +1315,117 @@ export class SessionHandlers {
       contentKey: permissionGateKey(gate),
       gateId,
     });
+  }
+
+  private permissionAnswerAdapter(sessionId: string): PromptAnswerAdapter {
+    return async ({ prompt, answer }): Promise<PromptAdapterResult> => {
+      const gate = this.pendingPermission.get(sessionId);
+      if (!gate || gate.promptId !== prompt.promptId) {
+        return {
+          ok: false,
+          code: "prompt_unavailable",
+          terminal: { state: "unavailable", reason: "provider_prompt_missing" },
+        };
+      }
+      const response = answer.responses[0];
+      const selectedId = response?.optionIds?.[0];
+      const selectedIndex = prompt.questions[0]?.options.findIndex(
+        (option) => option.optionId === selectedId,
+      );
+      if (selectedIndex === undefined || selectedIndex < 0) {
+        return { ok: false, code: "unknown_option" };
+      }
+      const option = gate.options[selectedIndex];
+      if (!option) return { ok: false, code: "unknown_option" };
+      const provider = this.sessionStore.getManaged(sessionId)?.provider;
+      if (
+        provider !== CODEX_CLI_PROVIDER &&
+        !(await this.permissionGateStillOpen(sessionId, permissionGateKey(gate)))
+      ) {
+        return {
+          ok: false,
+          code: "prompt_cancelled",
+          terminal: { state: "cancelled", reason: "provider_closed" },
+        };
+      }
+      if (this.pendingPermission.get(sessionId)?.promptId !== prompt.promptId) {
+        return { ok: false, code: "prompt_cancelled" };
+      }
+      try {
+        this.ptyManager.sendKeys(
+          sessionId,
+          option.answerKeys ?? permissionAnswerKeys(option.index),
+        );
+      } catch {
+        return { ok: false, code: "provider_error" };
+      }
+      return { ok: true };
+    };
+  }
+
+  private questionAnswerAdapter(sessionId: string): PromptAnswerAdapter {
+    return async ({ prompt, answer }): Promise<PromptAdapterResult> => {
+      const pending = this.pendingQuestions.get(sessionId);
+      if (!pending || pending.promptId !== prompt.promptId) {
+        return {
+          ok: false,
+          code: "prompt_unavailable",
+          terminal: { state: "unavailable", reason: "provider_prompt_missing" },
+        };
+      }
+      const answers: Record<string, string | string[]> = {};
+      for (const question of prompt.questions) {
+        const response = answer.responses.find((item) => item.questionId === question.questionId);
+        if (!response?.optionIds) return { ok: false, code: "unsupported_prompt_shape" };
+        answers[question.text] = response.optionIds.map((optionId) => {
+          const option = question.options.find((item) => item.optionId === optionId);
+          return option?.label ?? "";
+        });
+      }
+      const resolution = resolveAnswer(pending, {
+        toolUseId: pending.toolUseId,
+        answers,
+      });
+      if (!resolution.ok) {
+        const code =
+          resolution.reason === "unknown_option" ||
+          resolution.reason === "incomplete_answer" ||
+          resolution.reason === "unsupported_prompt_shape"
+            ? resolution.reason
+            : "prompt_unavailable";
+        return { ok: false, code };
+      }
+      if (!(await this.questionMenuStillOpen(sessionId))) {
+        this.pendingQuestions.delete(sessionId);
+        this.pendingQuestionKey.delete(sessionId);
+        this.broadcastToSession(sessionId, {
+          type: "question_cancelled",
+          sessionId,
+          toolUseId: pending.toolUseId,
+        });
+        return {
+          ok: false,
+          code: "prompt_cancelled",
+          terminal: { state: "cancelled", reason: "provider_closed" },
+        };
+      }
+      if (this.pendingQuestions.get(sessionId)?.promptId !== prompt.promptId) {
+        return { ok: false, code: "prompt_cancelled" };
+      }
+      try {
+        this.ptyManager.sendKeys(sessionId, resolution.keys);
+      } catch {
+        return { ok: false, code: "provider_error" };
+      }
+      this.pendingQuestions.delete(sessionId);
+      this.pendingQuestionKey.delete(sessionId);
+      this.broadcastToSession(sessionId, {
+        type: "question_cancelled",
+        sessionId,
+        toolUseId: pending.toolUseId,
+      });
+      return { ok: true };
+    };
   }
 
   /**
@@ -1205,6 +1471,11 @@ export class SessionHandlers {
     // unconditional here (a no-op for clients showing nothing) because a client
     // that got this far believes a gate is up and must be told it isn't.
     const gateClosed = (): void => {
+      const pending = this.pendingPermission.get(sessionId);
+      const prompt = pending?.promptId ? this.promptRegistry.get(pending.promptId) : null;
+      if (prompt?.state === "open" || prompt?.state === "updated") {
+        this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
+      }
       this.pendingPermission.delete(sessionId);
       this.pendingPermissionKey.delete(sessionId);
       this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
@@ -1270,6 +1541,10 @@ export class SessionHandlers {
       const message = err instanceof Error ? err.message : "Failed to send answer";
       json(res, 400, { ok: false, reason: message });
       return;
+    }
+    const normalized = gate.promptId ? this.promptRegistry.get(gate.promptId) : null;
+    if (normalized?.state === "open" || normalized?.state === "updated") {
+      this.promptRegistry.transition(normalized.promptId, "resolved", "answered_legacy");
     }
     json(res, 200, { ok: true });
   }
@@ -1337,6 +1612,10 @@ export class SessionHandlers {
     // into the prompt box instead of the picker. The rendered screen is the only
     // authority on whether the picker is still up.
     if (!(await this.questionMenuStillOpen(sessionId))) {
+      const prompt = this.promptRegistry.get(pending?.promptId ?? "");
+      if (prompt?.state === "open" || prompt?.state === "updated") {
+        this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
+      }
       this.pendingQuestions.delete(sessionId);
       this.pendingQuestionKey.delete(sessionId);
       this.broadcastToSession(sessionId, { type: "question_cancelled", sessionId, toolUseId });
@@ -1350,9 +1629,45 @@ export class SessionHandlers {
       json(res, 400, { ok: false, reason: message });
       return;
     }
+    const normalized = this.promptRegistry.get(pending?.promptId ?? "");
+    if (normalized?.state === "open" || normalized?.state === "updated") {
+      this.promptRegistry.transition(normalized.promptId, "resolved", "answered_legacy");
+    }
     this.pendingQuestions.delete(sessionId);
     this.broadcastToSession(sessionId, { type: "question_cancelled", sessionId, toolUseId });
     json(res, 200, { ok: true });
+  }
+
+  /**
+   * Answer a normalized prompt by its opaque ids.
+   *
+   * Refusals are keyed by `code` — the stable machine taxonomy of the prompt
+   * contract. The released legacy routes (`/answer`, `/permission/answer`) key
+   * theirs by `reason` and keep doing so; a client reads whichever key belongs
+   * to the route it called, and the two vocabularies are not merged.
+   *
+   * Status follows the same split as the legacy routes: a malformed or
+   * unanswerable *request* is 400, a prompt whose *state* refuses the answer is
+   * 409. A retry after PROMPT_TERMINAL_RETENTION_MS answers 404
+   * `prompt_not_found`, not the recorded outcome — the record it would replay
+   * is gone by then.
+   */
+  async handlePromptAnswer(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const parsed = PromptAnswerSchema.safeParse(await readBody(req));
+    if (!parsed.success) {
+      json(res, 400, { ok: false, code: "invalid_prompt_answer" });
+      return;
+    }
+    const outcome = await this.promptRegistry.answer(sessionId, parsed.data);
+    if (outcome.ok) {
+      json(res, 200, outcome);
+      return;
+    }
+    json(res, promptAnswerStatus(outcome.code), outcome);
   }
 
   // Best-effort: a session we don't own a PTY for, or one that raced away

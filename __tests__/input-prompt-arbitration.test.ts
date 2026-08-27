@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { Readable } from "stream";
 import { describe, expect, it } from "vitest";
 import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/sessions.handlers";
+import { clearExpiredPendingPrompt } from "../src/server-wiring";
+import { PromptRegistry } from "../src/services/prompts/promptRegistry";
 import { IdempotencyStore } from "../src/services/sessions/idempotency";
 import type { AskQuestion, WSMessage } from "../src/types";
 
@@ -107,6 +109,145 @@ function response(): { res: ServerResponse; status: () => number; body: () => un
 }
 
 describe("POST /input { input } while a prompt is open", () => {
+  it.each([
+    "permission",
+    "question",
+  ] as const)("clears an expired %s prompt and lets text input through", async (kind) => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const h = harness(null);
+      const frames: WSMessage[] = [];
+      const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+      deps.pendingQuestionKey = new Map();
+      deps.pendingPermissionKey = new Map();
+      deps.sessionSubscribers = new Map();
+      deps.wsHub.broadcastToClients = (_clients, frame) => frames.push(frame);
+      const registry = new PromptRegistry({
+        onExpire: (prompt) =>
+          clearExpiredPendingPrompt(
+            {
+              pendingPermission: h.pendingPermission,
+              pendingPermissionKey: deps.pendingPermissionKey,
+              pendingQuestions: h.pendingQuestions,
+              pendingQuestionKey: deps.pendingQuestionKey,
+              sessionSubscribers: deps.sessionSubscribers,
+              wsHub: deps.wsHub,
+            },
+            prompt,
+          ),
+      });
+      deps.promptRegistry = registry;
+      const prompt = registry.open({
+        sessionId: SESSION,
+        intent: kind === "permission" ? "approval" : "question",
+        message: kind === "permission" ? "Allow command?" : "Which language?",
+        questions: [
+          {
+            text: kind === "permission" ? "Allow command?" : "Which language?",
+            inputMode: "single",
+            options: [{ label: "Yes" }, { label: "No" }],
+            allowOther: false,
+            secret: "unknown",
+          },
+        ],
+        answerRequirement: "blocking",
+        expiresAt: "2026-08-26T12:00:00.100Z",
+        provenance: { source: "provider", confidence: "authoritative" },
+      });
+      if (kind === "permission") {
+        h.pendingPermission.set(SESSION, {
+          ...GATE,
+          gateId: prompt.promptId,
+          promptId: prompt.promptId,
+        });
+        deps.pendingPermissionKey.set(SESSION, "permission-key");
+      } else {
+        h.pendingQuestions.set(SESSION, {
+          toolUseId: "toolu_expiring",
+          questions: QUESTIONS,
+          origin: "pty",
+          promptId: prompt.promptId,
+        });
+        deps.pendingQuestionKey.set(SESSION, "question-key");
+      }
+
+      vi.setSystemTime("2026-08-26T12:00:00.100Z");
+      const { res, status, body } = response();
+      await h.handlers.handleSendInput(SESSION, request({ input: "hello" }), res);
+
+      expect(status()).toBe(200);
+      expect(body()).toEqual({ ok: true });
+      expect(h.inputs).toEqual(["hello"]);
+      expect(h.pendingPermission.has(SESSION)).toBe(false);
+      expect(h.pendingQuestions.has(SESSION)).toBe(false);
+      expect(frames).toContainEqual(
+        kind === "permission"
+          ? { type: "permission_cancelled", sessionId: SESSION }
+          : { type: "question_cancelled", sessionId: SESSION, toolUseId: "toolu_expiring" },
+      );
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not clear a newer pending permission when an old prompt expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const h = harness(null);
+      const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+      deps.pendingQuestionKey = new Map();
+      deps.pendingPermissionKey = new Map();
+      deps.sessionSubscribers = new Map();
+      const registry = new PromptRegistry({
+        onExpire: (prompt) =>
+          clearExpiredPendingPrompt(
+            {
+              pendingPermission: h.pendingPermission,
+              pendingPermissionKey: deps.pendingPermissionKey,
+              pendingQuestions: h.pendingQuestions,
+              pendingQuestionKey: deps.pendingQuestionKey,
+              sessionSubscribers: deps.sessionSubscribers,
+              wsHub: deps.wsHub,
+            },
+            prompt,
+          ),
+      });
+      const old = registry.open({
+        sessionId: SESSION,
+        intent: "approval",
+        message: "Old prompt",
+        questions: [
+          {
+            text: "Old prompt",
+            inputMode: "single",
+            options: [{ label: "Yes" }, { label: "No" }],
+            allowOther: false,
+            secret: "unknown",
+          },
+        ],
+        answerRequirement: "blocking",
+        expiresAt: "2026-08-26T12:00:00.100Z",
+        provenance: { source: "provider", confidence: "authoritative" },
+      });
+      h.pendingPermission.set(SESSION, {
+        ...GATE,
+        gateId: "new-prompt",
+        promptId: "new-prompt",
+      });
+
+      vi.setSystemTime("2026-08-26T12:00:00.100Z");
+      registry.get(old.promptId);
+
+      expect(h.pendingPermission.get(SESSION)?.promptId).toBe("new-prompt");
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     "permission",
     "question",

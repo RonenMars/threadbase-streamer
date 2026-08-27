@@ -40,6 +40,21 @@ const { connectToHost, hostSocketPath, listenForStreamers, probePtyHostStatus } 
 
 const cleanups: (() => void)[] = [];
 
+const GATE_PAINT = [
+  "╭────────────────────────────────────────────────────╮",
+  "│ Bash command                                       │",
+  "│   /opt/homebrew/bin/git status                     │",
+  "│ This command requires approval                     │",
+  "│                                                    │",
+  "│ Do you want to proceed?                            │",
+  "│ ❯ 1. Yes                                           │",
+  "│   2. Yes, and don't ask again                      │",
+  "│   3. No                                            │",
+  "│                                                    │",
+  "│ Esc to cancel · Tab to amend · ctrl+e to explain   │",
+  "╰────────────────────────────────────────────────────╯",
+].join("\r\n");
+
 afterEach(() => {
   while (cleanups.length) cleanups.pop()?.();
 });
@@ -236,6 +251,35 @@ describe("SessionHost over a real socket", () => {
     // This is what a streamer restart looks like from the host's side.
     expect(second.hasSession("survivor")).toBe(true);
     expect(second.getPid("survivor")).toBeGreaterThan(0);
+  });
+
+  it("does not replay a prompt after its PTY exits", async () => {
+    const { socketPath } = await startHost();
+    const opened: string[] = [];
+    const first = await connectRunner(socketPath, {
+      onPermissionChange: (sessionId: string, gate: unknown) => {
+        if (gate !== null) opened.push(sessionId);
+      },
+    });
+    await first.start("exited", { projectPath: tmpdir(), projectName: "p" });
+
+    const pty = await import("node-pty");
+    const proc = (pty.spawn as any).mock.results.at(-1)?.value;
+    proc._emit("data", GATE_PAINT);
+    await vi.waitFor(() => expect(opened).toEqual(["exited"]));
+
+    proc._emit("exit", { exitCode: 0 });
+    await vi.waitFor(() => expect(first.hasSession("exited")).toBe(false));
+    first.dispose();
+
+    const replayed: string[] = [];
+    await connectRunner(socketPath, {
+      onPermissionChange: (sessionId: string, gate: unknown) => {
+        if (gate !== null) replayed.push(sessionId);
+      },
+    });
+
+    expect(replayed).toEqual([]);
   });
 
   it("refuses to start a second host on the same endpoint", async () => {

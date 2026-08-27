@@ -3,6 +3,7 @@ import type { ProgressDedupeLRU } from "./agent/dedupe";
 import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "./claude-flags";
 import type { FeatureFlagValues } from "./feature-flags";
 import type { ProviderName } from "./providers";
+import type { PromptEvent, PromptSnapshot } from "./services/prompts/promptRegistry";
 
 // ─── Session Lifecycle ─────────────────────────────────────────────
 
@@ -333,6 +334,8 @@ export type WSMessage =
       gateId: string;
     }
   | { type: "permission_cancelled"; sessionId: string }
+  | PromptEvent
+  | PromptSnapshot
   | { type: "ping"; ts: number }
   // Ground-truth user message: the streamer wrote this text to the PTY, so the
   // client can positively identify user-owned output instead of parsing the
@@ -680,6 +683,7 @@ export interface PTYManagerOptions {
       options: PermissionOption[];
       cursor?: number;
     } | null,
+    occurrenceId?: string,
   ) => void;
   /**
    * Fired when the agent's phase within a running turn changes, including to
@@ -701,7 +705,7 @@ export interface PTYManagerOptions {
   onPhaseChange?: (sessionId: string, phase: AgentPhase | null) => void;
   // Fired when an AskUserQuestion menu is detected on the rendered screen (before
   // the JSONL tool_use block flushes). The server de-dupes against the JSONL path.
-  onLiveQuestion?: (sessionId: string, questions: AskQuestion[]) => void;
+  onLiveQuestion?: (sessionId: string, questions: AskQuestion[], occurrenceId?: string) => void;
   // Fired when a previously-detected AskUserQuestion screen menu disappears (the
   // user answered it and Claude's prompt marker is back). Lets the server clear
   // the pending question so an answered menu doesn't linger or re-appear.

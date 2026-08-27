@@ -1,11 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { LiveSessionManager } from "../live-session-manager";
 import type { Logger } from "../logger";
 import { getLogger } from "../logger";
+import { permissionGateKey } from "../services/questions/detectPermissionGate";
+import { questionContentKey } from "../services/questions/detectQuestionFromScreen";
 import type { ManagedSession, StartFreshSessionOptions, StartSessionOptions } from "../types";
 import {
   encodeMessage,
   type HostEvent,
   type HostHeartbeatState,
+  type HostPromptSnapshot,
   type HostRequest,
   type HostSession,
   type HostTransport,
@@ -67,6 +71,7 @@ export class SessionHost {
   private orphanTimer: ReturnType<typeof setInterval> | null = null;
   private onOrphaned: (() => void) | undefined;
   private orphaned = false;
+  private promptSnapshots = new Map<string, HostPromptSnapshot>();
 
   constructor(options: SessionHostOptions = {}) {
     this.log = options.logger ?? getLogger("pty-host");
@@ -83,16 +88,63 @@ export class SessionHost {
         this.lastAgentChunkAt.set(sessionId, Date.now());
         this.emit({ type: "event", event: "output", sessionId, data });
       },
-      onStatusChange: (session) => this.emit({ type: "event", event: "status-change", session }),
+      onStatusChange: (session) => {
+        if (session.status === "idle") this.promptSnapshots.delete(session.id);
+        this.emit({ type: "event", event: "status-change", session });
+      },
       onReady: (session) => this.emit({ type: "event", event: "ready", session }),
-      onPermissionChange: (sessionId, gate) =>
-        this.emit({ type: "event", event: "permission-change", sessionId, gate }),
+      onPermissionChange: (sessionId, gate) => {
+        const prior = this.promptSnapshots.get(sessionId);
+        if (gate === null) {
+          this.promptSnapshots.delete(sessionId);
+          this.emit({
+            type: "event",
+            event: "permission-change",
+            sessionId,
+            gate,
+            ...(prior ? { occurrenceId: prior.occurrenceId } : {}),
+          });
+          return;
+        }
+        const occurrenceId =
+          prior?.kind === "permission" && permissionGateKey(prior.gate) === permissionGateKey(gate)
+            ? prior.occurrenceId
+            : randomUUID();
+        this.promptSnapshots.set(sessionId, {
+          kind: "permission",
+          sessionId,
+          occurrenceId,
+          gate,
+        });
+        this.emit({
+          type: "event",
+          event: "permission-change",
+          sessionId,
+          gate,
+          occurrenceId,
+        });
+      },
       onPhaseChange: (sessionId, phase) =>
         this.emit({ type: "event", event: "phase-change", sessionId, phase }),
-      onLiveQuestion: (sessionId, questions) =>
-        this.emit({ type: "event", event: "live-question", sessionId, questions }),
-      onLiveQuestionGone: (sessionId) =>
-        this.emit({ type: "event", event: "live-question-gone", sessionId }),
+      onLiveQuestion: (sessionId, questions) => {
+        const prior = this.promptSnapshots.get(sessionId);
+        const occurrenceId =
+          prior?.kind === "question" &&
+          questionContentKey(prior.questions) === questionContentKey(questions)
+            ? prior.occurrenceId
+            : randomUUID();
+        this.promptSnapshots.set(sessionId, {
+          kind: "question",
+          sessionId,
+          occurrenceId,
+          questions,
+        });
+        this.emit({ type: "event", event: "live-question", sessionId, questions, occurrenceId });
+      },
+      onLiveQuestionGone: (sessionId) => {
+        this.promptSnapshots.delete(sessionId);
+        this.emit({ type: "event", event: "live-question-gone", sessionId });
+      },
       onUserMessage: (sessionId, text, ts) =>
         this.emit({ type: "event", event: "user-message", sessionId, text, ts }),
     });
@@ -172,12 +224,13 @@ export class SessionHost {
           event: "pty_host.streamer_subscribed",
           subscribers: this.subscribers.size,
         });
-        return {};
+        return { promptSnapshots: [...this.promptSnapshots.values()] };
 
       case "status":
         return {
           protocolVersion: PTY_HOST_PROTOCOL_VERSION,
           sessions: this.runner.listSessions().map((session) => this.toHostSession(session)),
+          promptSnapshots: [...this.promptSnapshots.values()],
         };
 
       case "heartbeat":
@@ -254,6 +307,7 @@ export class SessionHost {
 
   private forget(sessionId: string): void {
     this.lastAgentChunkAt.delete(sessionId);
+    this.promptSnapshots.delete(sessionId);
   }
 
   /**

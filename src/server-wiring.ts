@@ -23,12 +23,14 @@ import type { LiveSessionManager } from "./live-session-manager";
 import { getLogger, type Logger } from "./logger";
 import { REPLAY_MAX_LINES } from "./pty-shared";
 import type { ScannerManager } from "./scanner-manager";
+import type { Prompt } from "./schemas/prompt.schema";
 import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import type {
   ConversationWatcher,
   ConversationWatcherEvents,
 } from "./services/conversations/conversationWatcher";
 import type { HostPressureMonitor } from "./services/host-pressure/hostPressure";
+import type { PromptRegistry } from "./services/prompts/promptRegistry";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import type { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
 import { permissionGateKey } from "./services/questions/detectPermissionGate";
@@ -69,6 +71,14 @@ export type PendingPermission = {
   cursor?: number;
   /** Server-owned instance id, minted by handlePermissionChange. */
   gateId: string;
+  promptId?: string;
+  /**
+   * The pty-host's occurrence id for this gate, absent on the in-process PTY
+   * path. Instance identity is compared against THIS, never against promptId:
+   * the two were equal by construction until open() started minting a fresh id
+   * for a replayed occurrence held by a terminal record.
+   */
+  occurrenceId?: string;
 };
 
 /** The AskUserQuestion card currently broadcast for a session. */
@@ -76,7 +86,40 @@ export type PendingQuestion = {
   toolUseId: string;
   questions: AskQuestion[];
   origin: "pty" | "jsonl";
+  promptId: string;
 };
+
+export type ExpiredPendingPromptDeps = {
+  pendingPermission: Map<string, PendingPermission>;
+  pendingPermissionKey: Map<string, string>;
+  pendingQuestions: Map<string, PendingQuestion>;
+  pendingQuestionKey: Map<string, string>;
+  sessionSubscribers: Map<string, Set<WebSocket>>;
+  wsHub: Pick<WSHub, "broadcastToClients">;
+};
+
+export function clearExpiredPendingPrompt(deps: ExpiredPendingPromptDeps, prompt: Prompt): void {
+  const permission = deps.pendingPermission.get(prompt.sessionId);
+  if (permission?.promptId === prompt.promptId) {
+    deps.pendingPermission.delete(prompt.sessionId);
+    deps.pendingPermissionKey.delete(prompt.sessionId);
+    deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(prompt.sessionId) ?? [], {
+      type: "permission_cancelled",
+      sessionId: prompt.sessionId,
+    });
+  }
+
+  const question = deps.pendingQuestions.get(prompt.sessionId);
+  if (question?.promptId === prompt.promptId) {
+    deps.pendingQuestions.delete(prompt.sessionId);
+    deps.pendingQuestionKey.delete(prompt.sessionId);
+    deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(prompt.sessionId) ?? [], {
+      type: "question_cancelled",
+      sessionId: prompt.sessionId,
+      toolUseId: question.toolUseId,
+    });
+  }
+}
 
 /**
  * Everything the ConversationWatcher callbacks read from the server. Thunks
@@ -292,6 +335,7 @@ export type LiveSessionWiringDeps = {
   pendingQuestionKey: Map<string, string>;
   pendingPermission: Map<string, PendingPermission>;
   pendingPermissionKey: Map<string, string>;
+  promptRegistry: PromptRegistry;
   contendedSessions: Set<string>;
   log: () => Logger;
   sessionHandlers: () => SessionHandlers;
@@ -357,11 +401,11 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         ts,
       });
     },
-    onPermissionChange: (sessionId, gate) => {
-      deps.sessionHandlers().handlePermissionChange(sessionId, gate);
+    onPermissionChange: (sessionId, gate, occurrenceId) => {
+      deps.sessionHandlers().handlePermissionChange(sessionId, gate, occurrenceId);
     },
-    onLiveQuestion: (sessionId, questions) => {
-      deps.sessionHandlers().handleLiveQuestion(sessionId, questions);
+    onLiveQuestion: (sessionId, questions, occurrenceId) => {
+      deps.sessionHandlers().handleLiveQuestion(sessionId, questions, occurrenceId);
     },
     onLiveQuestionGone: (sessionId) => {
       // The rendered AskUserQuestion menu closed on this streamer's own live
@@ -468,11 +512,18 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         if (filePath) {
           deps.fileWatcher.unwatch(filePath);
           deps.sessionFileMap.delete(session.id);
-          deps.cancelPendingQuestion(session.id);
         }
+        // Unconditional, like the permission clear below: a screen-detected
+        // question needs no JSONL mapping to exist, and one left pending here
+        // survives the exit as an unanswerable card whose stale
+        // pendingQuestionKey then suppresses the same menu on resume. Before
+        // invalidateSession, so the prompt ends cancelled/provider_closed
+        // rather than unavailable.
+        deps.cancelPendingQuestion(session.id);
         // A gone PTY can never have an open gate; clear silently.
         deps.pendingPermission.delete(session.id);
         deps.pendingPermissionKey.delete(session.id);
+        deps.promptRegistry.invalidateSession(session.id, "session_ended");
         deps.contendedSessions.delete(session.id);
         // Remember that WE owned this conversation up to now, so a resume that
         // follows a hold isn't mistaken for a collision with someone else
@@ -568,6 +619,7 @@ export type ApiDepsWiring = {
   terminalSeq: Map<string, number>;
   pendingPermission: Map<string, PendingPermission>;
   pendingQuestions: Map<string, PendingQuestion>;
+  promptRegistry: PromptRegistry;
   agentClient: AgentClient | null;
   conversationWriter: ConversationWriter | null;
   agentConfig: AgentConfig;
@@ -622,6 +674,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleGetOutput: (id, res) => deps.sessionHandlers.handleGetOutput(id, res),
     handleSendInput: (id, req, res) => deps.sessionHandlers.handleSendInput(id, req, res),
     handleSendAnswer: (id, req, res) => deps.sessionHandlers.handleSendAnswer(id, req, res),
+    handlePromptAnswer: (id, req, res) => deps.sessionHandlers.handlePromptAnswer(id, req, res),
     handlePermissionAnswer: (id, req, res) =>
       deps.sessionHandlers.handlePermissionAnswer(id, req, res),
     handleCancel: (id, res) => deps.sessionHandlers.handleCancel(id, res),
@@ -699,6 +752,9 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             return;
           }
           deps.addSessionSubscriber(msg.sessionId, ws);
+          if (deps.promptRegistry) {
+            ws.send(JSON.stringify(deps.promptRegistry.snapshot(msg.sessionId)));
+          }
           if (deps.ptyManager.hasSession(msg.sessionId)) {
             // Replay everything the session's render terminal still holds; it
             // caps itself (REPLAY_MAX_LINES) and the client keeps its own,

@@ -45,11 +45,11 @@ import type {
 /**
  * Bumped on any incompatible change to the shapes below. Version 2 adds the
  * heartbeat and shutdown controls required for host supervision. Version 3
- * adds the `phase-change` event — the detector runs in the host, so without a
- * verb here the agent-phase indicator silently stops working when the flag is
- * on, which is exactly the failure this file's header warns about.
+ * adds the `phase-change` event. Version 4 adds host-owned prompt occurrence
+ * ids and current detector snapshots so a reconnect does not lose a prompt
+ * that opened before the new streamer subscribed.
  */
-export const PTY_HOST_PROTOCOL_VERSION = 3;
+export const PTY_HOST_PROTOCOL_VERSION = 4;
 
 export interface HostHeartbeatState {
   registryState: "known" | "unknown";
@@ -122,6 +122,7 @@ export type HostEvent =
         options: PermissionOption[];
         cursor?: number;
       } | null;
+      occurrenceId?: string;
     }
   /**
    * Agent phase changed within a running turn, including to `null` at turn
@@ -129,7 +130,13 @@ export type HostEvent =
    * absence must never mean "cleared", because the consumer merges state.
    */
   | { type: "event"; event: "phase-change"; sessionId: string; phase: AgentPhase | null }
-  | { type: "event"; event: "live-question"; sessionId: string; questions: AskQuestion[] }
+  | {
+      type: "event";
+      event: "live-question";
+      sessionId: string;
+      questions: AskQuestion[];
+      occurrenceId: string;
+    }
   | { type: "event"; event: "live-question-gone"; sessionId: string }
   | { type: "event"; event: "user-message"; sessionId: string; text: string; ts: number }
   | { type: "event"; event: "exit"; sessionId: string; exitCode: number };
@@ -171,7 +178,27 @@ export interface HostSession {
 export interface StatusResult {
   protocolVersion: number;
   sessions: HostSession[];
+  promptSnapshots?: HostPromptSnapshot[];
 }
+export interface SubscribeResult {
+  promptSnapshots: HostPromptSnapshot[];
+}
+
+export type HostPromptSnapshot =
+  | {
+      kind: "permission";
+      sessionId: string;
+      occurrenceId: string;
+      gate: NonNullable<
+        Parameters<NonNullable<import("../types").PTYManagerOptions["onPermissionChange"]>>[1]
+      >;
+    }
+  | {
+      kind: "question";
+      sessionId: string;
+      occurrenceId: string;
+      questions: AskQuestion[];
+    };
 export interface InputHistoryResult {
   history: UserMessage[];
 }

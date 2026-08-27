@@ -106,6 +106,7 @@ import { ScannerManager } from "./scanner-manager";
 import { seal } from "./seal";
 import { loadOrCreateServerIdentity } from "./server-identity";
 import {
+  clearExpiredPendingPrompt,
   createApiDeps,
   createConversationWatcherEvents,
   createLiveSessionOptions,
@@ -120,6 +121,7 @@ import {
   createHostPressureMonitor,
   type HostPressureMonitor,
 } from "./services/host-pressure/hostPressure";
+import { PromptRegistry } from "./services/prompts/promptRegistry";
 import {
   ApnsClient,
   describeMissingApnsCredentials,
@@ -308,7 +310,7 @@ export class StreamerServer {
   // otherwise misroute the answer into this streamer's PTY.
   private pendingQuestions = new Map<
     string,
-    { toolUseId: string; questions: AskQuestion[]; origin: "pty" | "jsonl" }
+    { toolUseId: string; questions: AskQuestion[]; origin: "pty" | "jsonl"; promptId: string }
   >();
   // Sessions resumed past a detected collision (busy probe said busy, caller
   // forced). JSONL-derived actionable question cards are suppressed for these
@@ -336,6 +338,9 @@ export class StreamerServer {
       cursor?: number;
       /** Server-owned instance id, minted by handlePermissionChange. */
       gateId: string;
+      promptId?: string;
+      /** Host-owned occurrence id; see PendingPermission in server-wiring.ts. */
+      occurrenceId?: string;
     }
   >();
   // Content key (prompt + detail + options + cursor) of the permission gate
@@ -343,6 +348,7 @@ export class StreamerServer {
   // repaint of the same gate doesn't re-broadcast on every tick. Cleared
   // alongside pendingPermission.
   private pendingPermissionKey = new Map<string, string>();
+  private promptRegistry: PromptRegistry;
   // Scanner lifecycle, freshness state and the cache↔disk reconcile.
   private scannerManager: ScannerManager;
   // Binds a live session to the JSONL/rollout its provider writes.
@@ -629,6 +635,22 @@ export class StreamerServer {
 
     this.sessionStore = new SessionStore();
     this.wsHub = new WSHub();
+    this.promptRegistry = new PromptRegistry({
+      emit: (event) =>
+        this.wsHub.broadcastToClients(this.sessionSubscribers.get(event.sessionId) ?? [], event),
+      onExpire: (prompt) =>
+        clearExpiredPendingPrompt(
+          {
+            pendingPermission: this.pendingPermission,
+            pendingPermissionKey: this.pendingPermissionKey,
+            pendingQuestions: this.pendingQuestions,
+            pendingQuestionKey: this.pendingQuestionKey,
+            sessionSubscribers: this.sessionSubscribers,
+            wsHub: this.wsHub,
+          },
+          prompt,
+        ),
+    });
 
     this.fileWatcher = new ConversationWatcher(
       createConversationWatcherEvents({
@@ -677,6 +699,7 @@ export class StreamerServer {
         pendingQuestionKey: this.pendingQuestionKey,
         pendingPermission: this.pendingPermission,
         pendingPermissionKey: this.pendingPermissionKey,
+        promptRegistry: this.promptRegistry,
         contendedSessions: this.contendedSessions,
         // Thunks, not values: sessionHandlers is constructed below, the
         // registry repo and the push notifiers are bound during listen(), and
@@ -779,6 +802,7 @@ export class StreamerServer {
       sessionStatusBus: this.sessionStatusBus,
       sessionFileMap: this.sessionFileMap,
       pendingQuestions: this.pendingQuestions,
+      promptRegistry: this.promptRegistry,
       pendingQuestionKey: this.pendingQuestionKey,
       pendingPermission: this.pendingPermission,
       pendingPermissionKey: this.pendingPermissionKey,
@@ -883,6 +907,7 @@ export class StreamerServer {
       terminalSeq: this.terminalSeq,
       pendingPermission: this.pendingPermission,
       pendingQuestions: this.pendingQuestions,
+      promptRegistry: this.promptRegistry,
       agentClient,
       conversationWriter,
       agentConfig,
@@ -1946,6 +1971,7 @@ export class StreamerServer {
     if (!this.ptyManager.isRemote()) this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.externalTails.clear();
+    this.promptRegistry.dispose();
     this.wsHub.dispose();
     this.pairTokens.dispose();
     // The APNs HTTP/2 session is long-lived by design, so it keeps the event
@@ -2841,7 +2867,7 @@ export class StreamerServer {
       // question still can't clobber it.
       const origin: "pty" | "jsonl" =
         priorPtyKey !== null && questionContentKey(p.questions) === priorPtyKey ? "pty" : "jsonl";
-      this.pendingQuestions.set(sessionId, { ...p, origin }); // last pending wins
+      this.sessionHandlers.handleJsonlQuestion(sessionId, p.toolUseId, p.questions, origin);
       const t = setTimeout(() => {
         if (this.pendingQuestions.get(sessionId)?.toolUseId === p.toolUseId) {
           this.cancelPendingQuestion(sessionId);
@@ -2880,6 +2906,10 @@ export class StreamerServer {
     if (!pq) return;
     this.pendingQuestions.delete(sessionId);
     this.pendingQuestionKey.delete(sessionId);
+    const prompt = this.promptRegistry.get(pq.promptId);
+    if (prompt?.state === "open" || prompt?.state === "updated") {
+      this.promptRegistry.transition(pq.promptId, "cancelled", "provider_closed");
+    }
     this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], {
       type: "question_cancelled",
       sessionId,

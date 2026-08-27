@@ -27,6 +27,19 @@ export {
   type ProviderName,
 } from "./providers";
 export { PTYManager } from "./pty-manager";
+export {
+  PROMPT_SCHEMA_VERSION,
+  type Prompt,
+  type PromptAnswer,
+  PromptAnswerSchema,
+  type PromptOption,
+  PromptOptionSchema,
+  type PromptQuestion,
+  PromptQuestionSchema,
+  type PromptResponse,
+  PromptResponseSchema,
+  PromptSchema,
+} from "./schemas/prompt.schema";
 export { StreamerServer } from "./server";
 export { ConversationWatcher } from "./services/conversations/conversationWatcher";
 export { SessionStore } from "./session-store";
