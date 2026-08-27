@@ -244,6 +244,8 @@ export type SessionHandlersDeps = {
       /** Server-owned instance id, minted by handlePermissionChange. */
       gateId: string;
       promptId?: string;
+      /** Host-owned occurrence id; see PendingPermission in server-wiring.ts. */
+      occurrenceId?: string;
     }
   >;
   pendingPermissionKey: Map<string, string>;
@@ -1249,7 +1251,7 @@ export class SessionHandlers {
     const priorPromptId = prior?.promptId;
     if (
       this.pendingPermissionKey.get(sessionId) === key &&
-      (occurrenceId === undefined || prior?.promptId === occurrenceId)
+      (occurrenceId === undefined || prior?.occurrenceId === occurrenceId)
     ) {
       return; // unchanged repaint
     }
@@ -1257,11 +1259,22 @@ export class SessionHandlers {
     // tell two consecutive identical gates apart; this can. The same identity
     // as the pending gate (cursor moved, repaint) keeps its id; anything else —
     // first open, different content, reopen after a close — is a new instance.
+    //
+    // Occurrence is compared to OCCURRENCE, never to promptId. The two were
+    // equal by construction until open() began minting a fresh id for a
+    // replayed occurrence held by a terminal record: after such a reopen the
+    // entry carries the new id while the host still sends the original
+    // occurrence (host.ts keeps it while permissionGateKey is unchanged, and
+    // that key excludes the cursor), so comparing against promptId made every
+    // later repaint a new instance — a cancel+open pair per paint, a new
+    // gateId on the wire, and any in-flight answer settling prompt_cancelled.
+    // `priorPromptId !== undefined` stays: it guards the registry lookup
+    // below, which is a separate question from identity.
     const samePrompt =
       prior &&
       priorPromptId !== undefined &&
       permissionGateKey(prior) === permissionGateKey(gate) &&
-      (occurrenceId === undefined || priorPromptId === occurrenceId);
+      (occurrenceId === undefined || prior.occurrenceId === occurrenceId);
     if (prior && !samePrompt) {
       const priorPrompt = prior.promptId ? this.promptRegistry.get(prior.promptId) : null;
       if (priorPrompt?.state === "open" || priorPrompt?.state === "updated") {
@@ -1284,6 +1297,7 @@ export class SessionHandlers {
       ...gate,
       gateId,
       ...(prompt ? { promptId: prompt.promptId } : {}),
+      ...(occurrenceId !== undefined ? { occurrenceId } : {}),
     });
     this.pendingPermissionKey.set(sessionId, key);
     const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;

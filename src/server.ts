@@ -339,6 +339,8 @@ export class StreamerServer {
       /** Server-owned instance id, minted by handlePermissionChange. */
       gateId: string;
       promptId?: string;
+      /** Host-owned occurrence id; see PendingPermission in server-wiring.ts. */
+      occurrenceId?: string;
     }
   >();
   // Content key (prompt + detail + options + cursor) of the permission gate

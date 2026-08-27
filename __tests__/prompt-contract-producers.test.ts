@@ -125,6 +125,29 @@ function harness(
   };
 }
 
+const promptStates = (h: ReturnType<typeof harness>, state: string) =>
+  h.frames.filter(
+    (frame) => frame.type === "prompt_event" && (frame as any).prompt.state === state,
+  );
+
+// The legacy /permission/answer route with nothing on screen: gateClosed()
+// cancels the normalized prompt and clears the pending maps, while the host —
+// which never saw this — keeps its occurrence id.
+async function legacyAnswerFindsGateClosed(h: ReturnType<typeof harness>): Promise<void> {
+  const pending = h.pendingPermission.get(SESSION);
+  const req = Readable.from([
+    Buffer.from(
+      JSON.stringify({
+        contentKey: permissionGateKey(pending ?? { options: [] }),
+        optionIndex: 0,
+        gateId: pending?.gateId,
+      }),
+    ),
+  ]) as unknown as IncomingMessage;
+  const res = { writeHead: () => {}, end: () => {} } as unknown as ServerResponse;
+  await h.handlers.handlePermissionAnswer(SESSION, req, res);
+}
+
 describe("legacy and provider-neutral producer events", () => {
   it("opens one registry prompt beside the legacy permission event", () => {
     const h = harness();
@@ -349,6 +372,44 @@ describe("legacy and provider-neutral producer events", () => {
         (frame) => frame.type === "prompt_event" && (frame as any).prompt.state === "open",
       ),
     ).toHaveLength(2);
+  });
+
+  // After that reopen the pending entry carries a FRESH promptId while the host
+  // keeps sending the original occurrence — host.ts reuses its id for as long
+  // as permissionGateKey(gate) is unchanged, and that key excludes the cursor.
+  // Comparing promptId to the occurrence therefore fails on every subsequent
+  // repaint and churns a cancel+open pair per paint.
+  it("keeps the reopened prompt across cursor repaints of the same occurrence", async () => {
+    const h = harness({ hasSession: true, outputLines: [] });
+    const gate = detectGateScreen(GATE_SCREEN);
+    h.handlers.handlePermissionChange(SESSION, gate, "host-occurrence-e");
+    await legacyAnswerFindsGateClosed(h);
+    h.handlers.handlePermissionChange(SESSION, gate, "host-occurrence-e");
+    const reopened = h.pendingPermission.get(SESSION);
+
+    h.handlers.handlePermissionChange(SESSION, { ...gate, cursor: 3 }, "host-occurrence-e");
+    h.handlers.handlePermissionChange(SESSION, { ...gate, cursor: 4 }, "host-occurrence-e");
+
+    expect(promptStates(h, "open")).toHaveLength(2);
+    expect(promptStates(h, "cancelled")).toHaveLength(1);
+    expect(h.pendingPermission.get(SESSION)?.promptId).toBe(reopened?.promptId);
+    expect(h.pendingPermission.get(SESSION)?.gateId).toBe(reopened?.gateId);
+  });
+
+  it("still replaces the reopened prompt when the host mints a different occurrence", async () => {
+    const h = harness({ hasSession: true, outputLines: [] });
+    const gate = detectGateScreen(GATE_SCREEN);
+    h.handlers.handlePermissionChange(SESSION, gate, "host-occurrence-e");
+    await legacyAnswerFindsGateClosed(h);
+    h.handlers.handlePermissionChange(SESSION, gate, "host-occurrence-e");
+    const reopened = h.pendingPermission.get(SESSION);
+
+    h.handlers.handlePermissionChange(SESSION, { ...gate, cursor: 3 }, "host-occurrence-e");
+    h.handlers.handlePermissionChange(SESSION, { ...gate, cursor: 4 }, "host-occurrence-f");
+
+    expect(promptStates(h, "open")).toHaveLength(3);
+    expect(promptStates(h, "cancelled")).toHaveLength(2);
+    expect(h.pendingPermission.get(SESSION)?.promptId).not.toBe(reopened?.promptId);
   });
 
   it("does not revise the normalized prompt for a cursor-only repaint", () => {

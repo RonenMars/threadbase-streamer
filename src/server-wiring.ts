@@ -72,6 +72,13 @@ export type PendingPermission = {
   /** Server-owned instance id, minted by handlePermissionChange. */
   gateId: string;
   promptId?: string;
+  /**
+   * The pty-host's occurrence id for this gate, absent on the in-process PTY
+   * path. Instance identity is compared against THIS, never against promptId:
+   * the two were equal by construction until open() started minting a fresh id
+   * for a replayed occurrence held by a terminal record.
+   */
+  occurrenceId?: string;
 };
 
 /** The AskUserQuestion card currently broadcast for a session. */
