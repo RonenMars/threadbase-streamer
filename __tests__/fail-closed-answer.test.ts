@@ -2,7 +2,9 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { Readable } from "stream";
 import { describe, expect, it } from "vitest";
 import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/sessions.handlers";
+import { detectQuestionFromScreen } from "../src/services/questions/detectQuestionFromScreen";
 import type { AskQuestion, WSMessage } from "../src/types";
+import { MULTI_SELECT_SCREEN } from "./fixtures/row7-multi-select-screen";
 
 // POST /answer fails closed on prompt shapes the PTY keystroke path cannot
 // answer: a multi-question form, a multi-select question, or an answer for a
@@ -46,7 +48,7 @@ interface Harness {
   pendingQuestions: SessionHandlersDeps["pendingQuestions"];
 }
 
-function harness(questions: AskQuestion[]): Harness {
+function harness(questions: AskQuestion[], screen: string[] = MENU_OPEN): Harness {
   const written: string[] = [];
   const broadcasts: WSMessage[] = [];
   const pendingQuestions: SessionHandlersDeps["pendingQuestions"] = new Map([
@@ -62,7 +64,7 @@ function harness(questions: AskQuestion[]): Harness {
     },
     ptyManager: {
       hasSession: () => true,
-      getOutputLines: async () => MENU_OPEN,
+      getOutputLines: async () => screen,
       sendKeys: (_id: string, keys: string) => written.push(keys),
     },
   };
@@ -156,5 +158,42 @@ describe("POST /answer fails closed with zero bytes written", () => {
     expect(body()).toEqual({ ok: true });
     expect(h.written).toEqual(["\x1b[B\r"]);
     expect(h.broadcasts.some((m) => m.type === "question_cancelled")).toBe(true);
+  });
+});
+
+// Everything above hand-builds its AskQuestion[]. Until #721 no producer could
+// emit `multiSelect: true` — detectQuestionFromScreen, the only screen
+// producer, hardcoded `false` — so the multi-select case above guarded a state
+// the real path could not reach, the same vacuity class as the replaced
+// sendKeys in #700. These two start at the rendered screen and let the detector
+// classify it, which is what makes the zero-byte guarantee load-bearing.
+describe("POST /answer on shapes the screen detector really produces", () => {
+  it("the captured multi-select form is refused with zero bytes written", async () => {
+    const detected = detectQuestionFromScreen(MULTI_SELECT_SCREEN);
+    expect(detected).not.toBeNull();
+    const questions = detected?.questions ?? [];
+    expect(questions[0].multiSelect).toBe(true); // the state the fix makes reachable
+    await refused(
+      harness(questions, MULTI_SELECT_SCREEN),
+      { [questions[0].question]: questions[0].options[0].label },
+      "unsupported_prompt_shape",
+    );
+  });
+
+  // Positive control on the very same path: a screen-detected single-select
+  // menu still answers, so the empty `written` above is a refusal and not a
+  // detector that has stopped producing answerable prompts at all.
+  it("a screen-detected single-select menu still answers: 200 and the keystrokes are written", async () => {
+    const detected = detectQuestionFromScreen(MENU_OPEN);
+    expect(detected).not.toBeNull();
+    const questions = detected?.questions ?? [];
+    expect(questions[0].multiSelect).toBe(false);
+    expect(questions[0].options.map((o) => o.label)).toEqual(["TypeScript", "Rust"]);
+    const h = harness(questions);
+    const { res, status, body } = response();
+    await h.handlers.handleSendAnswer(SESSION, request({ "Which language?": "Rust" }), res);
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ ok: true });
+    expect(h.written).toEqual(["\x1b[B\r"]);
   });
 });

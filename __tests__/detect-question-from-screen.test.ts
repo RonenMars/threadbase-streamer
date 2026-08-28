@@ -4,6 +4,12 @@ import {
   isSubmitConfirmationScreen,
   questionContentKey,
 } from "../src/services/questions/detectQuestionFromScreen";
+import {
+  MULTI_SELECT_SCREEN,
+  MULTI_SELECT_SCREEN_B,
+  MULTI_SELECT_SCREEN_B_TOGGLED,
+  MULTI_SELECT_SCREEN_TOGGLED,
+} from "./fixtures/row7-multi-select-screen";
 
 // The multi-question TUI's final confirmation screen.
 const SUBMIT_SCREEN = [
@@ -161,5 +167,111 @@ describe("questionContentKey", () => {
       },
     ];
     expect(questionContentKey(fromScreen)).toBe(questionContentKey(fromJsonl));
+  });
+});
+
+// #721: the screen→contract mapper published this multi-select form as a
+// single-select prompt, so POST /answer wrote a bare "\r" into it — which the
+// TUI reads as "toggle the highlighted checkbox", not "submit". These are the
+// four rendered screens captured from the reproduction rig.
+const CAPTURES: Array<[string, string[]]> = [
+  ["row 7, unticked", MULTI_SELECT_SCREEN],
+  ["row 7, after a tick", MULTI_SELECT_SCREEN_TOGGLED],
+  ["row 7b, unticked", MULTI_SELECT_SCREEN_B],
+  ["row 7b, after a tick", MULTI_SELECT_SCREEN_B_TOGGLED],
+];
+
+describe("multi-select shape classification (#721)", () => {
+  it.each(
+    CAPTURES,
+  )("classifies the captured multi-select form as multiSelect, never single (%s)", (_name, screen) => {
+    const r = detectQuestionFromScreen(screen);
+    expect(r).not.toBeNull();
+    expect(r?.questions).toHaveLength(1);
+    expect(r?.questions[0].multiSelect).toBe(true);
+  });
+
+  it("strips checkbox markers from option labels", () => {
+    const unticked = detectQuestionFromScreen(MULTI_SELECT_SCREEN);
+    expect(unticked?.questions[0].options.map((o) => o.label)).toEqual([
+      "Python",
+      "JavaScript",
+      "Type something",
+      "Chat about this",
+    ]);
+    // The ticked marker too, not just the empty box.
+    const ticked = detectQuestionFromScreen(MULTI_SELECT_SCREEN_TOGGLED);
+    expect(ticked?.questions[0].options.map((o) => o.label)).toEqual([
+      "Python",
+      "JavaScript",
+      "Type something",
+      "Chat about this",
+    ]);
+  });
+
+  it("refuses an unrecognised bracketed marker instead of guessing single-select", () => {
+    // Neither "[?]" nor "( )" is a marker we know how to read. Matching known
+    // glyphs alone is a positive detector, so an unfamiliar marker would fall
+    // through to single-select — which is the defect itself. An unreadable
+    // marker therefore lands in the unanswerable bucket, and because we do not
+    // know the token IS a marker, the label is left exactly as rendered.
+    const unknown = [
+      "Pick one?",
+      "❯ 1. [?] Foo",
+      "  2. ( ) Bar",
+      "Enter to select · Esc to cancel",
+    ];
+    const r = detectQuestionFromScreen(unknown);
+    expect(r?.questions[0].multiSelect).toBe(true);
+    expect(r?.questions[0].options.map((o) => o.label)).toEqual(["[?] Foo", "( ) Bar"]);
+  });
+
+  // Positive control. A classifier that called everything multi-select would
+  // satisfy every test above while breaking every menu that works today, so
+  // this is the one that has to keep passing exactly as it did before.
+  it("leaves genuine single-select menus single, with their labels untouched", () => {
+    const menu = detectQuestionFromScreen(MENU);
+    expect(menu?.questions[0].multiSelect).toBe(false);
+    expect(menu?.questions[0].options.map((o) => o.label)).toEqual([
+      "macOS / Chrome",
+      "iOS / Safari",
+      "Android",
+      "Chat about this",
+    ]);
+    const real = detectQuestionFromScreen(REAL_MENU);
+    expect(real?.questions[0].multiSelect).toBe(false);
+    expect(real?.questions[0].options.map((o) => o.label)).toEqual([
+      "iOS (PockeDev, Schedulock, Tabby)",
+      "Dev Tools (Culler, wo, ghost-complete)",
+      "Libs (Gitty + libgit2 fork)",
+      "Browser/Web (WebRuler, Ghostty Config, botik)",
+      "Type something.",
+      "Chat about this",
+    ]);
+    const submit = detectQuestionFromScreen(SUBMIT_SCREEN);
+    expect(submit?.questions[0].multiSelect).toBe(false);
+    expect(submit?.questions[0].options.map((o) => o.label)).toEqual(["Submit answers", "Cancel"]);
+    // And a permission gate is still nobody's structured question.
+    const gate = [
+      "Do you want to proceed?",
+      "❯ 1. Yes",
+      "  2. No",
+      "Enter to select · Esc to cancel",
+    ];
+    expect(detectQuestionFromScreen(gate)).toBeNull();
+  });
+
+  it("a checkbox toggle does not change the question content key", () => {
+    // questionContentKey is question text + option labels. While the labels
+    // carried "[ ]" / "[✔]", ticking a box on screen — even at the host
+    // keyboard, with no byte from us — read as different content and minted a
+    // fresh promptId. Stripping the marker is what makes the repaint a no-op.
+    const before = detectQuestionFromScreen(MULTI_SELECT_SCREEN);
+    const after = detectQuestionFromScreen(MULTI_SELECT_SCREEN_TOGGLED);
+    expect(before).not.toBeNull();
+    expect(after).not.toBeNull();
+    expect(questionContentKey(after?.questions ?? [])).toBe(
+      questionContentKey(before?.questions ?? []),
+    );
   });
 });
