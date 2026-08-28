@@ -154,12 +154,8 @@ describe("Codex resume", () => {
     }
   });
 
-  it("resumes a placeholder id via `codex resume <boundId>` while keeping the placeholder as the session id", async () => {
+  it("resumes a live-store placeholder alias via `codex resume <boundId>` while keeping the placeholder as the session id", async () => {
     const { StreamerServer } = await import("../src/server");
-    const { RuntimeStore } = await import("../src/db/runtime-store");
-    const { ManagedSessionsRepository } = await import(
-      "../src/db/repositories/managed-sessions.repository"
-    );
 
     const port = await getRandomPort();
     process.env.TB_SCANNER_DB = join(codexRoot, "scanner3.db");
@@ -176,29 +172,23 @@ describe("Codex resume", () => {
     });
     await server.listen(port, { awaitReady: true });
 
-    // The registry state a fresh Codex session leaves behind once
-    // watchForCodexRollout has bound its rollout id and the streamer restarts:
-    // a placeholder-keyed row whose only usable resume id is the bound one.
-    const store = RuntimeStore.open(process.env.THREADBASE_RUNTIME_DB as string);
-    const repo = new ManagedSessionsRepository(store.getDatabase());
-    repo.recordSpawn({
-      session: {
-        id: PLACEHOLDER_ID,
-        provider: "codex-cli",
-        projectPath: liveCwd,
-        projectName: "proj",
-        branch: "",
-        status: "idle",
-        startedAt: new Date(),
-        completedAt: null,
-        promptCount: 0,
-        lastOutput: "",
-        boundConversationId: CODEX_SESSION_ID,
-      },
-      pid: null,
-      cmdline: null,
-      streamerInstanceId: "instance-previous",
-    });
+    // The live state a fresh Codex session retains after watchForCodexRollout
+    // binds its rollout id, even if runtime.db is unavailable.
+    const placeholderSession = {
+      id: PLACEHOLDER_ID,
+      provider: "codex-cli" as const,
+      projectPath: liveCwd,
+      projectName: "proj",
+      branch: "",
+      status: "idle" as const,
+      startedAt: new Date(),
+      completedAt: null,
+      promptCount: 0,
+      lastOutput: "",
+      boundConversationId: CODEX_SESSION_ID,
+    };
+    (server as any).sessionStore.addManaged(placeholderSession);
+    (server as any).managedSessionsRepo = null;
 
     try {
       const res = await fetch(`http://localhost:${server.port}/api/sessions/resume`, {
@@ -207,25 +197,18 @@ describe("Codex resume", () => {
         body: JSON.stringify({ sessionId: PLACEHOLDER_ID }),
       });
 
-      // Same environment tolerance as the test above: a better-sqlite3 ABI
-      // mismatch can 500 the scanner lookup before ptyManager.start() runs.
-      if (ptySpawn.mock.calls.length > 0) {
-        expect(res.status).toBe(201);
-        const body = await res.json();
-        // The mobile invariant — the client navigated to the placeholder, so
-        // that is the id it must get back. Only argv carries the rollout id.
-        expect(body.id).toBe(PLACEHOLDER_ID);
-        expect(body.provider).toBe("codex-cli");
-        const [, args] = ptySpawn.mock.calls[0];
-        expect(args).toEqual(["resume", CODEX_SESSION_ID, "--cd", liveCwd, "--no-alt-screen"]);
-        // Re-recorded, so the *next* restart can resolve it again.
-        expect(repo.get(PLACEHOLDER_ID)?.bound_conversation_id).toBe(CODEX_SESSION_ID);
-      } else {
-        expect([201, 404, 500]).toContain(res.status);
-      }
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      // The mobile invariant — the client navigated to the placeholder, so
+      // that is the id it must get back. Only argv carries the rollout id.
+      expect(body.id).toBe(PLACEHOLDER_ID);
+      expect(body.provider).toBe("codex-cli");
+      expect(ptySpawn).toHaveBeenCalledTimes(1);
+      const [exe, args] = ptySpawn.mock.calls[0];
+      expect(exe).toMatch(/codex/);
+      expect(args).toEqual(["resume", CODEX_SESSION_ID, "--cd", liveCwd, "--no-alt-screen"]);
     } finally {
       delete process.env.TB_SCANNER_DB;
-      store.close();
       await server.close();
     }
   });
