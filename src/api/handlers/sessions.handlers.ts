@@ -1075,16 +1075,38 @@ export class SessionHandlers {
         ? "question"
         : null;
     if (openPrompt) {
-      this.log.info(`[input.prompt_pending] ${sessionId.slice(0, 8)} kind=${openPrompt}`, {
-        event: "input.prompt_pending",
-        sessionId,
-        promptKind: openPrompt,
-      });
+      // An accepted permission answer writes the keys and resolves the prompt record, but the
+      // entry lives on until the detector sees the gate repaint away. Text in that window is
+      // still refused — the cursor may still be on the picker — yet "answer the prompt" is the
+      // wrong thing to tell someone who just answered it. `resolved` is the only registry state
+      // that means the keys were written: a refused answer leaves a `cancelled` record beside a
+      // live entry and must keep reading "open". Questions never reach here answered, because
+      // both accept paths delete `pendingQuestions` before returning.
+      const pendingGate =
+        openPrompt === "permission" ? this.pendingPermission.get(sessionId) : undefined;
+      const promptState =
+        pendingGate?.promptId !== undefined &&
+        this.promptRegistry.get(pendingGate.promptId)?.state === "resolved"
+          ? "answered"
+          : "open";
+      this.log.info(
+        `[input.prompt_pending] ${sessionId.slice(0, 8)} kind=${openPrompt} state=${promptState}`,
+        {
+          event: "input.prompt_pending",
+          sessionId,
+          promptKind: openPrompt,
+          promptState,
+        },
+      );
       json(res, 409, {
         ok: false,
         reason: "prompt_pending",
         promptKind: openPrompt,
-        error: "A prompt is waiting for an answer; answer or dismiss it before sending text",
+        promptState,
+        error:
+          promptState === "answered"
+            ? "Your answer was sent; wait for the prompt to close before sending text"
+            : "A prompt is waiting for an answer; answer or dismiss it before sending text",
       });
       return;
     }
