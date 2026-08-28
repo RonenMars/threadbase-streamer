@@ -14,5 +14,6 @@
 | Everything open or closed, audited against code | [2026-08-10-open-items-register.md](2026-08-10-open-items-register.md) |
 | Issue labels and format (canonical, all Threadbase repos) | [threadbase/docs/issue-tracker.md](https://github.com/RonenMars/threadbase/blob/main/docs/issue-tracker.md) |
 | Optional AI-assistant tooling this repo declares (plugins, MCP servers, install paths) | [agents/tooling.md](agents/tooling.md) |
+| Prompt-contract program record (Phase 1–3 briefs, plans, probe report, GO-NO-GO; 2026-08) | [plans/2026-08-prompt-contract-program/](plans/2026-08-prompt-contract-program/) |
 | Historical material (shipped plans, superseded reference docs) | [archive/](archive/) |
 | Sample auto-update config | [update.yaml.example](update.yaml.example) |
