@@ -27,6 +27,7 @@ import { PTY_ROWS } from "../../pty-shared";
 import type { ScannerManager } from "../../scanner-manager";
 import { type Prompt, PromptAnswerSchema } from "../../schemas/prompt.schema";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
+import type { PendingPermission, PendingQuestion } from "../../server-wiring";
 import {
   type PromptAdapterResult,
   type PromptAnswerAdapter,
@@ -229,25 +230,9 @@ export type SessionHandlersDeps = {
   sessionStatusBus: EventEmitter;
   sessionFileMap: Map<string, string>;
   promptRegistry: PromptRegistry;
-  pendingQuestions: Map<
-    string,
-    { toolUseId: string; questions: AskQuestion[]; origin: "pty" | "jsonl"; promptId: string }
-  >;
+  pendingQuestions: Map<string, PendingQuestion>;
   pendingQuestionKey: Map<string, string>;
-  pendingPermission: Map<
-    string,
-    {
-      prompt?: string;
-      detail?: string;
-      options: PermissionOption[];
-      cursor?: number;
-      /** Server-owned instance id, minted by handlePermissionChange. */
-      gateId: string;
-      promptId?: string;
-      /** Host-owned occurrence id; see PendingPermission in server-wiring.ts. */
-      occurrenceId?: string;
-    }
-  >;
+  pendingPermission: Map<string, PendingPermission>;
   pendingPermissionKey: Map<string, string>;
   contendedSessions: Set<string>;
   selfPtyEndedAt: Map<string, number>;

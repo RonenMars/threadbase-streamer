@@ -110,6 +110,8 @@ import {
   createApiDeps,
   createConversationWatcherEvents,
   createLiveSessionOptions,
+  type PendingPermission,
+  type PendingQuestion,
 } from "./server-wiring";
 import { setCacheMetadata } from "./services/cache/cacheMetadata";
 import { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
@@ -149,7 +151,6 @@ import type {
   AskQuestion,
   DiscoveredProcess,
   ManagedSession,
-  PermissionOption,
   ServerConfig,
   ServerWarmingUpResponse,
   ServerWarmupState,
@@ -308,10 +309,7 @@ export class StreamerServer {
   // never clobber a PTY-originated one for a DIFFERENT question — an external
   // agent appending an AskUserQuestion into a shared conversation would
   // otherwise misroute the answer into this streamer's PTY.
-  private pendingQuestions = new Map<
-    string,
-    { toolUseId: string; questions: AskQuestion[]; origin: "pty" | "jsonl"; promptId: string }
-  >();
+  private pendingQuestions = new Map<string, PendingQuestion>();
   // Sessions resumed past a detected collision (busy probe said busy, caller
   // forced). JSONL-derived actionable question cards are suppressed for these
   // because a line in the shared file may have been written by the other owner.
@@ -329,20 +327,7 @@ export class StreamerServer {
   // Per-session permission gate currently open (scraped via OSC 777). Parallel
   // to pendingQuestions; mobile answers it by sending the option index via
   // /input { keys }. Cleared when the gate closes.
-  private pendingPermission = new Map<
-    string,
-    {
-      prompt?: string;
-      detail?: string;
-      options: PermissionOption[];
-      cursor?: number;
-      /** Server-owned instance id, minted by handlePermissionChange. */
-      gateId: string;
-      promptId?: string;
-      /** Host-owned occurrence id; see PendingPermission in server-wiring.ts. */
-      occurrenceId?: string;
-    }
-  >();
+  private pendingPermission = new Map<string, PendingPermission>();
   // Content key (prompt + detail + options + cursor) of the permission gate
   // currently broadcast for a session — mirrors pendingQuestionKey so a PTY
   // repaint of the same gate doesn't re-broadcast on every tick. Cleared
