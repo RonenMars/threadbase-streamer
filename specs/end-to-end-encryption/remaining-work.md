@@ -1,12 +1,19 @@
 # E2EE — what is left
 
-**Verified against both `main` branches on 2026-08-16.** Tracked in [threadbase-streamer#590](https://github.com/RonenMars/threadbase-streamer/issues/590) and [threadbase-mobile#698](https://github.com/RonenMars/threadbase-mobile/issues/698); phase order and rationale live in [plan.md](./plan.md).
+**Verified against both `main` branches on 2026-08-16; re-verified 2026-08-28 — see [parallel-execution-plan.md](./parallel-execution-plan.md) for what moved and how the rest is staffed.** Tracked in [threadbase-streamer#590](https://github.com/RonenMars/threadbase-streamer/issues/590) and [threadbase-mobile#698](https://github.com/RonenMars/threadbase-mobile/issues/698); phase order and rationale live in [plan.md](./plan.md).
 
 GitHub is the worklist. This file is a map of the remaining shape — it will go stale, and the issues will not.
 
 ---
 
 ## The one-line summary
+
+**As of 2026-08-28:** Phase 2 is merged on both sides — streamer #630 and #649 (authenticated msg1/msg2, conditional QR, mandatory registration), mobile #768 (handshake wired), #766 and #782 (confirmation gate wired).
+`E2EE_SUPPORTED` is `true` since streamer #674 (v1.69.0, 2026-08-23), merged without the device evidence its own gates asked for; the `e2ee` feature flag still defaults off, so no deployment changed.
+What is left of Phase 2 is evidence and close-out (streamer #590 item 4, mobile #759, #831, #667, the hardware run); Phases 3–5 are unbuilt.
+The App Store export declaration was reverted to `false` by mobile #862 after a rejected upload and stays that way until ANSSI's approval is on file.
+
+The paragraph below is the 2026-08-16 picture, kept for the reasoning it carries.
 
 The cryptographic primitives exist, but the cross-repository pairing contract is not ready to ship. Streamer #630 and mobile #766 are green; streamer #631 is merged; mobile #768 remains draft because review found security and durability defects that its green tests do not cover.
 
@@ -49,6 +56,8 @@ Once 1–4 are done: flip the constant locally, dev build to a **cabled physical
 On Android, go over the tunnel. Per [mobile#727](https://github.com/RonenMars/threadbase-mobile/issues/727) a release build cannot reach any `http://` address, and that failure looks exactly like an E2EE failure if you are not expecting it.
 
 After the device evidence is recorded, `E2EE_SUPPORTED` flips in its own one-line PR and merges last. It is not needed to test; a local edit is enough.
+
+*2026-08-28: the constant flipped in #674 (v1.69.0) before that evidence existed. The flip that still waits on evidence and an explicit decision is the stage-2 `e2ee` flag default (Phase 5).*
 
 ---
 
