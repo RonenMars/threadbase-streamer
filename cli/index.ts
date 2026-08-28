@@ -36,6 +36,7 @@ import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
 import { appendUpdateLog } from "../src/updater/update-log";
 import { getVersion } from "../src/version";
+import { logApiKeyLine } from "./boot-log";
 import { printServerBanner, printUrlBanner } from "./pair-banner";
 import { registerProdCommands } from "./prod";
 
@@ -364,7 +365,7 @@ program
     log.info(`WebSocket at ws://localhost:${resolvedPort}/ws`, {
       wsUrl: `ws://localhost:${resolvedPort}/ws`,
     });
-    log.info(`API key: ${apiKey}`, { apiKeyMasked: `${apiKey.slice(0, 6)}…` });
+    logApiKeyLine(log, apiKey);
 
     try {
       await printServerBanner({
