@@ -26,6 +26,7 @@ export default defineConfig({
     setupFiles: [
       "__tests__/setup/silence-logs.ts",
       "__tests__/setup/isolate-runtime-db.ts",
+      "__tests__/setup/neutral-feature-flags.ts",
       "__tests__/setup/isolate-scanner-index.ts",
       "__tests__/setup/provider-installed.ts",
     ],

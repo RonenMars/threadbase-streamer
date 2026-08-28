@@ -53,6 +53,19 @@ describe("feature flags registry", () => {
     expect(flag.default).toBe(false);
   });
 
+  // The guard for __tests__/setup/neutral-feature-flags.ts. Env is the highest
+  // real precedence rung, so a THREADBASE_FEATURE_* exported in the shell
+  // running the suite decides flags the tests never asked about — and does it
+  // silently, since every rung produces a valid boolean. Asserting the resolved
+  // value here means the leak shows up as one legible failure in this file
+  // instead of as unrelated tests failing wherever that flag happens to bite.
+  it("resolves to the registry defaults, so no shell env leaks into the suite", () => {
+    const { values, sources } = resolveFeatureFlags();
+    for (const f of FEATURE_FLAG_LIST) {
+      expect([f.id, values[f.id], sources[f.id]]).toEqual([f.id, f.default, "default"]);
+    }
+  });
+
   it("finds a known flag and rejects an unknown one", () => {
     expect(findFeatureFlag(FLAG.id)?.id).toBe(FLAG.id);
     expect(findFeatureFlag("nopeNotAFlag")).toBeUndefined();
