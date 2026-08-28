@@ -459,7 +459,11 @@ describe("handleWsOpen host_pressure replay", () => {
     const { handleWsOpen, unicast } = openDeps(null);
     const ws = { send: vi.fn() } as unknown as WebSocket;
     handleWsOpen(ws);
-    expect(unicast).not.toHaveBeenCalled();
+    // Asserts on host_pressure specifically rather than on unicast being
+    // unused: handleWsOpen also unicasts session_list and cache_ready, which
+    // this test never meant to forbid.
+    const types = unicast.mock.calls.map(([, message]) => (message as WSMessage).type);
+    expect(types).not.toContain("host_pressure");
   });
 });
 

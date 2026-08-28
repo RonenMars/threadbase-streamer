@@ -4,6 +4,7 @@ import { PTYManager } from "../src/pty-manager";
 import { REPLAY_MAX_LINES } from "../src/pty-shared";
 import type { ApiDepsWiring } from "../src/server-wiring";
 import { createApiDeps } from "../src/server-wiring";
+import { WSHub } from "../src/ws-hub";
 
 /**
  * `subscribe_session` used to replay a fixed 200 lines while the render
@@ -46,6 +47,7 @@ it("replays the whole render terminal, not just its tail", async () => {
   const sent: string[] = [];
   const ws = { send: (data: string) => sent.push(data) } as unknown as WebSocket;
   const { handleWsMessage } = createApiDeps({
+    wsHub: new WSHub(),
     addSessionSubscriber: vi.fn(),
     removeSessionSubscriber: vi.fn(),
     wsToClientId: new Map(),

@@ -708,9 +708,9 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleWsOpen: (ws) => {
       deps.wsHub.addClient(ws);
       const sessions = deps.withReconciledLifecycle(deps.sessionStore.list(deps.ptyAttachedIds()));
-      ws.send(JSON.stringify({ type: "session_list", sessions }));
+      deps.wsHub.unicast(ws, { type: "session_list", sessions });
       if (!deps.currentWarmupState()) {
-        ws.send(JSON.stringify({ type: "cache_ready" }));
+        deps.wsHub.unicast(ws, { type: "cache_ready" });
       }
       // Re-surface a pending cache-integrity alert to every connecting client
       // (covers the startup warm-up window and every reconnect).
@@ -753,7 +753,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           }
           deps.addSessionSubscriber(msg.sessionId, ws);
           if (deps.promptRegistry) {
-            ws.send(JSON.stringify(deps.promptRegistry.snapshot(msg.sessionId)));
+            deps.wsHub.unicast(ws, deps.promptRegistry.snapshot(msg.sessionId));
           }
           if (deps.ptyManager.hasSession(msg.sessionId)) {
             // Replay everything the session's render terminal still holds; it
@@ -763,15 +763,13 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             // the client however far back it could scroll.
             const lines = await deps.ptyManager.getOutputLines(msg.sessionId, REPLAY_MAX_LINES);
             const userMessages = deps.ptyManager.getInputHistory(msg.sessionId);
-            ws.send(
-              JSON.stringify({
-                type: "terminal_replay",
-                sessionId: msg.sessionId,
-                lines,
-                userMessages,
-                seq: deps.terminalSeq.get(msg.sessionId),
-              }),
-            );
+            deps.wsHub.unicast(ws, {
+              type: "terminal_replay",
+              sessionId: msg.sessionId,
+              lines,
+              userMessages,
+              seq: deps.terminalSeq.get(msg.sessionId),
+            });
           }
           // A gate/question can open before the client finishes subscribing
           // (Codex's startup gates fire within ~500ms of spawn) — broadcast()
@@ -784,18 +782,16 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
               event: "ws.replay_permission",
               sessionId: msg.sessionId,
             });
-            ws.send(
-              JSON.stringify({
-                type: "permission",
-                sessionId: msg.sessionId,
-                ...(pendingGate.prompt ? { prompt: pendingGate.prompt } : {}),
-                ...(pendingGate.detail ? { detail: pendingGate.detail } : {}),
-                options: pendingGate.options,
-                ...(pendingGate.cursor !== undefined ? { cursor: pendingGate.cursor } : {}),
-                contentKey: permissionGateKey(pendingGate),
-                gateId: pendingGate.gateId,
-              }),
-            );
+            deps.wsHub.unicast(ws, {
+              type: "permission",
+              sessionId: msg.sessionId,
+              ...(pendingGate.prompt ? { prompt: pendingGate.prompt } : {}),
+              ...(pendingGate.detail ? { detail: pendingGate.detail } : {}),
+              options: pendingGate.options,
+              ...(pendingGate.cursor !== undefined ? { cursor: pendingGate.cursor } : {}),
+              contentKey: permissionGateKey(pendingGate),
+              gateId: pendingGate.gateId,
+            });
           }
           const pendingQuestion = deps.pendingQuestions.get(msg.sessionId);
           if (pendingQuestion) {
@@ -803,14 +799,12 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
               event: "ws.replay_question",
               sessionId: msg.sessionId,
             });
-            ws.send(
-              JSON.stringify({
-                type: "question",
-                sessionId: msg.sessionId,
-                toolUseId: pendingQuestion.toolUseId,
-                questions: pendingQuestion.questions,
-              }),
-            );
+            deps.wsHub.unicast(ws, {
+              type: "question",
+              sessionId: msg.sessionId,
+              toolUseId: pendingQuestion.toolUseId,
+              questions: pendingQuestion.questions,
+            });
           }
         }
         if (msg.type === "unsubscribe_session" && typeof msg.sessionId === "string") {
