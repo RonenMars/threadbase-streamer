@@ -138,12 +138,11 @@ export class DevicesRepository {
     // paired-devices screen to spot a device they did not pair, and refreshing
     // it would erase the evidence that screen exists for.
     //
-    // `revoked_at` IS cleared, which is the one debatable line here. The
-    // alternative — leaving it set — makes a pairing that visibly succeeds
-    // produce a device whose every request 401s, with nothing explaining why.
-    // Re-pairing requires a live pair token minted on that machine, so it is an
-    // authorized act by the same person who revoked it. design.md does not
-    // cover this case; flagged rather than assumed.
+    // `revoked_at` IS cleared. The alternative — leaving it set — makes a
+    // pairing that visibly succeeds produce a device whose every request
+    // 401s, with nothing explaining why. Re-pairing requires a live pair
+    // token minted on that machine, so it is an authorized act by the same
+    // person who revoked it. Decided 2026-08-16; recorded in design.md §4.4.
     this.repairStmt = db.prepare(`
       UPDATE devices SET
         public_key = @public_key,
