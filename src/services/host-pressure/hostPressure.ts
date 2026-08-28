@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { type CpuInfo, cpus, freemem, loadavg, totalmem } from "os";
 import { type IntervalHistogram, monitorEventLoopDelay } from "perf_hooks";
 import type { HostPressureLevel, HostPressureOs, HostPressureReason, WSMessage } from "../../types";
@@ -46,7 +47,7 @@ export const HOST_PRESSURE_BARS = {
 
 export type HostSample = {
   liveAgents: number;
-  memFreeRatio: number;
+  memFreeRatio?: number;
   eventLoopP99Ms: number;
   load1: number;
   ncpu: number;
@@ -66,6 +67,73 @@ export type HostPressureWsMessage = Extract<WSMessage, { type: "host_pressure" }
 const REASON_ORDER: readonly HostPressureReason[] = ["memory", "event_loop", "load", "agents"];
 
 const RANK: Record<HostPressureState, number> = { ok: 0, elevated: 1, critical: 2 };
+
+export function parseMacMemoryPressureFreeRatio(output: string): number | undefined {
+  const match = output.match(/System-wide memory free percentage:\s*(\d+(?:\.\d+)?)%/);
+  if (!match) return undefined;
+  const percentage = Number(match[1]);
+  return percentage <= 100 ? percentage / 100 : undefined;
+}
+
+function runMacMemoryPressure(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "/usr/bin/memory_pressure",
+      ["-Q"],
+      { encoding: "utf8", timeout: 1_000 },
+      (error, stdout) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
+}
+
+export async function readMacMemoryPressureFreeRatio(
+  run: () => Promise<string> = runMacMemoryPressure,
+): Promise<number | undefined> {
+  try {
+    return parseMacMemoryPressureFreeRatio(await run());
+  } catch {
+    return undefined;
+  }
+}
+
+export class MacMemoryPressureProbe {
+  private current: number | undefined;
+  private pending = false;
+
+  constructor(private readonly read: () => Promise<number | undefined>) {}
+
+  refresh(): void {
+    if (this.pending) return;
+    this.pending = true;
+    void this.read()
+      .then((ratio) => {
+        this.current = ratio;
+      })
+      .finally(() => {
+        this.pending = false;
+      });
+  }
+
+  value(): number | undefined {
+    return this.current;
+  }
+}
+
+export function hostMemoryFreeRatio(
+  platform: NodeJS.Platform,
+  totalBytes: number,
+  freeBytes: number,
+  macPressureFreeRatio?: number,
+): number | undefined {
+  if (platform === "darwin") return macPressureFreeRatio;
+  return totalBytes > 0 ? freeBytes / totalBytes : 1;
+}
 
 function worst(levels: HostPressureState[]): HostPressureState {
   return levels.reduce<HostPressureState>(
@@ -155,19 +223,17 @@ export function classifyHostPressure(
   previous: HostPressureState,
   platform: NodeJS.Platform,
 ): HostPressureClassification {
-  const memRaw = schmittLowIsWorse(
-    sample.memFreeRatio,
-    previous,
-    HOST_PRESSURE_BARS.memFreeRatio.enterElevated,
-    HOST_PRESSURE_BARS.memFreeRatio.leaveElevated,
-    HOST_PRESSURE_BARS.memFreeRatio.enterCritical,
-    HOST_PRESSURE_BARS.memFreeRatio.leaveCritical,
-  );
-  // os.freemem() on Darwin is unused pages. macOS keeps that near zero on a
-  // healthy, compressor-backed box, so the Linux 8% critical bar would fire
-  // all day. Cap unused-page RAM at elevated; event_loop / load can still go
-  // critical.
-  const mem = platform === "darwin" && memRaw === "critical" ? "elevated" : memRaw;
+  const mem =
+    sample.memFreeRatio === undefined
+      ? "ok"
+      : schmittLowIsWorse(
+          sample.memFreeRatio,
+          previous,
+          HOST_PRESSURE_BARS.memFreeRatio.enterElevated,
+          HOST_PRESSURE_BARS.memFreeRatio.leaveElevated,
+          HOST_PRESSURE_BARS.memFreeRatio.enterCritical,
+          HOST_PRESSURE_BARS.memFreeRatio.leaveCritical,
+        );
   const eventLoop = schmittHighIsWorse(
     sample.eventLoopP99Ms,
     previous,
@@ -274,23 +340,29 @@ export function createHostPressureMonitor(
   liveAgents: () => number,
 ): HostPressureMonitor {
   const histogram = monitorEventLoopDelay({ resolution: 20 });
-  const windows = process.platform === "win32";
+  const platform = process.platform;
+  const windows = platform === "win32";
+  const macMemoryPressure =
+    platform === "darwin" ? new MacMemoryPressureProbe(readMacMemoryPressureFreeRatio) : null;
   let prevCpuTimes: CpuTimesSnapshot[] | null = null;
+  macMemoryPressure?.refresh();
   const monitor = new HostPressureMonitor({
     wsHub,
     histogram,
     readSample: () => {
       const eventLoopP99Ms = histogram.percentile(99) / 1e6;
       histogram.reset();
-      const total = totalmem();
+      const total = platform === "darwin" ? 0 : totalmem();
+      const free = platform === "darwin" ? 0 : freemem();
       const cpuList = cpus();
       const sample: HostSample = {
         liveAgents: liveAgents(),
-        memFreeRatio: total > 0 ? freemem() / total : 1,
+        memFreeRatio: hostMemoryFreeRatio(platform, total, free, macMemoryPressure?.value()),
         eventLoopP99Ms,
         load1: loadavg()[0],
         ncpu: cpuList.length,
       };
+      macMemoryPressure?.refresh();
       if (windows) {
         const cpuTimes = cpuList.map((cpu) => cpu.times);
         sample.cpuBusyRatio = cpuBusyRatio(prevCpuTimes, cpuTimes);
