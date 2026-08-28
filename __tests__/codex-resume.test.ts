@@ -154,7 +154,7 @@ describe("Codex resume", () => {
     }
   });
 
-  it("resumes a placeholder id via `codex resume <boundId>` while keeping the placeholder as the session id", async () => {
+  it("resumes a live-store placeholder alias via `codex resume <boundId>` while keeping the placeholder as the session id", async () => {
     const { StreamerServer } = await import("../src/server");
     const { RuntimeStore } = await import("../src/db/runtime-store");
     const { ManagedSessionsRepository } = await import(
@@ -181,24 +181,30 @@ describe("Codex resume", () => {
     // a placeholder-keyed row whose only usable resume id is the bound one.
     const store = RuntimeStore.open(process.env.THREADBASE_RUNTIME_DB as string);
     const repo = new ManagedSessionsRepository(store.getDatabase());
+    const placeholderSession = {
+      id: PLACEHOLDER_ID,
+      provider: "codex-cli" as const,
+      projectPath: liveCwd,
+      projectName: "proj",
+      branch: "",
+      status: "idle" as const,
+      startedAt: new Date(),
+      completedAt: null,
+      promptCount: 0,
+      lastOutput: "",
+      boundConversationId: CODEX_SESSION_ID,
+    };
     repo.recordSpawn({
-      session: {
-        id: PLACEHOLDER_ID,
-        provider: "codex-cli",
-        projectPath: liveCwd,
-        projectName: "proj",
-        branch: "",
-        status: "idle",
-        startedAt: new Date(),
-        completedAt: null,
-        promptCount: 0,
-        lastOutput: "",
-        boundConversationId: CODEX_SESSION_ID,
-      },
+      session: placeholderSession,
       pid: null,
       cmdline: null,
       streamerInstanceId: "instance-previous",
     });
+    // Production keeps this managed session in memory after putting the PTY on
+    // hold. That makes findConversationByUuid(PLACEHOLDER_ID) succeed through
+    // resolveConversationLookupId before resume target resolution reaches its
+    // registry fallback — the exact alias path this regression protects.
+    (server as any).sessionStore.addManaged(placeholderSession);
 
     try {
       const res = await fetch(`http://localhost:${server.port}/api/sessions/resume`, {

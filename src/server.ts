@@ -2617,27 +2617,18 @@ export class StreamerServer {
     // up by filename when processing --resume. The scanner index can return a
     // stale or wrong path (e.g. …/tb-mobile/android vs …/tb-mobile), so we
     // read the first cwd field directly, mirroring tb-scanner/src/parser.ts.
-    let jsonlPath = this.conversationHandlers.findJsonlPath(sessionId);
-    let conv = await this.conversationHandlers.findConversationByUuid(sessionId);
-
-    // Nothing resolves for a *fresh Codex* session id: it is a local
-    // placeholder, and Codex indexes its history under the rollout id it
-    // assigned itself. The registry is what remembers which is which, so fall
-    // back to the bound id and resolve path + history from there (G6). The
-    // session keeps the placeholder id the client navigated to — only argv and
-    // these lookups use the bound one.
-    let historyId = sessionId;
-    let registryProvider: string | undefined;
-    if (!jsonlPath && !conv) {
-      const row = this.managedSessionsRepo?.get(sessionId) ?? null;
-      const boundId = row ? resumeIdForRow(row) : null;
-      if (boundId != null && boundId !== sessionId) {
-        historyId = boundId;
-        registryProvider = row?.provider;
-        jsonlPath = this.conversationHandlers.findJsonlPath(boundId);
-        conv = await this.conversationHandlers.findConversationByUuid(boundId);
-      }
-    }
+    // A fresh Codex session uses a local placeholder id while Codex indexes
+    // history under the rollout id it assigned itself. Resolve that durable
+    // binding before any conversation lookup: findConversationByUuid can serve
+    // the placeholder through the in-memory alias, but that does not make the
+    // placeholder a valid `codex resume` target. The live session keeps the id
+    // the client navigated to; only argv and history lookups use the bound id.
+    const row = this.managedSessionsRepo?.get(sessionId) ?? null;
+    const resumeId = row ? resumeIdForRow(row) : null;
+    const historyId = resumeId ?? sessionId;
+    const registryProvider = row?.provider;
+    const jsonlPath = this.conversationHandlers.findJsonlPath(historyId);
+    const conv = await this.conversationHandlers.findConversationByUuid(historyId);
 
     // Cold boot resolves nothing through the scanner yet, so a persisted Codex
     // rollout has to come from the cache. Without this a boot-time resume of a
