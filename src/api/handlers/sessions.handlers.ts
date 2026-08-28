@@ -1237,10 +1237,13 @@ export class SessionHandlers {
     if (gate === null) {
       const prior = this.pendingPermission.get(sessionId);
       if (!prior) return;
-      const prompt = prior.promptId ? this.promptRegistry.get(prior.promptId) : null;
-      if (prompt?.state === "open" || prompt?.state === "updated") {
-        this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
-      }
+      // providerClosed, not transition: on a scraped gate the answer keys are
+      // what removed the box, and sendKeys fires this synchronously from inside
+      // the write. Deferring it there lets the answer settle `resolved`; a close
+      // with no answer in flight still cancels here, unchanged. The broadcast
+      // below is unconditional either way — the box IS gone, and a legacy client
+      // must be told so whichever way the record settles.
+      if (prior.promptId) this.promptRegistry.providerClosed(prior.promptId, "provider_closed");
       this.pendingPermission.delete(sessionId);
       this.pendingPermissionKey.delete(sessionId);
       this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
@@ -1536,7 +1539,16 @@ export class SessionHandlers {
     }
 
     try {
-      this.ptyManager.sendKeys(sessionId, option.answerKeys ?? permissionAnswerKeys(option.index));
+      // Same self-close as the prompt route: these keys remove the box, so
+      // sendKeys tears the record down from inside the write and the resolve
+      // below used to find it already `cancelled` — a 200 over a cancelled
+      // record, invisible because this route's status never reads the registry.
+      this.promptRegistry.whileAnswering(gate.promptId ?? "", () =>
+        this.ptyManager.sendKeys(
+          sessionId,
+          option.answerKeys ?? permissionAnswerKeys(option.index),
+        ),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send answer";
       json(res, 400, { ok: false, reason: message });
