@@ -1067,15 +1067,8 @@ export class SessionHandlers {
     // idempotency: a resend of the same key after the card is answered must go
     // through, not replay this refusal.
     //
-    // Called for its SIDE EFFECT, not its answer: hasActionable() prunes, and
-    // pruning expires every overdue prompt, whose onExpire clears the pending
-    // maps (clearExpiredPendingPrompt in server-wiring). Without it a prompt
-    // past its deadline is still in those maps at the moment they are read, so
-    // the refusal below outlives the prompt — the expiry timer would get there
-    // eventually, but "eventually" is after this decision. Deleting this as a
-    // discarded return value turns the expired-prompt cases in
-    // __tests__/input-prompt-arbitration.test.ts red.
-    this.promptRegistry.hasActionable(sessionId);
+    // Sweeps expired prompts so their onExpire clears the pending maps before the read below.
+    this.promptRegistry.sweepExpired(sessionId);
     const openPrompt = this.pendingPermission.has(sessionId)
       ? "permission"
       : this.pendingQuestions.has(sessionId)

@@ -157,7 +157,7 @@ export class PromptRegistry {
   }
 
   open(draft: PromptDraft, adapter?: PromptAnswerAdapter, promptId = this.createId()): Prompt {
-    this.prune(draft.sessionId);
+    this.sweepExpired(draft.sessionId);
     const held = this.byId.get(promptId);
     if (held && (held.prompt.state === "open" || held.prompt.state === "updated")) {
       throw new Error(`Prompt id already exists: ${promptId}`);
@@ -271,19 +271,19 @@ export class PromptRegistry {
   get(promptId: string): Prompt | null {
     const entry = this.byId.get(promptId);
     if (!entry) return null;
-    this.prune(entry.prompt.sessionId);
+    this.sweepExpired(entry.prompt.sessionId);
     return this.byId.has(promptId) ? copyPrompt(entry.prompt) : null;
   }
 
   hasActionable(sessionId: string): boolean {
-    this.prune(sessionId);
+    this.sweepExpired(sessionId);
     return [...(this.bySession.get(sessionId)?.values() ?? [])].some(
       (entry) => entry.prompt.state === "open" || entry.prompt.state === "updated",
     );
   }
 
   snapshot(sessionId: string): PromptSnapshot {
-    this.prune(sessionId);
+    this.sweepExpired(sessionId);
     return {
       type: "prompt_snapshot",
       schemaVersion: PROMPT_SCHEMA_VERSION,
@@ -300,7 +300,7 @@ export class PromptRegistry {
   }
 
   answer(sessionId: string, answer: PromptAnswer): Promise<PromptAnswerOutcome> {
-    this.prune(sessionId);
+    this.sweepExpired(sessionId);
     const entry = this.byId.get(answer.promptId);
     if (!entry || entry.prompt.sessionId !== sessionId) {
       return Promise.resolve({ ok: false, code: "prompt_not_found" });
@@ -444,7 +444,7 @@ export class PromptRegistry {
     return entry;
   }
 
-  private prune(sessionId: string): void {
+  sweepExpired(sessionId: string): void {
     const now = this.now();
     const session = this.bySession.get(sessionId);
     if (!session) return;
