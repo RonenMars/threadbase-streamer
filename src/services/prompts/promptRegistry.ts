@@ -101,6 +101,10 @@ interface PromptEntry {
   queue: Promise<void>;
   inFlight: Map<string, Promise<PromptAnswerOutcome>>;
   outcomes: Map<string, RecordedOutcome>;
+  // Set only across a provider write, so a teardown observed during it can be
+  // attributed to that write instead of read as the provider moving on.
+  answering?: boolean;
+  deferredClose?: string;
 }
 
 export interface PromptRegistryOptions {
@@ -258,6 +262,60 @@ export class PromptRegistry {
     return copyPrompt(entry.prompt);
   }
 
+  /**
+   * The provider's prompt left the screen.
+   *
+   * Distinct from `transition` because the detector cannot tell a teardown it
+   * observed on its own from one OUR OWN write caused. On a screen-scraped gate
+   * the answer keys remove the box, and pty-manager's sendKeys fires the close
+   * synchronously from inside the write — so the close always arrives before
+   * the answer that caused it has settled, and reporting it as a cancel failed
+   * every answer whose bytes had already landed (#720).
+   *
+   * While an answer is writing, the close is deferred and the answer decides:
+   * `resolved` if the write landed, the deferred close if it did not. Success
+   * is the adapter's own result, never the prompt's absence from the screen —
+   * a prompt that does not vanish when answered (a multi-select form) simply
+   * never reaches here, and is settled by the same adapter result (#721).
+   *
+   * ONLY this path defers. `replaced` from a different gate taking the screen,
+   * `unavailable` from invalidateSession and `expired` all still go through
+   * `transition` and still win, because none of them was caused by our write.
+   */
+  providerClosed(promptId: string, reason: string): Prompt | null {
+    const entry = this.byId.get(promptId);
+    if (!entry) return null;
+    if (entry.prompt.state !== "open" && entry.prompt.state !== "updated") return null;
+    if (entry.answering) {
+      entry.deferredClose = reason;
+      return null;
+    }
+    return this.transition(promptId, "cancelled", reason);
+  }
+
+  /**
+   * Run a provider write that may close the prompt as a side effect, so the
+   * close it causes is deferred rather than applied. For callers outside this
+   * class that write without going through `answer()` — the legacy permission
+   * route. `performAnswer` manages the same two fields directly, because it
+   * needs the deferred value in its own control flow.
+   *
+   * The write's own failure needs no unwinding here: pty-manager fires the
+   * close as the last statement of a successful sendKeys, so a throw means no
+   * close was ever deferred and the record is still open for the caller.
+   */
+  whileAnswering<T>(promptId: string, write: () => T): T {
+    const entry = this.byId.get(promptId);
+    if (!entry) return write();
+    entry.answering = true;
+    try {
+      return write();
+    } finally {
+      entry.answering = false;
+      entry.deferredClose = undefined;
+    }
+  }
+
   invalidateSession(sessionId: string, reason = "session_ended"): Prompt[] {
     const transitioned: Prompt[] = [];
     for (const entry of this.bySession.get(sessionId)?.values() ?? []) {
@@ -346,21 +404,46 @@ export class PromptRegistry {
     if (responseError) return { ok: false, code: responseError };
     if (!entry.adapter) return { ok: false, code: "prompt_unavailable" };
 
+    // Marked HERE: after every pre-adapter check above has passed (state,
+    // expiry, revision, responses, adapter presence) and immediately before the
+    // write. Never at the top of this method — the marker's lifetime is exactly
+    // the window in which our own write can close the prompt, so it can never
+    // mask a teardown that has nothing to do with us. Validation stays entirely
+    // on the near side of the write: a refused answer writes zero bytes and
+    // leaves the record open at its revision, and nothing below moves a check
+    // across that boundary.
+    entry.answering = true;
     let adapterResult: PromptAdapterResult;
+    let threw = false;
     try {
       adapterResult = await entry.adapter({ prompt: copyPrompt(prompt), answer });
     } catch {
-      return { ok: false, code: "provider_error" };
+      threw = true;
+      adapterResult = { ok: false, code: "provider_error" };
+    } finally {
+      entry.answering = false;
     }
+    // A close the detector observed while we were writing is OUR close, held
+    // back by providerClosed rather than applied. It settles on every exit that
+    // does not resolve, so a refused answer can never leave the record open
+    // with the provider's box already gone.
+    const deferred = entry.deferredClose;
+    entry.deferredClose = undefined;
+    const settle = (outcome: PromptAnswerOutcome): PromptAnswerOutcome => {
+      if (deferred) this.providerClosed(prompt.promptId, deferred);
+      return outcome;
+    };
+
+    if (threw) return settle({ ok: false, code: "provider_error" });
     if (entry.prompt.state !== "open" && entry.prompt.state !== "updated") {
-      return { ok: false, code: terminalError(entry.prompt.state) };
+      return settle({ ok: false, code: terminalError(entry.prompt.state) });
     }
     if (entry.prompt.revision !== answer.revision) {
-      return {
+      return settle({
         ok: false,
         code: "prompt_revision_mismatch",
         currentRevision: entry.prompt.revision,
-      };
+      });
     }
     if (!adapterResult.ok) {
       if (adapterResult.terminal) {
@@ -370,7 +453,7 @@ export class PromptRegistry {
           adapterResult.terminal.reason,
         );
       }
-      return { ok: false, code: adapterResult.code };
+      return settle({ ok: false, code: adapterResult.code });
     }
     return { ok: true, prompt: this.transition(prompt.promptId, "resolved", "answered") };
   }
