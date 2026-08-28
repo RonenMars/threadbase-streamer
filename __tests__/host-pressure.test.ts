@@ -11,7 +11,11 @@ import {
   HOST_PRESSURE_SAMPLE_MS,
   HostPressureMonitor,
   type HostSample,
+  hostMemoryFreeRatio,
   hostPressureOs,
+  MacMemoryPressureProbe,
+  parseMacMemoryPressureFreeRatio,
+  readMacMemoryPressureFreeRatio,
 } from "../src/services/host-pressure/hostPressure";
 import type { SessionStore } from "../src/session-store";
 import type { HostPressureReason, WSMessage } from "../src/types";
@@ -46,6 +50,78 @@ describe("HOST_PRESSURE_BARS", () => {
   });
 });
 
+describe("parseMacMemoryPressureFreeRatio", () => {
+  it("parses the pressure-aware free percentage", () => {
+    expect(
+      parseMacMemoryPressureFreeRatio(
+        "The system has 34359738368 bytes.\nSystem-wide memory free percentage: 37%\n",
+      ),
+    ).toBe(0.37);
+  });
+
+  it("rejects an out-of-range free percentage", () => {
+    expect(parseMacMemoryPressureFreeRatio("System-wide memory free percentage: 101%\n")).toBe(
+      undefined,
+    );
+  });
+});
+
+describe("readMacMemoryPressureFreeRatio", () => {
+  it("returns the pressure-aware ratio from the command output", async () => {
+    const ratio = await readMacMemoryPressureFreeRatio(
+      async () => "System-wide memory free percentage: 37%\n",
+    );
+
+    expect(ratio).toBe(0.37);
+  });
+
+  it("returns unknown when the command fails", async () => {
+    const ratio = await readMacMemoryPressureFreeRatio(async () => {
+      throw new Error("timed out");
+    });
+
+    expect(ratio).toBeUndefined();
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "reads the current ratio from the macOS memory-pressure tool",
+    async () => {
+      const ratio = await readMacMemoryPressureFreeRatio();
+
+      expect(ratio).toBeTypeOf("number");
+      expect(ratio).toBeGreaterThanOrEqual(0);
+      expect(ratio).toBeLessThanOrEqual(1);
+    },
+  );
+});
+
+describe("MacMemoryPressureProbe", () => {
+  it("does not overlap reads and exposes the completed ratio", async () => {
+    let calls = 0;
+    let complete: ((ratio: number | undefined) => void) | undefined;
+    const probe = new MacMemoryPressureProbe(
+      () =>
+        new Promise((resolve) => {
+          calls++;
+          complete = resolve;
+        }),
+    );
+
+    probe.refresh();
+    probe.refresh();
+    expect(calls).toBe(1);
+
+    complete?.(0.37);
+    await vi.waitFor(() => expect(probe.value()).toBe(0.37));
+  });
+});
+
+describe("hostMemoryFreeRatio", () => {
+  it("uses the pressure-aware ratio on Darwin", () => {
+    expect(hostMemoryFreeRatio("darwin", 100, 1, 0.37)).toBe(0.37);
+  });
+});
+
 describe("classifyHostPressure", () => {
   it("is ok on a quiet host", () => {
     expect(classifyHostPressure(healthy, "ok", POSIX)).toEqual({ level: "ok", reasons: [] });
@@ -65,13 +141,9 @@ describe("classifyHostPressure", () => {
     });
   });
 
-  it("caps Darwin unused-page memory at elevated, never critical", () => {
-    expect(classifyHostPressure(sample({ memFreeRatio: 0.005 }), "ok", "darwin")).toEqual({
-      level: "elevated",
-      reasons: ["memory"],
-    });
+  it("allows pressure-aware Darwin memory to become critical", () => {
     expect(classifyHostPressure(sample({ memFreeRatio: 0.07 }), "ok", "darwin")).toEqual({
-      level: "elevated",
+      level: "critical",
       reasons: ["memory"],
     });
   });
