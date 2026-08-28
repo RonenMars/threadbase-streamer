@@ -39,6 +39,40 @@ const BOX_ONLY_RE = /^[\s│─┌┐└┘├┤┬┴┼╭╮╰╯╱╲=_-]
 // never doubles as a structured question.
 const PERMISSION_LABEL_RE = /^(Yes|No)\b/i;
 
+// The checkbox a multi-select picker paints beside each selectable option
+// ("[ ] Python" before a toggle, "[✔] Python" after). Its presence is the ONLY
+// on-screen evidence that a picker is multi-select: the TUI draws a
+// multi-select form and a single-select menu with the same footer, the same
+// "N." numbering and the same ❯ cursor, so nothing else here distinguishes
+// them. `Chat about this` — the escape hatch — carries no checkbox, so ANY
+// marked option means multi-select; requiring all of them would miss every
+// real form.
+const KNOWN_STATE_MARKER_RE = /^(?:\[(?:[ xX*]|✓|✔)\]|[☐☑☒])\s*/;
+
+// A short bracketed token we do NOT recognise, treated as a state marker we
+// cannot read rather than as label text. This is what makes the classifier fail
+// towards unanswerable: without it, an unfamiliar marker (a future TUI painting
+// "( )" radios, say) would fall through to single-select and the answer route
+// would write a keystroke for a shape it never understood. The ≤3-character
+// bound is deliberate — real markers are one or two glyphs, while a longer
+// bracketed token ("[draft] …") is far more likely to be genuine label text.
+const UNKNOWN_STATE_MARKER_RE = /^(?:\[[^\]]{0,3}\]|\([^)]{0,3}\))\s*/;
+
+// Split a rendered option label into its state marker (if any) and the label
+// proper. A recognised marker is stripped — it is presentation, and leaving it
+// in the payload both ships "[ ]" to clients as if it were part of the option
+// text and makes questionContentKey unstable, so merely ticking a box on screen
+// reads as a different question and mints a new prompt.
+function stripStateMarker(label: string): { label: string; marked: boolean } {
+  if (KNOWN_STATE_MARKER_RE.test(label)) {
+    return { label: label.replace(KNOWN_STATE_MARKER_RE, ""), marked: true };
+  }
+  // Unrecognised: flag it, but leave the text alone — we do not know that the
+  // token is a marker, only that we cannot rule it out.
+  if (UNKNOWN_STATE_MARKER_RE.test(label)) return { label, marked: true };
+  return { label, marked: false };
+}
+
 // The final confirmation screen of a multi-question AskUserQuestion TUI:
 //   Ready to submit your answers?
 //   ❯ 1. Submit answers
@@ -79,6 +113,7 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
   // with "?"), a blank gap once options have started, or the top of the window.
   const options: AskOption[] = [];
   let firstOptionIdx = -1;
+  let sawStateMarker = false;
   for (let i = footerIdx - 1; i >= 0; i--) {
     const line = lines[i];
     const inner = stripBoxGutter(line);
@@ -94,8 +129,10 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
     if (options.length > 0 && QUESTION_RE.test(trimmed) && !OPTION_RE.test(inner)) break;
     const m = OPTION_RE.exec(inner);
     if (m) {
-      const label = m[2].trim();
-      if (PERMISSION_LABEL_RE.test(label)) return null; // it's a permission gate
+      const rendered = m[2].trim();
+      if (PERMISSION_LABEL_RE.test(rendered)) return null; // it's a permission gate
+      const { label, marked } = stripStateMarker(rendered);
+      if (marked) sawStateMarker = true;
       options.unshift({ label, description: "" });
       firstOptionIdx = i;
     }
@@ -126,8 +163,15 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
   // the multi-question carousel doesn't reliably auto-submit. (Roadmap: robust
   // auto-submit.) So we no longer reject it here.
 
+  // multiSelect carries two cases that must land in the same place: a picker we
+  // positively recognised as multi-select, and one whose option markers we could
+  // not read. Both are unanswerable by the keystroke path — answersToKeystrokes
+  // throws UnsupportedPromptShapeError before building a keystroke, and the
+  // contract publishes inputMode "multi", which released clients already fail
+  // closed on. The contract has no third value for "shape unknown", and this is
+  // the bucket that writes zero bytes.
   return {
-    questions: [{ question, header: "", multiSelect: false, options }],
+    questions: [{ question, header: "", multiSelect: sawStateMarker, options }],
   };
 }
 
