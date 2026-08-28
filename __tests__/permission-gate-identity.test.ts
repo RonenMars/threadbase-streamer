@@ -8,6 +8,7 @@ import { type ApiDepsWiring, createApiDeps } from "../src/server-wiring";
 import { detectCodexCommandApproval } from "../src/services/questions/codexScreen";
 import { detectGateScreen } from "../src/services/questions/detectPermissionGate";
 import type { WSMessage } from "../src/types";
+import { WSHub } from "../src/ws-hub";
 
 // Permission gate identity (D9) and provider-aware answer freshness.
 //
@@ -297,6 +298,7 @@ describe("subscribe replay carries the pending gate's gateId", () => {
     const sent: string[] = [];
     const ws = { send: (data: string) => sent.push(data) } as unknown as WebSocket;
     const { handleWsMessage } = createApiDeps({
+      wsHub: new WSHub(),
       addSessionSubscriber: vi.fn(),
       removeSessionSubscriber: vi.fn(),
       wsToClientId: new Map(),

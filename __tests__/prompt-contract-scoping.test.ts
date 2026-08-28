@@ -83,6 +83,7 @@ describe("provider-neutral prompt delivery", () => {
     registry.open(promptDraft());
     const ws = socket();
     const wiring = {
+      wsHub: new WSHub(),
       addSessionSubscriber: vi.fn(),
       removeSessionSubscriber: vi.fn(),
       promptRegistry: registry,
