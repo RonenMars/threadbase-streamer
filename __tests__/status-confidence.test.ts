@@ -33,12 +33,12 @@ function mkSession(over: Partial<ManagedSession> = {}): ManagedSession {
 
 describe("confidenceForSource", () => {
   // The whole point: exactly the timer-driven paths are inferences.
-  it.each<[StatusSource]>([
-    ["timeout-fallback"],
-    ["quiet-fallback"],
-  ])("treats %s as inferred", (source) => {
-    expect(confidenceForSource(source)).toBe("inferred");
-  });
+  it.each<[StatusSource]>([["timeout-fallback"], ["quiet-fallback"]])(
+    "treats %s as inferred",
+    (source) => {
+      expect(confidenceForSource(source)).toBe("inferred");
+    },
+  );
 
   it.each<[StatusSource]>([
     ["prompt-marker"],
@@ -115,34 +115,34 @@ describe("SessionResponse carries source and confidence", () => {
 describe("every status transition declares a source", () => {
   const SRC = join(__dirname, "..", "src");
 
-  it.each([
-    "pty-manager.ts",
-    "codex-pty-runner.ts",
-  ])("%s sets statusSource wherever it assigns status", (file) => {
-    const lines = readFileSync(join(SRC, file), "utf8").split("\n");
+  it.each(["pty-manager.ts", "codex-pty-runner.ts"])(
+    "%s sets statusSource wherever it assigns status",
+    (file) => {
+      const lines = readFileSync(join(SRC, file), "utf8").split("\n");
 
-    const assignments: number[] = [];
-    lines.forEach((line, i) => {
-      // `session.status = "..."` — an actual runtime transition, not a type
-      // annotation or an object literal key.
-      if (/^\s*session\.status\s*=\s*"/.test(line)) assignments.push(i);
-    });
+      const assignments: number[] = [];
+      lines.forEach((line, i) => {
+        // `session.status = "..."` — an actual runtime transition, not a type
+        // annotation or an object literal key.
+        if (/^\s*session\.status\s*=\s*"/.test(line)) assignments.push(i);
+      });
 
-    expect(assignments.length).toBeGreaterThan(0);
+      expect(assignments.length).toBeGreaterThan(0);
 
-    for (const i of assignments) {
-      // The source assignment sits within a few lines of the status change.
-      const window = lines.slice(Math.max(0, i - 2), i + 5).join("\n");
-      expect(window, `no statusSource near line ${i + 1} of ${file}`).toMatch(/statusSource/);
-    }
-  });
+      for (const i of assignments) {
+        // The source assignment sits within a few lines of the status change.
+        const window = lines.slice(Math.max(0, i - 2), i + 5).join("\n");
+        expect(window, `no statusSource near line ${i + 1} of ${file}`).toMatch(/statusSource/);
+      }
+    },
+  );
 
-  it.each([
-    "pty-manager.ts",
-    "codex-pty-runner.ts",
-  ])("%s reports the fields through toPublicSession", (file) => {
-    const src = readFileSync(join(SRC, file), "utf8");
-    expect(src).toContain("statusSource: s.statusSource");
-    expect(src).toContain("statusUpdatedAt: s.statusUpdatedAt");
-  });
+  it.each(["pty-manager.ts", "codex-pty-runner.ts"])(
+    "%s reports the fields through toPublicSession",
+    (file) => {
+      const src = readFileSync(join(SRC, file), "utf8");
+      expect(src).toContain("statusSource: s.statusSource");
+      expect(src).toContain("statusUpdatedAt: s.statusUpdatedAt");
+    },
+  );
 });

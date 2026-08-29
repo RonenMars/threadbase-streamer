@@ -182,14 +182,15 @@ const CAPTURES: Array<[string, string[]]> = [
 ];
 
 describe("multi-select shape classification (#721)", () => {
-  it.each(
-    CAPTURES,
-  )("classifies the captured multi-select form as multiSelect, never single (%s)", (_name, screen) => {
-    const r = detectQuestionFromScreen(screen);
-    expect(r).not.toBeNull();
-    expect(r?.questions).toHaveLength(1);
-    expect(r?.questions[0].multiSelect).toBe(true);
-  });
+  it.each(CAPTURES)(
+    "classifies the captured multi-select form as multiSelect, never single (%s)",
+    (_name, screen) => {
+      const r = detectQuestionFromScreen(screen);
+      expect(r).not.toBeNull();
+      expect(r?.questions).toHaveLength(1);
+      expect(r?.questions[0].multiSelect).toBe(true);
+    },
+  );
 
   it("strips checkbox markers from option labels", () => {
     const unticked = detectQuestionFromScreen(MULTI_SELECT_SCREEN);
