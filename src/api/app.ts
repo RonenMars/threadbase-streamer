@@ -15,6 +15,7 @@ import { createConfigRoutes } from "./routes/config.routes";
 import { createConversationRoutes } from "./routes/conversations.routes";
 import { createDeviceRoutes } from "./routes/devices.routes";
 import { createDiagnosticsRoutes } from "./routes/diagnostics.routes";
+import { createE2eeRoutes } from "./routes/e2ee.routes";
 import { createHealthRoutes } from "./routes/health.routes";
 import { createLogsRoutes } from "./routes/logs.routes";
 import { createMiscRoutes } from "./routes/misc.routes";
@@ -42,6 +43,24 @@ export type AppEnv = {
 const ALREADY_HANDLED = 597;
 
 /**
+ * Query parameters whose value is reduced REGARDLESS of its shape.
+ *
+ * The numeric rule below is a heuristic — it keeps pagination readable — and a
+ * heuristic is the wrong thing to protect a credential with. `?ticket=` was
+ * covered only by the accident that a base64url ticket is essentially never all
+ * digits, and "essentially never" is exactly the probability-instead-of-
+ * invariant argument the nonce design rejects (NONCE-DESIGN §10):
+ *
+ *     summarizeQuery({ ticket: "Xk9_2bQz-aR4" })   →  ticket=_
+ *     summarizeQuery({ ticket: "84719203847192" })  →  ticket=84719203847192
+ *
+ * Listing the keys instead protects `?key=` and every future secret-bearing
+ * parameter rather than one generator's alphabet. Matched case-insensitively so
+ * a `?apiKey=` cannot slip past on capitalisation.
+ */
+const SENSITIVE_QUERY_KEYS = new Set(["ticket", "key", "token", "apikey", "api_key"]);
+
+/**
  * The query string with only its numeric values kept.
  *
  * Pagination is the thing the log needs to show (`limit`, `offset`,
@@ -49,11 +68,19 @@ const ALREADY_HANDLED = 597;
  * `?path=/Users/...`, ids, search terms — is a value we deliberately do not
  * log, so the key is kept and the value is dropped. Returns undefined for a
  * bare path so the field stays absent rather than empty.
+ *
+ * Deliberately NOT blanket numeric redaction: `limit=50` must keep logging its
+ * value, or the fix costs the diagnostics this field exists for.
  */
 export function summarizeQuery(query: Record<string, string>): string | undefined {
   const keys = Object.keys(query).sort();
   if (keys.length === 0) return undefined;
-  return keys.map((k) => `${k}=${/^-?\d+$/.test(query[k]) ? query[k] : "_"}`).join("&");
+  return keys
+    .map((k) => {
+      const keep = !SENSITIVE_QUERY_KEYS.has(k.toLowerCase()) && /^-?\d+$/.test(query[k]);
+      return `${k}=${keep ? query[k] : "_"}`;
+    })
+    .join("&");
 }
 
 /**
@@ -133,6 +160,7 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
   app.route("/api/devices", createDeviceRoutes(deps));
   app.route("/api/backup", createBackupRoutes(deps));
   app.route("/api/pair", createPairRoutes(deps));
+  app.route("/api/e2ee", createE2eeRoutes(deps));
   app.route("/api", createBrowseRoutes(deps));
   app.route("/", createScannerRoutes(deps));
   app.route("/internal", createProgressRoutes(deps));

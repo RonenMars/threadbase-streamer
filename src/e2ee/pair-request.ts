@@ -13,9 +13,18 @@
 // client", never "a malformed request".
 
 import { NOISE_MAX_MESSAGE_BYTES } from "./noise";
+import { E2EE_PROTOCOL_VERSION } from "./protocol";
 
-/** Envelope version this build speaks. Matches `E2EE_PROTOCOL_VERSION`. */
-export const E2EE_EXCHANGE_VERSION = 1;
+/**
+ * @deprecated Use `E2EE_PROTOCOL_VERSION` from `src/e2ee/protocol.ts`, which is
+ * the canonical home. This name survives as a re-export of that one value
+ * because `src/server.ts` and `pair-payload.ts` import it and another track is
+ * editing `server.ts` — deleting the symbol would widen W1a's diff into files
+ * it does not own. `__tests__/e2ee-protocol-version.test.ts` asserts the two
+ * names are one value, which is what makes the alias safe rather than a second
+ * hand-synced copy (NONCE-DESIGN §4).
+ */
+export const E2EE_EXCHANGE_VERSION = E2EE_PROTOCOL_VERSION;
 
 /**
  * Cap on the base64 text before it is decoded.
@@ -67,10 +76,10 @@ export function parseE2eeRequest(raw: unknown): E2eeExchangeRequest | null {
   if (typeof v !== "number" || !Number.isInteger(v)) {
     throw new E2eeRequestError("E2EE_MALFORMED", "e2ee.v must be an integer");
   }
-  if (v !== E2EE_EXCHANGE_VERSION) {
+  if (v !== E2EE_PROTOCOL_VERSION) {
     throw new E2eeRequestError(
       "E2EE_VERSION_UNSUPPORTED",
-      `e2ee.v ${v} is not supported; this server speaks ${E2EE_EXCHANGE_VERSION}`,
+      `e2ee.v ${v} is not supported; this server speaks ${E2EE_PROTOCOL_VERSION}`,
     );
   }
 

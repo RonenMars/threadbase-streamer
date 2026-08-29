@@ -8,6 +8,7 @@ import * as miscRoutes from "../src/api/routes/misc.routes";
 import {
   generateKeyPair,
   type KeyPair,
+  PAIR_PROLOGUE,
   pskFromPairToken,
   readMessage2,
   writeMessage1,
@@ -116,6 +117,7 @@ describe("pair exchange with a Noise handshake", () => {
 
   function startHandshake(token: string, responderStaticPub = serverStaticPub) {
     return writeMessage1({
+      prologue: PAIR_PROLOGUE,
       staticKeyPair: clientStatic,
       responderStaticPub,
       psk: pskFromPairToken(token),
@@ -291,6 +293,7 @@ describe("pair exchange with a Noise handshake", () => {
     it("rejects a handshake bound to a different pair token", async () => {
       const token = await mintToken();
       const wrongPsk = writeMessage1({
+        prologue: PAIR_PROLOGUE,
         staticKeyPair: clientStatic,
         responderStaticPub: serverStaticPub,
         psk: pskFromPairToken("pt_ffffffffffffffffffffffffffffffff"),

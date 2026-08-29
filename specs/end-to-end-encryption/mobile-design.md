@@ -146,12 +146,14 @@ This is where a phone differs from a browser, and where a naive port of the serv
 
 | Event | What happens |
 |---|---|
-| App foreground | Ensure a context; **rekey** if one already exists and is older than the foreground threshold. |
+| App foreground | Ensure a context; if one exists and is older than the foreground threshold, **open a new context and retire the old one** — a key is never replaced in place ([NONCE-DESIGN.md §6](./NONCE-DESIGN.md)). *Corrected 2026-08-29 (Phase 3, W1a): this row previously said "rekey".* |
 | App background | Keep the context. Do **not** tear it down — the socket dies on backgrounding anyway (that is the signal the streamer's push suppression relies on, `CLAUDE.md` "Waiting-for-input push"), and re-handshaking on every foreground would add a round trip to the app's slowest moment. |
-| Socket reconnect (the existing backoff in `ws-client.ts`) | Reuse the context if unexpired; fetch a **fresh ticket** — tickets are single-use. |
+| Socket reconnect (the existing backoff in `ws-client.ts`) | **Reuse the REST context; open a new socket context with a fresh ticket.** |
 | Context expired or rejected | One transparent re-handshake, then surface the error. Never silently fall back to plaintext. |
 | Streamer restarted | Context is gone server-side; the client's first sealed request gets a context-unknown error and re-handshakes once. |
 | Server pinned, handshake fails | **Hard, visible failure.** This is the anti-downgrade half that actually matters — a MITM's cheapest attack is to answer as an old server. |
+
+> **Corrected 2026-08-29 (Phase 3, W1a).** The reconnect row previously read *"Reuse the context if unexpired; fetch a **fresh ticket** — tickets are single-use"*, which assumed one context per device. A fresh ticket only ever comes out of a fresh `POST /api/e2ee/open`, so a reconnect was always a new handshake — and the socket context is destroyed at close with no grace window, while the REST context is untouched by the socket going away. See [NONCE-DESIGN.md §8](./NONCE-DESIGN.md).
 
 The 2 s HTTP fallback for `terminal_replay` (`docs/architecture/2026-05-02-sessions-ws-push.md:132`, implemented in `hooks/useTerminalStream.ts`) still applies. It falls back to a *different transport*, not to plaintext — the HTTP path is sealed too.
 
@@ -271,7 +273,7 @@ Nothing in `docs/compatibility/tb-mobile.md` is renamed, removed, or retyped by 
 | Downgrade | A pinned server answering `e2ee.supported: false` produces the hard-failure screen with no "connect anyway" path. |
 | Key storage | `D_priv` is in SecureStore with `THIS_DEVICE_ONLY`, never in AsyncStorage, never logged, never in a Sentry breadcrumb. |
 | Persist inversion | A query with no `meta.persist` does not reach AsyncStorage; `persistBuster` drops the old cache. |
-| Rekey | Foreground after the threshold rekeys; counters reset only as part of it. |
+| Key replacement | A key is never replaced in place. A foreground past the threshold opens a **new context**; counters are never reset, in it or anywhere else. *Corrected 2026-08-29 (Phase 3, W1a); see [NONCE-DESIGN.md §6](./NONCE-DESIGN.md).* |
 | Revocation | A revoked device's live socket closes without the app retrying into a loop. |
 | Web target | A QR with `spk` is refused with the native-app explanation and never writes `D_priv` to localStorage or falls back to plaintext. |
 | No regression | The full existing suite passes: unit, integration, and the Maestro mock suite (`npm run test:e2e:mock`) — all three, per the repo's own guidance that `test:unit` alone is a false green. |

@@ -6,7 +6,13 @@ import naclUtil from "tweetnacl-util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as miscRoutes from "../src/api/routes/misc.routes";
 import type { DeviceRow, DevicesRepository } from "../src/db/repositories/devices.repository";
-import { generateKeyPair, type KeyPair, pskFromPairToken, writeMessage1 } from "../src/e2ee/noise";
+import {
+  generateKeyPair,
+  type KeyPair,
+  PAIR_PROLOGUE,
+  pskFromPairToken,
+  writeMessage1,
+} from "../src/e2ee/noise";
 import { StreamerServer } from "../src/server";
 import { loadOrCreateServerIdentity } from "../src/server-identity";
 
@@ -88,6 +94,7 @@ describe("the pair exchange refuses the handshake when the build denies the capa
 
   function handshakeMessage(token: string): string {
     const { message } = writeMessage1({
+      prologue: PAIR_PROLOGUE,
       staticKeyPair: clientStatic,
       responderStaticPub: serverStaticPub,
       psk: pskFromPairToken(token),

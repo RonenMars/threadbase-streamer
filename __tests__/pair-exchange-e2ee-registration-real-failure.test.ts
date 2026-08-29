@@ -47,7 +47,9 @@ vi.mock("../src/logger", () => {
 
 const { StreamerServer } = await import("../src/server");
 const miscRoutes = await import("../src/api/routes/misc.routes");
-const { generateKeyPair, pskFromPairToken, writeMessage1 } = await import("../src/e2ee/noise");
+const { generateKeyPair, PAIR_PROLOGUE, pskFromPairToken, writeMessage1 } = await import(
+  "../src/e2ee/noise"
+);
 const { loadOrCreateServerIdentity } = await import("../src/server-identity");
 
 type KeyPair = ReturnType<typeof generateKeyPair>;
@@ -116,6 +118,7 @@ describe("a real device-registration failure on the E2EE path", () => {
   it("500s with no device credential, leaves no row, and refuses a same-token retry as replayed", async () => {
     const token = await mintToken();
     const initiator = writeMessage1({
+      prologue: PAIR_PROLOGUE,
       staticKeyPair: clientStatic,
       responderStaticPub: serverStaticPub,
       psk: pskFromPairToken(token),

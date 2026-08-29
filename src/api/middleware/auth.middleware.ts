@@ -20,7 +20,10 @@ const PUBLIC_PATHS = new Set(["/healthz"]);
 const LOCAL_ONLY_PATHS = new Set(["/api/logs", "/api/logs/meta"]);
 // /api/__update uses HMAC signature auth instead of Bearer; skip the
 // Bearer-token middleware so the route handler can validate the signature.
-const PUBLIC_POST_PATHS = new Set(["/api/pair/exchange", "/api/__update"]);
+// /api/e2ee/open is public for the same reason /api/pair/exchange is: the
+// handshake IS the authentication, and the credential the middleware would look
+// for only exists inside it (design.md §3.5, NONCE-DESIGN §10).
+const PUBLIC_POST_PATHS = new Set(["/api/pair/exchange", "/api/__update", "/api/e2ee/open"]);
 // /internal/sessions/:sessionId/progress also uses HMAC (Progress webhook),
 // and the sessionId is dynamic so we match by prefix.
 const PUBLIC_POST_PREFIXES = ["/internal/sessions/"];
