@@ -65,6 +65,7 @@ import { RuntimeStore, resolveRuntimeDbPath } from "./db/runtime-store";
 import {
   type HandshakeResponderState,
   keyPairFrom,
+  PAIR_PROLOGUE,
   pskFromPairToken,
   readMessage1,
   writeMessage2,
@@ -2118,6 +2119,10 @@ export class StreamerServer {
           // is specified in design.md §2.4 and pinned by a committed vector
           // that tb-mobile checks against independently.
           psk: pskFromPairToken(token),
+          // Explicit: `prologue` is a required parameter, because defaulting it
+          // through `??` let a polluted prototype make this handshake accept an
+          // `/open` message (§11).
+          prologue: PAIR_PROLOGUE,
           message1: e2eeRequest.message1,
         });
       } catch {

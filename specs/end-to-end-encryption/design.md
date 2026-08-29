@@ -42,7 +42,7 @@ Every user-facing string, settings label, and privacy-policy line must therefore
 |---|---|
 | Cloudflare edge, or a proxy on the path | Sees request paths, sizes, timing, and connection metadata. No content, no credential. |
 | Passive LAN capture | Same. |
-| Active MITM on an established connection | Every frame fails authentication; the connection closes. Cannot inject input into a session. |
+| Active MITM on an established connection | Every frame fails authentication; the connection closes. Cannot inject input into a session — and cannot **re-point** an authentic sealed request at a different session either, which is a separate property and one the envelope only has because the REST AAD binds method, path and query ([NONCE-DESIGN.md §4](./NONCE-DESIGN.md)). *Corrected 2026-08-29 (Phase 3, W1a): this row previously claimed the second property without anything providing it.* |
 | Active MITM during pairing, without the QR | Cannot complete the handshake — the server's static key is in the QR (§2.2). |
 | Attacker who photographs the QR | Can pair *as a device* until the token is consumed or expires. Cannot impersonate the server to the real phone. See §2.5. |
 | Stolen `cache.db` / `runtime.db` / a backup | Encrypted at rest (§5); useless without the key file. |
@@ -261,7 +261,9 @@ counter:   starts at 0, increments by exactly 1 per sealed record, never reset
 ```
 
 Separate keys *and* separate direction labels per direction, so a record can never be reflected back at its sender.
-A sender that would exceed `2^64 - 1` refuses to send and forces a rekey. This is unreachable in practice; it is asserted so it cannot become a silent wrap.
+A sender that would exceed `2^64 - 1` refuses to send, and the refusal **destroys the context** — there is no recovery that keeps it, and under the §6 ruling there is no rekey to force. This is unreachable in practice; it is asserted so it cannot become a silent wrap.
+
+> **Corrected 2026-08-29 (Phase 3, W1a).** This sentence previously read *"refuses to send and forces a rekey"*. See [NONCE-DESIGN.md §7](./NONCE-DESIGN.md).
 
 **AAD binds the plaintext framing to the ciphertext.** The header travels in the clear and is authenticated, so an intermediary can neither rewrite a sequence number nor re-point a record at a different context:
 
@@ -282,7 +284,9 @@ This makes replay structurally impossible on the highest-volume channel without 
 **REST — sliding window.**
 HTTP requests can be concurrent, and mobile issues them concurrently (React Query). A strict counter would reject a perfectly legitimate out-of-order arrival.
 The receiver keeps an RFC-6479-style 1024-bit sliding bitmap per context: accept a counter above the window (advance), accept one inside the window whose bit is clear (set it), reject one below the window or already set.
-Responses do not need a window — each is bound to its request's counter in the AAD, and a response with the wrong counter is discarded by the client.
+Responses do not need a window — each is bound to its request's counter in the AAD, and a response with the wrong counter is discarded by the client. **That holds only under one rule, which therefore travels with the claim: at most one sealed response per accepted request counter, and a request the window or the AEAD rejected gets a *plaintext* error and never a sealed body.** Without it two responses could share `(k_s2c, 2‖counter)`.
+
+> **Corrected 2026-08-29 (Phase 3, W1a).** The claim was true and load-bearing without its precondition stated. See [NONCE-DESIGN.md §13(a)](./NONCE-DESIGN.md).
 
 **Across contexts.** A record from an expired or unknown `ctxId` is rejected before decryption is attempted. Contexts do not survive a streamer restart (§4.2), so an old capture can never be replayed into a new run.
 
@@ -292,7 +296,7 @@ Responses do not need a window — each is bound to its request's counter in the
 
 **Becomes:** a two-step that keeps the long-term credential out of every URL.
 
-1. `POST /api/e2ee/open` — public (added to `PUBLIC_POST_PATHS`, `src/api/middleware/auth.middleware.ts:23`), carries Noise `IK` messages 1 and 2 using the *stored* static keys from pairing. Returns `{ ctxId, expiresAt }`. The device is authenticated by the handshake itself: the server looks the initiator's static key up in `devices.e2ee_static_pub` and refuses if the row is missing or `revoked_at` is set.
+1. `POST /api/e2ee/open` — public (added to `PUBLIC_POST_PATHS`, `src/api/middleware/auth.middleware.ts:23`), carries Noise `IK` messages 1 and 2 using the *stored* static keys from pairing. **"Noise IK" alone admits at least three incompatible readings, and the two implementations are written by different tracks: the protocol name, prologue and the absence of a PSK are pinned in [NONCE-DESIGN.md §11](./NONCE-DESIGN.md) and by committed vectors.** Returns `{ ctxId, expiresAt }`. The device is authenticated by the handshake itself: the server looks the initiator's static key up in `devices.e2ee_static_pub` and refuses if the row is missing or `revoked_at` is set.
 2. `GET /ws?ticket=<t>` — `t` is a single-use, 30-second ticket issued **inside** the encrypted `/api/e2ee/open` response and bound to `ctxId`. It authorizes exactly one upgrade and is consumed on use.
 
 Consequences:
@@ -346,8 +350,9 @@ Derivation is the Noise spec's own `Split()` — no bespoke HKDF ladder, because
 |---|---|---|
 | `S_priv` | Machine lifetime | Manual only (`tb-streamer identity --rotate`), which **unpairs every device** and must say so before doing it. |
 | `D_priv` | Per-server pairing identity within the app install | Explicitly forgetting or replacing that server identity. A retry or re-pair loads and reuses it; a label-only edit never clears it. |
-| `k_c2s` / `k_s2c` | One transport context | 24 h wall clock, 1 GiB sealed, or an explicit rekey — whichever first. |
-| Transport context | ≤ 24 h; destroyed on streamer restart, on socket close after a grace window, and on device revocation. | |
+| `k_c2s` / `k_s2c` | One transport context, and never replaced within it | 24 h wall clock, 1 GiB sealed, or a client foreground past its threshold — each of which opens a **new context** rather than rekeying this one (§6). |
+| WebSocket context | Exactly one socket. Destroyed at that socket's close with **no grace window**, on streamer restart, and on device revocation. | |
+| REST context | One device, long-lived: ≤ 24 h, then destroyed on streamer restart or device revocation. Unaffected by a socket closing. | |
 | WS ticket | 30 s, single use | — |
 | Pair token | 180 s, single use (`src/pair-store.ts:26`, `:60-62`) | Unchanged. |
 | Device token (legacy credential) | No expiry, revocation only (`docs/architecture/2026-07-24-device-identity-and-capabilities.md:147`) | Unchanged. |
@@ -355,9 +360,13 @@ Derivation is the Noise spec's own `Split()` — no bespoke HKDF ladder, because
 **Forward secrecy** comes from the ephemeral half of each `IK` handshake: recovering `S_priv` later does not decrypt a captured session, because `ee` contributed entropy that was never written down.
 It does **not** protect against an attacker who holds `S_priv` *and* is active at handshake time — `IK` gives the responder no forward secrecy against a compromise-then-impersonate attacker. That is the standard `IK` caveat and is accepted, because the alternative (`XX`) costs the QR-based server authentication that §2.6 depends on.
 
-**Rekey** is `Noise Rekey()` on both cipher states, triggered by whichever bound is hit first, plus one on every app foreground. Counters reset to 0 only as part of a rekey, never independently.
+**A key is never replaced inside a context.** 24 h, 1 GiB sealed and a client foreground past its threshold all mean the same thing: **open a new context and retire the old one.** The counter is never reset, because nothing ever reuses a key with a counter that could go backwards.
 
-Grace/hold interacts here: a `hold_session` is an explicit message (`src/server-wiring.ts:669-671`) and a socket close deliberately arms nothing (`src/server-wiring.ts:684-689`). The transport context follows the socket, not the session — a phone that backgrounds and returns opens a **new** context and the session it was watching is untouched. Nothing about session lifetime changes.
+> **Corrected 2026-08-29 (Phase 3, W1a).** This section previously read *"Counters reset to 0 only as part of a rekey, never independently"*, which contradicted §3.3's *"never reset"*. It was corrected once to "rekey replaces `k` and the counter continues" and then again, by the user's ruling on [NONCE-DESIGN.md §6](./NONCE-DESIGN.md), to remove in-place rekey altogether. The reason is a defect rather than a preference: under §4.3's own model WebSocket contexts are per-socket and never rekey, so **REST would be the only rekeying channel — and REST is the one channel that cannot synchronise a rekey**, because it accepts counters out of order and a receiver cannot know which key generation a counter was sealed under without an epoch field the invariant forbids. The server crosses 1 GiB, replaces `k_s2c`, and the client unseals the next response under the old key and reports a server-side fault it has no recovery path for. Noise §11.3's rekey is safe because Noise transports are ordered; REST is not. What survives is the one sentence — *one counter value, once, per direction, per context*.
+
+Grace/hold interacts here: a `hold_session` is an explicit message (`src/server-wiring.ts:669-671`) and a socket close deliberately arms nothing (`src/server-wiring.ts:684-689`). A phone that backgrounds and returns keeps its REST context and opens a **new** socket context; the session it was watching is untouched, and nothing about session lifetime changes.
+
+> **Corrected 2026-08-29 (Phase 3, W1a).** This section previously said the transport context *"follows the socket"* as a single device-wide object, destroyed *"on socket close after a grace window"*. Each paired device holds **two** contexts, one `IK` handshake each: a WebSocket context bound to exactly one socket, and a long-lived REST context. One shared context would have shipped a bug — `X-TB-Ctx` is carried on every sealed REST request and the 2 s HTTP replay fallback runs *precisely* when the socket is unavailable, so a context that died with the socket would take the fallback with it; and under the strict counter (§3.4) the first frame after a reconnect would be a gap, so the client would close, reconnect, gap again and never recover. There is no grace window: a reconnect opens a new context, which is a new `ctxId` with new keys, not a rewound counter. See [NONCE-DESIGN.md §8](./NONCE-DESIGN.md).
 
 ### 4.4 Revocation
 

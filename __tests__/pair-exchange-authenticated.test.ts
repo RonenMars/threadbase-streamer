@@ -9,6 +9,7 @@ import type { DeviceRow, DevicesRepository } from "../src/db/repositories/device
 import {
   generateKeyPair,
   type KeyPair,
+  PAIR_PROLOGUE,
   pskFromPairToken,
   readMessage2,
   writeMessage1,
@@ -99,6 +100,7 @@ describe("the pair exchange authenticates what it stores and returns", () => {
 
   function startHandshake(token: string, payload: unknown) {
     return writeMessage1({
+      prologue: PAIR_PROLOGUE,
       staticKeyPair: clientStatic,
       responderStaticPub: serverStaticPub,
       psk: pskFromPairToken(token),

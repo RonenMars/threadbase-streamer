@@ -87,6 +87,13 @@ describe("http.request log line", () => {
     expect(requests()[0].fields.qs).toBe("limit=50&offset=100");
   });
 
+  // NONCE-DESIGN §10. The WS ticket is a credential and it can only travel in a
+  // URL, so the request log is the one place it can leak on a healthy server.
+  it("reduces an ALL-DIGIT ticket to _ in the http.request line", async () => {
+    await fetch(`${baseUrl}/api/conversations/count?ticket=84719203847192`);
+    expect(requests()[0].fields.qs).toBe("ticket=_");
+  });
+
   it("omits qs and bytes when there is nothing to report", async () => {
     await fetch(`${baseUrl}/healthz`);
     const [line] = requests();
@@ -111,6 +118,26 @@ describe("summarizeQuery", () => {
     expect(summarizeQuery({ q: "my private search" })).toBe("q=_");
     expect(summarizeQuery({ id: "9f3c-abc", limit: "20" })).toBe("id=_&limit=20");
     expect(summarizeQuery({ limit: "50; DROP" })).toBe("limit=_");
+  });
+
+  // The gap NONCE-DESIGN §10 names: the numeric rule let an all-digit secret
+  // through verbatim. A base64url ticket passes against the ORIGINAL code, so a
+  // test using one could never have failed and would prove nothing.
+  it("reduces a sensitive key regardless of the shape of its value", () => {
+    expect(summarizeQuery({ ticket: "84719203847192" })).toBe("ticket=_");
+    expect(summarizeQuery({ ticket: "Xk9_2bQz-aR4" })).toBe("ticket=_");
+    expect(summarizeQuery({ key: "12345678901234567890" })).toBe("key=_");
+    expect(summarizeQuery({ token: "42" })).toBe("token=_");
+    // Case is not a way past it.
+    expect(summarizeQuery({ Ticket: "84719203847192" })).toBe("Ticket=_");
+  });
+
+  // The control for the test above: the fix is a sensitive-KEY rule, not
+  // blanket numeric redaction, which would cost the diagnostics this field
+  // exists for.
+  it("still logs a non-sensitive numeric parameter", () => {
+    expect(summarizeQuery({ limit: "50" })).toBe("limit=50");
+    expect(summarizeQuery({ limit: "50", ticket: "84719203847192" })).toBe("limit=50&ticket=_");
   });
 
   it("returns undefined for a bare path so the field stays absent", () => {

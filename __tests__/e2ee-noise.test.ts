@@ -6,11 +6,14 @@ import {
   NOISE_MAX_MESSAGE_BYTES,
   NOISE_PROTOCOL_NAME,
   NoiseError,
+  OPEN_PROLOGUE,
   PAIR_PROLOGUE,
   pskFromPairToken,
+  readMessage1,
   readMessage2,
   respond,
   writeMessage1,
+  writeMessage2,
 } from "../src/e2ee/noise";
 import vectors from "./fixtures/noise-ikpsk1-vectors.json";
 
@@ -60,6 +63,7 @@ function handshake(
   const psk = pskFromPairToken("pt_ffeeddccbbaa99887766554433221100");
 
   const initiator = writeMessage1({
+    prologue: PAIR_PROLOGUE,
     staticKeyPair: client,
     responderStaticPub: over.responderStaticPub ?? server.publicKeyRaw,
     psk: over.clientPsk ?? psk,
@@ -67,6 +71,7 @@ function handshake(
   });
   const responder = () =>
     respond({
+      prologue: PAIR_PROLOGUE,
       staticKeyPair: server,
       psk: over.serverPsk ?? psk,
       message1: initiator.message,
@@ -83,13 +88,23 @@ describe("a complete IKpsk1 handshake", () => {
 
     // The transcript hash is what `ctxId` is derived from, so a disagreement
     // here would surface later as an unexplained context mismatch.
-    expect(client.keys.handshakeHash.equals(server.keys.handshakeHash)).toBe(true);
-    expect(client.keys.clientToServer.equals(server.keys.clientToServer)).toBe(true);
-    expect(client.keys.serverToClient.equals(server.keys.serverToClient)).toBe(true);
+    // `consume()` is the only way to the keys, and it yields KeyObjects; the
+    // test reaches for bytes through `export()`, which no `src/` caller does.
+    const clientKeys = client.keys.consume();
+    const serverKeys = server.keys.consume();
+    expect(clientKeys.handshakeHash.equals(serverKeys.handshakeHash)).toBe(true);
+    expect(clientKeys.clientToServer.export().equals(serverKeys.clientToServer.export())).toBe(
+      true,
+    );
+    expect(clientKeys.serverToClient.export().equals(serverKeys.serverToClient.export())).toBe(
+      true,
+    );
 
     // Separate keys per direction, so a record can never be reflected at its
     // sender (design.md §3.3).
-    expect(client.keys.clientToServer.equals(client.keys.serverToClient)).toBe(false);
+    expect(clientKeys.clientToServer.export().equals(clientKeys.serverToClient.export())).toBe(
+      false,
+    );
   });
 
   it("authenticates the initiator's static key rather than trusting a claim", () => {
@@ -116,7 +131,9 @@ describe("a complete IKpsk1 handshake", () => {
     // captured session.
     const a = handshake();
     const b = handshake();
-    expect(a.responder().keys.handshakeHash.equals(b.responder().keys.handshakeHash)).toBe(false);
+    expect(
+      a.responder().keys.consume().handshakeHash.equals(b.responder().keys.consume().handshakeHash),
+    ).toBe(false);
   });
 });
 
@@ -154,6 +171,7 @@ describe("server authentication", () => {
       const client = generateKeyPair();
       const psk = pskFromPairToken("pt_0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f");
       const { message } = writeMessage1({
+        prologue: PAIR_PROLOGUE,
         staticKeyPair: client,
         responderStaticPub: believedResponderPub ?? server.publicKeyRaw,
         psk,
@@ -161,6 +179,7 @@ describe("server authentication", () => {
       });
       return () =>
         respond({
+          prologue: PAIR_PROLOGUE,
           staticKeyPair: server,
           psk,
           message1: message,
@@ -276,7 +295,13 @@ describe("tampering", () => {
       const tampered = Buffer.from(initiator.message);
       tampered[i] ^= 0x01;
       expect(() =>
-        respond({ staticKeyPair: server, psk, message1: tampered, buildPayload: () => PAYLOAD_2 }),
+        respond({
+          prologue: PAIR_PROLOGUE,
+          staticKeyPair: server,
+          psk,
+          message1: tampered,
+          buildPayload: () => PAYLOAD_2,
+        }),
       ).toThrow(NoiseError);
     }
   });
@@ -290,6 +315,7 @@ describe("tampering", () => {
       // symmetric state, so reusing one would test a corrupted state rather
       // than a corrupted message.
       const fresh = writeMessage1({
+        prologue: PAIR_PROLOGUE,
         staticKeyPair: clientStatic,
         responderStaticPub: serverStatic.publicKeyRaw,
         psk: PSK,
@@ -297,6 +323,7 @@ describe("tampering", () => {
         ephemeral: clientEphemeral,
       });
       respond({
+        prologue: PAIR_PROLOGUE,
         staticKeyPair: serverStatic,
         psk: PSK,
         message1: fresh.message,
@@ -312,6 +339,7 @@ describe("tampering", () => {
     for (const length of [0, 1, 31, 32, 79]) {
       expect(() =>
         respond({
+          prologue: PAIR_PROLOGUE,
           staticKeyPair: server,
           psk,
           message1: initiator.message.subarray(0, length),
@@ -330,7 +358,13 @@ describe("tampering", () => {
     const { server, psk } = handshake();
     const huge = Buffer.alloc(NOISE_MAX_MESSAGE_BYTES + 1);
     expect(() =>
-      respond({ staticKeyPair: server, psk, message1: huge, buildPayload: () => PAYLOAD_2 }),
+      respond({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: server,
+        psk,
+        message1: huge,
+        buildPayload: () => PAYLOAD_2,
+      }),
     ).toThrow(/too large/);
   });
 
@@ -340,7 +374,13 @@ describe("tampering", () => {
     tampered.fill(0, 0, 32); // an all-zero X25519 key: low order, no shared secret
     let message = "";
     try {
-      respond({ staticKeyPair: server, psk, message1: tampered, buildPayload: () => PAYLOAD_2 });
+      respond({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: server,
+        psk,
+        message1: tampered,
+        buildPayload: () => PAYLOAD_2,
+      });
     } catch (err) {
       message = err instanceof Error ? err.message : String(err);
     }
@@ -364,6 +404,7 @@ describe("the interop contract with tb-mobile", () => {
    */
   it("reproduces the committed messages exactly from fixed keys", () => {
     const initiator = writeMessage1({
+      prologue: PAIR_PROLOGUE,
       staticKeyPair: clientStatic,
       responderStaticPub: serverStatic.publicKeyRaw,
       psk: PSK,
@@ -373,6 +414,7 @@ describe("the interop contract with tb-mobile", () => {
     expect(initiator.message.toString("base64")).toBe(vectors.message1);
 
     const server = respond({
+      prologue: PAIR_PROLOGUE,
       staticKeyPair: serverStatic,
       psk: PSK,
       message1: initiator.message,
@@ -380,12 +422,13 @@ describe("the interop contract with tb-mobile", () => {
       ephemeral: serverEphemeral,
     });
     expect(server.message2.toString("base64")).toBe(vectors.message2);
-    expect(server.keys.handshakeHash.toString("base64")).toBe(vectors.handshakeHash);
-    expect(server.keys.clientToServer.toString("base64")).toBe(vectors.clientToServerKey);
-    expect(server.keys.serverToClient.toString("base64")).toBe(vectors.serverToClientKey);
+    const serverKeys = server.keys.consume();
+    expect(serverKeys.handshakeHash.toString("base64")).toBe(vectors.handshakeHash);
+    expect(serverKeys.clientToServer.export().toString("base64")).toBe(vectors.clientToServerKey);
+    expect(serverKeys.serverToClient.export().toString("base64")).toBe(vectors.serverToClientKey);
 
     const client = readMessage2(initiator.state, server.message2);
-    expect(client.keys.handshakeHash.toString("base64")).toBe(vectors.handshakeHash);
+    expect(client.keys.consume().handshakeHash.toString("base64")).toBe(vectors.handshakeHash);
   });
 
   it("pins the protocol name and the prologue, which the transcript commits to", () => {
@@ -403,5 +446,313 @@ describe("the interop contract with tb-mobile", () => {
     // vector assertion would fail together with no indication of the cause.
     expect(serverStatic.publicKeyRaw.toString("base64")).toBe(vectors.keys.serverStaticPublic);
     expect(clientStatic.publicKeyRaw.toString("base64")).toBe(vectors.keys.clientStaticPublic);
+  });
+});
+
+/**
+ * Which pattern a handshake runs is STATED, never inferred from whether a psk
+ * happens to have been passed (NONCE-DESIGN §11).
+ *
+ * The inferred form was fail-open at a trust boundary: a pairing call site that
+ * forgot its `psk` would not have failed, it would have silently run plain `IK`
+ * and lost the pair-token binding that is the whole reason pairing uses
+ * `IKpsk1` (spec §9.3, design.md §2.4). A forgotten argument must never be a
+ * downgrade.
+ */
+describe("pattern selection is explicit", () => {
+  const server = generateKeyPair();
+  const client = generateKeyPair();
+  const psk = pskFromPairToken("pt_00112233445566778899aabbccddeeff");
+  const payload = Buffer.from("{}", "utf-8");
+
+  it("refuses IKpsk1 without a psk, which is the downgrade that used to be silent", () => {
+    // The DEFAULT pattern, reached by a call site that simply forgot the psk.
+    expect(() =>
+      writeMessage1({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: client,
+        responderStaticPub: server.publicKeyRaw,
+        payload,
+      }),
+    ).toThrow(/requires a 32-byte psk/);
+
+    const { message } = writeMessage1({
+      prologue: PAIR_PROLOGUE,
+      staticKeyPair: client,
+      responderStaticPub: server.publicKeyRaw,
+      psk,
+      payload,
+    });
+    expect(() =>
+      readMessage1({ prologue: PAIR_PROLOGUE, staticKeyPair: server, message1: message }),
+    ).toThrow(/requires a 32-byte psk/);
+  });
+
+  it("refuses an EMPTY or short psk, which a presence check let through (round 4)", () => {
+    // `Buffer.alloc(0)` is truthy, so `if (!psk)` completed a full `IKpsk1`
+    // handshake over an empty psk: right protocol name, right token order,
+    // `mixKeyAndHash` over zero bytes. The wire says `IKpsk1` and the binding
+    // is a constant — exactly what §11 refused when it rejected a public
+    // constant PSK, arrived at through a guard instead of a decision.
+    for (const bad of [Buffer.alloc(0), Buffer.alloc(31, 0x11), Buffer.alloc(33, 0x11)]) {
+      expect(() =>
+        writeMessage1({
+          prologue: PAIR_PROLOGUE,
+          staticKeyPair: client,
+          responderStaticPub: server.publicKeyRaw,
+          pattern: "IKpsk1",
+          psk: bad,
+          payload,
+        }),
+      ).toThrow(/requires a 32-byte psk/);
+      expect(() =>
+        readMessage1({
+          prologue: PAIR_PROLOGUE,
+          staticKeyPair: server,
+          pattern: "IKpsk1",
+          psk: bad,
+          message1: Buffer.alloc(200),
+        }),
+      ).toThrow(/requires a 32-byte psk/);
+    }
+
+    // The control: a real 32-byte psk still completes both halves.
+    const good = writeMessage1({
+      prologue: PAIR_PROLOGUE,
+      staticKeyPair: client,
+      responderStaticPub: server.publicKeyRaw,
+      pattern: "IKpsk1",
+      psk,
+      payload,
+    });
+    expect(() =>
+      readMessage1({ prologue: PAIR_PROLOGUE, staticKeyPair: server, psk, message1: good.message }),
+    ).not.toThrow();
+  });
+
+  it("reads the pattern default off the ARGUMENT, never the prototype chain (round 4)", () => {
+    // `args.pattern ?? "IKpsk1"` walks the prototype chain, so a polluted
+    // `Object.prototype.pattern` silently downgraded every psk-less call site
+    // to plain `IK` — and broke pairing, which is the caller that depends on
+    // the default being the stronger pattern.
+    const polluted = Object.prototype as { pattern?: string };
+    polluted.pattern = "IK";
+    try {
+      // A pairing call site passes a psk and no pattern: it must still be
+      // IKpsk1, so the psk is accepted rather than refused as "IK takes none".
+      expect(() =>
+        writeMessage1({
+          prologue: PAIR_PROLOGUE,
+          staticKeyPair: client,
+          responderStaticPub: server.publicKeyRaw,
+          psk,
+          payload,
+        }),
+      ).not.toThrow();
+    } finally {
+      delete polluted.pattern;
+    }
+  });
+
+  it("refuses IK WITH a psk, because that is the same confusion facing the other way", () => {
+    expect(() =>
+      writeMessage1({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: client,
+        responderStaticPub: server.publicKeyRaw,
+        pattern: "IK",
+        psk,
+        payload,
+      }),
+    ).toThrow(/takes no psk/);
+    expect(() =>
+      readMessage1({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: server,
+        pattern: "IK",
+        psk,
+        message1: Buffer.alloc(200),
+      }),
+    ).toThrow(/takes no psk/);
+  });
+
+  it("refuses a pattern string it does not recognise, rather than defaulting (adversary F)", () => {
+    // The selector used to end in `pattern === "IKpsk1" ? A : B`, so anything
+    // that matched neither guard fell through to psk-less `IK` and silently
+    // dropped the pair-token binding. TypeScript rules this out for callers in
+    // this repository; the client track consumes the module as an artefact, and
+    // these values arrive from config and wire fields, not only typed source.
+    for (const bogus of ["IKPSK1", "ik", "IKpsk", "", "Noise_IK", "iKpSk1"]) {
+      expect(() =>
+        writeMessage1({
+          prologue: PAIR_PROLOGUE,
+          staticKeyPair: client,
+          responderStaticPub: server.publicKeyRaw,
+          pattern: bogus as "IK",
+          psk,
+          payload,
+        }),
+      ).toThrow(/Unknown Noise pattern/);
+      expect(() =>
+        readMessage1({
+          prologue: PAIR_PROLOGUE,
+          staticKeyPair: server,
+          pattern: bogus as "IK",
+          psk,
+          message1: Buffer.alloc(200),
+        }),
+      ).toThrow(/Unknown Noise pattern/);
+    }
+  });
+
+  it("still completes both patterns when the pairing is coherent", () => {
+    // The control: the guards refuse incoherent combinations and nothing else.
+    const paired = writeMessage1({
+      prologue: PAIR_PROLOGUE,
+      staticKeyPair: client,
+      responderStaticPub: server.publicKeyRaw,
+      pattern: "IKpsk1",
+      psk,
+      payload,
+    });
+    expect(
+      respond({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: server,
+        psk,
+        message1: paired.message,
+        buildPayload: () => payload,
+      }).payload.toString(),
+    ).toBe("{}");
+
+    const open = writeMessage1({
+      staticKeyPair: client,
+      responderStaticPub: server.publicKeyRaw,
+      pattern: "IK",
+      payload,
+      prologue: OPEN_PROLOGUE,
+    });
+    expect(
+      respond({
+        staticKeyPair: server,
+        pattern: "IK",
+        message1: open.message,
+        prologue: OPEN_PROLOGUE,
+        buildPayload: () => payload,
+      }).payload.toString(),
+    ).toBe("{}");
+  });
+});
+
+/**
+ * Key hygiene on the handshake states (adversary E-4).
+ *
+ * `SymmetricState` holds `ck`, the live chaining key — and BOTH traffic keys
+ * are `HKDF(ck, "")`, so rendering it hands over the whole session rather than a
+ * fragment. It printed at `util.inspect`'s DEFAULT depth, no `showHidden`
+ * needed, because these four objects were the ones §13's "every object holding
+ * key material installs a handler" had not reached.
+ *
+ * The assertion is needle-free on purpose: it checks that NO buffer renders at
+ * all, so no key bytes appear in the test, in its failure output, or in a log
+ * that captures either.
+ */
+describe("the responder reads its ephemeral off the argument too (round 6)", () => {
+  it("mints a fresh e per respond(), even under a polluted prototype", () => {
+    // `writeMessage1` used `own` and `respond` did not, so a polluted
+    // `Object.prototype.ephemeral` pinned the RESPONDER's `e` across every
+    // call: two `respond()`s producing byte-identical message 2s, which by §8's
+    // own rule is definitionally a replay.
+    const server = generateKeyPair();
+    const client = generateKeyPair();
+    const pinned = generateKeyPair();
+    const psk = pskFromPairToken("pt_00112233445566778899aabbccddeeff");
+    const msg1 = () =>
+      writeMessage1({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: client,
+        responderStaticPub: server.publicKeyRaw,
+        psk,
+        payload: Buffer.from("{}", "utf-8"),
+      }).message;
+
+    const proto = Object.prototype as Record<string, unknown>;
+    proto.ephemeral = pinned;
+    try {
+      const a = respond({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: server,
+        psk,
+        message1: msg1(),
+        buildPayload: () => Buffer.from("{}", "utf-8"),
+      }).message2;
+      const b = respond({
+        prologue: PAIR_PROLOGUE,
+        staticKeyPair: server,
+        psk,
+        message1: msg1(),
+        buildPayload: () => Buffer.from("{}", "utf-8"),
+      }).message2;
+
+      // Different ephemerals, so different messages — and neither is the
+      // attacker's.
+      expect(a.subarray(0, 32).equals(b.subarray(0, 32))).toBe(false);
+      expect(a.subarray(0, 32).equals(pinned.publicKeyRaw)).toBe(false);
+    } finally {
+      delete proto.ephemeral;
+    }
+  });
+});
+
+describe("handshake states hold their key material as #private", () => {
+  /**
+   * The mechanism, asserted where the handshake lives. The exhaustive
+   * rendering-mode matrix — `showHidden`, `customInspect: false`, both
+   * together, descriptors, spread, `structuredClone` — is in
+   * `e2ee-record.test.ts`, which owns the detector; this asserts the property
+   * the mechanism rests on: these are not properties at all.
+   */
+  it("keeps ck, h and k off the object entirely", () => {
+    const server = generateKeyPair();
+    const client = generateKeyPair();
+    const psk = pskFromPairToken("pt_00112233445566778899aabbccddeeff");
+    const payload = Buffer.from("{}", "utf-8");
+
+    const cipher = new CipherState();
+    cipher.initializeKey(Buffer.alloc(32, 0x11));
+    expect(Object.getOwnPropertyNames(cipher)).not.toContain("k");
+
+    const initiator = writeMessage1({
+      prologue: PAIR_PROLOGUE,
+      staticKeyPair: client,
+      responderStaticPub: server.publicKeyRaw,
+      psk,
+      payload,
+    });
+    const responder = readMessage1({
+      prologue: PAIR_PROLOGUE,
+      staticKeyPair: server,
+      psk,
+      message1: initiator.message,
+    });
+
+    for (const symmetric of [initiator.state.symmetric, responder.symmetric]) {
+      const own = Object.getOwnPropertyNames(symmetric as object);
+      expect(own).not.toContain("ck");
+      expect(own).not.toContain("h");
+      expect(own).not.toContain("cipher");
+    }
+
+    const finished = writeMessage2(responder, payload);
+    const own = Object.getOwnPropertyNames(finished.keys);
+    expect(own).not.toContain("clientToServer");
+    expect(own).not.toContain("serverToClient");
+    // A `#private` is invisible to a descriptor walk, which is what a generic
+    // serializer does.
+    expect(Object.keys(Object.getOwnPropertyDescriptors(finished.keys))).toHaveLength(0);
+
+    // Reading still works, and the handshake still completes.
+    expect(finished.keys.consume().clientToServer.export()).toHaveLength(32);
+    expect(readMessage2(initiator.state, finished.message2).payload.toString()).toBe("{}");
   });
 });

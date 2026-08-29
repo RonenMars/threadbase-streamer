@@ -9,6 +9,7 @@ import {
   isPushTokenKind,
   PUSH_TOKEN_KINDS,
 } from "../../db/repositories/push.repository";
+import { E2EE_PROTOCOL_VERSION } from "../../e2ee/protocol";
 import { getLogger } from "../../logger";
 import { serverIdentityPublicKey } from "../../server-identity";
 import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
@@ -115,8 +116,16 @@ export function describePushCapability(
   };
 }
 
-/** Envelope version this build speaks. The same number the pair QR carries as `v`. */
-export const E2EE_PROTOCOL_VERSION = 1;
+/**
+ * Envelope version this build speaks. The same number the pair QR carries as `v`.
+ *
+ * @deprecated Re-exported from `src/e2ee/protocol.ts`, which is the canonical
+ * home: the record layer needs this constant and a crypto module importing a
+ * Hono route module would invert the dependency direction (NONCE-DESIGN §4).
+ * The name stays here because released call sites and tests import it from this
+ * module.
+ */
+export { E2EE_PROTOCOL_VERSION };
 
 /**
  * Whether this build has the E2EE code path at all.

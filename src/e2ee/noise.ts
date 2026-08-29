@@ -43,8 +43,113 @@ import {
   hkdfSync,
   type KeyObject,
 } from "crypto";
+import { importSecret, isBytes, own, redactKeyMaterial, unpooled } from "./protocol";
 
 export const NOISE_PROTOCOL_NAME = "Noise_IKpsk1_25519_ChaChaPoly_SHA256";
+
+/**
+ * The psk-less pattern, used by `POST /api/e2ee/open` (NONCE-DESIGN §11).
+ *
+ * The transport handshake runs against static keys pairing already stored and
+ * has no pair token, so there is no pre-shared secret to mix. A constant public
+ * "PSK" was considered and rejected: it reduces to plain `IK` anyway and
+ * encodes "there is a PSK here that means nothing", which a reader takes as a
+ * freshness guarantee that does not exist.
+ *
+ * The name is not decoration — it is the string that seeds `h`, so it is itself
+ * domain separation: a message from one pattern cannot be read by the other
+ * even before the prologue is considered.
+ */
+export const NOISE_IK_PROTOCOL_NAME = "Noise_IK_25519_ChaChaPoly_SHA256";
+
+/**
+ * Which of the two patterns a handshake call means.
+ *
+ * **Stated, never inferred.** This used to be decided by whether `psk` was
+ * present, which made a forgotten argument select the WEAKER protocol: a
+ * pairing call site that omitted its psk would have silently run plain `IK`
+ * and lost the pair-token binding that is the entire reason pairing uses
+ * `IKpsk1` (spec §9.3, design.md §2.4). A missing argument must never be a
+ * downgrade, so the pattern is named and the two are checked against each
+ * other in both directions — a psk handed to `IK` is the same caller confusion
+ * wearing the other face.
+ *
+ * The default is the STRONGER pattern, so an un-updated call site that forgets
+ * its psk throws instead of quietly weakening.
+ */
+export type NoisePattern = "IKpsk1" | "IK";
+
+const NOISE_PATTERNS: readonly NoisePattern[] = ["IKpsk1", "IK"];
+
+/**
+ * The protocol name for a pattern, or a throw.
+ *
+ * **Exhaustive, and fail-closed on anything unrecognised.** This used to end in
+ * `pattern === "IKpsk1" ? A : B`, so a value that matched neither guard —
+ * `"IKPSK1"`, `"ik"`, anything arriving from a config file, a wire field or a
+ * client artefact — fell through to psk-less `IK` and silently dropped the
+ * pair-token binding. TypeScript rules that out for callers inside this
+ * repository; the client track consumes this module as an artefact, and a type
+ * is not a runtime check.
+ *
+ * So there are two layers: a runtime membership test for values that were never
+ * typed, and a `never` arm that makes adding a third pattern a compile error
+ * here rather than a silent default somewhere else.
+ */
+/**
+ * A prologue is REQUIRED and must be real bytes — of any length, since the two
+ * namespace strings differ in length.
+ *
+ * Not `assertBytes`, which pins a width: this is the presence-and-type half of
+ * the same rule. It is a parameter rather than a default because
+ * `args.prologue ?? PAIR_PROLOGUE` is a prototype-chain read, and a polluted
+ * `Object.prototype.prologue` made the PAIRING handshake accept an `/open`
+ * message — §11's domain separation collapsing through a language default
+ * nobody wrote.
+ */
+function assertPrologue(prologue: unknown): asserts prologue is Buffer {
+  if (!(prologue instanceof Uint8Array) || prologue.BYTES_PER_ELEMENT !== 1) {
+    throw new NoiseError("prologue is required: pass PAIR_PROLOGUE or OPEN_PROLOGUE");
+  }
+}
+
+function protocolNameFor(pattern: NoisePattern, psk: Buffer | undefined): string {
+  if (!NOISE_PATTERNS.includes(pattern)) {
+    throw new NoiseError(
+      `Unknown Noise pattern ${JSON.stringify(String(pattern))}; expected "IKpsk1" or "IK"`,
+    );
+  }
+  switch (pattern) {
+    case "IKpsk1":
+      // ONE guard, and it checks BYTE LENGTH.
+      //
+      // Two versions of this were wrong in the same way. `!psk` accepted
+      // `Buffer.alloc(0)`, which is truthy, and completed a full `IKpsk1`
+      // handshake over an empty psk. `psk.length !== 32` then accepted
+      // `new Float64Array(32)`, whose `.length` is 32 and whose byteLength is
+      // 256, binding 256 zero bytes. Both produce the thing §11 rejects — a
+      // wire that says `IKpsk1` over a binding that is a constant — and both
+      // arrived through a guard rather than a decision.
+      //
+      // The defect was never in any single guard. It was in writing the guard
+      // four times, so `isBytes` is now the only place the question is asked.
+      if (!isBytes(psk, HASHLEN)) {
+        throw new NoiseError(
+          `The IKpsk1 pattern requires a ${HASHLEN}-byte psk; pass one, or pattern: "IK"`,
+        );
+      }
+      return NOISE_PROTOCOL_NAME;
+    case "IK":
+      if (psk) {
+        throw new NoiseError('The IK pattern takes no psk; drop it, or pattern: "IKpsk1"');
+      }
+      return NOISE_IK_PROTOCOL_NAME;
+    default: {
+      const unreachable: never = pattern;
+      throw new NoiseError(`Unhandled Noise pattern ${String(unreachable)}`);
+    }
+  }
+}
 
 /**
  * Prologue for the PAIRING handshake, mixed into the transcript before any
@@ -71,11 +176,41 @@ export const NOISE_PROTOCOL_NAME = "Noise_IKpsk1_25519_ChaChaPoly_SHA256";
  */
 export const PAIR_PROLOGUE = Buffer.from("threadbase-e2ee/1 pair", "utf-8");
 
+/**
+ * The sibling named above, now that `/api/e2ee/open` exists to use it.
+ *
+ * Same namespace, different purpose, so a message from the pairing handshake
+ * can never be replayed into the transport handshake or the other way round —
+ * by construction, rather than by an argument about the PSK.
+ */
+export const OPEN_PROLOGUE = Buffer.from("threadbase-e2ee/1 open", "utf-8");
+
+// The `/open` handshake takes NO psk: pass `pattern: "IK"` to these calls and
+// omit `psk`. Omitting `psk` alone is NOT how the pattern is selected — that
+// would make a forgotten argument a downgrade — and it throws.
+
 const DHLEN = 32;
 const HASHLEN = 32;
 const TAGLEN = 16;
 /** `e` (32) + `s` sealed (32 + 16) — everything before message 1's payload. */
 export const NOISE_MESSAGE_1_OVERHEAD = DHLEN + DHLEN + TAGLEN + TAGLEN;
+/**
+ * The initiator's ephemeral public key, or `null` when the message is too short
+ * to contain one.
+ *
+ * `e` is the FIRST field of message 1 and travels in the clear (spec §7.4), so
+ * it can be read before any Diffie-Hellman — which is what lets
+ * `/api/e2ee/open` reject a replayed msg1 without paying for it. Reading it
+ * lives here, with the rest of the wire layout, rather than in a route indexing
+ * into a buffer by a number it inferred.
+ *
+ * Returns a VIEW, not a copy: callers must not mutate it.
+ */
+export function messageEphemeral(message1: Buffer): Buffer | null {
+  if (message1.length < NOISE_MESSAGE_1_OVERHEAD) return null;
+  return message1.subarray(0, DHLEN);
+}
+
 /** `e` (32) — everything before message 2's payload. */
 export const NOISE_MESSAGE_2_OVERHEAD = DHLEN + TAGLEN;
 
@@ -240,21 +375,30 @@ function chachaNonce(n: bigint): Buffer {
  * verifying passes every other test in the suite.
  */
 export class CipherState {
-  private k: Buffer | null = null;
+  /**
+   * `#private`, not `private`: TypeScript's `private` is a compile-time
+   * annotation over an ordinary own property, which `showHidden` prints and
+   * `getOwnPropertyDescriptors` returns. A `#` field is not a property at all.
+   */
+  #k: Buffer | null = null;
   private n = 0n;
 
+  constructor() {
+    redactKeyMaterial(this, () => `CipherState { n: ${this.n}, k: <#private> }`);
+  }
+
   initializeKey(key: Buffer | null): void {
-    this.k = key;
+    this.#k = key;
     this.n = 0n;
   }
 
   hasKey(): boolean {
-    return this.k !== null;
+    return this.#k !== null;
   }
 
   encryptWithAd(ad: Buffer, plaintext: Buffer): Buffer {
-    if (!this.k) return plaintext;
-    const cipher = createCipheriv("chacha20-poly1305", this.k, chachaNonce(this.n), {
+    if (!this.#k) return plaintext;
+    const cipher = createCipheriv("chacha20-poly1305", this.#k, chachaNonce(this.n), {
       authTagLength: TAGLEN,
     });
     cipher.setAAD(ad, { plaintextLength: plaintext.length });
@@ -264,11 +408,11 @@ export class CipherState {
   }
 
   decryptWithAd(ad: Buffer, ciphertext: Buffer): Buffer {
-    if (!this.k) return ciphertext;
+    if (!this.#k) return ciphertext;
     if (ciphertext.length < TAGLEN) throw new NoiseError("Ciphertext shorter than its tag");
     const body = ciphertext.subarray(0, ciphertext.length - TAGLEN);
     const tag = ciphertext.subarray(ciphertext.length - TAGLEN);
-    const decipher = createDecipheriv("chacha20-poly1305", this.k, chachaNonce(this.n), {
+    const decipher = createDecipheriv("chacha20-poly1305", this.#k, chachaNonce(this.n), {
       authTagLength: TAGLEN,
     });
     decipher.setAAD(ad, { plaintextLength: body.length });
@@ -290,21 +434,31 @@ export class CipherState {
 // ─── SymmetricState (spec §5.2) ─────────────────────────────────────
 
 class SymmetricState {
-  private ck: Buffer;
-  private h: Buffer;
-  private readonly cipher = new CipherState();
+  /**
+   * The LIVE chaining key. Both traffic keys are `HKDF(ck, "")`, so rendering
+   * it hands over the whole session rather than a fragment — it printed at
+   * `util.inspect`'s default depth before this became a `#` field.
+   */
+  #ck: Buffer;
+  #h: Buffer;
+  readonly #cipher = new CipherState();
 
   constructor(protocolName: string) {
     const name = Buffer.from(protocolName, "utf-8");
     // Spec §5.2: pad to HASHLEN if it fits, otherwise hash it. Our name is 36
     // bytes, so this is always the hash branch — written in full anyway, since
     // the alternative is a constant nobody can check against the spec.
-    this.h =
+    this.#h =
       name.length <= HASHLEN
         ? Buffer.concat([name, Buffer.alloc(HASHLEN - name.length)])
         : createHash("sha256").update(name).digest();
-    this.ck = Buffer.from(this.h);
-    this.cipher.initializeKey(null);
+    this.#ck = Buffer.from(this.#h);
+    this.#cipher.initializeKey(null);
+    // `ck` is the LIVE chaining key, and both traffic keys are `HKDF(ck, "")` —
+    // so rendering it hands over the whole session, not a fragment of it. It
+    // printed at `util.inspect`'s DEFAULT depth, with no `showHidden` needed,
+    // because this object was the one place the §13 rule had not reached.
+    redactKeyMaterial(this, () => "SymmetricState { ck, h, cipher: <#private> }");
   }
 
   /**
@@ -315,7 +469,7 @@ class SymmetricState {
    * subtly wrong.
    */
   private hkdf(ikm: Buffer, outputs: 2 | 3): Buffer[] {
-    const raw = Buffer.from(hkdfSync("sha256", ikm, this.ck, Buffer.alloc(0), HASHLEN * outputs));
+    const raw = Buffer.from(hkdfSync("sha256", ikm, this.#ck, Buffer.alloc(0), HASHLEN * outputs));
     const out: Buffer[] = [];
     for (let i = 0; i < outputs; i++) out.push(raw.subarray(i * HASHLEN, (i + 1) * HASHLEN));
     return out;
@@ -323,30 +477,30 @@ class SymmetricState {
 
   mixKey(ikm: Buffer): void {
     const [ck, tempK] = this.hkdf(ikm, 2);
-    this.ck = ck;
-    this.cipher.initializeKey(tempK);
+    this.#ck = ck;
+    this.#cipher.initializeKey(tempK);
   }
 
   mixHash(data: Buffer): void {
-    this.h = createHash("sha256").update(this.h).update(data).digest();
+    this.#h = createHash("sha256").update(this.#h).update(data).digest();
   }
 
   /** Spec §5.2. Used only by the `psk` token. */
   mixKeyAndHash(ikm: Buffer): void {
     const [ck, tempH, tempK] = this.hkdf(ikm, 3);
-    this.ck = ck;
+    this.#ck = ck;
     this.mixHash(tempH);
-    this.cipher.initializeKey(tempK);
+    this.#cipher.initializeKey(tempK);
   }
 
   encryptAndHash(plaintext: Buffer): Buffer {
-    const ciphertext = this.cipher.encryptWithAd(this.h, plaintext);
+    const ciphertext = this.#cipher.encryptWithAd(this.#h, plaintext);
     this.mixHash(ciphertext);
     return ciphertext;
   }
 
   decryptAndHash(ciphertext: Buffer): Buffer {
-    const plaintext = this.cipher.decryptWithAd(this.h, ciphertext);
+    const plaintext = this.#cipher.decryptWithAd(this.#h, ciphertext);
     // Hashes the CIPHERTEXT, not the plaintext, and only after a successful
     // decrypt — so both sides' transcripts commit to the same bytes.
     this.mixHash(ciphertext);
@@ -355,7 +509,7 @@ class SymmetricState {
 
   /** The transcript hash. Both sides must arrive at the same value. */
   handshakeHash(): Buffer {
-    return Buffer.from(this.h);
+    return Buffer.from(this.#h);
   }
 
   /** Spec §5.2 `Split()`: the two directional transport keys. */
@@ -367,13 +521,81 @@ class SymmetricState {
 
 // ─── The handshake ──────────────────────────────────────────────────
 
-export interface HandshakeKeys {
-  /** Transcript hash. `ctxId` is derived from it, so both sides agree without a round trip. */
-  handshakeHash: Buffer;
-  /** Initiator → responder traffic key. */
-  clientToServer: Buffer;
-  /** Responder → initiator traffic key. */
-  serverToClient: Buffer;
+/**
+ * The transport keys a completed handshake yields.
+ *
+ * **A class with `#private` fields, not an object literal**, because this is
+ * the value that TRAVELS — out of `respond()`, through the route, into
+ * `createRecordState` — and so it is the one most likely to end up inside an
+ * error, a log line or a test diff. As a literal its two traffic keys were
+ * ordinary properties: `defineProperty(enumerable: false)` hid them from
+ * default `inspect` and `{ showHidden: true }` printed them anyway; the custom
+ * inspect handler hid them from that and `{ customInspect: false }` printed
+ * them anyway. A `#` field is not a property, so there is no mode to find.
+ *
+ * The getters are on the prototype, which `inspect` does not walk and
+ * `getOwnPropertyDescriptors` does not report, so `keys.clientToServer` reads
+ * exactly as it did while rendering nothing.
+ */
+export interface TrafficKeys {
+  /** Initiator → responder. An OpenSSL key handle, never bytes. */
+  readonly clientToServer: KeyObject;
+  /** Responder → initiator. */
+  readonly serverToClient: KeyObject;
+  /** The transcript hash. Public, and an unpooled copy. */
+  readonly handshakeHash: Buffer;
+}
+
+/**
+ * The transport keys a completed handshake yields.
+ *
+ * **The keys are `KeyObject`s and there is no byte getter at all.** Hiding was
+ * tried four ways and defeated four times — non-enumerable by `showHidden`, the
+ * inspect handler by `customInspect: false`, `#private` fields by
+ * `{ getters: true }` reading through the accessors, and finally `#private`
+ * with no getter by the ALLOCATION POOL: Node pool-allocates small Buffers, a
+ * Buffer's `.buffer` exposes the shared 8 KiB block, and a public Buffer on the
+ * same object hands out a window onto the pool the private key was allocated
+ * in. Hiding a Buffer cannot work, so no traffic-key bytes exist as a JS Buffer
+ * after the handshake: they are imported into OpenSSL and the copies wiped.
+ *
+ * `consume()` is the only way out and it works once, so ownership of the keys
+ * is a fact about the object rather than a convention.
+ */
+export class HandshakeKeys {
+  #clientToServer: KeyObject | null;
+  #serverToClient: KeyObject | null;
+  readonly #handshakeHash: Buffer;
+
+  constructor(handshakeHash: Buffer, clientToServer: Buffer, serverToClient: Buffer) {
+    this.#handshakeHash = unpooled(handshakeHash);
+    this.#clientToServer = importSecret(clientToServer);
+    this.#serverToClient = importSecret(serverToClient);
+    // These are `split()`'s outputs and this object owns them: wiped now, so the
+    // window in which a traffic key exists as JS-visible bytes ends here.
+    clientToServer.fill(0);
+    serverToClient.fill(0);
+    redactKeyMaterial(this, () => "HandshakeKeys { traffic keys: <KeyObject, off-heap> }");
+  }
+
+  /**
+   * Hand the keys to the record layer. Once.
+   *
+   * NOT the transcript hash's guard — that is public — but the keys': a second
+   * caller getting the same handles would mean two record layers believing they
+   * own one counter space, which is the shape every nonce rule here exists to
+   * prevent.
+   */
+  consume(): TrafficKeys {
+    const clientToServer = this.#clientToServer;
+    const serverToClient = this.#serverToClient;
+    if (!clientToServer || !serverToClient) {
+      throw new NoiseError("These handshake keys have already been consumed");
+    }
+    this.#clientToServer = null;
+    this.#serverToClient = null;
+    return { clientToServer, serverToClient, handshakeHash: unpooled(this.#handshakeHash) };
+  }
 }
 
 function dh(privateKey: KeyObject, publicKey: KeyObject): Buffer {
@@ -392,21 +614,42 @@ function dh(privateKey: KeyObject, publicKey: KeyObject): Buffer {
 export function writeMessage1(args: {
   staticKeyPair: KeyPair;
   responderStaticPub: Buffer;
-  psk: Buffer;
+  /** Required by `IKpsk1`, forbidden by `IK`. */
+  psk?: Buffer;
+  /** Defaults to the stronger `IKpsk1`. `/api/e2ee/open` passes `"IK"` (§11). */
+  pattern?: NoisePattern;
   payload: Buffer;
-  prologue?: Buffer;
+  /** REQUIRED: `PAIR_PROLOGUE` or `OPEN_PROLOGUE`. Never defaulted (§11). */
+  prologue: Buffer;
   /** Test seam only. Production always generates a fresh ephemeral. */
   ephemeral?: KeyPair;
 }): { message: Buffer; state: HandshakeInitiatorState } {
-  const state = new SymmetricState(NOISE_PROTOCOL_NAME);
-  state.mixHash(args.prologue ?? PAIR_PROLOGUE);
+  // `Object.hasOwn`, not `??`: `??` walks the prototype chain, so
+  // `Object.prototype.pattern = "IK"` silently downgrades every psk-less call
+  // site and breaks pairing. "The default is the stronger pattern" has to be
+  // enforced, not commented.
+  const pattern = Object.hasOwn(args, "pattern") ? (args.pattern as NoisePattern) : "IKpsk1";
+  const state = new SymmetricState(protocolNameFor(pattern, args.psk));
+  // REQUIRED, never defaulted. `args.prologue ??` is a prototype-chain read, so
+  // `Object.prototype.prologue = OPEN_PROLOGUE` made the PAIRING handshake
+  // accept an `/open` message — §11's domain separation collapsing through a
+  // language default nobody wrote.
+  // `own`, not `args.prologue`: making the parameter required is not enough,
+  // because reading it directly is ITSELF the prototype-chain read. With
+  // `Object.prototype.prologue` set, a call that passes none still found one.
+  const prologue = own(args, "prologue");
+  assertPrologue(prologue);
+  state.mixHash(prologue);
 
   const rs = publicKeyFromRaw(args.responderStaticPub);
   // Pre-message `<- s`: the responder's static key is known in advance, from
   // the QR. This is what makes the QR an out-of-band authentication channel.
   state.mixHash(args.responderStaticPub);
 
-  const e = args.ephemeral ?? generateKeyPair();
+  // Read off the ARGUMENT: a polluted `Object.prototype.ephemeral` pins every
+  // handshake to one attacker-chosen `e`, which by §8's own rule is
+  // definitionally a replay.
+  const e = own(args, "ephemeral") ?? generateKeyPair();
 
   // `e`. In a PSK handshake the token also calls MixKey (spec §9.2), so the
   // ephemeral contributes to the chaining key before any DH — without it the
@@ -425,13 +668,26 @@ export function writeMessage1(args: {
   state.mixKey(dh(args.staticKeyPair.privateKey, rs));
 
   // `psk` — the pair token. Placed last in message 1 by the `psk1` modifier.
-  state.mixKeyAndHash(args.psk);
+  // The `IK` pattern has no token here at all (§11), and `protocolNameFor` has
+  // already refused the two incoherent combinations.
+  if (pattern === "IKpsk1") state.mixKeyAndHash(args.psk as Buffer);
 
   const encryptedPayload = state.encryptAndHash(args.payload);
 
+  const initiator: HandshakeInitiatorState = {
+    symmetric: state,
+    ephemeral: e,
+    staticKeyPair: args.staticKeyPair,
+  };
+  // Holds the symmetric state and both keypairs. Redacted for the same reason
+  // and through the same helper (§13).
+  // Its `symmetric` is opaque by construction now, and the keypairs are Node
+  // `KeyObject`s, which never render their bytes. The summary is for reading.
+  redactKeyMaterial(initiator, () => "HandshakeInitiatorState { keys: <#private> }");
+
   return {
     message: Buffer.concat([e.publicKeyRaw, encryptedStatic, encryptedPayload]),
-    state: { symmetric: state, ephemeral: e, staticKeyPair: args.staticKeyPair },
+    state: initiator,
   };
 }
 
@@ -502,14 +758,32 @@ export interface HandshakeResponderState {
  */
 export function readMessage1(args: {
   staticKeyPair: KeyPair;
-  psk: Buffer;
+  /** Required by `IKpsk1`, forbidden by `IK`. */
+  psk?: Buffer;
+  /** Defaults to the stronger `IKpsk1`. `/api/e2ee/open` passes `"IK"` (§11). */
+  pattern?: NoisePattern;
   message1: Buffer;
-  prologue?: Buffer;
+  /** REQUIRED: `PAIR_PROLOGUE` or `OPEN_PROLOGUE`. Never defaulted (§11). */
+  prologue: Buffer;
 }): HandshakeResponderState {
   assertMessageSize(args.message1, NOISE_MESSAGE_1_OVERHEAD);
 
-  const state = new SymmetricState(NOISE_PROTOCOL_NAME);
-  state.mixHash(args.prologue ?? PAIR_PROLOGUE);
+  // `Object.hasOwn`, not `??`: `??` walks the prototype chain, so
+  // `Object.prototype.pattern = "IK"` silently downgrades every psk-less call
+  // site and breaks pairing. "The default is the stronger pattern" has to be
+  // enforced, not commented.
+  const pattern = Object.hasOwn(args, "pattern") ? (args.pattern as NoisePattern) : "IKpsk1";
+  const state = new SymmetricState(protocolNameFor(pattern, args.psk));
+  // REQUIRED, never defaulted. `args.prologue ??` is a prototype-chain read, so
+  // `Object.prototype.prologue = OPEN_PROLOGUE` made the PAIRING handshake
+  // accept an `/open` message — §11's domain separation collapsing through a
+  // language default nobody wrote.
+  // `own`, not `args.prologue`: making the parameter required is not enough,
+  // because reading it directly is ITSELF the prototype-chain read. With
+  // `Object.prototype.prologue` set, a call that passes none still found one.
+  const prologue = own(args, "prologue");
+  assertPrologue(prologue);
+  state.mixHash(prologue);
   state.mixHash(args.staticKeyPair.publicKeyRaw);
 
   // `e`
@@ -530,12 +804,12 @@ export function readMessage1(args: {
   // `ss`
   state.mixKey(dh(args.staticKeyPair.privateKey, rs));
 
-  // `psk`
-  state.mixKeyAndHash(args.psk);
+  // `psk` — the `IK` pattern has no token here (§11).
+  if (pattern === "IKpsk1") state.mixKeyAndHash(args.psk as Buffer);
 
   const payload = state.decryptAndHash(args.message1.subarray(DHLEN + DHLEN + TAGLEN));
 
-  return {
+  const responder: HandshakeResponderState = {
     symmetric: state,
     initiatorStaticPub,
     payload,
@@ -543,6 +817,8 @@ export function readMessage1(args: {
     initiatorStatic: rs,
     staticKeyPair: args.staticKeyPair,
   };
+  redactKeyMaterial(responder, () => "HandshakeResponderState { keys: <#private> }");
+  return responder;
 }
 
 /** Write message 2 and derive the transport keys. Completes the handshake. */
@@ -574,11 +850,15 @@ export function writeMessage2(
  */
 export function respond(args: {
   staticKeyPair: KeyPair;
-  psk: Buffer;
+  /** Required by `IKpsk1`, forbidden by `IK`. */
+  psk?: Buffer;
+  /** Defaults to the stronger `IKpsk1`. `/api/e2ee/open` passes `"IK"` (§11). */
+  pattern?: NoisePattern;
   message1: Buffer;
   /** Built from the authenticated message-1 payload; sealed into message 2. */
   buildPayload: (initiatorStaticPub: Buffer, payload: Buffer) => Buffer;
-  prologue?: Buffer;
+  /** REQUIRED: `PAIR_PROLOGUE` or `OPEN_PROLOGUE`. Never defaulted (§11). */
+  prologue: Buffer;
   /** Test seam only. */
   ephemeral?: KeyPair;
 }): ResponderResult {
@@ -587,7 +867,11 @@ export function respond(args: {
   const { message2, keys } = writeMessage2(
     state,
     args.buildPayload(initiatorStaticPub, payload),
-    args.ephemeral,
+    // `own`, like the initiator half at `writeMessage1`. Reading `args.ephemeral`
+    // bare is a prototype-chain read, and a polluted `Object.prototype.ephemeral`
+    // pins the RESPONDER's `e` across every `respond()` — two calls producing
+    // byte-identical messages, which by §8's own rule is definitionally a replay.
+    own(args, "ephemeral"),
   );
 
   return { initiatorStaticPub, payload, message2, keys };
@@ -598,7 +882,7 @@ function finish(state: SymmetricState): HandshakeKeys {
   // Spec §5.2: the first key is always initiator→responder, whichever side
   // called Split(). Naming them by direction here means no call site has to
   // remember which end it is.
-  return { handshakeHash: state.handshakeHash(), clientToServer: k1, serverToClient: k2 };
+  return new HandshakeKeys(state.handshakeHash(), k1, k2);
 }
 
 /**

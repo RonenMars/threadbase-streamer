@@ -134,6 +134,12 @@ const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]
   ["/api/logs", "admin"],
   // Pairing routes other than the public exchange (e.g. minting a token).
   ["/api/pair", "admin"],
+  // The transport handshake. `POST /api/e2ee/open` is public and bypasses this
+  // middleware entirely (`PUBLIC_POST_PATHS`) — the Noise handshake IS the
+  // authentication. The rule exists so a stray method on the same path is
+  // denied by rule rather than by omission, which is what the "every mounted
+  // route is classified" test enforces (NONCE-DESIGN §18).
+  ["/api/e2ee", "admin"],
   // The live WebSocket. Subscribing is a read — terminal output, session
   // updates, conversation events. Control still flows through the HTTP input
   // routes, which carry their own capability check, so a read-only device can
