@@ -111,88 +111,88 @@ function response(): { res: ServerResponse; status: () => number; body: () => un
 }
 
 describe("POST /input { input } while a prompt is open", () => {
-  it.each([
-    "permission",
-    "question",
-  ] as const)("clears an expired %s prompt and lets text input through", async (kind) => {
-    vi.useFakeTimers();
-    vi.setSystemTime("2026-08-26T12:00:00.000Z");
-    try {
-      const h = harness(null);
-      const frames: WSMessage[] = [];
-      const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
-      deps.pendingQuestionKey = new Map();
-      deps.pendingPermissionKey = new Map();
-      deps.sessionSubscribers = new Map();
-      deps.wsHub.broadcastToClients = (_clients, frame) => frames.push(frame);
-      const registry = new PromptRegistry({
-        onExpire: (prompt) =>
-          clearExpiredPendingPrompt(
+  it.each(["permission", "question"] as const)(
+    "clears an expired %s prompt and lets text input through",
+    async (kind) => {
+      vi.useFakeTimers();
+      vi.setSystemTime("2026-08-26T12:00:00.000Z");
+      try {
+        const h = harness(null);
+        const frames: WSMessage[] = [];
+        const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+        deps.pendingQuestionKey = new Map();
+        deps.pendingPermissionKey = new Map();
+        deps.sessionSubscribers = new Map();
+        deps.wsHub.broadcastToClients = (_clients, frame) => frames.push(frame);
+        const registry = new PromptRegistry({
+          onExpire: (prompt) =>
+            clearExpiredPendingPrompt(
+              {
+                pendingPermission: h.pendingPermission,
+                pendingPermissionKey: deps.pendingPermissionKey,
+                pendingQuestions: h.pendingQuestions,
+                pendingQuestionKey: deps.pendingQuestionKey,
+                sessionSubscribers: deps.sessionSubscribers,
+                wsHub: deps.wsHub,
+              },
+              prompt,
+            ),
+        });
+        deps.promptRegistry = registry;
+        const prompt = registry.open({
+          sessionId: SESSION,
+          intent: kind === "permission" ? "approval" : "question",
+          message: kind === "permission" ? "Allow command?" : "Which language?",
+          questions: [
             {
-              pendingPermission: h.pendingPermission,
-              pendingPermissionKey: deps.pendingPermissionKey,
-              pendingQuestions: h.pendingQuestions,
-              pendingQuestionKey: deps.pendingQuestionKey,
-              sessionSubscribers: deps.sessionSubscribers,
-              wsHub: deps.wsHub,
+              text: kind === "permission" ? "Allow command?" : "Which language?",
+              inputMode: "single",
+              options: [{ label: "Yes" }, { label: "No" }],
+              allowOther: false,
+              secret: "unknown",
             },
-            prompt,
-          ),
-      });
-      deps.promptRegistry = registry;
-      const prompt = registry.open({
-        sessionId: SESSION,
-        intent: kind === "permission" ? "approval" : "question",
-        message: kind === "permission" ? "Allow command?" : "Which language?",
-        questions: [
-          {
-            text: kind === "permission" ? "Allow command?" : "Which language?",
-            inputMode: "single",
-            options: [{ label: "Yes" }, { label: "No" }],
-            allowOther: false,
-            secret: "unknown",
-          },
-        ],
-        answerRequirement: "blocking",
-        expiresAt: "2026-08-26T12:00:00.100Z",
-        provenance: { source: "provider", confidence: "authoritative" },
-      });
-      if (kind === "permission") {
-        h.pendingPermission.set(SESSION, {
-          ...GATE,
-          gateId: prompt.promptId,
-          promptId: prompt.promptId,
+          ],
+          answerRequirement: "blocking",
+          expiresAt: "2026-08-26T12:00:00.100Z",
+          provenance: { source: "provider", confidence: "authoritative" },
         });
-        deps.pendingPermissionKey.set(SESSION, "permission-key");
-      } else {
-        h.pendingQuestions.set(SESSION, {
-          toolUseId: "toolu_expiring",
-          questions: QUESTIONS,
-          origin: "pty",
-          promptId: prompt.promptId,
-        });
-        deps.pendingQuestionKey.set(SESSION, "question-key");
+        if (kind === "permission") {
+          h.pendingPermission.set(SESSION, {
+            ...GATE,
+            gateId: prompt.promptId,
+            promptId: prompt.promptId,
+          });
+          deps.pendingPermissionKey.set(SESSION, "permission-key");
+        } else {
+          h.pendingQuestions.set(SESSION, {
+            toolUseId: "toolu_expiring",
+            questions: QUESTIONS,
+            origin: "pty",
+            promptId: prompt.promptId,
+          });
+          deps.pendingQuestionKey.set(SESSION, "question-key");
+        }
+
+        vi.setSystemTime("2026-08-26T12:00:00.100Z");
+        const { res, status, body } = response();
+        await h.handlers.handleSendInput(SESSION, request({ input: "hello" }), res);
+
+        expect(status()).toBe(200);
+        expect(body()).toEqual({ ok: true });
+        expect(h.inputs).toEqual(["hello"]);
+        expect(h.pendingPermission.has(SESSION)).toBe(false);
+        expect(h.pendingQuestions.has(SESSION)).toBe(false);
+        expect(frames).toContainEqual(
+          kind === "permission"
+            ? { type: "permission_cancelled", sessionId: SESSION }
+            : { type: "question_cancelled", sessionId: SESSION, toolUseId: "toolu_expiring" },
+        );
+        registry.dispose();
+      } finally {
+        vi.useRealTimers();
       }
-
-      vi.setSystemTime("2026-08-26T12:00:00.100Z");
-      const { res, status, body } = response();
-      await h.handlers.handleSendInput(SESSION, request({ input: "hello" }), res);
-
-      expect(status()).toBe(200);
-      expect(body()).toEqual({ ok: true });
-      expect(h.inputs).toEqual(["hello"]);
-      expect(h.pendingPermission.has(SESSION)).toBe(false);
-      expect(h.pendingQuestions.has(SESSION)).toBe(false);
-      expect(frames).toContainEqual(
-        kind === "permission"
-          ? { type: "permission_cancelled", sessionId: SESSION }
-          : { type: "question_cancelled", sessionId: SESSION, toolUseId: "toolu_expiring" },
-      );
-      registry.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+    },
+  );
 
   it("does not clear a newer pending permission when an old prompt expires", async () => {
     vi.useFakeTimers();
@@ -250,26 +250,26 @@ describe("POST /input { input } while a prompt is open", () => {
     }
   });
 
-  it.each([
-    "permission",
-    "question",
-  ] as const)("refuses with prompt_pending and writes zero bytes (%s)", async (kind) => {
-    const h = harness(kind);
-    const { res, status, body } = response();
-    await h.handlers.handleSendInput(
-      SESSION,
-      request({ input: "hello", idempotencyKey: "k1" }),
-      res,
-    );
+  it.each(["permission", "question"] as const)(
+    "refuses with prompt_pending and writes zero bytes (%s)",
+    async (kind) => {
+      const h = harness(kind);
+      const { res, status, body } = response();
+      await h.handlers.handleSendInput(
+        SESSION,
+        request({ input: "hello", idempotencyKey: "k1" }),
+        res,
+      );
 
-    expect(status()).toBe(409);
-    expect(body()).toMatchObject({ ok: false, reason: "prompt_pending", promptKind: kind });
-    expect(h.inputs).toEqual([]);
-    expect(h.keys).toEqual([]);
-    // A refusal is not a result to replay: the same key must go through once
-    // the card is answered.
-    expect(h.idempotency.size(SESSION)).toBe(0);
-  });
+      expect(status()).toBe(409);
+      expect(body()).toMatchObject({ ok: false, reason: "prompt_pending", promptKind: kind });
+      expect(h.inputs).toEqual([]);
+      expect(h.keys).toEqual([]);
+      // A refusal is not a result to replay: the same key must go through once
+      // the card is answered.
+      expect(h.idempotency.size(SESSION)).toBe(0);
+    },
+  );
 
   // Negative control: the same request with no prompt open reaches the PTY.
   // Proves the harness exercises the write, so the empty `inputs` above is a

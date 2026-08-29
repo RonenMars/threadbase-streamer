@@ -124,16 +124,15 @@ describe("credentials", () => {
 
   // No account identifier is defaulted in the source: baking one deployment's
   // Apple account in would make this silently sign for the wrong team elsewhere.
-  it.each([
-    "APNS_KEY_ID",
-    "APNS_TEAM_ID",
-    "APNS_BUNDLE_ID",
-  ] as const)("returns null when %s is missing rather than guessing an account", (missing) => {
-    const env: NodeJS.ProcessEnv = { ...FULL_ENV };
-    delete env[missing];
+  it.each(["APNS_KEY_ID", "APNS_TEAM_ID", "APNS_BUNDLE_ID"] as const)(
+    "returns null when %s is missing rather than guessing an account",
+    (missing) => {
+      const env: NodeJS.ProcessEnv = { ...FULL_ENV };
+      delete env[missing];
 
-    expect(readApnsCredentialsFromEnv(env)).toBeNull();
-  });
+      expect(readApnsCredentialsFromEnv(env)).toBeNull();
+    },
+  );
 
   it("explains the absence of the key without revealing anything", () => {
     const why = describeMissingApnsCredentials({});
