@@ -1,4 +1,3 @@
-import { createNodeWebSocket } from "@hono/node-ws";
 import { Connection, Client as TemporalClient } from "@temporalio/client";
 import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
@@ -18,7 +17,7 @@ import { json, readBody, writeHonoResponse } from "./api/handlers/http-helpers";
 import { SessionHandlers } from "./api/handlers/sessions.handlers";
 import { describeE2eeCapability } from "./api/routes/misc.routes";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
-import { createWsRoutes } from "./api/routes/ws.routes";
+import { mountWebSocket } from "./api/routes/ws.routes";
 import {
   generateApiKey,
   loadBrowseRoot,
@@ -955,9 +954,7 @@ export class StreamerServer {
     // routes first, handing it to createNodeWebSocket, then mounting the WS
     // route onto the same app instance.
     this.honoApp = createHonoApp(apiDeps);
-    const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app: this.honoApp });
-    this.honoApp.route("/", createWsRoutes(apiDeps, upgradeWebSocket));
-    injectWebSocket(this.httpServer);
+    mountWebSocket(this.honoApp, this.httpServer, apiDeps);
   }
 
   // ─── PTY Grace Timer ────────────────────────────────────────────

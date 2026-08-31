@@ -42,7 +42,7 @@ import {
   writeMessage2,
 } from "../../e2ee/noise";
 import { E2eeRequestError, parseE2eeRequest } from "../../e2ee/pair-request";
-import { E2EE_DEVICE_REVOKED, E2EE_PROTOCOL_VERSION } from "../../e2ee/protocol";
+import { E2EE_DEVICE_REVOKED, E2EE_PROTOCOL_VERSION, own } from "../../e2ee/protocol";
 import { Msg1ReplayCache } from "../../e2ee/replay-cache";
 import { getLogger } from "../../logger";
 import { loadOrCreateServerIdentity } from "../../server-identity";
@@ -84,7 +84,23 @@ const log = getLogger("e2ee");
  */
 function readBoundedJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const declared = Number(req.headers["content-length"]);
+    // **`own()`, not a bracket read.** `req.headers` is a raw Node object with
+    // `Object.prototype` on its chain, so `req.headers["content-length"]` on a
+    // request that sent no `Content-Length` returns whatever
+    // `Object.prototype["content-length"]` holds — on this endpoint, which is
+    // public and runs before anything has authenticated the bytes it parses.
+    //
+    // Not a bypass: the running byte total below is the real ceiling and still
+    // refuses an oversized body. What a polluted value buys is a SELF-inflicted
+    // refusal — a bodiless or small request reads as huge and eats a `400` on
+    // the D-9 path.
+    //
+    // The stronger remedy is not to have a bracket read at all: Hono's
+    // `c.req.header()` goes through a fetch-API `Headers`, whose `get()`
+    // answers `null` for an absent name whatever the prototype holds. That is
+    // why the rest of W1b needs no guard here. This one is a raw Node object
+    // reached before Hono's request wrapper, so `own()` is the tool.
+    const declared = Number(own(req.headers, "content-length"));
     if (Number.isFinite(declared) && declared > maxBytes) {
       reject(new E2eeRequestError("E2EE_MALFORMED", "request body is too large"));
       return;

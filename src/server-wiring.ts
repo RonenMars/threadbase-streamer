@@ -705,8 +705,8 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handlePairExchange: (req, res) => deps.handlePairExchange(req, res),
     handleBrowse: (url, res) => deps.handleBrowse(url, res),
     handleMkdir: (req, res) => deps.handleMkdir(req, res),
-    handleWsOpen: (ws) => {
-      deps.wsHub.addClient(ws);
+    handleWsOpen: (ws, context) => {
+      deps.wsHub.addClient(ws, context);
       const sessions = deps.withReconciledLifecycle(deps.sessionStore.list(deps.ptyAttachedIds()));
       deps.wsHub.unicast(ws, { type: "session_list", sessions });
       if (!deps.currentWarmupState()) {
@@ -733,8 +733,36 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           ...(principal?.deviceId ? { deviceId: principal.deviceId } : {}),
         });
       };
+      // **The parse catch below is narrowed to PARSING, and nothing else.**
+      //
+      // This used to be one `try { …the whole handler… } catch {}`, which
+      // swallowed every failure in the body as if it were malformed JSON. With
+      // sealing inside its reach a refused frame would have become a silently
+      // dropped one — no close, no code, no log — the opposite of what §9 froze
+      // four distinct codes to achieve.
+      //
+      // `receive` unseals for a sealed socket and passes a legacy client's text
+      // through unchanged, and it never throws: it closes the socket with the
+      // §9 code that says why and answers null. So it sits OUTSIDE both catches
+      // — anything that did escape it would be a fault in this server, and
+      // filing that under "malformed JSON" is the very shape being removed.
+      const text = deps.wsHub.receive(ws, raw);
+      if (text === null) return;
+
+      let msg: {
+        type?: string;
+        clientId?: string;
+        sessionId?: string;
+        when?: string;
+      };
       try {
-        const msg = JSON.parse(String(raw));
+        msg = JSON.parse(text);
+      } catch {
+        // malformed JSON, ignore. THIS catch covers the parse and nothing else.
+        return;
+      }
+
+      try {
         if (msg.type === "register" && typeof msg.clientId === "string") {
           const oldClientId = deps.wsToClientId.get(ws);
           if (oldClientId) deps.clientIdToWs.delete(oldClientId);
@@ -843,8 +871,16 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             when,
           });
         }
-      } catch {
-        // malformed JSON, ignore
+      } catch (err) {
+        // NOT a parse failure — the frame was well-formed and the handler threw.
+        // Logged rather than swallowed: this handler is `async`, so an escaping
+        // rejection would be an unhandled one, and a silently dropped frame here
+        // is a client waiting forever for a reply that was never attempted.
+        deps.log().error("[ws.handler_failed] a well-formed frame threw", {
+          event: "ws.handler_failed",
+          type: msg.type,
+          err,
+        });
       }
     },
     handleWsClose: (ws) => {

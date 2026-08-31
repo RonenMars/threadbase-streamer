@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { ServerResponse } from "http";
 import type { WebSocket } from "ws";
+import type { E2eeContext } from "../e2ee/context";
 import { getLogger } from "../logger";
 import type { Principal } from "../services/security/capabilities";
 import { authMiddleware } from "./middleware/auth.middleware";
@@ -36,6 +37,16 @@ export type AppEnv = {
     validatedQuery?: unknown;
     /** Who is making this request (C5). Set by authMiddleware. */
     principal?: Principal;
+    /**
+     * The E2EE context this request authenticated under, if any.
+     *
+     * Set by `authMiddleware` when a `/ws` upgrade presents a live ticket, and
+     * read by the WebSocket route. It is here rather than in a module-level map
+     * because the two are separated by an `await` — a shared variable would let
+     * two concurrent upgrades swap contexts. The REST unseal middleware will
+     * set the same field for `X-TB-Ctx`.
+     */
+    e2eeContext?: E2eeContext;
   };
 };
 

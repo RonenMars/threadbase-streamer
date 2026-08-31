@@ -147,7 +147,7 @@ Each paired device holds **two** contexts, one IK handshake each.
 | | WebSocket context | REST context |
 |---|---|---|
 | Scope | exactly one socket | one device, long-lived |
-| Opened by | `POST /api/e2ee/open` → `{ ctxId, ticket }` → `GET /ws?ticket=` | `POST /api/e2ee/open`, **opened with its first request in hand** |
+| Opened by | `POST /api/e2ee/open` → `{ ctxId, ticket }` → `GET /ws` with `X-TB-Ticket` | `POST /api/e2ee/open`, **opened with its first request in hand** |
 | `channel` byte | `0x01` | `0x02` request, `0x03` response |
 | Receive state | strict `expected`, no window (§5 R2) | sliding window, populated by the REST track |
 | Ends at | that socket's close — **no grace window** | 24 h, or revocation, or restart |
@@ -223,6 +223,10 @@ The same path is reached benignly, which is why the bound must be a rule and not
 
 A phone that backgrounds and returns keeps its REST context and opens a new socket context. The session it was watching is untouched — nothing about session lifetime changes.
 
+**A socket that consumed a ticket is never on the plaintext send path.** Stated as an invariant rather than as a property of the current wiring, because it constrains every shape the ticket question could resolve to — the options differ on *when* a context attaches, and none of them may allow a socket that once had one to be served in the clear. A send path that finds no context for such a socket closes it; it does not fall through to the legacy branch.
+
+**A socket closed for cause does not get to speak plaintext on the way out.** `close()` is not instantaneous, so a frame already in the receive buffer arrives after the context has been destroyed — and a receiver that reads "no context" as "legacy client" would then handle that frame in the clear, downgrading a sealed socket in the window after it was cut off. The hub therefore remembers every socket that has ever held a context and refuses one that no longer does, rather than falling back.
+
 **This supersedes [design.md §4.3](./design.md)** on two further points beyond §6's counter sentence: the transport context does **not** "follow the socket" as a single device-wide object, and there is **no grace window** on close. The W1a PR corrects both sentences in place, and corrects [mobile-design.md §4.3](./mobile-design.md)'s reconnect row to "reuse the REST context; open a new socket context with a fresh ticket".
 
 ## 9. Rejection codes — frozen at W1a's tag
@@ -258,11 +262,21 @@ The same reasoning separates the first two rows: *"absent"* and *"invalid"* are 
 
 D-9 asks for frames bounded *before* anything is allocated. On the socket that is **not achievable as currently wired**: `@hono/node-ws` constructs its `WebSocketServer` with hardcoded options and exposes no `maxPayload`, so `ws`'s 100 MiB default applies and the frame is fully assembled before any record-layer check runs. A per-frame ceiling in `record.ts` is therefore a check *after* allocation.
 
-W1b either constructs its own `WebSocketServer({ noServer: true, maxPayload })` and handles the upgrade, or accepts the ceiling and reaps any socket that has not sent a valid sealed frame within N seconds. It must state which. Whoever holds a socket without keys — a ticket thief (below), or a legacy `?key=` device — can otherwise push 100 MiB frames.
+W1b either constructs its own `WebSocketServer({ noServer: true, maxPayload })` and handles the upgrade, or accepts the ceiling and reaps any socket that has not sent a valid sealed frame within N seconds. It must state which.
+
+**It turned out not to be a choice between those two.** `createNodeWebSocket` *returns* the `WebSocketServer` it built, and `ws` reads `this.options.maxPayload` per upgrade in `completeUpgrade` rather than at construction — so assigning `wss.options.maxPayload` binds every subsequent socket and gives the pre-allocation bound without forking the upgrade path at all. W1b took that route and bounds the receiver at 64 KiB. Recorded so the next reader does not re-derive it, and because reaching into a dependency's `options` is the kind of thing that gets "cleaned up" by someone who does not know it is load-bearing. Whoever holds a socket without keys — a ticket thief (below), or a legacy `?key=` device — can otherwise push 100 MiB frames.
 
 **Per-direction frame ceilings**, because the two directions carry different things: client→server frames are `register` / `subscribe_session` / `hold_session`, which are bytes, so **64 KiB** is generous; server→client `terminal_replay` is bounded by the replay line cap and needs its own, larger ceiling. The server bounds c2s; the client bounds s2c.
 
-**Ticket theft.** An intermediary that consumes the client's ticket first holds a socket bound to a context whose keys it does not have. It gets no plaintext — every frame is sealed to keys it lacks — but it occupies a hub slot receiving sealed broadcasts, and the legitimate client's upgrade fails and re-opens. Reaping silent sockets (above) closes it; carrying the ticket in a header rather than the URL removes the log-tailing variant entirely.
+**Ticket theft.** An intermediary that consumes the client's ticket first holds a socket bound to a context whose keys it does not have. It gets no plaintext — every frame is sealed to keys it lacks — but it occupies a hub slot receiving sealed broadcasts, and the legitimate client's upgrade fails and re-opens. Carrying the ticket in a header rather than the URL removes the log-tailing variant entirely; the occupancy is closed by the deadline below.
+
+**A sealed socket has 10 s from the 101 to send its first frame that unseals, or it is closed.** The clock stops on **any valid sealed inbound frame** — never on a particular message type. The client contract's "sends `register` promptly" is one way for a client to satisfy this condition; making it *be* the condition would tie the server to a message name it does not need and break the day a client legitimately sends something else first. The close carries `E2EE_CTX_UNKNOWN`, which is literally true by the time it lands — the context is destroyed with the socket — and which gives a legitimate client whose first frame was lost to a stall exactly the right recovery.
+
+**This is the only clock that runs on a socket that never speaks.** The existing ping reaper cannot evict a thief, because answering a pong costs it nothing and silence is precisely what it is good at.
+
+**Ten seconds, and 15 s — the client's own connect timeout — is the only permitted relaxation. Never lower**: a real phone on a bad network has to fit an upgrade and one frame inside the window.
+
+**The residual, stated rather than implied closed.** A thief holds a TCP slot and hub membership on an **orphaned** context — the legitimate client has already re-opened to a fresh `ctxId` — receiving only low-frequency global broadcasts, **never a session subscriber**, for **≤10 s**. That is the whole of what ticket theft now buys.
 
 ### The ticket, and a gap in the protection the design assumes
 
@@ -381,6 +395,60 @@ and the client checks `response.counter === request.counter`.
 
 **(b) The principal comes from the context, and no `Authorization` header travels on a sealed request.** Unseal runs before authentication *so that* the credential travels sealed; a device token in a plaintext header on every sealed request is the exact leak that ordering exists to close. The unseal middleware sets the principal from the context and re-checks `revoked_at` per request; the auth middleware skips when a principal is already set. An `Authorization` header present alongside `X-TB-Ctx` **must name the context's device or the request is rejected** — "header device ≠ context device" is otherwise undefined behaviour at a trust boundary.
 
+**Both channels run this decision through one function, `authenticateContext` in `context.ts`.** Its signature and return type are **frozen at W1b's merge**, the same way §9's four codes froze at W1a's tag: the REST unseal middleware is built against this exact text, so a renamed variant is a coordinated change in two repositories rather than a refactor.
+
+```ts
+export type DevicePrincipal = Principal & { kind: "device"; deviceId: string };
+
+export type E2eeContextAuth =
+  | { ok: true; principal: DevicePrincipal }
+  | { ok: false; reason: "device-revoked" | "credential-mismatch" | "no-device-store" };
+
+export function authenticateContext(args: {
+  context: E2eeContext;           // already resolved by the caller
+  devicesRepo: DeviceLookup | null | undefined;
+  presented: string | undefined;  // credential beside the context; undefined = none = ordinary success
+}): E2eeContextAuth;
+```
+
+**It takes the resolved context, not a `ctxId`.** Both callers resolve first, so *"no such context"* is not a helper outcome — it is the caller's answer, before it calls. That also closes a race the `ctxId` shape had: a context could expire between the caller's own D-9 resolve and a second lookup inside the helper, giving one request two different answers.
+
+**`presented: undefined` is the ordinary case and an ordinary success.** §13(b) says a sealed REST request carries no `Authorization`, and a ticketed upgrade carries none either, so the mismatch check is conditional on a credential being present; its absence is never a special case a consumer has to work around.
+
+**A failure carries `reason` and nothing else** — no status, no body, no message. REST maps it onto HTTP, the upgrade maps it onto a close reason. HTTP policy inside a two-consumer helper is how one caller's answer silently becomes the other's.
+
+**Each reason covers more than its name suggests, and each is a fail-open path a consumer cannot close from its own side:**
+
+| Reason | Covers |
+|---|---|
+| `device-revoked` | a row that is **missing** as well as one with `revoked_at` set — §10: absent is not the same as invalid, and neither is success. Nobody may read "revoked" narrowly and add a row-not-found success path. `revoked_at` is read through `Object.hasOwn`, so a row lacking the column does not read as live. |
+| `credential-mismatch` | a credential naming another device **and one naming no device at all** — the shared API key is a mismatch, not an exemption. "Names another device", read literally, would exclude the case that matters most. |
+| `no-device-store` | no registry, or a read that threw. A refusal, never a success and never a throw out of the helper: *a downgrade guard that defaults to allowing the downgrade is not a guard.* **Its own arm, never folded into `device-revoked`** — "this device is revoked" is a statement about the *device*, "I could not consult the store" is a statement about *us*, and collapsing them reports a server-side fault as a claim about the peer. That is the same defect §9 split `E2EE_SEAL_FAILED` from `E2EE_SEQUENCE_VIOLATION` to prevent, recurring one layer up. Both arms refuse and both are terminal; only what the caller is told differs, which is the point. |
+
+**It never destroys and never logs.** Per-request consumers cannot afford a log line per request, and the caller already knows the context the message needs. The destroy rule both callers follow:
+
+> **Destroy a context only when the trigger is a fact in our own database that an attacker cannot forge — `device-revoked`. Never on a mismatched credential, which is an attacker-supplied header.**
+
+`ctxId` travels in a **plaintext header on every sealed request**, so it is visible to exactly the on-path party this design assumes exists. A destroy-on-mismatch would let anyone who sees one request kill that device's context repeatedly: forge a credential beside the observed id, watch the victim re-open, read the new id, repeat. **The safeguard becomes the weapon.**
+
+**Both callers apply the same effect, deliberately.** On the upgrade a destroy-on-mismatch would in fact be harmless, because the ticket is already spent and there is no second attempt to deny; it is still not done, because a helper whose two consumers apply different effects to one verdict is how the dangerous behaviour gets copied from the harmless one later. The residual is one orphaned socket context per mismatched upgrade, living out its lifetime — bounded by the 4-per-device cap and by `/open`'s own rate limit, and unreachable without the device's static key.
+
+**The invariant, and it is the reason the principal is built where it is:**
+
+> **A context-attached connection's `principal.deviceId` always equals its `context.deviceId`.**
+
+The principal comes from the **context's own device row** and never from the credential, so there is no path on which the two can differ — which is stronger than checking that they agree.
+
+**The same rule governs the WebSocket upgrade, and it is a client obligation.** A ticketed `GET /ws` presents `X-TB-Ticket` and **no `Authorization` and no `?key=`**. The ticket came out of a Noise handshake against the device's own static key and resolves to a context that names the device, so the long-term credential has nothing left to prove — and sending it anyway puts a device token on the wire on every reconnect, which is exactly the leak this section closes for REST. The auth middleware consumes the ticket, sets the principal from the context, re-checks `revoked_at`, and applies the ordinary capability check: a ticket authenticates, it does not authorize. A credential presented **beside** a ticket is tolerated only when it names the **same** device — the shared api key names none and is therefore a mismatch, not an exemption — and anything else is refused rather than resolved by preferring one of two answers to "who is this".
+
+**A spent or expired ticket answers `401`, not `426`**, because a ticketed upgrade carries no other credential to fall back to and a `426` needs a device principal to have been resolved. That is what the server does, and it is recorded here so the two implementations agree on the wire.
+
+**The client rule does not depend on it, and must not.** React Native cannot read a failed upgrade's HTTP status at all — a rejected upgrade surfaces only as `onerror`, with no status attached — so a contract written as "on `401`, do X" is a contract the party that has to act on it cannot execute. The rule is therefore about the *outcome*, not the code:
+
+> **Any failed upgrade on a ticketed socket is handled as `E2EE_CTX_UNKNOWN`: one fresh `POST /api/e2ee/open`, one retry, then a visible error. Never the re-authentication path.**
+
+Every server-side reason a ticketed upgrade fails — spent ticket, expired ticket, a context lost to a restart, a revoked row, a mismatched credential — is either recovered by a fresh `/open` or is a hard failure the retry will surface honestly. Treating the whole class that way costs one wasted handshake in the cases that were never going to recover, and it removes the client's dependence on a value it cannot see. A client that instead re-authenticated would put the long-term credential back on the wire on every transient failure, which is the leak this section closes.
+
 **Nobody re-adds `Authorization` to get past Cloudflare Access.** A named tunnel behind *interactive* Access `401`s any request without a bearer at the edge, so a `401` on a sealed request looks like it would be fixed by putting the header back. It would not — it would reintroduce the exact leak this rule closes. That topology already does not support the mobile client, and the right answers are Access off or a Service Token (which uses `CF-Access-Client-*`, not `Authorization`).
 
 State the D-9 rationale accurately while we are here: sealing the credential hides it from the **tunnel data plane**, not from Cloudflare-the-company — with a Service Token or interactive Access enabled, the edge sees a credential on every request regardless.
@@ -476,6 +544,15 @@ Each row is a rule above, the test that holds it, and the mutation that must mak
 | §13 handshake-state hygiene | `SymmetricState`, `CipherState` and both handshake states hide `ck` under plain `inspect` **and** `showHidden` | leave the handshake states unredacted |
 | §11 explicit pattern | `IKpsk1` without a `psk`, and `IK` with one, each throw | select the pattern by `psk` presence |
 | §8 sweep on open | N replayed msg1s leave the live context and ticket counts bounded | sweep only on lookup |
+| §10 first-frame deadline | a socket that spends a ticket and never sends a frame that unseals is closed within 10 s | remove the deadline → it persists indefinitely, answering pongs |
+| §10 a ticket is spent only by a real upgrade | a `/ws` request with a ticket and no `Upgrade` header leaves the ticket and the context intact | drop the upgrade predicate → a bodiless `GET` spends the ticket and orphans a 24 h context |
+| §10 the clock stops on ANY sealed frame | a sealed frame that is not `register` stops it | require `register` → a client that speaks first with anything else is reaped |
+| §13 principal is the context's device | a context-attached socket's `principal.deviceId` equals its `context.deviceId` | build the principal from the credential instead of from the context's row |
+| §13 mismatch ≠ dead context | observe a `ctxId` from a request, then present a mismatched credential beside it — the context must be **intact** afterwards | destroy on a mismatch → the safeguard becomes a remote kill switch |
+| §13 the unforgeable trigger still collects | a revoked row DOES destroy the context | never destroy → "does not destroy" becomes "never cleans up" |
+| §13 credential beside a context | a credential naming another device, and the shared api key, are each refused | treat a present credential as a pass |
+| §8 `everSealed` set at attach | a context detached before the socket has sent or received anything still refuses plaintext | set the flag on the first successful seal instead |
+| §8 no plaintext send path for a ticketed socket | detach a context from a **live** sealed socket by any means and try to get one plaintext frame out of it | drop the `everSealed` check in the send path → a plaintext `session_list` goes out |
 
 **A mutation that cannot be seen red does not verify anything, and two of these nearly were not.** `direction` and `counter` are each bound in *two* independent places — the AAD **and** the nonce — plus an explicit header check. Dropping either from the AAD alone leaves the frame rejected anyway, by the nonce, so the safeguard test stays green and only the interop fixtures fail because the ciphertext changed. The defence-in-depth is real and welcome; the consequence is that the mutation must remove **every** binding of the field, or it proves nothing about the safeguard it claims to test. `ctxId` and `channel` are bound by the AAD alone, so the single-field mutation is genuinely sufficient for them.
 

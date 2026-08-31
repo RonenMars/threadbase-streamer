@@ -13,6 +13,7 @@ import type { ProjectsRepository } from "../../db/repositories/projects.reposito
 import type { PushRepository } from "../../db/repositories/push.repository";
 import type { SessionsRepository } from "../../db/repositories/sessions.repository";
 import type { RuntimeStore } from "../../db/runtime-store";
+import type { E2eeContext } from "../../e2ee/context";
 import type {
   FeatureFlagDefinition,
   FeatureFlagId,
@@ -141,7 +142,12 @@ export type ApiDeps = {
   // WebSocket lifecycle delegates. `principal` is captured at the upgrade and
   // is what lets a frame be authorized; null means the request took a bypass
   // path (today only --local-no-auth) and carries that path's full authority.
-  handleWsOpen: (ws: WebSocket) => void;
+  /**
+   * `context` is present only for a socket that presented a valid ticket. Its
+   * absence is the legacy plaintext path, which must keep working (§8, dual
+   * paths).
+   */
+  handleWsOpen: (ws: WebSocket, context?: E2eeContext) => void;
   handleWsMessage: (ws: WebSocket, raw: unknown, principal: Principal | null) => void;
   handleWsClose: (ws: WebSocket) => void;
   // Multi-agent mode. Null when MULTI_AGENT_FLOW is OFF.

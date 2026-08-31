@@ -28,7 +28,7 @@
 // REST receiver to have to guess at.
 
 import { type KeyObject, randomBytes } from "crypto";
-import type { DeviceRow } from "../db/repositories/devices.repository";
+import { type DeviceRow, parseCapabilities } from "../db/repositories/devices.repository";
 import type { Principal } from "../services/security/capabilities";
 import type { TrafficKeys } from "./noise";
 import { E2EE_CTX_UNKNOWN, own, redactKeyMaterial, unpooled } from "./protocol";
@@ -44,6 +44,23 @@ import {
   type RecordState,
   RestResponseSealer,
 } from "./record";
+
+/**
+ * The header a client presents its single-use WebSocket ticket in.
+ *
+ * **A header, never a query parameter** (§10). `?ticket=` lands in every ingress
+ * access log — Cloudflare logs full request URLs — and single-use plus thirty
+ * seconds bounds that damage without removing it. React Native's `WebSocket`
+ * takes custom headers, so the ticket never needs to touch a URL at all. The
+ * property that buys is stronger than redaction: there is nothing to redact,
+ * because `http.request` logs a method, a path and a summarised query, never a
+ * header.
+ *
+ * It lives HERE rather than beside the route because `auth.middleware.ts` reads
+ * it too — a ticketed upgrade authenticates by its ticket (§13) — and a route
+ * module is not something the auth middleware should have to import.
+ */
+export const TICKET_HEADER = "x-tb-ticket";
 
 /** §8: a provisional context, and its ticket, die at 30 s. */
 export const TICKET_TTL_MS = 30_000;
@@ -140,6 +157,8 @@ export interface E2eeContext {
   markUsed(now?: number): void;
 }
 
+const contextInvalidators = new WeakMap<E2eeContext, () => void>();
+
 class Context implements E2eeContext {
   readonly ctxId: string;
   readonly ctxIdRaw: Buffer;
@@ -155,7 +174,7 @@ class Context implements E2eeContext {
   // on the WebSocket, a sliding window on REST (§8, design.md §3.4).
   readonly #send = new Map<Channel, RecordState>();
   readonly #receive = new Map<Channel, RecordState>();
-  readonly #responses: RestResponseSealer | null;
+  #responses: RestResponseSealer | null;
 
   constructor(args: {
     ctxIdRaw: Buffer;
@@ -199,6 +218,12 @@ class Context implements E2eeContext {
         ctxId: this.ctxIdRaw,
       });
     }
+
+    contextInvalidators.set(this, () => {
+      this.#send.clear();
+      this.#receive.clear();
+      this.#responses = null;
+    });
 
     // Holds record states, which hold traffic keys. Redacted through the same
     // helper as everything else that carries key material, so a fifth
@@ -265,11 +290,15 @@ class Context implements E2eeContext {
   }
 }
 
+function invalidateContext(context: E2eeContext): void {
+  contextInvalidators.get(context)?.();
+}
+
 type Direction = typeof DIRECTION_C2S | typeof DIRECTION_S2C;
 
-/** What revoking a device leaves for the caller to finish (§8). */
+/** What registry destruction reports to the caller (§8). */
 export interface DestroyedContexts {
-  /** Sockets W1b must terminate — a live socket must not outlive its revocation. */
+  /** WS contexts that were still indexed when destruction began. */
   socketCtxIds: string[];
   restCtxIds: string[];
   /** Unconsumed tickets dropped, so a revoked device cannot still upgrade. */
@@ -449,19 +478,31 @@ export class E2eeContextRegistry {
     }
     const context = this.#contexts.get(ctxId);
     if (!context) return false;
+    invalidateContext(context);
     this.#contexts.delete(ctxId);
     this.#byDevice.get(context.deviceId)?.delete(ctxId);
     return true;
   }
 
   /**
+   * Release one exact context owner without deleting a replacement that reused
+   * the same identifier.
+   */
+  destroyOwned(context: E2eeContext): boolean {
+    if (this.#contexts.get(context.ctxId) !== context) {
+      invalidateContext(context);
+      return false;
+    }
+    return this.destroy(context.ctxId);
+  }
+
+  /**
    * Destroy every context for a device and report what the caller must finish.
    *
-   * `POST /api/devices/:id/revoke` calls this, so a revocation reaches a live
-   * encrypted socket instead of waiting for its next request (design.md §4.4,
-   * point 3). The registry cannot terminate a socket — it holds no socket — so
-   * it returns the socket contexts and W1b terminates them. Indexing by device
-   * rather than by context alone is what makes this one call instead of a scan.
+   * `POST /api/devices/:id/revoke` calls this before the socket owner closes
+   * every hub reference for the device (design.md §4.4, point 3). The returned
+   * ids are accounting, not the close list: a drained context can already be
+   * absent here while its socket is still attached to the hub.
    */
   destroyDevice(deviceId: string): DestroyedContexts {
     const out: DestroyedContexts = { socketCtxIds: [], restCtxIds: [], tickets: 0 };
@@ -518,6 +559,7 @@ export class E2eeContextRegistry {
 
   /** Drop everything. A streamer restart does this by existing; tests need a call. */
   clear(): void {
+    for (const context of this.#contexts.values()) invalidateContext(context);
     this.#contexts.clear();
     this.#byDevice.clear();
     this.#tickets.clear();
@@ -630,6 +672,211 @@ function refusal(): E2eeRequiredRefusal {
         "This device is paired for end-to-end encryption and cannot be served in the clear. " +
         "Open an encrypted context with POST /api/e2ee/open and retry.",
       code: "E2EE_REQUIRED",
+    },
+  };
+}
+
+/**
+ * What a caller needs from `devicesRepo` to authenticate a context.
+ *
+ * Structural, not the concrete repository: the two callers hold it through
+ * different dependency records, and a narrow shape is also what lets a test
+ * drive the refusals without a database.
+ */
+export interface DeviceLookup {
+  get(deviceId: string): DeviceRow | null;
+  authenticate(credential: string): DeviceRow | null;
+}
+
+/**
+ * A `Principal` with its `deviceId` present.
+ *
+ * `Principal.deviceId` is optional, because a `legacy` principal has none. A
+ * context always names a device, so this is the honest return type — and it is
+ * what lets a caller read `principal.deviceId` without a cast or a `?.`, which
+ * matters because that field is the one the invariant is stated over.
+ */
+export type DevicePrincipal = Principal & { kind: "device"; deviceId: string };
+
+/**
+ * The verdict `authenticateContext` returns. **Frozen at W1b's merge**: the
+ * REST unseal middleware is built against this exact text, so a variant renamed
+ * here is a coordinated change in two tracks, not a refactor.
+ *
+ * A failure carries a `reason` and nothing else — no status, no body, no
+ * message. The two callers answer the same verdict differently: REST maps it to
+ * an HTTP status, the WebSocket upgrade maps it to a close reason. Putting HTTP
+ * policy inside a two-consumer helper is how one caller's answer silently
+ * becomes the other's.
+ *
+ * The reasons, and what each one covers — stated because each is a fail-open
+ * path a consumer cannot close from its own side once this freezes:
+ *
+ * - **`device-revoked`** — the context names a device whose row is **missing**
+ *   OR whose `revoked_at` is set. §10: absent is not the same as invalid, and
+ *   neither is success. Do not read "revoked" narrowly and add a row-not-found
+ *   success path; a context whose device has vanished authenticates nobody.
+ * - **`credential-mismatch`** — a credential was presented beside the context
+ *   and does not name the context's device. **Including one that names NO
+ *   device**: the shared API key is a mismatch, not an exemption. "Names
+ *   another device" read literally would exclude the case that matters most.
+ * - **`no-device-store`** — there is no device registry, or reading it threw.
+ *   A refusal, never a success: *a downgrade guard that defaults to allowing
+ *   the downgrade is not a guard.*
+ *
+ *   **Its own arm, deliberately, and not folded into `device-revoked`.** The
+ *   two are not the same fact: "this device is revoked" is a statement about
+ *   the DEVICE, and "I could not consult the store" is a statement about US.
+ *   Collapsing them tells the caller — and every log built from the caller —
+ *   that a device was revoked when what actually happened is that our own
+ *   storage was unreadable. That is precisely the defect §9 split
+ *   `E2EE_SEAL_FAILED` from `E2EE_SEQUENCE_VIOLATION` to prevent: a
+ *   server-side fault reported as a claim about the peer. Both arms still
+ *   refuse and both are terminal, so nothing about behaviour changes — only
+ *   what the caller is told, which is the entire point.
+ *
+ * "No such context" is deliberately NOT a reason. Both callers resolve the
+ * context before calling, so a not-found is theirs to answer — and taking the
+ * resolved object also closes a race the `ctxId` shape had, where a context
+ * could expire between the caller's own lookup and the helper's.
+ */
+export type E2eeContextAuth =
+  | { ok: true; principal: DevicePrincipal }
+  | { ok: false; reason: "device-revoked" | "credential-mismatch" | "no-device-store" };
+
+/**
+ * Turn a resolved context into the principal the request runs as — or refuse.
+ *
+ * **The tail every sealed entry point shares**, in one place because it has two
+ * callers: the WebSocket upgrade resolves its context from a single-use
+ * `X-TB-Ticket`, the REST unseal middleware resolves its from `X-TB-Ctx`, and
+ * from that point on the decision is identical. Forking a copy is how the two
+ * would come to disagree about which of them re-checks `revoked_at`.
+ *
+ * The property it exists to create, stated so a test can assert it:
+ *
+ * > **A context-attached connection's `principal.deviceId` always equals its
+ * > `context.deviceId`**, and a credential presented beside a context must name
+ * > that same device or the connection is refused.
+ *
+ * The principal is therefore built from the CONTEXT's own device row and never
+ * from the credential — there is no path here on which the two can differ,
+ * which is stronger than checking that they agree.
+ *
+ * Three refusals, all fail-closed:
+ *
+ *   - **no row, or `revoked_at` set** → `403 E2EE_DEVICE_REVOKED`. Re-checked
+ *     per connection rather than trusted from the handshake: a device revoked
+ *     between `/api/e2ee/open` and its next request holds a handle that is
+ *     still valid on its face (§10). Absent and revoked are the same refusal
+ *     and neither is success;
+ *   - **a credential naming another device** → `401`. "Header device ≠ context
+ *     device" must not be undefined behaviour at a trust boundary: two answers
+ *     to "who is this" is not a request to resolve by preferring one;
+ *   - **the SHARED api key beside a context** → `401` too. It names no device,
+ *     so it is a mismatch rather than an exemption — the one reading of this
+ *     rule that would otherwise let the stage-3 shared-key problem through a
+ *     door that had just been closed.
+ *
+ * **This function has no side effects: it returns a verdict and never applies
+ * one.** The rule its callers follow, which is the reason and not merely the
+ * behaviour:
+ *
+ * > **Destroy a context only when the trigger is a fact in our own database
+ * > that an attacker cannot forge — `revoked_at`. Never on a mismatched
+ * > credential, which is an attacker-supplied header.**
+ *
+ * `X-TB-Ctx` carries the `ctxId` in a PLAINTEXT header on every sealed request,
+ * so it is visible to exactly the on-path party this design assumes exists.
+ * Destroying on a mismatch would let anyone who sees one request kill that
+ * device's context over and over: forge a credential beside the observed id,
+ * watch the victim re-open, read the new id, repeat. The safeguard becomes the
+ * weapon.
+ *
+ * The property has to hold at ANY placement on EITHER channel, so it is this
+ * function's job not to destroy rather than each caller's job to remember. A
+ * refusal reports its `reason`, and a caller destroys on `device-revoked` and
+ * on nothing else.
+ */
+export function authenticateContext(args: {
+  /** Already resolved by the caller — from a spent ticket, or from `X-TB-Ctx`. */
+  context: E2eeContext;
+  devicesRepo: DeviceLookup | null | undefined;
+  /**
+   * The credential presented beside the context, if any.
+   *
+   * `undefined` is the ORDINARY case and an ordinary success: §13(b) says a
+   * sealed REST request carries no `Authorization` at all, and a ticketed
+   * upgrade carries none either. The mismatch check is conditional on a
+   * credential being present; its absence is never a special case.
+   */
+  presented: string | undefined;
+}): E2eeContextAuth {
+  // Never throws out of here. A store that is missing, or that throws on read,
+  // cannot prove this device is live, and "could not check" must not resolve to
+  // "let it through" — the same rule `refuseUnsealedIfPinned` learned.
+  if (!args.devicesRepo) return { ok: false, reason: "no-device-store" };
+
+  // **Every read of the store is inside this `try`, including the reads OF the
+  // row it returns.** `DeviceLookup` is a structural contract another
+  // repository implements, so a conforming-but-hostile lookup is the ordinary
+  // case to survive, not an exotic one: a row whose `revoked_at` is an accessor
+  // that throws puts the throw at the property read, not at the call. A `try`
+  // around only `get()` leaves that read bare, and "never throws" then holds
+  // against the store we happen to have rather than against the contract we
+  // published.
+  let live: { deviceId: string; capabilities: string } | null;
+  try {
+    const row: DeviceRow | null = args.devicesRepo.get(args.context.deviceId) ?? null;
+    // Absent and revoked are the same refusal, and neither is success (§10).
+    // `Object.hasOwn` before the value, like its sibling: a row that does not
+    // carry the column must not read as live through a prototype-chain hit.
+    // Both the `hasOwn` and the value read are inside the `try`.
+    live =
+      !row || !Object.hasOwn(row, "revoked_at") || row.revoked_at != null
+        ? null
+        : { deviceId: row.device_id, capabilities: row.capabilities };
+  } catch {
+    return { ok: false, reason: "no-device-store" };
+  }
+  if (!live) return { ok: false, reason: "device-revoked" };
+
+  if (args.presented !== undefined) {
+    let namedDeviceId: string | undefined;
+    try {
+      namedDeviceId = args.devicesRepo.authenticate(args.presented)?.device_id;
+    } catch {
+      return { ok: false, reason: "no-device-store" };
+    }
+    // The credential must name the CONTEXT's device. Compared against the
+    // context and not against the row, for the same reason the principal is
+    // built from the context below.
+    //
+    // A credential naming NO device — the shared API key — lands here too. It
+    // is a mismatch, not an exemption.
+    if (namedDeviceId !== args.context.deviceId) {
+      return { ok: false, reason: "credential-mismatch" };
+    }
+  }
+
+  // **The invariant: `principal.deviceId === context.deviceId`, by
+  // CONSTRUCTION.**
+  //
+  // The id comes from the context itself, never from the row and never from the
+  // credential. §13 claims "there is no path on which the two can differ, which
+  // is stronger than checking that they agree" — and while this read
+  // `row.device_id` that claim was only true as long as
+  // `get(id).device_id === id`, which is a property of whichever store is
+  // plugged in rather than of this function. A conforming `DeviceLookup` that
+  // returns a row for a different device was enough to break it. The row is
+  // still what proves the device is live and still supplies the capabilities;
+  // it just does not get to name who this is.
+  return {
+    ok: true,
+    principal: {
+      kind: "device",
+      deviceId: args.context.deviceId,
+      capabilities: parseCapabilities(live.capabilities),
     },
   };
 }
