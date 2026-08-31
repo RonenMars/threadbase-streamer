@@ -1,3 +1,9 @@
+## [1.72.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.72.0...v1.72.1) (2026-08-31)
+
+### Bug Fixes
+
+* **release:** render conventional commit entries in notes ([c277436](https://github.com/RonenMars/threadbase-streamer/commit/c2774364fff6ad7217353c05cd0eaf75a2064826))
+
 ## [1.72.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.71.0...v1.72.0) (2026-08-31)
 
 ## [1.71.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.70.6...v1.71.0) (2026-08-29)
