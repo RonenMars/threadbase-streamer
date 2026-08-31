@@ -1,6 +1,10 @@
 import { Hono } from "hono";
+import { contextRegistry } from "../../e2ee/context";
+import { getLogger } from "../../logger";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
+
+const log = getLogger("e2ee");
 
 /**
  * Paired-device management (C5 / mobile U10).
@@ -14,8 +18,31 @@ import type { ApiDeps } from "../types/api-deps";
  * has no reason to hand back a credential, and this endpoint is exactly where
  * an accidental echo would be most damaging.
  */
-export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo">) => {
+export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub">) => {
   const app = new Hono<AppEnv>();
+
+  /**
+   * Make a revocation reach the live process, not just the next request.
+   *
+   * `destroyDevice` drops every context the device still has indexed — N socket
+   * contexts, its REST context, and any unconsumed tickets. The hub closes by
+   * device identity rather than that answer because it can still own a socket
+   * whose context aged out of the registry's drain. Until this line existed, a
+   * revoked device kept a live encrypted socket, with its traffic keys resident
+   * in this process, until the peer happened to go away (design.md §4.4).
+   */
+  const cutLiveContexts = (deviceId: string): void => {
+    const destroyed = contextRegistry().destroyDevice(deviceId);
+    const sockets = deps.wsHub.closeDevice(deviceId);
+    if (destroyed.socketCtxIds.length || destroyed.restCtxIds.length || destroyed.tickets) {
+      log.info("[e2ee] revocation destroyed a device's live contexts", {
+        event: "e2ee.device_contexts_destroyed",
+        sockets,
+        rest: destroyed.restCtxIds.length,
+        tickets: destroyed.tickets,
+      });
+    }
+  };
 
   app.get("/", (c) => {
     const repo = deps.devicesRepo();
@@ -39,10 +66,12 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo">) => {
     // Idempotent: revoking an already-revoked device is not an error, so a
     // client retrying after a dropped response does not see a spurious failure.
     if (existing.revoked_at != null) {
+      cutLiveContexts(id);
       return c.json({ ok: true, alreadyRevoked: true });
     }
 
     repo.revoke(id);
+    cutLiveContexts(id);
     return c.json({ ok: true, alreadyRevoked: false });
   });
 
@@ -69,7 +98,10 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo">) => {
     const existing = repo.get(id);
     // Idempotent, like revoke: a client retrying after a dropped response gets
     // the same answer rather than a spurious 404.
-    if (!existing) return c.json({ ok: true, alreadyDeleted: true });
+    if (!existing) {
+      cutLiveContexts(id);
+      return c.json({ ok: true, alreadyDeleted: true });
+    }
 
     const force = c.req.query("force") === "1" || c.req.query("force") === "true";
     if (existing.revoked_at == null && !force) {
@@ -83,17 +115,27 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo">) => {
     }
 
     repo.delete(id);
+    // Same reason as revoke, and the reason it is here too: `?force=1` erases
+    // an ACTIVE row, so without this the credential is gone from the store
+    // while its sealed socket carries on with keys the store can no longer
+    // name. Erasing a device is at least as strong as revoking it.
+    cutLiveContexts(id);
     return c.json({ ok: true, alreadyDeleted: false });
   });
 
-  /** Bulk erase of already-revoked devices. Safe by construction — a revoked
-   *  device is already refused, so removing its row restores no access. */
+  /** Bulk erase of already-revoked devices. */
   app.delete("/", (c) => {
     const repo = deps.devicesRepo();
     if (!repo) {
       return c.json({ error: "Device registry is unavailable", code: "STORE_UNAVAILABLE" }, 503);
     }
-    return c.json({ ok: true, deleted: repo.deleteRevoked() });
+    const revokedIds = repo
+      .list()
+      .filter((device) => device.revokedAt != null)
+      .map((device) => device.deviceId);
+    const deleted = repo.deleteRevoked();
+    for (const deviceId of revokedIds) cutLiveContexts(deviceId);
+    return c.json({ ok: true, deleted });
   });
 
   return app;

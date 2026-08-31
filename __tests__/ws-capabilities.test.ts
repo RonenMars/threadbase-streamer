@@ -7,6 +7,7 @@ import {
   legacyPrincipal,
   type Principal,
 } from "../src/services/security/capabilities";
+import { WSHub } from "../src/ws-hub";
 
 /**
  * Per-frame authorization on the WebSocket.
@@ -56,6 +57,11 @@ function buildDeps(): Deps {
     // No live PTY, so subscribe_session takes its no-replay path and the test
     // observes the guard rather than the replay machinery.
     ptyManager: { hasSession: () => false },
+    // A real hub, because `handleWsMessage` now decodes through it: a sealed
+    // socket's frame is unsealed there and a legacy one's passes through. These
+    // sockets were never added to it, so they take the legacy path and every
+    // assertion below is about the capability guard, unchanged.
+    wsHub: new WSHub(),
     log: () => ({ warn, info: vi.fn(), debug: vi.fn(), error: vi.fn() }),
   } as unknown as ApiDepsWiring;
 
