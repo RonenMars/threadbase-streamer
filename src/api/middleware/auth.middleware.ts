@@ -87,7 +87,13 @@ export const authMiddleware =
     // is terminal for THIS upgrade. Falling through to a bearer or `?key=`
     // would turn a failed sealed attempt into a legacy plaintext socket. The
     // client recovers by opening a new context and ticket.
-    const ticket = path === WS_PATH ? c.req.header(TICKET_HEADER) : undefined;
+    // Mirror @hono/node-ws's upgrade predicate exactly: looser spends a ticket
+    // without a socket; stricter can downgrade an upgrade to legacy auth.
+    const isWsUpgrade =
+      method === "GET" &&
+      path === WS_PATH &&
+      c.req.header("upgrade")?.toLowerCase() === "websocket";
+    const ticket = isWsUpgrade ? c.req.header(TICKET_HEADER) : undefined;
     if (ticket !== undefined) {
       const registry = contextRegistry();
       const ctxId = registry.consumeTicket(ticket);

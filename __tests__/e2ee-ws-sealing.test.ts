@@ -593,6 +593,45 @@ describe("(a) nonce reuse", () => {
 // ─── (b) ticket single-use under a race ─────────────────────────────
 
 describe("(b) the ticket is single-use", () => {
+  it("leaves the ticket and context intact when GET /ws does not request an upgrade", async () => {
+    const device = pairDevice();
+    const ctx = await openContext(device);
+
+    await fetch(`${baseUrl}/ws`, {
+      headers: { [TICKET_HEADER]: ctx.ticket },
+    });
+    expect(registry.ticketCount).toBe(1);
+    expect(registry.get(ctx.ctxId)).not.toBeNull();
+    expect(hub.sealedCount).toBe(0);
+
+    const client = await connect({ [TICKET_HEADER]: ctx.ticket });
+    await client.until(2);
+    expect(drain(client, ctx).map((message) => message.type)).toEqual([
+      "session_list",
+      "cache_ready",
+    ]);
+  });
+
+  it("leaves the ticket and context intact when POST /ws cannot reach the upgrade route", async () => {
+    const device = pairDevice();
+    const ctx = await openContext(device);
+
+    await fetch(`${baseUrl}/ws`, {
+      method: "POST",
+      headers: { [TICKET_HEADER]: ctx.ticket },
+    });
+    expect(registry.ticketCount).toBe(1);
+    expect(registry.get(ctx.ctxId)).not.toBeNull();
+    expect(hub.sealedCount).toBe(0);
+
+    const client = await connect({ [TICKET_HEADER]: ctx.ticket });
+    await client.until(2);
+    expect(drain(client, ctx).map((message) => message.type)).toEqual([
+      "session_list",
+      "cache_ready",
+    ]);
+  });
+
   it("accepts exactly one of two concurrent upgrades presenting one ticket", async () => {
     const device = pairDevice();
     const ctx = await openContext(device);

@@ -545,6 +545,7 @@ Each row is a rule above, the test that holds it, and the mutation that must mak
 | §11 explicit pattern | `IKpsk1` without a `psk`, and `IK` with one, each throw | select the pattern by `psk` presence |
 | §8 sweep on open | N replayed msg1s leave the live context and ticket counts bounded | sweep only on lookup |
 | §10 first-frame deadline | a socket that spends a ticket and never sends a frame that unseals is closed within 10 s | remove the deadline → it persists indefinitely, answering pongs |
+| §10 a ticket is spent only by a real upgrade | a `/ws` request with a ticket and no `Upgrade` header leaves the ticket and the context intact | drop the upgrade predicate → a bodiless `GET` spends the ticket and orphans a 24 h context |
 | §10 the clock stops on ANY sealed frame | a sealed frame that is not `register` stops it | require `register` → a client that speaks first with anything else is reaped |
 | §13 principal is the context's device | a context-attached socket's `principal.deviceId` equals its `context.deviceId` | build the principal from the credential instead of from the context's row |
 | §13 mismatch ≠ dead context | observe a `ctxId` from a request, then present a mismatched credential beside it — the context must be **intact** afterwards | destroy on a mismatch → the safeguard becomes a remote kill switch |
