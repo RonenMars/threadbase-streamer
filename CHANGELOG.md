@@ -1,3 +1,9 @@
+## [1.73.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.72.1...v1.73.0) (2026-09-01)
+
+### Features
+
+* **e2ee:** add sealed REST envelope ([a10c8e3](https://github.com/RonenMars/threadbase-streamer/commit/a10c8e350ab694731587f675b88574fdd863707e))
+
 ## [1.72.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.72.0...v1.72.1) (2026-08-31)
 
 ### Bug Fixes
