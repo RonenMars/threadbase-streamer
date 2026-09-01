@@ -1,7 +1,12 @@
 import type { MiddlewareHandler } from "hono";
 import { validateApiKey } from "../../auth";
 import { parseCapabilities } from "../../db/repositories/devices.repository";
-import { authenticateContext, contextRegistry, TICKET_HEADER } from "../../e2ee/context";
+import {
+  authenticateContext,
+  contextRegistry,
+  refuseUnsealedIfPinned,
+  TICKET_HEADER,
+} from "../../e2ee/context";
 import { E2EE_DEVICE_REVOKED } from "../../e2ee/protocol";
 import { getLogger } from "../../logger";
 import {
@@ -178,6 +183,41 @@ export const authMiddleware =
       return;
     }
 
+    // ─── A sealed REST request already resolved its own principal ──────
+    //
+    // `e2eeEnvelopeMiddleware` runs ahead of this one (D-9: the unseal sits in
+    // front of authentication so the credential travels sealed) and, on a
+    // request that unsealed under `X-TB-Ctx`, has already set the principal
+    // from the CONTEXT's device row after re-checking `revoked_at`. Resolving
+    // it again here would be worse than redundant: a sealed request carries no
+    // `Authorization` at all (§13(b)), so the resolution below would find no
+    // credential and 401 a request that authenticated correctly.
+    //
+    // **What is skipped is credential RESOLUTION, and nothing else.** The
+    // capability check still runs, on the context's principal, exactly as it
+    // does for every other caller. Read this as "skip the rest of the
+    // middleware" and a read-only device gains full write authority the moment
+    // it seals — `c.set("principal", …)` below happens AFTER the capability
+    // gate, and not at all on the `required === null` early return, so a
+    // principal being present says nothing about authority having been checked.
+    //
+    // The 403 this can produce is sealed on the way out by the envelope
+    // middleware's response path, like every other answer that request is owed.
+    // A few focused middleware harnesses provide only the pre-existing
+    // Context surface; production Hono contexts always provide `get`.
+    const contextPrincipal = c.get?.("principal");
+    if (contextPrincipal) {
+      const requiredForContext = requiredCapability(path, method);
+      if (requiredForContext !== null && !hasCapability(contextPrincipal, requiredForContext)) {
+        return c.json(
+          { error: "Forbidden", code: "MISSING_CAPABILITY", required: requiredForContext },
+          403,
+        );
+      }
+      await next();
+      return;
+    }
+
     if (!presented && !loopbackOwner) {
       return c.json({ error: "Unauthorized" }, 401);
     }
@@ -213,6 +253,40 @@ export const authMiddleware =
 
     if (!principal) {
       return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    // ─── Downgrade enforcement: 426, never 401 (design.md §6.3) ────────
+    //
+    // We are on the PLAINTEXT branch by construction — the sealed branch
+    // returned above with a context principal — so a caller that reaches here
+    // resolved a credential and presented no `X-TB-Ctx`. If that credential
+    // names a device whose row is pinned (`e2ee_required`), it has already
+    // completed a handshake once and must never be served in the clear again.
+    //
+    // **426 and not 401, and the difference is not cosmetic.**
+    // `docs/compatibility/tb-mobile.md` maps 401 onto the re-authentication UI,
+    // so answering a downgrade with 401 would send a correctly-paired phone to
+    // a login screen it cannot satisfy — the credential is fine; the transport
+    // is not. 426 tells it to open a context and retry, which is a thing it can
+    // actually do.
+    //
+    // Through W1a's shared helper, never a second implementation: two copies of
+    // a downgrade rule is one copy that can be forgotten. Its stated limit
+    // carries over unchanged — a pinned device presenting the SHARED api key
+    // resolves to `legacy` with no device row, so the pin cannot bite. That is
+    // the stage-3 shared-key problem and it is R's, not this PR's.
+    const downgrade = refuseUnsealedIfPinned({
+      principal,
+      devicesRepo: deps.devicesRepo?.(),
+      context: c.get?.("e2eeContext"),
+    });
+    if (downgrade) {
+      // The code and the status, and nothing about the request. A downgrade
+      // refusal names no body, no key and no context.
+      log.warn("[e2ee] pinned device refused a plaintext request", {
+        event: "e2ee.rest_downgrade_refused",
+      });
+      return c.json(downgrade.body, downgrade.status);
     }
 
     // Capability check.

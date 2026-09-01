@@ -284,11 +284,14 @@ describe("the pair exchange authenticates what it stores and returns", () => {
       ) as { deviceToken: string };
 
       // Without this the field could be any string and every shape assertion
-      // above would still pass.
+      // above would still pass. The authenticated device is E2EE-pinned once
+      // the exchange completes, so plaintext use must be refused with the
+      // frozen downgrade response rather than served in the clear.
       const info = await fetch(`${baseUrl}/api/info`, {
         headers: { Authorization: `Bearer ${payload.deviceToken}` },
       });
-      expect(info.status).toBe(200);
+      expect(info.status).toBe(426);
+      await expect(info.json()).resolves.toMatchObject({ code: "E2EE_REQUIRED" });
     });
   });
 

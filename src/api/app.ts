@@ -8,6 +8,7 @@ import { getLogger } from "../logger";
 import type { Principal } from "../services/security/capabilities";
 import { authMiddleware } from "./middleware/auth.middleware";
 import { corsMiddleware } from "./middleware/cors.middleware";
+import { e2eeEnvelopeMiddleware } from "./middleware/e2ee-envelope.middleware";
 import { errorMiddleware } from "./middleware/error.middleware";
 import { createBackupRoutes } from "./routes/backup.routes";
 import { createBrowseRoutes } from "./routes/browse.routes";
@@ -40,11 +41,20 @@ export type AppEnv = {
     /**
      * The E2EE context this request authenticated under, if any.
      *
-     * Set by `authMiddleware` when a `/ws` upgrade presents a live ticket, and
-     * read by the WebSocket route. It is here rather than in a module-level map
-     * because the two are separated by an `await` — a shared variable would let
-     * two concurrent upgrades swap contexts. The REST unseal middleware will
-     * set the same field for `X-TB-Ctx`.
+     * **ONE declaration, deliberately, for two setters.** W1b's `/ws` upgrade
+     * and X-server's REST unseal both need this field, and both branches added
+     * it independently; two declarations of the same optional key merge in
+     * TypeScript and compile, right up until the two comments disagree about
+     * what the field means. Set by `authMiddleware` when a `/ws` upgrade
+     * presents a live ticket and read by the WebSocket route; set by
+     * `e2eeEnvelopeMiddleware` when a REST request unseals under `X-TB-Ctx`.
+     *
+     * It is here rather than in a module-level map because the setter and the
+     * reader are separated by an `await` — a shared variable would let two
+     * concurrent upgrades swap contexts.
+     *
+     * Absent on every plaintext request, which is what `refuseUnsealedIfPinned`
+     * reads as "this request was not sealed".
      */
     e2eeContext?: E2eeContext;
   };
@@ -156,6 +166,10 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
     });
   });
   app.use("*", corsMiddleware(deps.browserCors));
+  // AFTER cors, BEFORE auth. A preflight must be answerable without a context,
+  // and D-9 puts the unseal ahead of authentication so the credential travels
+  // sealed rather than in a plaintext header on every request.
+  app.use("*", e2eeEnvelopeMiddleware(deps));
   app.use("*", authMiddleware(deps));
   app.onError(errorMiddleware);
 
