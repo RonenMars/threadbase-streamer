@@ -44,6 +44,7 @@ import {
   type RecordState,
   RestResponseSealer,
 } from "./record";
+import { RestReceiveWindow } from "./rest-window";
 
 /**
  * The header a client presents its single-use WebSocket ticket in.
@@ -174,7 +175,24 @@ class Context implements E2eeContext {
   // on the WebSocket, a sliding window on REST (§8, design.md §3.4).
   readonly #send = new Map<Channel, RecordState>();
   readonly #receive = new Map<Channel, RecordState>();
+  // Not `readonly`: W1b's invalidator nulls this to make destruction real
+  // rather than a map deletion. See `contextInvalidators` below.
   #responses: RestResponseSealer | null;
+  /**
+   * REST contexts only; `null` on a socket context, and not merely unused
+   * there. A window a `ws` context carried would be an invitation to relax §5
+   * R2 to share an implementation, which is the one change this split exists to
+   * prevent.
+   *
+   * **Deliberately NOT cleared by the invalidator, and `readonly` says so.**
+   * `unsealRequest` opens with `requireRest()`, which throws once `#responses`
+   * is null, so an invalidated context refuses before the window is ever
+   * consulted — there is no path on which a stale window can admit a counter.
+   * It also holds no key material, only a bitmap of counters already seen. The
+   * one thing clearing it would buy is a second place to get destruction
+   * wrong.
+   */
+  readonly #window: RestReceiveWindow | null;
 
   constructor(args: {
     ctxIdRaw: Buffer;
@@ -198,19 +216,25 @@ class Context implements E2eeContext {
       this.#send.set(CHANNEL_WS, state(args.keys.serverToClient, DIRECTION_S2C, CHANNEL_WS));
       this.#receive.set(CHANNEL_WS, state(args.keys.clientToServer, DIRECTION_C2S, CHANNEL_WS));
       this.#responses = null;
+      this.#window = null;
     } else {
-      // ─── SEAM: the REST sliding window goes here ──────────────────────
-      // This receive state is STRICT today, which is correct for a channel
-      // nothing concurrent uses yet and wrong the moment React Query issues two
-      // requests at once (design.md §3.4: an RFC-6479-style 1024-bit bitmap,
-      // accept above the window and advance, accept inside it with the bit
-      // clear, reject below or already set). The REST track replaces the
-      // acceptance rule on THIS state and nothing else — the WebSocket's
-      // strictness (§5 R2) must not be relaxed to share an implementation.
+      // The REST receive path is WINDOWED, not strict. This state still does
+      // every check a record gets — bounds, version, `ctxId`, direction,
+      // channel, target hash, tag — but its sequence rule is not `expected`:
+      // `unsealRequest` below drives it through `unsealUnchecked` and hands the
+      // authenticated counter to `#window`, an RFC-6479-style 1024-bit bitmap
+      // (design.md §3.4). React Query issues concurrent requests, so an
+      // out-of-order arrival here is a network event and not a protocol
+      // violation.
+      //
+      // The acceptance rule is replaced on THIS state and nothing else: the
+      // WebSocket's strictness (§5 R2) is untouched, and `unsealUnchecked`
+      // refuses every channel but this one so the seam cannot reach it.
       this.#receive.set(
         CHANNEL_REST_REQUEST,
         state(args.keys.clientToServer, DIRECTION_C2S, CHANNEL_REST_REQUEST),
       );
+      this.#window = new RestReceiveWindow();
       // Responses have NO counter of their own: each echoes the counter of the
       // request it answers (§13(a)).
       this.#responses = new RestResponseSealer({
@@ -249,9 +273,30 @@ class Context implements E2eeContext {
 
   unsealRequest(frame: Buffer, target: Buffer): Buffer {
     const sealer = this.requireRest();
+    // A REST context is built with a window and a sealer together, so
+    // `requireRest()` above has already refused every context that has neither.
+    // This narrows the type; it is not a second opinion about what a REST
+    // context is, and there is no path on which it fires.
+    const window = this.#window;
+    if (!window) throw new RecordError(E2EE_CTX_UNKNOWN, "not a REST context");
     const state = this.receiveState(CHANNEL_REST_REQUEST);
-    const counter = state.counter;
-    const plaintext = state.unseal(frame, target);
+    // **Authenticate first, then decide (§5 R2 ordering).** The counter the
+    // window judges is the one that came OUT of the AEAD, never one read from a
+    // header beforehand: a pre-authentication check would make
+    // `E2EE_SEQUENCE_VIOLATION` an unauthenticated verdict about the peer and
+    // buys no protection, since the same attacker can as cheaply send garbage
+    // carrying the right counter.
+    //
+    // And it must come from the return value rather than from `state.counter`.
+    // The strict path could read the counter first because `expected` and the
+    // frame's counter are equal by definition there; on the window path they
+    // are not, and the difference is silent — every test still passes for the
+    // first request in a context.
+    const { plaintext, counter } = state.unsealUnchecked(frame, target);
+    // The window owns acceptance: `unsealUnchecked` advances nothing, so a
+    // repeat, an already-received counter or one that has fallen out of the
+    // window is refused HERE, before anything is armed to answer it.
+    window.admit(counter);
     // Acceptance is recorded ONLY on the success path, which is what makes
     // §13(a) enforceable rather than a rule a middleware has to remember: a
     // request the window or the AEAD rejected can never be answered with a
