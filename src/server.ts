@@ -8,6 +8,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir, hostname } from "os";
 import { dirname, join } from "path";
 import type { WebSocket } from "ws";
+import { describeAccessProbe, probeAccessGate, safeHost } from "./access-probe";
 import { type AgentClient, createAgentClient } from "./agent/agent-client";
 import { type AgentConfig, readAgentConfig } from "./agent/agent-config";
 import { type ConversationWriter, createConversationWriter } from "./agent/conversation-writer";
@@ -20,6 +21,7 @@ import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { mountWebSocket } from "./api/routes/ws.routes";
 import {
   generateApiKey,
+  loadAccessServiceToken,
   loadBrowseRoot,
   loadBrowserCors,
   loadCacheDir,
@@ -1514,6 +1516,7 @@ export class StreamerServer {
           );
         }
         this.warnIfE2eeDisabledOnTheCommandLine();
+        void this.probeAccessGate();
         if (this.ptyManager.isRemote()) {
           this.ptyManager.startRemoteHeartbeat(() => {
             if (!this.managedSessionsRepo) {
@@ -2422,6 +2425,47 @@ export class StreamerServer {
     this.log.warn(
       `Transport encryption is OFF for this run (--no-e2ee): traffic on the path is readable, including at the Cloudflare edge, and ${devices}.`,
       { event: "e2ee.disabled", reason: "cli", pinnedDevices: pinned },
+      "both",
+    );
+  }
+
+  /**
+   * Ask this server's own public URL what an unauthenticated device would get.
+   *
+   * Fire-and-forget, deliberately: the probe must never delay `listen()` or
+   * refuse a boot. It reports a misconfiguration the operator can fix, and a
+   * server that will not start is a worse outcome than one that warns.
+   *
+   * Silent unless there is something to say. No public URL means no edge to
+   * probe; e2ee off means no device would be refused by one; an unreachable URL
+   * is a different problem with its own symptoms, and warning about it here
+   * would cry wolf on every laptop that is merely offline.
+   */
+  private async probeAccessGate(): Promise<void> {
+    if (!this.featureFlags.accessProbe) return;
+    if (!this.publicUrl) return;
+    if (!describeE2eeCapability(this.featureFlags.e2ee).enabled) return;
+
+    const result = await probeAccessGate({
+      publicUrl: this.publicUrl,
+      serviceToken: loadAccessServiceToken(),
+    });
+    const message = describeAccessProbe(result);
+    if (!message) return;
+
+    // Console as well as the JSON log: the operator who put Access in front of
+    // this server is the only person who can remove it, and they are looking at
+    // a terminal, not at a log aggregator.
+    this.log.warn(
+      message,
+      {
+        event: "access.gate_detected",
+        publicUrl: this.publicUrl,
+        // The login URL carries a signed JWT in its query string. The host is the
+        // diagnostic; the rest is not ours to write down.
+        gateHost: safeHost(result.kind === "gated" ? result.location : undefined),
+        serviceTokenAccepted: result.kind === "gated" ? result.serviceTokenAccepted : undefined,
+      },
       "both",
     );
   }

@@ -100,6 +100,17 @@ export const FEATURE_FLAGS = {
     default: false,
     env: "THREADBASE_FEATURE_E2EE",
   },
+  accessProbe: {
+    description:
+      "At boot, ask this server's own public URL what an unauthenticated device would get, and warn " +
+      "if an edge gate (Cloudflare Access) answers instead of the server. On by default because the " +
+      "failure it catches is silent and expensive: a sealed request carries no Authorization header, " +
+      "so an interactive Access application refuses it before the tunnel and the device reports that " +
+      "pairing failed — blaming the server, which never saw the request. One probe, one line, never a " +
+      "retry and never a refusal to start.",
+    default: true,
+    env: "THREADBASE_FEATURE_ACCESS_PROBE",
+  },
   ptyHost: {
     description:
       "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +
