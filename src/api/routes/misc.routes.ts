@@ -10,6 +10,7 @@ import {
   PUSH_TOKEN_KINDS,
 } from "../../db/repositories/push.repository";
 import { E2EE_PROTOCOL_VERSION } from "../../e2ee/protocol";
+import type { FeatureFlagSource } from "../../feature-flags";
 import { getLogger } from "../../logger";
 import { serverIdentityPublicKey } from "../../server-identity";
 import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
@@ -169,7 +170,16 @@ export interface E2eeCapability {
   reason?: string;
 }
 
-export function describeE2eeCapability(flagEnabled: boolean): E2eeCapability {
+export function describeE2eeCapability(
+  flagEnabled: boolean,
+  /**
+   * Which rung of the precedence chain decided the flag, when the caller knows
+   * it. An operator who typed `--no-e2ee` and reads "set --feature e2ee=true"
+   * has been answered with the wrong question; naming the rung that actually
+   * decided is the difference between a reason and a template.
+   */
+  flagSource?: FeatureFlagSource,
+): E2eeCapability {
   const enabled = E2EE_SUPPORTED && flagEnabled;
   const base = {
     supported: E2EE_SUPPORTED,
@@ -183,11 +193,29 @@ export function describeE2eeCapability(flagEnabled: boolean): E2eeCapability {
     // Always says why, including when `supported` is false. An operator who set
     // the flag and saw nothing happen has exactly one question, and a field that
     // goes absent in the case they hit is the field not answering it.
-    reason: E2EE_SUPPORTED
-      ? "disabled by the e2ee feature flag — set THREADBASE_FEATURE_E2EE=1, --feature e2ee=true, " +
-        "or feature_flags: in server.yaml"
-      : "this build carries the capability negotiation but not yet the handshake it gates",
+    reason: E2EE_SUPPORTED ? disabledReason(flagSource) : NO_HANDSHAKE_REASON,
   };
+}
+
+const NO_HANDSHAKE_REASON =
+  "this build carries the capability negotiation but not yet the handshake it gates";
+
+/**
+ * Why encryption is off, in the operator's own terms.
+ *
+ * `cli` covers both spellings of one switch — `--no-e2ee` and
+ * `--feature e2ee=false` land on the same rung — and says "for this run",
+ * because a CLI option cannot outlive the command that typed it. Every other
+ * rung keeps the original text, which names the three ways to turn it on.
+ */
+function disabledReason(source?: FeatureFlagSource): string {
+  if (source === "cli") {
+    return "disabled by --no-e2ee (or --feature e2ee=false) for this run";
+  }
+  return (
+    "disabled by the e2ee feature flag — set THREADBASE_FEATURE_E2EE=1, --feature e2ee=true, " +
+    "or feature_flags: in server.yaml"
+  );
 }
 
 // One line per process, not one per request: `/api/info` is polled, and this
@@ -289,7 +317,10 @@ export const createMiscRoutes = (
       // Whether to encrypt to this server. Additive, same contract as `push`:
       // absent means an older server, which a client must read as "unknown" and
       // resolve as today's plaintext path — never as a reason to fail.
-      e2ee: describeE2eeCapability(deps.featureFlagsConfig().values.e2ee),
+      e2ee: describeE2eeCapability(
+        deps.featureFlagsConfig().values.e2ee,
+        deps.featureFlagsConfig().sources.e2ee,
+      ),
       // This build samples cheap host signals and pushes `host_pressure` when
       // the box is starved. Additive capability flag only — live readings stay
       // off this polled endpoint. Absent means an older server that never

@@ -37,6 +37,7 @@ import { runInstall } from "../src/updater/install";
 import { appendUpdateLog } from "../src/updater/update-log";
 import { getVersion } from "../src/version";
 import { logApiKeyLine } from "./boot-log";
+import { applyNoE2ee } from "./no-e2ee";
 import { printServerBanner, printUrlBanner } from "./pair-banner";
 import { registerProdCommands } from "./prod";
 
@@ -94,6 +95,10 @@ program
     "Free-text argv appended verbatim to every spawned Claude session, after the allowlisted flags. Unvalidated escape hatch.",
   )
   .option("--no-pair-qr", "Skip the pairing QR on startup")
+  .option(
+    "--no-e2ee",
+    "Disable transport encryption for this run. Sugar for --feature e2ee=false, and a serve option only: there is no server.yaml key and no environment variable for it, so it cannot outlive the command that typed it. THREADBASE_FEATURE_E2EE still wins, because env outranks the CLI in the documented precedence.",
+  )
   .option("--replace-prod", "Stop the launchd-supervised prod streamer and bind its port", false)
   .option("--forget", "Clear this repo's remembered dev-vs-prod choice and re-prompt", false)
   .option("--forget-all", "Clear every repo's remembered dev-vs-prod choice", false)
@@ -175,6 +180,14 @@ program
         process.exit(1);
       }
       featureFlags = parsed.values;
+    }
+    {
+      const applied = applyNoE2ee(featureFlags, opts.e2ee);
+      if (applied.error) {
+        log.error(applied.error, undefined, "console");
+        process.exit(1);
+      }
+      featureFlags = applied.values;
     }
 
     if (opts.defaultEffort !== undefined && !isEffortLevel(opts.defaultEffort)) {
