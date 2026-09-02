@@ -205,3 +205,178 @@ The screen-string marker list was written by hand, twice, and was incomplete bot
 ## Cleanup owed
 
 The `tb-secured` Access application is still live (owner-created; teardown steps in `ACCESS-APP-TEARDOWN.md`). The scratch rigs on `:8790`/`:8791`, the Metro instance, and the paired scratch device rows are all disposable and confined to `/tmp`. The phone holds three server entries, one of which (the tunnel) is broken while the gate is on.
+
+---
+
+# ADDENDUM — G session, 2026-09-02 evening (G-1 and G-2)
+
+**This is an addendum. D2 above is accepted and signed; nothing in it is reopened or
+restructured.** It records the rig session that was to close the two named gates D2
+left behind — G-1 (continuation frames, blocking R2) and G-2 (Android, blocking the
+stage-2 default flip) — plus the client-log capture group C1 asked for.
+
+**Status: G-1 determined; G-2 blocked; client log not yet captured.** Full row detail
+in `tracks/D/evidence/g1-continuation-frames.md`.
+
+## Rig conditions
+
+| item | value |
+|---|---|
+| streamer | `@threadbase-sh/streamer@1.74.0`, tag `67f2d05eebdc33f8651700be297251a62771589d` |
+| `dist/cli.cjs` sha256 | `e106cb527a01a1150cb3eb0a5a8a475e8fccd297e9e0e26373e16eba018dcbeb` |
+| sealed rig | **:8790**, `--feature e2ee=true`; pair URL carries `spk=…&v=1` |
+| legacy control rig | **:8791**, `--feature e2ee=false`; no `spk`; `/api/info` → `e2ee.enabled:false` |
+| isolation | scratch `HOME` + `THREADBASE_CONFIG_DIR` + npm prefix under `/tmp` |
+| streamer `origin/main` | `d9148f2527422325133a82b64c148c5d6ead1a89` |
+| mobile `origin/main` | `26815a16e2169c1b21019a142bd2893e7195121c` |
+| capture interface | **en0**, 192.168.68.125 — the address the rig itself advertises |
+
+**Isolation was verified with a control on the check itself.** Both rig PIDs show 0
+open files under the real `~/.threadbase`; the production streamer PID shows 11. The
+zero therefore means isolation, not a grep that cannot match. The production streamer
+on :8766 and both pre-existing `cloudflared` tunnels were untouched throughout.
+
+PLAN-D's recorded trap held again: `node-pty`'s `spawn-helper` shipped mode `0644` on
+both prebuilds and needed `chmod +x` before any session could spawn.
+
+## The bulk-output generator, stated plainly
+
+The agent stops at Claude Code's login screen under the scratch `HOME` — by design,
+and nothing was signed in — so it cannot emit the megabytes G-1 needs. A controlled
+generator was placed on the rig's PATH via a `.zshrc` inside the scratch `HOME`: 3 MB
+of mixed text, base64 and high-byte binary across ~3 300 lines, writing a
+machine-generated manifest of its own markers.
+
+The transport under test stays real end to end — real PTY, real ws-hub, real seal,
+real socket. Only the *content* is controlled, which is the same reasoning PLAN-D
+already applies to the unauthenticated agent. Verified the generator and not Claude
+Code was running: `GCTRL` markers 66, `Welcome`/`theme` 0. **Marker lists are read
+from that manifest, never hand-written** — D2's method note, applied.
+
+## Pipeline validation — a known-answer test before certifying anything
+
+The sweep tooling was validated against D2's own accepted capture
+(`d2-sealed-rows-2-4.pcap`, port 8790) before being pointed at anything new:
+
+| measure | bytes | coverage |
+|---|---|---|
+| total `tcp.len` on the port | 221 557 | — |
+| raw full-payload sweep | 221 557 | **100.00 %** |
+| field pipeline (ws + http decoded) | 147 247 | **66.46 %** |
+| field pipeline misses | 74 310 | **33.54 %** |
+
+This reproduces the revision's "~30 %" figure from the pcap itself, so the coverage
+arithmetic is checked against a number the program had already accepted.
+
+### One correction to the revision's attribution
+
+The revision describes the undissected bytes as including "one server-to-client
+**WebSocket frame** per capture larger than the MSS". From the pcap that is not what
+those bytes are. Every WebSocket frame in that capture is **≤126 bytes**
+(126×87, 125×25, 115×7, 68×9, 2×12, 0×22); the >MSS reassembled PDUs are **1 587-byte
+HTTP bodies**, and 86 packets are segments of reassembled PDUs.
+
+**The conclusion is unaffected** — the field pipeline missed a third of the payload,
+exactly as stated, and the raw sweep remains the primary grep. Only the attribution of
+the missed bytes changes: HTTP body reassembly and header/handshake bytes, not a large
+WebSocket frame. Recorded so nobody later hunts an artefact that is not there. It also
+means **D2 never exercised large-frame handling on the WebSocket leg at all**.
+
+## G-1 — continuation frames: DETERMINED
+
+**Result: the gate as written cannot be satisfied against this server, and that is the
+finding rather than a failure to produce one.**
+
+Three independent legs:
+
+1. **Source.** `src/ws-hub.ts:299` is the *only* server-to-client send, and it is
+   `ws.send(frame)` with no options. Sealed and plaintext share it: `frame` is either
+   the plaintext JSON or the sealed `Buffer`, so **sealing changes the payload, never
+   the framing**.
+2. **Dependency.** The shipped `ws@8.21.3` builds its send options with `fin: true`
+   hardcoded (`lib/websocket.js:476`). A scan of every `.ts` file on `origin/main`
+   for `_sender`, `fin: false` and `createWebSocketStream` returns zero hits — with a
+   positive control (a string known to exist in the same file returned 5), so the zero
+   is a real absence.
+3. **Direct wire observation.** A raw socket performing the WebSocket handshake by
+   hand and parsing frame headers off the byte stream:
+
+   ```
+   complete WebSocket frames parsed: 4
+     opcode 1  text  4 frames
+     FIN=0 (fragmented) frames: 0
+     opcode-0 continuation frames: 0
+     largest: (fin=1, opcode=1, payload_len=165847)
+   ```
+
+   A **165 847-byte** `terminal_replay` — ~**114× the MSS**, and three orders of
+   magnitude beyond anything in D2 — crosses as **one frame with FIN set**.
+
+**What this licenses.** Opcode-0 continuation frames do not occur on the client's
+receive path over a direct connection, at any payload size.
+
+**What it does not.** It does **not** say the React Native client handles
+fragmentation; it says the client is never asked to. Two limits travel with the claim:
+an **intermediary can re-fragment**, and the Cloudflare named tunnel is exactly such an
+intermediary on the production remote path — TLS, so this method cannot look; and this
+is a fact about a **pinned dependency**, not a permanent property.
+
+**Recommendation (owner's call).** If R2's concern is the client's receive path, the
+evidence that closes it is a **client-side test that delivers a fragmented sealed
+message to the RN WebSocket layer and asserts it unseals** — the path defect 1 lived
+on. That is a mobile change, not device evidence.
+
+## G-2 — Android: BLOCKED, and the reason is substantive
+
+**No Android build that can run the row exists.** The ArrayBuffer fix `443771a8`
+(#940 — "unseal ArrayBuffer WebSocket frames from React Native") is **not** an
+ancestor of `android-v62` (the newest tag, cut 2026-09-02), nor of v61 or v60.
+`ios-v215` does contain it; control: `origin/main` contains it. Since that fix *is*
+the sealed-frame receive path, any Android build installable today cannot unseal WS
+frames, and row 1 cannot run on it. G-2 needs a fresh build from `origin/main`.
+
+**And this machine cannot produce one**: `~/Library/Android/sdk` no longer exists (the
+running `adb` fork-server holds a deleted binary), there is no `adb` on PATH and no
+emulator. `eas` is installed but reports "Not logged in".
+
+### A stale plan note that would have produced a worthless G-2
+
+`PLAN-D.md` §5 says "Android: release build over the rig's own tunnel (mobile#727 — a
+release build cannot reach `http://`)". **Mobile #727 is CLOSED**, fixed 2026-08-15 by
+`13e21e22` (#752), which set `usesCleartextTraffic="true"` in the main manifest and
+added an app-layer policy permitting cleartext to the local network and refusing it
+elsewhere. Android therefore reaches the rig over **plain LAN http and is capturable**.
+
+Had §5 been followed, G-2 would have run over the tunnel's TLS and the canary would
+have been absent **because of TLS rather than because of E2EE** — a false pass on the
+one row that gates the default flip. Recorded in §14.
+
+## What the two methods together do and do not cover
+
+- **The raw full-payload sweep is primary**: it reaches 100 % of payload bytes on the
+  port, dissected or not. It **cannot read client-to-server WebSocket frames**, which
+  are XOR-masked.
+- **The field pipeline** unmasks those, but reached only 66.46 % of payload bytes on
+  D2's capture, so it can never be the primary grep.
+- **Neither alone is sufficient. Both were run.**
+- **The raw-socket frame parser** answers framing questions exactly, needs no elevated
+  privilege, and sees *one connection's* framing — it says nothing about other bytes on
+  the wire, so it complements the sweep and does not replace it.
+- **LAN only.** Every ciphertext claim here is LAN-scoped; `tcpdump` cannot see through
+  the tunnel's TLS, so tunnel rows prove function, never secrecy.
+
+## In the clear by design — expected, listed, not findings
+
+Request paths and query strings (D-7, including `GET /api/browse?path=<project>`), the
+`X-TB-Env` and `X-TB-Ctx` headers, the `{"e2ee":{"v":1,"noise":"…"}}` handshake bodies,
+the plaintext `429` refusal body from `/api/e2ee/open`, and the `serverIdentityKey`
+public key in `/api/info`.
+
+## Outstanding at the time of writing
+
+1. **Packet capture requires root** — `/dev/bpf*` is `crw------- root:wheel`, no
+   `access_bpf` group, no ChmodBPF daemon. The sealed-leg capture and the G-2 sweep
+   both wait on it.
+2. **G-2** waits on an Android build from `origin/main` and on an Android device.
+3. **C1's client log** — the revocation-storm capture — not yet attempted; it needs the
+   phone, and is batched with the G-1 sealed run.

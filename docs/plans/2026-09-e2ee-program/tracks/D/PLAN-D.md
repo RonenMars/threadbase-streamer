@@ -264,3 +264,50 @@ Two distinct timers, don't conflate them:
 7. Streamer restart — one transparent re-handshake (contexts are in-memory only, do not survive restart by design — confirm the client recovers without user-visible failure).
 8. Revoked device's live socket closes.
 9. Access/named-tunnel functional pass (see above) — function only, explicitly not a wire-secrecy claim.
+
+### §14 traps found 2026-09-02 evening (G session) — four more, all false-negative generators
+
+§14 exists because three earlier traps were not recorded. These four were hit in one
+session; every one of them fails as a clean, plausible empty result rather than as an
+error, which is the class this program keeps losing time to.
+
+1. **Two LAN interfaces on the same /24.** `en0` = 192.168.68.125 and `en9` =
+   192.168.68.102 are both on 192.168.68.0/24. Capture the wrong one and `tcpdump`
+   writes an empty file, the sweep finds no plaintext, and it reads as a clean pass.
+   Not hypothetical: mobile issue #727's field report used the `en9` address.
+   **Resolve it from the rig's own pair URL** — the streamer prints the address it
+   advertises (`192.168.68.125`, i.e. `en0`) — and still confirm with the positive
+   control before trusting any zero.
+
+2. **`git grep <pattern> origin/main -- <path>` returns empty on these repos
+   regardless of content.** Confirmed with a control: a string certain to exist in
+   the named file also returned zero. Any absence proved this way is a false
+   negative. Use `git show origin/main:<path> | grep` instead.
+
+3. **Spotlight indexing is disabled machine-wide** (`mdutil -s /` → "Indexing
+   disabled"), so `mdfind` returns empty for every query, including
+   `mdfind -name Safari`. Never use it to prove a file does not exist.
+
+4. **Packet capture requires root and fails only at capture time.** `/dev/bpf*` is
+   `crw------- root:wheel`, with no `access_bpf` group and no ChmodBPF daemon.
+   Budget the sudo ask into the plan rather than discovering it after the rig is up.
+
+**Method note carried forward — the >MSS artefact in D2 was HTTP, not WebSocket.**
+Re-analysis of `d2-sealed-rows-2-4.pcap` shows every WebSocket frame there is ≤126
+bytes; the >MSS reassembled PDUs are 1 587-byte HTTP bodies. The coverage conclusion
+(field pipeline misses 33.54 %, raw sweep 100 %) reproduces exactly, but a future
+reader chasing "the large WS frame" will not find one. D2 never exercised
+large-frame handling on the WebSocket leg at all.
+
+**Validate the sweep pipeline against an existing pcap before using it.** Running
+`sweep.sh` on D2's accepted capture reproduces the documented ~30 % gap
+(66.46 % field coverage vs 100 % raw). That is a known-answer test, and it is
+cheap — it costs one command and it means the tooling is not certified by the same
+run it is certifying.
+
+**Getting a genuinely >MSS WebSocket frame.** The agent stops at Claude Code's login
+screen under a scratch `HOME`, so it cannot emit bulk output, and PTY scrollback is a
+bounded virtual terminal (3 MB written retained as ~45 KB). The frame that does cross
+the MSS is **`terminal_replay`**, sent once on `subscribe_session`: measured at
+**165 847 bytes**, ~114× the 1 448-byte MSS. Drive it with `register` then
+`subscribe_session` on `/ws?key=`.
