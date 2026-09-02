@@ -316,6 +316,22 @@ export const createE2eeRoutes = (
       // block, so the sixth garbage msg1 from one source is refused before its
       // Diffie-Hellmans run rather than after.
       failures.charge(ip);
+      // Logged because a device pinned to a DIFFERENT server identity fails
+      // here on every attempt, forever, and until now left nothing behind: the
+      // replay and unknown-device refusals below each wrote a line, this one
+      // wrote none, so the one permanent condition was the one that could not
+      // be told from the wire. `reason` distinguishes it; nothing about the
+      // message is logged, for the same reason the caught error is dropped.
+      //
+      // Safe to log HERE and not on the branches above: this one is charged to
+      // the source budget, so the line rate is bounded by
+      // `OPEN_SOURCE_FAILURE_LIMIT`. The malformed-body and `429` branches
+      // return before or instead of a charge, so logging there would hand an
+      // unauthenticated caller an unbounded write to the operator's disk.
+      log.warn("[e2ee] open refused: message 1 did not authenticate", {
+        event: "e2ee.open_refused",
+        reason: "handshake",
+      });
       return c.json({ error: "E2EE handshake failed", code: "E2EE_HANDSHAKE_FAILED" }, 400);
     }
 
@@ -355,6 +371,7 @@ export const createE2eeRoutes = (
       failures.charge(ip);
       log.warn("[e2ee] open refused: no live device holds that static key", {
         event: "e2ee.open_refused",
+        reason: "unknown_device",
       });
       return c.json(
         { error: "This device is not paired for encryption", code: E2EE_DEVICE_REVOKED },
@@ -383,6 +400,14 @@ export const createE2eeRoutes = (
       kind = parseOpenPayload(handshake.payload).kind;
     } catch (err) {
       const e = err as E2eeRequestError;
+      // Past the handshake, so this caller authenticated as a live device and
+      // the line rate is bounded by the per-device limit rather than by
+      // anything a stranger controls. The code is logged; the payload is not.
+      log.warn("[e2ee] open refused: the sealed payload is not a valid open request", {
+        event: "e2ee.open_refused",
+        reason: "payload",
+        code: e.code,
+      });
       return c.json({ error: e.message, code: e.code }, 400);
     }
 
