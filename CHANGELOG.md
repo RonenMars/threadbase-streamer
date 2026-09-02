@@ -1,3 +1,9 @@
+## [1.74.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.73.0...v1.74.0) (2026-09-02)
+
+### Features
+
+* **e2ee:** D2 follow-ups — refusal logging, --no-e2ee, and an Access probe ([#752](https://github.com/RonenMars/threadbase-streamer/issues/752)) ([a3a6adf](https://github.com/RonenMars/threadbase-streamer/commit/a3a6adf08e3d3f72ee9e40941533ebd42c135808))
+
 ## [1.73.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.72.1...v1.73.0) (2026-09-01)
 
 ### Features
