@@ -138,6 +138,18 @@ Cloudflare Access puts an identity check in front of your tunnel — Google SSO,
 
 This repo's existing `tb-pc.rbv1000.win` tunnel runs behind Access. The streamer's own Bearer auth still applies on top — Access is the outer ring, Bearer is the inner ring.
 
+> ### ⚠️ Access and end-to-end encryption do not currently coexist
+>
+> If any device pairs with this server using E2EE, an **interactive** Access application on that hostname breaks it completely — not degraded, blocked at the first handshake.
+>
+> A sealed request carries no `Authorization` header by design, so Access refuses it at the edge before the tunnel. The device reports that pairing failed and the *server* did not finish the handshake, while the server never saw the request at all. Measured on hardware 2026-09-02: with Access in front, `POST /api/e2ee/open` never arrived; with a `Bypass` policy on the same application, the same phone paired and ran sealed WebSocket and REST traffic through the same tunnel.
+>
+> The "outer ring / inner ring" model above holds for Bearer-authenticated clients. It does **not** hold for sealed ones, because the inner ring's credential is not a header the outer ring can see.
+>
+> Options today: keep Access off the hostname devices use, or put a `Bypass` policy on it. A **service token** is the shape Cloudflare intends for machine clients, but tb-mobile cannot present one — there is no `CF-Access-Client-*` support in the client — so it is not yet a remedy anyone can apply.
+>
+> The streamer detects this at boot and warns (`event: "access.gate_detected"`); see [feature flags → `accessProbe`](../feature-flags.md).
+
 ### Why Access can't protect a quick-tunnel
 
 Access policies attach to an **Application**, which is scoped to a hostname in a zone you own. `trycloudflare.com` is not your zone — there's no Application object to attach a policy to, no DNS record under your control, no way to enforce anything at the edge. This is a Cloudflare product constraint, not a missing feature.
