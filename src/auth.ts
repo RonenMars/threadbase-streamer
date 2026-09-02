@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import type { AccessServiceToken } from "./access-probe";
 import {
   type ClaudeFlagValues,
   isPermissionMode,
@@ -297,6 +298,46 @@ export function setClaudeExtraArgs(text: string | undefined): void {
  * A malformed line yields {} plus a warning rather than throwing, so a typo in a
  * hand-edited server.yaml costs the flag, not the boot.
  */
+/**
+ * Cloudflare Access service-token credentials, for the boot probe in
+ * `access-probe.ts`.
+ *
+ * One line, JSON, so it reads the same way `feature_flags:` does:
+ *
+ *     access_service_token: {"client_id":"…","client_secret":"…"}
+ *
+ * A credential in server.yaml is a real consideration, and the file is already
+ * `chmod 600` because it holds the API key. This is the operator's own token for
+ * their own edge, it is useless without the hostname it belongs to, and the
+ * alternative — the streamer holding it in memory only — cannot survive the
+ * restart that the probe runs on.
+ *
+ * A malformed line costs the probe's second half, not the boot: the gate is
+ * still detected and reported, just without the "does my token satisfy it"
+ * answer.
+ */
+export function loadAccessServiceToken(): AccessServiceToken | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/^access_service_token:\s*(.+)$/m);
+    if (!match?.[1]) return undefined;
+    const parsed = JSON.parse(match[1].trim()) as Record<string, unknown>;
+    const clientId = parsed.client_id;
+    const clientSecret = parsed.client_secret;
+    if (typeof clientId !== "string" || typeof clientSecret !== "string") return undefined;
+    if (!clientId || !clientSecret) return undefined;
+    return { clientId, clientSecret };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      // The value is never logged, only the fact that it could not be read.
+      getLogger("auth").warn("Ignoring unreadable access_service_token in server.yaml", {
+        event: "config.access_service_token_parse_failed",
+      });
+    }
+    return undefined;
+  }
+}
+
 export function loadFeatureFlags(): FeatureFlagValues {
   try {
     const content = readFileSync(configFile(), "utf-8");

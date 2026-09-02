@@ -8,6 +8,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { homedir, hostname } from "os";
 import { dirname, join } from "path";
 import type { WebSocket } from "ws";
+import { describeAccessProbe, probeAccessGate, safeHost } from "./access-probe";
 import { type AgentClient, createAgentClient } from "./agent/agent-client";
 import { type AgentConfig, readAgentConfig } from "./agent/agent-config";
 import { type ConversationWriter, createConversationWriter } from "./agent/conversation-writer";
@@ -20,6 +21,7 @@ import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { mountWebSocket } from "./api/routes/ws.routes";
 import {
   generateApiKey,
+  loadAccessServiceToken,
   loadBrowseRoot,
   loadBrowserCors,
   loadCacheDir,
@@ -1513,6 +1515,8 @@ export class StreamerServer {
             { error: message, abiMismatch, path: this.runtimeDbPath, event: "runtime.open_failed" },
           );
         }
+        this.warnIfE2eeDisabledOnTheCommandLine();
+        void this.probeAccessGate();
         if (this.ptyManager.isRemote()) {
           this.ptyManager.startRemoteHeartbeat(() => {
             if (!this.managedSessionsRepo) {
@@ -2384,6 +2388,88 @@ export class StreamerServer {
    * Deliberately no `persisted` field: unlike claude-flags there is no PUT, and
    * the absence of that field is the signal that this endpoint is read-only.
    */
+  /**
+   * The boot warning for a run that turned transport encryption off from the
+   * command line.
+   *
+   * Through the console dest as well as the JSON log, because the person who
+   * typed the flag is watching a terminal, and a warning they have to grep for
+   * is a warning that arrives after the incident. It says what is readable and
+   * by whom — the tunnel's edge terminates TLS, so "we are behind HTTPS" is not
+   * an answer — and how many paired devices this run will refuse.
+   *
+   * Called after `devicesRepo` opens, since the count is the point. Silent when
+   * the repo did not open: a boot already shouting about a failed runtime store
+   * does not need a second line saying it also cannot count.
+   */
+  private warnIfE2eeDisabledOnTheCommandLine(): void {
+    if (this.featureFlags.e2ee || this.featureFlagSources.e2ee !== "cli") return;
+    const repo = this.devicesRepo;
+    if (!repo) return;
+    // Live rows only — a revoked device is already refused and counting it
+    // would inflate the number that is meant to make someone stop and think.
+    const pinned = repo.list().filter((d) => d.e2ee && d.revokedAt == null).length;
+    // The caveat is in the text rather than in a comment because the number is
+    // read by a person deciding whether to proceed. A pairing whose msg2 was
+    // lost leaves a row that is pinned but has never connected (#744), so this
+    // counts intent to encrypt, not devices in anyone's hand.
+    const devices =
+      pinned === 0
+        ? "no paired device requires it"
+        : `${pinned} paired device${pinned === 1 ? "" : "s"} require${pinned === 1 ? "s" : ""} it and will be refused (rows that never completed pairing are counted too)`;
+    // `both`, not `console`: the person who typed the flag is watching a
+    // terminal, and the person reading the JSON log afterwards is asking why a
+    // device was refused. `console` alone would answer only the first of them —
+    // and the brief for this flag asks specifically for `e2ee.disabled` in the
+    // JSON log.
+    this.log.warn(
+      `Transport encryption is OFF for this run (--no-e2ee): traffic on the path is readable, including at the Cloudflare edge, and ${devices}.`,
+      { event: "e2ee.disabled", reason: "cli", pinnedDevices: pinned },
+      "both",
+    );
+  }
+
+  /**
+   * Ask this server's own public URL what an unauthenticated device would get.
+   *
+   * Fire-and-forget, deliberately: the probe must never delay `listen()` or
+   * refuse a boot. It reports a misconfiguration the operator can fix, and a
+   * server that will not start is a worse outcome than one that warns.
+   *
+   * Silent unless there is something to say. No public URL means no edge to
+   * probe; e2ee off means no device would be refused by one; an unreachable URL
+   * is a different problem with its own symptoms, and warning about it here
+   * would cry wolf on every laptop that is merely offline.
+   */
+  private async probeAccessGate(): Promise<void> {
+    if (!this.featureFlags.accessProbe) return;
+    if (!this.publicUrl) return;
+    if (!describeE2eeCapability(this.featureFlags.e2ee).enabled) return;
+
+    const result = await probeAccessGate({
+      publicUrl: this.publicUrl,
+      serviceToken: loadAccessServiceToken(),
+    });
+    const message = describeAccessProbe(result);
+    if (!message) return;
+
+    // Console as well as the JSON log: the operator who put Access in front of
+    // this server is the only person who can remove it, and they are looking at
+    // a terminal, not at a log aggregator.
+    this.log.warn(
+      message,
+      {
+        event: "access.gate_detected",
+        publicUrl: this.publicUrl,
+        // The login URL carries a signed JWT in its query string. The host is the
+        // diagnostic; the rest is not ours to write down.
+        gateHost: safeHost(result.kind === "gated" ? result.location : undefined),
+        serviceTokenAccepted: result.kind === "gated" ? result.serviceTokenAccepted : undefined,
+      },
+      "both",
+    );
+  }
+
   private getFeatureFlagsConfig(): {
     registry: typeof FEATURE_FLAG_LIST;
     values: ResolvedFeatureFlags;

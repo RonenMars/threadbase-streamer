@@ -356,15 +356,48 @@ git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 ## Cloudflare Tunnel / Access
 
-### External requests to `/healthz` (or any endpoint) return `401`
+### External requests to `/healthz` (or any endpoint) are refused
 
 **When:** Testing the public URL from a browser, `curl`, or `Test-NetConnection`.
-**Cause:** The tunnel hostname (`https://tb-pc.rbv1000.win`) is protected by Cloudflare Access. Any request without an `Authorization` header gets `401` from the CF edge before the origin ever sees it — including `/healthz`.
-**Fix:** Always include the Bearer token for external requests:
+
+**Two different refusals, and telling them apart is the whole diagnosis:**
+
+| Response | Who refused | What it means |
+|---|---|---|
+| `401` with a JSON body | the **streamer** | the request reached the origin; it wants the API key |
+| `302` with `location: …/cdn-cgi/access/login/…` | **Cloudflare Access** | the request never reached the origin |
+
+**A Bearer token fixes only the first.** Access does not read `Authorization` — that header is the streamer's credential, not the edge's — so adding it to a request the edge is blocking changes nothing. Measured 2026-09-02 on `tb-secured.rbv1000.win`: with an interactive Access application in front, `/healthz` (which needs no credential at all) answered `302` to a login page; with the application removed, the same URL answered `200`.
+
+For an origin-authenticated request that Access is *not* blocking:
 ```powershell
 Invoke-RestMethod -Uri https://tb-pc.rbv1000.win/api/info -Headers @{Authorization="Bearer <api_key>"}
 ```
-Deploy-script healthchecks hit `http://localhost:8766/healthz` directly and are unaffected.
+
+Deploy-script healthchecks hit `http://localhost:8766/healthz` directly and are unaffected by either refusal.
+
+---
+
+### Paired devices cannot pair or connect through a hostname protected by Access
+
+**When:** A phone pairs fine over the LAN but fails against the tunnel hostname, reporting *"This server offered an encrypted pairing and then did not finish it."* The streamer log shows **no** `POST /api/pair/exchange` at all.
+
+**Cause:** A sealed request deliberately carries no `Authorization` header, and an interactive Cloudflare Access application refuses credential-less requests at the edge, before the tunnel. The device receives an HTML login redirect where Noise message 2 belongs, and correctly fails the pairing closed rather than continuing in plaintext. Nothing in the device's message names the gate, so the operator regenerates pairing codes forever.
+
+Measured on hardware, 2026-09-02, same hostname and same device:
+
+- Access application present → pairing fails closed, `POST /api/e2ee/open` never arrives.
+- A `Bypass` policy added → the phone paired and ran sealed WebSocket + REST traffic through the same tunnel with every request `200`.
+
+**Fix, in order of preference:**
+
+1. **Remove Access from the hostname devices use.** The streamer is all `/api` with no separate human-facing UI, so a gate over it gates the app itself.
+2. **Bypass the device paths** on that application (Action `Bypass`). Functionally the same as (1) for this server.
+3. A **service token** is the shape Cloudflare intends — but **tb-mobile cannot present one today**: there is no `CF-Access-Client-*` support anywhere in the client. Until that changes, this is not a remedy a user can apply.
+
+Never "fix" it by putting `Authorization` back on sealed requests. That reintroduces exactly the credential the envelope exists to remove.
+
+**The streamer warns about this by itself**, at boot, when `e2ee` is on and a public URL is set — `event: "access.gate_detected"`, console and JSON log, naming the gate host. See [feature flags → `accessProbe`](guides/feature-flags.md). If you are reading this because you saw that warning, the fix list above is what it is pointing at.
 
 ---
 
@@ -954,6 +987,34 @@ If you've already lost work, it's not gone if you pushed: `git -C vendor/menubar
 ---
 
 ## PTY / terminal output
+
+### Every session start fails with `posix_spawnp failed.` and nothing else
+
+**When:** The mobile app shows *"Failed to start session — posix_spawnp failed."* on every attempt. The server logs `[start] failed to start session: posix_spawnp failed.` and `POST /api/sessions/start → 500`. Pairing, the WebSocket and every other route work normally.
+
+**Cause:** `node-pty`'s helper binary lost its execute bit. The prebuilt `spawn-helper` ships executable, but an install that ran with postinstall scripts blocked (a sandboxed or `--ignore-scripts` install) leaves it `-rw-r--r--`, and `node-pty` then fails with a message that names nothing actionable.
+
+**Diagnosis:**
+
+```bash
+ls -l node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper
+# broken:  -rw-r--r--
+# working: -rwxr-xr-x
+```
+
+Swap `darwin-arm64` for your platform's directory.
+
+**Fix:**
+
+```bash
+chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
+```
+
+No restart is needed — `node-pty` spawns per session, so the next attempt picks it up. If a reinstall keeps clearing it, the install is running without postinstall scripts; re-run it with scripts enabled rather than chmod-ing after every `npm ci`.
+
+Seen 2026-09-02 on an isolated rig whose `npm install` ran under a script sandbox.
+
+---
 
 ### SSH passphrase prompt leaks into streamed terminal output *(macOS)*
 

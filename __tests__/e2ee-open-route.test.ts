@@ -62,6 +62,34 @@ vi.mock("../src/e2ee/noise", async (importOriginal) => {
   };
 });
 
+/**
+ * A pass-through tap on the REAL logger — the lines it records are the lines an
+ * operator would read. Refusals are the only thing this file asserts on: a
+ * device pinned to another server's identity fails the handshake on every
+ * attempt for as long as it is pointed at this one, and the server-side line is
+ * the only trace it leaves.
+ */
+const logLines = vi.hoisted(() => [] as { msg: string; meta: Record<string, unknown> }[]);
+vi.mock("../src/logger", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/logger")>();
+  return {
+    ...actual,
+    getLogger: (component?: string) => {
+      const real = actual.getLogger(component);
+      return {
+        ...real,
+        warn: (msg: string, meta?: unknown) => {
+          logLines.push({ msg, meta: (meta ?? {}) as Record<string, unknown> });
+          return real.warn(msg, meta);
+        },
+      };
+    },
+  };
+});
+
+/** Every `e2ee.open_refused` line recorded so far, newest last. */
+const refusals = () => logLines.filter((l) => l.meta.event === "e2ee.open_refused");
+
 const registry = contextRegistry();
 
 let dir: string;
@@ -91,6 +119,7 @@ afterAll(() => {
 beforeEach(async () => {
   registry.clear();
   noiseCalls.readMessage1 = 0;
+  logLines.length = 0;
   const deps = {
     apiKey: "tb_0123456789abcdef0123456789abcdef",
     localNoAuth: false,
@@ -607,6 +636,56 @@ describe("failing closed (§9, §10)", () => {
     const res = await post(JSON.stringify({ e2ee: { v: 1, noise: message.toString("base64") } }));
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("E2EE_HANDSHAKE_FAILED");
+  });
+
+  it("leaves a line an operator can read when a device fails the handshake", async () => {
+    const device = pairDevice();
+    const impostor = generateKeyPair();
+    const { message } = writeMessage1({
+      staticKeyPair: device.staticKeyPair,
+      responderStaticPub: impostor.publicKeyRaw,
+      pattern: "IK",
+      payload: Buffer.from(JSON.stringify({ v: 1, kind: "ws" }), "utf-8"),
+      prologue: OPEN_PROLOGUE,
+    });
+
+    const res = await post(JSON.stringify({ e2ee: { v: 1, noise: message.toString("base64") } }));
+
+    expect(res.status).toBe(400);
+    expect(refusals().map((l) => l.meta.reason)).toEqual(["handshake"]);
+    // Nothing about the message reaches the log — the refusal is diagnosable,
+    // the caller's key material is not.
+    const line = JSON.stringify(refusals()[0]);
+    expect(line).not.toContain(device.staticKeyPair.publicKeyRaw.toString("base64"));
+    expect(line).not.toContain(message.toString("base64"));
+  });
+
+  it("distinguishes a failed handshake from an unpaired key in the log", async () => {
+    const stranger = generateKeyPair();
+    const { body } = message1(stranger, { v: 1, kind: "ws" });
+
+    const res = await post(body);
+
+    expect(res.status).toBe(403);
+    expect(refusals().map((l) => l.meta.reason)).toEqual(["unknown_device"]);
+  });
+
+  it("writes no refusal line when the handshake succeeds — the positive control", async () => {
+    const { res } = await open("ws");
+
+    expect(res.status).toBe(200);
+    expect(refusals()).toEqual([]);
+  });
+
+  it("stays silent on the branches no budget has charged, so a stranger cannot fill the disk", async () => {
+    // Both refusals return before `failures.charge`, so a line here would be an
+    // unbounded write an unauthenticated caller controls. The silence is the
+    // rule; this test is what keeps a later "let us log everything" from
+    // undoing it without noticing.
+    expect((await post("not json at all")).status).toBe(400);
+    expect((await post(JSON.stringify({ e2ee: { v: 99, noise: "" } }))).status).toBe(400);
+
+    expect(refusals()).toEqual([]);
   });
 
   it("refuses a message built for the PAIRING handshake (§11)", async () => {

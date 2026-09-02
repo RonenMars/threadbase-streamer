@@ -22,7 +22,25 @@ Those keys are **not** the env var names. This does nothing (unknown key, droppe
 feature_flags: {"THREADBASE_FEATURE_PTY_HOST":true}
 ```
 
-Snake_case (`pty_host`) is also unknown. Current ids: `codexSystemPrompt`, `sessionRehydration`, `liveActivityPush`, `e2ee`, `ptyHost`. `GET /api/config/feature-flags` `registry[].id` is the same list.
+Snake_case (`pty_host`) is also unknown. Current ids: `codexSystemPrompt`, `sessionRehydration`, `liveActivityPush`, `e2ee`, `accessProbe`, `ptyHost`. `GET /api/config/feature-flags` `registry[].id` is the same list.
+
+## `accessProbe` — on by default, and why
+
+Most flags default off. This one defaults **on** because it costs one HTTP request at boot and catches a failure that is otherwise silent and expensive.
+
+A sealed request carries no `Authorization` header — that is what the envelope is for — so an interactive Cloudflare Access application in front of this server refuses it at the edge, before the tunnel. The device then reports that *pairing failed and the server did not finish the handshake*, blaming a server that never saw the request. Measured on hardware (2026-09-02): with Access on a tunnelled streamer, `POST /api/e2ee/open` never arrives and pairing fails closed; with Access bypassed, the same phone paired and ran sealed WebSocket and REST traffic through the same tunnel.
+
+So at boot, when `e2ee` is on and a public URL is configured, the streamer asks its own public URL what an unauthenticated device would get. If a Cloudflare Access login answers, it warns — console and JSON log, `event: "access.gate_detected"` — naming the gate host and the two remedies. It never blocks the boot, never retries, and says nothing when the public URL is merely unreachable.
+
+Turn it off with `--feature accessProbe=false`, `THREADBASE_FEATURE_ACCESS_PROBE=0`, or `feature_flags: {"accessProbe":false}`.
+
+Optional: if `~/.threadbase/server.yaml` carries
+
+```yaml
+access_service_token: {"client_id":"…","client_secret":"…"}
+```
+
+the probe repeats the request with those Cloudflare service-token headers and reports whether they satisfy the gate. A malformed line costs that second half only; the gate is still detected.
 
 ## Env vars
 

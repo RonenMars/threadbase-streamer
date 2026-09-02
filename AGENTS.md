@@ -36,6 +36,8 @@ Vitest globals are enabled. Every new feature requires tests under `__tests__/`.
 - Feature flags resolve at boot in this order: `THREADBASE_FEATURE_*` environment variables, `--feature`, `feature_flags` in YAML, registry defaults. YAML and CLI use keys from `FEATURE_FLAGS`, not environment-variable names. See [docs/guides/feature-flags.md](docs/guides/feature-flags.md).
 - `permissionMode`, `model`, and `effort` are spawn positionals. If `buildFlagArgs` skips one via `SPAWN_POSITIONAL_FLAG_IDS`, `StreamerServer.spawnFlagOverrides()` must resolve it; otherwise the API becomes a silent no-op.
 - `ptyGracePeriodMs: 0` means hold immediately, not never.
+- `--no-e2ee` is a `serve` option only: no `server.yaml` key and no environment variable of its own. It folds into the CLI rung, so `THREADBASE_FEATURE_E2EE=1` still wins by the precedence above — that collision is a rollout decision, not a bug to patch locally. It never un-pins a device: a paired device still gets `426` afterwards.
+- Encryption and an edge gate do not coexist. A sealed request carries no `Authorization` header, so an interactive Cloudflare Access application in front of the public URL blocks pairing entirely — the request never reaches the origin, and the device blames the server. The `accessProbe` flag (on by default) detects this at boot and warns; never "fix" it by re-adding `Authorization` to sealed requests. See [docs/troubleshooting.md](docs/troubleshooting.md#paired-devices-cannot-pair-or-connect-through-a-hostname-protected-by-access).
 
 ## Dependencies and build
 
