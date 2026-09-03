@@ -126,7 +126,7 @@ Restarting the streamer mid-session cleared its in-memory contexts; the client r
 
 ### Row 9 — the finding that changes a rollout
 
-With an interactive Cloudflare Access application on `tb-secured.rbv1000.win`, the phone's pairing **failed closed**: *"This server offered an encrypted pairing and then did not finish it."* The streamer logged **no `POST /api/pair/exchange` at all** — the request never arrived. A sealed request carries no `Authorization` header by design, and Access refuses credential-less requests at the edge.
+With an interactive Cloudflare Access application on `<test-tunnel-host>`, the phone's pairing **failed closed**: *"This server offered an encrypted pairing and then did not finish it."* The streamer logged **no `POST /api/pair/exchange` at all** — the request never arrived. A sealed request carries no `Authorization` header by design, and Access refuses credential-less requests at the edge.
 
 The guardrail held on hardware: *after msg1, a missing msg2 is a failed pairing, never plaintext success.*
 
@@ -215,8 +215,9 @@ restructured.** It records the rig session that was to close the two named gates
 left behind — G-1 (continuation frames, blocking R2) and G-2 (Android, blocking the
 stage-2 default flip) — plus the client-log capture group C1 asked for.
 
-**Status: G-1 determined; G-2 blocked; client log not yet captured.** Full row detail
-in `tracks/D/evidence/g1-continuation-frames.md`.
+**Status: G-1 COMPLETE; a large-payload sealed row PASSED; G-2 blocked; client log not
+yet captured.** Row detail in `tracks/D/evidence/g1-continuation-frames.md` and
+`tracks/D/evidence/g-row1-large-payload.md`.
 
 ## Rig conditions
 
@@ -279,15 +280,25 @@ HTTP bodies**, and 86 packets are segments of reassembled PDUs.
 **The conclusion is unaffected** — the field pipeline missed a third of the payload,
 exactly as stated, and the raw sweep remains the primary grep. Only the attribution of
 the missed bytes changes: HTTP body reassembly and header/handshake bytes, not a large
-WebSocket frame. Recorded so nobody later hunts an artefact that is not there. It also
-means **D2 never exercised large-frame handling on the WebSocket leg at all**.
+WebSocket frame.
 
-## G-1 — continuation frames: DETERMINED
+Two consequences, both worth stating plainly:
+
+1. **A future reader chasing "the large WebSocket frame" in those pcaps will find
+   nothing**, and could easily conclude from that the review was wrong about
+   everything. It was not — the 33.54 % miss is exact and reproducible.
+2. **D2 never exercised large-frame handling on the WebSocket leg at all.** That is a
+   real gap in the accepted evidence base, not a footnote, and it is the gap the 3 MB
+   row below fills.
+
+## G-1 — continuation frames: COMPLETE
 
 **Result: the gate as written cannot be satisfied against this server, and that is the
-finding rather than a failure to produce one.**
+finding rather than a failure to produce one.** Determined at source and observed
+directly on both the plaintext and the sealed leg, with a negative control. No packet
+capture and no elevated privilege were needed.
 
-Three independent legs:
+Four independent legs:
 
 1. **Source.** `src/ws-hub.ts:299` is the *only* server-to-client send, and it is
    `ws.send(frame)` with no options. Sealed and plaintext share it: `frame` is either
@@ -312,19 +323,89 @@ Three independent legs:
    A **165 847-byte** `terminal_replay` — ~**114× the MSS**, and three orders of
    magnitude beyond anything in D2 — crosses as **one frame with FIN set**.
 
+4. **Direct wire observation on the SEALED leg.** A scripted device does a real Noise
+   IKpsk1 pairing against the sealed rig, a real `/api/e2ee/open` context handshake,
+   then upgrades over a raw socket with `X-TB-Ticket` and sends sealed frames through
+   the real record layer:
+
+   ```
+   server e2ee: {"supported":true,"enabled":true,...}
+   complete WebSocket frames parsed: 4
+     opcode 2  binary  4 frames
+     FIN=0 (fragmented) frames: 0
+     opcode-0 continuation frames: 0
+     largest: (fin=1, opcode=2, len=165893)
+   ```
+
+   Every frame is sealed binary with FIN set. The same message that measured 165 847
+   bytes in plaintext is **165 893 bytes sealed — one frame, +46 bytes** of record
+   header and AEAD tag. Sealing changes the payload, not the framing, as observed.
+
+**Negative control.** The identical parser, fed a synthetic stream containing a
+fragmented message, reports `opcode-0 continuation frames: 2` and `FIN=0 frames: 2`
+across both the 16-bit and 64-bit extended-length paths. **The zero measured on both
+live rigs is a real absence, not a blind parser.**
+
 **What this licenses.** Opcode-0 continuation frames do not occur on the client's
 receive path over a direct connection, at any payload size.
 
 **What it does not.** It does **not** say the React Native client handles
-fragmentation; it says the client is never asked to. Two limits travel with the claim:
-an **intermediary can re-fragment**, and the Cloudflare named tunnel is exactly such an
-intermediary on the production remote path — TLS, so this method cannot look; and this
-is a fact about a **pinned dependency**, not a permanent property.
+fragmentation; it says the client is never asked to. Two limits travel with the claim
+and must not be dropped when it is quoted:
+
+- **An intermediary can re-fragment.** The Cloudflare named tunnel is exactly such an
+  intermediary on the production remote path — the leg the Android client runs over —
+  and that leg is TLS, so `tcpdump` can **neither confirm nor deny** fragmentation
+  there. The residual risk lives precisely where this method cannot look.
+- **This is a fact about `ws` 8.21.3, not a property of the system.** It rests on a
+  pinned dependency and a single-argument `send()` call. **A dependency bump could
+  reintroduce fragmentation with no code change in this repository at all** — nothing in
+  `threadbase-streamer` would have to be edited for the client to start receiving
+  continuation frames. That is the sentence a future reader needs.
+
+**Consequently the gate was split** (owner's decision, recorded here): the observed
+opcode breakdown gates R2's presentation, while a **client-side test that hands the RN
+WebSocket layer a deliberately fragmented sealed message and asserts it unseals** gates
+stage 2. The second is a mobile change and is routed to C2; it is not device evidence
+and G does not touch mobile code.
 
 **Recommendation (owner's call).** If R2's concern is the client's receive path, the
 evidence that closes it is a **client-side test that delivers a fragmented sealed
 message to the RN WebSocket layer and asserts it unseals** — the path defect 1 lived
 on. That is a mobile change, not device evidence.
+
+## Row 1 at scale — terminal output sealed at 3 MB: PASS
+
+**Why this row was run at all, given G-1 is settled — stated so it is not read as
+redundant re-confirmation.** It is not confirming G-1. It exists because **D2's entire
+evidence base is 221 557 payload bytes containing no WebSocket frame above 126 bytes**,
+and a 3 MB sealed row carrying a single 165 847-byte frame is the large-payload sealed
+row D2 never ran. It strengthens the sealing claim on its own terms.
+
+D2's row 1 rests on 221 557 payload bytes with no WebSocket frame above 126 bytes. This
+session repeated the question at **3 000 224 bytes** through the session and a
+**165 893-byte sealed frame** (~114× MSS), sweeping every byte the server transmitted
+on the connection.
+
+Markers were derived at sweep time from the run's own artefacts — the generator's
+machine-written manifest (214 markers), the session id, the project name, and literal
+40-byte slices of the output *as the server itself recorded it*. 222 markers per leg,
+none typed by hand.
+
+| leg | wire bytes | derived markers found | `"type":` | `terminal_replay` | `the quick brown fox` |
+|---|---|---|---|---|---|
+| legacy :8791 (positive control) | 167 549 | **15 / 222** | 4 | 1 | 216 |
+| **sealed :8790** | 166 945 | **0 / 222** | 0 | 0 | 0 |
+
+The control finds plaintext in the same invocation shape, so **the sealed zero is a
+real absence**. (15 rather than 222 because the PTY scrollback is a bounded virtual
+terminal: 3 MB was written, ~45 KB retained and replayed, so most manifest markers were
+never transmitted. The transmitted ones are all found.)
+
+**Limits, stated plainly.** This sweeps **one WebSocket connection, server-to-client
+only**. It does not cover the REST/HTTP leg, other connections, or client-to-server
+frames, and it does **not** replace the full-payload `tcpdump` sweep for a whole-wire
+claim — it was taken because capture needs root here. LAN/loopback scope, as ever.
 
 ## G-2 — Android: BLOCKED, and the reason is substantive
 
@@ -380,3 +461,49 @@ public key in `/api/info`.
 2. **G-2** waits on an Android build from `origin/main` and on an Android device.
 3. **C1's client log** — the revocation-storm capture — not yet attempted; it needs the
    phone, and is batched with the G-1 sealed run.
+
+
+## Method disclosure: the controlled output generator (approved)
+
+Stated plainly because **a controlled generator that is disclosed is a method; one that
+is not is a confound.** The agent stops at Claude Code's login screen under the scratch
+`HOME` and nothing was signed in, so it cannot emit the megabytes these rows need. A
+generator was placed on the rig's PATH via a `.zshrc` **inside the scratch `HOME`**,
+emitting 3 MB of mixed text, base64 and high-byte binary across ~3 300 lines and writing
+a machine-generated manifest of its own markers.
+
+Real PTY, real ws-hub, real seal, real socket — **only the content is controlled**,
+which is the same reasoning PLAN-D already applies to the unauthenticated agent. It
+never leaves the scratch `HOME`. Confirmed the generator and not Claude Code was
+running: `GCTRL` markers 66, `Welcome`/`theme` 0.
+
+## Android SDK: pre-install state, for a teardown that is a comparison
+
+The user authorised a **local SDK install** (explicitly not EAS) and attached a
+condition in their own words — *"remember to clean up the build files after the tests."*
+Recorded **before** installing anything, so teardown can be a comparison rather than a
+claim:
+
+| path | state before any install |
+|---|---|
+| `~/Library/Android` | PRESENT, **8.0 KB** (only `.DS_Store`) — the SDK really was gone |
+| `~/.gradle` | PRESENT, **6.6 GB** — large and pre-existing |
+| `~/.android` | PRESENT, **3.5 MB**, contains AVDs — pre-existing |
+| `android-studio` Homebrew cask | already installed, pre-existing |
+| `adb` / `sdkmanager` / `gradle` on PATH | none |
+
+**`~/.gradle` at 6.6 GB belongs to the user's other projects and will not be deleted.**
+Having the before-number means the report can say what this session added instead of
+guessing.
+
+Installed so far: `android-commandlinetools` via Homebrew (removable with
+`brew uninstall --cask android-commandlinetools`) plus `platform-tools` — **210 MB**,
+`adb` 1.0.41 / 37.0.1 working. **No emulator images.**
+
+**Escalation raised before pulling anything larger.** Five modules declare
+`externalNativeBuild` — `expo-modules-core`, `expo-updates`,
+`react-native-gesture-handler`, `react-native-pager-view`, `react-native-screens` — and
+**none ship prebuilt `.so` files**, so they compile C++ from source and the NDK plus
+CMake are unavoidable. That is roughly **5–5.5 GB** more, against an authorisation for
+"an SDK, not an open-ended download". Referred to the owner and the user; nothing
+further has been downloaded.

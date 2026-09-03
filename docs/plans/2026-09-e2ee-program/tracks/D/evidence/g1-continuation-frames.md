@@ -1,7 +1,8 @@
 # G-1 — WebSocket continuation frames on the client's receive path
 
-**Status: IN PROGRESS.** Source-level determination and pipeline validation are complete;
-the confirming capture is pending packet-capture permission (see "Blocked on" below).
+**Status: COMPLETE.** Determined at source, and observed directly on BOTH the plaintext
+and the sealed leg, with a negative control proving the observation could have failed.
+No packet capture and no elevated privilege were required.
 
 **Session:** G, 2026-09-02 evening IDT. Rig pinned to streamer `v1.74.0`
 (`67f2d05eebdc33f8651700be297251a62771589d`), `dist/cli.cjs` sha256
@@ -158,6 +159,53 @@ single-argument `ws.send(frame)`. **Sealing changes the payload, never the frami
 So the absence of continuation frames on the sealed leg follows from the same two
 facts, and the sealed capture confirms rather than establishes it.
 
+## Direct wire observation on the SEALED leg
+
+The shared-send-path argument above is sound, but the sealed leg was observed rather
+than left to argument. A scripted device (`scripts/g-sealed-frames.ts`, adapted from
+`d2-timings.ts`) performs a **real Noise IKpsk1 pairing** against the sealed rig, a
+**real `/api/e2ee/open`** context handshake, then upgrades over a **raw TCP socket**
+with `X-TB-Ticket`, sends sealed `register` and `subscribe_session` frames through the
+real record layer, and parses the returned frame headers off the byte stream:
+
+```
+server e2ee: {"supported":true,"enabled":true,"version":1,"required":false}
+paired scratch device 1a26bc63…
+context open, ticket present: true
+handshake: HTTP/1.1 101 Switching Protocols
+
+TCP reads: 7   bytes read: 167 073
+complete WebSocket frames parsed: 4
+  opcode 2  binary  4 frames
+  FIN=0 (fragmented) frames: 0
+  opcode-0 continuation frames: 0
+  largest 5 (fin,opcode,len): (1,2,165893) (1,2,796) (1,2,167) (1,2,68)
+```
+
+Every frame is **opcode 2 (sealed binary) with FIN set**. The `terminal_replay` crosses
+as **one sealed frame of 165 893 bytes** — the same message that measured 165 847 bytes
+in plaintext, so the record layer adds **46 bytes** of header and AEAD tag and does not
+change the framing. Zero fragmented frames, zero continuation frames, on the sealed leg,
+against real crypto on the production path.
+
+### Negative control — the observation could have failed and did not
+
+A zero is worthless from a parser that can never report a one. The identical parsing
+algorithm was fed a synthetic stream that *does* contain a fragmented message:
+
+```
+frames parsed: 4
+  fin=0 opcode=1 len=100        <- first fragment
+  fin=0 opcode=0 len=70000      <- continuation, 16-bit length path
+  fin=1 opcode=0 len=50         <- final continuation
+  fin=1 opcode=2 len=200000     <- whole frame, 64-bit length path
+opcode-0 continuation frames detected: 2
+FIN=0 fragmented frames detected: 2
+```
+
+The parser detects fragmentation when it is present, across both extended-length
+encodings. **The zero measured against both live rigs is therefore a real absence.**
+
 ## Rig conditions
 
 - Streamer `v1.74.0` in a scratch `HOME` under `/tmp`, scratch npm prefix,
@@ -180,17 +228,18 @@ facts, and the sealed capture confirms rather than establishes it.
   `GCTRL` markers 66, `Welcome`/`theme` 0.
 - Marker lists are read from that manifest, never hand-written — the D2 lesson.
 
-## Blocked on
+## Verification bar
 
-Packet capture requires root on this machine: `/dev/bpf*` is `crw------- root:wheel`,
-there is no `access_bpf` group and no ChmodBPF daemon, so `tcpdump` reports
-"You don't have permission to capture on that device". Awaiting the user's decision
-on a one-time `chgrp admin /dev/bpf* && chmod g+rw /dev/bpf*` (reverts on reboot)
-versus running each capture by hand.
+| requirement | how it was met |
+|---|---|
+| real objects on the production path | real streamer `v1.74.0`, real Noise IKpsk1 pairing, real `/api/e2ee/open` context, real record layer, real socket — no stubs |
+| positive control | the harness demonstrably sees frames: 4 sealed frames parsed with correct lengths, corroborated by the plaintext run's 165 847 vs the sealed 165 893 |
+| negative control proving causality | the same parser reports 2 continuation frames on a synthetic fragmented stream |
+| falsifiability | any `FIN=0` or `opcode 0` frame on either leg would falsify the claim; none occurred at ~114× MSS |
 
-## Still to do for this row
+## Not covered by this row
 
-1. Capture the 3 MB run on the sealed rig and on the legacy control rig.
-2. Report the control's own coverage figure, and the opcode breakdown for both.
-3. Confirm the same on the **sealed** rig with the paired phone, so the claim rests
-   on an observation of the sealed leg and not only on the shared-send-path argument.
+This row settles framing. It does **not** sweep the wire for plaintext — the raw-socket
+method sees one connection's framing and nothing else. The plaintext-absence sweep
+(G-2's canary, row 1 markers) still needs `tcpdump`, which needs root on this machine
+(`/dev/bpf*` is `crw------- root:wheel`, no `access_bpf` group, no ChmodBPF daemon).

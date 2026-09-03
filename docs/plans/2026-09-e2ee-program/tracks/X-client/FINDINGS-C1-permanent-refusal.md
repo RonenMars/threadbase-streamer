@@ -79,6 +79,16 @@ A mutation coming back green is the campaign working, not the campaign failing �
 
 M1 additionally turned six other tests red; the row above is the storm test specifically. Every mutation was reverted from a file backup and the suite re-confirmed green after each.
 
+## Method note: a green suite is not evidence of a well-typed test
+
+`tsc --noEmit` caught three type errors that a fully green jest run did not, and two of them were in the very code proving the fix — `openContext`'s union return type where the test meant to capture an error, and a cast on the SecureStore mock.
+
+The cause is structural, not a slip: this repo transforms tests with babel, which *strips* types rather than checking them. So the suite ran, exercised the intended paths and reported 1848 passing while the compiler considered that same code wrong. Nothing in the test output could have revealed it.
+
+That is the shape this program keeps rediscovering under different names: **the instrument agreed with itself.** The §14 field-decode pipeline greping only what tshark chose to dissect was the same fault; so was a positive control that exercised only payloads fitting in one segment. A check that cannot see a class of error will report that class as absent.
+
+The practical rule: `tsc` stays in the gate list as its own gate, and a green suite is never accepted as standing in for it. This costs one command and catches a category the suite is structurally blind to.
+
 ## Gates
 
 `tsc --noEmit` 0 · `eslint --max-warnings=0` 0 repo-wide · unit **1848/1848** across 187 suites · integration **472/472** · jest e2e **59/59**. The change adds 19 tests and 1 suite.
@@ -86,6 +96,8 @@ M1 additionally turned six other tests red; the row above is the storm test spec
 ## Seam disclosure
 
 The new suite mocks `createOpenInitiator` — the SecureStore/Noise boundary — following the existing precedent at `__tests__/unit/e2ee-rest-context-channels.test.ts:16`. That is not the transition under test: every refusal is produced by the real `mapOpenFailure`, carried by the real `OpenError`, through the real `openContext` control flow, and on a refusal the handshake is never read at all. The two clear-point tests mock no e2ee module at all. `stores/servers.test.ts` seeds a verdict through the real classifier — an unpaired device's open throws the non-retryable `E2EE_NOT_PAIRED` — then drives the real `addServer`. `hooks/useSession.test.tsx` goes further: it seeds a real 32-byte device key and a real X25519 server key into the SecureStore mock the whole suite already uses, so `createOpenInitiator` succeeds, a real Noise `writeMessage1` runs, and the refusal is a genuine `E2EE_HANDSHAKE_FAILED`. That the test asserts this code at all is its own control on the seeding: had the key not been read, the open would have failed earlier as `E2EE_NOT_PAIRED` and the test would be red.
+
+**The seam shrank, and that is worth as much as declaring it.** The disclosure above was written for a suite that mocked `createOpenInitiator` throughout. The recovery test does not: by seeding real key material instead, it removes the only e2ee mock from the path it exercises, so it mocks strictly less than the precedent it was modelled on. A reviewer checking the declared seam should find less of it than the declaration admits, never more.
 
 ## A case this also closes, unplanned
 

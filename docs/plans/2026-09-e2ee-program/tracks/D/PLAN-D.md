@@ -122,12 +122,12 @@ Also found stale `localStorage` from an unrelated prior browser session at this 
 - Android: `emulator-5554` already attached — **pre-existing, not started by this session.**
 - Two `cloudflared` tunnels already running — pre-existing:
   - PID 1624: `cloudflared tunnel --protocol http2 --url http://localhost:8765`
-  - PID 696 (root): `cloudflared tunnel --config ~/.cloudflared/config.yml run` — this is the named tunnel backing the real prod hostname `tb-pc.rbv1000.win → 127.0.0.1:8766` (per `tb-streamer/CLAUDE.md` §"Cloudflare Tunnel").
+  - PID 696 (root): `cloudflared tunnel --config ~/.cloudflared/config.yml run` — this is the named tunnel backing the real prod hostname `<prod-tunnel-host> → 127.0.0.1:8766` (per `tb-streamer/CLAUDE.md` §"Cloudflare Tunnel").
 - One `node` process already serving on port **8766**: `~/.threadbase/cli.js serve --port 8766 --prod` — **this is the real production streamer, using the real `~/.threadbase`.** Not touched, not connected to, must stay untouched throughout D1/D2.
 - One further `node` process listening on 127.0.0.1:7265 — unidentified, not investigated (out of scope for a read-only pass); the rig must avoid this port too.
 - Nothing booted or started by this session as of this record.
 
-**Consequence for rig isolation:** the rig's streamer must bind a port other than 8766/7265/8765, and must register its own, separate named tunnel — never reuse `tb-pc.rbv1000.win` or port 8766.
+**Consequence for rig isolation:** the rig's streamer must bind a port other than 8766/7265/8765, and must register its own, separate named tunnel — never reuse `<prod-tunnel-host>` or port 8766.
 
 ## 4. Rig isolation steps (to run on owner approval)
 
@@ -140,7 +140,7 @@ Also found stale `localStorage` from an unrelated prior browser session at this 
 7. **Verify isolation before anything else**, with `lsof`:
    - `lsof -p <rig-pid>` shows every open DB/config file path under `$SCRATCH`, none under the real `~/.threadbase`.
    - Cross-check: `lsof ~/.threadbase/*.db` shows only the pre-existing prod PID from §3, never the rig PID.
-8. Bring up an **ephemeral quick tunnel** — `cloudflared tunnel --url http://127.0.0.1:<rig-port>` — never a named tunnel on the user's Cloudflare account (that touches their config and needs their auth). Yields a throwaway `*.trycloudflare.com` HTTPS hostname, sufficient for the Android release-build leg (never `tb-pc.rbv1000.win`, never port 8766). Treat the quick-tunnel hostname as a secret to scrub, same as the others.
+8. Bring up an **ephemeral quick tunnel** — `cloudflared tunnel --url http://127.0.0.1:<rig-port>` — never a named tunnel on the user's Cloudflare account (that touches their config and needs their auth). Yields a throwaway `*.trycloudflare.com` HTTPS hostname, sufficient for the Android release-build leg (never `<prod-tunnel-host>`, never port 8766). Treat the quick-tunnel hostname as a secret to scrub, same as the others.
 9. Record: rig port, rig tunnel hostname, rig API key location (never the key value) — all four (API key, tunnel hostname, pair tokens, `spk`/tickets/device tokens) get scrubbed from every capture before anything leaves the scratchpad, per program CLAUDE.md §5 and `tracks/parallel-execution-plan.md` "Isolation within a group."
 
 ## 5. Device build (owner approval required, still no pairing)
@@ -265,49 +265,114 @@ Two distinct timers, don't conflate them:
 8. Revoked device's live socket closes.
 9. Access/named-tunnel functional pass (see above) — function only, explicitly not a wire-secrecy claim.
 
-### §14 traps found 2026-09-02 evening (G session) — four more, all false-negative generators
+### §14 traps found 2026-09-02 evening (G session)
 
-§14 exists because three earlier traps were not recorded. These four were hit in one
-session; every one of them fails as a clean, plausible empty result rather than as an
-error, which is the class this program keeps losing time to.
+§14 exists because three earlier traps were not recorded. Every trap below fails as a
+clean, plausible **empty result** rather than as an error — a green result that is
+actually a blind spot, the same shape as the ~30 % ungrepped payload.
 
-1. **Two LAN interfaces on the same /24.** `en0` = 192.168.68.125 and `en9` =
-   192.168.68.102 are both on 192.168.68.0/24. Capture the wrong one and `tcpdump`
-   writes an empty file, the sweep finds no plaintext, and it reads as a clean pass.
-   Not hypothetical: mobile issue #727's field report used the `en9` address.
-   **Resolve it from the rig's own pair URL** — the streamer prints the address it
-   advertises (`192.168.68.125`, i.e. `en0`) — and still confirm with the positive
-   control before trusting any zero.
+**1. Two LAN interfaces on the same /24.** `en0` = 192.168.68.125 and `en9` =
+192.168.68.102 are both on 192.168.68.0/24. Capture the wrong one and `tcpdump` writes
+an empty file, the sweep finds no plaintext, and it reads as a clean pass. Not
+hypothetical: mobile issue #727's field report used the `en9` address. Resolve the
+interface from **the rig's own pair URL** — the streamer prints the address it
+advertises — and then prove it.
 
-2. **`git grep <pattern> origin/main -- <path>` returns empty on these repos
-   regardless of content.** Confirmed with a control: a string certain to exist in
-   the named file also returned zero. Any absence proved this way is a false
-   negative. Use `git show origin/main:<path> | grep` instead.
+> **Rule: no interface is accepted until a positive control proves data flows on it,
+> and the evidence write-up must carry that interface's own total `tcp.len` byte count
+> next to the coverage figure.** A later reader must be able to see the capture was
+> non-empty *for a stated reason*, not by assumption.
 
-3. **Spotlight indexing is disabled machine-wide** (`mdutil -s /` → "Indexing
-   disabled"), so `mdfind` returns empty for every query, including
-   `mdfind -name Safari`. Never use it to prove a file does not exist.
+**2. A stale plan note can manufacture a false pass — the staleness is not the trap,
+the false pass is.** §5 of this document said "Android: release build over the rig's own
+tunnel (mobile#727 — a release build cannot reach `http://`)". **#727 is CLOSED**, fixed
+2026-08-15 by `13e21e22` (#752): `usesCleartextTraffic="true"` in the main manifest plus
+an app-layer policy permitting cleartext to the local network and refusing it elsewhere.
 
-4. **Packet capture requires root and fails only at capture time.** `/dev/bpf*` is
-   `crw------- root:wheel`, with no `access_bpf` group and no ChmodBPF daemon.
-   Budget the sudo ask into the plan rather than discovering it after the rig is up.
+> **The consequence, stated because the correction alone is not the lesson:** following
+> the stale note would have run G-2 over the tunnel's TLS, where the chosen-plaintext
+> canary is absent **because of TLS rather than because of E2EE** — and the row that
+> gates the stage-2 default flip would have recorded a pass that proves nothing. When a
+> plan note routes a secrecy test through a transport that hides everything, the note is
+> not merely out of date; it is generating the result.
 
-**Method note carried forward — the >MSS artefact in D2 was HTTP, not WebSocket.**
-Re-analysis of `d2-sealed-rows-2-4.pcap` shows every WebSocket frame there is ≤126
-bytes; the >MSS reassembled PDUs are 1 587-byte HTTP bodies. The coverage conclusion
-(field pipeline misses 33.54 %, raw sweep 100 %) reproduces exactly, but a future
-reader chasing "the large WS frame" will not find one. D2 never exercised
-large-frame handling on the WebSocket leg at all.
+**3. Spotlight indexing is disabled machine-wide** (`mdutil -s /` → "Indexing
+disabled"), so `mdfind` returns empty for every query, including `mdfind -name Safari`.
+Never use it to prove a file does not exist.
 
-**Validate the sweep pipeline against an existing pcap before using it.** Running
-`sweep.sh` on D2's accepted capture reproduces the documented ~30 % gap
-(66.46 % field coverage vs 100 % raw). That is a known-answer test, and it is
-cheap — it costs one command and it means the tooling is not certified by the same
-run it is certifying.
+**4. Packet capture requires root and fails only at capture time.** `/dev/bpf*` is
+`crw------- root:wheel`, with no `access_bpf` group and no ChmodBPF daemon. Budget the
+sudo ask into the plan rather than discovering it after the rig is up.
 
-**Getting a genuinely >MSS WebSocket frame.** The agent stops at Claude Code's login
-screen under a scratch `HOME`, so it cannot emit bulk output, and PTY scrollback is a
-bounded virtual terminal (3 MB written retained as ~45 KB). The frame that does cross
-the MSS is **`terminal_replay`**, sent once on `subscribe_session`: measured at
-**165 847 bytes**, ~114× the 1 448-byte MSS. Drive it with `register` then
-`subscribe_session` on `/ws?key=`.
+**5. `devicectl` "connected" does not mean USB.** `xcrun devicectl list devices` reported
+the iPhone 13 Pro as `connected` and the 17 Pro as `available (paired)`, but
+`xcrun xctrace list devices` — which is what `scripts/dev-device.sh` actually uses —
+listed **only the 17 Pro**. Acting on `devicectl` alone sends the user to plug in the
+wrong phone. **Use `xctrace` to decide which device is buildable.**
+
+**6. A local dev build reports `Bundle Version 1` regardless of commit.** Both phones
+report `com.ronenmars.threadbase` version 1.0, bundle version 1, so **the installed
+build's provenance cannot be read off the device**. That is why rebuilding before a
+receive-path row is not optional: a stale client certifies nothing, and it fails in a
+way that looks like a clean result.
+
+### A control is only a control if you verified the thing it looks for is really there
+
+**Recorded because it is my own error, and it nearly entered the record as a fabricated
+trap.** I reported that `git grep <pattern> origin/main -- <path>` returns empty on
+these repos regardless of content, "confirmed with a control". It does not. `git grep`
+works correctly here:
+
+```
+git grep -c -F 'upgradeWebSocket' origin/main -- 'src/*.ts'   ->  2 files
+git grep -n -F 'ws.send(frame)'   origin/main -- 'src/*.ts'   ->  src/ws-hub.ts:299
+```
+
+My "positive control" searched `sessions.routes.ts` for the word `router`, which **does
+not occur in that file** — ground truth `git show origin/main:<file> | grep -c router`
+= **0**. The control returned nothing because there was nothing to find, and I read that
+as the tool being broken.
+
+> **Rule: before a string is used as a positive control, its presence must be
+> established independently — by a different tool, on the same target.** An unverified
+> control that returns zero is indistinguishable from a broken tool, and it will
+> manufacture whichever conclusion you were already expecting. This is the
+> positive-control discipline turned back on the control itself.
+
+### Validate the sweep pipeline as a known-answer test before using it
+
+Run the pipeline against an **already-accepted** capture and reproduce a figure the
+program has already agreed on, before pointing it at anything new. `sweep.sh` on
+`d2-sealed-rows-2-4.pcap` reproduces the documented gap exactly: raw sweep **100.00 %**
+of 221 557 payload bytes, field pipeline **66.46 %**, misses **33.54 %**. That costs one
+command, and it means later coverage numbers are checkable rather than self-asserted —
+the tooling is not certified by the same run it is certifying.
+
+### D2's >MSS artefact was HTTP, not WebSocket
+
+Re-analysis of `d2-sealed-rows-2-4.pcap`: **every WebSocket frame in it is ≤126 bytes**
+(126×87, 125×25, 115×7, 68×9, 2×12, 0×22). The >MSS reassembled PDUs are **1 587-byte
+HTTP bodies**; 86 packets are segments of reassembled PDUs. The revision's 33.54 % miss
+stands exactly — only the attribution changes.
+
+Two consequences worth stating plainly: a future reader hunting "the large WS frame" in
+those pcaps will find nothing and could wrongly conclude the review was mistaken about
+everything; and **D2 never exercised large-frame handling on the WebSocket leg at all**,
+which is a real gap in the accepted evidence base rather than a footnote.
+
+### Getting a genuinely >MSS WebSocket frame
+
+The agent stops at Claude Code's login screen under a scratch `HOME`, so it cannot emit
+bulk output, and PTY scrollback is a bounded virtual terminal (3 MB written, ~45 KB
+retained). The frame that crosses the MSS is **`terminal_replay`**, sent once on
+`subscribe_session`: measured at **165 847 bytes plaintext / 165 893 sealed**, ~114× the
+1 448-byte MSS. Drive it with `register` then `subscribe_session` on `/ws?key=`.
+
+### Frame boundaries do not need `tcpdump`
+
+A raw TCP socket that performs the WebSocket handshake by hand and parses frame headers
+off the byte stream observes FIN bits and opcodes directly, with **no elevated
+privilege**. For the sealed leg, add a real Noise IKpsk1 pairing, a real
+`/api/e2ee/open` context and a ticketed upgrade (see `scripts/g-sealed-frames.ts`).
+Pair it with a negative control — feed the same parser a synthetic fragmented stream and
+confirm it reports `opcode 0` — or the zero means nothing.
