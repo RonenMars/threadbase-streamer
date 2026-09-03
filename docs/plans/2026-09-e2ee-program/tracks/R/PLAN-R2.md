@@ -90,12 +90,40 @@ Deferring this decision is not free and not flat; the cost step-changes at each 
 
 ## Decision record
 
-*(To be filled in once the user has chosen. Record verbatim enough that a later session can tell what was picked and what was merely considered.)*
+- **Chosen option:** A combination not among the three drafted above — **option 2 plus a new option 4** — reached by the user and the owner brainstorming after reading this escalation.
+- **In the user's own words:** "hand-off to proceed with 2+4"
+- **Date:** 2026-09-04
 
-- **Chosen option:**
-- **In the user's own words:**
-- **Date:**
-- **If code is needed, PR #:**
+**How option 4 was reached.** The brainstorm turned on a fact from the mobile client, re-verified against `origin/main` in `tb-mobile` before being recorded here: both channels decide sealed-vs-plaintext from client-held state only, never from what the server currently claims.
+- `services/authed-fetch.ts:177` — `if (isPinned(target)) return sealedFetch(...)`, else `plaintextFetch(...)`.
+- `services/ws-client.ts:190` — `const pinned = this.encryption.requireEncryption === true && !!this.encryption.serverPublicKey`.
+- `isPinned` (`authed-fetch.ts:181-183`) — `requireEncryption === true && !!serverPublicKey && !!id`.
+- The only call site anywhere in the app that sets `requireEncryption` to `false` is a deliberate user tap: `components/servers/ServerEncryptionSection.tsx:49`, inside a destructive-styled confirm alert (`stores/servers.ts:345` is the only setter, `stores/servers.ts:292` only ever sets it `true`).
+
+Consequence: a server that disables E2EE via `THREADBASE_FEATURE_E2EE=0` (or any other source) does **not** silently downgrade its already-pinned devices — `authedFetch` and `WsClient` keep refusing plaintext to any device the app still considers pinned, so the app breaks loudly, on every request, rather than quietly accepting cleartext. The residual harms are narrower than D-8 assumed: (a) **first-contact pairing** — a *new* device pairing against a server that has (re)gone plaintext gets no protection to lose, because it was never pinned; (b) **operator self-deception** — an operator who believes the box is encrypting production traffic and isn't. Both are real, but neither is the "previously-protected device silently downgraded" scenario D-8 was written to prevent — that scenario requires the client to trust server-side state over its own pin, and it doesn't.
+
+So D-8's rule is a **mechanism** rule ("no env var may hold encryption off") guarding against a **harm** ("a pinned device is silently downgraded") that the mechanism, as built, largely cannot cause. That reframing is why the user picked a combination outside the three drafted options rather than one of them as-is.
+
+**Option 2 — the disposition (documentation only).** D-8's "no env var may hold encryption off" rule is **retired as unenforceable, not patched**. `dilemmas.md` D-8 gets a resolution note recording this reasoning (including the client-pin evidence above) so a later reader sees the rule was retired on evidence, not abandoned. `design.md` §6.4/§6.5 get a line acknowledging the env var is a real, standing off switch once the default flips. **No resolver change** — `src/feature-flags.ts` is not touched; every flag keeps resolving through the same five rungs (`override → env → cli → yaml → default`). Registry uniformity is the entire point of taking option 2 as the base.
+
+**Option 4 — the replacement rule (code).** Source-agnostic and consequence-based: a boot that serves plaintext announces itself, naming the pinned-device count and the deciding source. This is option 3 from the original three, generalized past "any source" to *all four non-default rungs*, with the design question below settling exactly when it fires:
+- `src/server.ts:2405-2406` (`warnIfE2eeDisabledOnTheCommandLine`) — the guard broadens off `this.featureFlagSources.e2ee !== "cli"`; the method is renamed off "OnTheCommandLine" since it is no longer CLI-specific; its `reason` log field carries the real source instead of the literal `"cli"`.
+- `src/api/routes/misc.routes.ts:202-213` (`disabledReason`) — grows branches so `/api/info` names the actual rung (`env` / `cli` / `yaml`) instead of collapsing `env`/`yaml`/`default` into one generic line.
+- The pinned-device count machinery already exists at `server.ts:2417-2421` (`repo.list().filter((d) => d.e2ee && d.revokedAt == null).length`) and is reused as-is, not rebuilt — the method's own comment already says it is called after `devicesRepo` opens "since the count is the point."
+
+**Why option 5 (a boot refusal gated on the pinned count) was dropped, and why that's cheap under 2+4.** Option 5 would have made the pinned count **load-bearing** — a value the boot decision depends on, not just reports. `server.ts:2417-2421`'s own comment carries the `#744` caveat: a pairing whose `msg2` was lost leaves a row that is pinned but has never connected, so the count "counts intent to encrypt, not devices in anyone's hand." Under option 5, a ghost row from a lost `msg2` could have locked an operator out of disabling encryption for a device that was never actually in anyone's hand. Under 2+4 the count stays **advisory** — it enriches a warning a human reads, never gates a boot decision — which is the regime `#744`'s caveat was already written for. That's a large part of why this combination is cheap: it needs no `#744` fix as a prerequisite.
+
+**Explicitly not in scope:** no refusal to honour a config-sourced disable, no argv-level requirement for disabling, no boot refusal of any kind. No scaffolding or TODOs for option 5 are to be left in the diff.
+
+- **If code is needed, PR #:** *(filled in once opened — see Process below)*
+
+## The trigger design question (settled by the implementing session)
+
+Today the warning fires whenever the `cli` rung disabled `e2ee` — **including at zero pinned devices**, where its own text says "no paired device requires it." A strictly consequence-gated trigger (only warn when the pinned count is `> 0`) would **remove** a warning that fires today for a `cli`-sourced, zero-device disable, which is a regression in visibility even though it reads as more faithful to option 4's "consequence-based" framing.
+
+**Chosen: keep warning whenever `e2ee` is off from any explicit non-default source (`override`, `env`, `cli`, `yaml`), regardless of the pinned count; let the count enrich the text and severity, never gate whether the warning fires.** Never remove a warning that exists today.
+
+Reasoning: the zero-count case is exactly the boot the reviewer's original recommendation (`tracks/REVIEW-2026-08-29-mega-brain.md:173`, N1) was about — the friction D-8 wants "comes from the warning and the 426s, not from hiding the switch," and a freshly-disabled box with zero pinned devices today is precisely the boot where an operator most needs to see "you just turned this off" *before* any device gets pinned against it, i.e. before the count-gated version would ever speak. Gating on count would make the warning a lagging indicator (fires only after someone has already paired against plaintext) instead of a leading one (fires the moment the box boots plaintext, so pairing against it happens knowingly). That is a strictly worse trade for a mechanism this cheap to run on every boot. `default` stays exempt — off-by-default was never a surprise before stage 2, and warning on every default boot today (with `e2ee`'s registry default still `false`) would be pure noise with no decision behind it to announce.
 
 ## Next steps
 
