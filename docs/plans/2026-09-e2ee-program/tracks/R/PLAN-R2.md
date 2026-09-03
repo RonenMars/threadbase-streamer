@@ -1,6 +1,6 @@
 # PLAN-R2 — the D-8 vs §6.5 escalation
 
-Status: **DRAFTED, NOT YET PRESENTED.** Presentation is held on the owner's confirmation that **G-1** (continuation frames, on hardware) has landed — per the R task brief, drafting is unblocked but presenting is not. As of this draft (2026-09-02), `tracks/STATUS.md` still lists G-1 as open and blocking R2.
+Status: **DECIDED (2026-09-04, option 2 + option 4) — IMPLEMENTING.** See the Decision record and the Implementation log below. Presentation was originally held on G-1; G-1 was split on 2026-09-02 and its streamer half cleared R2.
 
 Pinned against streamer `origin/main` = `d9148f25` (`v1.74.0` = `67f2d05e`, R1 shipped via PR #752). Every file/line/test cited below was read from `origin/main` at that commit, not assumed from an earlier plan.
 
@@ -98,7 +98,7 @@ Deferring this decision is not free and not flat; the cost step-changes at each 
 - `services/authed-fetch.ts:177` — `if (isPinned(target)) return sealedFetch(...)`, else `plaintextFetch(...)`.
 - `services/ws-client.ts:190` — `const pinned = this.encryption.requireEncryption === true && !!this.encryption.serverPublicKey`.
 - `isPinned` (`authed-fetch.ts:181-183`) — `requireEncryption === true && !!serverPublicKey && !!id`.
-- The only call site anywhere in the app that sets `requireEncryption` to `false` is a deliberate user tap: `components/servers/ServerEncryptionSection.tsx:49`, inside a destructive-styled confirm alert (`stores/servers.ts:345` is the only setter, `stores/servers.ts:292` only ever sets it `true`).
+- The only call site anywhere in the app that sets `requireEncryption` to `false` is a deliberate user tap: `components/servers/ServerEncryptionSection.tsx:49`, inside a destructive-styled confirm alert (`stores/servers.ts:350` is the only setter, `stores/servers.ts:293` only ever sets it `true`). *Line numbers re-verified 2026-09-04 against mobile `origin/main` = `c64fab5e`; the first draft cited `:345`/`:292` from `26815a16`, and a repo-wide grep for `setRequireEncryption(` confirms the tap is still the sole `false` writer.*
 
 Consequence: a server that disables E2EE via `THREADBASE_FEATURE_E2EE=0` (or any other source) does **not** silently downgrade its already-pinned devices — `authedFetch` and `WsClient` keep refusing plaintext to any device the app still considers pinned, so the app breaks loudly, on every request, rather than quietly accepting cleartext. The residual harms are narrower than D-8 assumed: (a) **first-contact pairing** — a *new* device pairing against a server that has (re)gone plaintext gets no protection to lose, because it was never pinned; (b) **operator self-deception** — an operator who believes the box is encrypting production traffic and isn't. Both are real, but neither is the "previously-protected device silently downgraded" scenario D-8 was written to prevent — that scenario requires the client to trust server-side state over its own pin, and it doesn't.
 
@@ -116,6 +116,22 @@ So D-8's rule is a **mechanism** rule ("no env var may hold encryption off") gua
 **Explicitly not in scope:** no refusal to honour a config-sourced disable, no argv-level requirement for disabling, no boot refusal of any kind. No scaffolding or TODOs for option 5 are to be left in the diff.
 
 - **If code is needed, PR #:** *(filled in once opened — see Process below)*
+
+## Implementation log (session R, 2026-09-04)
+
+- **Branch/worktree:** `feat/e2ee-plaintext-boot-disclosure` at `tb-streamer/.worktrees/feat/e2ee-plaintext-boot-disclosure`, based on `origin/main` = `d9148f25` (`v1.74.0`), re-fetched. The worktree arrived carrying an uncommitted, near-complete implementation from a previous session (115+/23- across the three code/test files); it was reviewed line by line against the brief, found to match it, and reused rather than rewritten. Reported to the owner before any edit.
+- **Design question:** settled as recorded above (warn on every explicit non-default source, count enriches only). The implementing session's own additions to the reasoning: for `env`/`yaml` nothing is typed, so the boot line is the operator's only confirmation the "off" took effect; and `override` is unreachable for `e2ee` today (the only override rung is `codexSystemPromptEnabled`) but is covered by the guard for free and given a truthful one-line `/api/info` reason rather than the default-rung text, which tells the reader how to turn it *on*.
+- **Docs:** `dilemmas.md` D-8 resolution note (retired as unenforceable; client-pin evidence; residual harms; option-5 consequence with #744; precedence unchanged). `design.md` §6.4 acknowledgement paragraph. `design.md` §6.5 acknowledgement **plus a correction**: the sentence "Precedence puts the CLI flag last-word for the run, per the documented order" was false on `origin/main` (the documented order is `override → env → cli → yaml → default`, env beats cli, pinned by the `:96` test) and now states the real order.
+- **Code:** `src/feature-flags.ts` untouched. `src/server.ts`: `warnIfE2eeDisabledOnTheCommandLine` → `warnIfE2eeDisabled`, guard `if (this.featureFlags.e2ee) return; if (source === "default") return;`, `reason: source`, message says `(source: <rung>)`, count machinery reused as-is. `src/api/routes/misc.routes.ts`: `disabledReason` is a switch naming `cli` / `env` / `yaml` / `override`, with the original generic text kept for `default`.
+- **Harness defect found and fixed (would have been a false pass):** the boot-warning tests never sandboxed `THREADBASE_CONFIG_DIR`, so `loadFeatureFlags()` read the real `~/.threadbase/server.yaml`, which on this machine carries `feature_flags: {"e2ee":true}`. Every plain `boot(undefined)` therefore resolved `e2ee` ON from the **yaml** rung, and both the pre-existing positive control (`origin/main`) and the new default-rung negative control passed for a reason unrelated to the default rung. Caught because mutation M3 (delete the default-rung exemption) stayed green. Fixed by pointing the config dir at the test's temp directory in `beforeEach`/`afterEach`; M3 then went red on both controls. Not a CI defect (no `server.yaml` there), but a local false-pass trap for anyone running this file on a box with e2ee enabled in their live config.
+- **Mutations, each seen red then reverted** (file `__tests__/e2ee-no-e2ee-flag.test.ts`):
+  - M1 restore `source !== "cli"` guard → `also warns when the environment variable is what disabled it` and `also warns when server.yaml is what disabled it`: `AssertionError: expected [] to have a length of 1 but got +0`.
+  - M2 hardcode `reason: "cli"` → the same two tests: `expected 'cli' to be 'env'` / `expected 'cli' to be 'yaml'`.
+  - M3 delete `if (source === "default") return;` → `POSITIVE CONTROL — a boot that did not disable it warns about nothing` and `NEGATIVE CONTROL — the default rung (nothing decided it) stays silent, even though e2ee is off`: `expected [ { …(3) } ] to deeply equal []`.
+  - M4 delete the `env` branch of `disabledReason` → `names the environment variable when that rung decided it`: `expected 'disabled by the e2ee feature flag — s…' to be 'disabled by the THREADBASE_FEATURE_E2…'`.
+  - M5 delete the `yaml` branch → `names server.yaml when that rung decided it`: `expected 'disabled by the e2ee feature flag — s…' to be 'disabled by feature_flags: in server.…'`.
+- **Gates:** *(filled in below once the full suite has run)*
+- **Adjacent, not acted on:** `specs/end-to-end-encryption/plan.md:69` still summarises D-8 as "no `server.yaml` key, no env var"; true of the flag itself, stale as a statement of the guarantee. Left for the owner's docs branch. Other test files that boot a `StreamerServer` without sandboxing `THREADBASE_CONFIG_DIR` inherit the same live-config leak; out of this PR's scope.
 
 ## The trigger design question (settled by the implementing session)
 
