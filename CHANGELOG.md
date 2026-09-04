@@ -1,3 +1,9 @@
+## [1.76.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.75.2...v1.76.0) (2026-09-04)
+
+### Features
+
+* **e2ee:** flip the e2ee feature flag's default to on (stage 2) ([#776](https://github.com/RonenMars/threadbase-streamer/issues/776)) ([1e1d595](https://github.com/RonenMars/threadbase-streamer/commit/1e1d5954f4bee7b73ed6beef10399a4383933bef))
+
 ## [1.75.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.75.1...v1.75.2) (2026-09-04)
 
 ### Bug Fixes
