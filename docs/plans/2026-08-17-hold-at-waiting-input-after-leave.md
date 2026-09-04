@@ -118,11 +118,27 @@ No protocol change. The latch lives on the streamer. Host `status-change` alread
 
 Do not require a pty-host protocol test. Do not touch Task Scheduler / `prod stop`.
 
+## Ack (added 2026-09-04)
+
+The frame was fire-and-forget, so mobile's confirm flow had nothing to await
+before navigating home — see the mobile PR body. Added a unicast reply to the
+requesting socket only:
+
+```json
+{ "type": "hold_session_result", "sessionId": "<id>", "ok": true, "applied": "held" | "armed" | "grace" }
+{ "type": "hold_session_result", "sessionId": "<id>", "ok": false, "reason": "permission_denied" | "unknown_when" | "no_session" }
+```
+
+`ok: true` fires on request-accepted (immediate hold, or latch armed), not on
+the PTY actually exiting — `armed` may resolve arbitrarily far in the future
+(the session is still `running`), so a client waiting on the real exit before
+navigating away would hang. Old clients ignore the unknown frame type.
+
 ## Mobile (separate PR, after or with this)
 
 Kill on idle sends `when: "waiting_input"`. Kill it stays `POST /stop`. Leave it sends nothing. Empty unused discard (`promptCount === 0`) stays `POST /stop` with no modal. Backgrounding stays bare `hold_session`.
 
-Old streamers: extra field ignored → grace. Product-acceptable degrade; call it out in the mobile PR body.
+Old streamers: extra field ignored → grace, and no `hold_session_result` frame arrives — mobile times out its wait and falls back to leave-without-confirmation-toast behaviour. Product-acceptable degrade; call it out in the mobile PR body.
 
 ## Suggested issue
 

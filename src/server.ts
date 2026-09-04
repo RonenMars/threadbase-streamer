@@ -1259,8 +1259,8 @@ export class StreamerServer {
    * on the next running → waiting_input (or idle). No grace delay, no defer cap.
    * A subscribed leaving socket must not block an immediate hold.
    */
-  private armHoldWhenIdle(sessionId: string): void {
-    if (!this.ptyManager.hasSession(sessionId)) return;
+  private armHoldWhenIdle(sessionId: string): "held" | "armed" | "no_session" {
+    if (!this.ptyManager.hasSession(sessionId)) return "no_session";
     this.clearGrace(sessionId);
     const status =
       this.ptyManager.getSession(sessionId)?.status ??
@@ -1269,7 +1269,7 @@ export class StreamerServer {
       this.holdWhenIdle.delete(sessionId);
       this.ptyManager.putOnHold(sessionId);
       this.forgetIfEmptyUnused(sessionId);
-      return;
+      return "held";
     }
     this.holdWhenIdle.add(sessionId);
     this.log.info(
@@ -1277,6 +1277,7 @@ export class StreamerServer {
       { sessionId, event: "pty.hold_when_idle_armed" },
       "pino",
     );
+    return "armed";
   }
 
   /**
