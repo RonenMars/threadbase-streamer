@@ -2075,7 +2075,10 @@ describe("StreamerServer", () => {
     // permission replay), so a positional read would be flaky.
     function waitForFrame(ws: WebSocket, type: string, timeoutMs = 2000): Promise<any> {
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`timed out waiting for ${type}`)), timeoutMs);
+        const timer = setTimeout(
+          () => reject(new Error(`timed out waiting for ${type}`)),
+          timeoutMs,
+        );
         ws.on("message", (raw) => {
           const frame = JSON.parse(raw.toString());
           if (frame.type === type) {
