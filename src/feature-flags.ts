@@ -94,10 +94,11 @@ export const FEATURE_FLAGS = {
   e2ee: {
     description:
       "Application-layer encryption between a paired device and this server, independent of TLS, " +
-      "so a tunnel or a LAN observer on the path carries ciphertext. Off by default: it is " +
-      "negotiated per device, never forced, because released mobile builds cannot be " +
-      "force-updated and a server that demanded it would break every one of them.",
-    default: false,
+      "so a tunnel or a LAN observer on the path carries ciphertext. On by default (stage 2): it " +
+      "is negotiated per device, never forced, because released mobile builds cannot be " +
+      "force-updated and a server that demanded it would break every one of them. `required` " +
+      "(stage 3, refusing plaintext from any client) is a separate, still-unmade decision.",
+    default: true,
     env: "THREADBASE_FEATURE_E2EE",
   },
   accessProbe: {

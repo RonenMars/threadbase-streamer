@@ -63,7 +63,17 @@ describe("the pair exchange authenticates what it stores and returns", () => {
     serverStaticPub = Buffer.from(loadOrCreateServerIdentity().publicKey, "base64url");
     clientStatic = generateKeyPair();
 
-    server = new StreamerServer({ port: 0, apiKey: API_KEY, localNoAuth: false, verbose: false });
+    // Pinned off explicitly rather than relying on the registry default: every
+    // describe below runs under the mock immediately below anyway, except
+    // "the capability gate still fronts all of this", which deliberately
+    // restores the real function to test the real off-build behavior.
+    server = new StreamerServer({
+      port: 0,
+      apiKey: API_KEY,
+      localNoAuth: false,
+      verbose: false,
+      featureFlags: { e2ee: false },
+    });
     await server.listen(0, { awaitReady: true });
     baseUrl = `http://localhost:${server.port}`;
 

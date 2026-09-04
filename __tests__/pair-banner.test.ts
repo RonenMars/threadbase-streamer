@@ -189,7 +189,16 @@ describe("the capability probe against a real running server", () => {
     configDir = mkdtempSync(join(tmpdir(), "tb-pair-banner-"));
     process.env.THREADBASE_CONFIG_DIR = configDir;
 
-    server = new StreamerServer({ port: 0, apiKey: API_KEY, localNoAuth: false, verbose: false });
+    // Pinned off explicitly rather than relying on the registry default: this
+    // suite's assertion is about the CLI-credential capability-read
+    // discriminator (below), not about which way the e2ee flag defaults.
+    server = new StreamerServer({
+      port: 0,
+      apiKey: API_KEY,
+      localNoAuth: false,
+      verbose: false,
+      featureFlags: { e2ee: false },
+    });
     await server.listen(0, { awaitReady: true });
     port = server.port;
   });
