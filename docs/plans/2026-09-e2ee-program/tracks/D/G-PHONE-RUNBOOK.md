@@ -1,5 +1,10 @@
 # G — the single phone trip: exact commands, exact taps
 
+> **UPDATED 2026-09-04 — the capture-permission step below is OBSOLETE on this machine.**
+> Wireshark's `ChmodBPF` launch daemon is installed and verified: `/dev/bpf*` are `root:access_bpf`, the user is in that group, and `tcpdump -i en0 -c 3` captured 3 packets with no `sudo` — including on a node recreated *after* the install, which is the exact failure the manual grant kept hitting.
+> Do **not** run `sudo chgrp admin /dev/bpf*`; it is no longer needed. Still prove the interface with a positive control before trusting any capture meant to return nothing — that requirement is unchanged and is about the interface, not the permission.
+
+
 Written ahead so the trip happens **once**. Nothing here has been run. Every step is
 gated on the owner's go; steps B and E change the user's device.
 
