@@ -20,9 +20,17 @@ function makeHandlers(opts: {
   projectsDir?: string;
   cachedPath?: string;
   livePath?: string;
+  /** What the scanner's metadata index holds — the same map the LIST endpoint serves. */
+  indexed?: Record<string, string>;
 }): ConversationHandlers {
+  const metadata = new Map(
+    Object.entries(opts.indexed ?? {}).map(([id, filePath]) => [id, { filePath }]),
+  );
   return new ConversationHandlers({
-    scannerManager: { projectsDirs: () => (opts.projectsDir ? [opts.projectsDir] : []) },
+    scannerManager: {
+      projectsDirs: () => (opts.projectsDir ? [opts.projectsDir] : []),
+      current: { getMetadataCache: () => metadata },
+    },
     cache: () => (opts.cachedPath ? { getMetaById: () => ({ filePath: opts.cachedPath }) } : null),
     findLiveSessionFilePath: () => opts.livePath ?? null,
     resolveConversationLookupId: (id: string) => id,
@@ -99,6 +107,34 @@ describe("locateJsonlPath", () => {
 
     const h = makeHandlers({ cachedPath: sidechain });
     expect(await h.locateJsonlPath(agentId, agentId)).toBe(sidechain);
+  });
+
+  it("resolves a Codex rollout from the scanner index when the cache row is gone", async () => {
+    // The state measured on the live server 2026-09-04: 3 of the 50 ids
+    // `GET /api/conversations` was serving 404'd on the detail endpoint. Every
+    // one was a Codex rollout present on disk, indexed by the scanner (which is
+    // why the list offered it), with no conversation_meta row left — so the
+    // cache rung, the only rung a rollout could ever use, had nothing to say.
+    const id = "01a06de3-deaf-7cb3-8b75-0d6be441f8c5";
+    const rollout = join(dir, `rollout-2026-09-04T22-27-25-${id}.jsonl`);
+    writeFileSync(rollout, `${JSON.stringify({ type: "session_meta" })}\n`);
+
+    const h = makeHandlers({ indexed: { [id]: rollout } });
+    expect(await h.locateJsonlPath(id, id)).toBe(rollout);
+    // The controls: neither surviving rung can reach it on its own.
+    expect(h.findJsonlPath(id)).toBeNull();
+    expect(await makeHandlers({}).locateJsonlPath(id, id)).toBeNull();
+  });
+
+  it("verifies the indexed path rather than trusting it", async () => {
+    // Same discipline as the cached rung: an index entry pointing at a file that
+    // is not this conversation must not be served.
+    const id = "11111111-2222-3333-4444-555555555555";
+    const wrong = join(dir, "someone-elses.jsonl");
+    writeFileSync(wrong, `${JSON.stringify({ sessionId: "a-different-conversation" })}\n`);
+
+    const h = makeHandlers({ indexed: { [id]: wrong } });
+    expect(await h.locateJsonlPath(id, id)).toBeNull();
   });
 
   it("returns null when the file is genuinely gone — the archive's case", async () => {
