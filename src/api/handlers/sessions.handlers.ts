@@ -1069,11 +1069,24 @@ export class SessionHandlers {
     //
     // Sweeps expired prompts so their onExpire clears the pending maps before the read below.
     this.promptRegistry.sweepExpired(sessionId);
-    const openPrompt = this.pendingPermission.has(sessionId)
-      ? "permission"
-      : this.pendingQuestions.has(sessionId)
-        ? "question"
-        : null;
+    // Map membership alone is not authoritative: a prompt closed by a route
+    // other than sweepExpired or the answer paths (e.g. prompt_not_found)
+    // leaves its pendingPermission/pendingQuestions entry behind with no
+    // registry record ever cleaning it up (#757). Only that genuine absence
+    // means "gone" — a terminal-but-still-held record (`resolved` awaiting the
+    // detector's teardown, `cancelled` from a failed freshness scrape) is left
+    // alone: the picker may still be on screen, and #703 already covers why
+    // that window keeps refusing.
+    const isLive = (promptId: string | undefined): boolean =>
+      promptId === undefined || this.promptRegistry.get(promptId) !== null;
+    const pendingPermissionEntry = this.pendingPermission.get(sessionId);
+    const pendingQuestionEntry = this.pendingQuestions.get(sessionId);
+    const openPrompt =
+      pendingPermissionEntry && isLive(pendingPermissionEntry.promptId)
+        ? "permission"
+        : pendingQuestionEntry && isLive(pendingQuestionEntry.promptId)
+          ? "question"
+          : null;
     if (openPrompt) {
       // An accepted permission answer writes the keys and resolves the prompt record, but the
       // entry lives on until the detector sees the gate repaint away. Text in that window is
@@ -1082,8 +1095,7 @@ export class SessionHandlers {
       // that means the keys were written: a refused answer leaves a `cancelled` record beside a
       // live entry and must keep reading "open". Questions never reach here answered, because
       // both accept paths delete `pendingQuestions` before returning.
-      const pendingGate =
-        openPrompt === "permission" ? this.pendingPermission.get(sessionId) : undefined;
+      const pendingGate = openPrompt === "permission" ? pendingPermissionEntry : undefined;
       const promptState =
         pendingGate?.promptId !== undefined &&
         this.promptRegistry.get(pendingGate.promptId)?.state === "resolved"
