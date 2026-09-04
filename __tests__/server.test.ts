@@ -2070,6 +2070,22 @@ describe("StreamerServer", () => {
       return ws;
     }
 
+    // Waits for the first frame of `type` unicast back to this socket —
+    // hold_session_result arrives alongside other traffic (terminal_replay,
+    // permission replay), so a positional read would be flaky.
+    function waitForFrame(ws: WebSocket, type: string, timeoutMs = 2000): Promise<any> {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`timed out waiting for ${type}`)), timeoutMs);
+        ws.on("message", (raw) => {
+          const frame = JSON.parse(raw.toString());
+          if (frame.type === type) {
+            clearTimeout(timer);
+            resolve(frame);
+          }
+        });
+      });
+    }
+
     function runnerOnStatusChange(
       provider: typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER,
     ) {
@@ -2095,6 +2111,7 @@ describe("StreamerServer", () => {
       );
 
       const ws = await openWs();
+      const ackPromise = waitForFrame(ws, "hold_session_result");
       // Leave is explicit: a still-subscribed socket must not block this hold.
       ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
       await waitFor(() => holdSpy.mock.calls.length > 0);
@@ -2103,6 +2120,14 @@ describe("StreamerServer", () => {
       expect((server as any).ptyGraceTimers.has(SID)).toBe(false);
       expect((server as any).holdWhenIdle.has(SID)).toBe(false);
       expect((server as any).sessionStore.getManaged(SID)).toBeNull();
+      // The ack fires on request-accepted, not on the PTY actually exiting —
+      // a client navigating home on `ok` must not block on that async exit.
+      await expect(ackPromise).resolves.toEqual({
+        type: "hold_session_result",
+        sessionId: SID,
+        ok: true,
+        applied: "held",
+      });
       ws.close();
     });
 
@@ -2112,9 +2137,18 @@ describe("StreamerServer", () => {
       const holdSpy = mockRunner(session, "claude");
 
       const ws = await openWs();
+      const ackPromise = waitForFrame(ws, "hold_session_result");
       ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
       await waitFor(() => (server as any).holdWhenIdle.has(SID));
       expect(holdSpy).not.toHaveBeenCalled();
+      // Armed, not held yet — the ack still reports ok:true so the client can
+      // navigate away immediately; the actual hold fires later, unobserved.
+      await expect(ackPromise).resolves.toEqual({
+        type: "hold_session_result",
+        sessionId: SID,
+        ok: true,
+        applied: "armed",
+      });
 
       (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
 
@@ -2204,6 +2238,7 @@ describe("StreamerServer", () => {
       const warn = vi.spyOn((server as any).log, "warn");
 
       const ws = await openWs();
+      const ackPromise = waitForFrame(ws, "hold_session_result");
       ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "soon" }));
       await waitFor(() => warn.mock.calls.length > 0);
 
@@ -2214,12 +2249,19 @@ describe("StreamerServer", () => {
         expect.stringContaining("hold_when_unknown"),
         expect.objectContaining({ event: "pty.hold_when_unknown", when: "soon" }),
       );
+      await expect(ackPromise).resolves.toEqual({
+        type: "hold_session_result",
+        sessionId: SID,
+        ok: false,
+        reason: "unknown_when",
+      });
       ws.close();
     });
 
     it("is a no-op for an unknown session id", async () => {
       const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
       const ws = await openWs();
+      const ackPromise = waitForFrame(ws, "hold_session_result");
       ws.send(
         JSON.stringify({
           type: "hold_session",
@@ -2231,6 +2273,12 @@ describe("StreamerServer", () => {
       expect(holdSpy).not.toHaveBeenCalled();
       expect((server as any).holdWhenIdle.has("does-not-exist")).toBe(false);
       expect((server as any).ptyGraceTimers.has("does-not-exist")).toBe(false);
+      await expect(ackPromise).resolves.toEqual({
+        type: "hold_session_result",
+        sessionId: "does-not-exist",
+        ok: false,
+        reason: "no_session",
+      });
       ws.close();
     });
 

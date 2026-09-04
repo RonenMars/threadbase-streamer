@@ -334,6 +334,19 @@ export type WSMessage =
       gateId: string;
     }
   | { type: "permission_cancelled"; sessionId: string }
+  // Unicast reply to a client's `hold_session` frame, echoed to the requesting
+  // socket only (not broadcast). `applied` distinguishes an immediate hold
+  // from a latch armed for the next running -> waiting_input edge, so the
+  // client can navigate on `ok` without waiting for the PTY to actually exit
+  // (which may be arbitrarily far off for `armed`). Additive; old clients
+  // ignore it.
+  | {
+      type: "hold_session_result";
+      sessionId: string;
+      ok: boolean;
+      applied?: "held" | "armed" | "grace";
+      reason?: "permission_denied" | "unknown_when" | "no_session";
+    }
   | PromptEvent
   | PromptSnapshot
   | { type: "ping"; ts: number }

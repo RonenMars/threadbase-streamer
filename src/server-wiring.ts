@@ -601,7 +601,7 @@ export type ApiDepsWiring = {
   addSessionSubscriber: (sessionId: string, ws: WebSocket) => void;
   removeSessionSubscriber: (sessionId: string, ws: WebSocket) => void;
   startGraceTimer: (sessionId: string, delayMs: number) => void;
-  armHoldWhenIdle: (sessionId: string) => void;
+  armHoldWhenIdle: (sessionId: string) => "held" | "armed" | "no_session";
   handleSessionsCount: (res: ServerResponse) => void;
   applyLiveSessionSetting: (
     sessionId: string,
@@ -849,6 +849,12 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           // path ever had was the upgrade's `history:read`.
           if (!wsAllows(principal, "session:control")) {
             deny(msg.type, "session:control");
+            deps.wsHub.unicast(ws, {
+              type: "hold_session_result",
+              sessionId: msg.sessionId,
+              ok: false,
+              reason: "permission_denied",
+            });
             return;
           }
           // Additive `when` on the existing frame. Omitted / "grace" is today's
@@ -859,16 +865,34 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           const when = msg.when;
           if (when === undefined || when === "grace") {
             deps.startGraceTimer(msg.sessionId, deps.ptyGracePeriodMs);
+            deps.wsHub.unicast(ws, {
+              type: "hold_session_result",
+              sessionId: msg.sessionId,
+              ok: true,
+              applied: "grace",
+            });
             return;
           }
           if (when === "waiting_input") {
-            deps.armHoldWhenIdle(msg.sessionId);
+            const applied = deps.armHoldWhenIdle(msg.sessionId);
+            deps.wsHub.unicast(ws, {
+              type: "hold_session_result",
+              sessionId: msg.sessionId,
+              ok: applied !== "no_session",
+              ...(applied === "no_session" ? { reason: "no_session" } : { applied }),
+            });
             return;
           }
           deps.log().warn(`[pty.hold_when_unknown] hold_session when=${String(when)}`, {
             event: "pty.hold_when_unknown",
             sessionId: msg.sessionId,
             when,
+          });
+          deps.wsHub.unicast(ws, {
+            type: "hold_session_result",
+            sessionId: msg.sessionId,
+            ok: false,
+            reason: "unknown_when",
           });
         }
       } catch (err) {
