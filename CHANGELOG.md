@@ -1,3 +1,9 @@
+## [1.75.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.74.0...v1.75.0) (2026-09-04)
+
+### Features
+
+* **e2ee:** warn and name the source whenever a boot serves plaintext ([#758](https://github.com/RonenMars/threadbase-streamer/issues/758)) ([0409087](https://github.com/RonenMars/threadbase-streamer/commit/04090873a51e8390bd9b0463d4552fabc58b0c67)), closes [#744](https://github.com/RonenMars/threadbase-streamer/issues/744)
+
 ## [1.74.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.73.0...v1.74.0) (2026-09-02)
 
 ### Features
