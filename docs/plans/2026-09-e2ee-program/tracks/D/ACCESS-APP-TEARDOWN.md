@@ -14,7 +14,7 @@ Nothing else in the program depends on the gate. Every other D2 row was taken ov
 |---|---|
 | Access application `tb-secured` (destination `<test-tunnel-host>`, policy `owner only`) | **Delete** |
 | Policy `owner only` | Deleted with the app, or separately under Access controls → Policies if it lingers |
-| Tunnel `tb-e2ee-d2-20260901` (`877706d3-1f47-4ac9-8832-c970547a379e`) | **Keep** |
+| Tunnel `tb-e2ee-d2-20260901` (`<tunnel-id>`) | **Keep** |
 | DNS route `<test-tunnel-host>` → that tunnel | **Keep** |
 | Service token, if one was created for the probe work | Delete alongside the app |
 
