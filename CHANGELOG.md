@@ -1,3 +1,9 @@
+## [1.77.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.0...v1.77.1) (2026-09-04)
+
+### Bug Fixes
+
+* **conversations:** stop 404ing sessions and rollouts that exist ([#778](https://github.com/RonenMars/threadbase-streamer/issues/778)) ([cd4f559](https://github.com/RonenMars/threadbase-streamer/commit/cd4f5597f2bc39cec3680a3acbc29a82b1a96882))
+
 ## [1.77.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.76.0...v1.77.0) (2026-09-04)
 
 ### Features
