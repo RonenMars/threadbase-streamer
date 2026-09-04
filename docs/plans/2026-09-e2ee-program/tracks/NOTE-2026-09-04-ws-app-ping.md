@@ -150,6 +150,18 @@ This cost this agent one false "confirmed" and was caught only because the **pos
 
 **One pre-existing suite failure, proven not mine.** `__tests__/release-notes.test.ts::renders a release-worthy commit in the generated notes` fails with `Missing helper: "conventional-changelog-conventionalcommits requires conventional-changelog-writer@9 or newer …"`. Verified by checking out a throwaway worktree at pristine `origin/main` `d9148f25` with no changes at all and running that one file — identical failure — then removing the worktree. The cause is the shared `node_modules` symlink the worktree convention uses being stale against `origin/main`'s lockfile, so it will be red for every streamer track on this machine.
 
+### Method entry: a mutation campaign needs an unmutated baseline run
+
+Applies to every mutation campaign in this program, not just this one.
+
+**Red-only mutation evidence is ambiguous.** Six red results prove the tests failed *under mutation*. They do not prove the tests were passing immediately before it — so a rebase, a dependency shift or a half-reverted edit that quietly broke something would produce six reds that look exactly like a healthy campaign. The evidence is indistinguishable from the failure it is supposed to exclude.
+
+**The fix costs one extra run:** execute the suite unmutated, in the same session, immediately before the mutation sequence, and report its green alongside the reds. On the release rebase that was `baseline (unmutated) — 69 passed`, against which each subsequent red is attributable to its mutation rather than to whatever else happened to be true at that moment.
+
+This is the positive-control discipline from §8 turned on the mutation campaign itself — the one instrument in this program's methodology that nobody had pointed it at. §4 requires "a positive control proving the harness sees what it claims" for the *harness*; the campaign that uses the harness needs one too.
+
+Every mutation report produced in this program before this one has the gap. That does not invalidate them — a campaign whose reds were caused by a broken tree would usually show implausible counts — but "usually" is doing load-bearing work there, and one run removes it.
+
 ### The one-PR-at-a-time rule protects against something narrower than it says
 
 Observed while #760 (docs) and #761 (this change) were briefly open together. The repo was **never** at one-PR quiescence at any point that night: `#753` (Dependabot) and `#754` (Snyk) were open throughout.

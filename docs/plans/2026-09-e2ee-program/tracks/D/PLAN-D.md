@@ -554,3 +554,6 @@ privilege**. For the sealed leg, add a real Noise IKpsk1 pairing, a real
 `/api/e2ee/open` context and a ticketed upgrade (see `scripts/g-sealed-frames.ts`).
 Pair it with a negative control — feed the same parser a synthetic fragmented stream and
 confirm it reports `opcode 0` — or the zero means nothing.
+
+**15. A CI watcher that could not tell "finished" from "not started".** The orchestrator's own PR watcher polled `gh pr checks` and treated *zero pending* as *settled*. After a force-push resets CI there is a window in which the check list is empty — zero pending because zero exist — and the watcher reported `SETTLED failing=0` on a pull request whose legs had not begun. It asked *are any checks pending?* and never *have any checks started?*, which is the same pair of questions as every entry above. Fixed by additionally requiring a plausible total check count. Recorded because it is the eleventh mechanism in this family and the first one belonging to the orchestrator's own tooling: writing the register did not prevent building a fresh instance of it two hours later.
+
