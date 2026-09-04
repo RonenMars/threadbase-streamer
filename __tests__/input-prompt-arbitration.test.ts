@@ -639,3 +639,108 @@ describe("#703: POST /input { input } in the answered-gate window", () => {
     expect(h.inputs).toEqual([]);
   });
 });
+
+// #757: pendingPermission/pendingQuestions can outlive the prompt record they
+// were created for. A close via a route other than sweepExpired/the answer
+// paths (e.g. prompt_not_found) never deletes the map entry, so it sits there
+// until the registry's own terminal-retention window forgets the promptId.
+// Only genuine absence from the registry means "gone" — a terminal-but-still-
+// held record (the #703 window above) must keep refusing, since the picker
+// may still be on screen.
+describe("#757: a map entry outliving its registry record", () => {
+  it.each(["permission", "question"] as const)(
+    "accepts { input } once a %s record closed elsewhere is forgotten by the registry",
+    async (kind) => {
+      const h = harness(null);
+      const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+      const registry = new PromptRegistry({ terminalRetentionMs: 10 });
+      deps.promptRegistry = registry;
+      const prompt = registry.open({
+        sessionId: SESSION,
+        intent: kind === "permission" ? "approval" : "question",
+        message: "Allow command?",
+        questions: [
+          {
+            text: "Allow command?",
+            inputMode: "single",
+            options: [{ label: "Yes" }, { label: "No" }],
+            allowOther: false,
+            secret: "unknown",
+          },
+        ],
+        answerRequirement: "blocking",
+        expiresAt: null,
+        provenance: { source: "provider", confidence: "authoritative" },
+      });
+      if (kind === "permission") {
+        h.pendingPermission.set(SESSION, {
+          ...GATE,
+          gateId: prompt.promptId,
+          promptId: prompt.promptId,
+        });
+      } else {
+        h.pendingQuestions.set(SESSION, {
+          toolUseId: "toolu_1",
+          questions: QUESTIONS,
+          origin: "pty",
+          promptId: prompt.promptId,
+        });
+      }
+
+      // Closed by a route that never touches pendingPermission/pendingQuestions
+      // (e.g. the mismatched-promptId branch in the answer adapters) — the map
+      // entry is left standing exactly as the real defect describes.
+      registry.transition(prompt.promptId, "cancelled", "provider_closed");
+      // The registry's own retention window elapses, so `.get()` now forgets
+      // the promptId entirely: genuinely gone, not just terminal.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(registry.get(prompt.promptId)).toBeNull();
+
+      const { res, status, body } = response();
+      await h.handlers.handleSendInput(SESSION, request({ input: "hello" }), res);
+
+      expect(status()).toBe(200);
+      expect(body()).toEqual({ ok: true });
+      expect(h.inputs).toEqual(["hello"]);
+    },
+  );
+
+  // Positive control: a genuinely open record for the same session must keep
+  // refusing exactly as before.
+  it("keeps refusing while the registry record is still open", async () => {
+    const h = harness(null);
+    const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+    const registry = new PromptRegistry({ terminalRetentionMs: 10 });
+    deps.promptRegistry = registry;
+    const prompt = registry.open({
+      sessionId: SESSION,
+      intent: "question",
+      message: "Which language?",
+      questions: [
+        {
+          text: "Which language?",
+          inputMode: "single",
+          options: [{ label: "TypeScript" }, { label: "Rust" }],
+          allowOther: false,
+          secret: "unknown",
+        },
+      ],
+      answerRequirement: "blocking",
+      expiresAt: null,
+      provenance: { source: "provider", confidence: "authoritative" },
+    });
+    h.pendingQuestions.set(SESSION, {
+      toolUseId: "toolu_1",
+      questions: QUESTIONS,
+      origin: "pty",
+      promptId: prompt.promptId,
+    });
+
+    const { res, status, body } = response();
+    await h.handlers.handleSendInput(SESSION, request({ input: "hello" }), res);
+
+    expect(status()).toBe(409);
+    expect(body()).toMatchObject({ ok: false, reason: "prompt_pending", promptKind: "question" });
+    expect(h.inputs).toEqual([]);
+  });
+});
