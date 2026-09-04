@@ -12,7 +12,7 @@ them. Verify everything before use.
 |---|---|
 | sealed rig | `http://192.168.68.125:8790` — `--feature e2ee=true` |
 | legacy control rig | `http://192.168.68.125:8791` — `--feature e2ee=false` |
-| capture interface | **en0** (192.168.68.125) — the address the rig advertises |
+| capture interface | **DERIVE IT — do not copy a value from here.** See "Choosing the capture interface" below. |
 | iOS device | **iPhone 17 Pro**, UDID `00008150-00115DEA1A40401C` — the only device `xctrace` reports |
 | mobile worktree (iOS) | `~/dev/ai-tools/tb-mobile-worktrees/g-device-run` @ `26815a16`, `npm ci` and `pod install` both done |
 | mobile worktree (Android) | `~/dev/ai-tools/tb-mobile-worktrees/g2-android` @ **`c64fab5e`**, own `npm ci` done |
@@ -22,6 +22,44 @@ them. Verify everything before use.
 The 17 Pro is the only device `xcrun xctrace list devices` reports, so it is the only
 one `dev-device.sh` can target. The 13 Pro shows as "connected" to `devicectl` but is
 not available for development.
+
+---
+
+## Choosing the capture interface — DERIVE IT, never copy it
+
+**This section replaces the `en0` that used to sit in the table above as a fact.** It was
+correct on 2026-09-04 and it was correct *by luck*, which is the problem.
+
+`src/lan-url.ts::resolveServerUrl` on `origin/main` returns `publicUrl` when set and otherwise
+`firstLanIPv4()` — **the first non-internal IPv4 that `os.networkInterfaces()` happens to
+enumerate**. Nothing pins the winner, and on this machine the candidate list is four entries,
+not two:
+
+```
+en0     192.168.68.125     <- today's winner
+en9     192.168.68.102
+en12    169.254.185.52     (link-local)
+utun16  100.122.246.79     (Tailscale)
+```
+
+**The `utun` candidate is the worst case and is not merely "a different address".** If a
+Tailscale interface wins the enumeration, the rig advertises a VPN address, the device's
+traffic leaves over the VPN, and **the LAN-only scope that every ciphertext claim in this
+program depends on no longer holds**. That is a *scope violation*, not a missed capture: the
+row would be measuring a tunnel it never declared, and a clean-looking sweep of `en0` would
+certify nothing at all. If the advertised address is not on the LAN subnet, **stop** — do not
+capture, and do not reason about which interface "should" have won.
+
+**Do this, in order, every time:**
+
+1. Print the pair URL / read the rig's advertised address from the rig itself.
+2. Confirm that address is on the expected LAN subnet. If it is a `100.x` (Tailscale),
+   `169.254.x` (link-local) or anything else unexpected — stop and fix the rig, do not capture.
+3. Resolve that address to an interface: `ifconfig | grep -B4 <address>`.
+4. **Prove that interface carries traffic before trusting any capture that is supposed to
+   return nothing** (Step A1's control, run on *that* interface).
+5. Record the interface's own total `tcp.len` byte count beside the coverage figure, so a later
+   reader can see the capture was non-empty for a stated reason rather than by assumption.
 
 ---
 

@@ -335,6 +335,15 @@ enumerating later hands the pair URL a different address — and the device then
 interface nobody is capturing, while `tcpdump` on the remembered one writes an empty file
 that the sweep reports as "no plaintext found".
 
+**The `utun16` candidate is the worst case and deserves its own statement.** If the Tailscale
+interface wins the enumeration, the rig advertises a VPN address and the device's traffic leaves
+over the VPN. That does not merely move the capture to the wrong interface.
+**It is a scope violation: it breaks the LAN-only scope that every ciphertext claim in this
+program rests on.** The row would be
+measuring a tunnel it never declared, while a sweep of the remembered `en0` returned a clean
+empty file. Treat a non-LAN advertised address as a **stop**, not as an interface-selection
+problem: do not capture, and do not reason about which interface "should" have won.
+
 > **Rule: the capture interface is derived from the rig's LIVE pair URL at capture time, and
 > never carried over from an earlier session's note — including the note in
 > `G-PHONE-RUNBOOK.md`, which records `en0` as a fact when it is only today's outcome. Then
@@ -420,6 +429,34 @@ that legitimately recorded nothing. **Anything that must outlive a single comman
 started as a background process in its own right, and its liveness re-checked before you trust
 a result that depends on it.** An absence produced by a dead collector is the same false pass as
 an absence produced by a blind grep.
+
+**13. `git grep -E` is POSIX ERE and does not support `\s` — the search fails silently, and so
+does its control.** (Found by another agent tonight; recorded here because this section is the
+program's shared memory.) A pattern like `type:\s*"ping"` matches **nothing** on these repos,
+and it matches nothing *whether or not the thing is there*. The lethal part is that a positive
+control written in the same style fails identically, so the zero looks corroborated.
+
+> **Rule: use `[[:space:]]` or `-F` with `git grep`. And when reading this program's history,
+> distrust the zero of any `\s`-bearing search — it is not evidence of absence.**
+
+This is the same family as entries 8 and 12: a tool that cannot answer, returning something
+shaped exactly like an answer.
+
+**14. A scrub that greps for SHAPE rather than for PROVENANCE will both miss secrets and destroy
+evidence.** While verifying that no credential reached the record, a 35-character base64-ish
+string turned up in `D2-REPORT.md` — **the same length as the leaked scratch key**. It is an
+`X-TB-Env` header value, truncated with an ellipsis, and `X-TB-Env` is on the
+in-the-clear-by-design list (D-7): it travels as plaintext by construction, so publishing it
+reveals nothing an on-path observer lacks, and the report exists partly to document it as
+plaintext. A second hit, a 43-character `serverPublicKey`, is an X25519 **public** key published
+in every pairing QR.
+
+Either could have been "fixed" by a hurried scrubber — deleting exactly the evidence the report
+was written to carry — or waved through if the shape had looked innocuous instead.
+
+> **Rule: decide what a string IS, from how it is labelled and where it came from, not what it
+> resembles. Shape-matching alone produces both false positives that destroy evidence and false
+> negatives that ship secrets.**
 
 ### A control is only a control if you verified the thing it looks for is really there
 
