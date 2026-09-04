@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import type { AddressInfo } from "net";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -7,6 +7,7 @@ import { applyNoE2ee } from "../cli/no-e2ee";
 import { createHonoApp } from "../src/api/app";
 import { createMiscRoutes } from "../src/api/routes/misc.routes";
 import type { ApiDeps } from "../src/api/types/api-deps";
+import { loadFeatureFlags } from "../src/auth";
 import { DevicesRepository } from "../src/db/repositories/devices.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
 import { generateKeyPair } from "../src/e2ee/noise";
@@ -95,8 +96,13 @@ describe("D-8 — a serve option and nothing else", () => {
 
   it("does NOT beat the environment variable, which is the documented precedence", () => {
     // The D-8 vs §6.5 collision, implemented as written rather than excepted:
-    // `env` outranks `cli`, so this leaves encryption ON. R2 escalates the
-    // collision to the user; R1 must not pre-empt it by carving a special case.
+    // `env` outranks `cli`, so this leaves encryption ON. R2 resolved the
+    // collision by retiring D-8's no-env-var rule as unenforceable (the client
+    // never trusts server state over its own pin, so an env-var disable can't
+    // silently downgrade an already-pinned device) and replacing it with a
+    // source-agnostic boot warning + `/api/info` disclosure instead of a
+    // resolver special case — see tracks/R/PLAN-R2.md's decision record. This
+    // precedence is unchanged by that decision and stays exactly as written.
     const resolved = resolveFeatureFlags({
       cli: { e2ee: false },
       env: { THREADBASE_FEATURE_E2EE: "1" },
@@ -113,7 +119,9 @@ describe("what a disabled run tells a client and an operator", () => {
   let server: ReturnType<typeof serve>;
   let baseUrl: string;
 
-  const deps = (values: { e2ee: boolean }, source: "cli" | "default") =>
+  type FlagSource = "cli" | "env" | "yaml" | "override" | "default";
+
+  const deps = (values: { e2ee: boolean }, source: FlagSource) =>
     ({
       apiKey: "tb_0123456789abcdef0123456789abcdef",
       localNoAuth: false,
@@ -130,7 +138,7 @@ describe("what a disabled run tells a client and an operator", () => {
       e2eeVersion: 1,
     });
 
-  const start = async (values: { e2ee: boolean }, source: "cli" | "default") => {
+  const start = async (values: { e2ee: boolean }, source: FlagSource) => {
     server = serve({
       fetch: createHonoApp(deps(values, source)).fetch,
       hostname: "127.0.0.1",
@@ -141,7 +149,7 @@ describe("what a disabled run tells a client and an operator", () => {
   };
 
   /** The real `/api/info` route, with the minimum around it that route needs. */
-  const info = async (values: { e2ee: boolean }, source: "cli" | "default") => {
+  const info = async (values: { e2ee: boolean }, source: FlagSource) => {
     const app = createMiscRoutes({
       publicUrl: null,
       sessionStore: { list: () => [] } as never,
@@ -182,6 +190,16 @@ describe("what a disabled run tells a client and an operator", () => {
     expect((await info({ e2ee: false }, "default")).e2ee.reason).toContain(
       "THREADBASE_FEATURE_E2EE=1",
     );
+  });
+
+  it("names the environment variable when that rung decided it", async () => {
+    const { e2ee } = await info({ e2ee: false }, "env");
+    expect(e2ee.reason).toBe("disabled by the THREADBASE_FEATURE_E2EE environment variable");
+  });
+
+  it("names server.yaml when that rung decided it", async () => {
+    const { e2ee } = await info({ e2ee: false }, "yaml");
+    expect(e2ee.reason).toBe("disabled by feature_flags: in server.yaml");
   });
 
   it("POSITIVE CONTROL — an enabled run reports enabled with no reason at all", async () => {
@@ -243,15 +261,29 @@ describe("the boot warning", () => {
     return ids;
   };
 
+  let savedConfigDir: string | undefined;
+
   beforeEach(() => {
     logLines.length = 0;
     dir = mkdtempSync(join(tmpdir(), "tb-no-e2ee-boot-"));
     dbPath = join(dir, "runtime.db");
+    // The `yaml` rung is `loadFeatureFlags()` reading `server.yaml` under
+    // THREADBASE_CONFIG_DIR, which falls back to the real `~/.threadbase`.
+    // Nothing in the shared setup sandboxes that, so on a developer box whose
+    // live config carries `feature_flags: {"e2ee":true}` every plain boot here
+    // resolved e2ee ON from `yaml` — and the default-rung control passed for a
+    // reason that had nothing to do with the default rung. Point it at an empty
+    // dir so what a test writes there is the only yaml the server can see.
+    savedConfigDir = process.env.THREADBASE_CONFIG_DIR;
+    process.env.THREADBASE_CONFIG_DIR = join(dir, "config");
+    mkdirSync(process.env.THREADBASE_CONFIG_DIR);
   });
 
   afterEach(async () => {
     await server?.close();
     server = undefined;
+    if (savedConfigDir === undefined) delete process.env.THREADBASE_CONFIG_DIR;
+    else process.env.THREADBASE_CONFIG_DIR = savedConfigDir;
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -261,7 +293,10 @@ describe("the boot warning", () => {
 
     expect(disabledWarnings()).toHaveLength(1);
     const [warning] = disabledWarnings();
-    expect(warning.msg).toContain("Transport encryption is OFF for this run");
+    // The operator typed `--no-e2ee`; the line answers in those words, never in
+    // the resolver's rung name ("cli"), which is vocabulary they never saw.
+    expect(warning.msg).toContain("Transport encryption is OFF for this run (--no-e2ee");
+    expect(warning.msg).not.toContain("source: cli");
     expect(warning.msg).toContain("readable");
     expect(warning.msg).toContain("Cloudflare edge");
     expect(warning.msg).toContain("2 paired devices require it");
@@ -312,6 +347,72 @@ describe("the boot warning", () => {
     pin(2);
     await boot(undefined);
 
+    expect(disabledWarnings()).toEqual([]);
+  });
+
+  it("also warns when the environment variable is what disabled it", async () => {
+    pin(1);
+    const before = process.env.THREADBASE_FEATURE_E2EE;
+    process.env.THREADBASE_FEATURE_E2EE = "0";
+    try {
+      await boot(undefined);
+    } finally {
+      if (before === undefined) delete process.env.THREADBASE_FEATURE_E2EE;
+      else process.env.THREADBASE_FEATURE_E2EE = before;
+    }
+
+    expect(disabledWarnings()).toHaveLength(1);
+    const [warning] = disabledWarnings();
+    expect(warning.msg).toContain(
+      "Transport encryption is OFF for this run (the THREADBASE_FEATURE_E2EE environment variable)",
+    );
+    expect(warning.msg).toContain("1 paired device requires it");
+    expect(warning.meta.reason).toBe("env");
+    expect(warning.meta.pinnedDevices).toBe(1);
+  });
+
+  it("also warns when server.yaml is what disabled it", async () => {
+    pin(1);
+    writeFileSync(join(dir, "config", "server.yaml"), 'feature_flags: {"e2ee":false}\n');
+    await boot(undefined);
+
+    expect(disabledWarnings()).toHaveLength(1);
+    const [warning] = disabledWarnings();
+    expect(warning.msg).toContain(
+      "Transport encryption is OFF for this run (feature_flags: in server.yaml)",
+    );
+    expect(warning.meta.reason).toBe("yaml");
+  });
+
+  it("POSITIVE CONTROL — the sandboxed server.yaml is what the yaml rung reads", async () => {
+    // A yaml test that passes without the file being read is the default rung
+    // answering under another name. Two proofs it is read: the production
+    // loader returns exactly what was written, and flipping only the file's
+    // content flips the warning.
+    pin(1);
+    const yaml = join(dir, "config", "server.yaml");
+    writeFileSync(yaml, 'feature_flags: {"e2ee":true}\n');
+    expect(loadFeatureFlags()).toEqual({ e2ee: true });
+    await boot(undefined);
+    expect(disabledWarnings()).toEqual([]);
+
+    await server?.close();
+    server = undefined;
+    writeFileSync(yaml, 'feature_flags: {"e2ee":false}\n');
+    expect(loadFeatureFlags()).toEqual({ e2ee: false });
+    await boot(undefined);
+    expect(disabledWarnings()).toHaveLength(1);
+    expect(disabledWarnings()[0].meta.reason).toBe("yaml");
+  });
+
+  it("NEGATIVE CONTROL — the default rung (nothing decided it) stays silent, even though e2ee is off", async () => {
+    pin(3);
+    await boot(undefined);
+
+    // `e2ee` defaults false today, so a plain boot with no explicit source is
+    // the common case, not an anomaly — warning here would be pure noise with
+    // no operator decision behind it. This is the one source that must NOT
+    // trigger the broadened guard.
     expect(disabledWarnings()).toEqual([]);
   });
 });
