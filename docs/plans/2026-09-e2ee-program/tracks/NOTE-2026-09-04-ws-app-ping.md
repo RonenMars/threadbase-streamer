@@ -4,6 +4,12 @@ Agent note. Mobile issue #946's streamer half.
 Branch `fix/e2ee-ws-app-ping`, worktree `tb-streamer/.worktrees/fix/e2ee-ws-app-ping`, off `origin/main` `d9148f25`.
 Owner mirrors this file; this agent does not commit it.
 
+**OUTCOME — shipped.** PR #761 merged as `01614c89` on 2026-09-04, streamer issue #756 auto-closed from the PR body's `Closes`. Verified from the remote rather than from the merge report: `appPingJson` and `CLIENT_SILENCE_TIMEOUT_MS` are both present in `origin/main:src/ws-hub.ts`, and a release was cut on top (`1.75.1`).
+
+The contract is now live on both sides — the client half shipped first in tb-mobile #948 (`69083367`), the server half here. An idle sealed session now receives a frame its watchdog can see.
+
+Rebased twice while in flight: onto R's `04090873` (#758) and onto the `1.75.0` release commit `ebb75a33`. The patch text was verified byte-identical after each, and all six mutations were re-run on each new head.
+
 ## 1. Diagnosis re-verified from `origin/main`, and one broken grep caught
 
 Re-verified rather than trusted. The first form used was `git grep -E 'type:\s*"ping"'`, which returned nothing — **and so did its positive control** for `session_list`. `git grep -E` is POSIX ERE and does not support `\s`, so the emptiness was the grep, not the code. Re-run with `[[:space:]]`:
@@ -113,7 +119,9 @@ The single failure is `release-notes.test.ts`, a pre-existing dependency-version
 
 ### All mutations seen red
 
-Run in the worktree, each applied to the pristine file and reverted after. `<file>::<test>` with the verbatim assertion:
+Run in the worktree, each applied to the pristine file and reverted after, with `git status` confirming a clean tree between each. `<file>::<test>` with the verbatim assertion.
+
+**Baseline first: `69 passed` unmutated**, in the same session immediately before the sequence — so each red below is attributable to its mutation rather than to a broken tree. See the method entry in §8 for why a campaign without this is ambiguous.
 
 | Mutation | Red test | Verbatim assertion |
 |---|---|---|
@@ -126,7 +134,7 @@ Run in the worktree, each applied to the pristine file and reverted after. `<fil
 
 The cadence mutation also reddens the two pre-existing maintenance tests, which hardcode `advanceTimersByTimeAsync(30_000)` against the constant. That is existing coupling to `PING_INTERVAL_MS`, not something this change introduced.
 
-## 8. Two tooling findings that affect the whole program
+## 8. Method and tooling findings that affect the whole program
 
 **`npm run lint` is a silent no-op inside `tb-streamer/.worktrees/<…>`.** `biome.json` sets `vcs.useIgnoreFile: true` and `.gitignore:7` is `.worktrees/`, so biome ignores every file in the worktree the program *mandates* for streamer work. It does not error — it prints `Checked 0 files` and exits 0. **Every streamer track in this program that ran lint from its sanctioned worktree got a false green.** The form that works is explicit paths with the vcs ignore off:
 
