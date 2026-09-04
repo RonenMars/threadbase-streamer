@@ -57,7 +57,7 @@ Full Cloudflare guide (quick-tunnel walkthrough + how to graduate to a persisten
 
 ## Per-provider guides
 
-- **Cloudflare Tunnel** — [cloudflare.md](./cloudflare.md) (full guide; this is the path this repo's `tb-pc.rbv1000.win` deployment uses)
+- **Cloudflare Tunnel** — [cloudflare.md](./cloudflare.md) (full guide; this is the path this repo's `tb.example.com` deployment uses)
 - **ngrok** — [ngrok.md](./ngrok.md) (stub; scripted onboarding coming)
 - **Tailscale Serve (tailnet-private HTTPS)** — [tailscale-serve.md](./tailscale-serve.md) (the path for reaching your own machine from your own phone over cellular; covers the iOS ATS plaintext-`http`-to-`100.x` gotcha)
 - **Tailscale Funnel** — [tailscale-funnel.md](./tailscale-funnel.md) (stub; scripted onboarding coming)

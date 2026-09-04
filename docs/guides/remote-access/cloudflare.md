@@ -3,7 +3,7 @@
 This guide covers two phases:
 
 1. **Quick-tunnel** — 5-minute, no-account, throwaway URL. The right start point for "does the mobile pairing flow even work?"
-2. **Named tunnel** — your own hostname, persistent, optionally protected by Cloudflare Access. The right end-state for always-on exposure (and the setup this repo's `tb-pc.rbv1000.win` deployment uses).
+2. **Named tunnel** — your own hostname, persistent, optionally protected by Cloudflare Access. The right end-state for always-on exposure (and the setup this repo's `tb.example.com` deployment uses).
 
 Start with phase 1. If the answer to "do I want this to stay up?" is yes, graduate to phase 2.
 
@@ -71,7 +71,7 @@ When you're ready for something persistent, jump to Phase 2.
 
 ## Phase 2 — Named tunnel (when you want it always-on)
 
-A named tunnel is yours: it lives in your Cloudflare account, it routes through a hostname you own, you can attach Cloudflare Access policies to it, and it survives restarts. This is what `tb-pc.rbv1000.win` in this repo is.
+A named tunnel is yours: it lives in your Cloudflare account, it routes through a hostname you own, you can attach Cloudflare Access policies to it, and it survives restarts. This is what `tb.example.com` in this repo is.
 
 ### Prerequisites
 
@@ -136,7 +136,7 @@ Or via env var: `THREADBASE_PUBLIC_URL=https://tb-pc.example.com`.
 
 Cloudflare Access puts an identity check in front of your tunnel — Google SSO, GitHub, email-OTP, service tokens, IP rules, whatever. It's the difference between "anyone who guesses the URL can hit the Bearer-auth wall" and "the URL doesn't respond at all unless the caller is on your allow-list."
 
-This repo's existing `tb-pc.rbv1000.win` tunnel runs behind Access. The streamer's own Bearer auth still applies on top — Access is the outer ring, Bearer is the inner ring.
+This repo's existing `tb.example.com` tunnel runs behind Access. The streamer's own Bearer auth still applies on top — Access is the outer ring, Bearer is the inner ring.
 
 > ### ⚠️ Access and end-to-end encryption do not currently coexist
 >
@@ -179,9 +179,9 @@ The pragmatic answer for now: leave Access turned on for browser/laptop access, 
 
 ---
 
-## This repo's deployment (`tb-pc.rbv1000.win`)
+## This repo's deployment (`tb.example.com`)
 
-The active mapping is `https://tb-pc.rbv1000.win` → `http://127.0.0.1:8766`, served by `cloudflared` running as a **Windows service** and protected by Cloudflare Access. `public_url: https://tb-pc.rbv1000.win` is set in `~/.threadbase/server.yaml` so the pairing QR code embeds the correct URL.
+The active mapping is `https://tb.example.com` → `http://127.0.0.1:8766`, served by `cloudflared` running as a **Windows service** and protected by Cloudflare Access. `public_url: https://tb.example.com` is set in `~/.threadbase/server.yaml` so the pairing QR code embeds the correct URL.
 
 **Access behaviour on this hostname:** requests without an `Authorization` header receive `401 Unauthorized` from the CF edge — including unauthenticated probes of `/healthz`. Requests carrying `Authorization: Bearer <api_key>` pass through to the origin. Consequences:
 

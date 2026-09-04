@@ -100,7 +100,7 @@ public_url: https://tb-pc.example.com
 
 ## Step 5 (optional, advanced) — Cloudflare Access
 
-Once the named tunnel is up, the user can put Cloudflare Access in front of it for identity-based protection (Google SSO, GitHub, email-OTP, service tokens). This is what `tb-pc.rbv1000.win` in this repo uses.
+Once the named tunnel is up, the user can put Cloudflare Access in front of it for identity-based protection (Google SSO, GitHub, email-OTP, service tokens). This is what `tb.example.com` in this repo uses.
 
 This is **out of scope** for the quick-tunnel onboarding flow. Point at [`docs/guides/remote-access/cloudflare.md`](../../../docs/guides/remote-access/cloudflare.md) → **Phase 3 — Cloudflare Access** and leave the policy authoring to the dashboard. Important caveat the user needs to know: the mobile app sends a Bearer token, not interactive login — so Access policies will need a Service Token rule (or the Access app needs to be off for the mobile-facing endpoint) for `tb-mobile` to pair through it.
 

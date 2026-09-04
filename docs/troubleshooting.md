@@ -367,11 +367,11 @@ git config --global url."https://github.com/".insteadOf "git@github.com:"
 | `401` with a JSON body | the **streamer** | the request reached the origin; it wants the API key |
 | `302` with `location: …/cdn-cgi/access/login/…` | **Cloudflare Access** | the request never reached the origin |
 
-**A Bearer token fixes only the first.** Access does not read `Authorization` — that header is the streamer's credential, not the edge's — so adding it to a request the edge is blocking changes nothing. Measured 2026-09-02 on `tb-secured.rbv1000.win`: with an interactive Access application in front, `/healthz` (which needs no credential at all) answered `302` to a login page; with the application removed, the same URL answered `200`.
+**A Bearer token fixes only the first.** Access does not read `Authorization` — that header is the streamer's credential, not the edge's — so adding it to a request the edge is blocking changes nothing. Measured 2026-09-02 on `tb-secured.example.com`: with an interactive Access application in front, `/healthz` (which needs no credential at all) answered `302` to a login page; with the application removed, the same URL answered `200`.
 
 For an origin-authenticated request that Access is *not* blocking:
 ```powershell
-Invoke-RestMethod -Uri https://tb-pc.rbv1000.win/api/info -Headers @{Authorization="Bearer <api_key>"}
+Invoke-RestMethod -Uri https://tb.example.com/api/info -Headers @{Authorization="Bearer <api_key>"}
 ```
 
 Deploy-script healthchecks hit `http://localhost:8766/healthz` directly and are unaffected by either refusal.
@@ -403,7 +403,7 @@ Never "fix" it by putting `Authorization` back on sealed requests. That reintrod
 
 ### Tunnel returns `502` despite local server being healthy *(Windows only)*
 
-**When:** `https://tb-pc.rbv1000.win` returns `error code: 502` but `http://localhost:8766/healthz` returns OK. The `cloudflared` service shows as Running and `cloudflared tunnel info` shows an active connector.
+**When:** `https://tb.example.com` returns `error code: 502` but `http://localhost:8766/healthz` returns OK. The `cloudflared` service shows as Running and `cloudflared tunnel info` shows an active connector.
 **Cause:** The `cloudflared` Windows service runs as LocalSystem and reads from `C:\Windows\system32\config\systemprofile\.cloudflared\config.yml` — a separate file from `~/.cloudflared/config-system.yml`. When new ingress hostnames are added to the user config they are **not** automatically applied to the SYSTEM copy. Cloudflare returns 502 for any hostname with no matching ingress rule.
 **Diagnosis:** If the local server is healthy, the tunnel is connected, and `cloudflared tunnel route dns` confirms the hostname points to the right tunnel, the SYSTEM config is almost certainly stale.
 **Fix (requires admin):**
@@ -449,7 +449,7 @@ Restart-Service cloudflared
 **Cause:** `public_url` is not set in `~/.threadbase/server.yaml`.
 **Fix:**
 ```yaml
-public_url: https://tb-pc.rbv1000.win
+public_url: https://tb.example.com
 ```
 Restart the streamer to pick it up.
 
@@ -459,7 +459,7 @@ Restart the streamer to pick it up.
 
 ### "Failed to start session — File not found:" via public URL
 
-**When:** Session start works fine from `localhost` but the mobile app shows "Failed to start session — File not found:" (or similar) when connecting through `https://tb-pc.rbv1000.win`.
+**When:** Session start works fine from `localhost` but the mobile app shows "Failed to start session — File not found:" (or similar) when connecting through `https://tb.example.com`.
 **Cause:** The Cloudflare tunnel is returning `502 Bad Gateway`, not a real path error. The mobile app surfaces the raw error text from the JSON response, which can be misleading. The 502 is almost always the SYSTEM cloudflared config being stale and missing the tunnel hostname's ingress rule.
 **Fix:** See "Tunnel returns 502 despite local server being healthy" above.
 
