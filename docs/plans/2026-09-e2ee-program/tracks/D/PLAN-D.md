@@ -122,12 +122,12 @@ Also found stale `localStorage` from an unrelated prior browser session at this 
 - Android: `emulator-5554` already attached — **pre-existing, not started by this session.**
 - Two `cloudflared` tunnels already running — pre-existing:
   - PID 1624: `cloudflared tunnel --protocol http2 --url http://localhost:8765`
-  - PID 696 (root): `cloudflared tunnel --config ~/.cloudflared/config.yml run` — this is the named tunnel backing the real prod hostname `tb-pc.rbv1000.win → 127.0.0.1:8766` (per `tb-streamer/CLAUDE.md` §"Cloudflare Tunnel").
+  - PID 696 (root): `cloudflared tunnel --config ~/.cloudflared/config.yml run` — this is the named tunnel backing the real prod hostname `<prod-tunnel-host> → 127.0.0.1:8766` (per `tb-streamer/CLAUDE.md` §"Cloudflare Tunnel").
 - One `node` process already serving on port **8766**: `~/.threadbase/cli.js serve --port 8766 --prod` — **this is the real production streamer, using the real `~/.threadbase`.** Not touched, not connected to, must stay untouched throughout D1/D2.
 - One further `node` process listening on 127.0.0.1:7265 — unidentified, not investigated (out of scope for a read-only pass); the rig must avoid this port too.
 - Nothing booted or started by this session as of this record.
 
-**Consequence for rig isolation:** the rig's streamer must bind a port other than 8766/7265/8765, and must register its own, separate named tunnel — never reuse `tb-pc.rbv1000.win` or port 8766.
+**Consequence for rig isolation:** the rig's streamer must bind a port other than 8766/7265/8765, and must register its own, separate named tunnel — never reuse `<prod-tunnel-host>` or port 8766.
 
 ## 4. Rig isolation steps (to run on owner approval)
 
@@ -140,7 +140,7 @@ Also found stale `localStorage` from an unrelated prior browser session at this 
 7. **Verify isolation before anything else**, with `lsof`:
    - `lsof -p <rig-pid>` shows every open DB/config file path under `$SCRATCH`, none under the real `~/.threadbase`.
    - Cross-check: `lsof ~/.threadbase/*.db` shows only the pre-existing prod PID from §3, never the rig PID.
-8. Bring up an **ephemeral quick tunnel** — `cloudflared tunnel --url http://127.0.0.1:<rig-port>` — never a named tunnel on the user's Cloudflare account (that touches their config and needs their auth). Yields a throwaway `*.trycloudflare.com` HTTPS hostname, sufficient for the Android release-build leg (never `tb-pc.rbv1000.win`, never port 8766). Treat the quick-tunnel hostname as a secret to scrub, same as the others.
+8. Bring up an **ephemeral quick tunnel** — `cloudflared tunnel --url http://127.0.0.1:<rig-port>` — never a named tunnel on the user's Cloudflare account (that touches their config and needs their auth). Yields a throwaway `*.trycloudflare.com` HTTPS hostname, sufficient for the Android release-build leg (never `<prod-tunnel-host>`, never port 8766). Treat the quick-tunnel hostname as a secret to scrub, same as the others.
 9. Record: rig port, rig tunnel hostname, rig API key location (never the key value) — all four (API key, tunnel hostname, pair tokens, `spk`/tickets/device tokens) get scrubbed from every capture before anything leaves the scratchpad, per program CLAUDE.md §5 and `tracks/parallel-execution-plan.md` "Isolation within a group."
 
 ## 5. Device build (owner approval required, still no pairing)
@@ -264,3 +264,296 @@ Two distinct timers, don't conflate them:
 7. Streamer restart — one transparent re-handshake (contexts are in-memory only, do not survive restart by design — confirm the client recovers without user-visible failure).
 8. Revoked device's live socket closes.
 9. Access/named-tunnel functional pass (see above) — function only, explicitly not a wire-secrecy claim.
+
+### THE FAMILY: an empty result that reads as an answer
+
+**Read this before the individual traps. The traps matter less than the fact that they are one
+family with many members, and it will gain another.**
+
+Every entry below fails the same way: not as an error, but as a clean, plausible **empty
+result** that is byte-for-byte indistinguishable from the answer you were hoping for. The
+causes share nothing with each other, which is exactly why enumerating them is not a substitute
+for the habit.
+
+Distinct mechanisms that produced this identical signature in this program, so far:
+
+1. **A blind `git grep -E` with `\s`** — POSIX ERE has no `\s`, so it matches nothing whether or
+   not the thing is present (entry 13).
+2. **A linter honouring an ignore file** — it reported clean because it never read the files.
+3. **A log nothing had connected to** — Metro was recording correctly; no client had ever
+   attached (entry 8).
+4. **A control searching for a word that was not there** — the control returned zero, so the
+   tool looked broken when it was fine.
+5. **A shell that does not word-split** — zsh left an unquoted file list as one bogus filename,
+   and every check, *including the control*, returned a clean zero.
+6. **`tcpdump` silently unable to open `/dev/bpf*`** — no capture, no error you would notice.
+7. **A `find` predicate the platform does not support** — `-newermt` returned 0 even for
+   "30 days ago".
+8. **A collector that had already died** — a relay killed with its launching shell, whose
+   output file is empty for a reason unrelated to the wire (entry 12).
+9. **Spotlight disabled machine-wide** — `mdfind` returns empty for every query (entry 3).
+10. **A path that does not exist** — `git grep` over `src/cli/` returned nothing because the
+    directory is absent on `origin/main`, not because the tool failed.
+
+> **The habit, which is what actually transfers: whenever a tool returns nothing, prove it can
+> return *something* in the same invocation shape before treating the emptiness as an answer —
+> and make sure the control itself is looking for something you have independently established
+> is there. Then distinguish "the tool failed" from "the path is wrong" from "the thing is
+> genuinely absent". Those three are the same symptom and different findings.**
+
+### §14 traps found 2026-09-02 evening (G session)
+
+§14 exists because three earlier traps were not recorded. Every trap below fails as a
+clean, plausible **empty result** rather than as an error — a green result that is
+actually a blind spot, the same shape as the ~30 % ungrepped payload.
+
+**1. Two LAN interfaces on the same /24.** `en0` = 192.168.68.125 and `en9` =
+192.168.68.102 are both on 192.168.68.0/24. Capture the wrong one and `tcpdump` writes
+an empty file, the sweep finds no plaintext, and it reads as a clean pass. Not
+hypothetical: mobile issue #727's field report used the `en9` address. Resolve the
+interface from **the rig's own pair URL** — the streamer prints the address it
+advertises — and then prove it.
+
+> **Rule: no interface is accepted until a positive control proves data flows on it,
+> and the evidence write-up must carry that interface's own total `tcp.len` byte count
+> next to the coverage figure.** A later reader must be able to see the capture was
+> non-empty *for a stated reason*, not by assumption.
+
+**2. A stale plan note can manufacture a false pass — the staleness is not the trap,
+the false pass is.** §5 of this document said "Android: release build over the rig's own
+tunnel (mobile#727 — a release build cannot reach `http://`)". **#727 is CLOSED**, fixed
+2026-08-15 by `13e21e22` (#752): `usesCleartextTraffic="true"` in the main manifest plus
+an app-layer policy permitting cleartext to the local network and refusing it elsewhere.
+
+> **The consequence, stated because the correction alone is not the lesson:** following
+> the stale note would have run G-2 over the tunnel's TLS, where the chosen-plaintext
+> canary is absent **because of TLS rather than because of E2EE** — and the row that
+> gates the stage-2 default flip would have recorded a pass that proves nothing. When a
+> plan note routes a secrecy test through a transport that hides everything, the note is
+> not merely out of date; it is generating the result.
+
+**3. Spotlight indexing is disabled machine-wide** (`mdutil -s /` → "Indexing
+disabled"), so `mdfind` returns empty for every query, including `mdfind -name Safari`.
+Never use it to prove a file does not exist.
+
+**4. Packet capture requires root and fails only at capture time.** `/dev/bpf*` is
+`crw------- root:wheel`, with no `access_bpf` group and no ChmodBPF daemon. Budget the
+sudo ask into the plan rather than discovering it after the rig is up.
+
+**5. `devicectl` "connected" does not mean USB.** `xcrun devicectl list devices` reported
+the iPhone 13 Pro as `connected` and the 17 Pro as `available (paired)`, but
+`xcrun xctrace list devices` — which is what `scripts/dev-device.sh` actually uses —
+listed **only the 17 Pro**. Acting on `devicectl` alone sends the user to plug in the
+wrong phone. **Use `xctrace` to decide which device is buildable.**
+
+**6. A local dev build reports `Bundle Version 1` regardless of commit.** Both phones
+report `com.ronenmars.threadbase` version 1.0, bundle version 1, so **the installed
+build's provenance cannot be read off the device**. That is why rebuilding before a
+receive-path row is not optional: a stale client certifies nothing, and it fails in a
+way that looks like a clean result.
+
+**7. The rig CHOOSES the interface, and it chooses it by enumeration order.** Trap 1
+records that two interfaces share the /24. The mechanism behind it was not recorded, and it
+is worse than "pick the right one". `src/lan-url.ts::resolveServerUrl` on `origin/main`
+returns `publicUrl` when set and otherwise `firstLanIPv4()` — **the first non-internal IPv4
+that `os.networkInterfaces()` happens to enumerate**. On this machine that candidate list is
+not two entries but four:
+
+```
+candidate: en0    192.168.68.125     <- what it returns today
+candidate: en9    192.168.68.102
+candidate: en12   169.254.185.52     (link-local)
+candidate: utun16 100.122.246.79     (Tailscale)
+```
+
+Nothing pins the winner. A reboot, a Wi-Fi drop, a VPN coming up, or `en0` simply
+enumerating later hands the pair URL a different address — and the device then talks over an
+interface nobody is capturing, while `tcpdump` on the remembered one writes an empty file
+that the sweep reports as "no plaintext found".
+
+**The `utun16` candidate is the worst case and deserves its own statement.** If the Tailscale
+interface wins the enumeration, the rig advertises a VPN address and the device's traffic leaves
+over the VPN. That does not merely move the capture to the wrong interface.
+**It is a scope violation: it breaks the LAN-only scope that every ciphertext claim in this
+program rests on.** The row would be
+measuring a tunnel it never declared, while a sweep of the remembered `en0` returned a clean
+empty file. Treat a non-LAN advertised address as a **stop**, not as an interface-selection
+problem: do not capture, and do not reason about which interface "should" have won.
+
+> **Rule: the capture interface is derived from the rig's LIVE pair URL at capture time, and
+> never carried over from an earlier session's note — including the note in
+> `G-PHONE-RUNBOOK.md`, which records `en0` as a fact when it is only today's outcome. Then
+> prove it with a positive control on that interface, per trap 1.** Verified 2026-09-04: the
+> function returns `192.168.68.125` (en0) right now, which is why the earlier note was right;
+> it was right by luck of enumeration, not by construction.
+
+The same function is what makes the **no-root relay fallback** feasible: setting `publicUrl`
+makes the rig advertise any address you choose, so a logging relay can be put in the path
+without hand-editing a QR — `spk` is the server's static key and is host-independent.
+
+**8. An empty log is not a hollow instrument — find out WHY it is empty before you draw a
+conclusion from it. (Correction to my own earlier report, made before it hardened.)** I found
+`scratchpad/logs/metro-8081.log` at 735 bytes — startup banner only, unchanged for sixteen
+hours — and reported that Metro was not recording the app's console output, i.e. that the
+instrument was hollow. **That diagnosis was wrong.** Launching the app against that same Metro
+grew the file immediately and it now carries exactly what was wanted: `[boot] app module
+loaded`, `[strip.mount]`, `[hub.mount]`, `[sentry] …`, `[ws:srv_…] connect attempt=0`, `open`.
+Metro *was* recording. The log was empty because **no client had ever connected to it**.
+
+The operational rule is unchanged and if anything firmer, but the mechanism matters, because
+the wrong mechanism sends the next person to replace a tool that works:
+
+> **Rule: before grepping any log for the absence of a behaviour, establish that the subject
+> was connected to that log during the window — a byte count plus a positive control. A log
+> that never saw its subject connect is empty for a reason that has nothing to do with what
+> you are grepping for, and it is byte-for-byte indistinguishable from "the behaviour did not
+> happen".**
+
+`adb logcat` remains the better source for Android cadence regardless — it timestamps at OS
+level, needs no taps, and is not contingent on a bundler being attached — but Metro is a valid
+source, not a broken one.
+
+**9. A newer JDK fails the native build, and it fails in a way that names nothing useful.**
+CI builds Android on **Temurin 17** (`.github/workflows/e2e.yml`). This machine has only
+Oracle **22** and Android Studio's JBR **25**. On the JBR the Gradle *configuration* phase
+succeeds completely — 2m06, full task graph, no warning that matters — and then every
+`configureCMakeDebug[<abi>]` task fails at execution with:
+
+```
+> Execution failed for task ':expo-updates:configureCMakeDebug[arm64-v8a]'.
+   > WARNING: A restricted method in java.lang.System has been called
+```
+
+That is JDK 24+'s restricted-method enforcement (JEP 472) surfacing through AGP's native
+tooling, and the message reads like a warning rather than a cause. **The same build on JDK 22
+succeeds in 3m06 with no other change.** Configuration succeeding proves nothing about the
+native path — check the JDK against what CI uses before concluding anything from a build
+failure, and prefer failing fast with `--dry-run`, which costs two minutes and rules the JDK
+in or out of the *configuration* phase only.
+
+**10. `adb shell curl` proves LAN routing, not the app's cleartext policy.** The device reaches
+both rigs over plain http — `:8790` → **200**, `:8791` → **200**, with a dead-port control at
+`:8799` → **000** proving the probe discriminates. That is worth having, and it is *not* a
+re-verification of mobile #727: `curl` is a system binary and is not subject to the app's
+network-security config or its app-layer cleartext policy. The app's own stack is a separate
+question, and on a **debug** build it is separate again, because a debug network-security
+config may permit cleartext for reasons that have nothing to do with `13e21e22`.
+
+**11. A secret passed as a command-line argument WILL be logged by something you did not
+write. (My own incident, 2026-09-04, reported as a §6 stop-work trigger.)** The scratch rig's
+API key reached a log in clear. Not because it was printed deliberately — it was handled
+carefully throughout, with only its *length* echoed and its validity established by a 401-vs-200
+control rather than by displaying it. It leaked because the script's interface is positional
+(`tsx scripts/g-sealed-frames.ts <baseUrl> <apiKey> <sessionId>`) and **`npx` echoes the full
+resolved command line back as an `npm notice run` line**.
+
+> **Rule: the caller's discipline about not printing a secret is irrelevant if the secret is in
+> `argv`. Process launchers, the process table, shell history and crash reporters all read
+> `argv` and none of them asked you. Pass secrets by environment variable or file descriptor,
+> never as a positional argument — and when a tool's interface is positional, change the tool.**
+
+Remediation used here: invoke the binary directly rather than through `npx` (which removes the
+echoing layer) **and** patch the script to prefer `process.env.TB_KEY`, so the value is absent
+from `argv` entirely rather than merely unprinted. The workspace `CLAUDE.md` §5 already warns
+that "taps log argv"; this is the same rule arriving from the other direction, and it was still
+walked into.
+
+**12. `nohup … &` from a tool call does not survive the call.** A relay started that way took
+SIGTERM when its launching shell ended. It was caught only because the process prints a totals
+report on termination — without that it would have looked like a crash, or worse, like a capture
+that legitimately recorded nothing. **Anything that must outlive a single command has to be
+started as a background process in its own right, and its liveness re-checked before you trust
+a result that depends on it.** An absence produced by a dead collector is the same false pass as
+an absence produced by a blind grep.
+
+**13. `git grep -E` is POSIX ERE and does not support `\s` — the search fails silently, and so
+does its control.** (Found by another agent tonight; recorded here because this section is the
+program's shared memory.) A pattern like `type:\s*"ping"` matches **nothing** on these repos,
+and it matches nothing *whether or not the thing is there*. The lethal part is that a positive
+control written in the same style fails identically, so the zero looks corroborated.
+
+> **Rule: use `[[:space:]]` or `-F` with `git grep`. And when reading this program's history,
+> distrust the zero of any `\s`-bearing search — it is not evidence of absence.**
+
+This is the same family as entries 8 and 12: a tool that cannot answer, returning something
+shaped exactly like an answer.
+
+**14. A scrub that greps for SHAPE rather than for PROVENANCE will both miss secrets and destroy
+evidence.** While verifying that no credential reached the record, a 35-character base64-ish
+string turned up in `D2-REPORT.md` — **the same length as the leaked scratch key**. It is an
+`X-TB-Env` header value, truncated with an ellipsis, and `X-TB-Env` is on the
+in-the-clear-by-design list (D-7): it travels as plaintext by construction, so publishing it
+reveals nothing an on-path observer lacks, and the report exists partly to document it as
+plaintext. A second hit, a 43-character `serverPublicKey`, is an X25519 **public** key published
+in every pairing QR.
+
+Either could have been "fixed" by a hurried scrubber — deleting exactly the evidence the report
+was written to carry — or waved through if the shape had looked innocuous instead.
+
+> **Rule: decide what a string IS, from how it is labelled and where it came from, not what it
+> resembles. Shape-matching alone produces both false positives that destroy evidence and false
+> negatives that ship secrets.**
+
+### A control is only a control if you verified the thing it looks for is really there
+
+**Recorded because it is my own error, and it nearly entered the record as a fabricated
+trap.** I reported that `git grep <pattern> origin/main -- <path>` returns empty on
+these repos regardless of content, "confirmed with a control". It does not. `git grep`
+works correctly here:
+
+```
+git grep -c -F 'upgradeWebSocket' origin/main -- 'src/*.ts'   ->  2 files
+git grep -n -F 'ws.send(frame)'   origin/main -- 'src/*.ts'   ->  src/ws-hub.ts:299
+```
+
+My "positive control" searched `sessions.routes.ts` for the word `router`, which **does
+not occur in that file** — ground truth `git show origin/main:<file> | grep -c router`
+= **0**. The control returned nothing because there was nothing to find, and I read that
+as the tool being broken.
+
+> **Rule: before a string is used as a positive control, its presence must be
+> established independently — by a different tool, on the same target.** An unverified
+> control that returns zero is indistinguishable from a broken tool, and it will
+> manufacture whichever conclusion you were already expecting. This is the
+> positive-control discipline turned back on the control itself.
+
+### Validate the sweep pipeline as a known-answer test before using it
+
+Run the pipeline against an **already-accepted** capture and reproduce a figure the
+program has already agreed on, before pointing it at anything new. `sweep.sh` on
+`d2-sealed-rows-2-4.pcap` reproduces the documented gap exactly: raw sweep **100.00 %**
+of 221 557 payload bytes, field pipeline **66.46 %**, misses **33.54 %**. That costs one
+command, and it means later coverage numbers are checkable rather than self-asserted —
+the tooling is not certified by the same run it is certifying.
+
+### D2's >MSS artefact was HTTP, not WebSocket
+
+Re-analysis of `d2-sealed-rows-2-4.pcap`: **every WebSocket frame in it is ≤126 bytes**
+(126×87, 125×25, 115×7, 68×9, 2×12, 0×22). The >MSS reassembled PDUs are **1 587-byte
+HTTP bodies**; 86 packets are segments of reassembled PDUs. The revision's 33.54 % miss
+stands exactly — only the attribution changes.
+
+Two consequences worth stating plainly: a future reader hunting "the large WS frame" in
+those pcaps will find nothing and could wrongly conclude the review was mistaken about
+everything; and **D2 never exercised large-frame handling on the WebSocket leg at all**,
+which is a real gap in the accepted evidence base rather than a footnote.
+
+### Getting a genuinely >MSS WebSocket frame
+
+The agent stops at Claude Code's login screen under a scratch `HOME`, so it cannot emit
+bulk output, and PTY scrollback is a bounded virtual terminal (3 MB written, ~45 KB
+retained). The frame that crosses the MSS is **`terminal_replay`**, sent once on
+`subscribe_session`: measured at **165 847 bytes plaintext / 165 893 sealed**, ~114× the
+1 448-byte MSS. Drive it with `register` then `subscribe_session` on `/ws?key=`.
+
+### Frame boundaries do not need `tcpdump`
+
+A raw TCP socket that performs the WebSocket handshake by hand and parses frame headers
+off the byte stream observes FIN bits and opcodes directly, with **no elevated
+privilege**. For the sealed leg, add a real Noise IKpsk1 pairing, a real
+`/api/e2ee/open` context and a ticketed upgrade (see `scripts/g-sealed-frames.ts`).
+Pair it with a negative control — feed the same parser a synthetic fragmented stream and
+confirm it reports `opcode 0` — or the zero means nothing.
+
+**15. A CI watcher that could not tell "finished" from "not started".** The orchestrator's own PR watcher polled `gh pr checks` and treated *zero pending* as *settled*. After a force-push resets CI there is a window in which the check list is empty — zero pending because zero exist — and the watcher reported `SETTLED failing=0` on a pull request whose legs had not begun. It asked *are any checks pending?* and never *have any checks started?*, which is the same pair of questions as every entry above. Fixed by additionally requiring a plausible total check count. Recorded because it is the eleventh mechanism in this family and the first one belonging to the orchestrator's own tooling: writing the register did not prevent building a fresh instance of it two hours later.
+

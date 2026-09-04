@@ -1,6 +1,6 @@
 # D2 row 9 — Cloudflare Access in front of a streamer blocks E2EE outright
 
-Hostname `tb-secured.rbv1000.win`, routed by tunnel `tb-e2ee-d2-20260901` to the scratch rig on `:8790` (v1.73.0, e2ee on). Owner created a self-hosted Access application over that hostname at 16:31 IDT, one policy `owner only` (Allow / Emails / owner), built-in one-time PIN, no identity provider configured. The tunnel was left untouched — Access sits in front of it.
+Hostname `<test-tunnel-host>`, routed by tunnel `tb-e2ee-d2-20260901` to the scratch rig on `:8790` (v1.73.0, e2ee on). Owner created a self-hosted Access application over that hostname at 16:31 IDT, one policy `owner only` (Allow / Emails / owner), built-in one-time PIN, no identity provider configured. The tunnel was left untouched — Access sits in front of it.
 
 ## Before and after, same probes
 
@@ -32,7 +32,7 @@ Through Access, the client would receive **HTML** where it expects a sealed JSON
 
 ## Confirmed on a real device (16:50 IDT)
 
-The owner scanned a pairing QR pointing at the Access-gated hostname (`url=https://tb-secured.rbv1000.win`) on the wired iPhone, keeping the working LAN entry as a control.
+The owner scanned a pairing QR pointing at the Access-gated hostname (`url=https://<test-tunnel-host>`) on the wired iPhone, keeping the working LAN entry as a control.
 
 The app **failed closed**, with a specific and accurate message:
 

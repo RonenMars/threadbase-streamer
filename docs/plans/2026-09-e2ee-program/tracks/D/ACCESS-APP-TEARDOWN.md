@@ -12,10 +12,10 @@ Nothing else in the program depends on the gate. Every other D2 row was taken ov
 
 | Object | Action |
 |---|---|
-| Access application `tb-secured` (destination `tb-secured.rbv1000.win`, policy `owner only`) | **Delete** |
+| Access application `tb-secured` (destination `<test-tunnel-host>`, policy `owner only`) | **Delete** |
 | Policy `owner only` | Deleted with the app, or separately under Access controls → Policies if it lingers |
 | Tunnel `tb-e2ee-d2-20260901` (`877706d3-1f47-4ac9-8832-c970547a379e`) | **Keep** |
-| DNS route `tb-secured.rbv1000.win` → that tunnel | **Keep** |
+| DNS route `<test-tunnel-host>` → that tunnel | **Keep** |
 | Service token, if one was created for the probe work | Delete alongside the app |
 
 Deleting the tunnel or the DNS record would break the hostname itself rather than just removing the gate, and the rig still uses both.
@@ -50,8 +50,8 @@ curl -s -X DELETE -H "Authorization: Bearer $CF_API_TOKEN" \
 The gate is gone when the pre-Access behaviour returns — these were the exact values before it existed:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://tb-secured.rbv1000.win/healthz    # expect 200, not 302
-curl -s -o /dev/null -w '%{http_code}\n' https://tb-secured.rbv1000.win/api/info   # expect 401 (the streamer's own auth)
+curl -s -o /dev/null -w '%{http_code}\n' https://<test-tunnel-host>/healthz    # expect 200, not 302
+curl -s -o /dev/null -w '%{http_code}\n' https://<test-tunnel-host>/api/info   # expect 401 (the streamer's own auth)
 ```
 
 A 302 to `<team>.cloudflareaccess.com` means the application is still there. Access caches nothing meaningful here; the change takes effect within seconds.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Node v24.15.0, Hono 4.13.3, ws 8.21.3, Vitest 4.1.11, Biome 2.5.10, React Native 0.86.3, Expo 57.0.18, Jest 29.7.0, `@stablelib/*` 2.0.1, Maestro 2.8.0, Xcode 26.6.
 
-**Specs:** `CLAUDE.md`; `tracks/parallel-execution-plan.md`; `tracks/W/PLAN-W1b.md`; `tracks/X-server/PLAN-X-server.md`; `tracks/X-server/BRIEF-2b.md`; `tracks/X-client/prompt.md`; `tracks/D/PLAN-D.md` §14; `tracks/R/prompt.md`; streamer `v1.71.0:specs/end-to-end-encryption/NONCE-DESIGN.md`.
+**Specs:** `CLAUDE.md`; `tracks/paral calel-execution-plan.md`; `tracks/W/PLAN-W1b.md`; `tracks/X-server/PLAN-X-server.md`; `tracks/X-server/BRIEF-2b.md`; `tracks/X-client/prompt.md`; `tracks/D/PLAN-D.md` §14; `tracks/R/prompt.md`; streamer `v1.71.0:specs/end-to-end-encryption/NONCE-DESIGN.md`.
 
 ## Global constraints
 

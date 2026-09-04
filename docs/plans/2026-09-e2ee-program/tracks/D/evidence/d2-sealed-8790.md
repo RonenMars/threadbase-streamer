@@ -38,4 +38,4 @@ Row 3 (conversation events) is only partially covered: the conversation *list* f
 
 ## Scope
 
-LAN only. The tunnel leg (`tb-secured.rbv1000.win`, Cloudflare) is TLS-wrapped and opaque to this method; nothing here is a wire-secrecy claim about it.
+LAN only. The tunnel leg (`<test-tunnel-host>`, Cloudflare) is TLS-wrapped and opaque to this method; nothing here is a wire-secrecy claim about it.
