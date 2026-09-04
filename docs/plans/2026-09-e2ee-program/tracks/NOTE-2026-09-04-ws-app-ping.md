@@ -150,6 +150,32 @@ This cost this agent one false "confirmed" and was caught only because the **pos
 
 **One pre-existing suite failure, proven not mine.** `__tests__/release-notes.test.ts::renders a release-worthy commit in the generated notes` fails with `Missing helper: "conventional-changelog-conventionalcommits requires conventional-changelog-writer@9 or newer …"`. Verified by checking out a throwaway worktree at pristine `origin/main` `d9148f25` with no changes at all and running that one file — identical failure — then removing the worktree. The cause is the shared `node_modules` symlink the worktree convention uses being stale against `origin/main`'s lockfile, so it will be red for every streamer track on this machine.
 
+### The one-PR-at-a-time rule protects against something narrower than it says
+
+Observed while #760 (docs) and #761 (this change) were briefly open together. The repo was **never** at one-PR quiescence at any point that night: `#753` (Dependabot) and `#754` (Snyk) were open throughout.
+
+So the invariant the program actually maintains is "one *human* PR open at a time", not "one PR open at a time" — bot PRs are exempt and never held the slot. That is a weaker claim than the rule's wording, and the gap matters: **as written, the rule was in continuous violation all night while the thing it protects against — two humans merging interacting changes into one repo — never occurred once.**
+
+Worth stating so nobody later reads a night of bot PRs as evidence the rule was being ignored, or tries to enforce the literal wording against a Dependabot branch.
+
+### Method entry: check the tool's blast radius, not your intent
+
+Contributed by the owner from the same night's work on the docs record, and recorded here because it is the same family as the two findings above.
+
+`git-filter-repo` was run to excise a leaked identifier. It did that — and, because it rewrites every commit back to the initial one, it also turned the branch into a **parallel history with no common ancestor with `main` at all**. `git merge-base` returned nothing, and a PR from that branch would have shown 932 divergent commits and been unmergeable. The check that ran afterwards verified the leaked value was gone: the thing the operator was worried about. The thing the tool had actually changed — the ancestry — went unchecked.
+
+**A tool that does what you asked can still do something you did not ask. The verification has to cover the tool's blast radius, not the operator's intent.**
+
+This is the third member of a family that turned up three times in one night, and the shared shape is worth naming: in each case **the instrument reported success on the question that was asked, while the question that mattered was never asked.**
+
+| | Question asked, answered "fine" | Question that mattered, never asked |
+|---|---|---|
+| lint no-op | "does biome pass?" — yes, exit 0 | "did biome look at any file?" — no, zero |
+| `\s` grep | "does this pattern match?" — no hits | "can this pattern match anything?" — no, `\s` is not ERE |
+| `filter-repo` | "is the leaked value gone?" — yes | "what else did the rewrite change?" — the entire ancestry |
+
+None of the three announced itself. All three agreed with whoever read them first.
+
 **A naive attribution scan produces four false positives on ordinary English, and the next person will see them too.** Checking this commit body with a case-insensitive `grep -icE 'claude|cursor|co-authored|generated with|ai'` returns **4** — all from the bare `ai` alternation matching inside `against`, `await`, `plaintext` and `raising`. The check that actually answers the question is word-boundaried: `grep -inE '\b(claude|cursor|anthropic|copilot)\b|co-authored-by|generated with|🤖'`, which returns nothing here, plus a check that no trailer-style `^[A-Za-z-]+: ` lines exist. Use the second form; a `4` from the first is noise, not a finding.
 
 **The `tsc` gate was itself positive-controlled**: an injected `const __tscControl: number = "not a number";` produced `src/ws-hub.ts(559,7): error TS2322`, and the restored file exits 0. So the green is a green, not a gate that never ran.
