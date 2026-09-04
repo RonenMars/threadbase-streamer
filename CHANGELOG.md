@@ -1,3 +1,9 @@
+## [1.75.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.75.1...v1.75.2) (2026-09-04)
+
+### Bug Fixes
+
+* **sessions:** refuse input on the prompt registry's live state, not map membership ([#772](https://github.com/RonenMars/threadbase-streamer/issues/772)) ([048cd8c](https://github.com/RonenMars/threadbase-streamer/commit/048cd8cf7077d9a0d103f88a2678995d2e2d4c93)), closes [#745](https://github.com/RonenMars/threadbase-streamer/issues/745)
+
 ## [1.75.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.75.0...v1.75.1) (2026-09-04)
 
 ### Bug Fixes
