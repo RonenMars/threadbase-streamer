@@ -1,3 +1,9 @@
+## [1.77.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.76.0...v1.77.0) (2026-09-04)
+
+### Features
+
+* **sessions:** ack hold_session so mobile can navigate on request-accepted ([#775](https://github.com/RonenMars/threadbase-streamer/issues/775)) ([0c994bf](https://github.com/RonenMars/threadbase-streamer/commit/0c994bf6196d49086380e0806f6506edad550de7))
+
 ## [1.76.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.75.2...v1.76.0) (2026-09-04)
 
 ### Features
