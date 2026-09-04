@@ -1,3 +1,9 @@
+## [1.75.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.75.0...v1.75.1) (2026-09-04)
+
+### Bug Fixes
+
+* **ws:** emit the app-level ping the record layer already documents ([#761](https://github.com/RonenMars/threadbase-streamer/issues/761)) ([01614c8](https://github.com/RonenMars/threadbase-streamer/commit/01614c894ef8875442b7a740f1c991d626faf8f0)), closes [#948](https://github.com/RonenMars/threadbase-streamer/issues/948) [#756](https://github.com/RonenMars/threadbase-streamer/issues/756) [RonenMars/threadbase-mobile#946](https://github.com/RonenMars/threadbase-mobile/issues/946)
+
 ## [1.75.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.74.0...v1.75.0) (2026-09-04)
 
 ### Features
