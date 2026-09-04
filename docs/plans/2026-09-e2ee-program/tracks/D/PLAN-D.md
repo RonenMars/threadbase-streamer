@@ -346,6 +346,81 @@ The same function is what makes the **no-root relay fallback** feasible: setting
 makes the rig advertise any address you choose, so a logging relay can be put in the path
 without hand-editing a QR — `spk` is the server's static key and is host-independent.
 
+**8. An empty log is not a hollow instrument — find out WHY it is empty before you draw a
+conclusion from it. (Correction to my own earlier report, made before it hardened.)** I found
+`scratchpad/logs/metro-8081.log` at 735 bytes — startup banner only, unchanged for sixteen
+hours — and reported that Metro was not recording the app's console output, i.e. that the
+instrument was hollow. **That diagnosis was wrong.** Launching the app against that same Metro
+grew the file immediately and it now carries exactly what was wanted: `[boot] app module
+loaded`, `[strip.mount]`, `[hub.mount]`, `[sentry] …`, `[ws:srv_…] connect attempt=0`, `open`.
+Metro *was* recording. The log was empty because **no client had ever connected to it**.
+
+The operational rule is unchanged and if anything firmer, but the mechanism matters, because
+the wrong mechanism sends the next person to replace a tool that works:
+
+> **Rule: before grepping any log for the absence of a behaviour, establish that the subject
+> was connected to that log during the window — a byte count plus a positive control. A log
+> that never saw its subject connect is empty for a reason that has nothing to do with what
+> you are grepping for, and it is byte-for-byte indistinguishable from "the behaviour did not
+> happen".**
+
+`adb logcat` remains the better source for Android cadence regardless — it timestamps at OS
+level, needs no taps, and is not contingent on a bundler being attached — but Metro is a valid
+source, not a broken one.
+
+**9. A newer JDK fails the native build, and it fails in a way that names nothing useful.**
+CI builds Android on **Temurin 17** (`.github/workflows/e2e.yml`). This machine has only
+Oracle **22** and Android Studio's JBR **25**. On the JBR the Gradle *configuration* phase
+succeeds completely — 2m06, full task graph, no warning that matters — and then every
+`configureCMakeDebug[<abi>]` task fails at execution with:
+
+```
+> Execution failed for task ':expo-updates:configureCMakeDebug[arm64-v8a]'.
+   > WARNING: A restricted method in java.lang.System has been called
+```
+
+That is JDK 24+'s restricted-method enforcement (JEP 472) surfacing through AGP's native
+tooling, and the message reads like a warning rather than a cause. **The same build on JDK 22
+succeeds in 3m06 with no other change.** Configuration succeeding proves nothing about the
+native path — check the JDK against what CI uses before concluding anything from a build
+failure, and prefer failing fast with `--dry-run`, which costs two minutes and rules the JDK
+in or out of the *configuration* phase only.
+
+**10. `adb shell curl` proves LAN routing, not the app's cleartext policy.** The device reaches
+both rigs over plain http — `:8790` → **200**, `:8791` → **200**, with a dead-port control at
+`:8799` → **000** proving the probe discriminates. That is worth having, and it is *not* a
+re-verification of mobile #727: `curl` is a system binary and is not subject to the app's
+network-security config or its app-layer cleartext policy. The app's own stack is a separate
+question, and on a **debug** build it is separate again, because a debug network-security
+config may permit cleartext for reasons that have nothing to do with `13e21e22`.
+
+**11. A secret passed as a command-line argument WILL be logged by something you did not
+write. (My own incident, 2026-09-04, reported as a §6 stop-work trigger.)** The scratch rig's
+API key reached a log in clear. Not because it was printed deliberately — it was handled
+carefully throughout, with only its *length* echoed and its validity established by a 401-vs-200
+control rather than by displaying it. It leaked because the script's interface is positional
+(`tsx scripts/g-sealed-frames.ts <baseUrl> <apiKey> <sessionId>`) and **`npx` echoes the full
+resolved command line back as an `npm notice run` line**.
+
+> **Rule: the caller's discipline about not printing a secret is irrelevant if the secret is in
+> `argv`. Process launchers, the process table, shell history and crash reporters all read
+> `argv` and none of them asked you. Pass secrets by environment variable or file descriptor,
+> never as a positional argument — and when a tool's interface is positional, change the tool.**
+
+Remediation used here: invoke the binary directly rather than through `npx` (which removes the
+echoing layer) **and** patch the script to prefer `process.env.TB_KEY`, so the value is absent
+from `argv` entirely rather than merely unprinted. The workspace `CLAUDE.md` §5 already warns
+that "taps log argv"; this is the same rule arriving from the other direction, and it was still
+walked into.
+
+**12. `nohup … &` from a tool call does not survive the call.** A relay started that way took
+SIGTERM when its launching shell ended. It was caught only because the process prints a totals
+report on termination — without that it would have looked like a crash, or worse, like a capture
+that legitimately recorded nothing. **Anything that must outlive a single command has to be
+started as a background process in its own right, and its liveness re-checked before you trust
+a result that depends on it.** An absence produced by a dead collector is the same false pass as
+an absence produced by a blind grep.
+
 ### A control is only a control if you verified the thing it looks for is really there
 
 **Recorded because it is my own error, and it nearly entered the record as a fabricated

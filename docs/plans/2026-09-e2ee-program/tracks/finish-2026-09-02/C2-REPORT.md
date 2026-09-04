@@ -68,3 +68,25 @@ Mutations (restored from file backup, 7/7 re-confirmed after each):
 | M2 keep `'*'` but `if (msg.type !== 'ping') resetSilenceTimer()` | exactly 1 red: the new test, same assertion at `:122` (Received 2); pre-existing test stays green, which is what makes the new one non-redundant |
 
 The streamer half (emitting the ping) is not built; #946 stays open on the mobile side until it ships, and the PR body says so.
+
+## Milestone 3 — defect 4 staged (2026-09-04)
+
+Shape built, on the assumption stated to the owner (no "stop" received): the Terminal view gains a raw-key path, never a re-route of composer text.
+
+- `components/conversation/ChatComposer.tsx`: optional `sendErrorAction?: { label; onPress }` rendered as one tappable line under `sendError` (`testID="send-error-action"`).
+- `components/terminal/TerminalView.tsx`: when `sendInput` last failed with `prompt_pending` and the answer ghost is not in flight, the action is "Send Escape to dismiss it" → `sendKeys.mutate('\x1b')`, i.e. `POST …/input { keys }`, which the server deliberately does not arbitrate (`sessions.handlers.ts:1059-1064`). Composer text still goes through `{ input }` and is still refused.
+- `locales/{en,he,ar,ru}/terminal.json`: `answer.sendEscape`.
+- `__tests__/integration/components/TerminalView.test.tsx`, new describe "send refused with no card to answer": (1) refusal with no card → the server message stays (positive control), pressing the action calls `sendKeys` once with `'\x1b'` and `sendInput` not at all; (2) no refusal → no action; (3) a non-`prompt_pending` refusal → message shown, no action.
+
+Gates: TerminalView suite 33/33 (30 pre-existing + 3); `tsc --noEmit` exit 0; `eslint --max-warnings=0` exit 0 on the three TS files; `npm run test:i18n` 4 suites / 460 passed.
+
+Mutations (file-backup restore, verified by grep before and after):
+
+| Mutation | Result |
+|---|---|
+| M3 delete `sendErrorAction={sendEscapeAction}` | exactly 1 red: `TerminalView.test.tsx::"offers Escape through the raw-key route, and never re-sends the text as keys"` at `:642`, `screen.getByText(SEND_ESCAPE)` finds no element |
+| M4 send `'\r'` (Enter, which would accept the highlighted option) instead of `'\x1b'` | see below |
+
+Note: the first M4 attempt was cut by a 10-minute tool timeout with the file still mutated; the file was restored from the backup and verified (`grep -c "mutate('\\x1b')"` = 1) before anything else ran, and M4 was re-run on its own.
+
+Not done: `ChatComposer` has no story and is not in `story-exempt.txt`; the pre-commit hook warns on a modified component, it does not block. A story needs the voice and attachment props wired up, which is not a small addition, so it is left out and disclosed.

@@ -1,6 +1,6 @@
 # PLAN-R2 — the D-8 vs §6.5 escalation
 
-Status: **DECIDED (2026-09-04, option 2 + option 4) — IMPLEMENTING.** See the Decision record and the Implementation log below. Presentation was originally held on G-1; G-1 was split on 2026-09-02 and its streamer half cleared R2.
+Status: **DECIDED (2026-09-04, option 2 + option 4) — PR #758 OPEN, awaiting CI and the owner's merge.** See the Decision record and the Implementation log below. Presentation was originally held on G-1; G-1 was split on 2026-09-02 and its streamer half cleared R2.
 
 Pinned against streamer `origin/main` = `d9148f25` (`v1.74.0` = `67f2d05e`, R1 shipped via PR #752). Every file/line/test cited below was read from `origin/main` at that commit, not assumed from an earlier plan.
 
@@ -115,7 +115,7 @@ So D-8's rule is a **mechanism** rule ("no env var may hold encryption off") gua
 
 **Explicitly not in scope:** no refusal to honour a config-sourced disable, no argv-level requirement for disabling, no boot refusal of any kind. No scaffolding or TODOs for option 5 are to be left in the diff.
 
-- **If code is needed, PR #:** *(filled in once opened — see Process below)*
+- **If code is needed, PR #:** streamer **#758** (`feat/e2ee-plaintext-boot-disclosure`, commit `55a7f090` on `d9148f25`), opened 2026-09-04 ~03:25 IDT on the owner's approval. Lint re-checked with `biome check --vcs-enabled=false src cli __tests__` (481 files seen; the four pre-existing format errors are in untouched test files) because `npm run lint` is a silent no-op inside `.worktrees/`.
 
 ## Implementation log (session R, 2026-09-04)
 
@@ -134,7 +134,7 @@ So D-8's rule is a **mechanism** rule ("no env var may hold encryption off") gua
 - **Yaml harness proven (owner ruling 2):** new `POSITIVE CONTROL — the sandboxed server.yaml is what the yaml rung reads` writes `{"e2ee":true}`, asserts the production loader `loadFeatureFlags()` returns exactly that, boots and sees no warning; then rewrites the same file to `false`, reboots, and sees the warning with `reason: "yaml"`. The only variable between the two boots is the file's content.
 - **M6** print the rung name in the boot line (`(source: ${source})` in place of `(${E2EE_OFF_SWITCH[source]})`) → `says what is readable and how many devices this run refuses`, `also warns when the environment variable is what disabled it`, `also warns when server.yaml is what disabled it`: `AssertionError: expected 'Transport encryption is OFF for this …' to contain 'Transport encryption is OFF for this …'` (the cli test's literal is `"Transport encryption is OFF for this run (--no-e2ee"`).
 - **Anchoring check (owner ruling 1):** the found diff already embodied warn-always. Answer stands independently: reason (b) is derived from the decision record's harm model, and a count-gated diff would have had to delete the `origin/main` test `still warns when no device is pinned, and says so`, a visible regression on sight.
-- **Gates (final tree):** focused file 22/22; `tsc --noEmit` 0; biome clean on the three code/test files; full suite — *(see below)*. `release-notes.test.ts` fails identically on the untouched `spike/g-sealed-frames` worktree at `67f2d05e` (`v1.74.0`) with `Missing helper: "conventional-changelog-conventionalcommits requires conventional-changelog-writer@9 or newer`, the shared-`node_modules` mismatch tracked as #745, not this branch.
+- **Gates (final tree):** focused file 22/22; `tsc --noEmit` 0; biome clean on the three code/test files; full suite **2762 passed, 5 skipped, 1 failed** (261/263 files), the one failure being the pre-existing `release-notes.test.ts`. `release-notes.test.ts` fails identically on the untouched `spike/g-sealed-frames` worktree at `67f2d05e` (`v1.74.0`) with `Missing helper: "conventional-changelog-conventionalcommits requires conventional-changelog-writer@9 or newer`, the shared-`node_modules` mismatch tracked as #745, not this branch.
 - **Adjacent, not acted on:** `specs/end-to-end-encryption/plan.md:69` still summarises D-8 as "no `server.yaml` key, no env var"; true of the flag itself, stale as a statement of the guarantee. Left for the owner's docs branch. Other test files that boot a `StreamerServer` without sandboxing `THREADBASE_CONFIG_DIR` inherit the same live-config leak; out of this PR's scope.
 
 ## The trigger design question (settled by the implementing session)

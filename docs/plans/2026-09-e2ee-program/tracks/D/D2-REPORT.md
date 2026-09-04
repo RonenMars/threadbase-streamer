@@ -507,3 +507,81 @@ Installed so far: `android-commandlinetools` via Homebrew (removable with
 CMake are unavoidable. That is roughly **5–5.5 GB** more, against an authorisation for
 "an SDK, not an open-ended download". Referred to the owner and the user; nothing
 further has been downloaded.
+
+---
+
+# ADDENDUM II — G session, 2026-09-04 (Android build; G-2 prepared, not run)
+
+**Headline: G-2 is PREPARED AND UNRUN. It does not clear the stage-2 default flip.** The
+Android device was identified, the app built from current `origin/main` and installed, the
+artefact verified, and the method settled — but **no packet was captured and no canary was
+sent**, so there is no Android ciphertext claim. That is a scheduling outcome, not a finding
+about the protocol.
+
+## What blocked it, and why it is not substitutable
+
+- **`tcpdump` needs root.** `/dev/bpf*` is `crw------- root:wheel`, with no `access_bpf` group
+  and no ChmodBPF daemon. The grant did not land. The mechanism is now understood and recorded:
+  **the nodes are re-created on demand**, so a grant issued earlier does not cover a node
+  created when the capture starts — `/dev/bpf0` was observed re-created twice on 2026-09-04,
+  root-owned each time, after the command had been run. The grant must run in the same sitting
+  as the capture, then be **proved** with a positive control.
+- **The canary and the taps need the user**, who was away from both the machine and the device.
+  The canary must be user-chosen seconds before sending and ≥14 characters; pairing is a QR scan
+  plus a confirmation-gate tap.
+
+## What IS established (details: `evidence/g2-android-prepared-unrun.md`)
+
+| | |
+|---|---|
+| Device | **Xiaomi 2109119DG**, Android **14**, API **34**, `arm64-v8a` — the same device family mobile **#727** was reported on |
+| App installed | versionCode **63**, debug dev client, `arm64-v8a`, from `c64fab5e` |
+| `443771a8` in the served bundle | **verified** — added lines 1/1, removed lines 0/0, two positive controls 1/1 |
+| Runs current JS on this shell | **verified on device** — `fabric:true`, `[boot] app module loaded`, 0 fatals |
+| LAN reachability from the device | `:8790` → **200**, `:8791` → **200**, dead-port control → **000** |
+| Toolchain | NDK **27.1.12297006**, cmake **3.22.1**, buildTools **36.0.0**, SDK **36**, JDK **22** |
+| Sweep pipeline | re-validated as a known-answer test: raw **100.00 %**, field **66.46 %**, miss **33.54 %** |
+
+**A provenance improvement over iOS.** §14 trap 6 records that a local dev build reports Bundle
+Version 1 regardless of commit, so the installed build cannot be identified from the device.
+That is an iOS limitation: on Android, `versionCode` **63** against the pre-existing **56** is
+readable via `dumpsys` and does identify the build.
+
+## Correction to Addendum I
+
+Addendum I says **five** modules declare `externalNativeBuild`. It is **six** —
+`@sentry/react-native` was omitted. All six ship zero prebuilt `.so`; the NDK was genuinely
+unavoidable, and that is now confirmed rather than assumed: no CI artefact was usable either,
+because `e2e.yml` builds `assembleRelease -PreactNativeArchitectures=x86_64` — **emulator arch,
+not the device's arm64-v8a** — and never uploads the APK.
+
+## Added to the in-the-clear-by-design list
+
+Alongside request paths and query strings (D-7), `X-TB-Env` / `X-TB-Ctx`, the
+`{"e2ee":{"v":1,"noise":"…"}}` handshake bodies and the plaintext `429` refusal body:
+
+- **the plaintext `/api/info` response on the scripted harness's bootstrap.** It is fetched with
+  `Authorization: Bearer` before any context exists, to learn `serverIdentityKey` — a **public**
+  key. This is a property of the harness's bootstrap and is **not** evidence about whether the
+  mobile app seals its own REST leg.
+
+## A no-root fallback now exists, validated and deliberately unused
+
+Because the `bpf` grant has failed to land twice, a logging TCP relay was built and validated
+end to end with a scripted device performing real Noise IKpsk1 pairing, a real ticketed context
+and a real WS upgrade — **6 617 payload bytes**, sealed markers **0**, and, in the same stream,
+a **608-byte plaintext `/api/info` body** proving the sweep reads plaintext where plaintext
+exists. It stays the fallback: it is a **relay hop, not the LAN segment**, so it proves what
+leaves the device rather than what crosses the wire. Full write-up and limits:
+`evidence/g-relay-fallback-validated.md`.
+
+## What the Android row will and will not cover when it runs
+
+It will cover row 1 (terminal output sealed) and the chosen-plaintext canary on a second
+platform, over **plain LAN http** — never the tunnel, where the canary would be absent because
+of TLS rather than because of E2EE.
+
+It will **not** re-verify mobile #727. `adb shell curl` reaching the rig proves LAN routing, not
+the app's cleartext policy — `curl` is a system binary outside the app's network-security
+config. And on a **debug** build the question is further removed, because a debug
+network-security config may permit cleartext for reasons unrelated to `13e21e22`.

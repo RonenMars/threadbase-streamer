@@ -3,8 +3,10 @@
 Written ahead so the trip happens **once**. Nothing here has been run. Every step is
 gated on the owner's go; steps B and E change the user's device.
 
-**Rig facts as they stand right now** (verify before use — the rig may have been torn
-down by the time this is read):
+**STATUS 2026-09-04: the rigs below are TORN DOWN.** They were shut down deliberately at the
+owner's instruction, not lost — an idle scratch rig held for days is a liability, and PLAN-D
+§§3–4 rebuilds it in about ten minutes. The addresses are kept because the rebuild will reuse
+them. Verify everything before use.
 
 | | |
 |---|---|
@@ -12,7 +14,10 @@ down by the time this is read):
 | legacy control rig | `http://192.168.68.125:8791` — `--feature e2ee=false` |
 | capture interface | **en0** (192.168.68.125) — the address the rig advertises |
 | iOS device | **iPhone 17 Pro**, UDID `00008150-00115DEA1A40401C` — the only device `xctrace` reports |
-| mobile worktree | `~/dev/ai-tools/tb-mobile-worktrees/g-device-run` @ `26815a16`, `npm ci` and `pod install` both done |
+| mobile worktree (iOS) | `~/dev/ai-tools/tb-mobile-worktrees/g-device-run` @ `26815a16`, `npm ci` and `pod install` both done |
+| mobile worktree (Android) | `~/dev/ai-tools/tb-mobile-worktrees/g2-android` @ **`c64fab5e`**, own `npm ci` done |
+| **Android device** | **Xiaomi 2109119DG**, Android 14 / API 34, `arm64-v8a`, adb id `eb57e2b6` |
+| **Android app** | **INSTALLED**: versionCode **63**, debug dev client, built from `c64fab5e`, arm64-v8a. Needs Metro to run. |
 
 The 17 Pro is the only device `xcrun xctrace list devices` reports, so it is the only
 one `dev-device.sh` can target. The 13 Pro shows as "connected" to `devicectl` but is
@@ -20,7 +25,33 @@ not available for development.
 
 ---
 
-## Step 0 — CONFIRM the stale entries are gone (one line, before anything else)
+## Step 0 (NEW, 2026-09-04) — DELETE THE STALE RIG ENTRIES FIRST. Nothing else works until you do.
+
+**This is now certain rather than precautionary.** Session G tore the rigs down on the owner's
+instruction, so `192.168.68.125:8790` and `:8791` no longer exist — but the phones still hold
+server entries pointing at them. The Android device is additionally confirmed to hold at least
+one stored server (`srv_7xgq3m`), observed auto-connecting when the app was launched.
+
+**Symptom if you skip this**, quoted from the app so it is recognisable on sight:
+
+> "This address is already in your list. Delete that server first if you want to re-add it."
+> (`pair.scanner.errors.alreadyAdded`)
+
+The pairing fails at the **first tap**, before anything under test has run. Worse than the
+delay: a stale entry can reconnect mid-capture and put traffic on the wire that nobody
+accounted for, which contaminates a row you will then have to discard.
+
+**Do this on BOTH devices before scanning anything:** open Threadbase → the server list →
+delete every `192.168.68.x` entry and every `trycloudflare.com` entry. Then say what you see
+before tapping anything else.
+
+Note the ordering hazard: the rebuilt rig will very likely land on the **same** host:port, so
+the entry looks superficially valid and the app will still refuse it.
+
+---
+
+## Step 0b — the original check (kept, now subordinate to step 0)
+
 
 The user is clearing them themselves, so this is a check, not a task.
 
@@ -44,6 +75,18 @@ sudo chgrp admin /dev/bpf* && sudo chmod g+rw /dev/bpf*
 
 Reverts on reboot; while it stands any process running as the user can capture packets.
 Scope is recorded in the teardown record rather than left undocumented.
+
+### RUN THIS IMMEDIATELY BEFORE THE CAPTURE — it does not survive node recreation
+
+**This grant has now failed to land twice, and the reason is mechanical rather than
+forgetfulness.** `/dev/bpf*` nodes are created **on demand**. The glob only touches the nodes
+that exist at the moment it runs, so a grant issued an hour earlier — or last night — does not
+cover a node the kernel creates when your capture starts. Observed directly: `/dev/bpf0` was
+re-created at 02:44 and again at 02:52 on 2026-09-04, root-owned each time, after the user had
+already run the command.
+
+So: **the user runs step A, and step A1 runs within the same sitting, immediately before the
+capture.** Do not carry a grant across a break and assume it still holds — re-prove it.
 
 ### A1 — prove the permission, do not infer it
 
@@ -141,43 +184,45 @@ If the storm does not reproduce, say so plainly — C1 ships item 1 alone.
 
 ---
 
-## Step E — Android  (second visit, after the build exists)
+## Step E — Android  (BUILD AND INSTALL ARE DONE — 2026-09-04)
 
-Route is a **local SDK install** (decided; explicitly **not** EAS). Command-line tools
-and `platform-tools` are already installed — 210 MB, removable with
-`brew uninstall --cask android-commandlinetools`. The **NDK is still an open question
-with the owner**, because five modules compile C++ from source and none ship prebuilt
-`.so` files.
+**Everything that did not need a human is finished.** Do not rebuild and do not re-download the
+SDK unless something below fails.
 
-**`adb devices` currently returns an empty list — the device is not connected.**
-Before anything else, the user does this once:
+Done and verified this session:
+- Xiaomi **2109119DG**, Android **14**, API **34**, `arm64-v8a`, adb id `eb57e2b6`, USB debugging
+  authorised.
+- App **installed**: `com.ronenmars.threadbase` **versionCode 63**, `DEBUGGABLE`,
+  `primaryCpuAbi=arm64-v8a`, built from `c64fab5e` with `-PreactNativeArchitectures=arm64-v8a`.
+  Installed with `adb install -r`, so existing app data was preserved.
+- **It runs**: launched via the dev-client deep link and confirmed from the device's own log —
+  `Running "main" … fabric:true`, `[boot] app module loaded`, 0 fatals.
+- `443771a8` **verified present** in the Android bundle Metro serves, with two positive controls.
+  Re-verify at capture time — commands in `PLAN-G2.md` §7.
+- Device reaches the rig over plain LAN http: `:8790` → 200, `:8791` → 200, dead-port control
+  `:8799` → 000.
 
-1. Plug the Android device into the Mac by **USB**.
-2. On the phone: Settings → About phone → tap **Build number** seven times to unlock
-   Developer options.
-3. Settings → System → Developer options → enable **USB debugging**.
-4. A dialog appears on the phone: **Allow USB debugging** → tap **Allow**
-   (tick "Always allow from this computer").
+**The SDK and NDK were installed under a scratch `sdk_root` and DELETED at teardown.** A rebuild
+therefore costs the ~5.3 GB download again — so avoid rebuilding unless the installed app is
+genuinely unusable.
 
-Then, on the Mac, this identifies it and the model goes in the addendum:
+**What still needs a human, and cannot be worked around:**
+1. **The `bpf` grant, run IMMEDIATELY before the capture** — `/dev/bpf*` nodes are re-created on
+   demand, so a grant issued earlier does not cover a node created later. Then prove it with
+   step A1 before trusting any capture that is supposed to return nothing.
+2. **The canary** — user-chosen, seconds before sending, **≥14 characters**.
+3. **The taps** — step 0 first, then scan the QR and confirm the identity code.
 
+**Launch the app pointed at a specific Metro without touching the phone:**
 ```
-/opt/homebrew/share/android-commandlinetools/platform-tools/adb devices -l
+adb shell am start -a android.intent.action.VIEW \
+  -d "threadbase://expo-development-client/?url=http%3A%2F%2F192.168.68.125%3A8081"
 ```
+The scheme is `threadbase` (read from the APK manifest; `com.ronenmars.threadbase://…` does
+**not** resolve). **A debug dev client has no bundled JS — start Metro first or it cannot run.**
 
-**Do not capture a single Android packet until the artefact on the device is verified
-to contain `443771a8`.** A build that cannot unseal a WS frame produces exactly the
-empty-looking pass that §14 trap 1 warns about, and it would be the third trap of that
-shape in one day.
-
-When it does run: row 1 plus the **chosen-plaintext canary**. The canary is a string
-the **user** chooses seconds before sending, **at least 14 characters** (two-character
-tokens produced coincidental hits inside base64 and ciphertext in D2). Prove the server
-received it, then show it absent from the full sweep **and** the raw pcap.
-
-Android runs over **plain LAN http**, not the tunnel — mobile #727 is closed, fixed by
-`13e21e22`. Running it over the tunnel would make the canary absent because of TLS
-rather than because of E2EE, which is a false pass on the row that gates the flip.
+**Client log for cadence: `adb logcat`**, filtered on `ReactNativeJS`. OS-level timestamps, no
+taps, and not contingent on a bundler being attached.
 
 **Capture rule for every row here:** record the accepted interface's own **total
 `tcp.len` byte count** next to the coverage figure, and the **opcode breakdown with an

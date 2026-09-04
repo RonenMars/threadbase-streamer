@@ -160,3 +160,49 @@ the user wants them gone; remove the Xiaomi's rig server entries and the built a
 `git worktree remove` the scratch worktrees; note `/dev/bpf*` stays widened until reboot;
 record that :8766 changed PID by launchd, not by us. Scrub pair tokens, device tokens,
 API keys, `spk`/tickets and any real hostname before anything leaves the scratchpad.
+
+---
+
+## 7. Artefact verification — the exact commands, so the next session runs them
+
+A **debug dev-client APK contains no JS bundle** (verified: `unzip -l app-debug.apk` shows no
+`index.android.bundle`). The native shell and the JS therefore have to be verified separately,
+and this is a **strength rather than a weakness** for this row: a frozen release bundle would
+be verified once at build time, whereas the dev client's JS is verified **at the moment of
+use**, which is when it matters. Re-run this against the bundle Metro is serving during the
+row — not against tonight's result.
+
+```bash
+B=/tmp/g2-bundle.js
+curl -sS -o "$B" -w 'HTTP %{http_code} %{size_download}B\n' \
+  'http://127.0.0.1:8081/.expo/.virtual-metro-entry.bundle?platform=android&dev=true&minify=false&transform.engine=hermes&transform.routerRoot=app'
+# NOTE: /index.bundle 404s on this project — package.json `main` is `expo-router/entry`.
+
+# POSITIVE CONTROLS — present in BOTH pre- and post-fix code. If either is 0 the grep is
+# broken or the bundle is wrong, and every result below is worthless.
+grep -a -c -F 'sealed socket received a non-binary frame' "$B"   # expect 1
+grep -a -c -F 'recv.unseal('                             "$B"   # expect 1
+
+# ADDED by 443771a8 — must be PRESENT
+grep -a -c -F 'event.data instanceof ArrayBuffer'        "$B"   # expect 1
+grep -a -c -F 'recv.unseal(frame)'                       "$B"   # expect 1
+
+# REMOVED by 443771a8 — must be ABSENT
+grep -a -c -F 'recv.unseal(event.data)'                  "$B"   # expect 0
+grep -a -c -F '!(event.data instanceof Uint8Array)'       "$B"   # expect 0
+```
+
+Result on 2026-09-04 against Metro serving `26815a16`: controls 1/1, added 1/1, absent 0/0.
+
+**The device must also be shown to have loaded that bundle**, not merely to have had it
+offered: `adb logcat` during launch carries the app's own `ReactNativeJS` output and the
+bundle URL. An app that silently fell back to a cached bundle is the same false-pass shape as
+everything else in §14.
+
+## 8. Consequence of teardown that the next session must not trip over
+
+The rigs and Metro are being torn down this session by the owner's instruction. A **debug
+dev-client app cannot start without Metro** — it has no bundled JS. So the installed app is
+*not* independently runnable: the next session restarts Metro (`:8081`) from a worktree at the
+commit it intends to test **before** touching the phone. This is a property of the dev-client
+route, not a fault, and PLAN-D §§3–4 puts the rig rebuild at about ten minutes.
