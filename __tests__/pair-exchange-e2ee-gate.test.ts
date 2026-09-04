@@ -65,7 +65,18 @@ describe("the pair exchange refuses the handshake when the build denies the capa
     serverStaticPub = Buffer.from(loadOrCreateServerIdentity().publicKey, "base64url");
     clientStatic = generateKeyPair();
 
-    server = new StreamerServer({ port: 0, apiKey: API_KEY, localNoAuth: false, verbose: false });
+    // Pinned off explicitly rather than relying on the registry default: this
+    // suite's own subject is "capability off" behavior (the nested "capability
+    // on" describe below stubs `describeE2eeCapability` directly instead of
+    // depending on this flag), so it must stay off regardless of the flag's
+    // registry default.
+    server = new StreamerServer({
+      port: 0,
+      apiKey: API_KEY,
+      localNoAuth: false,
+      verbose: false,
+      featureFlags: { e2ee: false },
+    });
     await server.listen(0, { awaitReady: true });
     baseUrl = `http://localhost:${server.port}`;
   });

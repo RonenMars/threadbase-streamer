@@ -71,16 +71,18 @@ describe("describeE2eeCapability", () => {
 });
 
 describe("the e2ee feature flag", () => {
-  it("is registered, off by default, and carries an env override", () => {
+  it("is registered, on by default (stage 2), and carries an env override", () => {
     const def = FEATURE_FLAGS.e2ee;
-    // Off by default is GATE 3: tb-mobile is released and cannot be
-    // force-updated, so encryption is negotiated per device and never forced.
-    expect(def.default).toBe(false);
+    // On by default is stage 2: negotiated per device, never forced — a
+    // released tb-mobile build that doesn't speak e2ee yet is unaffected,
+    // since enablement is per-device, not a plaintext refusal (that's stage
+    // 3, `required`, still a separate unmade decision).
+    expect(def.default).toBe(true);
     expect(def.env).toBe("THREADBASE_FEATURE_E2EE");
   });
 
-  it("resolves off with no configuration at all", () => {
-    expect(resolveFeatureFlags({ env: {} }).values.e2ee).toBe(false);
+  it("resolves on with no configuration at all", () => {
+    expect(resolveFeatureFlags({ env: {} }).values.e2ee).toBe(true);
   });
 });
 
