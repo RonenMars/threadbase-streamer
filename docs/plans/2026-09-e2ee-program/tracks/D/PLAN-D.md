@@ -265,6 +265,42 @@ Two distinct timers, don't conflate them:
 8. Revoked device's live socket closes.
 9. Access/named-tunnel functional pass (see above) — function only, explicitly not a wire-secrecy claim.
 
+### THE FAMILY: an empty result that reads as an answer
+
+**Read this before the individual traps. The traps matter less than the fact that they are one
+family with many members, and it will gain another.**
+
+Every entry below fails the same way: not as an error, but as a clean, plausible **empty
+result** that is byte-for-byte indistinguishable from the answer you were hoping for. The
+causes share nothing with each other, which is exactly why enumerating them is not a substitute
+for the habit.
+
+Distinct mechanisms that produced this identical signature in this program, so far:
+
+1. **A blind `git grep -E` with `\s`** — POSIX ERE has no `\s`, so it matches nothing whether or
+   not the thing is present (entry 13).
+2. **A linter honouring an ignore file** — it reported clean because it never read the files.
+3. **A log nothing had connected to** — Metro was recording correctly; no client had ever
+   attached (entry 8).
+4. **A control searching for a word that was not there** — the control returned zero, so the
+   tool looked broken when it was fine.
+5. **A shell that does not word-split** — zsh left an unquoted file list as one bogus filename,
+   and every check, *including the control*, returned a clean zero.
+6. **`tcpdump` silently unable to open `/dev/bpf*`** — no capture, no error you would notice.
+7. **A `find` predicate the platform does not support** — `-newermt` returned 0 even for
+   "30 days ago".
+8. **A collector that had already died** — a relay killed with its launching shell, whose
+   output file is empty for a reason unrelated to the wire (entry 12).
+9. **Spotlight disabled machine-wide** — `mdfind` returns empty for every query (entry 3).
+10. **A path that does not exist** — `git grep` over `src/cli/` returned nothing because the
+    directory is absent on `origin/main`, not because the tool failed.
+
+> **The habit, which is what actually transfers: whenever a tool returns nothing, prove it can
+> return *something* in the same invocation shape before treating the emptiness as an answer —
+> and make sure the control itself is looking for something you have independently established
+> is there. Then distinguish "the tool failed" from "the path is wrong" from "the thing is
+> genuinely absent". Those three are the same symptom and different findings.**
+
 ### §14 traps found 2026-09-02 evening (G session)
 
 §14 exists because three earlier traps were not recorded. Every trap below fails as a
