@@ -90,3 +90,35 @@ Mutations (file-backup restore, verified by grep before and after):
 Note: the first M4 attempt was cut by a 10-minute tool timeout with the file still mutated; the file was restored from the backup and verified (`grep -c "mutate('\\x1b')"` = 1) before anything else ran, and M4 was re-run on its own.
 
 Not done: `ChatComposer` has no story and is not in `story-exempt.txt`; the pre-commit hook warns on a modified component, it does not block. A story needs the voice and attachment props wired up, which is not a small addition, so it is left out and disclosed.
+
+## Milestone 4 — streamer issues filed, suites green, defect 5 resolved by analysis (2026-09-04)
+
+Owner rulings received: defect-4 shape approved; C2 files both streamer issues; defect 5 is option 2 only, or a written analysis if the Maestro setup is disproportionate; commit and PR approval delegated to the owner after seeing the staged diff and verbatim messages.
+
+Streamer issues (owner check on `RonenMars/threadbase-streamer` → `RonenMars`):
+
+| Issue | Title | Labels |
+|---|---|---|
+| [#756](https://github.com/RonenMars/threadbase-streamer/issues/756) | P1: the app-level ping frame the silence watchdog depends on is documented but never sent — written as tracking agent P's in-flight fix; quotes `ws-hub.ts:257` verbatim; pins `{ type: "ping", ts }` and the 30 s cadence as contract | P1, bug, performance |
+| [#757](https://github.com/RonenMars/threadbase-streamer/issues/757) | P2: prompt_pending refuses input on a pending map that can outlive the prompt record — cites #724 as adjacent | P2, bug, provider |
+
+M4 result: exactly 1 red, `TerminalView.test.tsx::"offers Escape through the raw-key route, and never re-sends the text as keys"` at `:644`, `expect(mockSendKeysMutate).toHaveBeenCalledWith('\x1b')`, Received `"\r"`. Restore verified by grep.
+
+Full suites on the restored tree: **unit 1849/1849 (187 suites), integration 475/475 (64 suites)**, both via the repo scripts with `--forceExit`. `tsc --noEmit` exit 0 (run after the last edit). eslint 0 on all six staged TS files. `test:i18n` green.
+
+### Defect 5 — deferred to a written analysis, with the reasoning chain and the residual risk
+
+**Why not the Maestro route tonight.** Start-of-session record, 07:48:45 IDT: `xcrun simctl list devices booted` empty; `simctl list devices available` shows the iOS 26.5 runtime with **zero devices** created; no Release build exists for the runner to reuse except two in unrelated worktrees (`promo-04-e2e-verify`, `setup-yaml-mock-verify`) whose JS bundles are from other branches; Metro on :8081 belongs to another session (pid 10586) and is not mine to touch; Maestro 2.8.0 is installed. Getting to a run means creating a device, either rebuilding Release (a full Xcode build) or reusing a build I cannot prove fresh, modifying the mock server, writing a flow, and running it — the stale-bundle case is exactly the "empty-looking pass" trap G recorded, so the reuse shortcut is not safe. That is disproportionate under the authorised stop rule.
+
+**The reasoning chain**, stated so a reader can check it rather than trust it:
+
+1. React Native's `WebSocket` hands JavaScript whole messages. On iOS, `React/CoreModules/RCTWebSocketModule.mm` (RN 0.86.3) delegates to SocketRocket's `SRWebSocket`; on Android, `ReactAndroid/.../websocket/WebSocketModule.kt` calls `OkHttpClient.newWebSocket` (OkHttp 4.9.2 per RN's `libs.versions.toml:37`) and forwards `onMessage(text | ByteString)`. Both are RFC 6455 implementations that reassemble continuation frames below the message callback. JS never sees a frame; it sees a message.
+2. Therefore the mobile record layer (`services/ws-client.ts` `onmessage` → `context.recv.unseal`) **cannot ever see a fragment**. A jest test at the mocked `global.WebSocket` seam would hand it a whole message by construction and could not fail for a fragmentation reason. Option 1 was correctly rejected on those grounds.
+3. Sealing changes the payload, never the framing. G observed the same frame shapes on the plaintext and sealed legs at ~114× MSS. So a fragmented sealed message and a fragmented plaintext message exercise the identical native path: fragments → native reassembly → one whole message → the record layer, which is already tested with whole messages (including the `ArrayBuffer` shape from #940).
+4. The only open question is therefore "does the native layer under our pinned RN reassemble correctly", and the only instrument that can answer it is the real app receiving deliberately fragmented frames — the Maestro option, or a rig capture behind a re-fragmenting intermediary.
+
+**Two instruments, blind to the same thing for two different reasons** (carried forward at the owner's request): a capture against this streamer can only ever show fragmentation's *absence*, because `ws` 8.21.3 never emits `fin: false` from `ws-hub.ts:299`; a jest test cannot show anything either, because the seam it mocks sits *above* native reassembly. Neither is a weak version of the other; each is structurally the wrong place to look.
+
+**Residual risk.** Not observed on this build: that SocketRocket or OkHttp mis-reassembles a fragmented binary message on the pinned versions. Both libraries have carried continuation handling for years and it is exercised by every browser-grade server that fragments large messages, so the prior is low, but this program's rule is that a prior is not an observation. The gate this item guards is the stage-2 flip; the honest statement is "reasoned, not observed".
+
+**Recipe for the observation when hardware is up** (not built, so nothing untested ships): `e2e/mock-server.js` gains a `MOCK_FRAGMENT_BYTES=<n>` mode that sends each `terminal_output` echo as `ws.send(chunk, { fin: false })` followed by `ws.send(rest, { fin: true })` (ws's Sender emits opcode 0 for the continuation automatically); the existing chat flow's echo assertion is the positive path; the **negative control** is a second mode that sends the same chunks each with `fin: true` — three complete but individually unparseable messages — which must turn the echo assertion red, proving the harness distinguishes reassembled from not. Run on a freshly built Release app whose bundle contains this branch.

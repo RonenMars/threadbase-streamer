@@ -154,7 +154,9 @@ This cost this agent one false "confirmed" and was caught only because the **pos
 
 ## 9. The frozen wire contract is compiler-enforced, not merely obeyed
 
-The frame is built as `const appPing: WSMessage = { type: "ping", ts: Date.now() }`. Annotating the literal rather than passing it straight to `JSON.stringify` is deliberate: `JSON.stringify` accepts anything, so an unannotated literal would let the wire shape drift silently, which is precisely the freeze's concern. With the annotation, TypeScript's excess-property check makes the contract a build failure. Both forbidden edits were run:
+The frame is built as `const appPing: WSMessage = { type: "ping", ts: Date.now() }`.
+
+**The `: WSMessage` annotation is load-bearing and must not be tidied away.** It reads as redundant — the value is used once, on the next line, and a cleanup pass will want to inline it into `JSON.stringify`. That is exactly the edit to refuse. `JSON.stringify` accepts *anything*: inlined or unannotated, the literal is checked against nothing, and the wire shape can then drift field by field with the build staying green. The annotation is the only thing making the frozen contract mechanical rather than a matter of everyone remembering. With it, TypeScript's excess-property check turns a shape change into a build failure. Both forbidden edits were run:
 
 | Forbidden edit | `tsc` verdict |
 |---|---|
