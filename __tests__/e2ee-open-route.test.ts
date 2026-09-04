@@ -587,8 +587,13 @@ describe("failing closed (§9, §10)", () => {
     for (const word of ["replay", "replayed", "cache", "seen", "ephemeral", "duplicate"]) {
       expect(replayText.toLowerCase()).not.toContain(word);
     }
-    // And no header leaks it either.
-    expect(JSON.stringify([...replay.headers])).toBe(JSON.stringify([...other.headers]));
+    // And no header leaks it either. `date` is excluded on purpose: Node stamps
+    // it per second, so two sequential responses straddling a second boundary
+    // differ there while nothing about the failure does — and the property under
+    // test is that nothing about the failure differs, not that the two answers
+    // are simultaneous. Every other header is compared exactly (#759).
+    const withoutDate = (h: Headers) => JSON.stringify([...h].filter(([name]) => name !== "date"));
+    expect(withoutDate(replay.headers)).toBe(withoutDate(other.headers));
   });
 
   it("lets a device open twice: two handshakes, two ephemerals — the positive control", async () => {
