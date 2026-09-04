@@ -122,3 +122,15 @@ Full suites on the restored tree: **unit 1849/1849 (187 suites), integration 475
 **Residual risk.** Not observed on this build: that SocketRocket or OkHttp mis-reassembles a fragmented binary message on the pinned versions. Both libraries have carried continuation handling for years and it is exercised by every browser-grade server that fragments large messages, so the prior is low, but this program's rule is that a prior is not an observation. The gate this item guards is the stage-2 flip; the honest statement is "reasoned, not observed".
 
 **Recipe for the observation when hardware is up** (not built, so nothing untested ships): `e2e/mock-server.js` gains a `MOCK_FRAGMENT_BYTES=<n>` mode that sends each `terminal_output` echo as `ws.send(chunk, { fin: false })` followed by `ws.send(rest, { fin: true })` (ws's Sender emits opcode 0 for the continuation automatically); the existing chat flow's echo assertion is the positive path; the **negative control** is a second mode that sends the same chunks each with `fin: true` — three complete but individually unparseable messages — which must turn the echo assertion red, proving the harness distinguishes reassembled from not. Run on a freshly built Release app whose bundle contains this branch.
+
+## Milestone 5 — committed and PR opened (2026-09-04)
+
+Owner approved both commits verbatim (approval delegated to the owner by the user for this run).
+
+- `2fa24074` `test(e2ee): pin the server ping as the silence watchdog's liveness signal` (4 files, +34/−3). Pre-commit hooks printed nothing.
+- `20a864d8` `fix(terminal): offer Escape when a pending prompt refuses composer text` (7 files, +76/−4). Pre-commit hook output verbatim: `Storybook: modified component(s) with no story — add one if it's small:` naming `components/conversation/ChatComposer.tsx` and `components/terminal/TerminalView.tsx`. The lint stage printed nothing. TerminalView had not been disclosed before the hook named it; the PR body now names both. Neither commit received `[skip-ci]`.
+- Branch pushed; **PR #948** opened against `main`: `fix(terminal): send Escape past a pending prompt and pin the ping liveness contract`. The owner merges, not C2.
+
+Expected on merge: #947 closes; #946 and streamer #756 stay open until a streamer carrying P's ping ships; #757 is untouched.
+
+Track deliverables: issues #946, #947, #756, #757 filed · defect 3 mobile half merged-pending · defect 4 fix merged-pending · defect 5 deferred with the reasoning chain, residual risk and recipe recorded above.

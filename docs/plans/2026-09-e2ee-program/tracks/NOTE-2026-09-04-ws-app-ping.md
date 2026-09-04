@@ -150,6 +150,8 @@ This cost this agent one false "confirmed" and was caught only because the **pos
 
 **One pre-existing suite failure, proven not mine.** `__tests__/release-notes.test.ts::renders a release-worthy commit in the generated notes` fails with `Missing helper: "conventional-changelog-conventionalcommits requires conventional-changelog-writer@9 or newer …"`. Verified by checking out a throwaway worktree at pristine `origin/main` `d9148f25` with no changes at all and running that one file — identical failure — then removing the worktree. The cause is the shared `node_modules` symlink the worktree convention uses being stale against `origin/main`'s lockfile, so it will be red for every streamer track on this machine.
 
+**A naive attribution scan produces four false positives on ordinary English, and the next person will see them too.** Checking this commit body with a case-insensitive `grep -icE 'claude|cursor|co-authored|generated with|ai'` returns **4** — all from the bare `ai` alternation matching inside `against`, `await`, `plaintext` and `raising`. The check that actually answers the question is word-boundaried: `grep -inE '\b(claude|cursor|anthropic|copilot)\b|co-authored-by|generated with|🤖'`, which returns nothing here, plus a check that no trailer-style `^[A-Za-z-]+: ` lines exist. Use the second form; a `4` from the first is noise, not a finding.
+
 **The `tsc` gate was itself positive-controlled**: an injected `const __tscControl: number = "not a number";` produced `src/ws-hub.ts(559,7): error TS2322`, and the restored file exits 0. So the green is a green, not a gate that never ran.
 
 ## 9. The frozen wire contract is compiler-enforced, not merely obeyed
