@@ -480,10 +480,12 @@ Three surfaces, each for a different moment:
 
 There is deliberately **no** `server.yaml` key and **no** env var for it. The reasoning is `auto_resume_on_boot`'s, inverted: that setting is persisted precisely so the user is asked once and never again, whereas this one should require a deliberate act at every single boot. An operator who wants it permanently edits their launchd plist or Task Scheduler action, which is a visible, auditable change.
 
+**Acknowledged 2026-09-04 (D-8 resolution):** the flag has no key or variable of its own, but the `e2ee` feature flag it is sugar for does — `THREADBASE_FEATURE_E2EE` and `feature_flags:` in `server.yaml` exist by construction of the registry, and once stage 2 flips the default to `true` either one is a real, standing off switch that outlives any single boot. That is accepted rather than closed, because the client's own pin (§6.3) is what prevents a downgrade, not the absence of a switch. The compensating rule is that **every explicit "off" announces itself the same way `--no-e2ee` does**: the boot warning above fires for any non-default source, `e2ee.disabled` carries `reason: <source>`, and `/api/info`'s `reason` names the rung that decided it. See [dilemmas.md D-8](./dilemmas.md#d-8---no-e2ee-has-no-serveryaml-key-and-no-env-var).
+
 ### 6.5 The feature flag
 
 `e2ee` joins the registry (`src/feature-flags.ts`) with `default: false` at stage 0 and `default: true` from stage 2.
-It is the kill switch, and it is distinct from `--no-e2ee`: the flag says "this build's E2EE code path is off", the CLI flag says "this operator chose plaintext for this run". Precedence puts the CLI flag last-word for the run, per the documented order.
+It is the kill switch, and it is distinct from `--no-e2ee`: the flag says "this build's E2EE code path is off", the CLI flag says "this operator chose plaintext for this run". Precedence between them is the registry's documented order, `override → env → cli → yaml → default`: `--no-e2ee` lands on the `cli` rung, so `THREADBASE_FEATURE_E2EE=1` outranks it and leaves encryption on for that run (pinned by `__tests__/e2ee-no-e2ee-flag.test.ts`). The `env` and `yaml` rungs can also hold the flag *off*, permanently, once the stage-2 default is `true` — D-8 retired the rule that said they may not, and a boot disabled from any of these sources warns and reports its source (§6.4).
 
 ---
 

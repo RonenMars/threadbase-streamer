@@ -201,17 +201,33 @@ const NO_HANDSHAKE_REASON =
   "this build carries the capability negotiation but not yet the handshake it gates";
 
 /**
- * Why encryption is off, in the operator's own terms.
+ * The switch that turned encryption off, in the operator's own terms — the
+ * thing they typed or set, never the resolver's rung name. Shared by the boot
+ * warning and `/api/info` so the two never describe one switch two ways.
  *
  * `cli` covers both spellings of one switch — `--no-e2ee` and
- * `--feature e2ee=false` land on the same rung — and says "for this run",
- * because a CLI option cannot outlive the command that typed it. Every other
- * rung keeps the original text, which names the three ways to turn it on.
+ * `--feature e2ee=false` land on the same rung. `override` is unreachable for
+ * `e2ee` today (the only override rung is `codexSystemPromptEnabled`) but the
+ * type demands an answer, and this one is at least true.
+ */
+export const E2EE_OFF_SWITCH: Record<Exclude<FeatureFlagSource, "default">, string> = {
+  cli: "--no-e2ee (or --feature e2ee=false)",
+  env: "the THREADBASE_FEATURE_E2EE environment variable",
+  yaml: "feature_flags: in server.yaml",
+  override: "an explicit server configuration override",
+};
+
+/**
+ * Why encryption is off, in the operator's own terms — names the actual rung
+ * that decided it rather than collapsing every non-`cli` source into one
+ * generic line (D-8's resolution: the env var can't be hidden from the
+ * resolver, so `/api/info` names it plainly instead). `cli` says "for this
+ * run", because a CLI option cannot outlive the command that typed it; the
+ * `default` rung keeps the original text, which names the ways to turn it on.
  */
 function disabledReason(source?: FeatureFlagSource): string {
-  if (source === "cli") {
-    return "disabled by --no-e2ee (or --feature e2ee=false) for this run";
-  }
+  if (source === "cli") return `disabled by ${E2EE_OFF_SWITCH.cli} for this run`;
+  if (source !== undefined && source !== "default") return `disabled by ${E2EE_OFF_SWITCH[source]}`;
   return (
     "disabled by the e2ee feature flag — set THREADBASE_FEATURE_E2EE=1, --feature e2ee=true, " +
     "or feature_flags: in server.yaml"

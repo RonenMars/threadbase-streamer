@@ -16,7 +16,7 @@ import { type AppEnv, createHonoApp } from "./api/app";
 import { ConversationHandlers } from "./api/handlers/conversations.handlers";
 import { json, readBody, writeHonoResponse } from "./api/handlers/http-helpers";
 import { SessionHandlers } from "./api/handlers/sessions.handlers";
-import { describeE2eeCapability } from "./api/routes/misc.routes";
+import { describeE2eeCapability, E2EE_OFF_SWITCH } from "./api/routes/misc.routes";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
 import { mountWebSocket } from "./api/routes/ws.routes";
 import {
@@ -1515,7 +1515,7 @@ export class StreamerServer {
             { error: message, abiMismatch, path: this.runtimeDbPath, event: "runtime.open_failed" },
           );
         }
-        this.warnIfE2eeDisabledOnTheCommandLine();
+        this.warnIfE2eeDisabled();
         void this.probeAccessGate();
         if (this.ptyManager.isRemote()) {
           this.ptyManager.startRemoteHeartbeat(() => {
@@ -2389,11 +2389,24 @@ export class StreamerServer {
    * the absence of that field is the signal that this endpoint is read-only.
    */
   /**
-   * The boot warning for a run that turned transport encryption off from the
-   * command line.
+   * The boot warning for a run that turned transport encryption off from any
+   * explicit, non-default source.
+   *
+   * D-8 wanted no env var to hold encryption off invisibly; that guarantee
+   * turned out to be unenforceable without breaking the registry's uniform
+   * five-rung resolution (see dilemmas.md D-8's resolution note), so this is
+   * the replacement: every explicit "off" — `override`, `env`, `cli`, `yaml` —
+   * announces itself the same way `--no-e2ee` always has. `default` is exempt:
+   * off-by-default is not a decision anyone made this boot, and warning on
+   * every default boot before stage 2 flips it would be noise with nothing
+   * behind it.
+   *
+   * Fires regardless of the pinned count, including at zero — a leading
+   * indicator (warn the moment the box boots plaintext) beats a lagging one
+   * (warn only once a device has already paired against it).
    *
    * Through the console dest as well as the JSON log, because the person who
-   * typed the flag is watching a terminal, and a warning they have to grep for
+   * set the source is watching a terminal, and a warning they have to grep for
    * is a warning that arrives after the incident. It says what is readable and
    * by whom — the tunnel's edge terminates TLS, so "we are behind HTTPS" is not
    * an answer — and how many paired devices this run will refuse.
@@ -2402,8 +2415,10 @@ export class StreamerServer {
    * the repo did not open: a boot already shouting about a failed runtime store
    * does not need a second line saying it also cannot count.
    */
-  private warnIfE2eeDisabledOnTheCommandLine(): void {
-    if (this.featureFlags.e2ee || this.featureFlagSources.e2ee !== "cli") return;
+  private warnIfE2eeDisabled(): void {
+    if (this.featureFlags.e2ee) return;
+    const source = this.featureFlagSources.e2ee;
+    if (source === "default") return;
     const repo = this.devicesRepo;
     if (!repo) return;
     // Live rows only — a revoked device is already refused and counting it
@@ -2417,14 +2432,14 @@ export class StreamerServer {
       pinned === 0
         ? "no paired device requires it"
         : `${pinned} paired device${pinned === 1 ? "" : "s"} require${pinned === 1 ? "s" : ""} it and will be refused (rows that never completed pairing are counted too)`;
-    // `both`, not `console`: the person who typed the flag is watching a
+    // `both`, not `console`: the person who set the source is watching a
     // terminal, and the person reading the JSON log afterwards is asking why a
     // device was refused. `console` alone would answer only the first of them —
     // and the brief for this flag asks specifically for `e2ee.disabled` in the
     // JSON log.
     this.log.warn(
-      `Transport encryption is OFF for this run (--no-e2ee): traffic on the path is readable, including at the Cloudflare edge, and ${devices}.`,
-      { event: "e2ee.disabled", reason: "cli", pinnedDevices: pinned },
+      `Transport encryption is OFF for this run (${E2EE_OFF_SWITCH[source]}): traffic on the path is readable, including at the Cloudflare edge, and ${devices}.`,
+      { event: "e2ee.disabled", reason: source, pinnedDevices: pinned },
       "both",
     );
   }
