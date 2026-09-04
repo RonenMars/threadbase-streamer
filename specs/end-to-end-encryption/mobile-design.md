@@ -100,6 +100,8 @@ That is not new and this design does not remove it — but under E2EE it changes
 The mitigation is not cryptographic, it is a confirmation step: **for a deep link or a pasted credential — never for a camera scan — show the server's identity fingerprint and the authenticated machine name and require an explicit confirm before `addServer` runs.**
 A camera scan is exempt because pointing a camera at a screen *is* the out-of-band channel; a tapped link has no such channel and must borrow the user's attention instead.
 
+A camera scan is exempt from that *blocking* confirm/cancel gate, not from identity feedback altogether: when the scanned QR carries `spk`, the app still shows the server's identity fingerprint in a separate, non-blocking, informational card (`PairCameraIdentityCard`, `Done`-only, no `Cancel` — added #783) before continuing the add, so the user can still eyeball a match even though nothing here can refuse the pairing. A legacy (no-`spk`) camera scan shows nothing, matching a deep link with no `spk`.
+
 The `api-key` paste branch (`services/pair-exchange.ts:43`) produces a server record with no device row and no static key, so it can never be pinned. It stays as the manual escape hatch and is labelled as such in the UI.
 
 ---
