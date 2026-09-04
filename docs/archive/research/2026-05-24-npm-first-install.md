@@ -214,7 +214,7 @@ What lives on disk today and what needs to happen during a transition.
 | launchd plist | `~/Library/LaunchAgents/com.ronen.threadbase.plist` | macOS service | **Rewrite.** The plist's `ProgramArguments` references `<node-bin> <cli.js>` — both paths change in an npm-first world. A migration step needs to `bootout` the old service, write a new plist pointing at the npm-installed CLI binary, `bootstrap` it. |
 | systemd unit | `~/.config/systemd/user/threadbase.service` | Linux service | **Rewrite.** `ExecStart` changes from `<node> <cli.js> serve` to `threadbase-streamer serve` (or the npm bin's resolved path). |
 | Task Scheduler task | "Threadbase" | Windows service | **Rewrite.** The current task launches `wscript.exe launch.vbs` → `cmd.exe launch.cmd` → `node cli.js serve`. The new task would launch `threadbase-streamer serve` (probably still through the vbs shim for hidden-window behavior, since that's a Windows constraint, not a deploy-script artifact). |
-| Cloudflare Tunnel config | `~/.cloudflared/config-system.yml` (Windows service) or `~/.cloudflared/config.yml` (user) | External (cloudflared service) | **No change required.** Maps `tb-pc.rbv1000.win` → `http://127.0.0.1:8766`. As long as the streamer keeps binding to 8766 and `server.yaml`'s `port:` line stays in sync (for the menubar), cloudflared keeps working. |
+| Cloudflare Tunnel config | `~/.cloudflared/config-system.yml` (Windows service) or `~/.cloudflared/config.yml` (user) | External (cloudflared service) | **No change required.** Maps `tb.example.com` → `http://127.0.0.1:8766`. As long as the streamer keeps binding to 8766 and `server.yaml`'s `port:` line stays in sync (for the menubar), cloudflared keeps working. |
 | Menubar's port detection | reads `~/.threadbase/server.yaml`'s `port:` line | Electron app | **Constraint, not a migration item.** The npm-first install must continue to write or update `port:` in `server.yaml` when the user sets a non-default port. Or the menubar updates to read from a different source. (See §7.) |
 
 **Existing-user upgrade path** (high-level decisions, not designed):
@@ -305,8 +305,8 @@ Verified by reading `vendor/menubar/src/main.ts:1-23` and `vendor/menubar/CLAUDE
 **Code search**: `grep -rn "cloudflared\|cloudflare" src/ cli/ scripts/` returns zero matches in any source or script. Cloudflare Tunnel is purely external infrastructure.
 
 **What lives where:**
-- Tunnel mapping `https://tb-pc.rbv1000.win` → `http://127.0.0.1:8766` is configured in `~/.cloudflared/config-system.yml` (Windows SYSTEM service) or `~/.cloudflared/config.yml` (user-mode cloudflared).
-- The streamer's only "knowledge" of the tunnel is `public_url: https://tb-pc.rbv1000.win` in `~/.threadbase/server.yaml`, which is read by `src/auth.ts:loadPublicUrl()` and used to embed the right URL in the QR pairing code (`cli/index.ts:221`).
+- Tunnel mapping `https://tb.example.com` → `http://127.0.0.1:8766` is configured in `~/.cloudflared/config-system.yml` (Windows SYSTEM service) or `~/.cloudflared/config.yml` (user-mode cloudflared).
+- The streamer's only "knowledge" of the tunnel is `public_url: https://tb.example.com` in `~/.threadbase/server.yaml`, which is read by `src/auth.ts:loadPublicUrl()` and used to embed the right URL in the QR pairing code (`cli/index.ts:221`).
 - Cloudflare Access is documented as protecting the tunnel hostname with Bearer auth — but this is an Access policy, not streamer code. Even `/healthz` requires the Bearer header when accessed through the public URL.
 
 **Implications for `threadbase-streamer setup`:**

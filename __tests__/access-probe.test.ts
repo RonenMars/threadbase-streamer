@@ -35,11 +35,11 @@ vi.mock("../src/logger", async (importOriginal) => {
  * Only the network is faked, and it has to be: the transition under test is
  * "what the edge answered", so the edge is the input, not a seam inside the
  * logic. The redirect fixtures below are the actual shape Cloudflare returned
- * to a live probe of `tb-secured.rbv1000.win`.
+ * to a live probe of `tb-secured.example.com`.
  */
 
 const LOGIN =
-  "https://ronenmars.cloudflareaccess.com/cdn-cgi/access/login/tb-secured.rbv1000.win" +
+  "https://example.cloudflareaccess.com/cdn-cgi/access/login/tb-secured.example.com" +
   "?kid=a1a9e5f8&meta=eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.PAYLOAD.SIGNATURE&redirect_url=%2Fhealthz";
 
 const reply = (status: number, headers: Record<string, string> = {}) =>
@@ -165,7 +165,7 @@ describe("what reaches the log", () => {
     // The redirect's query string carries identity metadata about the account
     // and the request. The host is the diagnostic; the rest is not ours to
     // write into a file that gets attached to bug reports.
-    expect(safeHost(LOGIN)).toBe("ronenmars.cloudflareaccess.com");
+    expect(safeHost(LOGIN)).toBe("example.cloudflareaccess.com");
     expect(safeHost(LOGIN)).not.toContain("meta=");
     expect(safeHost(LOGIN)).not.toContain("PAYLOAD");
     expect(safeHost(undefined)).toBeUndefined();
@@ -297,7 +297,7 @@ describe("at boot", () => {
 
     expect(fetchCalls).toContain("https://example.test/healthz");
     expect(gateWarnings()).toHaveLength(1);
-    expect(gateWarnings()[0].meta.gateHost).toBe("ronenmars.cloudflareaccess.com");
+    expect(gateWarnings()[0].meta.gateHost).toBe("example.cloudflareaccess.com");
     expect(JSON.stringify(gateWarnings()[0])).not.toContain("PAYLOAD");
   });
 

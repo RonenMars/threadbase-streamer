@@ -9,7 +9,7 @@ Mobile shows:
 
 ```
 Couldn't load conversation
-Failed to reach https://tb.rbv1000.win/api/conversations/6762a0c9-867c-4e03-bb77-d1b56612dad4?msg_limit=80
+Failed to reach https://tb.example.com/api/conversations/6762a0c9-867c-4e03-bb77-d1b56612dad4?msg_limit=80
 Error: fetch failed: Fetch request has been canceled
 ```
 

@@ -66,6 +66,21 @@ Do not repurpose these released contracts:
 - Status meanings for `running`, `waiting_input`, `completed`, `failed`, `on_hold`, and `idle`
 - Menubar dependencies: default port 8766, `server.yaml` port fallback, and `/healthz` returning `{ ok, version }`
 
+## This repository is public — never commit a real identifier
+
+`RonenMars/threadbase-streamer` is a **public** repository. Documentation, skills, tests and fixtures must never carry a real deployment identifier.
+
+Never commit: a real tunnel hostname, a Cloudflare account id, a Zero Trust team domain (`<team>.cloudflareaccess.com`), an API key, a device token, or a private LAN topology beyond what is already published.
+
+Use RFC 2606 reserved names instead — `example.com`, `tb.example.com`, `example.cloudflareaccess.com` — so a reader can tell at a glance that a value is illustrative.
+
+Two failure modes this rule exists for, both of which happened here:
+
+- **A scan for credentials does not catch a hostname.** A previous scrub searched for keys and tokens, came back clean, and left a real tunnel host in twelve files for weeks.
+- **A placeholder can assert a falsehood.** Replacing a statement of fact — "the streamer is exposed at `<real host>`" — with an example host makes the sentence read as true when it is not. Rephrase to drop the identifier instead, and keep the operational fact.
+
+Where a real value is genuinely needed to run something, it belongs in untracked local config, never in a tracked file.
+
 ## Repository workflows
 
 - GitHub Issues are the worklist. Follow [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md); do not duplicate status into `docs/BACKLOG.md` or `docs/ROADMAP.md`.

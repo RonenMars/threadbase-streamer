@@ -75,4 +75,4 @@ The prod app is pinned always-on until Apple review completes (see comment in `f
 
 ## Cloudflare Access
 
-The prod app sits behind Cloudflare Access at `https://tb-pc.rbv1000.win`. Every request — including `/healthz` — requires `Authorization: Bearer <api_key>`. Localhost healthchecks bypass this (they hit `http://localhost:8080` directly inside the container). See `docs/guides/remote-access/cloudflare.md` for tunnel config details.
+The prod app sits behind Cloudflare Access at `https://tb.example.com`. Every request — including `/healthz` — requires `Authorization: Bearer <api_key>`. Localhost healthchecks bypass this (they hit `http://localhost:8080` directly inside the container). See `docs/guides/remote-access/cloudflare.md` for tunnel config details.
