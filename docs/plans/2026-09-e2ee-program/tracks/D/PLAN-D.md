@@ -316,6 +316,36 @@ build's provenance cannot be read off the device**. That is why rebuilding befor
 receive-path row is not optional: a stale client certifies nothing, and it fails in a
 way that looks like a clean result.
 
+**7. The rig CHOOSES the interface, and it chooses it by enumeration order.** Trap 1
+records that two interfaces share the /24. The mechanism behind it was not recorded, and it
+is worse than "pick the right one". `src/lan-url.ts::resolveServerUrl` on `origin/main`
+returns `publicUrl` when set and otherwise `firstLanIPv4()` — **the first non-internal IPv4
+that `os.networkInterfaces()` happens to enumerate**. On this machine that candidate list is
+not two entries but four:
+
+```
+candidate: en0    192.168.68.125     <- what it returns today
+candidate: en9    192.168.68.102
+candidate: en12   169.254.185.52     (link-local)
+candidate: utun16 100.122.246.79     (Tailscale)
+```
+
+Nothing pins the winner. A reboot, a Wi-Fi drop, a VPN coming up, or `en0` simply
+enumerating later hands the pair URL a different address — and the device then talks over an
+interface nobody is capturing, while `tcpdump` on the remembered one writes an empty file
+that the sweep reports as "no plaintext found".
+
+> **Rule: the capture interface is derived from the rig's LIVE pair URL at capture time, and
+> never carried over from an earlier session's note — including the note in
+> `G-PHONE-RUNBOOK.md`, which records `en0` as a fact when it is only today's outcome. Then
+> prove it with a positive control on that interface, per trap 1.** Verified 2026-09-04: the
+> function returns `192.168.68.125` (en0) right now, which is why the earlier note was right;
+> it was right by luck of enumeration, not by construction.
+
+The same function is what makes the **no-root relay fallback** feasible: setting `publicUrl`
+makes the rig advertise any address you choose, so a logging relay can be put in the path
+without hand-editing a QR — `spk` is the server's static key and is host-independent.
+
 ### A control is only a control if you verified the thing it looks for is really there
 
 **Recorded because it is my own error, and it nearly entered the record as a fabricated
