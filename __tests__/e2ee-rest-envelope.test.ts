@@ -397,8 +397,12 @@ describe("REST envelope: the controls", () => {
     expect(res.status).toBe(200);
     expect(res.headers["x-tb-e2ee"]).toBe("1");
     expect(res.headers["content-type"]).toBe("application/octet-stream");
-    // The wire carries no plaintext of the answer…
-    expect(res.body.toString("utf-8")).not.toContain("[]");
+    // The wire carries no plaintext of the answer. Asserted structurally — the
+    // sealed body is not the plaintext — rather than by scanning the body for a
+    // marker: a substring scan against ciphertext is unsound in principle, since
+    // ciphertext is uniform bytes and any short marker eventually appears in it
+    // by chance (`[]` did, on CI — #762). A longer marker only shrinks the odds.
+    expect(res.body.equals(Buffer.from("[]"))).toBe(false);
     // …and the client's own keys recover exactly what the handler returned.
     expect(unsealResponse(ctx, "GET", target, 0n, res)).toBe("[]");
   });
