@@ -49,7 +49,12 @@ import {
 } from "../src/e2ee/record";
 import { loadOrCreateServerIdentity } from "../src/server-identity";
 import { type ApiDepsWiring, createApiDeps } from "../src/server-wiring";
-import { WS_FIRST_FRAME_DEADLINE_MS, WSHub } from "../src/ws-hub";
+import {
+  CLIENT_SILENCE_TIMEOUT_MS,
+  PING_INTERVAL_MS,
+  WS_FIRST_FRAME_DEADLINE_MS,
+  WSHub,
+} from "../src/ws-hub";
 
 /**
  * W1b — sealing the WebSocket. NONCE-DESIGN §5, §8, §9, §10, §12.
@@ -2002,3 +2007,176 @@ async function openRestContext(device: Device): Promise<string> {
   registry.get(ctxId)?.markUsed();
   return ctxId;
 }
+
+// ─── the app-level liveness ping (tb-mobile #946, NONCE-DESIGN §18) ─────────
+
+/**
+ * The streamer declared `{ type: "ping" }`, documented sealing it, and never
+ * sent one — so an idle-but-alive sealed session redialled every 45 s and spent
+ * 62 % of its per-device open budget on nothing.
+ *
+ * Fake timers here fake **`setInterval` only**. The hub's sweep is driven by the
+ * real 30 s constant while socket I/O, the record layer and the harness's
+ * `poll()` all stay on real timers — so what these tests read is a real frame
+ * off a real wire, not a simulated one.
+ */
+describe("the app-level liveness ping", () => {
+  /** Advance one real sweep of the hub's real interval. */
+  async function oneSweep(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setInterval"] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reaches an idle sealed session inside the client's silence window, sealed", async () => {
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    const client = await connect({ [TICKET_HEADER]: ctx.ticket });
+    // handleWsOpen unicasts session_list and cache_ready; drain them so the
+    // next frame is unambiguously the ping and the receive state stays in step.
+    await client.until(2);
+    expect(drain(client, ctx).map((m) => m.type)).toEqual(["session_list", "cache_ready"]);
+    const before = client.frames.length;
+
+    // Nothing touches the session. The only thing that happens is time.
+    await oneSweep();
+    await client.until(before + 1);
+
+    const frame = client.frames[before];
+    // Sealed, on the wire, before the client's record layer sees it.
+    expect(frame.toString("latin1")).not.toContain("ping");
+    expect(frame.toString("latin1")).not.toContain("type");
+    // The counter continues the same sequence — no gap, no repeat (§5 R1/R2).
+    expect(headerOf(frame)).toMatchObject({ ctxId: ctx.ctxId, direction: DIRECTION_S2C });
+    expect(headerOf(frame).counter).toBe(2n);
+    const [message] = drain(client, ctx);
+    expect(message.type).toBe("ping");
+    expect(typeof message.ts).toBe("number");
+    // The point of the whole change: it arrived with time to spare.
+    expect(PING_INTERVAL_MS).toBeLessThan(CLIENT_SILENCE_TIMEOUT_MS);
+  });
+
+  it("NEGATIVE CONTROL: the protocol ping is delivered, and the JS layer cannot see it", async () => {
+    // The causal claim. `client.ping()` has run on this socket for as long as
+    // the hub has existed and never reset a silence timer, because protocol
+    // pings are handled below `onmessage`. Capturing the two channels
+    // SEPARATELY is what makes "the JS layer saw nothing" a fact about the
+    // protocol rather than a harness that sees nothing at all.
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    const client = await connect({ [TICKET_HEADER]: ctx.ticket });
+    await client.until(2);
+    drain(client, ctx);
+    const protocolPings: number[] = [];
+    client.ws.on("ping", () => protocolPings.push(Date.now()));
+    const before = client.frames.length;
+
+    await oneSweep();
+    await client.until(before + 1);
+    await poll(() => protocolPings.length > 0, 2000, "a protocol ping");
+
+    // Both signals left the server on the same sweep...
+    expect(protocolPings.length).toBeGreaterThanOrEqual(1);
+    // ...and the protocol one contributed NOTHING to the message channel: the
+    // single new frame is the app-level ping, which is the only one a JS
+    // `onmessage` handler — and therefore the silence timer — will ever see.
+    expect(client.frames.length - before).toBe(1);
+    expect(drain(client, ctx).map((m) => m.type)).toEqual(["ping"]);
+  });
+
+  it("keeps the counter strictly monotonic when a ping and real traffic share a sweep", async () => {
+    // The reorder hazard `sendTo` documents, exercised: a periodic sender and
+    // ordinary traffic on one socket. `sendTo` seals and sends synchronously, so
+    // counter order is wire order and the client's STRICT receive state — which
+    // rejects any gap, repeat or reorder — is the assertion.
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    const client = await connect({ [TICKET_HEADER]: ctx.ticket });
+    await client.until(2);
+    const before = client.frames.length;
+
+    hub.broadcast({ type: "session_update", session: { id: "s1" } } as never);
+    await oneSweep();
+    hub.broadcast({ type: "session_update", session: { id: "s2" } } as never);
+    await client.until(before + 3);
+
+    // Unsealing in order under a strict state IS the monotonicity check: a
+    // reordered or repeated counter throws here rather than returning.
+    expect(drain(client, ctx).map((m) => m.type)).toEqual([
+      "session_list",
+      "cache_ready",
+      "session_update",
+      "ping",
+      "session_update",
+    ]);
+    const counters = client.frames.map((f) => headerOf(f).counter);
+    expect(counters).toEqual([0n, 1n, 2n, 3n, 4n]);
+  });
+
+  it("reaches a legacy plaintext socket too, in the clear, and does not close it", async () => {
+    // The dual path. A legacy client's silence timer is the same 45 s timer, so
+    // it redials just as often — only more cheaply. It has no handler for an
+    // unknown type and ignores it apart from resetting that timer.
+    const client = await connect({ authorization: `Bearer ${API_KEY}` });
+    await client.until(2);
+    const before = client.frames.length;
+
+    await oneSweep();
+    await client.until(before + 1);
+
+    expect(JSON.parse(client.frames[before].toString("utf-8"))).toMatchObject({ type: "ping" });
+    expect(hub.sealedCount).toBe(0);
+    expect(client.closes).toEqual([]);
+  });
+
+  it("does not let a ping prove that a sealed socket holds the keys", async () => {
+    // The ticket thief (§10) occupies a hub slot on a context whose keys it does
+    // not have, and answers pongs happily. It now also RECEIVES a sealed ping it
+    // cannot open. That must not stop the unproven clock: only an inbound frame
+    // that actually unseals is proof, and `clearUnproven` is reached only from
+    // `receive`. Full fake timers here, because the deadline is a `setTimeout`.
+    vi.useFakeTimers();
+    // The deadline sits deliberately BETWEEN the first sweep and that sweep's
+    // pong timeout, so the whole test runs before `PONG_TIMEOUT_MS` elapses.
+    // `fakeServerSocket` never answers a pong and has no `terminate`, so a test
+    // that ran past 30 s + 10 s would die in the reaper instead of asserting.
+    const deadline = PING_INTERVAL_MS + 5_000;
+    const localHub = new WSHub({ firstFrameMs: deadline });
+    const socket = fakeServerSocket();
+    const context = openServerContext("unproven-ping-device", Date.now());
+    context.markUsed(Date.now());
+
+    try {
+      localHub.addClient(socket.ws, context);
+
+      // A sealed ping goes out to a socket that has never spoken...
+      await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS);
+      expect(socket.send).toHaveBeenCalledTimes(1);
+      expect(socket.close).not.toHaveBeenCalled();
+
+      // ...and buys it nothing: the deadline still fires.
+      await vi.advanceTimersByTimeAsync(deadline - PING_INTERVAL_MS);
+      expect(socket.close).toHaveBeenCalledWith(1008, E2EE_CTX_UNKNOWN);
+    } finally {
+      localHub.dispose();
+    }
+  });
+
+  it("keeps the cadence under the window the client actually times out on", async () => {
+    // The relationship, not the two numbers. Raising the cadence past the
+    // client's window silently restores the churn this ping exists to stop, and
+    // nothing else in the server would notice.
+    expect(PING_INTERVAL_MS).toBeLessThan(CLIENT_SILENCE_TIMEOUT_MS);
+    // With margin: a phone that misses a sweep boundary by a second must not
+    // redial, so the cadence leaves at least ten seconds of slack.
+    expect(CLIENT_SILENCE_TIMEOUT_MS - PING_INTERVAL_MS).toBeGreaterThanOrEqual(10_000);
+    // And the contract's own value, so lowering the constant is still caught.
+    expect(CLIENT_SILENCE_TIMEOUT_MS).toBe(45_000);
+  });
+});

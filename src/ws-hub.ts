@@ -12,7 +12,37 @@ import { CHANNEL_WS, RecordError } from "./e2ee/record";
 import { getLogger } from "./logger";
 import type { WSMessage } from "./types";
 
-const PING_INTERVAL_MS = 30_000;
+/**
+ * The one interval both liveness signals run on. It must stay under
+ * `CLIENT_SILENCE_TIMEOUT_MS`.
+ *
+ * Two pings leave this timer per sweep and they are **not** redundant. The
+ * WebSocket PROTOCOL ping proves the TCP connection is alive to the socket
+ * layer, and is handled below `onmessage` — React Native's JS layer never sees
+ * it. The app-level `{ type: "ping" }` frame is the only liveness signal the
+ * client's silence timer can observe. Without it an idle-but-alive session
+ * redials every `CLIENT_SILENCE_TIMEOUT_MS`: measured on hardware at 3.1
+ * context opens per minute against a limit of 5 per device per minute, 62 % of
+ * the budget spent while nobody touched the phone (tb-mobile #946).
+ *
+ * **One timer rather than two.** A single schedule cannot drift against itself,
+ * there is one place to change the cadence, and the ordering argument on
+ * `sendTo` has to hold for one call site instead of two.
+ */
+export const PING_INTERVAL_MS = 30_000;
+/**
+ * The client's silence timer, mirrored here because this file's cadence is only
+ * correct relative to it — `WS_SILENCE_TIMEOUT_MS` in tb-mobile
+ * `hooks/useTerminalStream.ts`. A client that receives nothing for this long
+ * calls `forceReconnect`, and against a pinned server every reconnect is a
+ * fresh Noise handshake charged to a 5-per-minute-per-device limit.
+ *
+ * Nothing reads it at runtime. It is here so a test can assert
+ * `PING_INTERVAL_MS` stays under it: raising the cadence past this window
+ * silently restores the churn the app-level ping was added to stop, and no
+ * other part of the server would notice.
+ */
+export const CLIENT_SILENCE_TIMEOUT_MS = 45_000;
 // How long to wait for a pong before treating the socket as dead.
 // Must be less than PING_INTERVAL_MS.
 const PONG_TIMEOUT_MS = 10_000;
@@ -254,12 +284,12 @@ export class WSHub {
    * N keys, N counters and N distinct nonces. `seal` does not mutate its
    * argument, so one Buffer feeds every seal.
    *
-   * An app-level `{ type: "ping" }` frame is sealed here like every other frame
-   * and consumes a counter. That is correct and costs nothing, and it is
-   * written down because WebSocket PROTOCOL pings are invisible to React
-   * Native's JS layer — the client's silence timer depends on the app-level
-   * ping continuing to exist, so nobody should optimise it away on the grounds
-   * that the protocol already has one (NONCE-DESIGN §18).
+   * An app-level `{ type: "ping" }` frame — emitted by `startPing` — is sealed
+   * here like every other frame and consumes a counter. That is correct and
+   * costs nothing, and it is written down because WebSocket PROTOCOL pings are
+   * invisible to React Native's JS layer — the client's silence timer depends on
+   * the app-level ping continuing to exist, so nobody should optimise it away on
+   * the grounds that the protocol already has one (NONCE-DESIGN §18).
    */
   private sendTo(ws: WebSocket, json: string, memo: Memo): boolean {
     const context = this.contexts.get(ws);
@@ -467,6 +497,25 @@ export class WSHub {
     this.unprovenTimers.clear();
   }
 
+  /**
+   * The maintenance sweep: both liveness pings, and the stale-context check.
+   *
+   * **The callback must stay synchronous.** `sendTo` seals and sends in one
+   * synchronous step precisely so no `await` can sit between the two and reorder
+   * counters (see `sendTo`), and that guarantee is what makes a periodic sender
+   * safe at all: a synchronous block runs to completion, so two sends cannot
+   * interleave and counter order is wire order. Making this callback `async`
+   * would create the hazard `sendTo` documents rather than inherit its absence.
+   *
+   * **Ordering inside the loop is load-bearing.** The app-level ping is emitted
+   * only for a socket that has already passed the stale-context and `readyState`
+   * guards. Sealing on a registry-invalidated context throws, so emitting above
+   * the stale-context guard would attempt a send on a socket this sweep has
+   * already decided to close, and report the refusal as `phase: "send"` rather
+   * than `phase: "maintenance"` — the sweep's own verdict, logged as if the
+   * frame had been at fault. The §9 code is unaffected either way, since
+   * `sendState` on an invalidated context raises `E2EE_CTX_UNKNOWN` itself.
+   */
   private startPing(): void {
     this.pingTimer = setInterval(() => {
       if (this.clients.size === 0 && this.pingTimer) {
@@ -474,6 +523,20 @@ export class WSHub {
         this.pingTimer = null;
         return;
       }
+      // One `ts` and one plaintext Buffer per sweep; the SEAL is still per
+      // socket, because N sockets means N keys and N counters.
+      //
+      // `: WSMessage` is load-bearing, not redundant typing. Do NOT inline this
+      // literal into the `JSON.stringify` below: that function accepts anything,
+      // so an inlined literal is type-checked against nothing and this frame's
+      // shape could drift a field at a time with the build staying green. The
+      // annotation is what makes the contract with tb-mobile's own `WSMessage`
+      // union a build failure (TS2353) rather than a convention everyone has to
+      // remember — the shape is frozen across two repositories (`types.ts` and
+      // NONCE-DESIGN §18), and this is where that freeze is enforced.
+      const appPing: WSMessage = { type: "ping", ts: Date.now() };
+      const appPingJson = JSON.stringify(appPing);
+      const memo: Memo = {};
       for (const client of this.clients) {
         const context = this.contexts.get(client);
         if (context && contextRegistry().get(context.ctxId) !== context) {
@@ -481,6 +544,15 @@ export class WSHub {
           continue;
         }
         if (client.readyState !== client.OPEN) continue;
+        // The app-level liveness frame — the ONLY one the client's silence timer
+        // can see, since the protocol ping below never reaches `onmessage`.
+        // Sealed for a sealed socket and plaintext for a legacy one, by the same
+        // `sendTo` every other frame uses; a legacy client ignores an unknown
+        // type, and its silence timer resets just the same.
+        if (!this.sendTo(client, appPingJson, memo)) {
+          this.clients.delete(client);
+          continue;
+        }
         // WS protocol ping — client must reply with a pong frame. If no pong
         // arrives within PONG_TIMEOUT_MS the socket is considered dead and
         // terminated. This is what detects iOS silently killing the TCP
