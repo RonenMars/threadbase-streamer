@@ -13,6 +13,10 @@ import { describe, expect, it } from "vitest";
  */
 
 const WORKFLOW = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+const RELEASE_WORKFLOW = readFileSync(
+  join(__dirname, "..", ".github", "workflows", "release.yml"),
+  "utf8",
+);
 const PACKAGE = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")) as {
   scripts: Record<string, string>;
 };
@@ -145,6 +149,54 @@ describe("cross-platform smoke", () => {
     );
     expect(smoke).toContain("npm ci");
     expect(smoke).not.toContain("uses: ./.github/actions/run-ci");
+  });
+});
+
+// The release build matrix compiles nothing: better-sqlite3 v13 ships
+// prebuilds/<platform>-<arch>.node for all eight platforms and node-pty ships
+// prebuilds/<platform>-<arch>/, so an implicit `node-gyp rebuild` produces a
+// binary that is already on disk. Letting it fire is not merely wasteful — the
+// Windows runner has no C++ toolchain, so it is a coin flip that only stays
+// green while npm happens to block package install scripts by default.
+// It stopped being green on 2026-09-05: the Windows leg of the release for
+// #781 died in `node-gyp rebuild` with 0xC0000409, the release never cut, and
+// the fix had merged to main unpublished. See
+// docs/testing/cross-platform-ci.md, "Why the install skips scripts".
+describe("release workflow install", () => {
+  const installs = [...RELEASE_WORKFLOW.matchAll(/run: (npm ci.*)$/gm)].map((m) => m[1].trim());
+
+  it("has install steps to assert against", () => {
+    // Three today: release-precheck, the build matrix, and the publish job.
+    expect(installs.length).toBeGreaterThanOrEqual(3);
+  });
+
+  // npm's default changed under this workflow between two runs four hours
+  // apart with nothing in the repo touched: npm 12 honours package.json's
+  // `allowScripts` (node-pty only) and blocks the rest, npm 10/11 ignore it and
+  // run everything. The runner image rolls on its own schedule, so the flag's
+  // ABSENCE guarantees nothing; only its presence does.
+  it("never lets an implicit node-gyp rebuild fire, in any job", () => {
+    for (const cmd of installs) expect(cmd).toContain("--ignore-scripts");
+  });
+
+  // --ignore-scripts also skips the ROOT package's lifecycle scripts, and
+  // `prepare` (patch-package) is load-bearing everywhere a build can happen —
+  // including the publish job, where npm runs `prepublishOnly: npm run build`
+  // BEFORE `prepare`, so the patch has to be on disk already.
+  it("re-runs patch-package after every install", () => {
+    const patches = RELEASE_WORKFLOW.match(/npx patch-package/g) ?? [];
+    expect(patches.length).toBe(installs.length);
+  });
+
+  // The build matrix additionally ships node-pty into the platform tarball, so
+  // its spawn-helper needs the 0755 bit that `postinstall` sets.
+  it("restores the node-pty spawn-helper bit in the build matrix", () => {
+    const build = RELEASE_WORKFLOW.slice(
+      RELEASE_WORKFLOW.indexOf("\n  build:"),
+      RELEASE_WORKFLOW.indexOf("\n  release:"),
+    );
+    expect(build).toContain("win32-x64");
+    expect(build).toMatch(/postinstall|spawn-helper/);
   });
 });
 

@@ -42,8 +42,13 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # See the note on the build job below: never let npm's default decide
+      # whether better-sqlite3's implicit node-gyp rebuild fires.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Apply patches
+        run: npx patch-package
 
       - name: Decide whether a release is needed
         id: precheck
@@ -86,12 +91,37 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      - name: Install Linux build tools for node-pty
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
+      # Nothing in this matrix compiles. better-sqlite3 v13 ships
+      # prebuilds/<platform>-<arch>.node for all eight platforms and node-pty
+      # ships prebuilds/<platform>-<arch>/, so the implicit `node-gyp rebuild`
+      # npm synthesises from better-sqlite3's binding.gyp produces a binary that
+      # is already on disk — and the Windows runner has no C++ toolchain to
+      # produce it with. Whether that implicit script fires at all depends on the
+      # npm major (12 blocks package install scripts, 10 does not), which the
+      # runner image rolls on its own schedule: this job ran clean at 21:15 and
+      # died in node-gyp at 01:22 with nothing in the repo changed, taking the
+      # release for #781 with it. `--ignore-scripts` is the only thing that
+      # decides it. Same reasoning, and the same shape, as the CI smoke job —
+      # see docs/testing/cross-platform-ci.md, "Why the install skips scripts".
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+        shell: bash
+
+      # --ignore-scripts skips the ROOT package's lifecycle scripts too, and the
+      # v1.77.1 release log shows this job running both of these for real.
+      # Without `prepare`, qrcode-terminal keeps its legacy \033 octal escapes
+      # and the tsup build below dies on "Legacy octal escape sequences cannot
+      # be used in strict mode". Without `postinstall`, node-pty's spawn-helper
+      # ships into the tarball without its 0755 bit and posix_spawnp fails at
+      # deploy time.
+      - name: Apply patches
+        run: npx patch-package
+        shell: bash
+
+      - name: Fix node-pty spawn-helper permissions
+        if: runner.os != 'Windows'
+        run: npm run postinstall
+        shell: bash
 
       - name: Build streamer
         run: npm run build
@@ -153,11 +183,15 @@ jobs:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
 
-      - name: Install Linux build tools for node-pty
-        run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
+      # patch-package is not optional here: @semantic-release/npm publishes,
+      # which fires `prepublishOnly: npm run build`, and npm runs prepublishOnly
+      # BEFORE prepare — so the qrcode-terminal patch has to be applied already
+      # or tsup dies on its legacy octal escapes mid-publish.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Apply patches
+        run: npx patch-package
 
       - name: Download all platform tarballs
         uses: actions/download-artifact@v7

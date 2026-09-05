@@ -73,6 +73,8 @@ Weighed against two real bugs shipped green, ~70s on some runs is a trade worth 
 
 Nothing here needs a compiler any more — `better-sqlite3` and `node-pty` both ship prebuilds — so skipping scripts costs nothing and removes a whole class of failure.
 
+**`release.yml` did not get this change until 2026-09-05, and it cost a release.** Its three `npm ci` calls rode npm's default, which is not stable: `Build win32-x64` installed clean at 21:15 and died in `node-gyp rebuild` at 01:22 (exit `3221226505`, crashing at the header fetch rather than reaching `gyp ERR! find VS`) with nothing in the repo changed. The publish job needs every build green, so the release for #781 never cut and a merged fix sat on `main` unpublished. All three installs now carry `--ignore-scripts`, each followed by `npx patch-package` — the publish job needs it too, because `npm publish` runs `prepublishOnly: npm run build` *before* `prepare`, so the qrcode-terminal patch has to be on disk already. `__tests__/ci-workflow.test.ts` reads both workflows and asserts it; it used to read only `ci.yml`, which is how the two drifted apart unnoticed.
+
 **Why `--ignore-scripts=false` was not the fix.** Whether scripts run by default depends on the npm major: npm 12 blocks package install scripts, npm 10 does not. The Windows runner is on Node 22, which bundles npm 10, so simply dropping the flag left the implicit gyp firing. The flag's presence or absence guarantees nothing; only `--ignore-scripts` does.
 
 **What has to be re-run, and why.** `--ignore-scripts` skips the root package's lifecycle scripts too, and two of ours are load-bearing:
