@@ -333,13 +333,6 @@ export class PromptRegistry {
     return this.byId.has(promptId) ? copyPrompt(entry.prompt) : null;
   }
 
-  hasActionable(sessionId: string): boolean {
-    this.sweepExpired(sessionId);
-    return [...(this.bySession.get(sessionId)?.values() ?? [])].some(
-      (entry) => entry.prompt.state === "open" || entry.prompt.state === "updated",
-    );
-  }
-
   snapshot(sessionId: string): PromptSnapshot {
     this.sweepExpired(sessionId);
     return {

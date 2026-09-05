@@ -30,6 +30,9 @@ const deps = {
   localNoAuth: true,
   apiKey: "tb_0123456789abcdef0123456789abcdef",
   logMenubarRequests: true,
+  // /healthz reads this; without it the route throws and answers 500, which
+  // the menubar cases below need to tell apart from a healthy poll.
+  cacheMonitor: () => null,
   handleConversationsCount: (_url: URL, res: any) => {
     const body = JSON.stringify({ count: 42 });
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -142,5 +145,60 @@ describe("summarizeQuery", () => {
 
   it("returns undefined for a bare path so the field stays absent", () => {
     expect(summarizeQuery({})).toBeUndefined();
+  });
+});
+
+// The suppression at src/api/app.ts used to test the x-client header alone, at
+// any path and any status, so a menubar 401/404/500 left no trace whatsoever —
+// invisible to the log archaeology that finds server bugs. What it buys is real
+// but narrow: GET /healthz every 5s is the menubar's ONLY request
+// (vendor/menubar src/renderer/renderer.js), ~17 280 lines ≈ 4.9MB/day at the
+// measured 285B per line, against a 32MB cap applied only at a --prod boot.
+describe("menubar requests", () => {
+  let menubarBaseUrl: string;
+  let menubarServer: ReturnType<typeof serve>;
+
+  const menubarDeps = {
+    ...(deps as unknown as Record<string, unknown>),
+    logMenubarRequests: false,
+  } as unknown as ApiDeps;
+
+  beforeAll(async () => {
+    const app = createHonoApp(menubarDeps);
+    menubarServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
+    await new Promise((r) => menubarServer.once("listening", r));
+    menubarBaseUrl = `http://127.0.0.1:${(menubarServer.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise((r) => menubarServer.close(r));
+  });
+
+  const asMenubar = (path: string) =>
+    fetch(`${menubarBaseUrl}${path}`, { headers: { "x-client": "menubar" } });
+
+  it("drops the healthy /healthz poll", async () => {
+    const res = await asMenubar("/healthz");
+    expect(res.status).toBe(200);
+    expect(requests()).toHaveLength(0);
+  });
+
+  it("logs a menubar request that failed", async () => {
+    await asMenubar("/api/conversations"); // the stub answers 404
+    const [line] = requests();
+    expect(line?.fields.status).toBe(404);
+    expect(line?.fields.path).toBe("/api/conversations");
+  });
+
+  it("logs a menubar request to anything but /healthz", async () => {
+    await asMenubar("/api/conversations/count"); // 200, but not the poll
+    expect(requests()).toHaveLength(1);
+    expect(requests()[0].fields.path).toBe("/api/conversations/count");
+  });
+
+  it("logs the healthy poll too when --log-menubar-requests is set", async () => {
+    const res = await fetch(`${baseUrl}/healthz`, { headers: { "x-client": "menubar" } });
+    expect(res.status).toBe(200);
+    expect(requests()).toHaveLength(1);
   });
 });

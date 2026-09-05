@@ -142,7 +142,7 @@ runners, same behaviour.
 
 ### `npm ci` fails on Windows with `gyp ERR! find VS` for `better-sqlite3`
 
-**When:** Any install that lets package install scripts run, on a machine without a C++ toolchain. Seen on `Smoke (windows-latest)`.
+**When:** Any install that lets package install scripts run, on a machine without a C++ toolchain. Seen on `Smoke (windows-latest)`, and on `Build win32-x64` in the **release** workflow — which had no `--ignore-scripts` until 2026-09-05 and rode npm's default instead. That default is not stable: the same job installed clean at 21:15 and died in `node-gyp rebuild` (exit `3221226505`, crashing at the header fetch rather than reaching `gyp ERR! find VS`) at 01:22 with nothing in the repo changed, so the release for #781 never cut and a merged fix sat on `main` unpublished. A green history here means the coin kept landing the same way, not that the job is safe.
 **Cause:** `better-sqlite3` v13 declares **no** `install` script. npm sees the `binding.gyp` it ships and *synthesises* `node-gyp rebuild` as an implicit install step, so it compiles from source and ignores the prebuilt binary already in the tarball. That needs Visual Studio, which the runner does not have. v12 never hit this because its explicit `install: prebuild-install || node-gyp rebuild` overrode the implicit gyp and downloaded a binary instead.
 **Fix:** Install with `--ignore-scripts`, then re-run the two scripts that matter by hand (see below). Nothing in this repo needs a compiler — `better-sqlite3` and `node-pty` both ship prebuilds.
 
@@ -872,34 +872,43 @@ PATH="$HOME/.nvm/versions/node/$(cat .nvmrc)/bin:$PATH" npm run deploy
 
 ---
 
-### `npm ci` succeeds but `better-sqlite3` has no binding at all (npm ≥ 12)
+### `npm ci` succeeds but `better-sqlite3` has no binding at all (npm ≥ 12) *(historical — v12 only)*
 
 **When:** A fresh clone or a new worktree on npm 12+. `npm ci` exits 0, but every test touching the cache fails, and the visible error is usually the same red herring as the entry above — `Cannot read properties of undefined (reading 'close')` in an `afterEach`, or `Error: Could not locate the bindings file`. The tell is at the end of the install output, not in the test output:
 ```
 npm warn install-scripts 6 packages had install scripts blocked because they are
 not covered by allowScripts. Run `npm install-scripts ls` to review.
 ```
-**Cause:** npm 12 blocks dependency install scripts by default. `better-sqlite3` builds its native module in an `install` script, so a blocked install leaves `build/Release/better_sqlite3.node` absent entirely. This is **not** an ABI mismatch — there is no binary to mismatch, so the `NODE_MODULE_VERSION` line the entries above tell you to look for never appears, and `scripts/check-native-abi.mjs` passes (it exits 0 when no binary exists).
+> **This does not happen any more, and the fix below is now the wrong thing to do.** It described `better-sqlite3` **v12**, which built its binding in an `install` script. v13 has no `install` script and ships `prebuilds/<platform>-<arch>.node` for all eight targets the project supports — win32 x64/arm64, darwin x64/arm64, linux x64/arm64, linuxmusl x64/arm64 — so a scripts-blocked install still yields a working module. Verify by executing it, never by looking for a file: `node -e "require('better-sqlite3')"`. There is no `build/` directory under v13 at all. Kept because the diagnosis cue is still useful if you meet a v12 lockfile on an old branch. Jump to the `gyp ERR! find VS` entry above for what to do today.
+
+**Cause (v12):** npm 12 blocks dependency install scripts by default. `better-sqlite3` v12 built its native module in an `install` script, so a blocked install left `build/Release/better_sqlite3.node` absent entirely. This is **not** an ABI mismatch — there is no binary to mismatch, so the `NODE_MODULE_VERSION` line the entries above tell you to look for never appears, and `scripts/check-native-abi.mjs` passes (it exits 0 when no binary exists).
 
 Only `better-sqlite3` is affected. The other blocked packages are fine without their scripts: `node-pty` ships `prebuilds/<platform>/pty.node`, `fsevents` ships `fsevents.node`, and `esbuild` resolves through its platform package. The root project's own `preinstall`/`pretest`/`prepare` hooks are unaffected — npm gates *dependency* scripts only.
 
-**Fix:** `package.json` carries an `allowScripts` field naming the one package allowed to build:
+**Fix (v12 only — do not apply on `main`):** `package.json` carried an `allowScripts` field naming the one package allowed to build:
 ```jsonc
 "allowScripts": { "better-sqlite3": true }
 ```
-A plain `npm ci` then produces the binding. If you hit this on a branch that predates the field, add it with `npm install-scripts approve better-sqlite3 --no-allow-scripts-pin` (the `--no-…-pin` matters: the default writes `better-sqlite3@<version>`, so the next dependabot bump silently re-blocks the build) and run `npm rebuild better-sqlite3`.
+A plain `npm ci` then produced the binding. **On `main` today `allowScripts` lists only `node-pty`, and putting `better-sqlite3` back would re-enable exactly the compile `ci.yml` and `release.yml` exist to avoid** — a compile that produces a binary already on disk, on runners that may have no C++ toolchain to produce it with.
 
-**Never copy `build/Release/*.node` from another checkout to work around this.** Branches pin different majors — `main` and the integration branches have differed by a full major (11.x vs 12.x) — and a binding from the wrong major loads without complaint and then misbehaves in ways that look like product bugs. It also silently invalidates whatever test run you were trying to verify.
+**Never copy `build/Release/*.node` from another checkout to work around this.** Branches pin different majors — `main` and the integration branches have differed by a full major (11.x vs 12.x) — and a binding from the wrong major loads without complaint and then misbehaves in ways that look like product bugs. It also silently invalidates whatever test run you were trying to verify. Under v13 the directory does not exist, so its *absence* proves nothing either: prove the module loads instead.
 
-**CI:** `ci.yml` sidesteps the gate with `npm ci --ignore-scripts=false`, which allows *every* package's scripts. `release.yml`'s three `npm ci` calls have no such flag — they work today only because GitHub's runners still bundle npm 10/11. The `allowScripts` field covers both paths with no flags at all, and is the reason release builds won't quietly start shipping without a binding when runners move to npm 12.
+**CI: both workflows now go the other way.** Since `better-sqlite3` v13 there is nothing to allow — it ships `prebuilds/<platform>-<arch>.node` for all eight platforms and has no `install` script, so npm *synthesises* `node-gyp rebuild` from its `binding.gyp` and compiles a binary that is already on disk. `ci.yml` and `release.yml` therefore install with `npm ci --ignore-scripts` and re-run the root scripts that matter by hand; see the `gyp ERR! find VS` entry above.
+
+`release.yml` had no flag on any of its three `npm ci` calls until 2026-09-05 and rode npm's default instead — which is not stable, because npm 12 honours `allowScripts` and npm 10/11 ignore it. The build matrix installed clean at 21:15 and died in `node-gyp rebuild` at 01:22 with nothing in the repo changed, and since the publish job needs every build to succeed, the release for #781 never cut and a merged fix sat on `main` unpublished. `__tests__/ci-workflow.test.ts` now asserts the flag on every install step in both workflows.
+
 
 ---
 
-### Nested `@threadbase-sh/scanner` `better-sqlite3` binding never built *(Windows dev checkouts)*
+### Nested `@threadbase-sh/scanner` `better-sqlite3` binding never built *(resolved — scanner ≥ 0.14.6)*
 
 **When:** `npm test` (or the server itself, run from a dev checkout) logs `cache.warmup_failed` with `Could not locate the bindings file`, and any endpoint that depends on the SQLite cache — `POST /api/sessions/resume`, `GET /api/conversations/count`, etc. — returns `500` instead of its documented status. The stack trace path ends in `node_modules\@threadbase-sh\scanner\node_modules\better-sqlite3\build\...\better_sqlite3.node`, **not** the top-level `node_modules\better-sqlite3`.
 **Cause:** `@threadbase-sh/scanner` vendors its own `better-sqlite3` dependency rather than sharing the repo's top-level one. `npm install`/`npm ci` on Windows without Visual Studio Build Tools installed silently fails to compile this *nested* copy's native binding — unlike the top-level `better-sqlite3` binding, which this repo already handles (see the `npm install --ignore-scripts` entry above). This is a build-time failure with a runtime symptom: the install itself doesn't error loudly, so it's easy to reach a deploy or test run without noticing the nested binding never got built.
-**Fix:** No general fix short of installing Visual Studio Build Tools so the nested `better-sqlite3` compiles during install. If you just need to keep working, treat cache-dependent 500s during local testing on this box as expected and measure with `persistent:false` where the test/tool supports it, rather than chasing them as regressions.
+> **Resolved by a dependency bump, not by installing a compiler.** `@threadbase-sh/scanner` 0.14.6 declares `better-sqlite3: ^13.0.3`, the same range the root does, so npm dedupes to a single top-level copy and there is no nested binding to build. Confirm on any checkout with `npm ls better-sqlite3` — one `deduped` line under the scanner and one top-level entry means this entry does not apply. Kept for anyone on a branch that predates the bump, where the scanner pinned `11.10.0`.
+
+**Fix (pre-0.14.6 only):** No general fix short of installing Visual Studio Build Tools so the nested `better-sqlite3` compiles during install. If you just need to keep working, treat cache-dependent 500s during local testing on this box as expected and measure with `persistent:false` where the test/tool supports it, rather than chasing them as regressions.
+
+**Do not install Visual Studio to fix a *current* checkout.** Nothing on `main` needs a compiler — see [docs/guides/windows-setup.md](guides/windows-setup.md).
 **Diagnosis cue:** confirm the failure predates your change by checking out `main` in place (`git checkout main -- .` without switching branches, so `node_modules` stays put) and re-running the same test — if it fails identically against `main`, it's this pre-existing environment issue, not something your change introduced.
 
 ---

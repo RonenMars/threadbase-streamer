@@ -616,6 +616,18 @@ export const e2eeEnvelopeMiddleware = (
         };
       }
       headers[HEADER_MARKER] = "1";
+      // **A sealed response must never enter a shared HTTP cache.** It is bound
+      // to ONE accepted request counter (§13(a)), so a cached copy is a record
+      // no later request can unseal — and worse, a cache that revalidates a
+      // sealed `304` applies its headers to the stored `200` and hands the
+      // client that status with a payload that is empty by construction. Field
+      // evidence, iOS build 219 against streamer 1.77.3: seven `304`s on
+      // `/api/conversations/:id`, and a `JSON Parse error: Unexpected end of
+      // input` on the app's messages query — `NSURLCache` revalidating on its
+      // own `If-None-Match`, because nothing in this tree ever said not to.
+      // Set for every sealed response, not just the bodiless one: the framing a
+      // record travels in is not what makes it single-use.
+      headers["Cache-Control"] = "no-store";
       if (!canCarryBody(status)) {
         // The frozen rule, response side: a record whose framing cannot carry a
         // body travels base64url in `X-TB-Env`. The only such response in the

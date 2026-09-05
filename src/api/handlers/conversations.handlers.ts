@@ -36,7 +36,7 @@ import {
   SearchQueryError,
 } from "../../services/search/searchQuery";
 import type { SessionStore } from "../../session-store";
-import type { ServerWarmupState } from "../../types";
+import type { ManagedSession, ServerWarmupState } from "../../types";
 import { isCodexInjectedContext } from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
 import { createScanProgressThrottle } from "../../utils/scanProgressThrottle";
@@ -385,8 +385,14 @@ export class ConversationHandlers {
    * 0 of 343 Codex ones — it reconstructs `<projectsDir>/<dir>/<uuid>.jsonl`,
    * which is Claude Code's layout, and a Codex rollout is
    * `rollout-<ts>-<uuid>.jsonl` under a date path, so that walk cannot match one
-   * by construction. The ladder below answers 99.7%, leaving only the three
-   * whose file is genuinely gone.
+   * by construction.
+   *
+   * That made the cache row the ONLY rung a Codex conversation could use, which
+   * is why the scanner-index rung exists: measured 2026-09-04, 3 of the 50 ids
+   * `GET /api/conversations` was serving 404'd here — every one a Codex rollout
+   * present on disk, listed from the scanner index, with no cache row left. The
+   * ladder's old "99.7%, only the file-is-gone case remains" held only while
+   * every Codex row still had its cache entry.
    */
   async locateJsonlPath(uuid: string, lookupId: string): Promise<string | null> {
     // A live PTY owns its file; nothing on disk is more current.
@@ -400,6 +406,15 @@ export class ConversationHandlers {
     // serve a 56-message sidechain as a 1307-message conversation.
     const cached = this.cache?.getMetaById(lookupId)?.filePath;
     if (cached && (await this.isJsonlPathFor(cached, lookupId))) return cached;
+
+    // The scanner's own metadata index — literally the source the conversation
+    // LIST reads (`getMetadataCache()`, used at handleListConversations). Without
+    // this rung the list and the detail disagree: the list offers an id whose
+    // parsed snapshot `getConversation` never built, and neither the cache row
+    // (dropped) nor the Claude-layout walk (wrong shape) can name its file. Same
+    // verification as the cached path; reading `current` never triggers a scan.
+    const indexed = this.scannerManager.current?.getMetadataCache().get(lookupId)?.filePath;
+    if (indexed && (await this.isJsonlPathFor(indexed, lookupId))) return indexed;
 
     // Claude-layout directory walk, kept as the self-heal for ids the cache
     // never learned about — and for the 49 above, where it happens to be right.
@@ -621,6 +636,44 @@ export class ConversationHandlers {
     return freshScanner.getConversation(lookupId);
   }
 
+  /**
+   * The 200 body for a session that exists but has written no transcript yet.
+   *
+   * Same shape as the cache-tail fallback in handleGetConversation, with an
+   * empty message list — a client cannot tell "no turns yet" from "a
+   * conversation that happens to be empty", which is the point: both are a
+   * working session with nothing to show, and neither is an error. There is no
+   * `file_path` on purpose; the file does not exist yet.
+   */
+  private emptyConversationPayload(id: string, session: ManagedSession) {
+    const provider = coerceProviderForRunner(session.provider);
+    const availability = classifyResumability(session.projectPath);
+    return {
+      meta: {
+        id,
+        profile_id: session.account ?? undefined,
+        project_name: session.projectName,
+        session_name: session.sessionName ?? undefined,
+        project_path: session.projectPath,
+        last_updated_at: (session.lastActivityAt ?? session.startedAt).toISOString(),
+        message_count: 0,
+        provider,
+        resumable: isProviderResumable(provider, availability.resumable),
+        ...(availability.unavailable_reason && {
+          unavailable_reason: availability.unavailable_reason,
+        }),
+      },
+      messages: [] as unknown[],
+      message_pagination: {
+        total: 0,
+        before_index: 0,
+        from_index: 0,
+        has_more_older: false,
+        next_before_index: null,
+      },
+    };
+  }
+
   async handleGetConversation(
     id: string,
     url: URL,
@@ -688,9 +741,33 @@ export class ConversationHandlers {
     }
 
     if (!conversation) {
-      // Self-heal: the row is a ghost (JSONL gone, no usable tail). Drop it so
-      // the next list refresh doesn't keep offering this id to clients.
-      this.cache?.invalidate(id);
+      // A session that has never been given a prompt is an EMPTY conversation,
+      // not a missing one. Claude only creates `<sessionId>.jsonl` on the first
+      // user turn — measured 0.0s to 86.9s after `pty.ready` on this machine, and
+      // never at all if the user opens a session and walks away. 404 here was
+      // 62% of every conversation 404 in a three-week production log, and it is
+      // what renders "Messages failed to load" on a session that is working fine.
+      // `promptCount === 0` is the same "unused start" signal
+      // `shouldForgetEmptySession` uses, and it keeps a real deletion honest: a
+      // session that HAS sent prompts but has no transcript still 404s.
+      const unusedStart = this.sessionStore.getManaged(id);
+      if (unusedStart && unusedStart.promptCount === 0) {
+        json(res, 200, this.emptyConversationPayload(id, unusedStart));
+        return;
+      }
+
+      // Self-heal, but only on PROOF. The row is a ghost when it names a file and
+      // that file is gone. Dropping it on an unexplained miss was the bug that
+      // made this permanent: for a Codex rollout the cache row is the only rung
+      // of locateJsonlPath that can match, so one transient miss deleted the row,
+      // the next request could no longer find the file, and `/api/sessions/:id`
+      // lost the same row as its own fallback — both endpoints 404ing forever on
+      // a conversation still sitting on disk. Invalidate `lookupId`, since that
+      // is the id the row is keyed by; `id` may be a Codex placeholder.
+      const lookupId = this.deps.resolveConversationLookupId(id);
+      const rowPath = this.cache?.getMetaById(lookupId)?.filePath;
+      if (rowPath && !existsSync(rowPath)) this.cache?.invalidate(lookupId);
+
       json(res, 404, { error: "Conversation not found", code: "not_found" });
       return;
     }

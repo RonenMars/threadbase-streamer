@@ -10,10 +10,22 @@ import type { ProjectsRepository } from "./db/repositories/projects.repository";
 import type { SessionsRepository } from "./db/repositories/sessions.repository";
 import type { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
 import type { ScannerManager } from "./scanner-manager";
 import type { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import type { SessionStore } from "./session-store";
 import type { WSHub } from "./ws-hub";
+
+/**
+ * How long a transcript watcher keeps waiting for the file its provider will
+ * write. Not a measured number: it arrived as `// give up after 2 minutes` in
+ * 76cdf9f2, when these watchers existed to re-key a placeholder session id to
+ * the real UUID — a mechanism that no longer exists. It survives only as a
+ * bound on an abandoned session's watch, and it is deliberately measured from
+ * the user's first turn rather than from the spawn, because that turn is what
+ * causes the file to exist. See the notes in watchForJsonl/watchForCodexRollout.
+ */
+const TRANSCRIPT_WATCH_DEADLINE_MS = 120_000;
 
 /**
  * Everything SessionWatchers reads from the server. Collaborators constructed
@@ -143,7 +155,8 @@ export class SessionWatchers {
     const projectsDir = join(homedir(), ".claude", "projects", encoded);
     const expectedFile = `${sessionId}.jsonl`;
     const filePath = join(projectsDir, expectedFile);
-    const deadline = Date.now() + 120_000;
+    const armedAt = Date.now();
+    const deadline = armedAt + TRANSCRIPT_WATCH_DEADLINE_MS;
 
     let watcher: ReturnType<typeof fsWatch> | null = null;
     const cleanup = () => {
@@ -156,10 +169,6 @@ export class SessionWatchers {
 
     const tryWire = () => {
       if (!this.deps.ptyManager.hasSession(sessionId)) {
-        cleanup();
-        return;
-      }
-      if (Date.now() > deadline) {
         cleanup();
         return;
       }
@@ -195,7 +204,31 @@ export class SessionWatchers {
         }
       }
 
-      if (!resolvedFilePath) return;
+      if (!resolvedFilePath) {
+        // The deadline bounds how long we WAIT, not whether we accept a file
+        // that has arrived. Claude writes <sessionId>.jsonl only on the user's
+        // FIRST turn, so what this races is human think time: across a 20.5-day
+        // production log the gap from pty.ready to the first prompt ran 3.6s to
+        // 405.7s, and the two sessions past 120s were never wired at all.
+        // Deciding here rather than at the top of tryWire costs nothing — this
+        // fs.watch handle is only ever closed from inside this callback, so the
+        // first post-deadline directory event ends the watch either way.
+        if (Date.now() > deadline) {
+          this.log.warn(
+            `[startFresh] gave up watching for the JSONL of ${sessionId}`,
+            {
+              event: "session.transcript_watch_expired",
+              sessionId,
+              provider: CLAUDE_CODE_PROVIDER,
+              projectPath,
+              waitedMs: Date.now() - armedAt,
+            },
+            "pino",
+          );
+          cleanup();
+        }
+        return;
+      }
 
       cleanup();
       this.deps.sessionFileMap.set(sessionId, resolvedFilePath);
@@ -244,11 +277,22 @@ export class SessionWatchers {
   // rollout files live under a date-nested directory
   // (~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl) that Codex creates
   // itself — it may not exist yet when this function is first called, so we
-  // poll rather than fs.watch a not-yet-existent directory. Per Phase 0
-  // findings, the rollout file appears within ~1s of process spawn (after
-  // any directory-trust gate is cleared), well before any user input.
+  // poll rather than fs.watch a not-yet-existent directory.
+  //
+  // The rollout file is created LAZILY, on the user's first turn — not "within
+  // ~1s of process spawn", as this comment claimed until the deadline was
+  // investigated. Verified against Codex CLI 0.147.0 on a bound production
+  // rollout: the filename and `session_meta.payload.timestamp` both read the
+  // session-creation time (08:05:49) while the envelope `timestamp` of line 0
+  // reads the first input (08:07:15). Every rollout binding observed in a
+  // 20.5-day log landed ~100ms after the first input, never at spawn, with gaps
+  // of 60.2s / 75.6s / 86.8s. So this races human think time, and unlike the
+  // Claude side there is no recovery: `locateJsonlPath` has no rung that can
+  // reconstruct `rollout-<ts>-<uuid>.jsonl` from a placeholder session id, and
+  // an unbound Codex session also loses resume, fork and boot rehydration.
   watchForCodexRollout(sessionId: string, projectPath: string): void {
-    const deadline = Date.now() + 120_000;
+    let deadline = Date.now() + TRANSCRIPT_WATCH_DEADLINE_MS;
+    let seenPrompts = 0;
     const now = new Date();
     const dateDir = join(
       String(now.getFullYear()),
@@ -301,7 +345,30 @@ export class SessionWatchers {
         cleanup();
         return;
       }
+      // The turn is what creates the rollout, so the deadline runs from the
+      // turn. An abandoned session still stops polling 120s after the spawn,
+      // which is the only thing the deadline was ever bounding.
+      // ponytail: promptCount moves only on POST /api/sessions/:id/input, so a
+      // first prompt composed entirely of raw sendKeys keystrokes is not
+      // covered — every first prompt in the log went through that endpoint.
+      // Widen to a timestamp on the session if that ever stops being true.
+      const prompts = this.deps.sessionStore.getManaged(sessionId)?.promptCount ?? 0;
+      if (prompts > seenPrompts) {
+        seenPrompts = prompts;
+        deadline = Date.now() + TRANSCRIPT_WATCH_DEADLINE_MS;
+      }
       if (Date.now() > deadline) {
+        this.log.warn(
+          `[startFresh] gave up watching for the Codex rollout of ${sessionId}`,
+          {
+            event: "session.transcript_watch_expired",
+            sessionId,
+            provider: CODEX_CLI_PROVIDER,
+            projectPath,
+            promptCount: prompts,
+          },
+          "pino",
+        );
         cleanup();
         return;
       }

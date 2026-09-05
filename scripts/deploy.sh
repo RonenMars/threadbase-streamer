@@ -295,11 +295,11 @@ cmd_predeploy_check() {
   fi
 
   if [[ "$branch" != "main" ]]; then
-    err "not on main (current: $branch). Re-run with --force to override."
+    err "not on main (current: $branch). Re-run with npm run deploy:force to override."
     exit 1
   fi
   if [[ -n "$dirty" ]]; then
-    err "working tree is dirty. Commit/stash, or re-run with --force."
+    err "working tree is dirty. Commit/stash, or re-run with npm run deploy:force."
     exit 1
   fi
   check_active_sessions "$force"
@@ -343,7 +343,7 @@ check_active_sessions() {
     return 0
   fi
   err "$count active PTY session(s) in flight — redeploying now will kill them mid-turn."
-  err "Wait for them to finish, ask the client to hold them, or re-run with --force to override."
+  err "Wait for them to finish, ask the client to hold them, or re-run with npm run deploy:force to override."
   exit 1
 }
 

@@ -1,3 +1,34 @@
+## [1.77.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.4...v1.77.5) (2026-09-05)
+
+### Bug Fixes
+
+* **e2ee:** mark sealed responses no-store ([#788](https://github.com/RonenMars/threadbase-streamer/issues/788)) ([b8b2b2c](https://github.com/RonenMars/threadbase-streamer/commit/b8b2b2ce8db02ad02531822af3e7240254b8c11e))
+
+## [1.77.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.3...v1.77.4) (2026-09-05)
+
+### Bug Fixes
+
+* **deploy:** point predeploy-check errors at npm run deploy:force ([#787](https://github.com/RonenMars/threadbase-streamer/issues/787)) ([bfd1b29](https://github.com/RonenMars/threadbase-streamer/commit/bfd1b299a827bb3a2ced61da285a72d9b615d4c5))
+
+## [1.77.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.2...v1.77.3) (2026-09-05)
+
+### Bug Fixes
+
+* **sessions:** bind a transcript that arrives after the watch deadline ([#780](https://github.com/RonenMars/threadbase-streamer/issues/780)) ([aaede98](https://github.com/RonenMars/threadbase-streamer/commit/aaede98570e595189d0adb1f279b5047f49ef5a6)), closes [#778](https://github.com/RonenMars/threadbase-streamer/issues/778) [#778](https://github.com/RonenMars/threadbase-streamer/issues/778)
+
+## [1.77.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.1...v1.77.2) (2026-09-05)
+
+### Bug Fixes
+
+* **api:** stop dropping every menubar request from the access log ([#781](https://github.com/RonenMars/threadbase-streamer/issues/781)) ([db23366](https://github.com/RonenMars/threadbase-streamer/commit/db23366d4d3fe61716a081edfb593e446e8abb9b)), closes [#131](https://github.com/RonenMars/threadbase-streamer/issues/131)
+* **ci:** stop the release build compiling a binary it already has ([#782](https://github.com/RonenMars/threadbase-streamer/issues/782)) ([c5c3b35](https://github.com/RonenMars/threadbase-streamer/commit/c5c3b3545a4849ecf0fbb41eee896b3929111980)), closes [#781](https://github.com/RonenMars/threadbase-streamer/issues/781) [#780](https://github.com/RonenMars/threadbase-streamer/issues/780)
+
+## [1.77.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.0...v1.77.1) (2026-09-04)
+
+### Bug Fixes
+
+* **conversations:** stop 404ing sessions and rollouts that exist ([#778](https://github.com/RonenMars/threadbase-streamer/issues/778)) ([cd4f559](https://github.com/RonenMars/threadbase-streamer/commit/cd4f5597f2bc39cec3680a3acbc29a82b1a96882))
+
 ## [1.77.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.76.0...v1.77.0) (2026-09-04)
 
 ### Features
