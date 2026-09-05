@@ -695,6 +695,13 @@ export class ConversationHandlers {
       const isFirstLoad = !url.searchParams.has("before_index");
       if (isFirstLoad) {
         const tail = this.cache.getConversationTail(id);
+        // A tail row carrying neither text nor content blocks renders as nothing
+        // on a client, so serving it is a 200 that paints a blank conversation —
+        // worse than the 404, which clients already handle. Builds before the
+        // user/assistant role guard in ConversationCache wrote exactly these for
+        // Codex rollouts, keying `role` off the envelope type (event_msg /
+        // response_item), and the rows survive for any conversation whose file
+        // has since stopped changing.
         const usableTail = (tail?.messages ?? []).filter(
           (message) => (message.text ?? "").length > 0 || (message.content?.length ?? 0) > 0,
         );
@@ -728,6 +735,9 @@ export class ConversationHandlers {
             },
             messages: messagesPayload,
             message_pagination: {
+              // Count what was actually served, not what the tail holds: the
+              // filtered rows are gone from the payload, and a total the page
+              // cannot account for is what a client reads as "more to load".
               total: usableTail.length,
               before_index: usableTail.length,
               from_index: 0,
