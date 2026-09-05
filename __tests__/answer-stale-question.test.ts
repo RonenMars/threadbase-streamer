@@ -76,6 +76,11 @@ function harness(screen: string[], opts: { hasSession?: boolean } = {}): Harness
     pendingQuestionKey,
     pendingPermission: new Map(),
     sessionSubscribers: new Map(),
+    // This harness exercises question freshness. The one arbitration case
+    // includes a synthetic permission prompt without a rendered Claude gate,
+    // so model it as Codex, where the established permission route uses the
+    // runner's pending gate as its authority.
+    sessionStore: { getManaged: () => ({ provider: "codex-cli" }) },
     wsHub: {
       broadcast: (m: WSMessage) => broadcasts.push(m),
       broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
@@ -283,5 +288,20 @@ describe("POST /raw-key", () => {
 
     expect(stale.status()).toBe(409);
     expect(h.rawWritten).toEqual([]);
+  });
+
+  it("refuses an open registry question whose menu has already left the screen", async () => {
+    const h = harness(MENU_CLOSED);
+    openRawPrompt(h, "question-prompt", "question");
+    const stale = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "down", promptId: "question-prompt" }),
+      stale.res,
+    );
+
+    expect(stale.status()).toBe(409);
+    expect(h.rawWritten).toEqual([]);
+    expect(h.pendingQuestions.has(SESSION)).toBe(false);
   });
 });

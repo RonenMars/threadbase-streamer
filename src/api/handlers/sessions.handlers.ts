@@ -1631,7 +1631,7 @@ export class SessionHandlers {
       return;
     }
     let focused:
-      | { kind: "permission"; promptId: string }
+      | { kind: "permission"; promptId: string; contentKey: string }
       | { kind: "question"; promptId: string; toolUseId: string }
       | null = null;
     if (action !== "escape") {
@@ -1652,7 +1652,11 @@ export class SessionHandlers {
         permission?.promptId &&
         (livePermission?.state === "open" || livePermission?.state === "updated")
       ) {
-        focused = { kind: "permission", promptId: permission.promptId };
+        focused = {
+          kind: "permission",
+          promptId: permission.promptId,
+          contentKey: permissionGateKey(permission),
+        };
       } else if (
         question?.promptId &&
         (liveQuestion?.state === "open" || liveQuestion?.state === "updated")
@@ -1665,6 +1669,46 @@ export class SessionHandlers {
       }
       if (action === "enter" && confirm !== true) {
         json(res, 400, { ok: false, code: "raw_key_confirmation_required" });
+        return;
+      }
+      // The registry is only an event record; a host-keyboard answer, Esc, or
+      // the next PTY repaint can leave it open briefly after its picker has
+      // gone. Use the same rendered-screen checks as the answer routes before
+      // navigation reaches whatever the terminal is showing now.
+      if (focused?.kind === "question" && !(await this.questionMenuStillOpen(sessionId))) {
+        const pending = this.pendingQuestions.get(sessionId);
+        if (pending?.promptId === focused.promptId) {
+          const prompt = this.promptRegistry.get(focused.promptId);
+          if (prompt?.state === "open" || prompt?.state === "updated") {
+            this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
+          }
+          this.pendingQuestions.delete(sessionId);
+          this.pendingQuestionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, {
+            type: "question_cancelled",
+            sessionId,
+            toolUseId: focused.toolUseId,
+          });
+        }
+        json(res, 409, { ok: false, code: "raw_key_stale" });
+        return;
+      }
+      if (
+        focused?.kind === "permission" &&
+        this.sessionStore.getManaged(sessionId)?.provider !== CODEX_CLI_PROVIDER &&
+        !(await this.permissionGateStillOpen(sessionId, focused.contentKey))
+      ) {
+        const pending = this.pendingPermission.get(sessionId);
+        if (pending?.promptId === focused.promptId) {
+          const prompt = this.promptRegistry.get(focused.promptId);
+          if (prompt?.state === "open" || prompt?.state === "updated") {
+            this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
+          }
+          this.pendingPermission.delete(sessionId);
+          this.pendingPermissionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
+        }
+        json(res, 409, { ok: false, code: "raw_key_stale" });
         return;
       }
     }
