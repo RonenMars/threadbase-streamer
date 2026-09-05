@@ -1,3 +1,9 @@
+## [1.78.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.5...v1.78.0) (2026-09-05)
+
+### Features
+
+* **session:** add constrained remote key controls ([#791](https://github.com/RonenMars/threadbase-streamer/issues/791)) ([727900e](https://github.com/RonenMars/threadbase-streamer/commit/727900eceb4bdbea1a7ed0a9eb81b32bccd71ff5))
+
 ## [1.77.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.4...v1.77.5) (2026-09-05)
 
 ### Bug Fixes
