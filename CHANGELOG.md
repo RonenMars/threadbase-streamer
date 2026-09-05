@@ -1,3 +1,9 @@
+## [1.77.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.4...v1.77.5) (2026-09-05)
+
+### Bug Fixes
+
+* **e2ee:** mark sealed responses no-store ([#788](https://github.com/RonenMars/threadbase-streamer/issues/788)) ([b8b2b2c](https://github.com/RonenMars/threadbase-streamer/commit/b8b2b2ce8db02ad02531822af3e7240254b8c11e))
+
 ## [1.77.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.3...v1.77.4) (2026-09-05)
 
 ### Bug Fixes
