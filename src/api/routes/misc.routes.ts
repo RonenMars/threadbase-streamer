@@ -342,6 +342,9 @@ export const createMiscRoutes = (
       // off this polled endpoint. Absent means an older server that never
       // samples. Informational: pressure never holds, kills, or refuses sessions.
       hostPressure: true,
+      // Fixed-action picker navigation is available at POST /api/sessions/:id/raw-key.
+      // Absent on older streamers, so mobile can explain the required update.
+      rawKeys: true,
       // Provider-neutral prompt contract: normalized prompt events, opaque ids
       // and the atomic /prompt/answer route. A prompt_snapshot on subscribe
       // carries RETAINED prompts, terminal ones included — render on `state`,

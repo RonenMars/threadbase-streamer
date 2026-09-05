@@ -786,6 +786,7 @@ export interface SessionRunner {
   startFresh(options: StartFreshSessionOptions): Promise<ManagedSession>;
   sendInput(sessionId: string, input: string): number;
   sendKeys(sessionId: string, keys: string): void;
+  sendRawKeys(sessionId: string, keys: string): void;
   cancel(sessionId: string): void;
   killPid(pid: number): void;
   putOnHold(sessionId: string): void;

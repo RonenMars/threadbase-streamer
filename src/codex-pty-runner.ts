@@ -380,6 +380,19 @@ export class CodexPtyRunner implements SessionRunner {
     session.lastActivityAt = new Date();
   }
 
+  sendRawKeys(sessionId: string, keys: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    if (session.status === "idle") throw new Error(`Session is idle (no active PTY): ${sessionId}`);
+    this.log.info(`[codex.raw_keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length}`, {
+      event: "codex.raw_keys_write",
+      sessionId,
+      byteLen: keys.length,
+    });
+    session.process.write(keys);
+    session.lastActivityAt = new Date();
+  }
+
   // Map a gate-card digit to the PTY bytes that answer the real dialog,
   // persisting the choice when the digit was a synthetic "remember for all
   // projects" option (those numbers don't exist on the actual dialog and must

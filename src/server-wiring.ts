@@ -673,6 +673,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleGetSession: (id, res) => deps.sessionHandlers.handleGetSession(id, res),
     handleGetOutput: (id, res) => deps.sessionHandlers.handleGetOutput(id, res),
     handleSendInput: (id, req, res) => deps.sessionHandlers.handleSendInput(id, req, res),
+    handleRawKey: (id, req, res) => deps.sessionHandlers.handleRawKey(id, req, res),
     handleSendAnswer: (id, req, res) => deps.sessionHandlers.handleSendAnswer(id, req, res),
     handlePromptAnswer: (id, req, res) => deps.sessionHandlers.handlePromptAnswer(id, req, res),
     handlePermissionAnswer: (id, req, res) =>

@@ -260,6 +260,10 @@ export class SessionHost {
         this.runner.sendKeys(request.sessionId, request.keys);
         return {};
 
+      case "raw_keys":
+        this.runner.sendRawKeys(request.sessionId, request.keys);
+        return {};
+
       case "cancel":
         this.runner.cancel(request.sessionId);
         return {};

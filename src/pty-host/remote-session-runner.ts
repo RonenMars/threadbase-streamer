@@ -385,6 +385,11 @@ export class RemoteSessionRunner implements SessionRunner {
     this.fireAndForget({ type: "keys", sessionId, keys });
   }
 
+  sendRawKeys(sessionId: string, keys: string): void {
+    this.requireSession(sessionId);
+    this.fireAndForget({ type: "raw_keys", sessionId, keys });
+  }
+
   cancel(sessionId: string): void {
     this.fireAndForget({ type: "cancel", sessionId });
   }

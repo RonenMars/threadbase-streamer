@@ -67,6 +67,7 @@ const CLOSED_SCREEN = [
 interface Harness {
   handlers: SessionHandlers;
   written: string[];
+  rawWritten: string[];
   broadcasts: WSMessage[];
   pendingPermission: SessionHandlersDeps["pendingPermission"];
   pendingPermissionKey: Map<string, string>;
@@ -84,11 +85,14 @@ function harness(
   opts: { hasSession?: boolean } = {},
 ): Harness {
   const written: string[] = [];
+  const rawWritten: string[] = [];
   const broadcasts: WSMessage[] = [];
   const pendingPermission: SessionHandlersDeps["pendingPermission"] = new Map();
   const pendingPermissionKey = new Map<string, string>();
 
   const deps = {
+    pendingQuestions: new Map(),
+    pendingQuestionKey: new Map(),
     pendingPermission,
     pendingPermissionKey,
     sessionSubscribers: new Map(),
@@ -103,6 +107,7 @@ function harness(
       hasSession: () => opts.hasSession ?? true,
       getOutputLines: async () => liveScreen,
       sendKeys: (_id: string, keys: string) => written.push(keys),
+      sendRawKeys: (_id: string, keys: string) => rawWritten.push(keys),
     },
   };
   const handlers = new SessionHandlers(deps as unknown as SessionHandlersDeps);
@@ -132,6 +137,7 @@ function harness(
   return {
     handlers,
     written,
+    rawWritten,
     broadcasts,
     pendingPermission,
     pendingPermissionKey,
@@ -296,6 +302,21 @@ describe("POST /permission/answer — gate_closed", () => {
     expect(h.written).toEqual([]);
     expect(status()).toBe(409);
     expect(body()).toEqual({ ok: false, reason: "gate_closed" });
+  });
+});
+
+describe("POST /raw-key — current permission gate", () => {
+  it("refuses an open registry gate after the screen moved to another gate", async () => {
+    const h = harness(GATE_A_SCREEN, GATE_B_SCREEN);
+    const promptId = h.pendingPermission.get(SESSION)?.promptId;
+    if (!promptId) throw new Error("expected pending permission prompt");
+    const { res, status, body } = response();
+    await h.handlers.handleRawKey(SESSION, request({ action: "down", promptId }), res);
+
+    expect(status()).toBe(409);
+    expect(body()).toEqual({ ok: false, code: "raw_key_stale" });
+    expect(h.rawWritten).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(false);
   });
 });
 
