@@ -1,3 +1,9 @@
+## [1.77.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.3...v1.77.4) (2026-09-05)
+
+### Bug Fixes
+
+* **deploy:** point predeploy-check errors at npm run deploy:force ([#787](https://github.com/RonenMars/threadbase-streamer/issues/787)) ([bfd1b29](https://github.com/RonenMars/threadbase-streamer/commit/bfd1b299a827bb3a2ced61da285a72d9b615d4c5))
+
 ## [1.77.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.2...v1.77.3) (2026-09-05)
 
 ### Bug Fixes
