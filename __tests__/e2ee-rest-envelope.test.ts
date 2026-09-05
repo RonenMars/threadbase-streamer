@@ -1290,6 +1290,44 @@ describe("REST envelope: both response paths are sealed", () => {
     expect(unsealResponse(ctx, "GET", target, 0n, res)).toBe("");
   });
 
+  it("marks every sealed response no-store, in both framings", async () => {
+    // A sealed record is owed to ONE accepted counter (§13(a)), so a shared
+    // HTTP cache holding a copy holds something nothing can unseal. The bite is
+    // not the stale body: a cache that revalidates the `304` below applies its
+    // headers onto the stored `200` and hands the client THAT status with the
+    // empty payload a `304` carries — which is how the app's messages query
+    // came back `JSON Parse error: Unexpected end of input` on iOS build 219.
+    // The route says nothing about caching (`conversations.handlers.ts` sets an
+    // `ETag` and no `Cache-Control`), so this header has to come from here.
+    const body = await openRestContext();
+    directWrite = (res) => {
+      res.writeHead(200, { "Content-Type": "application/json", ETag: '"abc"' });
+      res.end(JSON.stringify({ count: 3 }));
+    };
+    const bodyRes = await sealedCall(body, {
+      method: "GET",
+      target: "/api/conversations/c1",
+      counter: 0n,
+    });
+    expect(bodyRes.status).toBe(200);
+    expect(bodyRes.headers["cache-control"]).toBe("no-store");
+
+    // The other framing: the record rides in `X-TB-Env`, and is just as
+    // single-use for travelling in a header.
+    const bodiless = await openRestContext();
+    directWrite = (res) => {
+      res.writeHead(304, { ETag: '"abc"', "Access-Control-Expose-Headers": "ETag" });
+      res.end();
+    };
+    const bodilessRes = await sealedCall(bodiless, {
+      method: "GET",
+      target: "/api/conversations/c1",
+      counter: 0n,
+    });
+    expect(bodilessRes.status).toBe(304);
+    expect(bodilessRes.headers["cache-control"]).toBe("no-store");
+  });
+
   it("seals the ndjson stop stream as ONE record", async () => {
     const ctx = await openRestContext();
     // Quoted from `api/handlers/sessions.handlers.ts`: the ndjson header, an
