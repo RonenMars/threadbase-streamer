@@ -605,7 +605,10 @@ export interface ServerConfig {
   apiKeySource?: "config" | "cli";
   localNoAuth?: boolean;
   verbose?: boolean;
-  logMenubarRequests?: boolean; // log /healthz requests from the menubar app (default: false)
+  // Also log the menubar app's HEALTHY /healthz polls (default: false — they are
+  // ~17 280 lines/day and carry nothing). A menubar request that is not a
+  // healthy /healthz poll is logged regardless; see src/api/app.ts.
+  logMenubarRequests?: boolean;
   browseRoot?: string;
   publicUrl?: string;
   browserCors?: string;

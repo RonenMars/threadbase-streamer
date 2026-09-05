@@ -142,13 +142,28 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
     const outgoing = c.env?.outgoing as ServerResponse | undefined;
     const bytesWritten = outgoing && countResponseBytes(outgoing);
     await next();
-    if (!deps.logMenubarRequests && c.req.header("x-client") === "menubar") return;
     const ms = Date.now() - start;
     // A direct-write route's Hono status is the 597 sentinel, not the status
     // the client got — which is why 96% of these lines used to read `→ 597`.
     // The real one is on the Node response the handler wrote to.
     const handled = c.res.status === ALREADY_HANDLED && outgoing !== undefined;
     const status = handled ? (outgoing as ServerResponse).statusCode : c.res.status;
+    // Drop the menubar's healthy poll, and only that. GET /healthz every 5s is
+    // the app's sole request (vendor/menubar src/renderer/renderer.js), so at
+    // the measured 285B per line it is ~17 280 lines ≈ 4.9MB/day — roughly 5×
+    // the rate of everything else this log records, against a 32MB cap that
+    // log-cap.ts only applies at a --prod boot. Until this predicate carried a
+    // path and a status it dropped EVERY menubar request: a menubar 401/404/500
+    // left no trace at all, which is invisible to exactly the log archaeology
+    // that finds bugs like the /api/conversations 404s (#778).
+    if (
+      !deps.logMenubarRequests &&
+      c.req.header("x-client") === "menubar" &&
+      c.req.path === "/healthz" &&
+      status < 400
+    ) {
+      return;
+    }
     const qs = summarizeQuery(c.req.query());
     // Only the direct-write path has finished writing by now; a Hono-piped
     // response is serialized after this middleware returns, so its size is not
