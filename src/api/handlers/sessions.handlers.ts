@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { basename, dirname, join } from "path";
 import type { WebSocket } from "ws";
+import { z } from "zod";
 import type { AgentClient } from "../../agent/agent-client";
 import type { AgentConfig } from "../../agent/agent-config";
 import { handleSendAgentInput } from "../../agent/handle-send-agent-input";
@@ -107,6 +108,23 @@ const ADOPT_KILL_POLL_MS = 100;
 // sessions. Ready normally lands well under this: Claude's quiet-checker and
 // Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
 const START_READY_TIMEOUT_MS = 10_000;
+
+const RawKeySchema = z.object({
+  action: z.enum(["escape", "up", "down", "left", "right", "tab", "shift_tab", "enter"]),
+  promptId: z.string().trim().min(1).max(200).optional(),
+  confirm: z.literal(true).optional(),
+});
+
+const RAW_KEY_BYTES = {
+  escape: "\x1b",
+  up: "\x1b[A",
+  down: "\x1b[B",
+  left: "\x1b[D",
+  right: "\x1b[C",
+  tab: "\t",
+  shift_tab: "\x1b[Z",
+  enter: "\r",
+} as const;
 
 // How long a Codex resume/fork waits for an authoritative startup outcome
 // before falling back to the pre-existing "spawned, still booting" behaviour.
@@ -1597,6 +1615,39 @@ export class SessionHandlers {
       return onScreen !== null && permissionGateKey(onScreen) === contentKey;
     } catch {
       return true;
+    }
+  }
+
+  /** Deliberately narrower than /input { keys }: fixed actions, no arbitrary bytes. */
+  async handleRawKey(sessionId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const parsed = RawKeySchema.safeParse(await readBody(req));
+    if (!parsed.success) {
+      json(res, 400, { ok: false, code: "invalid_raw_key" });
+      return;
+    }
+    const { action, promptId, confirm } = parsed.data;
+    if (!this.ptyManager.hasSession(sessionId)) {
+      json(res, 409, { ok: false, code: "raw_key_unavailable" });
+      return;
+    }
+    if (action !== "escape") {
+      const currentPromptId =
+        this.pendingQuestions.get(sessionId)?.promptId ??
+        this.pendingPermission.get(sessionId)?.promptId;
+      if (!promptId || promptId !== currentPromptId) {
+        json(res, 409, { ok: false, code: "raw_key_stale" });
+        return;
+      }
+      if (action === "enter" && confirm !== true) {
+        json(res, 400, { ok: false, code: "raw_key_confirmation_required" });
+        return;
+      }
+    }
+    try {
+      this.ptyManager.sendKeys(sessionId, RAW_KEY_BYTES[action]);
+      json(res, 200, { ok: true });
+    } catch {
+      json(res, 409, { ok: false, code: "raw_key_unavailable" });
     }
   }
 

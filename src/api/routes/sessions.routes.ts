@@ -53,6 +53,11 @@ export const createSessionRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
+  app.post("/:id/raw-key", async (c) => {
+    await deps.handleRawKey(c.req.param("id"), c.env.incoming, c.env.outgoing);
+    return alreadyHandled();
+  });
+
   app.post("/:id/answer", async (c) => {
     await deps.handleSendAnswer(c.req.param("id"), c.env.incoming, c.env.outgoing);
     return alreadyHandled();
