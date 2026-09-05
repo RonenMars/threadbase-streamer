@@ -42,8 +42,13 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # See the note on the build job below: never let npm's default decide
+      # whether better-sqlite3's implicit node-gyp rebuild fires.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Apply patches
+        run: npx patch-package
 
       - name: Decide whether a release is needed
         id: precheck
@@ -178,11 +183,15 @@ jobs:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
 
-      - name: Install Linux build tools for node-pty
-        run: sudo apt-get update && sudo apt-get install -y python3 make g++
-
+      # patch-package is not optional here: @semantic-release/npm publishes,
+      # which fires `prepublishOnly: npm run build`, and npm runs prepublishOnly
+      # BEFORE prepare — so the qrcode-terminal patch has to be applied already
+      # or tsup dies on its legacy octal escapes mid-publish.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Apply patches
+        run: npx patch-package
 
       - name: Download all platform tarballs
         uses: actions/download-artifact@v7

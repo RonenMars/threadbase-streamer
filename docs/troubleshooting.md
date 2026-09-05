@@ -891,7 +891,11 @@ A plain `npm ci` then produces the binding. If you hit this on a branch that pre
 
 **Never copy `build/Release/*.node` from another checkout to work around this.** Branches pin different majors — `main` and the integration branches have differed by a full major (11.x vs 12.x) — and a binding from the wrong major loads without complaint and then misbehaves in ways that look like product bugs. It also silently invalidates whatever test run you were trying to verify.
 
-**CI:** `ci.yml` sidesteps the gate with `npm ci --ignore-scripts=false`, which allows *every* package's scripts. `release.yml`'s three `npm ci` calls have no such flag — they work today only because GitHub's runners still bundle npm 10/11. The `allowScripts` field covers both paths with no flags at all, and is the reason release builds won't quietly start shipping without a binding when runners move to npm 12.
+**CI: both workflows now go the other way.** Since `better-sqlite3` v13 there is nothing to allow — it ships `prebuilds/<platform>-<arch>.node` for all eight platforms and has no `install` script, so npm *synthesises* `node-gyp rebuild` from its `binding.gyp` and compiles a binary that is already on disk. `ci.yml` and `release.yml` therefore install with `npm ci --ignore-scripts` and re-run the root scripts that matter by hand; see the `gyp ERR! find VS` entry above.
+
+`release.yml` had no flag on any of its three `npm ci` calls until 2026-09-05 and rode npm's default instead — which is not stable, because npm 12 honours `allowScripts` and npm 10/11 ignore it. The build matrix installed clean at 21:15 and died in `node-gyp rebuild` at 01:22 with nothing in the repo changed, and since the publish job needs every build to succeed, the release for #781 never cut and a merged fix sat on `main` unpublished. `__tests__/ci-workflow.test.ts` now asserts the flag on every install step in both workflows.
+
+> The `allowScripts` prescription earlier in this entry predates the v13 bump: `package.json` today lists only > `node-pty`, and adding `better-sqlite3` back would re-enable exactly the compile these workflows exist to avoid.
 
 ---
 

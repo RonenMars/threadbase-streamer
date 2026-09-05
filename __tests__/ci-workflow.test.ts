@@ -162,31 +162,40 @@ describe("cross-platform smoke", () => {
 // #781 died in `node-gyp rebuild` with 0xC0000409, the release never cut, and
 // the fix had merged to main unpublished. See
 // docs/testing/cross-platform-ci.md, "Why the install skips scripts".
-describe("release build install", () => {
-  const build = RELEASE_WORKFLOW.slice(
-    RELEASE_WORKFLOW.indexOf("\n  build:"),
-    RELEASE_WORKFLOW.indexOf("\n  release:"),
-  );
+describe("release workflow install", () => {
+  const installs = [...RELEASE_WORKFLOW.matchAll(/run: (npm ci.*)$/gm)].map((m) => m[1].trim());
 
-  it("has a build job to assert against", () => {
-    expect(build).toContain("win32-x64");
-    expect(build).toContain("npm ci");
+  it("has install steps to assert against", () => {
+    // Three today: release-precheck, the build matrix, and the publish job.
+    expect(installs.length).toBeGreaterThanOrEqual(3);
   });
 
   // npm's default changed under this workflow between two runs four hours
-  // apart with nothing in the repo touched: npm 12 blocks package install
-  // scripts, npm 10 does not, and the runner image rolls on its own schedule.
-  // The flag's ABSENCE guarantees nothing; only its presence does.
-  it("never lets an implicit node-gyp rebuild fire", () => {
-    expect(build).toContain("npm ci --ignore-scripts");
-    expect(build).not.toMatch(/run: npm ci\s*$/m);
+  // apart with nothing in the repo touched: npm 12 honours package.json's
+  // `allowScripts` (node-pty only) and blocks the rest, npm 10/11 ignore it and
+  // run everything. The runner image rolls on its own schedule, so the flag's
+  // ABSENCE guarantees nothing; only its presence does.
+  it("never lets an implicit node-gyp rebuild fire, in any job", () => {
+    for (const cmd of installs) expect(cmd).toContain("--ignore-scripts");
   });
 
-  // --ignore-scripts also skips the ROOT package's lifecycle scripts, and the
-  // successful v1.77.1 release log shows this job genuinely running both.
-  it("re-runs the two root scripts that are load-bearing", () => {
-    expect(build).toContain("patch-package");
-    // Either form: `npm run postinstall`, or the chmod the smoke job spells out.
+  // --ignore-scripts also skips the ROOT package's lifecycle scripts, and
+  // `prepare` (patch-package) is load-bearing everywhere a build can happen —
+  // including the publish job, where npm runs `prepublishOnly: npm run build`
+  // BEFORE `prepare`, so the patch has to be on disk already.
+  it("re-runs patch-package after every install", () => {
+    const patches = RELEASE_WORKFLOW.match(/npx patch-package/g) ?? [];
+    expect(patches.length).toBe(installs.length);
+  });
+
+  // The build matrix additionally ships node-pty into the platform tarball, so
+  // its spawn-helper needs the 0755 bit that `postinstall` sets.
+  it("restores the node-pty spawn-helper bit in the build matrix", () => {
+    const build = RELEASE_WORKFLOW.slice(
+      RELEASE_WORKFLOW.indexOf("\n  build:"),
+      RELEASE_WORKFLOW.indexOf("\n  release:"),
+    );
+    expect(build).toContain("win32-x64");
     expect(build).toMatch(/postinstall|spawn-helper/);
   });
 });
