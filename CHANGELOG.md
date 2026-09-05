@@ -1,3 +1,9 @@
+## [1.77.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.2...v1.77.3) (2026-09-05)
+
+### Bug Fixes
+
+* **sessions:** bind a transcript that arrives after the watch deadline ([#780](https://github.com/RonenMars/threadbase-streamer/issues/780)) ([aaede98](https://github.com/RonenMars/threadbase-streamer/commit/aaede98570e595189d0adb1f279b5047f49ef5a6)), closes [#778](https://github.com/RonenMars/threadbase-streamer/issues/778) [#778](https://github.com/RonenMars/threadbase-streamer/issues/778)
+
 ## [1.77.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.1...v1.77.2) (2026-09-05)
 
 ### Bug Fixes
