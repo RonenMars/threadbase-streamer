@@ -1,3 +1,10 @@
+## [1.77.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.1...v1.77.2) (2026-09-05)
+
+### Bug Fixes
+
+* **api:** stop dropping every menubar request from the access log ([#781](https://github.com/RonenMars/threadbase-streamer/issues/781)) ([db23366](https://github.com/RonenMars/threadbase-streamer/commit/db23366d4d3fe61716a081edfb593e446e8abb9b)), closes [#131](https://github.com/RonenMars/threadbase-streamer/issues/131)
+* **ci:** stop the release build compiling a binary it already has ([#782](https://github.com/RonenMars/threadbase-streamer/issues/782)) ([c5c3b35](https://github.com/RonenMars/threadbase-streamer/commit/c5c3b3545a4849ecf0fbb41eee896b3929111980)), closes [#781](https://github.com/RonenMars/threadbase-streamer/issues/781) [#780](https://github.com/RonenMars/threadbase-streamer/issues/780)
+
 ## [1.77.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.0...v1.77.1) (2026-09-04)
 
 ### Bug Fixes
