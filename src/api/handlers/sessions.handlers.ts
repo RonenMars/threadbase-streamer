@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { basename, dirname, join } from "path";
 import type { WebSocket } from "ws";
+import { z } from "zod";
 import type { AgentClient } from "../../agent/agent-client";
 import type { AgentConfig } from "../../agent/agent-config";
 import { handleSendAgentInput } from "../../agent/handle-send-agent-input";
@@ -107,6 +108,23 @@ const ADOPT_KILL_POLL_MS = 100;
 // sessions. Ready normally lands well under this: Claude's quiet-checker and
 // Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
 const START_READY_TIMEOUT_MS = 10_000;
+
+const RawKeySchema = z.object({
+  action: z.enum(["escape", "up", "down", "left", "right", "tab", "shift_tab", "enter"]),
+  promptId: z.string().trim().min(1).max(200).optional(),
+  confirm: z.literal(true).optional(),
+});
+
+const RAW_KEY_BYTES = {
+  escape: "\x1b",
+  up: "\x1b[A",
+  down: "\x1b[B",
+  left: "\x1b[D",
+  right: "\x1b[C",
+  tab: "\t",
+  shift_tab: "\x1b[Z",
+  enter: "\r",
+} as const;
 
 // How long a Codex resume/fork waits for an authoritative startup outcome
 // before falling back to the pre-existing "spawned, still booting" behaviour.
@@ -1597,6 +1615,135 @@ export class SessionHandlers {
       return onScreen !== null && permissionGateKey(onScreen) === contentKey;
     } catch {
       return true;
+    }
+  }
+
+  /** Deliberately narrower than /input { keys }: fixed actions, no arbitrary bytes. */
+  async handleRawKey(sessionId: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const parsed = RawKeySchema.safeParse(await readBody(req));
+    if (!parsed.success) {
+      json(res, 400, { ok: false, code: "invalid_raw_key" });
+      return;
+    }
+    const { action, promptId, confirm } = parsed.data;
+    if (!this.ptyManager.hasSession(sessionId)) {
+      json(res, 409, { ok: false, code: "raw_key_unavailable" });
+      return;
+    }
+    let focused:
+      | { kind: "permission"; promptId: string; contentKey: string }
+      | { kind: "question"; promptId: string; toolUseId: string }
+      | null = null;
+    if (action !== "escape") {
+      // Pending maps can retain a prompt after its registry record expired or
+      // was retired by another route. Sweep first, then only let a live
+      // registry record authorize bytes to reach the PTY.
+      this.promptRegistry.sweepExpired(sessionId);
+      // The PTY cursor is on a permission gate when both maps coexist. This is
+      // the same arbitration order as composer input; accepting the question
+      // id here would send navigation to a different focused dialog.
+      const permission = this.pendingPermission.get(sessionId);
+      const question = this.pendingQuestions.get(sessionId);
+      const livePermission = permission?.promptId
+        ? this.promptRegistry.get(permission.promptId)
+        : null;
+      const liveQuestion = question?.promptId ? this.promptRegistry.get(question.promptId) : null;
+      if (
+        permission?.promptId &&
+        (livePermission?.state === "open" || livePermission?.state === "updated")
+      ) {
+        focused = {
+          kind: "permission",
+          promptId: permission.promptId,
+          contentKey: permissionGateKey(permission),
+        };
+      } else if (
+        question?.promptId &&
+        (liveQuestion?.state === "open" || liveQuestion?.state === "updated")
+      ) {
+        focused = { kind: "question", promptId: question.promptId, toolUseId: question.toolUseId };
+      }
+      if (!promptId || promptId !== focused?.promptId) {
+        json(res, 409, { ok: false, code: "raw_key_stale" });
+        return;
+      }
+      if (action === "enter" && confirm !== true) {
+        json(res, 400, { ok: false, code: "raw_key_confirmation_required" });
+        return;
+      }
+      // The registry is only an event record; a host-keyboard answer, Esc, or
+      // the next PTY repaint can leave it open briefly after its picker has
+      // gone. Use the same rendered-screen checks as the answer routes before
+      // navigation reaches whatever the terminal is showing now.
+      if (focused?.kind === "question" && !(await this.questionMenuStillOpen(sessionId))) {
+        const pending = this.pendingQuestions.get(sessionId);
+        if (pending?.promptId === focused.promptId) {
+          const prompt = this.promptRegistry.get(focused.promptId);
+          if (prompt?.state === "open" || prompt?.state === "updated") {
+            this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
+          }
+          this.pendingQuestions.delete(sessionId);
+          this.pendingQuestionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, {
+            type: "question_cancelled",
+            sessionId,
+            toolUseId: focused.toolUseId,
+          });
+        }
+        json(res, 409, { ok: false, code: "raw_key_stale" });
+        return;
+      }
+      if (
+        focused?.kind === "permission" &&
+        this.sessionStore.getManaged(sessionId)?.provider !== CODEX_CLI_PROVIDER &&
+        !(await this.permissionGateStillOpen(sessionId, focused.contentKey))
+      ) {
+        const pending = this.pendingPermission.get(sessionId);
+        if (pending?.promptId === focused.promptId) {
+          const prompt = this.promptRegistry.get(focused.promptId);
+          if (prompt?.state === "open" || prompt?.state === "updated") {
+            this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
+          }
+          this.pendingPermission.delete(sessionId);
+          this.pendingPermissionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
+        }
+        json(res, 409, { ok: false, code: "raw_key_stale" });
+        return;
+      }
+    }
+    try {
+      if (action === "enter") {
+        // Enter commits the selected option, so it is user input rather than
+        // navigation: mark waiting_input → running before retiring the prompt.
+        this.ptyManager.sendKeys(sessionId, RAW_KEY_BYTES[action]);
+      } else {
+        this.ptyManager.sendRawKeys(sessionId, RAW_KEY_BYTES[action]);
+      }
+      if (action === "enter") {
+        if (focused) {
+          const normalized = this.promptRegistry.get(focused.promptId);
+          if (normalized?.state === "open" || normalized?.state === "updated") {
+            this.promptRegistry.transition(normalized.promptId, "resolved", "raw_key_enter");
+          }
+        }
+        if (focused?.kind === "permission") {
+          this.pendingPermission.delete(sessionId);
+          this.pendingPermissionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
+        } else if (focused?.kind === "question") {
+          this.pendingQuestions.delete(sessionId);
+          this.pendingQuestionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, {
+            type: "question_cancelled",
+            sessionId,
+            toolUseId: focused.toolUseId,
+          });
+        }
+      }
+      json(res, 200, { ok: true });
+    } catch {
+      json(res, 409, { ok: false, code: "raw_key_unavailable" });
     }
   }
 

@@ -470,6 +470,22 @@ export class PTYManager implements SessionRunner {
     }
   }
 
+  // Navigation keys move a focused picker without submitting user input. Keep
+  // its waiting_input status intact so clients retain the prompt identity for
+  // a multi-key sequence (for example Down, Down, Enter).
+  sendRawKeys(sessionId: string, keys: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    if (session.status === "idle") throw new Error(`Session is idle (no active PTY): ${sessionId}`);
+    this.log.info(`[pty.raw_keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length}`, {
+      event: "pty.raw_keys_write",
+      sessionId,
+      byteLen: keys.length,
+    });
+    session.process.write(keys);
+    session.lastActivityAt = new Date();
+  }
+
   sendInput(sessionId: string, input: string): number {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);

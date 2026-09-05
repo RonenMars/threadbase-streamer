@@ -85,6 +85,34 @@ describe("PTYManager — user message input history", () => {
     mgr.dispose();
   });
 
+  it("keeps a waiting picker waiting while raw navigation keys are written", async () => {
+    const statuses: string[] = [];
+    const mgr = new PTYManager({ onStatusChange: (session) => statuses.push(session.status) });
+    const session = await spawnFresh(mgr);
+    await makeReady(mgr, session.id);
+    statuses.length = 0;
+
+    mgr.sendRawKeys(session.id, "\x1b[B");
+
+    expect(mgr.getSession(session.id)?.status).toBe("waiting_input");
+    expect(statuses).toEqual([]);
+    mgr.dispose();
+  });
+
+  it("marks the session running when Enter commits a selected option", async () => {
+    const statuses: string[] = [];
+    const mgr = new PTYManager({ onStatusChange: (session) => statuses.push(session.status) });
+    const session = await spawnFresh(mgr);
+    await makeReady(mgr, session.id);
+    statuses.length = 0;
+
+    mgr.sendKeys(session.id, "\r");
+
+    expect(mgr.getSession(session.id)?.status).toBe("running");
+    expect(statuses).toEqual(["running"]);
+    mgr.dispose();
+  });
+
   it("records queued input once flushed on ready", async () => {
     const events: string[] = [];
     const mgr = new PTYManager({ onUserMessage: (_id, text) => events.push(text) });

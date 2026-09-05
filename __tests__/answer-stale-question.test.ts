@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { Readable } from "stream";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/sessions.handlers";
+import { PromptRegistry } from "../src/services/prompts/promptRegistry";
 import type { AskQuestion, WSMessage } from "../src/types";
 
 // Regression: answering a question whose menu already closed used to type the
@@ -46,23 +47,40 @@ const MENU_CLOSED = [
 interface Harness {
   handlers: SessionHandlers;
   written: string[];
+  rawWritten: string[];
   broadcasts: WSMessage[];
   pendingQuestions: SessionHandlersDeps["pendingQuestions"];
+  pendingPermission: SessionHandlersDeps["pendingPermission"];
   pendingQuestionKey: Map<string, string>;
 }
 
 function harness(screen: string[], opts: { hasSession?: boolean } = {}): Harness {
   const written: string[] = [];
+  const rawWritten: string[] = [];
   const broadcasts: WSMessage[] = [];
   const pendingQuestions: SessionHandlersDeps["pendingQuestions"] = new Map([
-    [SESSION, { toolUseId: "toolu_1", questions: QUESTIONS, origin: "jsonl" as const }],
+    [
+      SESSION,
+      {
+        toolUseId: "toolu_1",
+        questions: QUESTIONS,
+        origin: "jsonl" as const,
+        promptId: "question-prompt",
+      },
+    ],
   ]);
   const pendingQuestionKey = new Map<string, string>([[SESSION, "key"]]);
 
   const deps = {
     pendingQuestions,
     pendingQuestionKey,
+    pendingPermission: new Map(),
     sessionSubscribers: new Map(),
+    // This harness exercises question freshness. The one arbitration case
+    // includes a synthetic permission prompt without a rendered Claude gate,
+    // so model it as Codex, where the established permission route uses the
+    // runner's pending gate as its authority.
+    sessionStore: { getManaged: () => ({ provider: "codex-cli" }) },
     wsHub: {
       broadcast: (m: WSMessage) => broadcasts.push(m),
       broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
@@ -71,16 +89,50 @@ function harness(screen: string[], opts: { hasSession?: boolean } = {}): Harness
       hasSession: () => opts.hasSession ?? true,
       getOutputLines: async () => screen,
       sendKeys: (_id: string, keys: string) => written.push(keys),
+      sendRawKeys: (_id: string, keys: string) => rawWritten.push(keys),
     },
   };
 
   return {
     handlers: new SessionHandlers(deps as unknown as SessionHandlersDeps),
     written,
+    rawWritten,
     broadcasts,
     pendingQuestions,
+    pendingPermission: deps.pendingPermission,
     pendingQuestionKey,
   };
+}
+
+function rawRequest(body: unknown): IncomingMessage {
+  return Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
+}
+
+function openRawPrompt(h: Harness, promptId: string, intent: "approval" | "question") {
+  const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+  const registry = deps.promptRegistry ?? new PromptRegistry();
+  deps.promptRegistry = registry;
+  registry.open(
+    {
+      sessionId: SESSION,
+      intent,
+      message: "Choose an option",
+      questions: [
+        {
+          text: "Choose an option",
+          inputMode: "single",
+          options: [{ label: "Yes" }, { label: "No" }],
+          allowOther: false,
+          secret: "unknown",
+        },
+      ],
+      answerRequirement: "blocking",
+      expiresAt: null,
+      provenance: { source: "provider", confidence: "authoritative" },
+    },
+    undefined,
+    promptId,
+  );
 }
 
 function request(): IncomingMessage {
@@ -174,5 +226,82 @@ describe("POST /answer against a menu that already closed", () => {
       expect(h.written).toEqual(["\x1b[B\r"]);
       expect(status()).toBe(200);
     });
+  });
+});
+
+describe("POST /raw-key", () => {
+  it("prefers the focused permission prompt over a concurrently retained question", async () => {
+    const h = harness(MENU_OPEN);
+    openRawPrompt(h, "question-prompt", "question");
+    openRawPrompt(h, "permission-prompt", "approval");
+    h.pendingPermission.set(SESSION, { promptId: "permission-prompt", options: [] });
+
+    const stale = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "down", promptId: "question-prompt" }),
+      stale.res,
+    );
+    expect(stale.status()).toBe(409);
+    expect(h.rawWritten).toEqual([]);
+
+    const focused = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "down", promptId: "permission-prompt" }),
+      focused.res,
+    );
+    expect(focused.status()).toBe(200);
+    expect(h.rawWritten).toEqual(["\x1b[B"]);
+  });
+
+  it("retires a confirmed Enter prompt so it cannot be replayed", async () => {
+    const h = harness(MENU_OPEN);
+    openRawPrompt(h, "question-prompt", "question");
+    const first = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "enter", promptId: "question-prompt", confirm: true }),
+      first.res,
+    );
+    expect(first.status()).toBe(200);
+    expect(h.written).toEqual(["\r"]);
+
+    const replay = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "enter", promptId: "question-prompt", confirm: true }),
+      replay.res,
+    );
+    expect(replay.status()).toBe(409);
+    expect(h.written).toEqual(["\r"]);
+  });
+
+  it("refuses a map entry whose prompt no longer exists in the registry", async () => {
+    const h = harness(MENU_OPEN);
+    const stale = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "down", promptId: "question-prompt" }),
+      stale.res,
+    );
+
+    expect(stale.status()).toBe(409);
+    expect(h.rawWritten).toEqual([]);
+  });
+
+  it("refuses an open registry question whose menu has already left the screen", async () => {
+    const h = harness(MENU_CLOSED);
+    openRawPrompt(h, "question-prompt", "question");
+    const stale = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "down", promptId: "question-prompt" }),
+      stale.res,
+    );
+
+    expect(stale.status()).toBe(409);
+    expect(h.rawWritten).toEqual([]);
+    expect(h.pendingQuestions.has(SESSION)).toBe(false);
   });
 });

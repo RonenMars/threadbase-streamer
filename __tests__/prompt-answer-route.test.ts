@@ -86,6 +86,7 @@ describe("POST /api/sessions/:id/prompt/answer", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       promptContract: { schemaVersion: 1, atomicAnswer: true },
+      rawKeys: true,
     });
   });
 
