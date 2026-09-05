@@ -13,6 +13,10 @@ import { describe, expect, it } from "vitest";
  */
 
 const WORKFLOW = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+const RELEASE_WORKFLOW = readFileSync(
+  join(__dirname, "..", ".github", "workflows", "release.yml"),
+  "utf8",
+);
 const PACKAGE = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")) as {
   scripts: Record<string, string>;
 };
@@ -145,6 +149,45 @@ describe("cross-platform smoke", () => {
     );
     expect(smoke).toContain("npm ci");
     expect(smoke).not.toContain("uses: ./.github/actions/run-ci");
+  });
+});
+
+// The release build matrix compiles nothing: better-sqlite3 v13 ships
+// prebuilds/<platform>-<arch>.node for all eight platforms and node-pty ships
+// prebuilds/<platform>-<arch>/, so an implicit `node-gyp rebuild` produces a
+// binary that is already on disk. Letting it fire is not merely wasteful — the
+// Windows runner has no C++ toolchain, so it is a coin flip that only stays
+// green while npm happens to block package install scripts by default.
+// It stopped being green on 2026-09-05: the Windows leg of the release for
+// #781 died in `node-gyp rebuild` with 0xC0000409, the release never cut, and
+// the fix had merged to main unpublished. See
+// docs/testing/cross-platform-ci.md, "Why the install skips scripts".
+describe("release build install", () => {
+  const build = RELEASE_WORKFLOW.slice(
+    RELEASE_WORKFLOW.indexOf("\n  build:"),
+    RELEASE_WORKFLOW.indexOf("\n  release:"),
+  );
+
+  it("has a build job to assert against", () => {
+    expect(build).toContain("win32-x64");
+    expect(build).toContain("npm ci");
+  });
+
+  // npm's default changed under this workflow between two runs four hours
+  // apart with nothing in the repo touched: npm 12 blocks package install
+  // scripts, npm 10 does not, and the runner image rolls on its own schedule.
+  // The flag's ABSENCE guarantees nothing; only its presence does.
+  it("never lets an implicit node-gyp rebuild fire", () => {
+    expect(build).toContain("npm ci --ignore-scripts");
+    expect(build).not.toMatch(/run: npm ci\s*$/m);
+  });
+
+  // --ignore-scripts also skips the ROOT package's lifecycle scripts, and the
+  // successful v1.77.1 release log shows this job genuinely running both.
+  it("re-runs the two root scripts that are load-bearing", () => {
+    expect(build).toContain("patch-package");
+    // Either form: `npm run postinstall`, or the chmod the smoke job spells out.
+    expect(build).toMatch(/postinstall|spawn-helper/);
   });
 });
 

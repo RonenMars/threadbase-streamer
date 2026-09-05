@@ -25,7 +25,11 @@ if (existsSync(outPath)) rmSync(outPath);
 // tsup.config.ts), so the prebuilt native binaries for the current arch
 // must travel inside the tarball. node-pty's spawn-helper bit is fixed by
 // the package.json postinstall at deploy time; better-sqlite3's prebuild
-// lives under node_modules/better-sqlite3/build/Release.
+// lives under node_modules/better-sqlite3/prebuilds/<platform>-<arch>.node.
+// It used to be build/Release, which is v12's compile-from-source layout —
+// v13 has no build/ directory at all and ships prebuilds for every platform
+// in the npm tarball. That stale sentence is what made the release job's
+// node-gyp rebuild look load-bearing; nothing here needs a compiler.
 const entries = [
   "dist",
   "package.json",

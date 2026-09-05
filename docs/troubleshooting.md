@@ -142,7 +142,7 @@ runners, same behaviour.
 
 ### `npm ci` fails on Windows with `gyp ERR! find VS` for `better-sqlite3`
 
-**When:** Any install that lets package install scripts run, on a machine without a C++ toolchain. Seen on `Smoke (windows-latest)`.
+**When:** Any install that lets package install scripts run, on a machine without a C++ toolchain. Seen on `Smoke (windows-latest)`, and on `Build win32-x64` in the **release** workflow — which had no `--ignore-scripts` until 2026-09-05 and rode npm's default instead. That default is not stable: the same job installed clean at 21:15 and died in `node-gyp rebuild` (exit `3221226505`, crashing at the header fetch rather than reaching `gyp ERR! find VS`) at 01:22 with nothing in the repo changed, so the release for #781 never cut and a merged fix sat on `main` unpublished. A green history here means the coin kept landing the same way, not that the job is safe.
 **Cause:** `better-sqlite3` v13 declares **no** `install` script. npm sees the `binding.gyp` it ships and *synthesises* `node-gyp rebuild` as an implicit install step, so it compiles from source and ignores the prebuilt binary already in the tarball. That needs Visual Studio, which the runner does not have. v12 never hit this because its explicit `install: prebuild-install || node-gyp rebuild` overrode the implicit gyp and downloaded a binary instead.
 **Fix:** Install with `--ignore-scripts`, then re-run the two scripts that matter by hand (see below). Nothing in this repo needs a compiler — `better-sqlite3` and `node-pty` both ship prebuilds.
 
