@@ -1630,14 +1630,36 @@ export class SessionHandlers {
       json(res, 409, { ok: false, code: "raw_key_unavailable" });
       return;
     }
+    let focused:
+      | { kind: "permission"; promptId: string }
+      | { kind: "question"; promptId: string; toolUseId: string }
+      | null = null;
     if (action !== "escape") {
+      // Pending maps can retain a prompt after its registry record expired or
+      // was retired by another route. Sweep first, then only let a live
+      // registry record authorize bytes to reach the PTY.
+      this.promptRegistry.sweepExpired(sessionId);
       // The PTY cursor is on a permission gate when both maps coexist. This is
       // the same arbitration order as composer input; accepting the question
       // id here would send navigation to a different focused dialog.
       const permission = this.pendingPermission.get(sessionId);
       const question = this.pendingQuestions.get(sessionId);
-      const currentPromptId = permission?.promptId ?? question?.promptId;
-      if (!promptId || promptId !== currentPromptId) {
+      const livePermission = permission?.promptId
+        ? this.promptRegistry.get(permission.promptId)
+        : null;
+      const liveQuestion = question?.promptId ? this.promptRegistry.get(question.promptId) : null;
+      if (
+        permission?.promptId &&
+        (livePermission?.state === "open" || livePermission?.state === "updated")
+      ) {
+        focused = { kind: "permission", promptId: permission.promptId };
+      } else if (
+        question?.promptId &&
+        (liveQuestion?.state === "open" || liveQuestion?.state === "updated")
+      ) {
+        focused = { kind: "question", promptId: question.promptId, toolUseId: question.toolUseId };
+      }
+      if (!promptId || promptId !== focused?.promptId) {
         json(res, 409, { ok: false, code: "raw_key_stale" });
         return;
       }
@@ -1647,33 +1669,31 @@ export class SessionHandlers {
       }
     }
     try {
-      this.ptyManager.sendRawKeys(sessionId, RAW_KEY_BYTES[action]);
       if (action === "enter") {
-        const permission = this.pendingPermission.get(sessionId);
-        const question = this.pendingQuestions.get(sessionId);
-        const settledPrompt =
-          permission?.promptId === promptId
-            ? permission
-            : question?.promptId === promptId
-              ? question
-              : undefined;
-        if (settledPrompt?.promptId) {
-          const normalized = this.promptRegistry.get(settledPrompt.promptId);
+        // Enter commits the selected option, so it is user input rather than
+        // navigation: mark waiting_input → running before retiring the prompt.
+        this.ptyManager.sendKeys(sessionId, RAW_KEY_BYTES[action]);
+      } else {
+        this.ptyManager.sendRawKeys(sessionId, RAW_KEY_BYTES[action]);
+      }
+      if (action === "enter") {
+        if (focused) {
+          const normalized = this.promptRegistry.get(focused.promptId);
           if (normalized?.state === "open" || normalized?.state === "updated") {
             this.promptRegistry.transition(normalized.promptId, "resolved", "raw_key_enter");
           }
         }
-        if (permission?.promptId === promptId) {
+        if (focused?.kind === "permission") {
           this.pendingPermission.delete(sessionId);
           this.pendingPermissionKey.delete(sessionId);
           this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
-        } else if (question?.promptId === promptId) {
+        } else if (focused?.kind === "question") {
           this.pendingQuestions.delete(sessionId);
           this.pendingQuestionKey.delete(sessionId);
           this.broadcastToSession(sessionId, {
             type: "question_cancelled",
             sessionId,
-            toolUseId: question?.toolUseId ?? "",
+            toolUseId: focused.toolUseId,
           });
         }
       }

@@ -40,7 +40,7 @@ describe("pty-host prompt snapshot", () => {
       onPermissionChange: (...args) => calls.push(args),
     } as PTYManagerOptions);
 
-    expect(PTY_HOST_PROTOCOL_VERSION).toBe(4);
+    expect(PTY_HOST_PROTOCOL_VERSION).toBe(5);
     expect(calls).toEqual([
       [
         "session-1",

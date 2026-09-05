@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { Readable } from "stream";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/sessions.handlers";
+import { PromptRegistry } from "../src/services/prompts/promptRegistry";
 import type { AskQuestion, WSMessage } from "../src/types";
 
 // Regression: answering a question whose menu already closed used to type the
@@ -102,6 +103,33 @@ function rawRequest(body: unknown): IncomingMessage {
   return Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
 }
 
+function openRawPrompt(h: Harness, promptId: string, intent: "approval" | "question") {
+  const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+  const registry = deps.promptRegistry ?? new PromptRegistry();
+  deps.promptRegistry = registry;
+  registry.open(
+    {
+      sessionId: SESSION,
+      intent,
+      message: "Choose an option",
+      questions: [
+        {
+          text: "Choose an option",
+          inputMode: "single",
+          options: [{ label: "Yes" }, { label: "No" }],
+          allowOther: false,
+          secret: "unknown",
+        },
+      ],
+      answerRequirement: "blocking",
+      expiresAt: null,
+      provenance: { source: "provider", confidence: "authoritative" },
+    },
+    undefined,
+    promptId,
+  );
+}
+
 function request(): IncomingMessage {
   const body = JSON.stringify({
     toolUseId: "toolu_1",
@@ -199,6 +227,8 @@ describe("POST /answer against a menu that already closed", () => {
 describe("POST /raw-key", () => {
   it("prefers the focused permission prompt over a concurrently retained question", async () => {
     const h = harness(MENU_OPEN);
+    openRawPrompt(h, "question-prompt", "question");
+    openRawPrompt(h, "permission-prompt", "approval");
     h.pendingPermission.set(SESSION, { promptId: "permission-prompt", options: [] });
 
     const stale = response();
@@ -222,6 +252,7 @@ describe("POST /raw-key", () => {
 
   it("retires a confirmed Enter prompt so it cannot be replayed", async () => {
     const h = harness(MENU_OPEN);
+    openRawPrompt(h, "question-prompt", "question");
     const first = response();
     await h.handlers.handleRawKey(
       SESSION,
@@ -229,7 +260,7 @@ describe("POST /raw-key", () => {
       first.res,
     );
     expect(first.status()).toBe(200);
-    expect(h.rawWritten).toEqual(["\r"]);
+    expect(h.written).toEqual(["\r"]);
 
     const replay = response();
     await h.handlers.handleRawKey(
@@ -238,6 +269,19 @@ describe("POST /raw-key", () => {
       replay.res,
     );
     expect(replay.status()).toBe(409);
-    expect(h.rawWritten).toEqual(["\r"]);
+    expect(h.written).toEqual(["\r"]);
+  });
+
+  it("refuses a map entry whose prompt no longer exists in the registry", async () => {
+    const h = harness(MENU_OPEN);
+    const stale = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "down", promptId: "question-prompt" }),
+      stale.res,
+    );
+
+    expect(stale.status()).toBe(409);
+    expect(h.rawWritten).toEqual([]);
   });
 });
