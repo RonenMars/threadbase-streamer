@@ -97,6 +97,10 @@ export class LiveSessionManager {
     this.runnerFor(sessionId).sendKeys(sessionId, keys);
   }
 
+  sendRawKeys(sessionId: string, keys: string): void {
+    this.runnerFor(sessionId).sendRawKeys(sessionId, keys);
+  }
+
   cancel(sessionId: string): void {
     this.runnerFor(sessionId).cancel(sessionId);
   }

@@ -49,7 +49,7 @@ import type {
  * ids and current detector snapshots so a reconnect does not lose a prompt
  * that opened before the new streamer subscribed.
  */
-export const PTY_HOST_PROTOCOL_VERSION = 4;
+export const PTY_HOST_PROTOCOL_VERSION = 5;
 
 export interface HostHeartbeatState {
   registryState: "known" | "unknown";
@@ -72,6 +72,8 @@ export type HostRequest =
   | { id: number; type: "write"; sessionId: string; input: string }
   /** Raw keystrokes — never recorded as a user message. */
   | { id: number; type: "keys"; sessionId: string; keys: string }
+  /** Navigation keys that must not change a waiting prompt's session status. */
+  | { id: number; type: "raw_keys"; sessionId: string; keys: string }
   /** Begin receiving events. Sent once per connection after status passes the version check. */
   | { id: number; type: "subscribe" }
   /** The rendered screen, newest `maxLines` rows, in true on-screen order. */

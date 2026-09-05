@@ -1631,9 +1631,12 @@ export class SessionHandlers {
       return;
     }
     if (action !== "escape") {
-      const currentPromptId =
-        this.pendingQuestions.get(sessionId)?.promptId ??
-        this.pendingPermission.get(sessionId)?.promptId;
+      // The PTY cursor is on a permission gate when both maps coexist. This is
+      // the same arbitration order as composer input; accepting the question
+      // id here would send navigation to a different focused dialog.
+      const permission = this.pendingPermission.get(sessionId);
+      const question = this.pendingQuestions.get(sessionId);
+      const currentPromptId = permission?.promptId ?? question?.promptId;
       if (!promptId || promptId !== currentPromptId) {
         json(res, 409, { ok: false, code: "raw_key_stale" });
         return;
@@ -1644,7 +1647,36 @@ export class SessionHandlers {
       }
     }
     try {
-      this.ptyManager.sendKeys(sessionId, RAW_KEY_BYTES[action]);
+      this.ptyManager.sendRawKeys(sessionId, RAW_KEY_BYTES[action]);
+      if (action === "enter") {
+        const permission = this.pendingPermission.get(sessionId);
+        const question = this.pendingQuestions.get(sessionId);
+        const settledPrompt =
+          permission?.promptId === promptId
+            ? permission
+            : question?.promptId === promptId
+              ? question
+              : undefined;
+        if (settledPrompt?.promptId) {
+          const normalized = this.promptRegistry.get(settledPrompt.promptId);
+          if (normalized?.state === "open" || normalized?.state === "updated") {
+            this.promptRegistry.transition(normalized.promptId, "resolved", "raw_key_enter");
+          }
+        }
+        if (permission?.promptId === promptId) {
+          this.pendingPermission.delete(sessionId);
+          this.pendingPermissionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
+        } else if (question?.promptId === promptId) {
+          this.pendingQuestions.delete(sessionId);
+          this.pendingQuestionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, {
+            type: "question_cancelled",
+            sessionId,
+            toolUseId: question?.toolUseId ?? "",
+          });
+        }
+      }
       json(res, 200, { ok: true });
     } catch {
       json(res, 409, { ok: false, code: "raw_key_unavailable" });
