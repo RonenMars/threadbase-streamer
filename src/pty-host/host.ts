@@ -264,6 +264,10 @@ export class SessionHost {
         this.runner.sendRawKeys(request.sessionId, request.keys);
         return {};
 
+      case "resize":
+        this.runner.resize(request.sessionId, request.cols, request.rows);
+        return {};
+
       case "cancel":
         this.runner.cancel(request.sessionId);
         return {};

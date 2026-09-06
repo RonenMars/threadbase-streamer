@@ -390,6 +390,13 @@ export class RemoteSessionRunner implements SessionRunner {
     this.fireAndForget({ type: "raw_keys", sessionId, keys });
   }
 
+  resize(sessionId: string, cols: number, rows: number): void {
+    // No requireSession: unlike keys, a resize for a session that just exited
+    // is meaningless rather than wrong, and SIGWINCH races exit by nature.
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) return;
+    this.fireAndForget({ type: "resize", sessionId, cols, rows });
+  }
+
   cancel(sessionId: string): void {
     this.fireAndForget({ type: "cancel", sessionId });
   }
