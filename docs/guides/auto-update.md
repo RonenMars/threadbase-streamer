@@ -143,6 +143,26 @@ semantic-release runs on `main` (stable) and `next` (prerelease) per
 (`@semantic-release/changelog` overwrites `CHANGELOG.md` on first run —
 the stub in this repo is a placeholder.)
 
+**That mapping comes from a dependency nothing declares.**
+`@semantic-release/commit-analyzer` builds the preset package name from the
+`preset` string in `.releaserc.json` and imports it dynamically
+(`lib/load-parser-config.js`), without listing it as a dependency — so
+`conventional-changelog-conventionalcommits` sits in this repo's
+`devDependencies` purely to be found at runtime by that import.
+`npm ls` shows it with no dependents, which makes it look orphaned; it is not.
+Removing it, or letting it resolve to whatever a transitive dependency hoists,
+changes how every commit is classified into a release.
+
+It is pinned exactly, not caret-ranged, for the same reason. When bumping it,
+green CI proves nothing — no test exercises semantic-release, so a preset that
+stopped recognising `fix:` would still merge green and simply cut no release.
+Verify by running the repo's real analyzer config over a fixed set of commit
+messages on both versions and diffing the result. Done for the 9.3.1 → 10.4.0
+major (2026-09-06): all fifteen cases classified identically. That major swaps
+the `hidden` commit-type property and the `bumpStrict` preset option for
+`effect`, and `.releaserc.json` uses neither — release behaviour here comes
+from `releaseRules`, which the major does not touch.
+
 The `next` branch does not exist by default. Create it
 (`git switch -c next && git push -u origin next`) only when you want
 canarying — servers with `channel: next` in `update.yaml` will consume
