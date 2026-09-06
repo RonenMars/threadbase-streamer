@@ -101,6 +101,10 @@ export class LiveSessionManager {
     this.runnerFor(sessionId).sendRawKeys(sessionId, keys);
   }
 
+  resize(sessionId: string, cols: number, rows: number): void {
+    this.runnerFor(sessionId).resize(sessionId, cols, rows);
+  }
+
   cancel(sessionId: string): void {
     this.runnerFor(sessionId).cancel(sessionId);
   }

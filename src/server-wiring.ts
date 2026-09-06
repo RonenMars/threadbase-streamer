@@ -755,6 +755,8 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
         clientId?: string;
         sessionId?: string;
         when?: string;
+        cols?: number;
+        rows?: number;
       };
       try {
         msg = JSON.parse(text);
@@ -842,6 +844,24 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             return;
           }
           deps.removeSessionSubscriber(msg.sessionId, ws);
+        }
+        if (
+          msg.type === "resize_session" &&
+          typeof msg.sessionId === "string" &&
+          typeof msg.cols === "number" &&
+          typeof msg.rows === "number"
+        ) {
+          // Control, not reading, for the same reason hold_session is: this
+          // reshapes the terminal every other subscriber is watching, so a
+          // read-only device must not be able to send it.
+          if (!wsAllows(principal, "session:control")) {
+            deny(msg.type, "session:control");
+            return;
+          }
+          // Silent on an unknown session and on nonsense dimensions — the
+          // runner guards both. A client dragging a window must not have to
+          // care whether the session is still alive.
+          deps.ptyManager.resize(msg.sessionId, msg.cols, msg.rows);
         }
         if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
           // Holding a session SIGINTs the agent and disposes its screen, which

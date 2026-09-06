@@ -1,3 +1,9 @@
+## [1.79.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.78.0...v1.79.0) (2026-09-06)
+
+### Features
+
+* **pty:** add PTY resize and a tb codex attach command ([#797](https://github.com/RonenMars/threadbase-streamer/issues/797)) ([5b20112](https://github.com/RonenMars/threadbase-streamer/commit/5b20112a21260e4d7551815fb955fe96a9ee5253)), closes [#791](https://github.com/RonenMars/threadbase-streamer/issues/791)
+
 ## [1.78.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.77.5...v1.78.0) (2026-09-05)
 
 ### Features
