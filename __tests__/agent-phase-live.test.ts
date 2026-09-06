@@ -46,6 +46,22 @@ type MockProc = { _emit: (event: string, data: string) => void };
 // queue). Give the microtask and the write callback a tick.
 const settle = (ms = 10) => new Promise((r) => setTimeout(r, ms));
 
+// Asserting a transition after a fixed sleep is a race, and it is the one this
+// file kept losing: `expected 'running' to be 'waiting_input'` at the Ready
+// assertion below failed twice on Smoke (macos-latest) in 2026-09, because a
+// loaded runner had not finished the readiness scrape within the 10ms.
+// Wait for the condition instead of guessing a duration. The expect() that
+// follows each call is deliberately kept, so a genuine regression still fails
+// with its original message — this only stops a slow runner from being read as
+// a broken one.
+async function waitUntil(predicate: () => boolean, budgetMs = 2000): Promise<void> {
+  const until = performance.now() + budgetMs;
+  while (performance.now() < until) {
+    if (predicate()) return;
+    await settle(5);
+  }
+}
+
 // The runner's own record, for assertions that need the live object rather
 // than the toPublicSession() copy getSession() hands back (e.g. mutating it to
 // set up a transition).
@@ -85,7 +101,7 @@ describe("agent phase — Codex turn through a fake PTY", () => {
 
       // Boot settles on Ready. Booting is not a turn: no phase is reported.
       proc._emit("data", READY_BAR);
-      await settle();
+      await waitUntil(() => runner.getSession(session.id)?.status === "waiting_input");
       expect(runner.getSession(session.id)?.status).toBe("waiting_input");
       expect(phases).toEqual([]);
 
@@ -94,13 +110,13 @@ describe("agent phase — Codex turn through a fake PTY", () => {
       await settle(80);
 
       proc._emit("data", WORKING_BAR);
-      await settle();
+      await waitUntil(() => phases.length >= 1);
       expect(phases).toEqual(["working"]);
       expect(internalOf(runner, session.id).subStatus).toBe("working");
 
       // Turn end. The phase clears exactly once, and the session is idle again.
       proc._emit("data", READY_BAR);
-      await settle();
+      await waitUntil(() => phases.length >= 2);
       expect(phases).toEqual(["working", null]);
       expect(runner.getSession(session.id)?.status).toBe("waiting_input");
       expect(internalOf(runner, session.id).subStatus).toBeNull();
@@ -241,12 +257,12 @@ describe("agent phase — the scrape pass stays non-fatal", () => {
         Promise.reject(new Error("screen read exploded"));
 
       proc._emit("data", "Continue? [y/N] ");
-      await settle();
+      await waitUntil(() => events.includes("pty.prompt_detect_failed"));
       expect(events).toContain("pty.prompt_detect_failed");
 
       // Still live: the prompt marker on a later chunk settles the session.
       proc._emit("data", "╭\n");
-      await settle();
+      await waitUntil(() => mgr.getSession(session.id)?.status === "waiting_input");
       expect(mgr.getSession(session.id)?.status).toBe("waiting_input");
     } finally {
       mgr.dispose();
