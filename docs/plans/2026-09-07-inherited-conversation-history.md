@@ -140,10 +140,18 @@ already has `readFirstJsonlEntry()` in `conversations.handlers.ts` for exactly
 this kind of identity check. A `session_meta` carrying `forked_from_id` +
 `forked_from_ordinal_exclusive` produces a link; anything else produces none.
 
-**Storage**: a `conversation_links` table keyed by conversation id, written when
-a file is scanned or refreshed, and at Codex bind time in
-`session-watchers.ts` (where `boundConversationId` is already recorded durably).
-Not derived per request — the translation costs a parent parse.
+**Storage**: none in phases 1–2, deliberately. The plan originally called for a
+`conversation_links` table so the translation would not be redone per request —
+but the read path needs the prefix's *messages*, not just its length, so storing
+`throughMessageIndex` saves nothing that is actually expensive. What it would
+save is a re-parse of the source file, and an in-process cache keyed by
+`sourcePath + cut` does that in a dozen lines with no migration, no repository
+and no write path to keep in sync. The prefix is immutable, so the cache needs
+no invalidation.
+
+The table becomes worth adding at phase 4, when a window can be served from the
+offset index without parsing anything and the cut is the only thing left to
+look up.
 
 ### Numbering: one continuous space
 
@@ -176,6 +184,14 @@ of this feature is zero.
 Each half is fetched by the best reader available for its file: the offset-index
 window when warm (Claude today, Codex after Phase 4), otherwise the existing
 single-file parse. No new parsing code.
+
+**Phases 1–2 implement the degenerate form of this.** Codex detail requests
+already materialise every message (there is no index to window with), so the
+prefix is simply prepended to that list and the existing slicing does the rest —
+one `filtered` array feeds `total`, every cursor and the byte budget, unchanged.
+The split-window read above is what this becomes once phase 4 gives Codex an
+index worth windowing. Until then a fork costs one extra full parse of its
+source, cached in process; phase 4 is what removes it.
 
 ### ETag
 
@@ -232,9 +248,10 @@ depth cap of 8 and a visited-set to refuse cycles. A refused chain degrades to
 
 ## Phases
 
-1. **Link discovery and storage.** `conversation_links` table + migration; read
-   `session_meta` on scan/refresh and at Codex bind; translate
-   `sourceOrdinalExclusive` → `throughMessageIndex`; no read-path change yet.
+1. **Link discovery and translation.** Read `session_meta` lazily, on the read
+   path, for files that can carry a link (Codex only, so Claude's hot path pays
+   nothing); translate `sourceOrdinalExclusive` → `throughMessageIndex` using
+   the scanner's own line parser; cache resolved prefixes in process.
    Verifiable on its own: the link row for `01a077c6-…` must say
    `throughMessageIndex: 21` — not 297 (the raw ordinal) and not 27 (the
    parent's whole-file message count).
@@ -271,10 +288,14 @@ standing performance debt this work makes worth paying.
   the hub row reads "no messages" while the detail view shows 27. Phase 2 must
   correct the count at the same time as the detail, or the two surfaces
   disagree.
-- **Scanner ownership.** Message parsing lives in `@threadbase-sh/scanner`
-  (a separate repo). Phases 1–3 need nothing from it; Phase 4 may need a Codex
-  line reducer exported, which is a cross-repo dependency to confirm before
-  scheduling it.
+- **Scanner ownership.** Message parsing lives in `@threadbase-sh/scanner` (a
+  separate repo), and the cross-repo dependency turned out to bind at phase 1,
+  not phase 4 as first written: translating the cut requires knowing which lines
+  render, and that rule lives there. The streamer must not carry a second copy
+  of it — a copy that drifts shows a fork the wrong number of inherited turns,
+  silently. So `parseCodexJsonlLine` is exported from the scanner and
+  `parseCodexConversation` is refactored to use it, leaving exactly one
+  definition of "this line is a message".
 
 ## Verification
 

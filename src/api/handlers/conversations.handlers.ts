@@ -27,6 +27,10 @@ import {
   findSearchTarget,
   type SearchableMessage,
 } from "../../services/conversations/findSearchTarget";
+import {
+  type InheritedHistory,
+  resolveInheritedHistory,
+} from "../../services/conversations/inheritedHistory";
 import { deriveProjectChatTitle } from "../../services/projectChats/deriveProjectChatTitle";
 import {
   applyFilters,
@@ -674,6 +678,57 @@ export class ConversationHandlers {
     };
   }
 
+  /**
+   * Can this file carry a fork link at all?
+   *
+   * Only Codex writes one today, and a conversation GET is a hot path: without
+   * this, every Claude request pays an extra open+read of a first line that can
+   * never contain a link.
+   */
+  private mayInheritHistory(conversationId: string, filePath: string): boolean {
+    const provider = this.cache?.getMetaById(
+      this.deps.resolveConversationLookupId(conversationId),
+    )?.provider;
+    if (provider) return provider === CODEX_CLI_PROVIDER;
+    // No cache row yet — a rollout bound seconds ago is exactly that case, and
+    // it is the one this feature exists for. Fall back to the filename, which
+    // is the same signal `isJsonlPathFor` reads: Codex writes
+    // `rollout-<ts>-<uuid>.jsonl`, Claude writes `<uuid>.jsonl`.
+    return basename(filePath).startsWith("rollout-");
+  }
+
+  /**
+   * The stand-in for a conversation whose own file holds no messages yet but
+   * which inherits a history (a fresh fork). Carries the identity fields the
+   * response meta needs; `messages` stays empty because the prefix is merged in
+   * at the filter step, where the served index space is decided.
+   */
+  private shellConversationForInherited(
+    id: string,
+    filePath: string,
+    inherited: InheritedHistory,
+  ): Conversation & { provider: string } {
+    const session =
+      this.sessionStore.getManaged(id) ??
+      this.sessionStore.listManaged().find((s) => s.boundConversationId === id);
+    const meta = this.cache?.getMetaById(id);
+    const newest = inherited.messages.at(-1)?.timestamp;
+    return {
+      id,
+      filePath,
+      account: session?.account ?? meta?.account ?? "",
+      projectPath: session?.projectPath ?? meta?.projectPath ?? "",
+      projectName: session?.projectName ?? meta?.projectName ?? "",
+      sessionName: session?.sessionName ?? meta?.title ?? "",
+      sessionId: id,
+      messages: [],
+      fullText: "",
+      messageCount: 0,
+      timestamp: inherited.forkedAt ?? newest ?? new Date().toISOString(),
+      provider: CODEX_CLI_PROVIDER,
+    };
+  }
+
   async handleGetConversation(
     id: string,
     url: URL,
@@ -685,7 +740,38 @@ export class ConversationHandlers {
     // Try the scanner first (has full content including tool_use blocks).
     // Fall back to the cache tail only when the scanner can't find the file —
     // e.g. a conversation that existed in a previous run but whose JSONL was deleted.
-    const conversation = await this.findConversationByUuid(id);
+    // A conversation can inherit its opening history from another file — see
+    // inheritedHistory.ts. Resolved from the file itself (one line for the
+    // common case: not a fork, and cached per path after that), never from our
+    // session records, so a fork the user made in their own terminal reads the
+    // same as one we started.
+    //
+    // Resolved BEFORE findConversationByUuid, and that order is load-bearing.
+    // findConversationByUuid fires a stale-while-revalidate refresh in the
+    // background; awaiting anything after it hands the event loop over long
+    // enough for that refresh to COMPLETE, and a completed refresh makes the
+    // next refreshFileGuarded call inside REFRESH_TTL_MS a no-op — so a caller
+    // that appends a turn and asks for a refresh gets told "recent enough" and
+    // serves the pre-append snapshot. Doing our I/O first leaves the path from
+    // that refresh to the response free of awaits, exactly as it was.
+    const ownFilePath = await this.locateJsonlPath(id, this.deps.resolveConversationLookupId(id));
+    const inherited =
+      ownFilePath && this.mayInheritHistory(id, ownFilePath)
+        ? await resolveInheritedHistory({
+            filePath: ownFilePath,
+            locateSource: (sourceId) =>
+              this.locateJsonlPath(sourceId, this.deps.resolveConversationLookupId(sourceId)),
+          })
+        : null;
+
+    let conversation = await this.findConversationByUuid(id);
+
+    // A fork with no turns of its own has no transcript to find, but it is not
+    // an empty conversation — its history is the prefix. Stand in a shell for
+    // the scanner's miss so the normal paging path below serves it.
+    if (!conversation && inherited && inherited.messages.length > 0 && ownFilePath) {
+      conversation = this.shellConversationForInherited(id, ownFilePath, inherited);
+    }
 
     if (!conversation && this.cache) {
       // Only `before_index` indicates the client is paginating backward (asking
@@ -808,9 +894,15 @@ export class ConversationHandlers {
           )
         : 0;
     const etagMessageCount = Math.max(etagSource.messageCount, indexedCount);
+    // The prefix is part of what this response serves, so it has to be part of
+    // the validator. Without it a client caches half a conversation under a tag
+    // that cannot change when the other half does. The prefix is immutable, so
+    // its path and cut are enough — no source mtime needed.
     const etag = computeConversationEtag({
-      filePath: etagSource.filePath,
-      messageCount: etagMessageCount,
+      filePath: inherited
+        ? `${etagSource.filePath}+${inherited.sourceFilePath ?? inherited.sourceId}@${inherited.ordinalExclusive}`
+        : etagSource.filePath,
+      messageCount: etagMessageCount + (inherited?.messages.length ?? 0),
       timestamp: etagSource.timestamp,
     });
 
@@ -838,9 +930,18 @@ export class ConversationHandlers {
     // turn. Drop them from the REST payload so the chat opens as user→agent
     // rather than fake-user→fake-user→agent. Heuristic is Codex-specific text;
     // Claude messages never match.
-    const filtered = conversation.messages.filter(
-      (m) => !(m.role === "user" && typeof m.text === "string" && isCodexInjectedContext(m.text)),
-    );
+    const isServable = (m: { role: string; text?: string }) =>
+      !(m.role === "user" && typeof m.text === "string" && isCodexInjectedContext(m.text));
+
+    // The inherited prefix is filtered SEPARATELY from the conversation's own
+    // messages, not because the result differs — concatenating then filtering
+    // gives the same list — but because the boundary between the two halves is
+    // only knowable after the filter runs. `through_message_index` names a
+    // served index, and injected-context lines are dropped before indices are
+    // assigned, so counting the prefix beforehand puts the divider in the wrong
+    // place by however many lines the filter removed.
+    const inheritedFiltered = inherited ? inherited.messages.filter(isServable) : [];
+    const filtered = [...inheritedFiltered, ...conversation.messages.filter(isServable)];
     const total = filtered.length;
 
     const hasAnchor = url.searchParams.has("anchor_index");
@@ -1081,8 +1182,11 @@ export class ConversationHandlers {
     // the meta (message_count / last_updated_at) must reflect what was actually
     // served — otherwise meta disagrees with the messages array. Prefer the
     // index total and the newest served message's timestamp.
-    const metaMessageCount =
+    const ownMessageCount =
       indexTotal != null && indexTotal > conv.messageCount ? indexTotal : conv.messageCount;
+    // Count the prefix too, or meta says "0 messages" for a fork whose body
+    // carries 21 — and the hub row and the open conversation disagree.
+    const metaMessageCount = ownMessageCount + inheritedFiltered.length;
     const metaLastUpdatedAt =
       indexTotal != null && indexTotal > conv.messageCount
         ? (slice.at(-1)?.timestamp ?? conv.timestamp)
@@ -1102,6 +1206,17 @@ export class ConversationHandlers {
         resumable: isProviderResumable(convProvider, availability.resumable),
         ...(availability.unavailable_reason && {
           unavailable_reason: availability.unavailable_reason,
+        }),
+        // Additive: an older client ignores it and simply sees a longer
+        // conversation, which is still the fix. A newer one draws the seam.
+        ...(inherited && {
+          inherited_history: {
+            source_id: inherited.sourceId,
+            source_provider: CODEX_CLI_PROVIDER,
+            through_message_index: inheritedFiltered.length,
+            forked_at: inherited.forkedAt,
+            unavailable_reason: inherited.unavailableReason,
+          },
         }),
       },
       messages: messagesPayload,
