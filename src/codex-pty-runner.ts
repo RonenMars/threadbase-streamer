@@ -611,6 +611,34 @@ export class CodexPtyRunner implements SessionRunner {
   }
 
   // SIGINT produces a clean exitCode=0 exit (Phase 0 — confirmed).
+  /**
+   * Resize a live PTY. Silent when the session is unknown or has no process:
+   * a terminal emitting SIGWINCH races session exit by nature, and throwing
+   * would turn an ordinary window drag into an error the caller must catch.
+   */
+  resize(sessionId: string, cols: number, rows: number): void {
+    const session = this.sessions.get(sessionId);
+    if (!session?.process) return;
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) return;
+    try {
+      session.process.resize(cols, rows);
+      // The headless render terminal MUST track the PTY (see pty-shared.ts):
+      // getOutputLines reads its grid for replay, and the gate detectors scrape
+      // it. Resizing one without the other desyncs every absolute cursor move
+      // the TUI makes — which would break gate detection, the reason a managed
+      // session exists at all.
+      session.screen.resize(cols, rows);
+    } catch (err) {
+      // node-pty throws if the fd closed between the guard above and here.
+      // The session is going away; a resize for it is moot, not an error.
+      this.log.debug(`[pty.resize.failed] ${sessionId.slice(0, 8)}`, {
+        event: "pty.resize_failed",
+        sessionId,
+        err,
+      });
+    }
+  }
+
   cancel(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);

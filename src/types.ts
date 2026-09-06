@@ -787,6 +787,17 @@ export interface SessionRunner {
   sendInput(sessionId: string, input: string): number;
   sendKeys(sessionId: string, keys: string): void;
   sendRawKeys(sessionId: string, keys: string): void;
+  /**
+   * Resize the session's PTY. A no-op for a session this runner does not own,
+   * so a caller racing a session's exit does not have to guard the call.
+   *
+   * Sessions still SPAWN at the fixed `PTY_COLS`/`PTY_ROWS`: those are the size
+   * every headless consumer (mobile's VirtualTerminal, the replay ring buffer)
+   * assumes, and nothing here changes that default. This exists for an attached
+   * local terminal, which has a real size of its own and is the only caller
+   * that can know it.
+   */
+  resize(sessionId: string, cols: number, rows: number): void;
   cancel(sessionId: string): void;
   killPid(pid: number): void;
   putOnHold(sessionId: string): void;

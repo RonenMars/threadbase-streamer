@@ -3,6 +3,7 @@ import { stdin } from "node:process";
 import { Command } from "commander";
 import {
   loadAutoResumeOnBoot,
+  loadBrowseRoot,
   loadDefaultPermissionMode,
   loadOrCreateApiKey,
   loadPtyGracePeriodMs,
@@ -578,6 +579,30 @@ program
     const apiKey = loadOrCreateApiKey();
     const publicUrl = loadPublicUrl() ?? null;
     await printServerBanner({ port, apiKey, publicUrl, includeQr: true });
+  });
+
+program
+  .command("codex [path]")
+  .description(
+    "Start a streamer-managed Codex session in a directory and attach this terminal to it (server must already be running)",
+  )
+  .option("-p, --port <number>", "Port the server is listening on", "8766")
+  .option("--detached", "Start the session and print its id instead of attaching", false)
+  .action(async (path: string | undefined, opts) => {
+    const { runCodexAttach } = await import("./attach");
+    const { createTerminalIO, connectSocket } = await import("./attach-io");
+    const { resolve } = await import("node:path");
+    const code = await runCodexAttach(
+      {
+        cwd: resolve(process.cwd(), path ?? "."),
+        browseRoot: loadBrowseRoot(),
+        port: Number.parseInt(opts.port, 10),
+        apiKey: loadOrCreateApiKey(),
+        detached: opts.detached,
+      },
+      { fetchFn: fetch, connect: connectSocket, io: createTerminalIO() },
+    );
+    process.exit(code);
   });
 
 program

@@ -151,10 +151,12 @@ describe("isHostEvent", () => {
 
 describe("RemoteSessionRunner — connect", () => {
   it("uses the supervision protocol version rather than accepting a Phase 6c host", () => {
-    // Pinned so a bump is always deliberate. 5 adds raw navigation writes;
+    // Pinned so a bump is always deliberate. 4 adds prompt snapshots and
     // host-owned occurrence ids: a streamer talking to a version-3 host would
-    // silently lose any prompt that opened before reconnect.
-    expect(PTY_HOST_PROTOCOL_VERSION).toBe(5);
+    // silently lose any prompt that opened before reconnect. 5 adds raw
+    // navigation writes, 6 adds `resize` — an older host rejects either as an
+    // unknown verb, caught at the handshake where skew is actually reported.
+    expect(PTY_HOST_PROTOCOL_VERSION).toBe(6);
   });
 
   it("shuts down an incompatible host before subscribing", async () => {

@@ -36,10 +36,11 @@ import type {
  *    needs an event here or the feature silently stops working when the flag
  *    is on. That is why this list is longer than the sketch in the plan.
  *
- * Deliberately absent: `resize`. The plan lists it, but PTY dimensions are the
- * fixed `PTY_COLS`/`PTY_ROWS` constants and `SessionRunner` has no resize
- * method, so the verb would be one nothing could ever send. Add it with the
- * caller that needs it.
+ * `resize` was deliberately absent until there was a caller: sessions spawn at
+ * the fixed `PTY_COLS`/`PTY_ROWS` and every headless consumer assumes that
+ * size. An attached local terminal is the caller that needs it — it has a real
+ * size of its own — so the verb exists now. Sessions still spawn at the
+ * constants; nothing resizes unless something attached asks.
  */
 
 /**
@@ -47,9 +48,10 @@ import type {
  * heartbeat and shutdown controls required for host supervision. Version 3
  * adds the `phase-change` event. Version 4 adds host-owned prompt occurrence
  * ids and current detector snapshots so a reconnect does not lose a prompt
- * that opened before the new streamer subscribed.
+ * that opened before the new streamer subscribed. Version 5 adds `raw_keys`.
+ * Version 6 adds `resize`; an older host rejects either as an unknown verb.
  */
-export const PTY_HOST_PROTOCOL_VERSION = 5;
+export const PTY_HOST_PROTOCOL_VERSION = 6;
 
 export interface HostHeartbeatState {
   registryState: "known" | "unknown";
@@ -74,6 +76,12 @@ export type HostRequest =
   | { id: number; type: "keys"; sessionId: string; keys: string }
   /** Navigation keys that must not change a waiting prompt's session status. */
   | { id: number; type: "raw_keys"; sessionId: string; keys: string }
+  /**
+   * Set a session's PTY dimensions. Answered once applied; the host treats an
+   * unknown session as a no-op rather than an error, because a terminal
+   * emitting SIGWINCH races session exit by nature.
+   */
+  | { id: number; type: "resize"; sessionId: string; cols: number; rows: number }
   /** Begin receiving events. Sent once per connection after status passes the version check. */
   | { id: number; type: "subscribe" }
   /** The rendered screen, newest `maxLines` rows, in true on-screen order. */
