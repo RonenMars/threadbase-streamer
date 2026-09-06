@@ -74,7 +74,10 @@ function makeHandlers(opts: Opts) {
     // nothing, which is exactly the state under test.
     scannerManager: { ready: null, current: undefined, projectsDirs: () => [] },
     scanProfiles: undefined,
-    sessionStore: { getManaged: () => opts.session ?? null },
+    sessionStore: {
+      getManaged: (sid: string) => (opts.session?.id === sid ? opts.session : null),
+      listManaged: () => (opts.session ? [opts.session] : []),
+    },
     ptyManager: { hasSession: () => false },
     cache: () => ({
       getMetaById: () => (opts.metaFilePath ? { filePath: opts.metaFilePath } : null),
@@ -111,6 +114,31 @@ describe("a session with no transcript yet", () => {
     expect(body.meta.message_count).toBe(0);
     expect(body.message_pagination.total).toBe(0);
     // Nothing to self-heal: there is no ghost row, only a session yet to speak.
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("answers 200 when requested by a live Codex session's bound rollout id", async () => {
+    // Mobile always fetches by the bound rollout UUID once Codex binds it
+    // (server.ts:2653's resolveConversationLookupId comment), but the managed
+    // session map is keyed by the placeholder PTY id. `getManaged(id)` alone
+    // misses this session entirely, which is the bug: the fast path fell
+    // through to a 404 for a session that's live and simply hasn't spoken yet.
+    const boundId = "01a077c6-1d5a-7a03-a6b8-40c7817fe8c6";
+    const { handlers, invalidate } = makeHandlers({
+      session: managedSession({ id: "sess-1", boundConversationId: boundId }),
+    });
+    const res = makeRes();
+
+    await handlers.handleGetConversation(
+      boundId,
+      new URL(`http://localhost/api/conversations/${boundId}?msg_limit=80`),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.messages).toEqual([]);
+    expect(body.meta.id).toBe(boundId);
     expect(invalidate).not.toHaveBeenCalled();
   });
 
