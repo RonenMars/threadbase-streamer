@@ -1,3 +1,9 @@
+## [1.82.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.82.0...v1.82.1) (2026-09-06)
+
+### Bug Fixes
+
+* **conversations:** resolve empty-session fast path by bound Codex id ([#802](https://github.com/RonenMars/threadbase-streamer/issues/802)) ([4dbabfc](https://github.com/RonenMars/threadbase-streamer/commit/4dbabfcf1f265d3d446f00c05a673267f0cb53e4))
+
 ## [1.82.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.81.0...v1.82.0) (2026-09-06)
 
 ### Features
