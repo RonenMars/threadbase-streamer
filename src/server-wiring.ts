@@ -21,7 +21,7 @@ import type { ExternalTailManager } from "./external-tails";
 import { handleListProjects } from "./handlers/handleListProjects";
 import type { LiveSessionManager } from "./live-session-manager";
 import { getLogger, type Logger } from "./logger";
-import { REPLAY_MAX_LINES } from "./pty-shared";
+import { PTY_COLS, PTY_ROWS, REPLAY_MAX_LINES } from "./pty-shared";
 import type { ScannerManager } from "./scanner-manager";
 import type { Prompt } from "./schemas/prompt.schema";
 import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
@@ -322,6 +322,7 @@ export function createConversationWatcherEvents(
  * notifiers are bound during listen(), and `log` is swapped by tests.
  */
 export type LiveSessionWiringDeps = {
+  sessionGeometry: Map<string, { cols: number; rows: number }>;
   sessionStore: SessionStore;
   wsHub: WSHub;
   fileWatcher: ConversationWatcher;
@@ -513,6 +514,9 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
           deps.fileWatcher.unwatch(filePath);
           deps.sessionFileMap.delete(session.id);
         }
+        // The next PTY for this conversation spawns at the defaults again, so a
+        // remembered size would be reported for a session that never had it.
+        deps.sessionGeometry.delete(session.id);
         // Unconditional, like the permission clear below: a screen-detected
         // question needs no JSONL mapping to exist, and one left pending here
         // survives the exit as an unanswerable card whose stale
@@ -565,6 +569,7 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
  * server instance after construction.
  */
 export type ApiDepsWiring = {
+  sessionGeometry: Map<string, { cols: number; rows: number }>;
   apiKey: () => string;
   localNoAuth: boolean;
   logMenubarRequests: boolean;
@@ -794,12 +799,22 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             // the client however far back it could scroll.
             const lines = await deps.ptyManager.getOutputLines(msg.sessionId, REPLAY_MAX_LINES);
             const userMessages = deps.ptyManager.getInputHistory(msg.sessionId);
+            // Carried on the replay rather than a separate frame: a client
+            // subscribing to an already-resized session would otherwise decode
+            // the replayed screen at the default size before any later resize
+            // told it better.
+            const geometry = deps.sessionGeometry.get(msg.sessionId) ?? {
+              cols: PTY_COLS,
+              rows: PTY_ROWS,
+            };
             deps.wsHub.unicast(ws, {
               type: "terminal_replay",
               sessionId: msg.sessionId,
               lines,
               userMessages,
               seq: deps.terminalSeq.get(msg.sessionId),
+              cols: geometry.cols,
+              rows: geometry.rows,
             });
           }
           // A gate/question can open before the client finishes subscribing
@@ -861,7 +876,19 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           // Silent on an unknown session and on nonsense dimensions — the
           // runner guards both. A client dragging a window must not have to
           // care whether the session is still alive.
+          if (!deps.ptyManager.hasSession(msg.sessionId)) return;
           deps.ptyManager.resize(msg.sessionId, msg.cols, msg.rows);
+          deps.sessionGeometry.set(msg.sessionId, { cols: msg.cols, rows: msg.rows });
+          // Every other subscriber is decoding this session's stream against a
+          // geometry that just changed. A client that assumes the spawn size —
+          // as every shipped mobile build does — renders absolute cursor moves
+          // against the wrong viewport until it is told otherwise.
+          deps.wsHub.broadcast({
+            type: "terminal_resize",
+            sessionId: msg.sessionId,
+            cols: msg.cols,
+            rows: msg.rows,
+          });
         }
         if (msg.type === "hold_session" && typeof msg.sessionId === "string") {
           // Holding a session SIGINTs the agent and disposes its screen, which

@@ -47,6 +47,7 @@ it("replays the whole render terminal, not just its tail", async () => {
   const sent: string[] = [];
   const ws = { send: (data: string) => sent.push(data) } as unknown as WebSocket;
   const { handleWsMessage } = createApiDeps({
+    sessionGeometry: new Map(),
     wsHub: new WSHub(),
     addSessionSubscriber: vi.fn(),
     removeSessionSubscriber: vi.fn(),

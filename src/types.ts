@@ -369,7 +369,16 @@ export type WSMessage =
       lines: string[];
       userMessages?: UserMessage[];
       seq?: number;
+      // The geometry these lines were rendered at. A TUI addresses rows
+      // absolutely within the viewport, so a client decoding the replay at a
+      // different size resolves those moves to the wrong rows. Additive: absent
+      // means the spawn defaults, which is what an older client assumed anyway.
+      cols?: number;
+      rows?: number;
     }
+  // A live session's PTY was resized. Broadcast so every subscriber re-bases
+  // its decoder; only something attached asks for this, so it is rare.
+  | { type: "terminal_resize"; sessionId: string; cols: number; rows: number }
   | { type: "session_ready"; session: SessionResponse }
   // Multi-agent additive variants. Old clients ignore unknown types.
   | {
