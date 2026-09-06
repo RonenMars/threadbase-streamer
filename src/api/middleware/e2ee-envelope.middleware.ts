@@ -630,9 +630,10 @@ export const e2eeEnvelopeMiddleware = (
       headers["Cache-Control"] = "no-store";
       if (!canCarryBody(status)) {
         // The frozen rule, response side: a record whose framing cannot carry a
-        // body travels base64url in `X-TB-Env`. The only such response in the
-        // tree is the `304` at `conversations.handlers.ts`, and it still owes
-        // the one sealed record its counter was accepted for.
+        // body travels base64url in `X-TB-Env`. Such responses in the tree are
+        // the `304` at `conversations.handlers.ts` and the `204` from
+        // `DELETE /api/push/register`; each still owes the one sealed record its
+        // counter was accepted for.
         headers[HEADER_ENVELOPE] = record.toString("base64url");
         return { status, headers };
       }

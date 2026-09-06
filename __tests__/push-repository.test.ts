@@ -130,6 +130,74 @@ describe("delivery health", () => {
   });
 });
 
+describe("deletion", () => {
+  // Delete rather than revoke: a retained row is still a stored delivery
+  // credential, so "we no longer hold your token" has to mean the row is gone.
+  it("erases a token so nothing about it is retained", () => {
+    repo.register({ token: "tok-1", platform: "ios" });
+
+    expect(repo.deleteToken("tok-1")).toBe(true);
+    expect(repo.get("tok-1")).toBeNull();
+    expect(repo.listHealth()).toHaveLength(0);
+  });
+
+  // The unregister route is idempotent, which it can only be if a second
+  // delete is a non-event rather than an error.
+  it("reports nothing deleted the second time", () => {
+    repo.register({ token: "tok-1", platform: "ios" });
+    repo.deleteToken("tok-1");
+
+    expect(repo.deleteToken("tok-1")).toBe(false);
+  });
+
+  it("erases every token of one device and leaves another device alone", () => {
+    repo.register({ token: "a-1", platform: "ios", deviceId: "dev-a" });
+    repo.register({ token: "a-2", platform: "ios", deviceId: "dev-a" });
+    repo.register({ token: "b-1", platform: "ios", deviceId: "dev-b" });
+
+    expect(repo.deleteForDevice("dev-a")).toBe(2);
+    expect(repo.listHealth().map((t) => t.deviceId)).toEqual(["dev-b"]);
+  });
+
+  // Registrations predating device identity carry no device id. Deleting them
+  // alongside some other device's tokens would retire a phone that was never
+  // revoked.
+  it("leaves unattributed tokens alone when erasing a device", () => {
+    repo.register({ token: "orphan", platform: "ios" });
+    repo.register({ token: "a-1", platform: "ios", deviceId: "dev-a" });
+
+    expect(repo.deleteForDevice("dev-a")).toBe(1);
+    expect(repo.get("orphan")).not.toBeNull();
+  });
+
+  describe("ownership-scoped delete", () => {
+    it("erases the caller's own token", () => {
+      repo.register({ token: "a-1", platform: "ios", deviceId: "dev-a" });
+
+      expect(repo.deleteTokenForDevice("a-1", "dev-a")).toBe(true);
+      expect(repo.get("a-1")).toBeNull();
+    });
+
+    // Otherwise any device holding `notifications` could retire a sibling's
+    // token just by learning its value.
+    it("refuses another device's token", () => {
+      repo.register({ token: "b-1", platform: "ios", deviceId: "dev-b" });
+
+      expect(repo.deleteTokenForDevice("b-1", "dev-a")).toBe(false);
+      expect(repo.get("b-1")).not.toBeNull();
+    });
+
+    // Rows written before register took the device id from the principal have
+    // none. Without this arm a phone could never retire its own old token.
+    it("erases an unattributed token", () => {
+      repo.register({ token: "orphan", platform: "ios" });
+
+      expect(repo.deleteTokenForDevice("orphan", "dev-a")).toBe(true);
+      expect(repo.get("orphan")).toBeNull();
+    });
+  });
+});
+
 describe("event deduplication", () => {
   // The user must never be told twice about one thing.
   it("claims an event id exactly once", () => {

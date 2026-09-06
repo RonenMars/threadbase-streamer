@@ -437,10 +437,26 @@ export const createMiscRoutes = (
       return c.json({ error: "Push registration is unavailable", code: "STORE_UNAVAILABLE" }, 503);
     }
 
+    // The device id comes from the authenticated principal, not from the body.
+    // A client-chosen id is unverified and tb-mobile sent its own install UUID,
+    // which matches no row in `devices` — so every token was attributed to a
+    // device that does not exist and the revoke cascade below would delete
+    // nothing. The body is still honoured for the shared api key, which names no
+    // device of its own. Register upserts by token and the upsert takes the new
+    // device_id whenever it is non-null, so rows written under the old handler
+    // heal on the next registration rather than needing a migration.
+    const principal = c.get("principal");
+    const deviceId =
+      principal?.kind === "device" && principal.deviceId
+        ? principal.deviceId
+        : typeof body?.deviceId === "string"
+          ? body.deviceId
+          : null;
+
     repo.register({
       token,
       platform,
-      deviceId: typeof body?.deviceId === "string" ? body.deviceId : null,
+      deviceId,
       kind,
       activityId: typeof body?.activityId === "string" ? body.activityId : null,
       sessionId: typeof body?.sessionId === "string" ? body.sessionId : null,
@@ -449,6 +465,51 @@ export const createMiscRoutes = (
       startedAt: numberOrNull(body?.startedAt),
     });
     return c.json({ ok: true });
+  });
+
+  /**
+   * Unregister a token.
+   *
+   * Same auth as register — `/api/push` maps to the `notifications` capability
+   * in `requiredCapability()`, which matches on path prefix and so classifies
+   * every method on it. An unauthenticated caller gets 401 and a read-only
+   * device 403, without a rule of its own.
+   *
+   * A device principal may only retire its own tokens (or an unattributed one
+   * left by the old register handler). The shared api key names no device, so it
+   * deletes by token alone — it is the owner's credential, and scoping it would
+   * leave a token nothing could ever remove.
+   *
+   * 204 and idempotent: an unknown token is already the state the caller asked
+   * for. Answering 404 would make a retry after a dropped response look like a
+   * failure and strand the client's local state. `kind` is accepted and ignored
+   * — the token is the primary key, so it names exactly one row whatever kind
+   * the client believes it to be.
+   */
+  app.delete("/api/push/register", async (c) => {
+    // Raw Node request like the sibling routes — Hono's c.req.json() does not
+    // see a body on this server's request plumbing.
+    const body = (await readJsonBody(c.env.incoming).catch(() => null)) as {
+      token?: unknown;
+    } | null;
+    const token = body?.token;
+    if (typeof token !== "string" || token.length === 0) {
+      return c.json({ error: "Missing token" }, 400);
+    }
+
+    const repo = deps.pushRepo();
+    if (!repo) {
+      return c.json({ error: "Push registration is unavailable", code: "STORE_UNAVAILABLE" }, 503);
+    }
+
+    const principal = c.get("principal");
+    // Return values deliberately ignored: deleting nothing is success here.
+    if (principal?.kind === "device" && principal.deviceId) {
+      repo.deleteTokenForDevice(token, principal.deviceId);
+    } else {
+      repo.deleteToken(token);
+    }
+    return c.body(null, 204);
   });
 
   // Delivery health for every registered token. Never echoes a token back — it

@@ -29,9 +29,13 @@ CREATE TABLE IF NOT EXISTS push_tokens (
   -- retried rather than failing forever.
   failure_streak    INTEGER NOT NULL DEFAULT 0,
 
-  -- Set when the provider tells us the token is permanently invalid, or the
-  -- user unregisters. Retained rather than deleted so the health report can
-  -- explain why delivery stopped.
+  -- Set when the provider tells us the token is permanently invalid. Retained
+  -- rather than deleted so the health report can explain why delivery stopped.
+  --
+  -- NOT set by an unregister, and not by revoking the device the token belongs
+  -- to: both DELETE the row. A revoked row is still a stored delivery
+  -- credential, and "we no longer hold your push token" is the claim those two
+  -- paths exist to honour, so there is nothing left to report on afterwards.
   revoked_at        INTEGER
 );
 
