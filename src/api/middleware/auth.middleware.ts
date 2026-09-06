@@ -28,7 +28,21 @@ function isLocalRequest(remoteAddr: string | undefined): boolean {
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
 
-const PUBLIC_PATHS = new Set(["/healthz"]);
+// `/healthz` is open to LOCAL callers only — the menubar poll, the deploy
+// healthcheck and the updater's restart probe all hit
+// `http://127.0.0.1:8766/healthz` with no credential and must keep working.
+// `remoteAddress` cannot separate those from an external probe: behind the
+// Cloudflare tunnel every request arrives from 127.0.0.1 and the streamer reads
+// no forwarded-IP header (see `e2ee.routes.ts` §8). But cloudflared injects
+// `Cf-Connecting-Ip` on every request it proxies, and a genuine loopback caller
+// sets none — so the header's PRESENCE is the "came through the tunnel" signal.
+// A tunneled `/healthz` therefore falls through to the same key/e2ee gate as
+// every other route (encrypted context, Bearer, or `?key=`), while a local one
+// stays open. An external probe cannot strip the header (cloudflared adds it at
+// its own edge), and a local process forging it only denies its own `/healthz`
+// — never a bypass.
+const HEALTHZ_PATH = "/healthz";
+const CF_TUNNEL_HEADER = "cf-connecting-ip";
 // Localhost-only unauthenticated paths (menubar logs viewer).
 const LOCAL_ONLY_PATHS = new Set(["/api/logs", "/api/logs/meta"]);
 // /api/__update uses HMAC signature auth instead of Bearer; skip the
@@ -49,7 +63,11 @@ export const authMiddleware =
     const isPublicPostPath =
       method === "POST" &&
       (PUBLIC_POST_PATHS.has(path) || PUBLIC_POST_PREFIXES.some((p) => path.startsWith(p)));
-    if (PUBLIC_PATHS.has(path) || isPublicPostPath) {
+    // A local `/healthz` (no cloudflared header) is open; a tunneled one falls
+    // through to the gate below, where an e2ee context, a Bearer, or a `?key=`
+    // authenticates it and a bare probe gets 401.
+    const isLocalHealthz = path === HEALTHZ_PATH && c.req.header(CF_TUNNEL_HEADER) === undefined;
+    if (isLocalHealthz || isPublicPostPath) {
       await next();
       return;
     }
