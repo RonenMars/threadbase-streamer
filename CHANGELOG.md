@@ -1,3 +1,9 @@
+## [1.82.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.81.0...v1.82.0) (2026-09-06)
+
+### Features
+
+* **ws:** report a session's PTY geometry to its subscribers ([#799](https://github.com/RonenMars/threadbase-streamer/issues/799)) ([a37d276](https://github.com/RonenMars/threadbase-streamer/commit/a37d27624d4d9bc81bc5b5c3e8cbfd2880e7a732)), closes [#797](https://github.com/RonenMars/threadbase-streamer/issues/797)
+
 ## [1.81.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.80.0...v1.81.0) (2026-09-06)
 
 ### Features
