@@ -54,6 +54,15 @@ export interface AttachOptions {
   apiKey: string;
   /** Skip the terminal attach and just report the started session. */
   detached: boolean;
+  /**
+   * Resize the session's PTY to this terminal. Off by default, and the default
+   * is the load-bearing part: `VIEWPORT_ROWS` is compiled into every mobile
+   * build already on a device, and those builds cannot be force-updated. A
+   * session resized away from the spawn geometry renders as garbage on any
+   * phone watching it — including one that never asked for a local attach.
+   * Opt in when you are driving from the terminal and not watching from a phone.
+   */
+  resize: boolean;
 }
 
 /**
@@ -158,6 +167,7 @@ export async function runCodexAttach(opts: AttachOptions, deps: AttachDeps): Pro
   }
 
   const sendResize = () => {
+    if (!opts.resize) return;
     const size = sizeOrNull(io);
     if (!size) return;
     socket.send(
@@ -230,6 +240,9 @@ export async function runCodexAttach(opts: AttachOptions, deps: AttachDeps): Pro
         });
     });
 
-    io.log(`Attached to Codex session ${sessionId}. Ctrl-] to detach.\r\n`);
+    const geometry = opts.resize
+      ? " This terminal's size is now the session's; a phone watching it will render incorrectly."
+      : "";
+    io.log(`Attached to Codex session ${sessionId}. Ctrl-] to detach.${geometry}\r\n`);
   });
 }

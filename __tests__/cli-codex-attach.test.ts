@@ -87,7 +87,7 @@ function okStart(sessionId = "sess-1") {
   }) as unknown as typeof fetch;
 }
 
-const BASE = { port: 8766, apiKey: "tb_key", detached: false };
+const BASE = { port: 8766, apiKey: "tb_key", detached: false, resize: false };
 
 describe("toBrowseRelativePath", () => {
   it("addresses a nested directory relative to the browse root", () => {
@@ -139,11 +139,47 @@ describe("runCodexAttach", () => {
     expect(JSON.parse(init.body)).toEqual({ path: "app", provider: "codex-cli" });
   });
 
-  it("subscribes and reports this terminal's size before any output", async () => {
+  // The default is load-bearing, not a preference. VIEWPORT_ROWS is compiled
+  // into every mobile build already on a device, and those cannot be
+  // force-updated — so a session resized away from the spawn geometry renders
+  // as garbage on any phone watching it, including one that never asked for a
+  // local attach. Attaching must not do that to a session by default.
+  it("subscribes without resizing the session by default", async () => {
     const s = makeSocket();
     const t = makeIO();
     const run = runCodexAttach(
       { ...BASE, cwd: "/root/app", browseRoot: "/root" },
+      { fetchFn: okStart(), connect: async () => s.socket, io: t.io },
+    );
+    await vi.waitFor(() => expect(t.keysBound()).toBe(true));
+
+    expect(s.sent()).toEqual([{ type: "subscribe_session", sessionId: "sess-1" }]);
+
+    s.hangUp();
+    await run;
+  });
+
+  it("does not resize on a window change either, unless asked", async () => {
+    const s = makeSocket();
+    const t = makeIO();
+    const run = runCodexAttach(
+      { ...BASE, cwd: "/root/app", browseRoot: "/root" },
+      { fetchFn: okStart(), connect: async () => s.socket, io: t.io },
+    );
+    await vi.waitFor(() => expect(t.keysBound()).toBe(true));
+
+    t.resize();
+
+    expect(s.sent().some((m) => m.type === "resize_session")).toBe(false);
+    s.hangUp();
+    await run;
+  });
+
+  it("reports this terminal's size before any output when --resize is given", async () => {
+    const s = makeSocket();
+    const t = makeIO();
+    const run = runCodexAttach(
+      { ...BASE, cwd: "/root/app", browseRoot: "/root", resize: true },
       { fetchFn: okStart(), connect: async () => s.socket, io: t.io },
     );
     await vi.waitFor(() => expect(t.keysBound()).toBe(true));
@@ -157,12 +193,27 @@ describe("runCodexAttach", () => {
     await run;
   });
 
+  it("warns that a watching phone will render incorrectly when --resize is given", async () => {
+    const s = makeSocket();
+    const t = makeIO();
+    const run = runCodexAttach(
+      { ...BASE, cwd: "/root/app", browseRoot: "/root", resize: true },
+      { fetchFn: okStart(), connect: async () => s.socket, io: t.io },
+    );
+    await vi.waitFor(() => expect(t.keysBound()).toBe(true));
+
+    expect(t.logs.join("\n")).toContain("phone");
+
+    s.hangUp();
+    await run;
+  });
+
   it("reports a new size when the terminal is resized", async () => {
     let cols = 100;
     const s = makeSocket();
     const t = makeIO({ size: () => ({ cols, rows: 30 }) });
     const run = runCodexAttach(
-      { ...BASE, cwd: "/root/app", browseRoot: "/root" },
+      { ...BASE, cwd: "/root/app", browseRoot: "/root", resize: true },
       { fetchFn: okStart(), connect: async () => s.socket, io: t.io },
     );
     await vi.waitFor(() => expect(t.keysBound()).toBe(true));
@@ -186,7 +237,7 @@ describe("runCodexAttach", () => {
     const s = makeSocket();
     const t = makeIO({ size: () => null });
     const run = runCodexAttach(
-      { ...BASE, cwd: "/root/app", browseRoot: "/root" },
+      { ...BASE, cwd: "/root/app", browseRoot: "/root", resize: true },
       { fetchFn: okStart(), connect: async () => s.socket, io: t.io },
     );
     await vi.waitFor(() => expect(t.keysBound()).toBe(true));
