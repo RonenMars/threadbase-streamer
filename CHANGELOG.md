@@ -1,3 +1,9 @@
+## [1.83.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.82.1...v1.83.0) (2026-09-06)
+
+### Features
+
+* **push:** delete push tokens on unregister and device revoke ([#805](https://github.com/RonenMars/threadbase-streamer/issues/805)) ([36b1a69](https://github.com/RonenMars/threadbase-streamer/commit/36b1a697c59c0f9706cc2f6338617a675f41a371))
+
 ## [1.82.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.82.0...v1.82.1) (2026-09-06)
 
 ### Bug Fixes
