@@ -1,3 +1,9 @@
+## [1.84.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.83.0...v1.84.0) (2026-09-06)
+
+### Features
+
+* **conversations:** serve the history a forked session inherits ([#807](https://github.com/RonenMars/threadbase-streamer/issues/807)) ([9d54162](https://github.com/RonenMars/threadbase-streamer/commit/9d541626ee2af03216b34ec77233abe4bcb44b58)), closes [RonenMars/threadbase-scanner#81](https://github.com/RonenMars/threadbase-scanner/issues/81) [#806](https://github.com/RonenMars/threadbase-streamer/issues/806)
+
 ## [1.83.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.82.1...v1.83.0) (2026-09-06)
 
 ### Features
