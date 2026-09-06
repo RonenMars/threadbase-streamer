@@ -99,6 +99,8 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 
 The streamer is exposed publicly through a Cloudflare named tunnel → `http://127.0.0.1:8766`, behind Cloudflare Access: **every external request needs `Authorization: Bearer <api_key>`, even `/healthz`** (localhost healthchecks are unaffected). Deployment-specific config (`config-system.yml`, service restart) and general tunnel setup: [docs/guides/remote-access/cloudflare.md](docs/guides/remote-access/cloudflare.md).
 
+`/healthz` is also gated **in the app**, not only at the Access edge — necessary because e2ee pairing needs Access off/bypassed on the device hostname, which otherwise leaves `/healthz` open to any unauthenticated probe. Every tunneled request reaches the streamer from `127.0.0.1` with no forwarded IP, so `remoteAddress` cannot separate a tunneled probe from a genuine local healthcheck; `authMiddleware` keys the local carve-out on the `Cf-Connecting-Ip` header cloudflared injects instead. Absent ⇒ a real loopback caller (menubar poll, deploy/updater healthcheck) and stays open; present ⇒ came through the tunnel and must pass the normal key/e2ee gate. The menubar and both healthcheck paths hit `127.0.0.1` directly, carry no such header, and are unaffected.
+
 ## This repository is public — never commit a real identifier
 
 `RonenMars/threadbase-streamer` is a **public** repository. Documentation, skills, tests and fixtures must never carry a real deployment identifier.
