@@ -143,6 +143,47 @@ semantic-release runs on `main` (stable) and `next` (prerelease) per
 (`@semantic-release/changelog` overwrites `CHANGELOG.md` on first run —
 the stub in this repo is a placeholder.)
 
+### The preset pin, and why it cannot move yet
+
+That `feat:` → minor mapping comes from `conventional-changelog-conventionalcommits`,
+which `npm ls` reports with **no dependents**. It looks removable. It is not.
+
+`@semantic-release/commit-analyzer` builds the preset package name from the
+`preset` string in `.releaserc.json` and imports it *dynamically*, without
+declaring it as a dependency (`lib/load-parser-config.js`):
+
+```js
+const presetPackage = `conventional-changelog-${preset.toLowerCase()}`;
+```
+
+Resolution lands on the single top-level copy this repo pins, so that pin is
+what every commit is classified with. It is pinned exactly rather than
+caret-ranged for the same reason.
+
+**It is held at 9.x deliberately.** Preset v10 requires
+`conventional-changelog-writer@9` or newer, and both semantic-release plugins
+still declare `^8.0.0` at their latest versions (`release-notes-generator@14.1.1`,
+`commit-analyzer@13.0.1`) — so writer 8 is what gets installed. v10 detects the
+mismatch and refuses to render:
+
+```
+Missing helper: "conventional-changelog-conventionalcommits requires
+conventional-changelog-writer@9 or newer … Update the tooling or use an older
+major version of the preset."
+```
+
+Revisit when those plugins ship on writer 9. Forcing it with an npm `override`
+puts a writer the plugins do not support underneath them, which is the silent
+kind of breakage this pipeline has already produced twice.
+
+**Two halves, and the writer half is the one that breaks.** Verifying a preset
+bump by checking that commits still classify correctly exercises only
+`commit-analyzer`; rendering is a separate plugin with a separate dependency,
+and the 9 → 10 break lives entirely on that side. `__tests__/release-notes.test.ts`
+drives `generateNotes` with the real `.releaserc.json` config and is what
+catches it — a preset bump that passes commit analysis and still cannot render
+turns that test red rather than shipping a release with empty notes.
+
 The `next` branch does not exist by default. Create it
 (`git switch -c next && git push -u origin next`) only when you want
 canarying — servers with `channel: next` in `update.yaml` will consume
