@@ -353,7 +353,7 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
   return {
     id: conversationId,
     conversationId,
-    provider: CLAUDE_CODE_PROVIDER,
+    provider: d.provider,
     // Stays "idle" deliberately: we cannot see this process's prompt state, and
     // reporting `running` would route mobile to the destructive Overtake screen.
     // Liveness travels in the additive fields below instead.

@@ -2158,8 +2158,16 @@ export class SessionHandlers {
       return;
     }
 
-    // Start a new managed session, resuming the conversation
+    // Start a new managed session, resuming the conversation.
+    //
+    // The provider has to be carried: `LiveSessionManager.start` defaults to
+    // Claude when it is absent, so adopting a Codex session used to respawn it
+    // as Claude against a Codex rollout id. No `resumeId` — a discovered Codex
+    // process states its rollout id in argv (`codex resume <uuid>`), so the
+    // conversation id already IS the provider-side id, which is the case that
+    // field exists to cover.
     const session = await this.ptyManager.start(convId, {
+      provider: discSession.provider,
       projectPath,
       projectName,
       branch,
