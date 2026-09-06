@@ -1,3 +1,9 @@
+## [1.80.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.79.0...v1.80.0) (2026-09-06)
+
+### Features
+
+* **auth:** gate /healthz for tunneled callers ([#796](https://github.com/RonenMars/threadbase-streamer/issues/796)) ([df01de8](https://github.com/RonenMars/threadbase-streamer/commit/df01de83a6aa76443012d0467acda9b0cc103f61))
+
 ## [1.79.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.78.0...v1.79.0) (2026-09-06)
 
 ### Features
