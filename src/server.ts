@@ -306,6 +306,13 @@ export class StreamerServer {
   // handed to the immediately-following onNewLines so it can stamp WS `seq` on
   // the matching conversation_events entries. Same read → same lines order.
   private pendingLineSeqs = new Map<string, (number | null)[]>();
+  /**
+   * A session's PTY size, recorded only when something resizes it away from the
+   * spawn defaults. Absent means "still PTY_COLS x PTY_ROWS", which is why this
+   * is a sparse map rather than a field on every session: resize is opt-in and
+   * rare, and the default is what every reader already assumes.
+   */
+  private sessionGeometry = new Map<string, { cols: number; rows: number }>();
   // `origin` records whether the pending question came from the live PTY-screen
   // path (handleLiveQuestion) or a JSONL flush. A JSONL-derived question must
   // never clobber a PTY-originated one for a DIFFERENT question — an external
@@ -673,6 +680,7 @@ export class StreamerServer {
 
     this.ptyManager = new LiveSessionManager(
       createLiveSessionOptions({
+        sessionGeometry: this.sessionGeometry,
         sessionStore: this.sessionStore,
         wsHub: this.wsHub,
         fileWatcher: this.fileWatcher,
@@ -838,6 +846,7 @@ export class StreamerServer {
     });
 
     const apiDeps = createApiDeps({
+      sessionGeometry: this.sessionGeometry,
       // Values where the literal captured values: publicUrl/browseRoot are the
       // construction-time reads they always were (realpath resolves later and
       // deliberately does not update these).

@@ -18,6 +18,12 @@ import { WSHub } from "../src/ws-hub";
  * pre-refactor tree (76d6d420) and pasting the result. The test passing after
  * the refactor IS the before/after comparison.
  *
+ * Updated once since: `terminal_replay` gained `cols`/`rows`. That is an
+ * intentional wire addition rather than refactor drift — a client decoding the
+ * replayed screen has to know the geometry it was rendered at — so the golden
+ * moved with it. The values are the spawn defaults, which is what a session
+ * nothing resized reports.
+ *
  * This is a wire-contract test, not a snapshot of convenience: a deliberate
  * change to any of these six frames is supposed to fail here and be updated
  * with the change that caused it.
@@ -42,7 +48,7 @@ const EXPECTED_FRAMES = [
   '{"type":"session_list","sessions":[{"id":"fixed-session","status":"running"}]}',
   '{"type":"cache_ready"}',
   '{"type":"prompt_snapshot","schemaVersion":1,"sessionId":"uuid-wire-identity","sequence":0,"prompts":[]}',
-  '{"type":"terminal_replay","sessionId":"uuid-wire-identity","lines":["alpha","beta"],"userMessages":[]}',
+  '{"type":"terminal_replay","sessionId":"uuid-wire-identity","lines":["alpha","beta"],"userMessages":[],"cols":120,"rows":40}',
   '{"type":"permission","sessionId":"uuid-wire-identity","prompt":"Allow write?","detail":"src/a.ts","options":[{"label":"Yes","value":"1"}],"cursor":0,"contentKey":"Allow write?::src/a.ts::undefined.Yes::","gateId":"gate-fixed-1"}',
   '{"type":"question","sessionId":"uuid-wire-identity","toolUseId":"tool-fixed-1","questions":[{"question":"Which?","header":"H","options":[]}]}',
 ];
@@ -73,6 +79,7 @@ async function captureOpenAndSubscribe(): Promise<string[]> {
 
   const hub = new WSHub();
   const deps = createApiDeps({
+    sessionGeometry: new Map(),
     wsHub: hub,
     withReconciledLifecycle: (s: unknown) => s,
     sessionStore: { list: () => [{ id: "fixed-session", status: "running" }] },
