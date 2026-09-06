@@ -82,6 +82,7 @@ describe("requiredCapability", () => {
     ["/api/browse?path=/x", "GET", "fs:browse"],
     ["/api/upload", "POST", "fs:upload"],
     ["/api/push/register", "POST", "notifications"],
+    ["/api/push/register", "DELETE", "notifications"],
     ["/api/devices", "GET", "admin"],
     ["/api/config/claude-flags", "PUT", "admin"],
   ])("maps %s %s to %s", (path, method, expected) => {

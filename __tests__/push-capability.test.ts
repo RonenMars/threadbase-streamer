@@ -129,6 +129,71 @@ describe("push capability over HTTP", () => {
     });
   });
 
+  /**
+   * Unregister (`DELETE /api/push/register`).
+   *
+   * A client could register a token and never take it back: the only way a row
+   * left the table was a provider rejection, so uninstalling the app or turning
+   * notifications off left the server holding a live delivery credential.
+   */
+  describe("unregistering a token", () => {
+    beforeEach(async () => {
+      await boot();
+    });
+
+    const register = (token: string) =>
+      fetch(`${baseUrl}/api/push/register`, {
+        method: "POST",
+        headers: { ...AUTH, "Content-Type": "application/json" },
+        body: JSON.stringify({ token, platform: "ios" }),
+      });
+
+    const unregister = (body: unknown, headers: Record<string, string> = AUTH) =>
+      fetch(`${baseUrl}/api/push/register`, {
+        method: "DELETE",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const health = async () =>
+      (await (await fetch(`${baseUrl}/api/push/health`, { headers: AUTH })).json()).tokens;
+
+    it("erases the token rather than marking it revoked", async () => {
+      await register("tok-live");
+      expect(await health()).toHaveLength(1);
+
+      const res = await unregister({ token: "tok-live" });
+
+      expect(res.status).toBe(204);
+      expect(await health()).toHaveLength(0);
+    });
+
+    // A retry after a dropped response must not look like a failure, or the
+    // client is stranded holding local state it cannot clear.
+    it("answers 204 for a token it never held", async () => {
+      const res = await unregister({ token: "never-registered" });
+      expect(res.status).toBe(204);
+    });
+
+    // `kind` is accepted and ignored: the token is the primary key, so it names
+    // one row whatever kind the client believes it to be.
+    it("ignores a kind field", async () => {
+      await register("tok-live");
+      const res = await unregister({ token: "tok-live", kind: "liveactivity_start" });
+
+      expect(res.status).toBe(204);
+      expect(await health()).toHaveLength(0);
+    });
+
+    it("rejects a request with no token", async () => {
+      expect((await unregister({})).status).toBe(400);
+    });
+
+    it("refuses an unauthenticated caller", async () => {
+      expect((await unregister({ token: "tok-live" }, {})).status).toBe(401);
+    });
+  });
+
   describe("with APNs credentials", () => {
     const saved = { ...process.env };
     beforeEach(async () => {

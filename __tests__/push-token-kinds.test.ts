@@ -66,6 +66,29 @@ describe("kind isolation", () => {
     expect(repo.listDeliverable().map((t) => t.token)).toEqual(["expo-tok"]);
   });
 
+  // The failure mode: deleting only the Expo row on a device revoke and leaving
+  // a live ActivityKit token behind, still able to start and update activities.
+  it("erases every kind a device registered", () => {
+    repo.register({ token: "expo-tok", platform: "ios", kind: "expo", deviceId: "dev-a" });
+    repo.register({
+      token: "start-tok",
+      platform: "ios",
+      kind: "liveactivity_start",
+      deviceId: "dev-a",
+    });
+    repo.register({
+      token: "update-tok",
+      platform: "ios",
+      kind: "liveactivity_update",
+      activityId: "act-1",
+      sessionId: "sess-1",
+      deviceId: "dev-a",
+    });
+
+    expect(repo.deleteForDevice("dev-a")).toBe(3);
+    expect(repo.listHealth()).toHaveLength(0);
+  });
+
   it("looks per-activity tokens up by session", () => {
     repo.register({
       token: "update-a",

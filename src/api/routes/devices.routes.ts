@@ -18,7 +18,7 @@ const log = getLogger("e2ee");
  * has no reason to hand back a credential, and this endpoint is exactly where
  * an accidental echo would be most damaging.
  */
-export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub">) => {
+export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub" | "pushRepo">) => {
   const app = new Hono<AppEnv>();
 
   /**
@@ -40,6 +40,28 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub">)
         sockets,
         rest: destroyed.restCtxIds.length,
         tickets: destroyed.tickets,
+      });
+    }
+  };
+
+  /**
+   * Revoking or erasing a device deletes its push tokens.
+   *
+   * Cross-database: devices are in runtime.db and push_tokens in cache.db, so
+   * there is no foreign key to lean on and this is the only place the two are
+   * joined. Delete rather than revoke, for the same reason the record itself
+   * goes — a retained row is still a stored delivery credential.
+   *
+   * Silent when the cache is unavailable: a device revoke must never fail
+   * because the conversation cache did not open.
+   */
+  const dropPushTokens = (deviceId: string): void => {
+    const deleted = deps.pushRepo?.()?.deleteForDevice(deviceId) ?? 0;
+    if (deleted) {
+      log.info("[push] revocation deleted a device's push tokens", {
+        event: "push.device_tokens_deleted",
+        deviceId,
+        deleted,
       });
     }
   };
@@ -67,11 +89,13 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub">)
     // client retrying after a dropped response does not see a spurious failure.
     if (existing.revoked_at != null) {
       cutLiveContexts(id);
+      dropPushTokens(id);
       return c.json({ ok: true, alreadyRevoked: true });
     }
 
     repo.revoke(id);
     cutLiveContexts(id);
+    dropPushTokens(id);
     return c.json({ ok: true, alreadyRevoked: false });
   });
 
@@ -100,6 +124,7 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub">)
     // the same answer rather than a spurious 404.
     if (!existing) {
       cutLiveContexts(id);
+      dropPushTokens(id);
       return c.json({ ok: true, alreadyDeleted: true });
     }
 
@@ -120,6 +145,7 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub">)
     // while its sealed socket carries on with keys the store can no longer
     // name. Erasing a device is at least as strong as revoking it.
     cutLiveContexts(id);
+    dropPushTokens(id);
     return c.json({ ok: true, alreadyDeleted: false });
   });
 
@@ -134,7 +160,10 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub">)
       .filter((device) => device.revokedAt != null)
       .map((device) => device.deviceId);
     const deleted = repo.deleteRevoked();
-    for (const deviceId of revokedIds) cutLiveContexts(deviceId);
+    for (const deviceId of revokedIds) {
+      cutLiveContexts(deviceId);
+      dropPushTokens(deviceId);
+    }
     return c.json({ ok: true, deleted });
   });
 

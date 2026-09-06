@@ -471,6 +471,35 @@ program
   );
 
 /**
+ * Erase the push tokens belonging to devices, from the shell.
+ *
+ * Push tokens live in cache.db while devices live in runtime.db, so the cascade
+ * the HTTP routes do in application code has to be repeated here — these
+ * commands deliberately bypass the server. Opened only when the file already
+ * exists: creating and migrating a cache.db as a side effect of revoking a
+ * device would be a surprise, and a machine with no cache has no tokens to
+ * erase either.
+ */
+async function dropPushTokensForDevices(cacheDir: string, deviceIds: string[]): Promise<number> {
+  const { existsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const dbPath = join(cacheDir, "cache.db");
+  if (deviceIds.length === 0 || !existsSync(dbPath)) return 0;
+
+  const { ConversationCache } = await import("../src/conversation-cache");
+  const { PushRepository } = await import("../src/db/repositories/push.repository");
+  const cache = ConversationCache.open(dbPath);
+  try {
+    const repo = new PushRepository(cache.getDatabase());
+    let deleted = 0;
+    for (const deviceId of deviceIds) deleted += repo.deleteForDevice(deviceId);
+    return deleted;
+  } finally {
+    cache.close();
+  }
+}
+
+/**
  * Paired-device management from the shell.
  *
  * Talks to runtime.db directly rather than to the HTTP API, so it works with
@@ -512,12 +541,23 @@ program
       .argument("<deviceId>")
       .description("Refuse this device's token, keeping its record for the audit trail")
       .option("--db <path>", "runtime.db path (default: ~/.threadbase/runtime.db)")
+      .option(
+        "--cache-dir <path>",
+        "Cache directory holding push tokens (default: ~/.threadbase/cache)",
+        `${process.env.HOME}/.threadbase/cache`,
+      )
       .action(async (deviceId: string, opts) => {
         const { RuntimeStore, resolveRuntimeDbPath } = await import("../src/db/runtime-store");
         const { DevicesRepository } = await import("../src/db/repositories/devices.repository");
         const store = RuntimeStore.open(resolveRuntimeDbPath(opts.db));
         const ok = new DevicesRepository(store.getDatabase()).revoke(deviceId);
         store.close();
+        if (ok) {
+          const dropped = await dropPushTokensForDevices(opts.cacheDir, [deviceId]);
+          if (dropped) {
+            log.info(`Deleted ${dropped} push token(s).`, undefined, "console");
+          }
+        }
         log.info(ok ? `Revoked ${deviceId}.` : `No such device: ${deviceId}`, undefined, "console");
         if (!ok) process.exitCode = 1;
       }),
@@ -529,6 +569,11 @@ program
       .option("--revoked", "Erase all revoked devices rather than one by id")
       .option("--force", "Erase an ACTIVE device (revoking first is the safe order)")
       .option("--db <path>", "runtime.db path (default: ~/.threadbase/runtime.db)")
+      .option(
+        "--cache-dir <path>",
+        "Cache directory holding push tokens (default: ~/.threadbase/cache)",
+        `${process.env.HOME}/.threadbase/cache`,
+      )
       .action(async (deviceId: string | undefined, opts) => {
         const { RuntimeStore, resolveRuntimeDbPath } = await import("../src/db/runtime-store");
         const { DevicesRepository } = await import("../src/db/repositories/devices.repository");
@@ -536,8 +581,16 @@ program
         const repo = new DevicesRepository(store.getDatabase());
 
         if (opts.revoked) {
+          // Collect the ids BEFORE the delete: afterwards there is no row left
+          // to name, and the push tokens would outlive the device silently.
+          const revokedIds = repo
+            .list()
+            .filter((device) => device.revokedAt != null)
+            .map((device) => device.deviceId);
           const n = repo.deleteRevoked();
           store.close();
+          const dropped = await dropPushTokensForDevices(opts.cacheDir, revokedIds);
+          if (dropped) log.info(`Deleted ${dropped} push token(s).`, undefined, "console");
           log.info(`Erased ${n} revoked device record(s).`, undefined, "console");
           return;
         }
@@ -566,6 +619,8 @@ program
         }
         repo.delete(deviceId);
         store.close();
+        const dropped = await dropPushTokensForDevices(opts.cacheDir, [deviceId]);
+        if (dropped) log.info(`Deleted ${dropped} push token(s).`, undefined, "console");
         log.info(`Erased ${deviceId}.`, undefined, "console");
       }),
   );

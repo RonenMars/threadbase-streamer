@@ -134,6 +134,9 @@ export class PushRepository {
   private successStmt: Database.Statement;
   private failureStmt: Database.Statement;
   private revokeStmt: Database.Statement;
+  private deleteByTokenStmt: Database.Statement;
+  private deleteTokenForDeviceStmt: Database.Statement;
+  private deleteByDeviceStmt: Database.Statement;
   private claimEventStmt: Database.Statement;
   private markDeliveredStmt: Database.Statement;
   private listByKindSessionStmt: Database.Statement;
@@ -202,6 +205,15 @@ export class PushRepository {
        WHERE token = @token
     `);
     this.revokeStmt = db.prepare("UPDATE push_tokens SET revoked_at = ? WHERE token = ?");
+    this.deleteByTokenStmt = db.prepare("DELETE FROM push_tokens WHERE token = ?");
+    // Ownership-scoped unregister. `device_id IS NULL` is not a widening:
+    // registrations written before the id was taken from the authenticated
+    // principal carry no device, and without this arm a phone could never
+    // retire the token it registered under the old handler.
+    this.deleteTokenForDeviceStmt = db.prepare(
+      "DELETE FROM push_tokens WHERE token = @token AND (device_id = @device_id OR device_id IS NULL)",
+    );
+    this.deleteByDeviceStmt = db.prepare("DELETE FROM push_tokens WHERE device_id = ?");
 
     // Live Activity sends are driven by a session status change, so they select
     // by (kind, session) rather than scanning every token. Expired rows are
@@ -379,6 +391,39 @@ export class PushRepository {
 
   revoke(token: string, now: number = Date.now()): boolean {
     return this.revokeStmt.run(now, token).changes > 0;
+  }
+
+  /**
+   * Erase one token.
+   *
+   * Delete, not revoke: a retained row is still a stored delivery credential,
+   * and a client unregistering is asking for the credential to be gone, not for
+   * it to be marked dead and kept for the health report.
+   */
+  deleteToken(token: string): boolean {
+    return this.deleteByTokenStmt.run(token).changes > 0;
+  }
+
+  /**
+   * Erase one token, but only if it belongs to this device (or to no device).
+   *
+   * What keeps a `notifications`-holding device from retiring another device's
+   * token: the token value is the only thing the route is given, so without the
+   * ownership term any caller that learns a token can delete it.
+   */
+  deleteTokenForDevice(token: string, deviceId: string): boolean {
+    return this.deleteTokenForDeviceStmt.run({ token, device_id: deviceId }).changes > 0;
+  }
+
+  /**
+   * Erase every token attributed to a device.
+   *
+   * Cross-database by necessity — devices live in runtime.db and tokens in
+   * cache.db — so this is called from the device routes and the CLI, never
+   * joined in SQL.
+   */
+  deleteForDevice(deviceId: string): number {
+    return this.deleteByDeviceStmt.run(deviceId).changes;
   }
 
   /**
