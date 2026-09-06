@@ -22,6 +22,7 @@ function makeManagedSession(overrides: Partial<ManagedSession> = {}): ManagedSes
 function makeDiscoveredProcess(overrides: Partial<DiscoveredProcess> = {}): DiscoveredProcess {
   return {
     pid: 12345,
+    provider: "claude-code",
     projectPath: "/tmp/discovered",
     projectName: "discovered",
     branch: "feature",
@@ -108,6 +109,15 @@ describe("SessionStore", () => {
       expect(resp?.ptyAttached).toBe(false);
       expect(resp?.pid).toBe(12345);
       expect(resp?.status).toBe("idle");
+    });
+
+    // The response used to hardcode claude-code, so a discovered Codex session
+    // was reported as Claude — and adopting it respawned it as Claude against a
+    // Codex rollout id.
+    it("reports a discovered Codex session as Codex", () => {
+      store.setDiscovered([makeDiscoveredProcess({ provider: "codex-cli" })]);
+
+      expect(store.get(UUID_B, noPty)?.provider).toBe("codex-cli");
     });
 
     it("skips discovered processes with null conversationId", () => {

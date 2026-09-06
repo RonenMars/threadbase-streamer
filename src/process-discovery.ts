@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { platform } from "os";
 import { basename, dirname } from "path";
 import { isWindows } from "./platform";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
 import type { DiscoveredProcess } from "./types";
 
 export async function discoverClaudeProcesses(): Promise<DiscoveredProcess[]> {
@@ -75,6 +76,101 @@ export function looksLikeClaudeProcess(commandLine: string): boolean {
   return false;
 }
 
+/**
+ * Codex subcommands that are never an interactive session.
+ *
+ * A deny-list, arrived at the hard way. The obvious allow-list — "the
+ * subcommand must be `resume` or absent" — cannot be written correctly, because
+ * finding "the subcommand" means knowing which flags take a value: `codex --cd
+ * /srv/app` would read the path as the subcommand and reject a real session,
+ * and there is no reliable enumeration of Codex's value-taking flags to fix
+ * that with.
+ *
+ * Over-accepting is the risk a deny-list carries, and here it is bounded. A
+ * process only becomes adoptable if it also states a rollout id, which is what
+ * `codex resume <uuid>` does and what no non-interactive subcommand does — so a
+ * future non-interactive verb missing from this list is discovered but never
+ * reaches adopt, because SessionStore drops a discovered process that names no
+ * conversation.
+ */
+const CODEX_NON_INTERACTIVE_SUBCOMMANDS = new Set([
+  "app-server",
+  "exec",
+  "mcp",
+  "proto",
+  "login",
+  "logout",
+  "completion",
+]);
+
+/**
+ * Whether a command line is an interactive Codex CLI session.
+ *
+ * Far more selective than the Claude matcher has to be, because "codex" is a
+ * crowded name on a machine that has the ChatGPT desktop app: its Electron
+ * framework is literally `Codex Framework.framework`, its helpers are
+ * `Codex (Renderer)` and `Codex (Service)`, and `~/.codex/` holds a Chrome
+ * extension host and a computer-use service. Measured on one developer machine,
+ * 21 processes matched the word "codex" and only 3 were sessions.
+ *
+ * Two discriminators do the work:
+ *
+ *  - The executable's base name must be exactly `codex`, which drops every
+ *    Electron helper and the `codex-code-mode-host` sidecar (which does have a
+ *    TTY, so liveness alone would not have separated it).
+ *  - No token may be a non-interactive subcommand. This is the load-bearing
+ *    one: the ChatGPT app's `/Applications/ChatGPT.app/Contents/Resources/codex`
+ *    and the VS Code extension's bundled binary are both named exactly `codex`,
+ *    and only `app-server` distinguishes them from a session someone is typing
+ *    at. Scanning every token rather than locating the subcommand means a
+ *    value that happens to equal one of these names costs a missed session,
+ *    never a wrongly claimed one.
+ */
+export function looksLikeCodexProcess(commandLine: string): boolean {
+  const tokens = tokenizeCommandLine(commandLine);
+  if (tokens.length === 0) return false;
+
+  const exe = exeBaseName(tokens[0]).toLowerCase();
+  if (exe !== "codex" && exe !== "codex.exe") return false;
+
+  // A macOS bundle path contains spaces, so tokenizing splits it mid-path and
+  // the first token can END at a directory called "Codex" — which is exactly
+  // what `.../Frameworks/Codex Framework.framework/.../Codex (Renderer)` and
+  // `~/.codex/computer-use/Codex Computer Use.app/...` do. Their base name then
+  // reads as `codex` and the executable check alone lets them through. No real
+  // CLI invocation has a bundle marker anywhere in it.
+  if (tokens.some((token) => /\.(?:app|framework)[\\/]/i.test(token))) return false;
+
+  for (const token of tokens.slice(1)) {
+    if (CODEX_NON_INTERACTIVE_SUBCOMMANDS.has(token.toLowerCase())) return false;
+  }
+  return true;
+}
+
+/** Which agent a command line is, or null when it is neither. */
+export function providerForCommandLine(commandLine: string): ProviderName | null {
+  if (looksLikeClaudeProcess(commandLine)) return CLAUDE_CODE_PROVIDER;
+  if (looksLikeCodexProcess(commandLine)) return CODEX_CLI_PROVIDER;
+  return null;
+}
+
+// Codex resumes by positional rollout id (`codex resume <uuid>`), not by the
+// `--resume <id>` flag Claude uses, so the Claude extractor cannot see it.
+// Anchored on a UUID shape rather than "the token after resume": `codex resume
+// --last` picks the most recent session and carries no id at all, and adopting
+// a session under the id "--last" would name a conversation that does not exist.
+const CODEX_ROLLOUT_ID =
+  /\bresume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i;
+
+export function extractCodexResumeId(args: string): string | null {
+  return args.match(CODEX_ROLLOUT_ID)?.[1] ?? null;
+}
+
+/** The conversation id a discovered process is working on, if it states one. */
+export function extractConversationId(args: string, provider: ProviderName): string | null {
+  return provider === CODEX_CLI_PROVIDER ? extractCodexResumeId(args) : extractResumeId(args);
+}
+
 async function discoverUnix(): Promise<DiscoveredProcess[]> {
   const pids = await getPidsUnix();
 
@@ -86,14 +182,19 @@ async function discoverUnix(): Promise<DiscoveredProcess[]> {
           getProcessArgsUnix(pid),
           getProcessStartTimeUnix(pid),
         ]);
-        const conversationId = extractResumeId(args);
+        // Re-derived here rather than carried from the sweep: the pgrep
+        // fallback matches on name alone, so this is the only point at which
+        // `codex app-server` can be told apart from a session.
+        const provider = providerForCommandLine(args);
+        if (provider === null) return null;
 
         return {
           pid,
+          provider,
           projectPath: cwd,
           projectName: basename(cwd),
           branch: await readGitBranch(cwd),
-          conversationId,
+          conversationId: extractConversationId(args, provider),
           startedAt,
         } satisfies DiscoveredProcess;
       } catch {
@@ -121,12 +222,16 @@ async function discoverWindows(): Promise<DiscoveredProcess[]> {
         const info = await getProcessInfoWindows(pid);
         if (!info) return null;
 
+        const provider = providerForCommandLine(info.args);
+        if (provider === null) return null;
+
         return {
           pid,
+          provider,
           projectPath: info.cwd,
           projectName: basename(info.cwd),
           branch: await readGitBranch(info.cwd),
-          conversationId: extractResumeId(info.args),
+          conversationId: extractConversationId(info.args, provider),
           startedAt: info.startedAt,
         } satisfies DiscoveredProcess;
       } catch {
@@ -158,7 +263,7 @@ function run(
   });
 }
 
-// Parse `ps -eo pid=,args=` output into pids whose command line is a Claude CLI.
+// Parse `ps -eo pid=,args=` output into pids whose command line is an agent CLI.
 // Exported for tests — this is where shim installs (running as `node`) are
 // recovered, which a name-only `pgrep -x claude` can never see.
 export function parsePsOutput(stdout: string): number[] {
@@ -170,7 +275,7 @@ export function parsePsOutput(stdout: string): number[] {
     if (!match) continue;
     const pid = Number.parseInt(match[1], 10);
     if (!(pid > 0)) continue;
-    if (looksLikeClaudeProcess(match[2])) pids.push(pid);
+    if (providerForCommandLine(match[2]) !== null) pids.push(pid);
   }
   return pids;
 }
@@ -184,16 +289,23 @@ async function getPidsUnix(): Promise<number[]> {
   } catch {
     // fall through
   }
-  try {
-    const output = await run("pgrep", ["-x", "claude"]);
-    return output
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((s) => Number.parseInt(s, 10));
-  } catch {
-    return [];
+  // Name-only fallback, one sweep per agent. It cannot see shim installs (those
+  // run as `node`) and cannot tell an interactive `codex` from the ChatGPT
+  // app's `codex app-server`, so the per-pid args re-read in discoverUnix is
+  // what actually filters this path — it drops anything that is neither agent.
+  const pids: number[] = [];
+  for (const name of ["claude", "codex"]) {
+    try {
+      const output = await run("pgrep", ["-x", name]);
+      for (const line of output.trim().split("\n")) {
+        const pid = Number.parseInt(line, 10);
+        if (pid > 0) pids.push(pid);
+      }
+    } catch {
+      // No match for this agent, or no pgrep at all. Try the next one.
+    }
   }
+  return pids;
 }
 
 async function getProcessCwdUnix(pid: number): Promise<string> {
@@ -276,7 +388,7 @@ async function discoverWindowsViaCim(): Promise<DiscoveredProcess[] | null> {
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      "Get-CimInstance Win32_Process -Filter \"Name = 'claude.exe' OR Name = 'claude' OR Name = 'node.exe' OR Name = 'bun.exe' OR Name = 'deno.exe'\" | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress",
+      "Get-CimInstance Win32_Process -Filter \"Name = 'claude.exe' OR Name = 'claude' OR Name = 'codex.exe' OR Name = 'codex' OR Name = 'node.exe' OR Name = 'bun.exe' OR Name = 'deno.exe'\" | Select-Object ProcessId,CommandLine,CreationDate | ConvertTo-Json -Compress",
     ]);
   } catch {
     return null; // PowerShell unavailable — let the caller fall back.
@@ -292,17 +404,22 @@ async function discoverWindowsViaCim(): Promise<DiscoveredProcess[] | null> {
   const results: DiscoveredProcess[] = [];
   for (const row of rows) {
     const commandLine = row.CommandLine ?? "";
-    if (!commandLine || !looksLikeClaudeProcess(commandLine)) continue;
+    if (!commandLine) continue;
+    // The CIM filter above matches on process name, which cannot separate an
+    // interactive `codex` from the ChatGPT app's `codex app-server`. This does.
+    const provider = providerForCommandLine(commandLine);
+    if (provider === null) continue;
     // Windows exposes no process CWD (neither CIM nor wmic carries it), so the
     // project path is genuinely unknown here rather than guessed. The previous
     // code substituted the executable's own directory, which reported an
     // unrelated install path as the user's project.
     results.push({
       pid: row.ProcessId,
+      provider,
       projectPath: "",
       projectName: "",
       branch: "",
-      conversationId: extractResumeId(commandLine),
+      conversationId: extractConversationId(commandLine, provider),
       startedAt: parseCimDate(row.CreationDate),
     });
   }

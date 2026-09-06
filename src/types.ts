@@ -206,6 +206,12 @@ export interface ManagedSession {
 
 export interface DiscoveredProcess {
   pid: number;
+  /**
+   * Which agent this process is running. Discovery used to find only Claude, so
+   * every consumer could assume it; a discovered Codex session must not be
+   * reported — or adopted — as a Claude one.
+   */
+  provider: ProviderName;
   projectPath: string;
   projectName: string;
   branch: string;
