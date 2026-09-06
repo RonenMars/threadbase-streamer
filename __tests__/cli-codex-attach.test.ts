@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import {
   type AttachIO,
   type AttachSocket,
@@ -102,12 +103,20 @@ describe("toBrowseRelativePath", () => {
     expect(toBrowseRelativePath("/home/me/code", "/home/me/code")).toEqual({ ok: true, path: "." });
   });
 
+  // Both paths are resolved before comparison, so the expectation has to be
+  // too: on Windows "/etc" resolves to "D:\\etc", and asserting the POSIX
+  // spelling passes everywhere except the one platform that would catch a real
+  // separator bug.
   it("refuses a directory outside the browse root, naming both", () => {
-    const result = toBrowseRelativePath("/etc", "/home/me/code");
+    const outside = resolve("/etc");
+    const root = resolve("/home/me/code");
+
+    const result = toBrowseRelativePath(outside, root);
+
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toContain("/etc");
-      expect(result.reason).toContain("/home/me/code");
+      expect(result.reason).toContain(outside);
+      expect(result.reason).toContain(root);
     }
   });
 
