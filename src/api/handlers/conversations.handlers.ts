@@ -760,7 +760,15 @@ export class ConversationHandlers {
       // `promptCount === 0` is the same "unused start" signal
       // `shouldForgetEmptySession` uses, and it keeps a real deletion honest: a
       // session that HAS sent prompts but has no transcript still 404s.
-      const unusedStart = this.sessionStore.getManaged(id);
+      //
+      // Codex asks for one more rung: the id may be the session's BOUND rollout
+      // rather than the session's own id. `codex fork` writes a rollout holding
+      // only `session_meta` (the forked-from history stays in the parent file),
+      // so a fork is an empty conversation from the moment it binds — and the
+      // client is told that bound id by the same session payload it just read.
+      const unusedStart =
+        this.sessionStore.getManaged(id) ??
+        this.sessionStore.listManaged().find((s) => s.boundConversationId === id);
       if (unusedStart && unusedStart.promptCount === 0) {
         json(res, 200, this.emptyConversationPayload(id, unusedStart));
         return;

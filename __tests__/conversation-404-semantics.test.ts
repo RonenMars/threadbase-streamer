@@ -74,7 +74,10 @@ function makeHandlers(opts: Opts) {
     // nothing, which is exactly the state under test.
     scannerManager: { ready: null, current: undefined, projectsDirs: () => [] },
     scanProfiles: undefined,
-    sessionStore: { getManaged: () => opts.session ?? null },
+    sessionStore: {
+      getManaged: (id: string) => (opts.session?.id === id ? opts.session : null),
+      listManaged: () => (opts.session ? [opts.session] : []),
+    },
     ptyManager: { hasSession: () => false },
     cache: () => ({
       getMetaById: () => (opts.metaFilePath ? { filePath: opts.metaFilePath } : null),
@@ -112,6 +115,23 @@ describe("a session with no transcript yet", () => {
     expect(body.message_pagination.total).toBe(0);
     // Nothing to self-heal: there is no ghost row, only a session yet to speak.
     expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("answers 200 for a fork asked for by its BOUND rollout id", async () => {
+    // `codex fork` writes a rollout carrying only `session_meta` — the
+    // forked-from turns stay in the parent file — so the fork is an empty
+    // conversation the moment it binds. The client asks by the bound id it was
+    // just handed in the session payload, which `getManaged` cannot match.
+    const bound = "01a077c6-1d5a-7a03-a6b8-40c7817fe8c6";
+    const { handlers } = makeHandlers({
+      session: managedSession({ boundConversationId: bound }),
+    });
+    const res = makeRes();
+
+    await handlers.handleGetConversation(bound, url, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).messages).toEqual([]);
   });
 
   it("still 404s once the session HAS been prompted", async () => {
