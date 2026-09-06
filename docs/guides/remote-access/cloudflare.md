@@ -189,6 +189,8 @@ The active mapping is `https://tb.example.com` → `http://127.0.0.1:8766`, serv
 - External clients must always include the Bearer token — there is no anonymous access through the public URL, even for `/healthz`.
 - `Test-NetConnection` and browser probes will be blocked by CF Access; use `Invoke-RestMethod` with the Bearer header to test the public URL.
 
+**App-level `/healthz` gate (independent of Access).** The streamer also gates `/healthz` itself, so the endpoint stays authenticated even where Access is bypassed on this hostname — which it must be for e2ee device pairing (a sealed request carries no `Authorization` and Access refuses it at the edge; see the note above). Every request through the tunnel reaches the origin from `127.0.0.1` with no forwarded IP, so `authMiddleware` distinguishes a tunneled caller from a genuine local one by the `Cf-Connecting-Ip` header cloudflared injects: present ⇒ tunneled ⇒ Bearer or e2ee required (unauthenticated probe → `401`); absent ⇒ a real loopback healthcheck (menubar, deploy, updater) and stays open. So a tunneled `/healthz` returns `401` without a key whether Access blocks it at the edge or not, while `http://localhost:8766/healthz` keeps working with no credential.
+
 **cloudflared config files on the Windows box:**
 
 - `~/.cloudflared/config.yml` — user-level config (read when running `cloudflared` manually)
@@ -208,7 +210,7 @@ The active mapping is `https://tb.example.com` → `http://127.0.0.1:8766`, serv
 
 ## Troubleshooting
 
-- **`401 Unauthorized` from `/healthz` over the named tunnel** — Access is in front of it. Either log in via browser, configure a Service Token, or remove the Access policy. Direct `http://localhost:8766/healthz` will still work because Access is at the CF edge, not on the streamer.
+- **`401 Unauthorized` from `/healthz` over the named tunnel** — send the Bearer token. This can come from either layer: Cloudflare Access in front, or the streamer's own app-level gate (see "App-level `/healthz` gate" above), and removing the Access policy no longer makes `/healthz` anonymous — the app still requires the key for a tunneled caller. Direct `http://localhost:8766/healthz` still works with no credential, because both the edge check and the app carve-out treat a loopback request (no `Cf-Connecting-Ip`) as local.
 - **Quick-tunnel URL works on laptop, mobile app can't pair** — check the mobile app is sending the Bearer token; quick-tunnel hosts don't bypass the streamer's auth.
 - **Named tunnel returns 502** — `cloudflared` can't reach `127.0.0.1:8766`. Check the streamer is actually running (`curl http://127.0.0.1:8766/healthz` locally) and that `config.yml`'s `service:` line matches the port.
 - **macOS — duplicate connectors in dashboard** — you have both the LaunchAgent and the LaunchDaemon running. Pick one, `launchctl unload` the other.
