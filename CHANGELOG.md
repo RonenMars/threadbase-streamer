@@ -1,3 +1,9 @@
+## [1.81.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.80.0...v1.81.0) (2026-09-06)
+
+### Features
+
+* **discovery:** find Codex sessions and adopt them as Codex ([#798](https://github.com/RonenMars/threadbase-streamer/issues/798)) ([a80f121](https://github.com/RonenMars/threadbase-streamer/commit/a80f1214410666917eb0bc5c77dc2415351e955d))
+
 ## [1.80.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.79.0...v1.80.0) (2026-09-06)
 
 ### Features
