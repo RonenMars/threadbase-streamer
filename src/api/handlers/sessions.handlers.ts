@@ -1153,13 +1153,18 @@ export class SessionHandlers {
       if (filePath) {
         this.scannerManager
           .get()
-          .then((scanner) => scanner.refreshFile(filePath))
-          .then((meta) => {
-            this.log.info("scanner.refreshFile: ok", {
+          .then((scanner) => this.scannerManager.refreshFileAfterWrite(scanner, filePath))
+          .then(({ outcome, meta }) => {
+            // Post-write, and through the manager rather than straight at the
+            // scanner: a direct call would be single-flighted onto whatever
+            // parse happened to be running, which may have read the file
+            // before this input reached it.
+            this.log.info(`scanner.refreshFile: ${outcome === "refreshed" ? "ok" : outcome}`, {
               event: "scanner.refresh",
               sessionId,
               filePath,
               trigger: "sendInput",
+              outcome,
               messageCount: meta?.messageCount,
             });
           })

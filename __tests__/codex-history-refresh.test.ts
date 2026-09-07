@@ -23,6 +23,9 @@ describe.each([
   let file: string;
   let scanner: ConversationScanner;
   let manager: ScannerManager;
+  // Every background task the detail handler schedules, so a test can await
+  // the stale-while-revalidate refresh instead of hoping it has not landed.
+  let backgroundTasks: Promise<unknown>[];
 
   function turn(text: string, second: number): string {
     return `${JSON.stringify({
@@ -53,6 +56,7 @@ describe.each([
       trackCacheWrite: () => {},
     });
     manager.track(scanner);
+    backgroundTasks = [];
   });
 
   afterEach(async () => {
@@ -72,7 +76,9 @@ describe.each([
       resolveConversationLookupId: (id: string) => id,
       findLiveSessionFilePath: () => file,
       isBoundConversationLive: () => false,
-      trackCacheWrite: () => {},
+      trackCacheWrite: (task: Promise<unknown>) => {
+        backgroundTasks.push(task);
+      },
     } as ConstructorParameters<typeof ConversationHandlers>[0]);
     let status = 0;
     let body = "";
@@ -92,6 +98,15 @@ describe.each([
     return { status, body: JSON.parse(body) };
   }
 
+  // Let every background refresh the last response scheduled finish. Standing
+  // in for "something on this path awaited": whatever hands the event loop
+  // over between the SWR refresh being fired and the response being written
+  // lets that refresh COMPLETE, which is exactly the state a turn-end refresh
+  // then has to survive.
+  async function drainBackgroundRefreshes() {
+    await Promise.all(backgroundTasks.splice(0));
+  }
+
   it("keeps incremental history and the indexed conversation after turn refresh", async () => {
     await scanner.scan({ ...scanOptions, codexRoots: [dir] });
     manager.adoptIfUnclaimed(scanner);
@@ -100,8 +115,13 @@ describe.each([
     expect(before.body.messages).toEqual([]);
     expect((await scanner.getConversation(ID))?.messages).toHaveLength(1);
 
+    // The read-path refresh has now landed and armed its throttle. A turn-end
+    // refresh must not be told "recent enough" and serve the pre-append
+    // snapshot — which is what made this test order-of-awaits sensitive.
+    await drainBackgroundRefreshes();
     appendFileSync(file, turn("second", 2));
-    await manager.refreshFileGuarded(scanner, file);
+    expect((await manager.refreshFileForRead(scanner, file)).outcome).toBe("skipped");
+    expect((await manager.refreshFileAfterWrite(scanner, file)).outcome).toBe("refreshed");
 
     const after = await history();
     expect(after.status).toBe(200);
@@ -137,7 +157,7 @@ describe.each([
     manager.adoptIfUnclaimed(scanner);
     expect((await history()).status).toBe(200);
     unlinkSync(file);
-    await manager.refreshFileGuarded(scanner, file);
+    await manager.refreshFileAfterWrite(scanner, file);
     expect(await scanner.getConversation(ID)).toBeNull();
     expect((await history()).status).toBe(404);
   });
