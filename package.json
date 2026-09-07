@@ -37,7 +37,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "scripts/check-node-version.mjs",
+    "scripts/check-native-abi.mjs"
   ],
   "publishConfig": {
     "access": "public"
