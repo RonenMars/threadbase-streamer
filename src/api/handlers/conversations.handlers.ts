@@ -585,7 +585,7 @@ export class ConversationHandlers {
       //
       // Stale-while-revalidate: since a snapshot already exists, respond from it
       // immediately and refresh the one file's indexes in the background
-      // (single-flighted + TTL-throttled via refreshFileGuarded, tracked so
+      // (single-flighted + TTL-throttled via refreshFileForRead, tracked so
       // close() awaits it). The next request after the refresh settles sees the
       // fresh data. Only a conversation with NO snapshot pays the parse
       // synchronously (the getConversation-null fallthrough below), so a cold
@@ -593,7 +593,7 @@ export class ConversationHandlers {
       if (fromIndex.filePath && this.scannerManager.isConversationSnapshotStale(fromIndex)) {
         const filePath = fromIndex.filePath;
         this.deps.trackCacheWrite(
-          this.scannerManager.refreshFileGuarded(scanner, filePath).catch((err) => {
+          this.scannerManager.refreshFileForRead(scanner, filePath).catch((err: unknown) => {
             this.log.warn("scanner.refreshFile: failed", {
               event: "scanner.refresh_failed",
               conversationId: uuid,
@@ -746,14 +746,17 @@ export class ConversationHandlers {
     // session records, so a fork the user made in their own terminal reads the
     // same as one we started.
     //
-    // Resolved BEFORE findConversationByUuid, and that order is load-bearing.
+    // Resolved before findConversationByUuid, but that order is no longer
+    // load-bearing and the next await added here is free to break it. It was:
     // findConversationByUuid fires a stale-while-revalidate refresh in the
-    // background; awaiting anything after it hands the event loop over long
-    // enough for that refresh to COMPLETE, and a completed refresh makes the
-    // next refreshFileGuarded call inside REFRESH_TTL_MS a no-op — so a caller
-    // that appends a turn and asks for a refresh gets told "recent enough" and
-    // serves the pre-append snapshot. Doing our I/O first leaves the path from
-    // that refresh to the response free of awaits, exactly as it was.
+    // background, awaiting anything after it hands the event loop over long
+    // enough for that refresh to COMPLETE, and a completed refresh used to
+    // make the next refresh of the same file inside REFRESH_TTL_MS a no-op —
+    // so a caller that appended a turn and asked for a refresh was told
+    // "recent enough" and served the pre-append snapshot. The read and
+    // post-write paths are separate contracts now (ScannerManager
+    // .refreshFileForRead / .refreshFileAfterWrite, #806): a read landing here
+    // cannot throttle a writer out.
     const ownFilePath = await this.locateJsonlPath(id, this.deps.resolveConversationLookupId(id));
     const inherited =
       ownFilePath && this.mayInheritHistory(id, ownFilePath)

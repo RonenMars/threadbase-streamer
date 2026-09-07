@@ -18,6 +18,7 @@ import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheInte
 import { refreshConversationCache } from "./services/conversations/refreshConversationCache";
 import { shouldRefreshProjectsFromHdd } from "./services/conversations/shouldRefreshProjectsFromHdd";
 import {
+  canonicalizeFilePath,
   canonicalLivePathSet,
   joinStatCacheByNativePath,
   toNativeFilePath,
@@ -26,8 +27,69 @@ import { debounce } from "./utils/debounce";
 import { isScannedSnapshotStale } from "./utils/isScannedSnapshotStale";
 
 // A refresh that settled within this window is served from the current
-// snapshot instead of re-parsing.
-const REFRESH_TTL_MS = 2000;
+// snapshot instead of re-parsing. Read path only: a post-write refresh is
+// never throttled out (see refreshFileAfterWrite).
+export const REFRESH_TTL_MS = 2000;
+
+/** What a refresh request actually did — see refreshFileForRead/AfterWrite. */
+export type RefreshOutcome =
+  /** This request started the parse that covers it. */
+  | "refreshed"
+  /** It awaited a parse another request had already started or queued. */
+  | "joined"
+  /** Read path only: a parse fulfilled within REFRESH_TTL_MS, so none ran. */
+  | "skipped";
+
+export type RefreshResult = {
+  outcome: RefreshOutcome;
+  /**
+   * The scanner's own answer for the covering pass: fresh metadata, or null
+   * for a file that no longer parses (missing/empty — refreshFile drops it
+   * from the indexes and returns null). Always null for "skipped", which is
+   * the outcome to check before reading anything into a null meta.
+   */
+  meta: ConversationMeta | null;
+};
+
+type RefreshPass = Promise<ConversationMeta | null>;
+
+const withOutcome = (outcome: RefreshOutcome, pass: RefreshPass): Promise<RefreshResult> =>
+  pass.then((meta) => ({ outcome, meta }));
+
+/**
+ * Per-file refresh coordination. This state is the ONLY thing that calls
+ * scanner.refreshFile for its path, which is what makes the post-write
+ * guarantee hold: the scanner single-flights refreshFile internally, so a
+ * caller that reached it directly during an in-flight parse would be handed
+ * that parse's result — metadata read before the write it is asking about.
+ */
+type RefreshState = {
+  /**
+   * The scanner the recorded work belongs to. refreshFile indexes into one
+   * instance, so a pass against a scanner that rescanForRefresh has since
+   * swapped out can never satisfy a request against its replacement.
+   */
+  scanner: ConversationScanner;
+  /**
+   * The path as the first caller for this key spelled it. Kept native rather
+   * than reusing the canonical map key, because the scanner is a native-path
+   * consumer (its own canonicalPath() converts TO the platform separator) and
+   * handing it the key would change what every existing caller passes.
+   */
+  filePath: string;
+  /** The parse currently reading the file, if any. */
+  active: RefreshPass | null;
+  /**
+   * When the last parse FULFILLED. A rejection leaves this alone: it observed
+   * nothing about the file, so it must not tell the next read "recent enough".
+   */
+  completedAt: number;
+  /**
+   * The follow-up pass shared by every post-write request that arrived while
+   * `active` was running. Started synchronously the moment `active` settles.
+   */
+  queued: { promise: RefreshPass; settle: (pass: RefreshPass) => void } | null;
+};
 
 export type ConversationReconcileMode = "files" | "full";
 
@@ -80,7 +142,11 @@ export class ScannerManager {
   // re-walks the whole corpus back-to-back. refresh=1 and per-file
   // reconciles go through other paths and are unaffected.
   private static readonly AUTO_FULL_RECONCILE_COOLDOWN_MS = 60_000;
-  private refreshInFlight = new Map<string, { promise: Promise<unknown>; completedAt: number }>();
+  // Keyed canonically (canonicalizeFilePath), because that is the identity the
+  // rest of the process keys refresh work by and the form the scanner reduces
+  // its own in-flight key to. Bounded by the set of files ever refreshed; an
+  // entry is overwritten, never duplicated, per path.
+  private refreshState = new Map<string, RefreshState>();
   private log = getLogger("server");
 
   /**
@@ -261,15 +327,23 @@ export class ScannerManager {
   ): Promise<ConversationMeta[]> {
     const metas = await Promise.all(
       paths.map((filePath) =>
-        scanner.refreshFile(filePath).catch((err) => {
-          this.log.warn("scanner.refreshFile: failed", {
-            event: "scanner.refresh_failed",
-            filePath,
-            trigger: "directory-event",
-            err,
-          });
-          return null;
-        }),
+        // Post-write, not read: a directory event IS the notification that the
+        // file changed, so this must never be throttled out or satisfied by a
+        // parse that started before the event. Routing it through the same
+        // coordinator as the other writers is also what keeps the scanner's
+        // internal refreshFile coalescing from quietly serving one of them a
+        // pre-write parse.
+        this.refreshFileAfterWrite(scanner, filePath)
+          .then((result) => result.meta)
+          .catch((err) => {
+            this.log.warn("scanner.refreshFile: failed", {
+              event: "scanner.refresh_failed",
+              filePath,
+              trigger: "directory-event",
+              err,
+            });
+            return null;
+          }),
       ),
     );
     return metas.filter((m): m is ConversationMeta => m !== null);
@@ -289,40 +363,147 @@ export class ScannerManager {
     return isScannedSnapshotStale(conv.timestamp, mtimeMs);
   }
 
-  // Single-flight + TTL wrapper for scanner.refreshFile. Both call sites (the
-  // detail-stale branch and the per-turn refresh) route through here so that
-  // N stacked retries on a live, actively-appended file cost one parse, not N:
-  //  - a refresh already in flight for the path → await the same promise;
-  //  - a refresh that settled within REFRESH_TTL_MS → skip, return null (the
-  //    caller keeps serving the current snapshot);
-  //  - otherwise start one, cache the promise, and stamp completedAt on settle.
-  // The map is bounded by the active-file set (entries only live while a
-  // refresh is in flight or within its TTL and are overwritten on the next
-  // refresh of the same path).
-  refreshFileGuarded(
-    scanner: ConversationScanner,
-    filePath: string,
-  ): Promise<Awaited<ReturnType<ConversationScanner["refreshFile"]>> | null> {
-    const existing = this.refreshInFlight.get(filePath);
-    if (existing) {
-      const settled = existing.completedAt > 0;
-      if (!settled) {
-        // In flight: coalesce onto the same parse.
-        return existing.promise as Promise<Awaited<
-          ReturnType<ConversationScanner["refreshFile"]>
-        > | null>;
-      }
-      if (Date.now() - existing.completedAt < REFRESH_TTL_MS) {
-        // Completed recently enough: serve the snapshot, skip the parse.
-        return Promise.resolve(null);
-      }
+  /**
+   * Read-path refresh: throttled and coalesced, for a caller that would rather
+   * serve the current snapshot than pay a parse.
+   *
+   *  - a pass already reading the file → await it ("joined");
+   *  - a pass that fulfilled within REFRESH_TTL_MS → skip ("skipped"), so N
+   *    stacked detail requests on a live, actively-appended file cost one
+   *    parse per window rather than one each;
+   *  - otherwise parse ("refreshed").
+   *
+   * Deliberately NOT content-aware: skipping only when the file is unchanged
+   * would defeat the throttle exactly where it earns its keep, since a live
+   * rollout changes on every append.
+   */
+  refreshFileForRead(scanner: ConversationScanner, filePath: string): Promise<RefreshResult> {
+    const key = canonicalizeFilePath(filePath);
+    const state = this.refreshStateFor(scanner, key, filePath);
+    if (state.active) return withOutcome("joined", state.active);
+    if (state.completedAt > 0 && Date.now() - state.completedAt < REFRESH_TTL_MS) {
+      return Promise.resolve({ outcome: "skipped", meta: null });
     }
-    const entry = { promise: Promise.resolve<unknown>(null), completedAt: 0 };
-    entry.promise = scanner.refreshFile(filePath).finally(() => {
-      entry.completedAt = Date.now();
+    return withOutcome("refreshed", this.startRefreshPass(state, key));
+  }
+
+  /**
+   * Post-write refresh, for a caller that knows the file just changed (the
+   * end of an agent turn, a user's input, a directory event).
+   *
+   * The guarantee: when the returned promise fulfils, a parse that STARTED
+   * after this call has completed. It cannot be thrown away by the read
+   * throttle, and it cannot be satisfied by an older parse — completion of a
+   * parse that began before the write is no proof it observed the write, and
+   * the scanner would hand exactly that parse to a direct caller.
+   *
+   * So: no pass running → parse now; a pass running → wait for a follow-up
+   * that starts when it settles. Every post-write request arriving during a
+   * pass shares that one follow-up, so a burst costs one extra parse, not one
+   * per caller. Requests that arrive after the follow-up has STARTED are not
+   * covered by it and get the next one.
+   *
+   * What it does not promise: that the writer's bytes have reached disk. This
+   * is "everything visible in the file when this was called is indexed", not
+   * a flush protocol — a waiting_input signal is not proof of a flush.
+   */
+  refreshFileAfterWrite(scanner: ConversationScanner, filePath: string): Promise<RefreshResult> {
+    const key = canonicalizeFilePath(filePath);
+    const state = this.refreshStateFor(scanner, key, filePath);
+    if (!state.active) return withOutcome("refreshed", this.startRefreshPass(state, key));
+    if (state.queued) return withOutcome("joined", state.queued.promise);
+    return withOutcome("refreshed", this.queueRefreshPass(state).promise);
+  }
+
+  // The state for this file, rebuilt from scratch when the scanner it recorded
+  // work against is no longer the one being asked about. Any post-write pass
+  // the discarded state still owed is re-armed against the new scanner rather
+  // than left hanging: its callers asked for their write to be indexed, and
+  // the index that matters now is the new instance's.
+  private refreshStateFor(
+    scanner: ConversationScanner,
+    key: string,
+    filePath: string,
+  ): RefreshState {
+    const previous = this.refreshState.get(key);
+    if (previous && previous.scanner === scanner) return previous;
+    const state: RefreshState = {
+      scanner,
+      filePath,
+      active: null,
+      completedAt: 0,
+      queued: null,
+    };
+    this.refreshState.set(key, state);
+    const orphaned = previous?.queued;
+    if (orphaned) {
+      previous.queued = null;
+      orphaned.settle(this.startRefreshPass(state, key));
+    }
+    return state;
+  }
+
+  private startRefreshPass(state: RefreshState, key: string): RefreshPass {
+    const pass: RefreshPass = state.scanner.refreshFile(state.filePath).then(
+      (meta) => {
+        this.finishRefreshPass(state, key, pass, true);
+        return meta;
+      },
+      (err) => {
+        this.finishRefreshPass(state, key, pass, false);
+        throw err;
+      },
+    );
+    state.active = pass;
+    return pass;
+  }
+
+  private queueRefreshPass(state: RefreshState): NonNullable<RefreshState["queued"]> {
+    let settle!: (pass: RefreshPass) => void;
+    // Resolving with a promise adopts it, rejection included, so a queued
+    // caller sees exactly what its covering pass saw.
+    const promise = new Promise<ConversationMeta | null>((resolve) => {
+      settle = resolve;
     });
-    this.refreshInFlight.set(filePath, entry);
-    return entry.promise as Promise<Awaited<ReturnType<ConversationScanner["refreshFile"]>> | null>;
+    state.queued = { promise, settle };
+    return state.queued;
+  }
+
+  private finishRefreshPass(
+    state: RefreshState,
+    key: string,
+    pass: RefreshPass,
+    fulfilled: boolean,
+  ): void {
+    // A pass whose state was replaced (or superseded) must not resurrect it or
+    // clobber the newer one's bookkeeping.
+    if (this.refreshState.get(key) !== state || state.active !== pass) return;
+    state.active = null;
+    if (fulfilled) state.completedAt = Date.now();
+    const queued = state.queued;
+    if (!queued) return;
+    state.queued = null;
+    // Started synchronously with the settle — not through a microtask hop —
+    // so nothing can slip into the gap and open a second parallel parse, and
+    // so a rejected pass still gets its follow-up attempted exactly once.
+    queued.settle(this.startRefreshPass(state, key));
+  }
+
+  // Let every outstanding pass finish before the scanners it indexes into are
+  // closed. Rounds, because a queued pass only starts once its predecessor
+  // settles; capped, because a caller appending during shutdown must not be
+  // able to hold close() open indefinitely.
+  private async drainRefreshPasses(): Promise<void> {
+    for (let round = 0; round < 4; round++) {
+      const outstanding: Promise<unknown>[] = [];
+      for (const state of this.refreshState.values()) {
+        if (state.active) outstanding.push(state.active.catch(() => undefined));
+        if (state.queued) outstanding.push(state.queued.promise.catch(() => undefined));
+      }
+      if (outstanding.length === 0) break;
+      await Promise.all(outstanding);
+    }
+    this.refreshState.clear();
   }
 
   // ─── scanner acquisition ──────────────────────────────────────────
@@ -560,6 +741,7 @@ export class ScannerManager {
 
   async close(): Promise<void> {
     this.markStaleDebounced.cancel();
+    await this.drainRefreshPasses();
     await Promise.all([...this.allScanners].map((s) => s.close()));
     this.allScanners.clear();
     this.scanner = null;

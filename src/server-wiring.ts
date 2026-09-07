@@ -484,15 +484,19 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         if (filePath) {
           deps.scannerManager
             .get()
-            .then((scanner) => deps.scannerManager.refreshFileGuarded(scanner, filePath))
-            .then((meta) => {
-              // meta === null means the guard coalesced/skipped this refresh
-              // (already in flight or within the TTL) — not a real result.
-              deps.log().info("scanner.refreshFile: ok", {
+            .then((scanner) => deps.scannerManager.refreshFileAfterWrite(scanner, filePath))
+            .then(({ outcome, meta }) => {
+              // "ok" is reserved for a parse this request started. A post-write
+              // refresh is never "skipped"; "joined" means it shared the pass
+              // another writer had already queued, and one line per request
+              // with an explicit outcome is what makes the two countable —
+              // `messageCount` alone never could.
+              deps.log().info(`scanner.refreshFile: ${outcome === "refreshed" ? "ok" : outcome}`, {
                 event: "scanner.refresh",
                 sessionId: session.id,
                 filePath,
                 trigger: session.status,
+                outcome,
                 messageCount: meta?.messageCount,
               });
             })
