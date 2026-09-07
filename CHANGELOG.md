@@ -1,3 +1,9 @@
+## [1.86.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.86.0...v1.86.1) (2026-09-07)
+
+### Bug Fixes
+
+* **publish:** ship the scripts preinstall runs on a consumer install ([#814](https://github.com/RonenMars/threadbase-streamer/issues/814)) ([5b9a14a](https://github.com/RonenMars/threadbase-streamer/commit/5b9a14aa89bd1be6ae2617b0931b32c1e5fb099e)), closes [#176](https://github.com/RonenMars/threadbase-streamer/issues/176) [#812](https://github.com/RonenMars/threadbase-streamer/issues/812)
+
 ## [1.86.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.85.0...v1.86.0) (2026-09-07)
 
 ### Features
