@@ -148,6 +148,30 @@ runners, same behaviour.
 
 > Note `--ignore-scripts=false` is **not** a workaround: it only forces scripts on. Whether they run by default depends on the npm major (npm 12 blocks package install scripts, npm 10 does not), so the flag's absence guarantees nothing either way.
 
+### A local `npm install` dies in `node-gyp rebuild` — upgrade npm to 12 {#local-install-npm-12}
+
+**When:** A plain `npm install` in a dev checkout on a machine with no C++ toolchain, running npm 11 or older. It fails exactly the way CI used to, ending in `gyp ERR! find VS ... Could not find any Visual Studio installation to use` with `npm error path ...\node_modules\better-sqlite3`. VS2017 Build Tools alone does not count — node-gyp refuses it above Node 21 (`not looking for VS2017 as it is only supported up to Node.js 21`), so a box that "has Build Tools installed" still lands here.
+**Cause:** the same synthesised `node-gyp rebuild` as the entry above. `package.json` already carries the fix — `"allowScripts": { "node-pty": true }`, which blocks every *other* dependency install script, `better-sqlite3`'s implicit gyp included — but that field is **npm 12+ only**; npm 10 and 11 ignore it silently. Node 24.15.0 bundles npm 11.12.1, so a stock nvm install of the `.nvmrc` Node hits the failure with the repo already configured to prevent it.
+**Fix:** upgrade npm, then install normally. Do **not** install Visual Studio, and do not reach for `--ignore-scripts` locally.
+
+```bash
+npm install -g npm@12
+npm install
+```
+
+The install then ends with `npm warn install-scripts 4 packages had install scripts blocked because they are not covered by allowScripts`, naming `better-sqlite3`, both `esbuild` copies and `protobufjs`. That warning is the fix working — leave all four blocked (`npm install-scripts ls` reviews them). Verified on Windows 10 / Node 24.15.0 / npm 12.0.2 on 2026-09-07: install, `npm run build`, and both native modules loading from their prebuilds.
+
+**Why this beats `--ignore-scripts` locally.** `--ignore-scripts` skips the **root package's** lifecycle scripts too, so it has to be followed by `npx patch-package` by hand or the build fails on the `qrcode-terminal` octal escape (next entry). `allowScripts` is per-dependency instead: the root's `preinstall`, `postinstall` and `prepare` all still run, so `npm install` is one command again. CI keeps `--ignore-scripts` because the runners' npm major is not pinned and that flag works on every one of them.
+
+**Don't trust a quiet install — prove the prebuilt binary loads:**
+
+```bash
+node -e "const D=require('better-sqlite3');new D(':memory:').exec('create table t(a)');console.log('ok')"
+npm ls better-sqlite3   # the scanner's copy must read `deduped`
+```
+
+**Machine-wide consequence:** npm 12 blocks dependency install scripts by default in *every* project on the box, not just this one. Another project that genuinely needs one warns at install time and needs `npm install-scripts approve <pkg>`. Revert with `npm install -g npm@11.12.1` if that trade is wrong for you.
+
 ### Installing with `--ignore-scripts` breaks the build or every PTY test
 
 **When:** After `npm ci --ignore-scripts` (CI smoke job, or a hardened local install).
