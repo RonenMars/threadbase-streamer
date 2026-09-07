@@ -15,10 +15,22 @@ Install the Node version pinned in `.nvmrc`. Running a different major is the si
 
 ## 2. `npm install` — the native-module fork in the road
 
-`npm install` on Windows goes one of two ways, and which one you get depends on whether a Visual Studio C++ toolchain (VS2019/2022, "Desktop development with C++" workload) is installed:
+Which way `npm install` goes on Windows depends on your **npm major**, not on whether Visual Studio is installed. **You do not need to install Visual Studio.** Nothing in this repo actually needs a compiler — `better-sqlite3` and `node-pty` both ship prebuilt binaries.
 
-- **With the toolchain**: a plain `npm install` works. `better-sqlite3` v13 ships no `install` script, so npm synthesizes an implicit `node-gyp rebuild` from its `binding.gyp` and compiles from source — even though a working prebuilt binary is already in the tarball.
-- **Without the toolchain** (the common case — most dev machines don't have a full VS install, and VS2017 Build Tools alone is *not* enough for Node 24's node-gyp): a plain `npm install` fails with `gyp ERR! find VS ... Could not find any Visual Studio installation to use`. **You do not need to install Visual Studio to fix this.** Nothing in this repo actually needs a compiler — `better-sqlite3` and `node-pty` both ship prebuilt binaries. Install with the implicit script skipped instead:
+The thing that goes wrong is one implicit step: `better-sqlite3` v13 ships no `install` script, so npm synthesizes a `node-gyp rebuild` from its `binding.gyp` and compiles from source even though a working prebuilt binary is already in the tarball. Whether that step runs is the whole story.
+
+- **npm 12+ — the recommended path.** A plain `npm install` works with no toolchain. `package.json` carries `"allowScripts": { "node-pty": true }`, which blocks every *other* dependency install script — the synthesized gyp included — and npm 12 is the first major that honours the field. The `.nvmrc` Node bundles npm 11, so upgrade npm once:
+
+  ```powershell
+  npm install -g npm@12
+  npm install
+  ```
+
+  The install ends with `npm warn install-scripts 4 packages had install scripts blocked because they are not covered by allowScripts`, naming `better-sqlite3`, both `esbuild` copies and `protobufjs`. That warning is the mechanism working — leave all four blocked. Note npm 12 blocks dependency install scripts in *every* project on the machine, not just this one; see [the troubleshooting entry](../troubleshooting.md#local-install-npm-12) for the full trade and how to revert.
+
+- **npm 10/11 with a C++ toolchain** (VS2019/2022, "Desktop development with C++" workload): a plain `npm install` works, but only by spending the time compiling a binary that was already on disk.
+
+- **npm 10/11 without a toolchain** (the common case — most dev machines don't have a full VS install, and VS2017 Build Tools alone is *not* enough for Node 24's node-gyp): a plain `npm install` fails with `gyp ERR! find VS ... Could not find any Visual Studio installation to use`. Upgrade npm per the first bullet. If you can't, skip the implicit script instead:
 
   ```powershell
   npm install --ignore-scripts
@@ -33,9 +45,9 @@ Install the Node version pinned in `.nvmrc`. Running a different major is the si
   # hand; it's a no-op on this platform, unlike macOS/Linux.
   ```
 
-  This is the same trick `.github/workflows/ci.yml`'s Windows smoke job uses, and it's fully documented in `docs/troubleshooting.md` under "`npm ci` fails on Windows with `gyp ERR! find VS` for `better-sqlite3`" and "`npm install --ignore-scripts` recovery still fails the build (`qrcode-terminal` legacy octal escape)" — read those two entries together if either step above still fails.
+  This is the same trick `.github/workflows/ci.yml`'s Windows smoke job uses — CI keeps it rather than moving to npm 12 because the runners' npm major is not pinned and the flag works on every one of them. It's fully documented in `docs/troubleshooting.md` under "`npm ci` fails on Windows with `gyp ERR! find VS` for `better-sqlite3`" and "`npm install --ignore-scripts` recovery still fails the build (`qrcode-terminal` legacy octal escape)" — read those two entries together if either step above still fails.
 
-**A gotcha this doesn't fix:** `@threadbase-sh/scanner` vendors its *own* nested `better-sqlite3` copy, and neither a toolchain-less `npm install` nor `npm install --ignore-scripts` builds it — see [the nested-scanner entry](../troubleshooting.md#nested-threadbase-shscanner-better-sqlite3-binding-never-built-windows-dev-checkouts) in troubleshooting.md. There's no fix short of installing the VS toolchain for that one nested copy; if you don't need the SQLite cache to work locally, this is a known, safe-to-ignore gap.
+**A gotcha that used to live here is gone.** `@threadbase-sh/scanner` once vendored its *own* nested `better-sqlite3` copy that no toolchain-less install could build, and installing the VS toolchain was the only fix. Scanner 0.14.6 aligned its range with the root's, so npm dedupes to a single top-level copy and there is no nested binding to build. Confirm on any checkout with `npm ls better-sqlite3` — one `deduped` line under the scanner and one top-level entry means you're clear. The [nested-scanner entry](../troubleshooting.md) in troubleshooting.md is kept only for branches that predate the bump.
 
 ## 3. Verify `node_modules` isn't stale before deploying
 
