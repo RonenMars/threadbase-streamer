@@ -4,6 +4,7 @@ import {
   createJsonlParseState,
   type FileStatEntry,
   type JsonlParseState,
+  parseCodexJsonlLine,
   parseJsonlLine,
 } from "@threadbase-sh/scanner";
 import Database from "better-sqlite3";
@@ -14,7 +15,7 @@ import { setImmediate as yieldToEventLoop } from "timers/promises";
 import { instrumentDatabase, labelStatements } from "./db/query-timing";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
 import { getLogger } from "./logger";
-import { CLAUDE_CODE_PROVIDER } from "./providers";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
 import {
   DEFAULT_AGENT_ENTRYPOINTS,
   isAgentFile,
@@ -603,27 +604,49 @@ export class ConversationCache {
     );
   }
 
-  // The offset index understands only claude-code JSONL: parseJsonlLine is the
-  // claude-code reducer, so a codex file "indexes" as zero messages and the
-  // resulting file_state serves empty windows for a real conversation (the
-  // silent-wrong-data bug hotfixed after 1.28.0). Non-claude providers are
-  // excluded from the index entirely; the scanner serves them (it routes each
-  // provider to its own parser).
-  private isIndexableFile(filePath: string): boolean {
-    // Resolve by file_path, NOT by conversationIdForFile: codex rollout files
-    // are named rollout-<ts>-<uuid>.jsonl, so the filename stem is not the
-    // meta row's id and an id lookup silently misses. A file with no meta row
-    // at all is NOT indexable — provider unknown means indexing is unsafe; a
-    // later request backfills once the meta row exists.
-    // file_path is stored canonicalized (forward slashes), so the lookup key
-    // must be canonicalized too. Passing a native Windows path here matches no
-    // row, which reads as "not indexable" and silently disables the offset
-    // index for every conversation.
+  /**
+   * The line reducer for `filePath`, or null when the file must not be indexed.
+   *
+   * Returning the parser and the eligibility together is deliberate: indexing a
+   * file with the wrong provider's reducer does not fail, it indexes ZERO
+   * messages and then serves empty windows for a real conversation — the
+   * silent-wrong-data bug hotfixed after 1.28.0. Making the caller ask for a
+   * parser rather than a boolean removes the arrangement where those two facts
+   * can disagree.
+   *
+   * Claude's reducer is stateful (`extractToolResultBlocks` resolves a
+   * tool_result's type from `pendingToolUses`), so its parser closes over one
+   * `JsonlParseState` per call site. Codex's is stateless — every discriminator
+   * lives on the single line — so it needs none, and a Codex window needs no
+   * lookback to be correct.
+   *
+   * Resolve by file_path, NOT by conversationIdForFile: codex rollout files are
+   * named rollout-<ts>-<uuid>.jsonl, so the filename stem is not the meta row's
+   * id and an id lookup silently misses. A file with no meta row at all is NOT
+   * indexable — provider unknown means indexing is unsafe; a later request
+   * backfills once the meta row exists.
+   * file_path is stored canonicalized (forward slashes), so the lookup key must
+   * be canonicalized too. Passing a native Windows path here matches no row,
+   * which reads as "not indexable" and silently disables the offset index for
+   * every conversation.
+   */
+  private lineParserFor(
+    filePath: string,
+    resumeState?: JsonlParseState,
+  ): { parse: (text: string) => ConversationMessage | null; state: JsonlParseState | null } | null {
     const row = this.stmts.getProviderByFilePath.get(canonicalizeFilePath(filePath)) as
       | { provider: string | null }
       | undefined;
-    if (!row) return false;
-    return (row.provider ?? CLAUDE_CODE_PROVIDER) === CLAUDE_CODE_PROVIDER;
+    if (!row) return null;
+    const provider = row.provider ?? CLAUDE_CODE_PROVIDER;
+    if (provider === CODEX_CLI_PROVIDER) {
+      return { parse: (text) => parseCodexJsonlLine(text), state: null };
+    }
+    if (provider !== CLAUDE_CODE_PROVIDER) return null;
+    // `state` is returned so the incremental writer can persist it per file:
+    // a later append must continue this reducer, not restart it.
+    const state = resumeState ?? createJsonlParseState();
+    return { parse: (text) => parseJsonlLine(text, state), state };
   }
 
   /**
@@ -662,7 +685,8 @@ export class ConversationCache {
     // Non-indexable provider: write nothing, but return all-null seqs (not
     // null) — a null return means "decline" and would send the caller into an
     // endless drop-and-backfill loop for a file that can never be indexed.
-    if (!this.isIndexableFile(filePath)) return spans.map(() => null);
+    const parser = this.lineParserFor(filePath, this.indexParseState.get(filePath));
+    if (!parser) return spans.map(() => null);
 
     const existing = this.getFileState(filePath);
     const expectedStart = existing?.byte_offset ?? 0;
@@ -673,18 +697,18 @@ export class ConversationCache {
     if (spans.length === 0) return [];
     const convId = ConversationCache.conversationIdForFile(filePath);
 
-    let state = this.indexParseState.get(filePath);
-    if (!state) {
-      state = createJsonlParseState();
-      this.indexParseState.set(filePath, state);
-    }
+    // Persist only once this call is going to consume the spans: a decline
+    // above must not leave a fresh reducer behind for the next read to resume
+    // from. Claude's reducer carries across watcher reads; Codex has no state
+    // to carry, and stores none.
+    if (parser.state) this.indexParseState.set(filePath, parser.state);
 
     let nextIndex = existing ? existing.last_message_index + 1 : 0;
     const rows: MessageIndexRow[] = [];
     const seqs: (number | null)[] = [];
 
     for (const span of spans) {
-      const msg = parseJsonlLine(span.text, state);
+      const msg = parser.parse(span.text);
       if (!msg) {
         seqs.push(null); // summary/sidecar/malformed → no index row, no seq
         continue;
@@ -753,11 +777,11 @@ export class ConversationCache {
     // walking the file.
     this.deleteFileIndex(filePath, convId);
     this.indexParseState.delete(filePath);
-    if (!this.isIndexableFile(filePath)) return;
+    const parser = this.lineParserFor(filePath);
+    if (!parser) return;
 
     const CHUNK = 256 * 1024;
     const YIELD_EVERY = 1000;
-    const state = createJsonlParseState();
     const fh = await openAsync(filePath, "r");
     let fileOffset = 0; // absolute byte offset of `carry`'s first byte
     let carry = Buffer.alloc(0); // bytes after the last "\n" of the previous chunk
@@ -780,7 +804,7 @@ export class ConversationCache {
 
         const rows: MessageIndexRow[] = [];
         for (const span of spans) {
-          const msg = parseJsonlLine(span.text, state);
+          const msg = parser.parse(span.text);
           linesSinceYield++;
           if (msg) {
             rows.push({
@@ -821,8 +845,8 @@ export class ConversationCache {
       last_message_index: nextIndex - 1,
     });
     // Seed the incremental writer's state so subsequent appends continue the
-    // same reducer instead of re-parsing from scratch.
-    this.indexParseState.set(filePath, state);
+    // same reducer instead of re-parsing from scratch. Codex carries no state.
+    if (parser.state) this.indexParseState.set(filePath, parser.state);
     // The cold path's only success signal. Until now just `backfill_failed`
     // was logged, so a full-file re-parse — the difference between a 20 ms
     // detail fetch and a multi-second one — left no trace when it worked.
@@ -879,11 +903,14 @@ export class ConversationCache {
       return null;
     }
     // A file_state that covered the file but indexed no messages is a poisoned
-    // row (pre-hotfix backfill of a non-claude file) — serving it would render
-    // a real conversation empty. Belt-and-braces: also decline non-indexable
-    // providers outright in case a poisoned row carries a nonzero count. The
-    // decline routes the caller to backfill, which purges the row.
-    if (fileState.last_message_index < 0 || !this.isIndexableFile(filePath)) {
+    // row (pre-hotfix backfill of a file the reducer could not read) — serving
+    // it would render a real conversation empty. Resolving the parser here is
+    // the same belt-and-braces the old `isIndexableFile` call was: a provider
+    // with no reducer declines outright, even if a poisoned row carries a
+    // nonzero count. The decline routes the caller to backfill, which purges
+    // the row.
+    const parser = this.lineParserFor(filePath);
+    if (fileState.last_message_index < 0 || !parser) {
       return null;
     }
 
@@ -893,17 +920,21 @@ export class ConversationCache {
     if (to <= from) return { messages: [], total, fromIndex: from };
 
     // Read a short prefix before the window purely to build parse state, then
-    // drop it. `parseJsonlLine` IS state-dependent: `extractToolResultBlocks`
-    // resolves a tool_result's type from `pendingToolUses`, so a window that
+    // drop it. Claude's `parseJsonlLine` IS state-dependent:
+    // `extractToolResultBlocks` resolves a tool_result's type from
+    // `pendingToolUses`, so a window that
     // opens between a tool_use and its tool_result serves the result as
     // "generic" — a Bash card rendering with the default icon and label.
     // Measured at 0.37% of tool_results at the default msg_limit of 80, which
     // is (tool_result density)/W: short-range pairs still break whenever a
     // boundary lands between the halves. Pair distance measures p50 1, max 4,
     // so 8 is slack, and the extra reads are byte-ranges out of the same index.
+    // Codex's reducer is stateless — every discriminator is on the line — so a
+    // Codex window needs no lookback and pays for no extra reads.
+    const lookback = parser.state ? PARSE_STATE_LOOKBACK : 0;
     const rows = this.getMessageIndexWindow(
       ConversationCache.conversationIdForFile(filePath),
-      Math.max(0, from - PARSE_STATE_LOOKBACK),
+      Math.max(0, from - lookback),
       to,
     );
     if (rows.length === 0) return { messages: [], total, fromIndex: from };
@@ -921,11 +952,10 @@ export class ConversationCache {
       // table, and `applyTeamInfo` is not exported to us at all. No lookback
       // fixes that; it needs the table carried per conversation. Left as a
       // known gap rather than papered over — see offset-index-read.test.ts.
-      const state = createJsonlParseState();
       for (const row of rows) {
         const buf = Buffer.alloc(row.byte_length);
         readSync(fd, buf, 0, row.byte_length, row.byte_offset);
-        const msg = parseJsonlLine(buf.toString("utf-8"), state);
+        const msg = parser.parse(buf.toString("utf-8"));
         if (msg && row.message_index >= from) messages.push(msg);
       }
     } finally {
