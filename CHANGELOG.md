@@ -1,3 +1,9 @@
+## [1.85.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.84.1...v1.85.0) (2026-09-07)
+
+### Features
+
+* **sessions:** offer takeover of a Codex rollout held by a terminal ([#810](https://github.com/RonenMars/threadbase-streamer/issues/810)) ([7b8d956](https://github.com/RonenMars/threadbase-streamer/commit/7b8d956b94b80010f6e645c49f99b412d494a878))
+
 ## [1.84.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.84.0...v1.84.1) (2026-09-07)
 
 ### Bug Fixes
