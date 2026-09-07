@@ -1,3 +1,9 @@
+## [1.84.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.84.0...v1.84.1) (2026-09-07)
+
+### Bug Fixes
+
+* **scanner:** give post-write refreshes their own contract ([#808](https://github.com/RonenMars/threadbase-streamer/issues/808)) ([cac5d99](https://github.com/RonenMars/threadbase-streamer/commit/cac5d99c7329d5897fb723ee407098b44b32c0d5)), closes [#807](https://github.com/RonenMars/threadbase-streamer/issues/807)
+
 ## [1.84.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.83.0...v1.84.0) (2026-09-06)
 
 ### Features
