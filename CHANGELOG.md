@@ -1,3 +1,9 @@
+## [1.86.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.85.0...v1.86.0) (2026-09-07)
+
+### Features
+
+* **codex:** warn when a rollout stops matching how we read it ([#815](https://github.com/RonenMars/threadbase-streamer/issues/815)) ([c80d458](https://github.com/RonenMars/threadbase-streamer/commit/c80d45839ba9e2ddeb89b1aa78399b3452dc8471)), closes [#807](https://github.com/RonenMars/threadbase-streamer/issues/807)
+
 ## [1.85.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.84.1...v1.85.0) (2026-09-07)
 
 ### Features
