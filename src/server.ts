@@ -1,7 +1,7 @@
 import { Connection, Client as TemporalClient } from "@temporalio/client";
 import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
-import { existsSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -141,6 +141,7 @@ import {
   questionsFromLines,
   shouldBroadcastQuestion,
 } from "./services/questions/questionBroadcast";
+import { sweepCodexFormat } from "./services/sessions/codexFormatCanary";
 import type { CodexOwnerSource } from "./services/sessions/codexRolloutOwner";
 import { type BusySignal, resolveResumeBusyWindowMs } from "./services/sessions/conversationBusy";
 import { IdempotencyStore } from "./services/sessions/idempotency";
@@ -190,6 +191,13 @@ export const IDLE_REAP_AFTER_MS = 6 * 60 * 60 * 1000;
 // How often the sweep runs. Coarse on purpose — reaping 5 minutes late costs
 // nothing, and a frequent timer on an idle server does not earn its wakeups.
 export const IDLE_REAP_SWEEP_MS = 5 * 60 * 1000;
+
+/**
+ * How often the Codex rollout format is sampled. Hourly: the thing being
+ * watched changes with a Codex release, not minute to minute, and a sweep
+ * reads a few files' opening lines.
+ */
+const CODEX_FORMAT_CANARY_INTERVAL_MS = 60 * 60 * 1000;
 
 // A completed refreshFile within this window is treated as fresh — a retry
 // storm on a live conversation collapses to one parse per window instead of
@@ -442,6 +450,7 @@ export class StreamerServer {
   private sessionVerdicts = new Map<string, ReconcileVerdict>();
   // Periodic sweep that releases PTYs no agent is using. Null until listen().
   private idleReaperTimer: ReturnType<typeof setInterval> | null = null;
+  private codexFormatCanaryTimer: ReturnType<typeof setInterval> | null = null;
   // Map of clientId → WS socket (populated by the "register" WS handshake)
   private clientIdToWs = new Map<string, WebSocket>();
   // Reverse map for cleanup on close
@@ -1151,6 +1160,37 @@ export class StreamerServer {
   }
 
   /**
+   * Log any Codex rollout assumption that no longer holds.
+   *
+   * Deliberately log-only. A format change is not something the streamer can
+   * repair or route around, and a WS alert or a blocked request would turn an
+   * informational signal into an outage. What it buys is that the next silent
+   * empty conversation is preceded by a line naming the assumption that moved.
+   */
+  private runCodexFormatCanary(): void {
+    try {
+      const report = sweepCodexFormat(this.codexRoots, {
+        readdirSync,
+        statSync,
+        existsSync,
+        readFileSync,
+        join,
+      });
+      for (const finding of report.findings) {
+        this.log.warn(`[codex-format] ${finding.code}: ${finding.detail}`, {
+          event: "codex.format_drift",
+          code: finding.code,
+          detail: finding.detail,
+          filePath: finding.filePath,
+        });
+      }
+    } catch (err) {
+      // A canary must never be the thing that breaks the daemon it watches.
+      this.log.warn("codex format canary failed", { event: "codex.format_canary_failed", err });
+    }
+  }
+
+  /**
    * Release PTYs whose agent has been silent past IDLE_REAP_AFTER_MS.
    *
    * This is the bound that lets handleWsClose stop arming kill timers. The
@@ -1479,6 +1519,19 @@ export class StreamerServer {
     if (!this.ptyManager.isRemote()) {
       this.idleReaperTimer = setInterval(() => this.reapIdleSessions(), IDLE_REAP_SWEEP_MS);
       this.idleReaperTimer.unref?.();
+    }
+
+    // Codex owns the rollout format and does not version it. Sample the newest
+    // files periodically so a change is a log line rather than a user reporting
+    // an empty conversation weeks later. Reads at most a few files' opening
+    // lines; never blocks a request and never changes behaviour.
+    if (this.codexRoots.length > 0) {
+      this.runCodexFormatCanary();
+      this.codexFormatCanaryTimer = setInterval(
+        () => this.runCodexFormatCanary(),
+        CODEX_FORMAT_CANARY_INTERVAL_MS,
+      );
+      this.codexFormatCanaryTimer.unref?.();
     }
 
     // Informational only: samples cheap OS + event-loop signals and broadcasts
@@ -1938,6 +1991,10 @@ export class StreamerServer {
     if (this.idleReaperTimer) {
       clearInterval(this.idleReaperTimer);
       this.idleReaperTimer = null;
+    }
+    if (this.codexFormatCanaryTimer) {
+      clearInterval(this.codexFormatCanaryTimer);
+      this.codexFormatCanaryTimer = null;
     }
     this.hostPressureMonitor?.dispose();
     this.hostPressureMonitor = null;
