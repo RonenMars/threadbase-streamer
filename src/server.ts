@@ -199,12 +199,6 @@ export const IDLE_REAP_SWEEP_MS = 5 * 60 * 1000;
  */
 const CODEX_FORMAT_CANARY_INTERVAL_MS = 60 * 60 * 1000;
 
-// A completed refreshFile within this window is treated as fresh — a retry
-// storm on a live conversation collapses to one parse per window instead of
-// one per request.
-
-// How much of the tree a background conversation-list reconcile has to cover.
-
 // Accepted `--model` / `/model` values: an alias ("opus", "sonnet") or a full
 // model name ("claude-opus-4-5"). Deliberately strict — this string is written
 // straight into a live PTY by applyLiveSessionSetting, so anything that could
