@@ -229,7 +229,9 @@ describe("Codex active-writer over HTTP", () => {
       expect(body.detectedBy).toEqual(["file_handle"]);
       expect(body.likelyOwner).toBe("external");
       expect(body.canForce).toBe(false);
-      expect(body.canTakeOver).toBe(false);
+      // A standalone `codex` TUI owns exactly one conversation, so stopping it
+      // costs the user only the turn in flight — takeover is offered.
+      expect(body.canTakeOver).toBe(true);
       expect(body.canFork).toBe(true);
       expect(body.ownerPid).toBe(9935);
       expect(body.ownerSource).toBe("terminal");
@@ -316,6 +318,91 @@ describe("Codex active-writer over HTTP", () => {
       const proc = ptySpawn.mock.results.at(-1)?.value;
       expect(proc.kill).not.toHaveBeenCalled();
     } finally {
+      delete process.env.TB_SCANNER_DB;
+      await server.close();
+    }
+  });
+
+  // ─── takeover: stop the terminal that owns the rollout, resume it here ───
+  //
+  // The other half of the collision recovery. Fork leaves the other client
+  // running and diverges; takeover is for the case where that client is the
+  // user's own forgotten terminal and they want the conversation itself.
+  // Destructive by construction, so what these pin is mostly what it REFUSES.
+
+  it("takes over from a standalone codex TUI: kills the owner, resumes the rollout", async () => {
+    preflightOwner.value = { pid: 424_242, command: "codex", source: "terminal" };
+    // Signal 0 is the liveness probe; ESRCH means "already gone", which lets
+    // kill-then-wait settle and the respawn proceed.
+    const killed: Array<number | undefined> = [];
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: unknown,
+    ) => {
+      killed.push(pid);
+      if (signal === 0) throw new Error("ESRCH");
+      return true;
+    }) as never);
+    const server = await startServer("takeover");
+    try {
+      const pending = post(server, `/api/sessions/${CODEX_SESSION_ID}/adopt`, {});
+      const drove = await driveSpawnedPty([READY_STATUS_BAR]);
+      expect(drove).toBe(true);
+
+      const res = await pending;
+      expect(res.status).toBe(201);
+
+      expect(killed).toContain(424_242);
+      // Resumed, not forked: same conversation, and `codex resume` is given the
+      // rollout id rather than whatever local id the client navigated to.
+      const [exe, args] = ptySpawn.mock.calls[0];
+      expect(exe).toMatch(/codex/);
+      expect(args[0]).toBe("resume");
+      expect(args[1]).toBe(CODEX_SESSION_ID);
+    } finally {
+      killSpy.mockRestore();
+      delete process.env.TB_SCANNER_DB;
+      await server.close();
+    }
+  });
+
+  it("refuses to take over a codex app-server, and kills nothing", async () => {
+    // A desktop / VS Code app-server hosts unrelated conversations in one
+    // process. Killing it to reclaim this one would take the others with it,
+    // and the user would have no idea why. This is the assertion that matters
+    // most in this file: the refusal must happen BEFORE any signal is sent.
+    preflightOwner.value = { pid: 313_131, command: "node", source: "unknown" };
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((() => true) as never);
+    const server = await startServer("takeover-appserver");
+    try {
+      const res = await post(server, `/api/sessions/${CODEX_SESSION_ID}/adopt`, {});
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("ADOPT_OWNER_NOT_TERMINAL");
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(ptySpawn.mock.calls.length).toBe(0);
+    } finally {
+      killSpy.mockRestore();
+      delete process.env.TB_SCANNER_DB;
+      await server.close();
+    }
+  });
+
+  it("refuses when nobody holds the rollout any more, and kills nothing", async () => {
+    // The collision cleared between the 409 and the user pressing the button.
+    // Re-probing here is what catches it — and is also why a pid from the
+    // earlier refusal is never reused: pids get recycled, and killing a stale
+    // one stops an unrelated process.
+    preflightOwner.value = null;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((() => true) as never);
+    const server = await startServer("takeover-noowner");
+    try {
+      const res = await post(server, `/api/sessions/${CODEX_SESSION_ID}/adopt`, {});
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("ADOPT_NO_OWNER");
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(ptySpawn.mock.calls.length).toBe(0);
+    } finally {
+      killSpy.mockRestore();
       delete process.env.TB_SCANNER_DB;
       await server.close();
     }
