@@ -3218,6 +3218,19 @@ export class StreamerServer {
       setting,
       value,
     });
+    // Record what we asked for and tell subscribers, so the WS carries the new
+    // value instead of leaving every client to re-GET the session. Only
+    // `effort` is stored: `model` is owned by the scanner, and overwriting it
+    // here with a spawn-time alias would clobber the resolved name.
+    //
+    // Optimistic by nature — 202 means the TUI has not applied it yet. The
+    // status-line scrape on GET /api/sessions/:id stays authoritative and wins
+    // if the two ever disagree.
+    if (setting === "effort") {
+      this.sessionStore.updateManaged(sessionId, { effort: value });
+      const updated = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+      if (updated) this.wsHub.broadcast({ type: "session_update", session: updated });
+    }
     json(res, 202, { id: sessionId, [setting]: value });
   }
 }

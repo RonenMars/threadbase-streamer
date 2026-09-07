@@ -144,6 +144,13 @@ describe("PATCH /api/sessions/:id/{model,effort}", () => {
     );
   }
 
+  async function get(id: string): Promise<{ effort?: string; model?: string }> {
+    const res = await fetch(`http://localhost:${port}/api/sessions/${id}`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+    return (await res.json()) as { effort?: string; model?: string };
+  }
+
   function patch(id: string, setting: "model" | "effort", body: unknown) {
     return fetch(`http://localhost:${port}/api/sessions/${id}/${setting}`, {
       method: "PATCH",
@@ -181,6 +188,45 @@ describe("PATCH /api/sessions/:id/{model,effort}", () => {
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ id, effort: "xhigh" });
     expect(written(proc)).toBe("/effort xhigh\r");
+  }, 30000);
+
+  it("seeds effort onto the session from the spawn options", async () => {
+    // The production start paths spread spawnFlagOverrides() into these options,
+    // so seeding here is what puts effort on the session before any PATCH —
+    // without it a session broadcasts no effort at all and the list has nothing
+    // to show. This helper passes it explicitly because it calls startFresh
+    // directly rather than through the route that resolves the server config.
+    const session = await internals.ptyManager.startFresh({
+      projectPath: projectDir,
+      effort: "medium",
+    });
+    internals.sessionStore.addManaged(session as unknown as Record<string, unknown>);
+    await waitForStatus(session.id, "waiting_input");
+    expect((await get(session.id)).effort).toBe("medium");
+  }, 30000);
+
+  it("persists the effort onto the session so session_update carries it", async () => {
+    const id = await startSession();
+    await waitForStatus(id, "waiting_input");
+
+    // Before: the spawn seeds the configured default, not "xhigh".
+    const before = await get(id);
+    expect(before.effort).not.toBe("xhigh");
+
+    expect((await patch(id, "effort", { effort: "xhigh" })).status).toBe(202);
+
+    // The 202 says "typed into the PTY", so the value has to be readable from
+    // session state rather than only from a fresh status-line scrape.
+    const after = await get(id);
+    expect(after.effort).toBe("xhigh");
+  }, 30000);
+
+  it("does not persist a model, which the scanner owns", async () => {
+    const id = await startSession();
+    await waitForStatus(id, "waiting_input");
+    const before = (await get(id)).model;
+    expect((await patch(id, "model", { model: "opus" })).status).toBe(202);
+    expect((await get(id)).model).toBe(before);
   }, 30000);
 
   it("accepts a full model name, not just an alias", async () => {

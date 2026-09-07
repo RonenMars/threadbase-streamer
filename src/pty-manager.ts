@@ -310,6 +310,7 @@ export class PTYManager implements SessionRunner {
       projectPath: options.projectPath,
       projectName,
       branch: options.branch ?? "",
+      ...(options.effort != null && { effort: options.effort }),
       status: "running",
       statusSource: "spawn",
       statusUpdatedAt: new Date(),
@@ -395,6 +396,7 @@ export class PTYManager implements SessionRunner {
       projectPath: options.projectPath,
       projectName,
       branch: "",
+      ...(options.effort != null && { effort: options.effort }),
       status: "running",
       statusSource: "spawn",
       statusUpdatedAt: new Date(),
@@ -1311,6 +1313,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
+    ...(s.effort != null && { effort: s.effort }),
     ...(s.firstMessageText != null && { firstMessageText: s.firstMessageText }),
     // Unconditional: this shape crosses the pty-host boundary, and a streamer
     // re-adopting a surviving host's sessions mid-turn has no other source for

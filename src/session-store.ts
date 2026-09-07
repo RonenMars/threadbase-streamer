@@ -321,6 +321,7 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     ...(s.projectId != null && { projectId: s.projectId }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
     ...(s.model != null && { model: s.model }),
+    ...(s.effort != null && { effort: s.effort }),
     ...(s.account != null && { account: s.account }),
     ...(s.messageCount != null && { messageCount: s.messageCount }),
     ...(s.preview != null && { preview: s.preview }),
