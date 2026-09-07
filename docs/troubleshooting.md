@@ -109,6 +109,25 @@ runners, same behaviour.
 
 ---
 
+### A Windows deploy runs no lint and no tests, unlike macOS and Linux {#windows-deploy-no-gate}
+
+**When:** Any `npm run deploy:windows`. It is not a failure — it is a missing check, which is why nothing draws attention to it.
+**Cause:** `scripts/deploy.sh` and `scripts/deploy-linux.sh` both run `npm run lint` and `npm test` before building, logging `running lint + tests`. `scripts/deploy.ps1` does not: its `Invoke-PredeployCheck` verifies only that the branch is `main` and the tree is clean, then goes straight to `npm run build`. So a Windows deploy ships whatever is in the checkout, while the other two refuse to.
+
+Two places used to claim otherwise, which is the real trap — `deploy.ps1`'s own usage header described `-Force` as skipping "lint/test gates", and the `local-deploy` skill described all three scripts as sharing one shape including "lint + tests". Both are corrected; the missing gate itself is tracked in #817.
+
+**Fix / workaround:** until #817 lands, run the suite yourself before deploying on Windows:
+
+```powershell
+npm run lint
+npm test
+npm run deploy:windows
+```
+
+**Diagnosis cue:** a gated deploy prints `running lint + tests` (or `skipping lint + tests (--force)`). A Windows deploy prints neither and goes straight to `building` — absence of both lines is the tell.
+
+---
+
 ### Healthcheck fails with `ENOENT … migrations`
 
 **When:** Server starts but crashes immediately; `dist/migrations/` cannot be found at runtime.
@@ -171,6 +190,44 @@ npm ls better-sqlite3   # the scanner's copy must read `deduped`
 ```
 
 **Machine-wide consequence:** npm 12 blocks dependency install scripts by default in *every* project on the box, not just this one. Another project that genuinely needs one warns at install time and needs `npm install-scripts approve <pkg>`. Revert with `npm install -g npm@11.12.1` if that trade is wrong for you.
+
+### `npm install -g @threadbase-sh/streamer` fails with `Cannot find module …\scripts\check-node-version.mjs` {#global-install-preinstall}
+
+**When:** Installing the published CLI from npm at **1.85.0 or older**, on npm 10 or 11. The install dies partway and npm rolls it back:
+
+```
+npm error command failed
+npm error command ... node scripts/check-node-version.mjs --warn && node scripts/check-native-abi.mjs --warn
+npm error Error: Cannot find module '...\node_modules\@threadbase-sh\streamer\scripts\check-node-version.mjs'
+npm error   code: 'MODULE_NOT_FOUND',
+```
+
+**Cause:** `package.json` declared `"files": ["dist"]` while also declaring a `preinstall` that runs two scripts out of `scripts/`, so the published tarball never carried them. npm 10 and 11 run a dependency's install scripts by default, hit the missing file, and abort. npm 12 escaped it only by blocking dependency install scripts by default — which is why this went unnoticed on a box that had upgraded. Introduced 2026-07-05 (#176) and present in every release up to 1.85.0.
+**Fix:** upgrade to **1.86.1 or newer**, where `files` ships the two scripts (#814):
+
+```bash
+npm install -g @threadbase-sh/streamer@latest
+```
+
+This is unrelated to the `MODULE_NOT_FOUND` entry under "Windows-specific issues" about a PM2 crash-loop on a stale pre-rename package scope, which shares only the error code.
+
+---
+
+### A global npm install silently replaces a `deploy.sh` / `deploy.ps1` install's commands {#global-install-shim-collision}
+
+**When:** Running `npm install -g @threadbase-sh/streamer` on a machine that already has a deploy-script install.
+**Cause:** the published package's `bin` claims **both** `tb-streamer` and `threadbase-streamer` — the same two commands the deploy installs as shims onto `~/.threadbase/cli.js`. A global npm install wins, so those commands start resolving to the npm copy while the supervised service (launchd / systemd / Task Scheduler) keeps running the deployed release. Nothing errors; the two just drift, and `tb-streamer prod …` may then address a different install than the one actually serving port 8766.
+
+This is the same class as the documented Homebrew-vs-deploy collision, and it is not covered by that entry.
+
+**Fix:** pick one install method per machine. To *test* a published tarball without disturbing a deploy install, install into a throwaway prefix instead of the real global root:
+
+```bash
+npm install -g @threadbase-sh/streamer@<version> --prefix /tmp/tb-probe
+node /tmp/tb-probe/node_modules/@threadbase-sh/streamer/dist/cli.cjs --version
+```
+
+Confirm the real commands are untouched afterwards with `which tb-streamer` (POSIX) or `where tb-streamer` (Windows) — it should still point at the deploy shim, not a global `node_modules`.
 
 ### Installing with `--ignore-scripts` breaks the build or every PTY test
 

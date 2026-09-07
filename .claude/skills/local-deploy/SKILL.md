@@ -271,7 +271,9 @@ npm run deploy:windows
 npm run deploy:windows:force
 ```
 
-Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → lint + tests (unless `--force`/`-Force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/`** → activate → restart the service → healthcheck on `http://localhost:8766/healthz`.
+> **Windows runs no lint/test gate.** `deploy.ps1` has no equivalent of the `npm run lint && npm test` step `deploy.sh` and `deploy-linux.sh` run, so `-Force` there skips only the branch and dirty-tree checks. Run the suite by hand before deploying on Windows. Tracked in #817; see the `{#windows-deploy-no-gate}` entry in docs/troubleshooting.md.
+
+Each script does the same shape: predeploy check → **browse_root check** (prompts interactively if `~/.threadbase/server.yaml` has no `browse_root:` key or the path doesn't exist) → lint + tests (unless `--force`) → `npm run build` → stamp release at `~/.threadbase/releases/cli.<sha>.cjs` → **copy `dist/migrations/`** → activate → restart the service → healthcheck on `http://localhost:8766/healthz`.
 
 `dist/migrations/` now contains the **SQLite** migrations consumed by `ConversationCache.open()` — projects table, project_id columns, cache_metadata. They are required on every deploy; the streamer will fail to start without them.
 
