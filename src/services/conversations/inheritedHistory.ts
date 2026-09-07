@@ -65,7 +65,7 @@ export function readForkLinkFromLine(line: string): InheritedLink | null {
   } catch {
     return null;
   }
-  if (!entry || entry.type !== "session_meta") return null;
+  if (entry?.type !== "session_meta") return null;
 
   const payload = asRecord(entry.payload);
   if (!payload) return null;

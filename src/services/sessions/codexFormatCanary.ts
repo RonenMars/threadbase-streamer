@@ -97,7 +97,7 @@ export function auditCodexRolloutLines(lines: string[]): CodexFormatFinding[] {
   }
 
   const first = parsed[0];
-  if (!first || first.type !== "session_meta") {
+  if (first?.type !== "session_meta") {
     findings.push({
       code: "first_line_not_session_meta",
       detail: `first line has type ${JSON.stringify(first?.type ?? null)}`,

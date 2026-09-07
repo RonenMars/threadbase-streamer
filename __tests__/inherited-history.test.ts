@@ -64,7 +64,7 @@ function writeParent(): string {
   const path = join(dir, "rollout-2026-09-06T11-20-26-parent.jsonl");
   writeFileSync(
     path,
-    [
+    `${[
       line(0, { type: "session_meta", payload: { id: "parent", cwd: "/tmp/p" } }),
       message(1, "user", "first question"),
       message(2, "assistant", "first answer"),
@@ -79,7 +79,7 @@ function writeParent(): string {
       // Past the cut: the parent kept going after the fork was taken.
       message(9, "user", "after the fork"),
       message(10, "assistant", "still going"),
-    ].join("\n") + "\n",
+    ].join("\n")}\n`,
   );
   return path;
 }
@@ -88,7 +88,7 @@ function writeFork(parentId: string, cut: number, ownTurns: string[] = []): stri
   const path = join(dir, `rollout-2026-09-06T20-31-07-fork-${cut}.jsonl`);
   writeFileSync(
     path,
-    [
+    `${[
       line(cut, {
         type: "session_meta",
         payload: {
@@ -100,7 +100,7 @@ function writeFork(parentId: string, cut: number, ownTurns: string[] = []): stri
         },
       }),
       ...ownTurns,
-    ].join("\n") + "\n",
+    ].join("\n")}\n`,
   );
   return path;
 }
@@ -132,6 +132,10 @@ describe("reading the fork link", () => {
 
   it.each([
     ["not JSON at all", "}{ broken"],
+    // Valid JSON that is not an object: asRecord answers null for both, which
+    // is the branch the type check has to survive rather than throw on.
+    ["a bare JSON null", "null"],
+    ["a bare JSON number", "42"],
     ["a non-session_meta line", line(1, { type: "event_msg", payload: { type: "token_count" } })],
     [
       "an id with no ordinal",
@@ -182,7 +186,7 @@ describe("translating the cut", () => {
     const path = join(dir, "rollout-no-ordinals.jsonl");
     writeFileSync(
       path,
-      [
+      `${[
         JSON.stringify({ type: "session_meta", payload: { id: "p" } }),
         JSON.stringify({
           type: "response_item",
@@ -192,7 +196,7 @@ describe("translating the cut", () => {
           type: "response_item",
           payload: { type: "message", role: "user", content: [{ type: "input_text", text: "b" }] },
         }),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
 
     expect((await readMessagesBeforeOrdinal(path, 2))?.map((m) => m.text)).toEqual(["a"]);
@@ -251,10 +255,10 @@ describe("resolving a fork's inherited history", () => {
     const leaf = join(dir, "rollout-leaf.jsonl");
     writeFileSync(
       leaf,
-      line(10, {
+      `${line(10, {
         type: "session_meta",
         payload: { id: "leaf", forked_from_id: "middle", forked_from_ordinal_exclusive: 10 },
-      }) + "\n",
+      })}\n`,
     );
 
     const inherited = await resolveInheritedHistory({
@@ -277,17 +281,17 @@ describe("resolving a fork's inherited history", () => {
     const b = join(dir, "rollout-b.jsonl");
     writeFileSync(
       a,
-      line(5, {
+      `${line(5, {
         type: "session_meta",
         payload: { id: "a", forked_from_id: "b", forked_from_ordinal_exclusive: 5 },
-      }) + "\n",
+      })}\n`,
     );
     writeFileSync(
       b,
-      line(5, {
+      `${line(5, {
         type: "session_meta",
         payload: { id: "b", forked_from_id: "a", forked_from_ordinal_exclusive: 5 },
-      }) + "\n",
+      })}\n`,
     );
 
     const inherited = await resolveInheritedHistory({
