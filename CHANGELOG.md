@@ -1,3 +1,9 @@
+## [1.86.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.86.1...v1.86.2) (2026-09-07)
+
+### Performance Improvements
+
+* **cache:** let the offset index cover Codex rollouts ([#818](https://github.com/RonenMars/threadbase-streamer/issues/818)) ([6ad4d7b](https://github.com/RonenMars/threadbase-streamer/commit/6ad4d7bb2769261e5ade60e888e0192c2f18fa87)), closes [RonenMars/threadbase-scanner#81](https://github.com/RonenMars/threadbase-scanner/issues/81)
+
 ## [1.86.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.86.0...v1.86.1) (2026-09-07)
 
 ### Bug Fixes
