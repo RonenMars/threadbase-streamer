@@ -1,3 +1,9 @@
+## [1.87.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.1...v1.87.2) (2026-09-08)
+
+### Bug Fixes
+
+* **conversations:** stop serving Codex reads from the offset index ([#824](https://github.com/RonenMars/threadbase-streamer/issues/824)) ([2a8e569](https://github.com/RonenMars/threadbase-streamer/commit/2a8e5691df0f667ff04e363a62eaeffafc287ca2)), closes [#818](https://github.com/RonenMars/threadbase-streamer/issues/818)
+
 ## [1.87.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.0...v1.87.1) (2026-09-08)
 
 ### Bug Fixes
