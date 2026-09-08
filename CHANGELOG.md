@@ -1,3 +1,9 @@
+## [1.89.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.1...v1.89.2) (2026-09-08)
+
+### Bug Fixes
+
+* **conversations:** count meta.message_count in the served space ([#833](https://github.com/RonenMars/threadbase-streamer/issues/833)) ([aca8a0b](https://github.com/RonenMars/threadbase-streamer/commit/aca8a0b0ff86edc47a9a25a227b88c1be0ca9ec3)), closes [#824](https://github.com/RonenMars/threadbase-streamer/issues/824) [#824](https://github.com/RonenMars/threadbase-streamer/issues/824) [#824](https://github.com/RonenMars/threadbase-streamer/issues/824)
+
 ## [1.89.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.0...v1.89.1) (2026-09-08)
 
 ### Bug Fixes
