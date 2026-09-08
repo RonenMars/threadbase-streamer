@@ -679,13 +679,16 @@ export class ConversationHandlers {
   }
 
   /**
-   * Can this file carry a fork link at all?
+   * Is this conversation a Codex rollout?
    *
-   * Only Codex writes one today, and a conversation GET is a hot path: without
-   * this, every Claude request pays an extra open+read of a first line that can
-   * never contain a link.
+   * Two callers, both needing the same fact for different reasons: only Codex
+   * writes a fork link, and only Codex numbers its offset index in a different
+   * space than this handler serves (see the gate in handleGetConversation). A
+   * conversation GET is a hot path, so answering from the cache row keeps every
+   * Claude request from paying an open+read of a first line that can never
+   * contain a link.
    */
-  private mayInheritHistory(conversationId: string, filePath: string): boolean {
+  private isCodexConversation(conversationId: string, filePath: string): boolean {
     const provider = this.cache?.getMetaById(
       this.deps.resolveConversationLookupId(conversationId),
     )?.provider;
@@ -759,7 +762,7 @@ export class ConversationHandlers {
     // cannot throttle a writer out.
     const ownFilePath = await this.locateJsonlPath(id, this.deps.resolveConversationLookupId(id));
     const inherited =
-      ownFilePath && this.mayInheritHistory(id, ownFilePath)
+      ownFilePath && this.isCodexConversation(id, ownFilePath)
         ? await resolveInheritedHistory({
             filePath: ownFilePath,
             locateSource: (sourceId) =>
@@ -1006,7 +1009,30 @@ export class ConversationHandlers {
       // dropped by a stale upper bound.
       const isTailRequest = !url.searchParams.has("before_index") && !hasAfter && !hasAnchor;
       const indexFilePath = (conversation as { filePath?: string }).filePath;
-      if (isTailRequest && indexFilePath && this.cache) {
+      // The offset index counts a Codex rollout in a DIFFERENT index space than
+      // this handler serves it in, so neither its count nor its windows can be
+      // used for one. The index is built with the scanner's parseCodexJsonlLine,
+      // which renders the AGENTS.md / permissions dumps Codex writes as
+      // `role: user`; `isServable` below drops them. Measured on a rollout whose
+      // first turn is an AGENTS.md dump, the same request served two different
+      // conversations depending only on whether the index happened to be warm:
+      // warm gave 3 messages with the dump at message_index 0, cold gave the
+      // real 2 at 0-1. So the dump renders as a user bubble AND every genuine
+      // message shifts by one, which moves what a stored before_index /
+      // after_index / search anchor_index points at.
+      //
+      // For a fork it is worse than a shift: the index window covers the fork's
+      // OWN file, so taking it discards `filtered` — the only array carrying the
+      // inherited prefix — and serves 2 messages under a meta claiming 6 with
+      // the divider at index 4.
+      //
+      // Reader-side gate on purpose: nothing is reindexed and no row changes, so
+      // it lifts the day the two spaces agree — either the index is written with
+      // the same filter this handler serves through, or the window is filtered
+      // and recounted on read. Claude is unaffected: its index space and its
+      // served space have always been the same one.
+      const useOffsetIndex = !!indexFilePath && !this.isCodexConversation(id, indexFilePath);
+      if (isTailRequest && useOffsetIndex && indexFilePath && this.cache) {
         const indexed = this.cache.getIndexedMessageCount(
           ConversationCache.conversationIdForFile(indexFilePath),
         );
@@ -1023,10 +1049,10 @@ export class ConversationHandlers {
       // wrong. Only for the linear paging windows (before/after/tail); the
       // anchored-search window keeps using the scanner's reader.
       const indexWindow =
-        scanLimit > 0 && !hasAnchor && indexFilePath && this.cache
+        scanLimit > 0 && !hasAnchor && useOffsetIndex && indexFilePath && this.cache
           ? this.cache.readMessageWindow(indexFilePath, windowStart, beforeIndex)
           : null;
-      if (!indexWindow && indexFilePath && this.cache && !hasAnchor) {
+      if (!indexWindow && useOffsetIndex && indexFilePath && this.cache && !hasAnchor) {
         // The one line that separates a fast fetch from a slow one. A miss
         // means this request falls through to the scanner and re-parses the
         // whole file, which is the entire difference between the 34 ms and
