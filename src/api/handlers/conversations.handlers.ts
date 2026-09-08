@@ -952,7 +952,21 @@ export class ConversationHandlers {
     // Fold the offset index's count into the validator: when the index is
     // fresher than the scanner snapshot (a live/appended file), the ETag must
     // change so a client holding the old tail doesn't get a 304 against grown
-    // content. Cheap count lookup; the window read below reuses the same number.
+    // content. Cheap count lookup, and deliberately NOT behind the
+    // `useOffsetIndex` gate the window read below sits behind — since #824 a
+    // Codex rollout is served from the scanner, so there is no window read here
+    // to share this number with, and for Codex it feeds nothing but the tag.
+    //
+    // Reading it unguarded is safe even though for Codex it is a PRE-filter
+    // count, one higher per injected-context line than the body serves: the
+    // input it is maxed against, `etagSource.messageCount`, is the scanner's raw
+    // count in that SAME pre-filter space, and nothing here is compared against
+    // the served post-`isServable` count. A validator only has to CHANGE when
+    // the content does; it does not have to be a meaningful message count. Both
+    // inputs move on an append — the watcher's `extendMessageIndex` reduces
+    // Codex lines with the same `parseCodexJsonlLine` the backfill uses — so an
+    // append cannot leave the tag frozen and hand out a stale 304. Pinned in
+    // __tests__/codex-meta-count-etag.test.ts.
     const indexedCount =
       etagSource.filePath && this.cache
         ? this.cache.getIndexedMessageCount(
@@ -1271,11 +1285,39 @@ export class ConversationHandlers {
     // the meta (message_count / last_updated_at) must reflect what was actually
     // served — otherwise meta disagrees with the messages array. Prefer the
     // index total and the newest served message's timestamp.
-    const ownMessageCount =
-      indexTotal != null && indexTotal > conv.messageCount ? indexTotal : conv.messageCount;
-    // Count the prefix too, or meta says "0 messages" for a fork whose body
-    // carries 21 — and the hub row and the open conversation disagree.
-    const metaMessageCount = ownMessageCount + inheritedFiltered.length;
+    //
+    // The base is `total` (= `filtered.length`): the inherited prefix plus this
+    // file's own turns, each through `isServable`, so the whole number sits in
+    // the one space this response serves in. Taking it whole is also what counts
+    // the prefix, so a fork's meta does not say "0 messages" while its body
+    // carries 21 and the hub row disagrees with the open conversation.
+    //
+    // It replaces `conv.messageCount + inheritedFiltered.length`, which added a
+    // POST-filter prefix length to the scanner's RAW count — for Codex that
+    // count still holds the AGENTS.md / permissions lines `isServable` drops —
+    // producing a number in neither space: a fork carrying one injected line in
+    // its own file reported 7 against a body of 6.
+    //
+    // Freshness is then carried across as a DELTA rather than by swapping the
+    // raw `indexTotal` in for the own half, because only the delta is known to
+    // be filter-free. `indexTotal` is non-null only for CLAUDE — since #824 the
+    // offset index is gated off for Codex (`useOffsetIndex`), and `indexWindow`
+    // is the only thing that sets it — so this term is zero for every Codex
+    // conversation, fork or not, and `metaMessageCount` is simply `total` there.
+    // On the Claude path `isServable` matches nothing (the heuristic is
+    // Codex-specific text) and there is never an inherited prefix, so the delta
+    // is exactly the messages the index has read past the snapshot.
+    //
+    // Equivalent to `indexFresh ? indexTotal : total` on every input reachable
+    // today: every Conversation the meta block can see is built with
+    // `messageCount: messages.length` (the scanner's parseConversation /
+    // parseCodexConversation / assemble, and `shellConversationForInherited`).
+    // The delta is preferred because it localizes the "no messages were
+    // filtered here" assumption to the newly-appended region instead of
+    // asserting it over the whole conversation.
+    const indexFreshDelta =
+      indexTotal != null && indexTotal > conv.messageCount ? indexTotal - conv.messageCount : 0;
+    const metaMessageCount = total + indexFreshDelta;
     const metaLastUpdatedAt =
       indexTotal != null && indexTotal > conv.messageCount
         ? (slice.at(-1)?.timestamp ?? conv.timestamp)
