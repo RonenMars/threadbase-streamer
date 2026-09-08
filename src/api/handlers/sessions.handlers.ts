@@ -1223,6 +1223,22 @@ export class SessionHandlers {
       promptId: prompt.promptId,
     });
     this.pendingQuestionKey.set(sessionId, key);
+    // Counterpart to ws.broadcast_permission below. Shape only — question and
+    // option TEXT must never enter logs, same rule the detectors follow. The
+    // absence of this line is what made a client-scraped card indistinguishable
+    // from one this server sent (#823).
+    const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
+    this.log.info(
+      `[ws.broadcast_question] ${sessionId.slice(0, 8)} subscribers=${subscriberCount}`,
+      {
+        event: "ws.broadcast_question",
+        sessionId,
+        subscriberCount,
+        origin: "screen",
+        questionCount: questions.length,
+        optionCount: questions[0]?.options.length ?? 0,
+      },
+    );
     this.broadcastToSession(sessionId, { type: "question", sessionId, toolUseId, questions });
   }
 
@@ -1261,6 +1277,16 @@ export class SessionHandlers {
       questions,
       origin,
       promptId: prompt.promptId,
+    });
+    // No broadcast on this path — the card reaches the client on the next
+    // GET /api/sessions/:id — so without this the question is pending with
+    // nothing at all in the log.
+    this.log.info(`[question.pending] ${sessionId.slice(0, 8)} origin=${origin}`, {
+      event: "question.pending",
+      sessionId,
+      origin,
+      questionCount: questions.length,
+      optionCount: questions[0]?.options.length ?? 0,
     });
   }
 
