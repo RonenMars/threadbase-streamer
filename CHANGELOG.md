@@ -1,3 +1,9 @@
+## [1.89.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.88.0...v1.89.0) (2026-09-08)
+
+### Features
+
+* **conversations:** filter empty histories and provider-created subagents ([#828](https://github.com/RonenMars/threadbase-streamer/issues/828)) ([9b05c92](https://github.com/RonenMars/threadbase-streamer/commit/9b05c925ad89f1e387d143d1af0a6340d4ce2491))
+
 ## [1.88.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.2...v1.88.0) (2026-09-08)
 
 ### Features
