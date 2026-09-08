@@ -21,6 +21,8 @@ export const createConversationRoutes = (deps: ApiDeps) => {
   // "<id>/search-target" as a conversation id.
   app.on("QUERY", "/:id{.+}/search-target", async (c) => {
     const id = c.req.param("id");
+    if (await deps.isExcludedSubagent?.(id))
+      return c.json({ error: "Conversation not found" }, 404);
     await deps.handleSearchTarget(id, c.env.incoming, c.env.outgoing);
     return alreadyHandled();
   });

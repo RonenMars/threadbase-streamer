@@ -282,6 +282,7 @@ export function createConversationWatcherEvents(
       });
     },
     onTruncated: (filePath) => {
+      deps.cache()?.reconcileClassification(filePath);
       // The file shrank below our offset — it is a different generation of
       // content now, so every byte span we recorded for it is meaningless.
       // Drop the index (and its parse state); the next read rebuilds from 0.
@@ -660,6 +661,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     sessionStore: deps.sessionStore,
     wsHub: deps.wsHub,
     cache: () => deps.cache(),
+    isExcludedSubagent: (id) => deps.conversationHandlers.isExcludedSubagent(id),
     cacheMonitor: () => deps.cacheMonitor(),
     hostPressureMonitor: () => deps.hostPressureMonitor(),
     pushRepo: () => deps.pushRepo(),
@@ -780,6 +782,27 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           if (oldClientId) deps.clientIdToWs.delete(oldClientId);
           deps.clientIdToWs.set(msg.clientId, ws);
           deps.wsToClientId.set(ws, msg.clientId);
+        }
+        // Cache-backed and synchronous on purpose. `handleWsMessage` is async,
+        // so its first `await` defers everything after it by a microtask — and
+        // subscribe_session emits its snapshot BEFORE any await (the ordering
+        // ws-hub-wire-identity, ws-replay-depth, permission-gate-identity and
+        // prompt-contract-scoping all pin). The handler's own
+        // isExcludedSubagent may classify off disk, which belongs on the HTTP
+        // detail path, not on every WS frame.
+        if (typeof msg.sessionId === "string") {
+          // A live session carries its own flag in memory, so it is refused
+          // even with no cache; the stored classification is cache-derived and
+          // degrades with it. Cacheless also loses the flag's value, which
+          // falls back to the registry default (off).
+          const subagentCache = deps.cache?.();
+          const managed = deps.sessionStore?.getManaged?.(msg.sessionId);
+          const includeSubagents = subagentCache?.includeSubagentSessions ?? false;
+          if (
+            (managed?.isSubagent === true && !includeSubagents) ||
+            subagentCache?.isExcludedSubagent(managed?.boundConversationId ?? msg.sessionId)
+          )
+            return;
         }
         if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
           // Reading a session's stream is the same authority as reading its

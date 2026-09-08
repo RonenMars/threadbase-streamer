@@ -242,6 +242,7 @@ export class SessionRegistryBoot {
       const rows = this.managedSessionsRepo.listRecoverable({
         sinceMs: now - REHYDRATE_WINDOW_MS,
         limit: REHYDRATE_MAX + 1,
+        includeSubagents: this.featureFlags.subagentSessions ?? false,
       });
       const truncated = rows.length > REHYDRATE_MAX;
       const candidates = truncated ? rows.slice(0, REHYDRATE_MAX) : rows;

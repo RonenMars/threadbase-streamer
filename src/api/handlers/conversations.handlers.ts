@@ -23,6 +23,7 @@ import {
   isProviderResumable,
 } from "../../providers";
 import type { ScannerManager, ScanProfile } from "../../scanner-manager";
+import { classifyConversationFile } from "../../services/conversations/classification";
 import {
   findSearchTarget,
   type SearchableMessage,
@@ -72,6 +73,7 @@ const MAX_BYTES_CEILING = 32 * 1024 * 1024;
  * that spans well beyond conversations.
  */
 export type ConversationHandlersDeps = {
+  includeSubagentSessions?: () => boolean;
   scannerManager: ScannerManager;
   sessionStore: SessionStore;
   ptyManager: LiveSessionManager;
@@ -97,6 +99,46 @@ export type ConversationHandlersDeps = {
  * server: this class only reads it through `deps`.
  */
 export class ConversationHandlers {
+  private publicScannerMeta(meta: ConversationMeta): ConversationMeta | null {
+    const id = this.cache?.getIdByFilePath(meta.filePath);
+    const row = id ? this.cache?.getMetaById(id) : null;
+    if (row) return this.cache?.isVisible(row.id) ? { ...meta, sessionId: row.id } : null;
+    try {
+      const classification = classifyConversationFile(meta.filePath, meta.provider);
+      if (
+        !classification.hasMessages ||
+        (classification.isSubagent && !(this.deps.includeSubagentSessions?.() ?? false))
+      )
+        return null;
+      return {
+        ...meta,
+        sessionId:
+          classification.isSubagent || classification.provider === CODEX_CLI_PROVIDER
+            ? classification.id
+            : meta.sessionId,
+      };
+    } catch {
+      return meta;
+    }
+  }
+  async isExcludedSubagent(id: string): Promise<boolean> {
+    if (this.deps.includeSubagentSessions?.() ?? this.cache?.includeSubagentSessions ?? false)
+      return false;
+    const lookupId = this.deps.resolveConversationLookupId(id);
+    if (this.sessionStore.getManaged(id)?.isSubagent) return true;
+    const meta = this.cache?.getMetaById(lookupId);
+    if (meta?.isSubagent != null) return meta.isSubagent;
+    const filePath = meta?.filePath ?? (await this.locateJsonlPath(id, lookupId));
+    if (!filePath) return false;
+    try {
+      const classification = this.cache
+        ? this.cache.reconcileClassification(filePath)
+        : classifyConversationFile(filePath);
+      return classification?.isSubagent ?? false;
+    } catch {
+      return false;
+    }
+  }
   constructor(private deps: ConversationHandlersDeps) {}
 
   private get scannerManager(): ScannerManager {
@@ -181,6 +223,8 @@ export class ConversationHandlers {
       });
       const adapted = conversations.map((c) => ({
         id: c.id,
+        isSubagent: c.isSubagent,
+        parentConversationId: c.parentConversationId,
         title: deriveProjectChatTitle({
           title: c.title,
           projectName: c.projectName,
@@ -206,6 +250,7 @@ export class ConversationHandlers {
 
     const scanner = await this.scannerManager.get();
     let metas = [...scanner.getMetadataCache().values()];
+    metas = metas.flatMap((meta) => this.publicScannerMeta(meta) ?? []);
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
     if (providerFilter)
@@ -274,6 +319,7 @@ export class ConversationHandlers {
 
     const scanner = await this.scannerManager.get(true);
     let metas = [...scanner.getMetadataCache().values()];
+    metas = metas.flatMap((meta) => this.publicScannerMeta(meta) ?? []);
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
     if (providerFilter)
@@ -317,6 +363,8 @@ export class ConversationHandlers {
     const sessions = conversations.map((c) => ({
       type: "conversation" as const,
       id: c.id,
+      isSubagent: c.isSubagent,
+      parentConversationId: c.parentConversationId,
       status: "idle" as const,
       ownership: "historical" as const,
       ptyAttached: false,
@@ -527,6 +575,13 @@ export class ConversationHandlers {
     // conversation we care about, so a sibling file changing must not stall this
     // single-conversation request behind a full-tree rescan.
     const scanner = await this.scannerManager.get(true);
+    const child = this.cache?.getMetaById(lookupId);
+    if (child?.isSubagent && child.filePath) {
+      const page = await scanner.parseSingleFilePage(child.filePath, child.account ?? undefined, {
+        limit: Number.MAX_SAFE_INTEGER,
+      });
+      return page?.conversation ? { ...page.conversation, sessionId: lookupId } : null;
+    }
     const fromIndex = await scanner.getConversation(lookupId);
     if (fromIndex) {
       // Live-session bypass: a conversation with a live PTY is exactly the case
@@ -739,6 +794,11 @@ export class ConversationHandlers {
     ifNoneMatch?: string,
   ): Promise<void> {
     if (this.deps.rejectIfWarmingUp(res)) return;
+
+    if (await this.isExcludedSubagent(id)) {
+      json(res, 404, { error: "Conversation not found" });
+      return;
+    }
 
     // Try the scanner first (has full content including tool_use blocks).
     // Fall back to the cache tail only when the scanner can't find the file —
@@ -1223,6 +1283,8 @@ export class ConversationHandlers {
     const body: Record<string, unknown> = {
       meta: {
         id,
+        isSubagent: this.cache?.getMetaById(id)?.isSubagent,
+        parentConversationId: this.cache?.getMetaById(id)?.parentConversationId,
         profile_id: conv.account,
         project_name: conv.projectName,
         session_name: conv.sessionName || undefined,
@@ -1366,12 +1428,17 @@ export class ConversationHandlers {
       },
       scanner,
     );
-    const adapted = results.map((r: any) => ({
+    this.cache?.upsertFromScannerMeta(results.map((r: any) => r.meta));
+    const publicResults = results.flatMap((r) => {
+      const meta = this.publicScannerMeta(r.meta);
+      return meta ? [{ ...r, meta }] : [];
+    });
+    const adapted = publicResults.map((r: any) => ({
       // Use sessionId so the id matches /api/conversations and resolves via
       // findConversationByUuid — a client can round-trip a search result into
       // GET /api/conversations/:id or the search-target QUERY. The old
       // filename-stem derivation produced an id no other endpoint recognized.
-      id: r.meta.sessionId || r.meta.id,
+      id: this.cache?.getIdByFilePath(r.meta.filePath) ?? r.meta.sessionId ?? r.meta.id,
       title: r.meta.projectName,
       sessionName: r.meta.sessionName || undefined,
       filePath: r.meta.filePath,
@@ -1399,7 +1466,8 @@ export class ConversationHandlers {
         : [],
     }));
 
-    const page = paginate(applyFilters(adapted, filters), offset, limit);
+    const visible = adapted.filter((r) => this.cache?.isVisible(r.id) ?? true);
+    const page = paginate(applyFilters(visible, filters), offset, limit);
     json(res, 200, {
       conversations: page.items,
       hasMore: page.hasMore,

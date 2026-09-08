@@ -65,6 +65,12 @@ export interface FeatureFlagResolution {
  * `undefined`. A TS enum would add a runtime object without a stronger type.
  */
 export const FEATURE_FLAGS = {
+  subagentSessions: {
+    description:
+      "Include provider-created Claude Code and Codex child sessions in history and session APIs.",
+    default: false,
+    env: "THREADBASE_FEATURE_SUBAGENT_SESSIONS",
+  },
   codexSystemPrompt: {
     description:
       "Send the built system prompt to fresh Codex sessions. Off by default: Codex has no " +

@@ -630,7 +630,11 @@ export class StreamerServer {
 
     this.browserCors = config.browserCors ?? loadBrowserCors();
 
-    this.sessionStore = new SessionStore();
+    this.sessionStore = new SessionStore(
+      (id, session) =>
+        (this.featureFlags.subagentSessions || session?.isSubagent !== true) &&
+        (this.cache?.isVisible(id) ?? true),
+    );
     this.wsHub = new WSHub();
     this.promptRegistry = new PromptRegistry({
       emit: (event) =>
@@ -737,6 +741,7 @@ export class StreamerServer {
     });
 
     this.conversationHandlers = new ConversationHandlers({
+      includeSubagentSessions: () => this.featureFlags.subagentSessions,
       scannerManager: this.scannerManager,
       sessionStore: this.sessionStore,
       ptyManager: this.ptyManager,
@@ -785,6 +790,7 @@ export class StreamerServer {
     const agentClient = this.agentClient;
 
     this.sessionHandlers = new SessionHandlers({
+      includeSubagentSessions: () => this.featureFlags.subagentSessions,
       // Collaborators the constructor already built. The Maps and Sets are
       // passed by reference on purpose: they stay StreamerServer state, and a
       // mutation from a handler is the same mutation the WS/PTY callbacks here
@@ -1593,6 +1599,7 @@ export class StreamerServer {
             undefined,
             {
               filterAgentConversations: !this.includeAgents,
+              includeSubagentSessions: this.featureFlags.subagentSessions,
               agentEntrypoints: this.agentEntrypoints,
               onAgentFileDetected: (fp) => {
                 this.fileWatcher.unwatch(fp);
@@ -2795,6 +2802,9 @@ export class StreamerServer {
         ? (liveSession.boundConversationId ?? null)
         : null);
     const historyId = resumeId ?? sessionId;
+    if (await this.conversationHandlers.isExcludedSubagent(historyId)) {
+      return { ok: false, reason: "history_file_missing" };
+    }
     const managedProvider = row?.provider ?? liveSession?.provider;
     const jsonlPath = this.conversationHandlers.findJsonlPath(historyId);
     const conv = await this.conversationHandlers.findConversationByUuid(historyId);
@@ -2804,6 +2814,12 @@ export class StreamerServer {
     // Codex session reads as history_file_missing purely because the warm-up
     // has not run, and auto-resume permanently skips a session that is fine.
     const cachedConvMeta = this.cache?.getMetaById(historyId);
+    if (
+      !this.featureFlags.subagentSessions &&
+      (row?.is_subagent === 1 || liveSession?.isSubagent || cachedConvMeta?.isSubagent)
+    ) {
+      return { ok: false, reason: "history_file_missing" };
+    }
     const cachedPath = cachedConvMeta?.filePath ? toNativeFilePath(cachedConvMeta.filePath) : null;
     const cachedCodexPath =
       (managedProvider === CODEX_CLI_PROVIDER || cachedConvMeta?.provider === CODEX_CLI_PROVIDER) &&

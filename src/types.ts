@@ -78,6 +78,8 @@ export function confidenceForSource(source: StatusSource): StatusConfidence {
 }
 
 export interface ManagedSession {
+  isSubagent?: boolean;
+  parentConversationId?: string | null;
   id: string; // JSONL UUID — the .jsonl filename under ~/.claude/projects/
   provider?: ProviderName;
   projectId?: string; // Stable identity into the projects table (added during migration).
@@ -458,6 +460,8 @@ export interface ServerWarmingUpResponse {
 }
 
 export interface SessionResponse {
+  isSubagent?: boolean;
+  parentConversationId?: string | null;
   id: string; // JSONL UUID
   conversationId: string; // alias for id — mobile uses this to build deep-link URLs
   provider?: ProviderName;

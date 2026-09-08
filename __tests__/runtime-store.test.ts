@@ -65,6 +65,7 @@ describe("RuntimeStore", () => {
       "002_add_managed_session_boot_token.sql",
       "003_create_devices.sql",
       "004_add_device_e2ee.sql",
+      "005_classify_subagents.sql",
     ]);
     store.close();
 
