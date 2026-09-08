@@ -1,3 +1,9 @@
+## [1.87.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.86.2...v1.87.0) (2026-09-08)
+
+### Features
+
+* **sessions:** carry effort on session_update ([#820](https://github.com/RonenMars/threadbase-streamer/issues/820)) ([b90040a](https://github.com/RonenMars/threadbase-streamer/commit/b90040a293fc0d1a0329acdecacea78355b3a96a))
+
 ## [1.86.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.86.1...v1.86.2) (2026-09-07)
 
 ### Performance Improvements
