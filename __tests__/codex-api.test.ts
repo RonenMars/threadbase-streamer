@@ -1,5 +1,4 @@
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StreamerServer } from "../src/server";
@@ -8,17 +7,6 @@ const CODEX_SESSION_ID = "019edbc1-13a7-7fa1-80b4-7eafc270f03e";
 const FIXTURE = join(__dirname, "fixtures", "codex-rollout.jsonl");
 const API_KEY = "tb_codex_api_test_key_00000000000000";
 const auth = { Authorization: `Bearer ${API_KEY}` };
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 function makeCodexRoot(tmpBase: string): string {
   const root = join(tmpBase, "codex-sessions");
@@ -35,8 +23,6 @@ describe("codex conversations — HTTP API", () => {
   let tmpBase: string;
 
   beforeEach(async () => {
-    port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     tmpBase = mkdtempSync(join(tmpdir(), "threadbase-codex-api-test-"));
     // Isolate the scanner's SQLite index to an empty temp DB so the warmup scan
     // only sees the codexRoots fixture file instead of the 5000+ real conversations
@@ -45,7 +31,7 @@ describe("codex conversations — HTTP API", () => {
     const codexRoot = makeCodexRoot(tmpBase);
 
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -58,7 +44,9 @@ describe("codex conversations — HTTP API", () => {
       // also leak real host conversations into the fixture.
       scannerPersistent: false,
     });
-    await server.listen(port, { awaitReady: true });
+    await server.listen(0, { awaitReady: true });
+    port = server.port;
+    baseUrl = `http://localhost:${port}`;
   });
 
   afterEach(async () => {

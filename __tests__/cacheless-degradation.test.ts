@@ -1,5 +1,4 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StreamerServer } from "../src/server";
@@ -17,17 +16,6 @@ const FIXTURE_PROFILES = [
   },
 ];
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 // Regression for the 2026-07-03 incident: with better-sqlite3 unusable (node
 // ABI mismatch), ConversationCache.open threw (caught, "running without
 // cache") but the scanner's own SQLite index kept throwing on every request —
@@ -42,8 +30,6 @@ describe("conversation API without SQLite (degraded mode)", () => {
   let savedScannerDb: string | undefined;
 
   beforeEach(async () => {
-    port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     tmpBase = mkdtempSync(join(tmpdir(), "threadbase-cacheless-test-"));
 
     // A regular FILE where directories are expected: every SQLite open under
@@ -54,7 +40,7 @@ describe("conversation API without SQLite (degraded mode)", () => {
     process.env.TB_SCANNER_DB = join(blocker, "scanner.db");
 
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -67,7 +53,9 @@ describe("conversation API without SQLite (degraded mode)", () => {
       // dir is empty; flaky locally). [] disables codex scanning entirely.
       codexRoots: [],
     });
-    await server.listen(port, { awaitReady: true });
+    await server.listen(0, { awaitReady: true });
+    port = server.port;
+    baseUrl = `http://localhost:${port}`;
   });
 
   afterEach(async () => {

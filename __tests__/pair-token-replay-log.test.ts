@@ -1,4 +1,3 @@
-import { createServer } from "http";
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,32 +39,20 @@ const { StreamerServer } = await import("../src/server");
 const API_KEY = "tb_test_key_for_replay_log";
 const replays = () => h.calls.filter((c) => c.fields?.event === "pair.token_replayed");
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 describe("a replayed pair token", () => {
   let server: InstanceType<typeof StreamerServer>;
   let baseUrl: string;
 
   beforeEach(async () => {
     h.calls.length = 0;
-    const port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
     });
-    await server.listen(port);
+    await server.listen(0);
+    baseUrl = `http://localhost:${server.port}`;
   });
 
   afterEach(async () => {

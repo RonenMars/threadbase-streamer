@@ -1,7 +1,6 @@
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import { mkdtempSync, readFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../../src/server";
@@ -28,22 +27,9 @@ export function createFixtureProfiles(fixtureDir: string) {
 
 export const TEST_API_KEY = "tb_contract_test_key";
 
-export async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 export async function createTestServer(fixtureDir: string, overrides: Partial<ServerConfig> = {}) {
-  const port = overrides.port ?? (await getRandomPort());
   const cacheDir = overrides.cacheDir ?? mkdtempSync(join(tmpdir(), "tb-test-cache-"));
   const server = new StreamerServer({
-    port,
     apiKey: TEST_API_KEY,
     localNoAuth: false,
     verbose: false,
@@ -56,8 +42,16 @@ export async function createTestServer(fixtureDir: string, overrides: Partial<Se
     scannerPersistent: false,
     codexRoots: [],
     ...overrides,
+    // Bind the real server to port 0 and read the OS-assigned port back off
+    // it, rather than probing with a throwaway listener and closing it — a
+    // closed probe leaves a window where another suite can grab the same
+    // port before this server binds it for real. `overrides.port` is
+    // deliberately not honored: no caller passes one, and honoring it would
+    // reopen the TOCTOU window this removes.
+    port: 0,
   });
-  await server.listen(port, { awaitReady: true });
+  await server.listen(0, { awaitReady: true });
+  const port = server.port;
   const baseUrl = `http://localhost:${port}`;
   const headers = { Authorization: `Bearer ${TEST_API_KEY}` };
 

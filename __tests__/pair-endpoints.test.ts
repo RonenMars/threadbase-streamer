@@ -1,19 +1,7 @@
-import { createServer } from "http";
 import nacl from "tweetnacl";
 import naclUtil from "tweetnacl-util";
 import { PairTokenStore } from "../src/pair-store";
 import { StreamerServer } from "../src/server";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const API_KEY = "tb_test_key_for_pair_tests";
 
@@ -23,16 +11,16 @@ describe("Pair endpoints", () => {
   let baseUrl: string;
 
   beforeEach(async () => {
-    port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
       publicUrl: "https://example.test",
     });
-    await server.listen(port);
+    await server.listen(0);
+    port = server.port;
+    baseUrl = `http://localhost:${port}`;
   });
 
   afterEach(async () => {

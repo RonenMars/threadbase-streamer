@@ -6,7 +6,6 @@
 
 import { EventEmitter } from "events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { homedir } from "os";
 import { basename, join, sep } from "path";
 import WebSocket from "ws";
@@ -33,17 +32,6 @@ vi.mock("node-pty", () => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 const API_KEY = "tb_test_watch_for_jsonl";
 
 // Returns the Claude projects dir for a given absolute project path —
@@ -64,9 +52,6 @@ describe("watchForJsonl — conversation_event wiring", () => {
   let origBrowseRoot: string | undefined;
 
   beforeEach(async () => {
-    port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
-
     // Create a project dir directly under homedir.
     // Set THREADBASE_BROWSE_ROOT so loadBrowseRoot() (which reads server.yaml)
     // is overridden — otherwise the test server picks up the dev browse_root.
@@ -76,7 +61,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
 
     cacheDir = mkdtempSync(join(homedir(), "threadbase-wfj-cache-"));
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -84,7 +69,9 @@ describe("watchForJsonl — conversation_event wiring", () => {
       cacheDir,
       scanProfiles: [],
     });
-    await server.listen(port);
+    await server.listen(0);
+    port = server.port;
+    baseUrl = `http://localhost:${port}`;
   });
 
   afterEach(async () => {

@@ -1,5 +1,4 @@
 import { mkdirSync, mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { vi } from "vitest";
@@ -10,17 +9,6 @@ vi.mock("../src/process-discovery", () => ({
 
 import { discoverClaudeProcesses } from "../src/process-discovery";
 import { StreamerServer } from "../src/server";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const API_KEY = "tb_test_key_adopt_no_path";
 const CONV_ID = "aaaaaaaa-1111-4222-8333-444444444444";
@@ -43,16 +31,15 @@ describe("POST /api/sessions/:id/adopt — unknown working directory", () => {
     tmpBase = mkdtempSync(join(tmpdir(), "threadbase-adopt-no-path-"));
     mkdirSync(join(tmpBase, "projects"), { recursive: true });
 
-    const port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
       scanProfiles: [{ id: "test", label: "Test", configDir: tmpBase, enabled: true, emoji: "🧪" }],
     });
-    await server.listen(port);
+    await server.listen(0);
+    baseUrl = `http://localhost:${server.port}`;
   });
 
   afterEach(async () => {

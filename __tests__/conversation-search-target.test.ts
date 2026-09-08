@@ -1,5 +1,4 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
@@ -9,17 +8,6 @@ import {
 } from "../src/services/conversations/findSearchTarget";
 
 const API_KEY = "tb_test_key_for_search_target_tests";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 describe("findSearchTarget", () => {
   const text = (t: string, uuid?: string): SearchableMessage => ({ text: t, uuid });
@@ -144,9 +132,8 @@ describe("QUERY /api/conversations/:id/search-target", () => {
     }
     writeFileSync(join(projDir, `${convId}.jsonl`), lines.join(""));
 
-    port = await getRandomPort();
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -160,7 +147,8 @@ describe("QUERY /api/conversations/:id/search-target", () => {
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(port);
+    await server.listen(0);
+    port = server.port;
   });
 
   afterAll(async () => {

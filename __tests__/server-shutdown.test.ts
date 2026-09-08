@@ -73,17 +73,6 @@ async function expectPortRebindable(port: number): Promise<void> {
   await new Promise<void>((resolve) => probe.close(() => resolve()));
 }
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 function makeServer(port: number): StreamerServer {
   const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-shutdown-test-"));
   // An empty `scanProfiles` array falls back to watching the real
@@ -125,18 +114,18 @@ async function connectSlowWs(port: number): Promise<WebSocket> {
 
 describe("StreamerServer.close() port release", () => {
   it("releases the port with no clients connected (common deploy path)", async () => {
-    const port = await getRandomPort();
-    const server = makeServer(port);
-    await server.listen(port);
+    const server = makeServer(0);
+    await server.listen(0);
+    const port = server.port;
 
     await Promise.race([server.close(), hangGuard("server.close()")]);
     await expectPortRebindable(port);
   });
 
   it("releases :PORT even when a WebSocket client withholds its close ACK", async () => {
-    const port = await getRandomPort();
-    const server = makeServer(port);
-    await server.listen(port);
+    const server = makeServer(0);
+    await server.listen(0);
+    const port = server.port;
 
     const ws = await connectSlowWs(port);
 
@@ -160,9 +149,9 @@ describe("StreamerServer.close() port release", () => {
     // the first EADDRINUSE — it retries with backoff and binds once the first
     // releases mid-window, mirroring launchd relaunching before the kernel has
     // fully torn down the old socket.
-    const port = await getRandomPort();
-    const first = makeServer(port);
-    await first.listen(port);
+    const first = makeServer(0);
+    await first.listen(0);
+    const port = first.port;
 
     const second = makeServer(port);
     const bindPromise = second.listen(port); // will EADDRINUSE, then retry
@@ -178,9 +167,9 @@ describe("StreamerServer.close() port release", () => {
   });
 
   it("frees the port for an immediate rebind (the EADDRINUSE scenario)", async () => {
-    const port = await getRandomPort();
-    const server = makeServer(port);
-    await server.listen(port);
+    const server = makeServer(0);
+    await server.listen(0);
+    const port = server.port;
     const ws = await connectSlowWs(port);
 
     await Promise.race([server.close(), hangGuard("server.close()")]);

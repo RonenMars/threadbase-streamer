@@ -1,5 +1,4 @@
 import { mkdirSync, mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,17 +7,6 @@ import { ConversationCache } from "../src/conversation-cache";
 import { StreamerServer } from "../src/server";
 
 const API_KEY = "tb_test_key_for_integration_tests";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 /** Poll GET /api/cache/alert until a pending alert appears; return its fingerprint. */
 async function waitForAlert(port: number): Promise<string> {
@@ -80,7 +68,6 @@ describe("cache-integrity alert wiring", () => {
     // scanner surfaces on the host: 25 missing >= 20, ratio threshold 0.
     process.env.THREADBASE_CACHE_ALERT_MIN_MISSING = "20";
     process.env.THREADBASE_CACHE_ALERT_MIN_RATIO = "0";
-    port = await getRandomPort();
     cacheDir = mkdtempSync(join(tmpdir(), "cache-alert-wiring-cache-"));
     configDir = mkdtempSync(join(tmpdir(), "cache-alert-wiring-cfg-"));
     scanDir = mkdtempSync(join(tmpdir(), "cache-alert-wiring-scan-"));
@@ -90,7 +77,7 @@ describe("cache-integrity alert wiring", () => {
     seedMissingRows(cacheDir, 25);
 
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -104,7 +91,8 @@ describe("cache-integrity alert wiring", () => {
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(port);
+    await server.listen(0);
+    port = server.port;
 
     // Warm-up runs detection asynchronously; wait until the alert is raised.
     fingerprint = await waitForAlert(port);
