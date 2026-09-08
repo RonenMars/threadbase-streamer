@@ -570,3 +570,19 @@ describe("SessionStore", () => {
     });
   });
 });
+
+describe("effort on the session frame", () => {
+  it("is emitted when the session carries one, so session_update can carry it too", () => {
+    const store = new SessionStore();
+    store.addManaged(makeManagedSession({ effort: "high" }));
+    const resp = store.get(UUID_A, new Set([UUID_A]));
+    expect(resp?.effort).toBe("high");
+  });
+
+  it("is absent rather than null when unset, so a client merge keeps its last value", () => {
+    const store = new SessionStore();
+    store.addManaged(makeManagedSession());
+    const resp = store.get(UUID_A, new Set([UUID_A]));
+    expect(resp && "effort" in resp).toBe(false);
+  });
+});

@@ -99,6 +99,15 @@ export interface ManagedSession {
   failureCode?: string;
   sessionName?: string;
   model?: string;
+  /**
+   * Reasoning-effort tier this session is running with.
+   *
+   * Seeded from the resolved spawn config rather than scraped, because
+   * `session_update` is event-driven and has no screen to read. `GET
+   * /api/sessions/:id` still prefers a live status-line scrape, which is
+   * authoritative if the user changed it inside the terminal.
+   */
+  effort?: string;
   account?: string;
   messageCount?: number;
   preview?: string;
