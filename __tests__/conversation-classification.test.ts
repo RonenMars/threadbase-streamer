@@ -170,13 +170,32 @@ it.each(["scan", "append"])("repairs simultaneous parent and child cache rows vi
   expect(cache.getMetaById("agent-one")?.parentConversationId).toBe("parent");
 });
 
-it.each(["cli", "vscode"])("does not classify Codex %s entrypoints as children", (source) => {
+it.each(["cli", "vscode", "exec"])(
+  "does not classify Codex %s entrypoints as children",
+  (source) => {
+    const path = file("rollout", [
+      { type: "session_meta", payload: { id: "ordinary", source } },
+      codex(),
+    ]);
+    expect(classifyConversationFile(path)).toMatchObject({
+      isSubagent: false,
+      parentConversationId: null,
+    });
+  },
+);
+
+// Real shapes seen in a survey of ~680 rollouts: the `subagent` key marks a
+// provider-created child even when its value names no parent.
+it.each([
+  ["a string value", "review"],
+  ["an unrecognised object value", { other: "guardian" }],
+])("classifies a Codex subagent source carrying %s as a child", (_label, subagent) => {
   const path = file("rollout", [
-    { type: "session_meta", payload: { id: "ordinary", source } },
+    { type: "session_meta", payload: { id: "odd-child", source: { subagent } } },
     codex(),
   ]);
   expect(classifyConversationFile(path)).toMatchObject({
-    isSubagent: false,
+    isSubagent: true,
     parentConversationId: null,
   });
 });
