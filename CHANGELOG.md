@@ -1,3 +1,9 @@
+## [1.87.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.0...v1.87.1) (2026-09-08)
+
+### Bug Fixes
+
+* **questions:** require a numbered menu to start at 1 ([#822](https://github.com/RonenMars/threadbase-streamer/issues/822)) ([07d6f62](https://github.com/RonenMars/threadbase-streamer/commit/07d6f6253842c504a14b10e32d123a5ee63d9547)), closes [#821](https://github.com/RonenMars/threadbase-streamer/issues/821)
+
 ## [1.87.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.86.2...v1.87.0) (2026-09-08)
 
 ### Features
