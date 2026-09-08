@@ -3,7 +3,6 @@
 // the caller passes { force: true }.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -24,17 +23,6 @@ vi.mock("node-pty", () => {
   }
   return { spawn: vi.fn(() => makeMockProcess()) };
 });
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const API_KEY = "tb_test_resume_busy";
 const UUID = "bbbbbbbb-1111-2222-3333-444444444444";
@@ -68,9 +56,8 @@ describe("handleResume — CONVERSATION_BUSY collision detection", () => {
 
   async function makeServer() {
     const { StreamerServer } = await import("../src/server");
-    const port = await getRandomPort();
     const server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -80,8 +67,8 @@ describe("handleResume — CONVERSATION_BUSY collision detection", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
-    return { server, port };
+    await server.listen(0);
+    return { server, port: server.port };
   }
 
   function resume(port: number, body: Record<string, unknown>) {

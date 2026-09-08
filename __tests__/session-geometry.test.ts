@@ -1,5 +1,4 @@
 import { mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import WebSocket from "ws";
@@ -22,16 +21,6 @@ import type { StreamerServer } from "../src/server";
 
 const API_KEY = "tb_test_session_geometry";
 const SID = "geometry-session";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const port = (srv.address() as { port: number }).port;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -63,10 +52,9 @@ describe("session geometry reaches subscribers", () => {
 
   beforeAll(async () => {
     const { StreamerServer } = await import("../src/server");
-    port = await getRandomPort();
     cacheDir = mkdtempSync(join(tmpdir(), "tb-session-geometry-"));
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -76,7 +64,7 @@ describe("session geometry reaches subscribers", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
+    await server.listen(0);
     port = server.port;
   });
 

@@ -1,5 +1,4 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
@@ -19,17 +18,6 @@ const ASCII_ID = "max-bytes-ascii-1111";
 const HEBREW_ID = "max-bytes-hebrew-2222";
 const SHORT_ID = "max-bytes-short-3333";
 const HUGE_ID = "max-bytes-huge-4444";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 function jsonl(convId: string, count: number, text: (i: number) => string): string {
   const lines: string[] = [];
@@ -94,9 +82,8 @@ describe("GET /api/conversations/:id?max_bytes", () => {
   beforeAll(async () => {
     const profileDir = mkdtempSync(join(tmpdir(), "threadbase-max-bytes-profile-"));
     writeFixtures(profileDir);
-    port = await getRandomPort();
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -108,7 +95,8 @@ describe("GET /api/conversations/:id?max_bytes", () => {
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(port, { awaitReady: true });
+    await server.listen(0, { awaitReady: true });
+    port = server.port;
   });
 
   afterAll(async () => {

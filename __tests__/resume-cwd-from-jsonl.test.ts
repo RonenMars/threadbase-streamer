@@ -7,7 +7,6 @@
  * "No conversation found with session ID".
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
@@ -26,17 +25,6 @@ vi.mock("node-pty", () => {
   }
   return { spawn: vi.fn(() => makeMockProcess()) };
 });
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const API_KEY = "tb_test_resume_cwd";
 const TEST_UUID = "ba124111-fc6c-4973-b5c6-7ef8bacdc77b";
@@ -75,7 +63,6 @@ describe("handleResume — cwd from JSONL", () => {
     ptySpawn = nodePty.spawn as unknown as ReturnType<typeof vi.fn>;
     ptySpawn.mockClear();
 
-    const port = await getRandomPort();
     const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-resume-cache-"));
 
     // Point the server at our temp ~/.claude dir by overriding homedir temporarily.
@@ -84,7 +71,7 @@ describe("handleResume — cwd from JSONL", () => {
     process.env.HOME = tmpClaudeDir;
 
     const server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -92,7 +79,8 @@ describe("handleResume — cwd from JSONL", () => {
       skipStartupWarmup: true,
       cacheDir,
     });
-    await server.listen(port);
+    await server.listen(0);
+    const port = server.port;
 
     try {
       const res = await fetch(`http://localhost:${port}/api/sessions/resume`, {
@@ -129,7 +117,7 @@ describe("handleResume — cwd from JSONL", () => {
 
   it("readCwdFromJsonl extracts the first cwd field from a JSONL file", async () => {
     const server = new StreamerServer({
-      port: await getRandomPort(),
+      port: 0, // never listen()s — no real bind ever happens
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -152,7 +140,7 @@ describe("handleResume — cwd from JSONL", () => {
 
   it("readCwdFromJsonl returns null for a JSONL with no cwd fields", async () => {
     const server = new StreamerServer({
-      port: await getRandomPort(),
+      port: 0, // never listen()s — no real bind ever happens
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,

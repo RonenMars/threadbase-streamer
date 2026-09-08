@@ -45,17 +45,6 @@ vi.mock("../src/logger", async (importOriginal) => {
 
 const API_KEY = "tb_test_key_for_bind_retry_tests";
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 function makeServer(port: number, host?: string): StreamerServer {
   const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-bind-retry-test-"));
   return new StreamerServer({
@@ -130,9 +119,15 @@ describe("StreamerServer bind retry logging", () => {
   });
 
   it("logs a recovering EADDRINUSE retry at debug, not warn", async () => {
-    const port = await getRandomPort();
-    const first = makeServer(port, "127.0.0.1");
-    await first.listen(port);
+    // Bind the real server to port 0 and read the OS-assigned port back off
+    // it, rather than probing with a throwaway listener and closing it — a
+    // closed probe leaves a window where another suite can grab the same
+    // port before `first` binds it for real (the EADDRINUSE flake this test
+    // exists to exercise). `first` stays bound the whole time, so there is
+    // no window here.
+    const first = makeServer(0, "127.0.0.1");
+    await first.listen(0);
+    const port = first.port;
 
     const counter = bindLogCounter();
     const second = makeServer(port, "127.0.0.1");
@@ -161,9 +156,16 @@ describe("StreamerServer bind retry logging", () => {
   });
 
   it("logs exactly one error and rethrows when all attempts are exhausted", async () => {
-    const port = await getRandomPort();
+    // Same reasoning as above: bind `blocker` to port 0 directly and read the
+    // assigned port off it, so the port is held continuously with no
+    // probe-then-close gap another suite could steal.
     const blocker: Server = createServer();
-    await new Promise<void>((resolve) => blocker.listen(port, "127.0.0.1", resolve));
+    const port = await new Promise<number>((resolve) => {
+      blocker.listen(0, "127.0.0.1", () => {
+        const addr = blocker.address();
+        resolve(typeof addr === "object" && addr ? addr.port : 0);
+      });
+    });
 
     const counter = bindLogCounter();
     const server = makeServer(port, "127.0.0.1");

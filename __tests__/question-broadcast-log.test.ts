@@ -8,22 +8,10 @@
 // The lines must carry shape only: question and option TEXT never enters logs.
 
 import { mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { StreamerServer } from "../src/server";
 import type { AskQuestion } from "../src/types";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const SECRET = "Deploy to production?";
 const OPTION_SECRET = "Yes, deploy the release";
@@ -47,10 +35,9 @@ describe("question broadcast logging", () => {
 
   beforeAll(async () => {
     const { StreamerServer } = await import("../src/server");
-    const port = await getRandomPort();
     cacheDir = mkdtempSync(join(tmpdir(), "tb-question-log-cache-"));
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: "tb_test_question_log",
       localNoAuth: false,
       verbose: false,
@@ -60,7 +47,7 @@ describe("question broadcast logging", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
+    await server.listen(0);
   });
 
   afterAll(async () => {

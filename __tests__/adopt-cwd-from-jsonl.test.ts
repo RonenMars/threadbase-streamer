@@ -12,7 +12,6 @@
  * user's session. Hence the process.kill spy in the refusal cases.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
@@ -41,17 +40,6 @@ import { discoverClaudeProcesses } from "../src/process-discovery";
 import { StreamerServer } from "../src/server";
 
 const ptySpawn = nodePtySpawn as unknown as ReturnType<typeof vi.fn>;
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const API_KEY = "tb_test_key_adopt_cwd_jsonl";
 const CONV_ID = "bbbbbbbb-2222-4333-8444-555555555555";
@@ -97,10 +85,8 @@ describe("POST /api/sessions/:id/adopt — cwd resolved from the conversation JS
     projectCwd = join(tmpBase, "project");
     mkdirSync(projectCwd, { recursive: true });
 
-    const port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -110,7 +96,8 @@ describe("POST /api/sessions/:id/adopt — cwd resolved from the conversation JS
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(port);
+    await server.listen(0);
+    baseUrl = `http://localhost:${server.port}`;
   });
 
   afterEach(async () => {

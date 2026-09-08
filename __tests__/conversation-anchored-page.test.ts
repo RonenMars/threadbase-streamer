@@ -1,22 +1,10 @@
 import { ConversationScanner } from "@threadbase-sh/scanner";
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
 
 const API_KEY = "tb_test_key_for_anchored_page_tests";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const convId = "anchored-page-session-5555";
 
@@ -59,9 +47,8 @@ describe("GET /api/conversations/:id anchored and after windows", () => {
   beforeAll(async () => {
     const profileDir = mkdtempSync(join(tmpdir(), "threadbase-anchored-profile-"));
     writeFixture(profileDir);
-    port = await getRandomPort();
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -75,7 +62,8 @@ describe("GET /api/conversations/:id anchored and after windows", () => {
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(port, { awaitReady: true });
+    await server.listen(0, { awaitReady: true });
+    port = server.port;
   });
 
   afterAll(async () => {
@@ -266,9 +254,8 @@ describe("GET /api/conversations/:id anchored paged-reader parity", () => {
   async function fetchAnchoredWithScannerPrototype(
     getConversationPage: unknown,
   ): Promise<{ text: string; body: DetailBody }> {
-    const port = await getRandomPort();
     const pageServer = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -286,7 +273,8 @@ describe("GET /api/conversations/:id anchored paged-reader parity", () => {
     const original = proto.getConversationPage;
     proto.getConversationPage = getConversationPage;
     try {
-      await pageServer.listen(port, { awaitReady: true });
+      await pageServer.listen(0, { awaitReady: true });
+      const port = pageServer.port;
       const res = await fetch(
         `http://localhost:${port}/api/conversations/${convId}?msg_limit=120&anchor_index=150`,
         { headers: { Authorization: `Bearer ${API_KEY}` } },

@@ -1,5 +1,4 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
@@ -14,17 +13,6 @@ import { StreamerServer } from "../src/server";
 // warm-up really is skipped, and the server still answers rather than throwing.
 
 const API_KEY = "tb_test_key_for_skip_warmup";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 /** A config dir holding one conversation JSONL the warm-up scan would index. */
 function seedConfigDir(): string {
@@ -74,10 +62,10 @@ describe("skipStartupWarmup", () => {
   });
 
   it("indexes conversations when the warm-up runs (default behaviour)", async () => {
-    const port = await getRandomPort();
-    server = makeServer(port, false, seedConfigDir());
+    server = makeServer(0, false, seedConfigDir());
     // awaitReady blocks until the warm-up settles, so this does not race the scan.
-    await server.listen(port, { awaitReady: true });
+    await server.listen(0, { awaitReady: true });
+    const port = server.port;
 
     expect(await countConversations(port)).toBeGreaterThan(0);
     // Long timeout on purpose: this is the control case that DOES run the
@@ -86,9 +74,9 @@ describe("skipStartupWarmup", () => {
 
   // Skipping must not break the endpoint — it degrades to empty, never throws.
   it("skips the scan and still serves conversations as empty", async () => {
-    const port = await getRandomPort();
-    server = makeServer(port, true, seedConfigDir());
-    await server.listen(port, { awaitReady: true });
+    server = makeServer(0, true, seedConfigDir());
+    await server.listen(0, { awaitReady: true });
+    const port = server.port;
 
     const res = await fetch(`http://localhost:${port}/api/conversations`, {
       headers: { Authorization: `Bearer ${API_KEY}` },
@@ -99,9 +87,8 @@ describe("skipStartupWarmup", () => {
   // The property the flake fix depends on: close() must not await a scan that
   // never ran, nor hang on the skipped warm-up promise.
   it("closes promptly when the warm-up is skipped", async () => {
-    const port = await getRandomPort();
-    server = makeServer(port, true, seedConfigDir());
-    await server.listen(port, { awaitReady: true });
+    server = makeServer(0, true, seedConfigDir());
+    await server.listen(0, { awaitReady: true });
 
     const started = Date.now();
     await server.close();
