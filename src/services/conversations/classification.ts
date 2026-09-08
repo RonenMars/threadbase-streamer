@@ -71,10 +71,16 @@ export class ConversationClassifier {
         this.provider = "codex-cli";
         this.sawIdentity = true;
         if (entry.payload.id) this.id = entry.payload.id;
-        const source = spawnSource.safeParse(entry.payload.source);
-        this.isSubagent = source.success;
-        this.parentConversationId = source.success
-          ? source.data.subagent.thread_spawn.parent_thread_id
+        // A `subagent` key is what makes it provider-created; the value varies
+        // ("review", {other:…}, {thread_spawn:…}) and only thread_spawn names a
+        // parent. Keying on the full thread_spawn shape classified the other
+        // values as ordinary top-level history and showed them to the user.
+        // A string source ("cli", "vscode", "exec", …) is never a subagent.
+        const source = entry.payload.source;
+        this.isSubagent = typeof source === "object" && source !== null && "subagent" in source;
+        const spawn = spawnSource.safeParse(source);
+        this.parentConversationId = spawn.success
+          ? spawn.data.subagent.thread_spawn.parent_thread_id
           : null;
       } else if (this.provider === "claude-code" && entry.isSidechain !== undefined) {
         this.sawIdentity = true;
