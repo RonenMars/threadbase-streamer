@@ -142,7 +142,7 @@ export class CacheIntegrityMonitor {
       return;
     }
 
-    const totalRows = this.cache.listConversations({ limit: 0, offset: 0 }).total;
+    const totalRows = this.cache.countAllRows();
     const fingerprint = fingerprintOf(missing.map((m) => m.id));
     const severity = this.classifySeverity(missing.length, totalRows);
 

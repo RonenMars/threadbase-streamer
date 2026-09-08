@@ -17,6 +17,10 @@ import { runSqliteMigrations } from "./db/sqlite-migrate";
 import { getLogger } from "./logger";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
 import {
+  ConversationClassifier,
+  classifyConversationFile,
+} from "./services/conversations/classification";
+import {
   DEFAULT_AGENT_ENTRYPOINTS,
   isAgentFile,
   isAgentLine,
@@ -25,6 +29,7 @@ import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
 import { fileIdentity, type LineSpan, splitCompleteLines } from "./utils/fileIdentity";
 
 export interface ConversationCacheOptions {
+  includeSubagentSessions?: boolean;
   // When true, drop conversations whose JSONL came from an agent entrypoint.
   // Default false to preserve legacy behavior.
   filterAgentConversations?: boolean;
@@ -37,6 +42,9 @@ export interface ConversationCacheOptions {
 }
 
 export interface ConversationListItem {
+  hasMessages?: boolean | null;
+  isSubagent?: boolean | null;
+  parentConversationId?: string | null;
   id: string;
   filePath: string;
   projectId: string | null;
@@ -112,6 +120,9 @@ export interface ScannerMeta {
 }
 
 interface MetaRow {
+  has_messages: number | null;
+  is_subagent: number | null;
+  parent_conversation_id: string | null;
   id: string;
   file_path: string;
   project_id: string | null;
@@ -219,6 +230,11 @@ const cacheLog = getLogger("cache");
 const PARSE_STATE_LOOKBACK = 8;
 
 export class ConversationCache {
+  private classifiers = new Map<string, ConversationClassifier>();
+  readonly includeSubagentSessions: boolean;
+  private classifyFull: Database.Statement;
+  private classifyAppend: Database.Statement;
+  private fileAliases: Database.Statement;
   private db: Database.Database;
   private tailSize: number;
   private fileIndex = new Map<string, string>();
@@ -262,6 +278,7 @@ export class ConversationCache {
     getProviderByFilePath: Database.Statement;
     allFilePaths: Database.Statement;
     allFilePathsWithTitle: Database.Statement;
+    countAllRows: Database.Statement;
     allFileStats: Database.Statement;
     allScannerStatCacheRows: Database.Statement;
     updateScannerCache: Database.Statement;
@@ -304,11 +321,21 @@ export class ConversationCache {
     this.migrationsDir = migrationsDir;
     this.db = db;
     this.tailSize = tailSize;
+    this.includeSubagentSessions = options?.includeSubagentSessions ?? false;
     this.filterAgentConversations = options?.filterAgentConversations ?? false;
     this.agentEntrypoints = options?.agentEntrypoints ?? DEFAULT_AGENT_ENTRYPOINTS;
     this.onAgentFileDetected = options?.onAgentFileDetected;
     db.exec(SCHEMA);
     runSqliteMigrations(db, this.migrationsDir);
+    this.fileAliases = db.prepare(
+      "SELECT id FROM conversation_meta WHERE file_path = ? AND id != ?",
+    );
+    this.classifyFull = db.prepare(
+      `UPDATE conversation_meta SET has_messages = ?, is_subagent = ?, parent_conversation_id = ? WHERE id = ?`,
+    );
+    this.classifyAppend = db.prepare(`UPDATE conversation_meta SET
+      has_messages = CASE WHEN ? = 1 THEN 1 ELSE has_messages END,
+      is_subagent = ?, parent_conversation_id = ?, provider = ? WHERE id = ?`);
     // Exactly the columns listConversations' row mapper reads. `SELECT *` also
     // pulled scanner_meta_json, which averages 5.7 KB per row — 3.5 MB of the
     // 4.5 MB this table occupies — and is never read on this path: roughly
@@ -318,7 +345,8 @@ export class ConversationCache {
     // getFullById deliberately keeps `SELECT *`: it is a single row by primary
     // key and its callers want every column.
     const LIST_COLUMNS =
-      "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider";
+      "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id";
+    const visible = `has_messages IS NOT 0${this.includeSubagentSessions ? "" : " AND is_subagent IS NOT 1"}`;
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
       getFullById: db.prepare("SELECT * FROM conversation_meta WHERE id = ?"),
@@ -399,19 +427,21 @@ export class ConversationCache {
         WHERE conversation_tail.updated_at < excluded.updated_at
       `),
       list: db.prepare(
-        `SELECT ${LIST_COLUMNS} FROM conversation_meta ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
+        `SELECT ${LIST_COLUMNS} FROM conversation_meta WHERE ${visible} ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
       ),
-      count: db.prepare("SELECT COUNT(*) as n FROM conversation_meta"),
+      count: db.prepare(`SELECT COUNT(*) as n FROM conversation_meta WHERE ${visible}`),
       listByProject: db.prepare(
-        `SELECT ${LIST_COLUMNS} FROM conversation_meta WHERE project_path = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
+        `SELECT ${LIST_COLUMNS} FROM conversation_meta WHERE ${visible} AND project_path = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
       ),
       countByProject: db.prepare(
-        "SELECT COUNT(*) as n FROM conversation_meta WHERE project_path = ?",
+        `SELECT COUNT(*) as n FROM conversation_meta WHERE ${visible} AND project_path = ?`,
       ),
       listByProvider: db.prepare(
-        `SELECT ${LIST_COLUMNS} FROM conversation_meta WHERE provider = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
+        `SELECT ${LIST_COLUMNS} FROM conversation_meta WHERE ${visible} AND provider = ? ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
       ),
-      countByProvider: db.prepare("SELECT COUNT(*) as n FROM conversation_meta WHERE provider = ?"),
+      countByProvider: db.prepare(
+        `SELECT COUNT(*) as n FROM conversation_meta WHERE ${visible} AND provider = ?`,
+      ),
       deleteById: db.prepare("DELETE FROM conversation_meta WHERE id = ?"),
       deleteTailById: db.prepare("DELETE FROM conversation_tail WHERE conversation_id = ?"),
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
@@ -422,6 +452,7 @@ export class ConversationCache {
       ),
       allFilePaths: db.prepare("SELECT id, file_path FROM conversation_meta"),
       allFilePathsWithTitle: db.prepare("SELECT id, file_path, title FROM conversation_meta"),
+      countAllRows: db.prepare("SELECT COUNT(*) AS n FROM conversation_meta"),
       allFileStats: db.prepare(
         "SELECT file_path, mtime_ms, file_size FROM conversation_meta WHERE mtime_ms IS NOT NULL AND file_size IS NOT NULL",
       ),
@@ -461,7 +492,7 @@ export class ConversationCache {
       ),
       markAsStreamer: db.prepare("UPDATE conversation_meta SET source = 'streamer' WHERE id = ?"),
       getLatestConversation: db.prepare(
-        "SELECT id, last_activity FROM conversation_meta WHERE last_activity IS NOT NULL ORDER BY last_activity DESC, id DESC LIMIT 1",
+        `SELECT id, last_activity FROM conversation_meta WHERE ${visible} AND last_activity IS NOT NULL ORDER BY last_activity DESC, id DESC LIMIT 1`,
       ),
       listConversationsForProjectBackfill: db.prepare(
         "SELECT id, project_path, project_id, last_activity FROM conversation_meta WHERE project_path IS NOT NULL",
@@ -472,7 +503,7 @@ export class ConversationCache {
       popularProjects: db.prepare(
         `SELECT project_path, project_name, COUNT(*) as cnt
          FROM conversation_meta
-         WHERE project_path IS NOT NULL
+         WHERE ${visible} AND project_path IS NOT NULL
          GROUP BY project_path
          ORDER BY cnt DESC
          LIMIT ?`,
@@ -484,13 +515,13 @@ export class ConversationCache {
       projectSummaries: db.prepare(
         `SELECT project_path, project_name, COUNT(*) as cnt, MAX(last_activity) as latest
          FROM conversation_meta
-         WHERE project_path IS NOT NULL
+         WHERE ${visible} AND project_path IS NOT NULL
          GROUP BY project_path
          ORDER BY latest DESC, project_path ASC
          LIMIT ? OFFSET ?`,
       ),
       projectSummaryCount: db.prepare(
-        "SELECT COUNT(DISTINCT project_path) as n FROM conversation_meta WHERE project_path IS NOT NULL",
+        `SELECT COUNT(DISTINCT project_path) as n FROM conversation_meta WHERE ${visible} AND project_path IS NOT NULL`,
       ),
       getFileState: db.prepare("SELECT * FROM conversation_file_state WHERE path = ?"),
       upsertFileState: db.prepare(
@@ -1087,7 +1118,125 @@ export class ConversationCache {
     this.fileIndexLoaded = true;
   }
 
+  /** NULL stays visible until a completed parse proves emptiness. */
+  isVisible(id: string): boolean {
+    const meta = this.getMetaById(id);
+    return (
+      meta?.hasMessages !== false && (this.includeSubagentSessions || meta?.isSubagent !== true)
+    );
+  }
+
+  /**
+   * Every row, ignoring the visibility predicate. Cache health is a property of
+   * the whole cache: `listMissingFiles` counts rows a list query never returns,
+   * so a filtered denominator would divide two different corpora.
+   */
+  countAllRows(): number {
+    return (this.stmts.countAllRows.get() as { n: number }).n;
+  }
+
+  isExcludedSubagent(id: string): boolean {
+    return !this.includeSubagentSessions && this.getMetaById(id)?.isSubagent === true;
+  }
+
+  reconcileClassification(filePath: string): ConversationClassifier | null {
+    try {
+      const id = this.getIdByFilePath(filePath);
+      const meta = id ? this.getMetaById(id) : null;
+      const classification = classifyConversationFile(filePath, meta?.provider);
+      if (meta) {
+        if (classification.isSubagent && classification.id !== meta.id) {
+          const row = this.stmts.getFullById.get(meta.id) as MetaRow;
+          const original = row.scanner_meta_json ? JSON.parse(row.scanner_meta_json) : {};
+          this.upsertFromScannerMeta([{ ...original, id: meta.id, sessionId: meta.id, filePath }]);
+        } else {
+          this.classifyFull.run(
+            Number(classification.hasMessages),
+            Number(classification.isSubagent),
+            classification.parentConversationId,
+            meta.id,
+          );
+          classification.id = meta.id;
+          this.classifiers.delete(canonicalizeFilePath(filePath));
+        }
+      }
+      return classification;
+    } catch {
+      return null;
+    }
+  }
+
+  private classifyAppendedLines(filePath: string, lines: string[]): void {
+    const key = canonicalizeFilePath(filePath);
+    let classifier = this.classifiers.get(key);
+    if (!classifier) {
+      const existingId = this.getIdByFilePath(key);
+      const meta = existingId ? this.getMetaById(existingId) : null;
+      classifier = new ConversationClassifier(key, meta?.provider);
+      if (meta) {
+        classifier.id = meta.id;
+        classifier.hasMessages = meta.hasMessages === true;
+        classifier.isSubagent = meta.isSubagent ?? classifier.isSubagent;
+        classifier.parentConversationId = meta.parentConversationId ?? null;
+      }
+      this.classifiers.set(key, classifier);
+    }
+    for (const line of lines) classifier.append(line);
+    if (
+      !this.getIdByFilePath(key) &&
+      !classifier.hasMessages &&
+      !classifier.isSubagent &&
+      !lines.some((raw) => {
+        try {
+          const line = JSON.parse(raw);
+          return (
+            line &&
+            (line.cwd ||
+              line.slug ||
+              line.type === "session_meta" ||
+              line.type === "user" ||
+              line.type === "assistant" ||
+              line.role === "user" ||
+              line.role === "assistant")
+          );
+        } catch {
+          return false;
+        }
+      })
+    )
+      return;
+    const current = classifier;
+    this.db.transaction(() => {
+      this.removeFileAliases(key, current.id);
+      this.stmts.insertSkeleton.run(current.id, key, 0);
+      this.classifyAppend.run(
+        Number(current.hasMessages),
+        Number(current.isSubagent),
+        current.parentConversationId,
+        current.provider,
+        current.id,
+      );
+      if (this.fileIndexLoaded) this.fileIndex.set(key, current.id);
+    })();
+  }
+
+  /** Repair both legacy parent-keyed rows and live-tail aliases for this file only. */
+  private removeFileAliases(filePath: string, id: string): void {
+    const aliases = this.fileAliases.all(filePath, id) as { id: string }[];
+    for (const alias of aliases) {
+      this.stmts.deleteTailById.run(alias.id);
+      this.stmts.deleteMessageIndex.run(alias.id);
+      this.stmts.deleteById.run(alias.id);
+    }
+    if (aliases.length) {
+      this.stmts.deleteFileState.run(filePath);
+      this.clearIndexParseState(filePath);
+      this.fileIndex.delete(filePath);
+    }
+  }
+
   updateFromLine(filePath: string, rawLine: string): void {
+    this.classifyAppendedLines(filePath, [rawLine]);
     let line: JsonlLine;
     try {
       line = JSON.parse(rawLine);
@@ -1180,6 +1329,7 @@ export class ConversationCache {
    * moving backward when an interleaved writer appends an older line — P0.3).
    */
   updateFromLines(filePath: string, rawLines: string[]): void {
+    this.classifyAppendedLines(filePath, rawLines);
     // Classify all lines first (outside the transaction). A single watched
     // file maps to one conversation, so we accumulate into scalars.
     let sawProjectContext = false;
@@ -1315,18 +1465,27 @@ export class ConversationCache {
     const upsertedIds: string[] = [];
     const run = this.db.transaction((items: ScannerMeta[]) => {
       for (const m of items) {
+        let classification: ConversationClassifier | null = null;
+        try {
+          classification = classifyConversationFile(m.filePath, m.provider);
+        } catch {
+          // A missing or unreadable file is not evidence of an empty history.
+        }
         const id =
-          m.sessionId ||
-          m.id
-            .split("/")
-            .pop()
-            ?.replace(/\.jsonl$/, "") ||
-          m.id;
+          classification?.isSubagent || classification?.provider === CODEX_CLI_PROVIDER
+            ? classification.id
+            : m.sessionId ||
+              m.id
+                .split("/")
+                .pop()
+                ?.replace(/\.jsonl$/, "") ||
+              m.id;
         const lastActivityMs = m.timestamp ? new Date(m.timestamp).getTime() : null;
         // Store the canonical (forward-slash) path so live-tail / directory-event
         // lookups by native separators hit this row (P1.a). statSync keeps the
         // original path — the stat is a file-identity read, not a key.
         const canonicalPath = canonicalizeFilePath(m.filePath);
+        if (classification) this.removeFileAliases(canonicalPath, id);
         let mtimeMs: number | null = null;
         let fileSize: number | null = null;
         try {
@@ -1369,10 +1528,19 @@ export class ConversationCache {
           updated_at: seq,
           mtime_ms: mtimeMs,
           file_size: fileSize,
-          provider: m.provider ?? CLAUDE_CODE_PROVIDER,
+          provider: classification?.provider ?? m.provider ?? CLAUDE_CODE_PROVIDER,
           scanner_meta_json: scannerMetaJson,
         });
         this.stmts.updateScannerCache.run(mtimeMs, fileSize, scannerMetaJson, id);
+        if (classification) {
+          this.classifyFull.run(
+            Number(classification.hasMessages),
+            Number(classification.isSubagent),
+            classification.parentConversationId,
+            id,
+          );
+          this.classifiers.delete(canonicalPath);
+        }
         if (this.fileIndexLoaded) this.fileIndex.set(canonicalPath, id);
         upsertedIds.push(id);
       }
@@ -1385,6 +1553,7 @@ export class ConversationCache {
   // by updateFromLine when a previously-cached file turns out to be an agent
   // JSONL.
   deleteByFilePath(filePath: string): boolean {
+    this.classifiers.delete(canonicalizeFilePath(filePath));
     // Canonicalize so a native-separator path matches the forward-slash file_path
     // and fileIndex key (P1.a).
     const key = canonicalizeFilePath(filePath);
@@ -1483,6 +1652,9 @@ export class ConversationCache {
     return {
       total,
       conversations: rows.map((r) => ({
+        hasMessages: r.has_messages === null ? null : r.has_messages === 1,
+        isSubagent: r.is_subagent === null ? null : r.is_subagent === 1,
+        parentConversationId: r.parent_conversation_id,
         id: r.id,
         filePath: r.file_path,
         projectId: r.project_id,
@@ -1560,6 +1732,9 @@ export class ConversationCache {
     return {
       id: row.id,
       filePath: row.file_path,
+      hasMessages: row.has_messages === null ? null : row.has_messages === 1,
+      isSubagent: row.is_subagent === null ? null : row.is_subagent === 1,
+      parentConversationId: row.parent_conversation_id,
       projectId: row.project_id,
       projectPath: row.project_path,
       projectName: row.project_name,
@@ -1652,6 +1827,8 @@ export class ConversationCache {
 
   invalidate(id?: string): void {
     if (id) {
+      const meta = this.getMetaById(id);
+      if (meta) this.classifiers.delete(canonicalizeFilePath(meta.filePath));
       this.stmts.deleteTailById.run(id);
       this.stmts.deleteById.run(id);
       if (this.fileIndexLoaded) {
@@ -1663,6 +1840,7 @@ export class ConversationCache {
         }
       }
     } else {
+      this.classifiers.clear();
       this.stmts.deleteTailAll.run();
       this.stmts.deleteAll.run();
       this.fileIndex.clear();
@@ -1776,7 +1954,10 @@ export class ConversationCache {
       // Not in the scan snapshot. If the file is gone from disk, it's a genuine
       // deletion — remove it. If it still exists, this is a scan/discovery gap
       // (the CRITICAL #2 race for live files); leave it for the next reconcile.
-      if (exists(row.file_path)) continue;
+      if (exists(row.file_path)) {
+        this.reconcileClassification(row.file_path);
+        continue;
+      }
       removed.push(row.id);
     }
     if (removed.length > 0) {
@@ -1858,6 +2039,7 @@ export class ConversationCache {
    * resolution action, which repopulates from a fresh disk scan afterward.
    */
   clearAll(): void {
+    this.classifiers.clear();
     this.db.transaction(() => {
       this.stmts.deleteTailAll.run();
       this.stmts.deleteAll.run();

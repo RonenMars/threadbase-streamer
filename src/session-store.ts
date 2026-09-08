@@ -13,6 +13,9 @@ import type {
 import { confidenceForSource } from "./types";
 
 export class SessionStore {
+  constructor(
+    private readonly visibility: (id: string, session?: ManagedSession) => boolean = () => true,
+  ) {}
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();
 
@@ -90,12 +93,14 @@ export class SessionStore {
     const seenIds = new Set<string>();
 
     for (const s of this.managed.values()) {
+      if (!this.visibility(s.boundConversationId ?? s.id, s)) continue;
       results.push(managedToResponse(s, ptyAttachedIds.has(s.id)));
       seenIds.add(s.id);
     }
 
     for (const d of this.discovered.values()) {
       if (!d.conversationId) continue;
+      if (!this.visibility(d.conversationId)) continue;
       if (seenIds.has(d.conversationId)) continue;
       results.push(discoveredToResponse(d, d.conversationId));
       seenIds.add(d.conversationId);
@@ -253,6 +258,8 @@ function isLiveMultiAgent(s: ManagedSession): boolean {
 
 function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResponse {
   return {
+    isSubagent: s.isSubagent ?? false,
+    parentConversationId: s.parentConversationId ?? null,
     id: s.id,
     conversationId: s.id,
     provider: s.provider ?? CLAUDE_CODE_PROVIDER,

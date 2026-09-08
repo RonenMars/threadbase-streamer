@@ -11,6 +11,23 @@ const alreadyHandled = () => new Response(null, { status: ALREADY_HANDLED });
 export const createSessionRoutes = (deps: ApiDeps) => {
   const app = new Hono<AppEnv>();
 
+  app.use("/:id/*", async (c, next) => {
+    if (await deps.isExcludedSubagent?.(c.req.param("id") ?? "")) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    await next();
+  });
+  app.use("/:id", async (c, next) => {
+    const id = c.req.param("id") ?? "";
+    if (
+      !["count", "recents", "names", "resume", "start"].includes(id) &&
+      (await deps.isExcludedSubagent?.(id))
+    ) {
+      return c.json({ error: "Session not found" }, 404);
+    }
+    await next();
+  });
+
   app.get("/count", (c) => {
     deps.handleSessionsCount(c.env.outgoing);
     return alreadyHandled();

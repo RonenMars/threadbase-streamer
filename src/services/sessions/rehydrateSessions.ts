@@ -93,6 +93,8 @@ export function rehydrateSkipReason(
 export function rowToStubSession(row: ManagedSessionRow): ManagedSession {
   return {
     id: row.session_id,
+    isSubagent: row.is_subagent === 1,
+    parentConversationId: row.parent_conversation_id ?? null,
     provider: row.provider as ManagedSession["provider"],
     projectPath: row.project_path,
     projectName: row.project_name,
