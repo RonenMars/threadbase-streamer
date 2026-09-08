@@ -1,3 +1,9 @@
+## [1.88.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.2...v1.88.0) (2026-09-08)
+
+### Features
+
+* **observability:** log question card broadcasts ([#825](https://github.com/RonenMars/threadbase-streamer/issues/825)) ([44c528d](https://github.com/RonenMars/threadbase-streamer/commit/44c528d4b8a37fc4bff9151fec41bb22c6aba50c)), closes [#821](https://github.com/RonenMars/threadbase-streamer/issues/821) [RonenMars/threadbase-mobile#1021](https://github.com/RonenMars/threadbase-mobile/issues/1021)
+
 ## [1.87.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.1...v1.87.2) (2026-09-08)
 
 ### Bug Fixes
