@@ -9,6 +9,7 @@ import { classifyConversationFile } from "../src/services/conversations/classifi
 import { rowToStubSession } from "../src/services/sessions/rehydrateSessions";
 import { SessionStore } from "../src/session-store";
 import type { ManagedSession } from "../src/types";
+import { canonicalizeFilePath } from "../src/utils/canonicalizeFilePath";
 
 let dir: string;
 let cache: ConversationCache;
@@ -118,10 +119,14 @@ it("keeps legacy NULL rows visible until classified without relying on the lazy 
 it("keeps two Claude child identities separate from their parent and repairs an old alias", () => {
   const path = file("agent-one", [child("one")]);
   cache.upsertFromScannerMeta([{ id: "parent", filePath: join(dir, "missing.jsonl") }]);
+  // Cache keys are canonical (forward slashes); `path` is native. Writing the
+  // native form here would key the alias off a path the repair never looks up,
+  // and the miss is invisible on POSIX, where the two forms are identical.
   cache
     .getDatabase()
     .prepare("UPDATE conversation_meta SET file_path = ? WHERE id = 'parent'")
-    .run(path);
+    .run(canonicalizeFilePath(path));
+  expect(cache.getIdByFilePath(path)).toBe("parent"); // the alias really is keyed here
   scan("agent-one", [child("one")], "parent");
   scan("agent-two", [child("two")], "parent");
   expect(cache.getMetaById("parent")).toBeNull();
@@ -150,7 +155,15 @@ it.each(["scan", "append"])("repairs simultaneous parent and child cache rows vi
   cache
     .getDatabase()
     .prepare("INSERT INTO conversation_meta (id, file_path, updated_at) VALUES ('parent', ?, 0)")
-    .run(path);
+    .run(canonicalizeFilePath(path));
+  // Both rows must actually share one cache key, or the repair below asserts
+  // on a collision that never existed.
+  expect(
+    cache
+      .getDatabase()
+      .prepare("SELECT COUNT(*) AS n FROM conversation_meta WHERE file_path = ?")
+      .get(canonicalizeFilePath(path)),
+  ).toMatchObject({ n: 2 });
   if (mode === "scan") scan("agent-one", [child("one")], "parent");
   else cache.updateFromLine(path, JSON.stringify(child("one")));
   expect(cache.getMetaById("parent")).toBeNull();
