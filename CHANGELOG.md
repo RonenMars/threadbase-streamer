@@ -1,3 +1,9 @@
+## [1.89.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.0...v1.89.1) (2026-09-08)
+
+### Bug Fixes
+
+* **conversations:** classify every Codex subagent source shape as a child ([#831](https://github.com/RonenMars/threadbase-streamer/issues/831)) ([827723b](https://github.com/RonenMars/threadbase-streamer/commit/827723b3ab4d2fd39ee896b13ccc6515fca4293e)), closes [RonenMars/threadbase-scanner#82](https://github.com/RonenMars/threadbase-scanner/issues/82)
+
 ## [1.89.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.88.0...v1.89.0) (2026-09-08)
 
 ### Features
