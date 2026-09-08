@@ -21,13 +21,22 @@ const SUBMIT_SCREEN = [
 
 // A rendered AskUserQuestion menu — the exact shape that has NO JSONL yet and
 // was previously dumped as raw TUI text in the mobile chat.
+//
+// The escape hatch is numbered 4, not 6: a real menu enumerates 1..n, as
+// REAL_MENU below (a live pty.prompt_detect capture) shows with its contiguous
+// 1-6. This fixture is that menu compressed to four rows, and it used to keep
+// the escape hatch's original "6." — reading as a gap no render produces.
+// Nothing here depends on the numbers (this detector maps rows to labels, and
+// answers are positional keystrokes), but the gap was taken as evidence that
+// real menus skip numbers, which is why tb-mobile's copy of it nearly blocked
+// the numbering guard in threadbase-mobile#1022. Don't restore the 6.
 const MENU = [
   "╭──────────────────────────────────────────────╮",
   "Which area are you focused on?",
   "❯ 1. macOS / Chrome",
   "  2. iOS / Safari",
   "  3. Android",
-  "  6. Chat about this",
+  "  4. Chat about this",
   "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
   "╰──────────────────────────────────────────────╯",
 ];
