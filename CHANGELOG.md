@@ -1,3 +1,13 @@
+## [1.89.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.2...v1.89.3) (2026-09-09)
+
+### Bug Fixes
+
+* **conversations:** treat sdk-py as an agent entrypoint ([#840](https://github.com/RonenMars/threadbase-streamer/issues/840)) ([cabc2f4](https://github.com/RonenMars/threadbase-streamer/commit/cabc2f4ff72fe9924b74d8b9be43f1c0b3178863))
+
+### Reverts
+
+* **docs:** drop the false claim that the Windows deploy skips lint and tests ([#838](https://github.com/RonenMars/threadbase-streamer/issues/838)) ([5fc7310](https://github.com/RonenMars/threadbase-streamer/commit/5fc73102e1315eb2ccf809cf1408dc977bbfe2ec)), closes [#819](https://github.com/RonenMars/threadbase-streamer/issues/819) [#819](https://github.com/RonenMars/threadbase-streamer/issues/819) [pre-#819](https://github.com/RonenMars/pre-/issues/819) [#819](https://github.com/RonenMars/threadbase-streamer/issues/819)
+
 ## [1.89.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.1...v1.89.2) (2026-09-08)
 
 ### Bug Fixes
