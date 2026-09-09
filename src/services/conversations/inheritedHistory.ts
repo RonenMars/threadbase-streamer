@@ -19,8 +19,15 @@ import { type ConversationMessage, parseCodexJsonlLine } from "@threadbase-sh/sc
 /** Deepest chain (fork of a fork of a …) we will resolve. */
 const MAX_CHAIN_DEPTH = 8;
 
-/** Resolved prefixes held in memory. Small: each entry pins a message array. */
-const PREFIX_CACHE_MAX = 8;
+/**
+ * Resolved prefixes held in memory. Each entry pins a message array, so this is
+ * a memory/parse trade: past the cap, every eviction costs a full re-parse of a
+ * parent prefix. 8 was low enough that someone with a handful of forks open
+ * thrashed it. Raised rather than replaced with a windowed read — see
+ * "Why the split-window read was dropped" in
+ * docs/plans/2026-09-07-inherited-conversation-history.md.
+ */
+const PREFIX_CACHE_MAX = 32;
 
 export interface InheritedLink {
   /** Provider-side id of the conversation this one continues. */

@@ -1,3 +1,15 @@
+## [1.89.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.1...v1.89.2) (2026-09-08)
+
+### Bug Fixes
+
+* **conversations:** count meta.message_count in the served space ([#833](https://github.com/RonenMars/threadbase-streamer/issues/833)) ([aca8a0b](https://github.com/RonenMars/threadbase-streamer/commit/aca8a0b0ff86edc47a9a25a227b88c1be0ca9ec3)), closes [#824](https://github.com/RonenMars/threadbase-streamer/issues/824) [#824](https://github.com/RonenMars/threadbase-streamer/issues/824) [#824](https://github.com/RonenMars/threadbase-streamer/issues/824)
+
+## [1.89.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.0...v1.89.1) (2026-09-08)
+
+### Bug Fixes
+
+* **conversations:** classify every Codex subagent source shape as a child ([#831](https://github.com/RonenMars/threadbase-streamer/issues/831)) ([827723b](https://github.com/RonenMars/threadbase-streamer/commit/827723b3ab4d2fd39ee896b13ccc6515fca4293e)), closes [RonenMars/threadbase-scanner#82](https://github.com/RonenMars/threadbase-scanner/issues/82)
+
 ## [1.89.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.88.0...v1.89.0) (2026-09-08)
 
 ### Features

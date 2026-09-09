@@ -306,13 +306,13 @@ describe("a fork keeps its inherited history when its own file is indexed", () =
     // depends on it.
     expect(indices(body)).toEqual([0, 1, 2, 3, 4, 5]);
     expect(body.message_pagination.total).toBe(6);
-    // PRE-EXISTING and deliberately not fixed here: `meta.message_count` adds
-    // the POST-filter prefix length to `conv.messageCount`, which is the
-    // scanner's raw UNFILTERED count — so it reads 7 while the body serves 6.
-    // Independent of this gate (both paths yield the same own count of 3) and
-    // out of scope for a reader-side index change; pinned so the day someone
-    // corrects it, this assertion says why it moved.
-    expect(body.meta.message_count).toBe(7);
+    // Was 7 until the mixed-space count was fixed: `meta.message_count` added
+    // the POST-filter prefix length to `conv.messageCount`, the scanner's raw
+    // UNFILTERED count, so it over-reported by one per injected-context line in
+    // the fork's own file. It now counts `filtered.length`, the one space this
+    // response serves in — the same number as `message_pagination.total`.
+    expect(body.meta.message_count).toBe(6);
+    expect(body.meta.message_count).toBe(body.message_pagination.total);
     // The POST-filter boundary: the divider lands before the fork's own turns.
     expect(body.meta.inherited_history.through_message_index).toBe(4);
     expect(body.meta.inherited_history.unavailable_reason).toBeNull();
