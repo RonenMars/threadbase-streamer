@@ -446,6 +446,12 @@ export class ScannerManager {
   private startRefreshPass(state: RefreshState, key: string): RefreshPass {
     const pass: RefreshPass = state.scanner.refreshFile(state.filePath).then(
       (meta) => {
+        try {
+          if (meta) this.deps.cache()?.upsertFromScannerMeta([meta] as any[]);
+          else this.deps.cache()?.reconcileClassification(state.filePath);
+        } catch (err) {
+          this.log.warn("Failed to cache refreshed conversation classification", { err });
+        }
         this.finishRefreshPass(state, key, pass, true);
         return meta;
       },

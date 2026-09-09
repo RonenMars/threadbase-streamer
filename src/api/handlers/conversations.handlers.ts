@@ -23,6 +23,7 @@ import {
   isProviderResumable,
 } from "../../providers";
 import type { ScannerManager, ScanProfile } from "../../scanner-manager";
+import { classifyConversationFile } from "../../services/conversations/classification";
 import {
   findSearchTarget,
   type SearchableMessage,
@@ -72,6 +73,7 @@ const MAX_BYTES_CEILING = 32 * 1024 * 1024;
  * that spans well beyond conversations.
  */
 export type ConversationHandlersDeps = {
+  includeSubagentSessions?: () => boolean;
   scannerManager: ScannerManager;
   sessionStore: SessionStore;
   ptyManager: LiveSessionManager;
@@ -97,6 +99,46 @@ export type ConversationHandlersDeps = {
  * server: this class only reads it through `deps`.
  */
 export class ConversationHandlers {
+  private publicScannerMeta(meta: ConversationMeta): ConversationMeta | null {
+    const id = this.cache?.getIdByFilePath(meta.filePath);
+    const row = id ? this.cache?.getMetaById(id) : null;
+    if (row) return this.cache?.isVisible(row.id) ? { ...meta, sessionId: row.id } : null;
+    try {
+      const classification = classifyConversationFile(meta.filePath, meta.provider);
+      if (
+        !classification.hasMessages ||
+        (classification.isSubagent && !(this.deps.includeSubagentSessions?.() ?? false))
+      )
+        return null;
+      return {
+        ...meta,
+        sessionId:
+          classification.isSubagent || classification.provider === CODEX_CLI_PROVIDER
+            ? classification.id
+            : meta.sessionId,
+      };
+    } catch {
+      return meta;
+    }
+  }
+  async isExcludedSubagent(id: string): Promise<boolean> {
+    if (this.deps.includeSubagentSessions?.() ?? this.cache?.includeSubagentSessions ?? false)
+      return false;
+    const lookupId = this.deps.resolveConversationLookupId(id);
+    if (this.sessionStore.getManaged(id)?.isSubagent) return true;
+    const meta = this.cache?.getMetaById(lookupId);
+    if (meta?.isSubagent != null) return meta.isSubagent;
+    const filePath = meta?.filePath ?? (await this.locateJsonlPath(id, lookupId));
+    if (!filePath) return false;
+    try {
+      const classification = this.cache
+        ? this.cache.reconcileClassification(filePath)
+        : classifyConversationFile(filePath);
+      return classification?.isSubagent ?? false;
+    } catch {
+      return false;
+    }
+  }
   constructor(private deps: ConversationHandlersDeps) {}
 
   private get scannerManager(): ScannerManager {
@@ -181,6 +223,8 @@ export class ConversationHandlers {
       });
       const adapted = conversations.map((c) => ({
         id: c.id,
+        isSubagent: c.isSubagent,
+        parentConversationId: c.parentConversationId,
         title: deriveProjectChatTitle({
           title: c.title,
           projectName: c.projectName,
@@ -206,6 +250,7 @@ export class ConversationHandlers {
 
     const scanner = await this.scannerManager.get();
     let metas = [...scanner.getMetadataCache().values()];
+    metas = metas.flatMap((meta) => this.publicScannerMeta(meta) ?? []);
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
     if (providerFilter)
@@ -274,6 +319,7 @@ export class ConversationHandlers {
 
     const scanner = await this.scannerManager.get(true);
     let metas = [...scanner.getMetadataCache().values()];
+    metas = metas.flatMap((meta) => this.publicScannerMeta(meta) ?? []);
     metas = applyIncludeFilter(metas, "conversations");
     if (project) metas = applyProjectFilter(metas, project);
     if (providerFilter)
@@ -317,6 +363,8 @@ export class ConversationHandlers {
     const sessions = conversations.map((c) => ({
       type: "conversation" as const,
       id: c.id,
+      isSubagent: c.isSubagent,
+      parentConversationId: c.parentConversationId,
       status: "idle" as const,
       ownership: "historical" as const,
       ptyAttached: false,
@@ -527,6 +575,13 @@ export class ConversationHandlers {
     // conversation we care about, so a sibling file changing must not stall this
     // single-conversation request behind a full-tree rescan.
     const scanner = await this.scannerManager.get(true);
+    const child = this.cache?.getMetaById(lookupId);
+    if (child?.isSubagent && child.filePath) {
+      const page = await scanner.parseSingleFilePage(child.filePath, child.account ?? undefined, {
+        limit: Number.MAX_SAFE_INTEGER,
+      });
+      return page?.conversation ? { ...page.conversation, sessionId: lookupId } : null;
+    }
     const fromIndex = await scanner.getConversation(lookupId);
     if (fromIndex) {
       // Live-session bypass: a conversation with a live PTY is exactly the case
@@ -679,13 +734,16 @@ export class ConversationHandlers {
   }
 
   /**
-   * Can this file carry a fork link at all?
+   * Is this conversation a Codex rollout?
    *
-   * Only Codex writes one today, and a conversation GET is a hot path: without
-   * this, every Claude request pays an extra open+read of a first line that can
-   * never contain a link.
+   * Two callers, both needing the same fact for different reasons: only Codex
+   * writes a fork link, and only Codex numbers its offset index in a different
+   * space than this handler serves (see the gate in handleGetConversation). A
+   * conversation GET is a hot path, so answering from the cache row keeps every
+   * Claude request from paying an open+read of a first line that can never
+   * contain a link.
    */
-  private mayInheritHistory(conversationId: string, filePath: string): boolean {
+  private isCodexConversation(conversationId: string, filePath: string): boolean {
     const provider = this.cache?.getMetaById(
       this.deps.resolveConversationLookupId(conversationId),
     )?.provider;
@@ -737,6 +795,11 @@ export class ConversationHandlers {
   ): Promise<void> {
     if (this.deps.rejectIfWarmingUp(res)) return;
 
+    if (await this.isExcludedSubagent(id)) {
+      json(res, 404, { error: "Conversation not found" });
+      return;
+    }
+
     // Try the scanner first (has full content including tool_use blocks).
     // Fall back to the cache tail only when the scanner can't find the file —
     // e.g. a conversation that existed in a previous run but whose JSONL was deleted.
@@ -759,7 +822,7 @@ export class ConversationHandlers {
     // cannot throttle a writer out.
     const ownFilePath = await this.locateJsonlPath(id, this.deps.resolveConversationLookupId(id));
     const inherited =
-      ownFilePath && this.mayInheritHistory(id, ownFilePath)
+      ownFilePath && this.isCodexConversation(id, ownFilePath)
         ? await resolveInheritedHistory({
             filePath: ownFilePath,
             locateSource: (sourceId) =>
@@ -889,7 +952,21 @@ export class ConversationHandlers {
     // Fold the offset index's count into the validator: when the index is
     // fresher than the scanner snapshot (a live/appended file), the ETag must
     // change so a client holding the old tail doesn't get a 304 against grown
-    // content. Cheap count lookup; the window read below reuses the same number.
+    // content. Cheap count lookup, and deliberately NOT behind the
+    // `useOffsetIndex` gate the window read below sits behind — since #824 a
+    // Codex rollout is served from the scanner, so there is no window read here
+    // to share this number with, and for Codex it feeds nothing but the tag.
+    //
+    // Reading it unguarded is safe even though for Codex it is a PRE-filter
+    // count, one higher per injected-context line than the body serves: the
+    // input it is maxed against, `etagSource.messageCount`, is the scanner's raw
+    // count in that SAME pre-filter space, and nothing here is compared against
+    // the served post-`isServable` count. A validator only has to CHANGE when
+    // the content does; it does not have to be a meaningful message count. Both
+    // inputs move on an append — the watcher's `extendMessageIndex` reduces
+    // Codex lines with the same `parseCodexJsonlLine` the backfill uses — so an
+    // append cannot leave the tag frozen and hand out a stale 304. Pinned in
+    // __tests__/codex-meta-count-etag.test.ts.
     const indexedCount =
       etagSource.filePath && this.cache
         ? this.cache.getIndexedMessageCount(
@@ -1006,7 +1083,30 @@ export class ConversationHandlers {
       // dropped by a stale upper bound.
       const isTailRequest = !url.searchParams.has("before_index") && !hasAfter && !hasAnchor;
       const indexFilePath = (conversation as { filePath?: string }).filePath;
-      if (isTailRequest && indexFilePath && this.cache) {
+      // The offset index counts a Codex rollout in a DIFFERENT index space than
+      // this handler serves it in, so neither its count nor its windows can be
+      // used for one. The index is built with the scanner's parseCodexJsonlLine,
+      // which renders the AGENTS.md / permissions dumps Codex writes as
+      // `role: user`; `isServable` below drops them. Measured on a rollout whose
+      // first turn is an AGENTS.md dump, the same request served two different
+      // conversations depending only on whether the index happened to be warm:
+      // warm gave 3 messages with the dump at message_index 0, cold gave the
+      // real 2 at 0-1. So the dump renders as a user bubble AND every genuine
+      // message shifts by one, which moves what a stored before_index /
+      // after_index / search anchor_index points at.
+      //
+      // For a fork it is worse than a shift: the index window covers the fork's
+      // OWN file, so taking it discards `filtered` — the only array carrying the
+      // inherited prefix — and serves 2 messages under a meta claiming 6 with
+      // the divider at index 4.
+      //
+      // Reader-side gate on purpose: nothing is reindexed and no row changes, so
+      // it lifts the day the two spaces agree — either the index is written with
+      // the same filter this handler serves through, or the window is filtered
+      // and recounted on read. Claude is unaffected: its index space and its
+      // served space have always been the same one.
+      const useOffsetIndex = !!indexFilePath && !this.isCodexConversation(id, indexFilePath);
+      if (isTailRequest && useOffsetIndex && indexFilePath && this.cache) {
         const indexed = this.cache.getIndexedMessageCount(
           ConversationCache.conversationIdForFile(indexFilePath),
         );
@@ -1023,10 +1123,10 @@ export class ConversationHandlers {
       // wrong. Only for the linear paging windows (before/after/tail); the
       // anchored-search window keeps using the scanner's reader.
       const indexWindow =
-        scanLimit > 0 && !hasAnchor && indexFilePath && this.cache
+        scanLimit > 0 && !hasAnchor && useOffsetIndex && indexFilePath && this.cache
           ? this.cache.readMessageWindow(indexFilePath, windowStart, beforeIndex)
           : null;
-      if (!indexWindow && indexFilePath && this.cache && !hasAnchor) {
+      if (!indexWindow && useOffsetIndex && indexFilePath && this.cache && !hasAnchor) {
         // The one line that separates a fast fetch from a slow one. A miss
         // means this request falls through to the scanner and re-parses the
         // whole file, which is the entire difference between the 34 ms and
@@ -1185,11 +1285,39 @@ export class ConversationHandlers {
     // the meta (message_count / last_updated_at) must reflect what was actually
     // served — otherwise meta disagrees with the messages array. Prefer the
     // index total and the newest served message's timestamp.
-    const ownMessageCount =
-      indexTotal != null && indexTotal > conv.messageCount ? indexTotal : conv.messageCount;
-    // Count the prefix too, or meta says "0 messages" for a fork whose body
-    // carries 21 — and the hub row and the open conversation disagree.
-    const metaMessageCount = ownMessageCount + inheritedFiltered.length;
+    //
+    // The base is `total` (= `filtered.length`): the inherited prefix plus this
+    // file's own turns, each through `isServable`, so the whole number sits in
+    // the one space this response serves in. Taking it whole is also what counts
+    // the prefix, so a fork's meta does not say "0 messages" while its body
+    // carries 21 and the hub row disagrees with the open conversation.
+    //
+    // It replaces `conv.messageCount + inheritedFiltered.length`, which added a
+    // POST-filter prefix length to the scanner's RAW count — for Codex that
+    // count still holds the AGENTS.md / permissions lines `isServable` drops —
+    // producing a number in neither space: a fork carrying one injected line in
+    // its own file reported 7 against a body of 6.
+    //
+    // Freshness is then carried across as a DELTA rather than by swapping the
+    // raw `indexTotal` in for the own half, because only the delta is known to
+    // be filter-free. `indexTotal` is non-null only for CLAUDE — since #824 the
+    // offset index is gated off for Codex (`useOffsetIndex`), and `indexWindow`
+    // is the only thing that sets it — so this term is zero for every Codex
+    // conversation, fork or not, and `metaMessageCount` is simply `total` there.
+    // On the Claude path `isServable` matches nothing (the heuristic is
+    // Codex-specific text) and there is never an inherited prefix, so the delta
+    // is exactly the messages the index has read past the snapshot.
+    //
+    // Equivalent to `indexFresh ? indexTotal : total` on every input reachable
+    // today: every Conversation the meta block can see is built with
+    // `messageCount: messages.length` (the scanner's parseConversation /
+    // parseCodexConversation / assemble, and `shellConversationForInherited`).
+    // The delta is preferred because it localizes the "no messages were
+    // filtered here" assumption to the newly-appended region instead of
+    // asserting it over the whole conversation.
+    const indexFreshDelta =
+      indexTotal != null && indexTotal > conv.messageCount ? indexTotal - conv.messageCount : 0;
+    const metaMessageCount = total + indexFreshDelta;
     const metaLastUpdatedAt =
       indexTotal != null && indexTotal > conv.messageCount
         ? (slice.at(-1)?.timestamp ?? conv.timestamp)
@@ -1197,6 +1325,8 @@ export class ConversationHandlers {
     const body: Record<string, unknown> = {
       meta: {
         id,
+        isSubagent: this.cache?.getMetaById(id)?.isSubagent,
+        parentConversationId: this.cache?.getMetaById(id)?.parentConversationId,
         profile_id: conv.account,
         project_name: conv.projectName,
         session_name: conv.sessionName || undefined,
@@ -1340,12 +1470,17 @@ export class ConversationHandlers {
       },
       scanner,
     );
-    const adapted = results.map((r: any) => ({
+    this.cache?.upsertFromScannerMeta(results.map((r: any) => r.meta));
+    const publicResults = results.flatMap((r) => {
+      const meta = this.publicScannerMeta(r.meta);
+      return meta ? [{ ...r, meta }] : [];
+    });
+    const adapted = publicResults.map((r: any) => ({
       // Use sessionId so the id matches /api/conversations and resolves via
       // findConversationByUuid — a client can round-trip a search result into
       // GET /api/conversations/:id or the search-target QUERY. The old
       // filename-stem derivation produced an id no other endpoint recognized.
-      id: r.meta.sessionId || r.meta.id,
+      id: this.cache?.getIdByFilePath(r.meta.filePath) ?? r.meta.sessionId ?? r.meta.id,
       title: r.meta.projectName,
       sessionName: r.meta.sessionName || undefined,
       filePath: r.meta.filePath,
@@ -1373,7 +1508,8 @@ export class ConversationHandlers {
         : [],
     }));
 
-    const page = paginate(applyFilters(adapted, filters), offset, limit);
+    const visible = adapted.filter((r) => this.cache?.isVisible(r.id) ?? true);
+    const page = paginate(applyFilters(visible, filters), offset, limit);
     json(res, 200, {
       conversations: page.items,
       hasMore: page.hasMore,

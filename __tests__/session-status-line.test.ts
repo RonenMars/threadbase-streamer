@@ -6,7 +6,6 @@
 // own unit tests can't: an async handler reached through the real Hono app.
 
 import { mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -38,17 +37,6 @@ vi.mock("node-pty", () => {
   return { spawn: vi.fn(() => makeMockProcess()) };
 });
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 const API_KEY = "tb_test_status_line";
 
 describe("GET /api/sessions/:id — status-line enrichment", () => {
@@ -70,9 +58,8 @@ describe("GET /api/sessions/:id — status-line enrichment", () => {
 
   async function makeServer() {
     const { StreamerServer } = await import("../src/server");
-    const port = await getRandomPort();
     const server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -85,8 +72,8 @@ describe("GET /api/sessions/:id — status-line enrichment", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
-    return { server, port };
+    await server.listen(0);
+    return { server, port: server.port };
   }
 
   it("reports model, effort and permission mode for a live session", async () => {

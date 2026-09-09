@@ -8,22 +8,10 @@
 // session_update) or a question card for it.
 
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import WebSocket from "ws";
 import type { StreamerServer } from "../src/server";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const API_KEY = "tb_test_external_tails";
 
@@ -61,9 +49,6 @@ describe("external live tails", () => {
 
   beforeEach(async () => {
     const { StreamerServer } = await import("../src/server");
-    port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
-
     configDir = mkdtempSync(join(tmpdir(), "tb-ext-tail-cfg-"));
     cacheDir = mkdtempSync(join(tmpdir(), "tb-ext-tail-cache-"));
     projectPath = mkdtempSync(join(tmpdir(), "tb-ext-tail-proj-"));
@@ -73,7 +58,7 @@ describe("external live tails", () => {
     mkdirSync(projectDir, { recursive: true });
 
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -83,7 +68,9 @@ describe("external live tails", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
+    await server.listen(0);
+    port = server.port;
+    baseUrl = `http://localhost:${port}`;
 
     events = [];
     ws = new WebSocket(`ws://localhost:${port}/ws?key=${API_KEY}`);

@@ -78,6 +78,8 @@ export function confidenceForSource(source: StatusSource): StatusConfidence {
 }
 
 export interface ManagedSession {
+  isSubagent?: boolean;
+  parentConversationId?: string | null;
   id: string; // JSONL UUID — the .jsonl filename under ~/.claude/projects/
   provider?: ProviderName;
   projectId?: string; // Stable identity into the projects table (added during migration).
@@ -99,6 +101,15 @@ export interface ManagedSession {
   failureCode?: string;
   sessionName?: string;
   model?: string;
+  /**
+   * Reasoning-effort tier this session is running with.
+   *
+   * Seeded from the resolved spawn config rather than scraped, because
+   * `session_update` is event-driven and has no screen to read. `GET
+   * /api/sessions/:id` still prefers a live status-line scrape, which is
+   * authoritative if the user changed it inside the terminal.
+   */
+  effort?: string;
   account?: string;
   messageCount?: number;
   preview?: string;
@@ -449,6 +460,8 @@ export interface ServerWarmingUpResponse {
 }
 
 export interface SessionResponse {
+  isSubagent?: boolean;
+  parentConversationId?: string | null;
   id: string; // JSONL UUID
   conversationId: string; // alias for id — mobile uses this to build deep-link URLs
   provider?: ProviderName;

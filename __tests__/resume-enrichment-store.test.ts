@@ -9,21 +9,9 @@
 // ManagedSession.firstMessageAt makes managedToResponse throw on .toISOString().
 
 import { mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { ManagedSession } from "../src/types";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 const API_KEY = "tb_test_resume_enrich";
 const SESSION_ID = "cccccccc-1111-2222-3333-555555555555";
@@ -59,9 +47,8 @@ describe("enrichResumedSessionAsync — writes land in the store", () => {
 
   async function makeServer() {
     const { StreamerServer } = await import("../src/server");
-    const port = await getRandomPort();
     const server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -72,8 +59,8 @@ describe("enrichResumedSessionAsync — writes land in the store", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
-    return { server, port, internals: server as unknown as Internals };
+    await server.listen(0);
+    return { server, port: server.port, internals: server as unknown as Internals };
   }
 
   function seedSession(internals: Internals, over: Partial<ManagedSession> = {}): void {

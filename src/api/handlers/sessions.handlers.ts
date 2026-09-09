@@ -29,6 +29,7 @@ import type { ScannerManager } from "../../scanner-manager";
 import { type Prompt, PromptAnswerSchema } from "../../schemas/prompt.schema";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
 import type { PendingPermission, PendingQuestion } from "../../server-wiring";
+import { classifyConversationFile } from "../../services/conversations/classification";
 import {
   type PromptAdapterResult,
   type PromptAnswerAdapter,
@@ -273,6 +274,7 @@ export type SessionHandlersDeps = {
   // reset-and-rescan, mutated by PUT /api/config/claude-flags, resolved
   // asynchronously at boot (browseRoot), or swapped on the instance by tests.
   cache: () => ConversationCache | null;
+  includeSubagentSessions?: () => boolean;
   log: () => Logger;
   browseRoot: () => string | null;
   claudeFlags: () => ClaudeFlagValues;
@@ -832,6 +834,15 @@ export class SessionHandlers {
     branch?: string;
   }): Promise<ResumeOutcome> {
     const { sessionId } = opts;
+    const managed = this.sessionStore.getManaged(sessionId);
+    const includeSubagents =
+      this.deps.includeSubagentSessions?.() ?? this.cache?.includeSubagentSessions ?? false;
+    if (
+      (managed?.isSubagent && !includeSubagents) ||
+      this.cache?.isExcludedSubagent(managed?.boundConversationId ?? sessionId)
+    ) {
+      return { ok: false, reason: "history_file_missing" };
+    }
 
     // If a PTY is already running for this session, return it immediately
     if (this.ptyManager.hasSession(sessionId)) {
@@ -844,6 +855,20 @@ export class SessionHandlers {
     const target = await this.deps.resolveConversationTarget(sessionId);
     if (!target.ok) return target;
     const { historyId, jsonlPath, historyPath, conv, projectPath, provider } = target;
+    let classification:
+      | { isSubagent?: boolean | null; parentConversationId?: string | null }
+      | null
+      | undefined = this.cache?.getMetaById(historyId);
+    const classificationPath = historyPath || jsonlPath;
+    if (classification?.isSubagent == null && classificationPath) {
+      try {
+        classification = classifyConversationFile(classificationPath, provider);
+      } catch {
+        // The existing target/readiness checks own unreadable-history errors.
+      }
+    }
+    if (!includeSubagents && classification?.isSubagent)
+      return { ok: false, reason: "history_file_missing" };
 
     // Codex-only fast path: does another process hold this exact rollout open?
     // The generic probe below cannot answer that — a Codex owner need not carry
@@ -953,6 +978,10 @@ export class SessionHandlers {
     if (historyId !== sessionId) session.boundConversationId = historyId;
 
     this.sessionStore.addManaged(session);
+    this.sessionStore.updateManaged(session.id, {
+      isSubagent: classification?.isSubagent ?? false,
+      parentConversationId: classification?.parentConversationId ?? null,
+    });
     this.registryBoot.recordSessionSpawn(session);
 
     // Codex is the only authority on its writer lock, and it reports the
@@ -1223,6 +1252,22 @@ export class SessionHandlers {
       promptId: prompt.promptId,
     });
     this.pendingQuestionKey.set(sessionId, key);
+    // Counterpart to ws.broadcast_permission below. Shape only — question and
+    // option TEXT must never enter logs, same rule the detectors follow. The
+    // absence of this line is what made a client-scraped card indistinguishable
+    // from one this server sent (#823).
+    const subscriberCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
+    this.log.info(
+      `[ws.broadcast_question] ${sessionId.slice(0, 8)} subscribers=${subscriberCount}`,
+      {
+        event: "ws.broadcast_question",
+        sessionId,
+        subscriberCount,
+        origin: "screen",
+        questionCount: questions.length,
+        optionCount: questions[0]?.options.length ?? 0,
+      },
+    );
     this.broadcastToSession(sessionId, { type: "question", sessionId, toolUseId, questions });
   }
 
@@ -1261,6 +1306,16 @@ export class SessionHandlers {
       questions,
       origin,
       promptId: prompt.promptId,
+    });
+    // No broadcast on this path — the card reaches the client on the next
+    // GET /api/sessions/:id — so without this the question is pending with
+    // nothing at all in the log.
+    this.log.info(`[question.pending] ${sessionId.slice(0, 8)} origin=${origin}`, {
+      event: "question.pending",
+      sessionId,
+      origin,
+      questionCount: questions.length,
+      optionCount: questions[0]?.options.length ?? 0,
     });
   }
 

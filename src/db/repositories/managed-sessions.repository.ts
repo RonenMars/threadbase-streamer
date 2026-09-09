@@ -26,6 +26,8 @@ export type StatusSource = "spawn" | "transition" | "exit" | "shutdown" | "probe
 export type { SessionLifecycle } from "../../types";
 
 export interface ManagedSessionRow {
+  is_subagent?: number;
+  parent_conversation_id?: string | null;
   session_id: string;
   provider: string;
   pid: number | null;
@@ -88,13 +90,13 @@ export class ManagedSessionsRepository {
         status, status_source, status_updated_at, started_at, completed_at,
         last_activity_at, prompt_count, session_name, project_id,
         bound_conversation_id, resumed_from_conversation_id, failure_reason,
-        streamer_instance_id, boot_token
+        streamer_instance_id, boot_token, is_subagent, parent_conversation_id
       ) VALUES (
         @session_id, @provider, @pid, @cmdline, @project_path, @project_name, @branch,
         @status, @status_source, @status_updated_at, @started_at, @completed_at,
         @last_activity_at, @prompt_count, @session_name, @project_id,
         @bound_conversation_id, @resumed_from_conversation_id, @failure_reason,
-        @streamer_instance_id, @boot_token
+        @streamer_instance_id, @boot_token, @is_subagent, @parent_conversation_id
       )
       ON CONFLICT(session_id) DO UPDATE SET
         pid = excluded.pid,
@@ -114,7 +116,9 @@ export class ManagedSessionsRepository {
         resumed_from_conversation_id = excluded.resumed_from_conversation_id,
         failure_reason = excluded.failure_reason,
         streamer_instance_id = excluded.streamer_instance_id,
-        boot_token = excluded.boot_token
+        boot_token = excluded.boot_token,
+        is_subagent = excluded.is_subagent,
+        parent_conversation_id = excluded.parent_conversation_id
     `);
 
     // Narrow status-only write for the hot transition path, so a
@@ -184,6 +188,7 @@ export class ManagedSessionsRepository {
     this.listRecoverableStmt = db.prepare(`
       SELECT * FROM managed_sessions
        WHERE (completed_at IS NULL OR status_source = 'shutdown')
+         AND (@include_subagents = 1 OR is_subagent = 0)
          AND status_updated_at >= @since
        ORDER BY status_updated_at DESC
        LIMIT @limit
@@ -196,6 +201,8 @@ export class ManagedSessionsRepository {
   recordSpawn({ session, pid, cmdline, streamerInstanceId }: RecordSpawnInput): void {
     this.upsertStmt.run({
       session_id: session.id,
+      is_subagent: Number(session.isSubagent ?? false),
+      parent_conversation_id: session.parentConversationId ?? null,
       provider: session.provider ?? "claude-code",
       pid,
       cmdline,
@@ -305,8 +312,20 @@ export class ManagedSessionsRepository {
    * and touched no longer ago than `sinceMs`. Newest first, capped — the caller
    * decides which of these actually deserve rehydrating (`shouldRehydrate`).
    */
-  listRecoverable({ sinceMs, limit }: { sinceMs: number; limit: number }): ManagedSessionRow[] {
-    return this.listRecoverableStmt.all({ since: sinceMs, limit }) as ManagedSessionRow[];
+  listRecoverable({
+    sinceMs,
+    limit,
+    includeSubagents = true,
+  }: {
+    sinceMs: number;
+    limit: number;
+    includeSubagents?: boolean;
+  }): ManagedSessionRow[] {
+    return this.listRecoverableStmt.all({
+      since: sinceMs,
+      limit,
+      include_subagents: Number(includeSubagents),
+    }) as ManagedSessionRow[];
   }
 
   delete(sessionId: string): void {

@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer, request as httpRequest } from "http";
+import { request as httpRequest } from "http";
 import { StreamerServer } from "../src/server";
 
 // The rotation assertion below reads the emitted log record rather than console.
@@ -35,7 +35,10 @@ vi.mock("../src/logger", async (importOriginal) => {
 // writes server.yaml. Redirect that write to a throwaway dir so the suite never
 // clobbers the user's live ~/.threadbase/server.yaml (which would desync a
 // running prod streamer and 401 every client until restart).
-const REAL_CONFIG = join(homedir(), ".threadbase", "server.yaml");
+// homedir() is sandboxed suite-wide by __tests__/setup/sandbox-home.ts, which
+// would make the mtime guard below skip itself. TB_TEST_REAL_HOME is the real
+// one, so this still checks the file it was written to check.
+const REAL_CONFIG = join(process.env.TB_TEST_REAL_HOME || homedir(), ".threadbase", "server.yaml");
 let originalConfigDir: string | undefined;
 let realConfigMtimeBefore: number | undefined;
 
@@ -64,17 +67,6 @@ afterAll(() => {
   }
 });
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 const API_KEY = "tb_sectest_key_0000000000000000";
 
 describe("security hardening", () => {
@@ -83,10 +75,10 @@ describe("security hardening", () => {
   let baseUrl: string;
 
   beforeEach(async () => {
-    port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     server = new StreamerServer({ apiKey: API_KEY, localNoAuth: false, verbose: false });
-    await server.listen(port);
+    await server.listen(0);
+    port = server.port;
+    baseUrl = `http://localhost:${port}`;
   });
 
   afterEach(async () => {
@@ -102,9 +94,8 @@ describe("security hardening", () => {
       console.warn = (...args: unknown[]) => warns.push(args.join(" "));
       let warnServer: StreamerServer | undefined;
       try {
-        const p = await getRandomPort();
         warnServer = new StreamerServer({ apiKey: API_KEY, localNoAuth: true, verbose: false });
-        await warnServer.listen(p);
+        await warnServer.listen(0);
       } finally {
         console.warn = orig;
         await warnServer?.close();
@@ -118,9 +109,8 @@ describe("security hardening", () => {
       console.warn = (...args: unknown[]) => warns.push(args.join(" "));
       let quietServer: StreamerServer | undefined;
       try {
-        const p = await getRandomPort();
         quietServer = new StreamerServer({ apiKey: API_KEY, localNoAuth: false, verbose: false });
-        await quietServer.listen(p);
+        await quietServer.listen(0);
       } finally {
         console.warn = orig;
         await quietServer?.close();
@@ -175,13 +165,13 @@ describe("security hardening", () => {
     });
 
     it("returns 403 when localNoAuth is active", async () => {
-      const p = await getRandomPort();
       const noAuthServer = new StreamerServer({
         apiKey: API_KEY,
         localNoAuth: true,
         verbose: false,
       });
-      await noAuthServer.listen(p);
+      await noAuthServer.listen(0);
+      const p = noAuthServer.port;
       try {
         const res = await fetch(`http://localhost:${p}/api/auth/rotate`, {
           method: "POST",
@@ -204,14 +194,14 @@ describe("security hardening", () => {
     });
 
     it("returns persisted=false and a warning when key came from --api-key CLI flag", async () => {
-      const p = await getRandomPort();
       const cliServer = new StreamerServer({
         apiKey: API_KEY,
         apiKeySource: "cli",
         localNoAuth: false,
         verbose: false,
       });
-      await cliServer.listen(p);
+      await cliServer.listen(0);
+      const p = cliServer.port;
       try {
         const res = await fetch(`http://localhost:${p}/api/auth/rotate`, {
           method: "POST",

@@ -10,7 +10,6 @@
  * The spawned binary is the assertion because it is the thing that was wrong.
  */
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
@@ -41,17 +40,6 @@ import { StreamerServer } from "../src/server";
 
 const ptySpawn = nodePtySpawn as unknown as ReturnType<typeof vi.fn>;
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 const API_KEY = "tb_test_key_adopt_provider";
 // A Codex rollout id, which is what `codex resume <uuid>` states in argv and
 // therefore what discovery reports as the conversation.
@@ -80,10 +68,8 @@ describe("POST /api/sessions/:id/adopt — provider", () => {
     projectCwd = join(tmpBase, "project");
     mkdirSync(projectCwd, { recursive: true });
 
-    const port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -93,7 +79,8 @@ describe("POST /api/sessions/:id/adopt — provider", () => {
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(port);
+    await server.listen(0);
+    baseUrl = `http://localhost:${server.port}`;
   });
 
   afterEach(async () => {

@@ -50,7 +50,13 @@ function seed(n: number): { id: string; filePath: string }[] {
   for (let i = 0; i < n; i++) {
     const id = `conv-${i}`;
     const filePath = join(root, `${id}.jsonl`);
-    writeFileSync(filePath, `${JSON.stringify({ type: "summary" })}\n`);
+    // A renderable turn, not just metadata: these rows stand in for real
+    // conversations, and a metadata-only file now classifies as empty and
+    // drops out of the visible corpus the assertions below count.
+    writeFileSync(
+      filePath,
+      `${JSON.stringify({ type: "user", message: { role: "user", content: "hello" } })}\n`,
+    );
     metas.push({ ...META_BASE, id, sessionId: id, filePath });
     out.push({ id, filePath });
   }

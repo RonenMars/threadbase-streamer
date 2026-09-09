@@ -22,7 +22,19 @@ Those keys are **not** the env var names. This does nothing (unknown key, droppe
 feature_flags: {"THREADBASE_FEATURE_PTY_HOST":true}
 ```
 
-Snake_case (`pty_host`) is also unknown. Current ids: `codexSystemPrompt`, `sessionRehydration`, `liveActivityPush`, `e2ee`, `accessProbe`, `ptyHost`. `GET /api/config/feature-flags` `registry[].id` is the same list.
+Snake_case (`pty_host`) is also unknown. Current ids: `subagentSessions`, `codexSystemPrompt`, `sessionRehydration`, `liveActivityPush`, `e2ee`, `accessProbe`, `ptyHost`. `GET /api/config/feature-flags` `registry[].id` is the same list.
+
+## Provider-created child sessions
+
+`subagentSessions` defaults to `false`: Claude Code sidechains and Codex thread-spawn children are excluded from conversation/session lists, search, summaries, and direct detail/resume/control requests.
+Set `THREADBASE_FEATURE_SUBAGENT_SESSIONS=true`, pass `--feature subagentSessions=true`, or set `feature_flags: {"subagentSessions": true}` in YAML to include them.
+The existing precedence applies: environment, CLI, YAML, then registry default; restart to apply a change.
+This does not change `THREADBASE_INCLUDE_AGENTS` or `THREADBASE_AGENT_ENTRYPOINTS`, which classify SDK/editor entrypoints.
+Child identities remain independent and expose `isSubagent` and `parentConversationId`.
+
+Normal lists exclude histories whose completed parse found no renderable messages, regardless of this flag.
+Unclassified migration rows remain visible until scanned.
+`has_messages` records presence, while `message_count` remains display/pagination metadata; presence does not establish an exact count.
 
 ## `accessProbe` — on by default, and why
 

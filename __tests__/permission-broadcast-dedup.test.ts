@@ -5,21 +5,9 @@
 // behavior into handlePermissionChange.
 
 import { mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { StreamerServer } from "../src/server";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 describe("handlePermissionChange — broadcast dedup", () => {
   let server: StreamerServer;
@@ -28,10 +16,9 @@ describe("handlePermissionChange — broadcast dedup", () => {
 
   beforeAll(async () => {
     const { StreamerServer } = await import("../src/server");
-    const port = await getRandomPort();
     cacheDir = mkdtempSync(join(tmpdir(), "tb-perm-dedup-cache-"));
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: "tb_test_perm_dedup",
       localNoAuth: false,
       verbose: false,
@@ -41,7 +28,7 @@ describe("handlePermissionChange — broadcast dedup", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
+    await server.listen(0);
   });
 
   afterAll(async () => {

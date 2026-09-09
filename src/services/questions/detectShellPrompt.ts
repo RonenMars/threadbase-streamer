@@ -11,8 +11,9 @@
 // reused.
 //
 // Philosophy mirrors the existing detectors: conservative but false-positive
-// tolerant. A spurious card is recoverable (the user ignores it or taps and the
-// keys are harmless); a MISSED prompt strands a blocked PTY. We only fire on a
+// tolerant. A spurious card is mostly recoverable (the user ignores it), though
+// tapping one sends real keystrokes — a numbered card scraped out of prose types
+// its digit in as a prompt; a MISSED prompt strands a blocked PTY. We only fire on a
 // tight set of patterns anchored to the LAST non-blank rendered line.
 
 const ENTER = "\r";
@@ -118,7 +119,13 @@ export function detectShellPrompt(lines: string[]): ShellPrompt | null {
       options.unshift({ index: num, label: m[2].trim(), answerKeys: `${num}${ENTER}` });
       firstRow = i;
     }
-    if (options.length >= 2) {
+    // A real menu enumerates 1..n. A numbered block scraped out of the middle
+    // of prose does not: an assistant message listing open questions 1-8 wraps
+    // item 5 onto a continuation line, which ends the contiguous run above
+    // item 6 — so the "menu" starts at 6, and answering it types "6\r" into
+    // the session as a prompt. Trade-off: this also rejects a real menu whose
+    // first rows scrolled off screen; widen only if that is ever observed.
+    if (options.length >= 2 && options.every((o, i) => o.index === i + 1)) {
       // Prompt = nearest non-chrome line above the first numbered row.
       let prompt = "";
       for (let i = firstRow - 1; i >= 0; i--) {

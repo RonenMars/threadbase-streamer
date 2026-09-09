@@ -185,13 +185,14 @@ Each half is fetched by the best reader available for its file: the offset-index
 window when warm (Claude today, Codex after Phase 4), otherwise the existing
 single-file parse. No new parsing code.
 
-**Phases 1–2 implement the degenerate form of this.** Codex detail requests
-already materialise every message (there is no index to window with), so the
-prefix is simply prepended to that list and the existing slicing does the rest —
-one `filtered` array feeds `total`, every cursor and the byte budget, unchanged.
-The split-window read above is what this becomes once phase 4 gives Codex an
-index worth windowing. Until then a fork costs one extra full parse of its
-source, cached in process; phase 4 is what removes it.
+**Phases 1–2 implement the degenerate form of this, and that is where this
+stops.** Codex detail requests already materialise every message (there is no
+index to window with), so the prefix is simply prepended to that list and the
+existing slicing does the rest — one `filtered` array feeds `total`, every cursor
+and the byte budget, unchanged.
+
+> **The split-window read above will not be built.** Decided 2026-09-08. See
+> "Why the split-window read was dropped" below.
 
 ### ETag
 
@@ -269,6 +270,36 @@ depth cap of 8 and a visited-set to refuse cycles. A refused chain degrades to
 
 Phases 1–2 are the fix. 3 is the polish the design decision asked for. 4 is a
 standing performance debt this work makes worth paying.
+
+**Status as of 2026-09-08.** Phases 1–3 shipped.
+Phase 4 shipped as #818 and was then gated off for Codex by #824, because the offset index numbers a Codex rollout in a different space than the detail handler serves it in — the index is built with the scanner's `parseCodexJsonlLine`, which renders the AGENTS.md and permissions dumps as `role: user`, while `isServable` drops them before indices are assigned.
+That gate lifts when the two spaces agree; #824's comment names the condition.
+
+## Why the split-window read was dropped
+
+Decided 2026-09-08, after investigating what it would take to build.
+
+**It cannot be built correctly on today's index, and the blocker is not `N`.**
+While the index space is pre-filter and the served space is post-filter, any windowed read against the index numbers in a different space than `through_message_index` and every client cursor live in — and the gap varies with the conversation's *text*, so it is not a constant that can be corrected for.
+Handed a perfect `N`, the own half would still be served unfiltered: a correct divider over a wrong list.
+
+**Resolving `N` from the index is separately impossible.**
+`forked_from_ordinal_exclusive` is a LINE ordinal and `conversation_message_index` has no ordinal column, so the cut cannot be located in the index at all.
+Even given a mapping, the index counts in the pre-filter space, and `isCodexInjectedContext` is a predicate on message TEXT which the index does not store — so the correction cannot be computed from rows either, only by preading and parsing them, which is the scan the design existed to remove.
+
+**The payoff does not justify the machinery.**
+The parent prefix is already memoised by `prefixCache` — one parse per fork per process, not per request.
+So the real gain over today is an integer instead of a pinned message array, plus removal of the cache's eviction cliff.
+Against that: a reindex, a durably persisted cut, an invalidation key on file identity plus a monotonic size floor, and seam arithmetic across two files with `message_index` rewriting — every one of which is a new way to serve a subtly wrong conversation.
+#824 is what that class of mistake looks like in production, and it shipped from a much simpler change.
+
+**What was done instead.** `PREFIX_CACHE_MAX` was raised from 8, which addresses the only concrete cost anyone identified without adding a failure mode.
+
+If a profile later shows fork prefix parsing actually hurting users, reopen this — but reopen it *after* the two index spaces are reconciled, not before.
+
+**Not needed, for the record:** a `conversation_links` table.
+`cache_metadata` is a generic key/value store with a working repository, so persisting a resolved cut would be a type widening rather than a migration.
+Recorded here so the question does not get re-litigated from scratch.
 
 ## Risks
 

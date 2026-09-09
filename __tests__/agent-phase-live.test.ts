@@ -9,7 +9,6 @@
 
 import { EventEmitter } from "events";
 import { mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
@@ -296,17 +295,6 @@ describe("agent phase — the scrape pass stays non-fatal", () => {
   }, 15000);
 });
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 const API_KEY = "tb_test_agent_phase";
 
 describe("agent phase — server wiring", () => {
@@ -328,9 +316,8 @@ describe("agent phase — server wiring", () => {
 
   it("stores the phase, broadcasts a scoped frame, and clears it when the PTY dies", async () => {
     const { StreamerServer } = await import("../src/server");
-    const port = await getRandomPort();
     const server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -341,7 +328,8 @@ describe("agent phase — server wiring", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
+    await server.listen(0);
+    const port = server.port;
 
     const internals = server as unknown as {
       ptyManager: {

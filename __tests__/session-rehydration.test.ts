@@ -7,7 +7,6 @@
 // worth recovering were the ones nothing looked at.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { ManagedSessionRow } from "../src/db/repositories/managed-sessions.repository";
@@ -200,17 +199,6 @@ describe("a rehydrated stub in SessionStore", () => {
 
 // ── boot integration ─────────────────────────────────────────────────────────
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 const API_KEY = "tb_test_session_rehydration";
 const UUID = "cccccccc-1111-2222-3333-444444444444";
 
@@ -314,9 +302,8 @@ describe("boot rehydration", () => {
 
   async function makeServer(over: Record<string, unknown> = {}) {
     const { StreamerServer } = await import("../src/server");
-    const port = await getRandomPort();
     const server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -328,8 +315,8 @@ describe("boot rehydration", () => {
       codexRoots: [],
       ...over,
     });
-    await server.listen(port, { awaitReady: true });
-    return { server, port };
+    await server.listen(0, { awaitReady: true });
+    return { server, port: server.port };
   }
 
   function api(port: number, path: string) {

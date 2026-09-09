@@ -55,6 +55,7 @@ export type ApiDeps = {
   sessionStore: SessionStore;
   wsHub: WSHub;
   cache: () => ConversationCache | null;
+  isExcludedSubagent?: (id: string) => Promise<boolean>;
   cacheMonitor: () => CacheIntegrityMonitor | null;
   hostPressureMonitor: () => HostPressureMonitor | null;
   /** Push registration + delivery state (C7). Null when the cache DB is unavailable. */

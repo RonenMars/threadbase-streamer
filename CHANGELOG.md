@@ -1,3 +1,45 @@
+## [1.89.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.1...v1.89.2) (2026-09-08)
+
+### Bug Fixes
+
+* **conversations:** count meta.message_count in the served space ([#833](https://github.com/RonenMars/threadbase-streamer/issues/833)) ([aca8a0b](https://github.com/RonenMars/threadbase-streamer/commit/aca8a0b0ff86edc47a9a25a227b88c1be0ca9ec3)), closes [#824](https://github.com/RonenMars/threadbase-streamer/issues/824) [#824](https://github.com/RonenMars/threadbase-streamer/issues/824) [#824](https://github.com/RonenMars/threadbase-streamer/issues/824)
+
+## [1.89.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.0...v1.89.1) (2026-09-08)
+
+### Bug Fixes
+
+* **conversations:** classify every Codex subagent source shape as a child ([#831](https://github.com/RonenMars/threadbase-streamer/issues/831)) ([827723b](https://github.com/RonenMars/threadbase-streamer/commit/827723b3ab4d2fd39ee896b13ccc6515fca4293e)), closes [RonenMars/threadbase-scanner#82](https://github.com/RonenMars/threadbase-scanner/issues/82)
+
+## [1.89.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.88.0...v1.89.0) (2026-09-08)
+
+### Features
+
+* **conversations:** filter empty histories and provider-created subagents ([#828](https://github.com/RonenMars/threadbase-streamer/issues/828)) ([9b05c92](https://github.com/RonenMars/threadbase-streamer/commit/9b05c925ad89f1e387d143d1af0a6340d4ce2491))
+
+## [1.88.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.2...v1.88.0) (2026-09-08)
+
+### Features
+
+* **observability:** log question card broadcasts ([#825](https://github.com/RonenMars/threadbase-streamer/issues/825)) ([44c528d](https://github.com/RonenMars/threadbase-streamer/commit/44c528d4b8a37fc4bff9151fec41bb22c6aba50c)), closes [#821](https://github.com/RonenMars/threadbase-streamer/issues/821) [RonenMars/threadbase-mobile#1021](https://github.com/RonenMars/threadbase-mobile/issues/1021)
+
+## [1.87.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.1...v1.87.2) (2026-09-08)
+
+### Bug Fixes
+
+* **conversations:** stop serving Codex reads from the offset index ([#824](https://github.com/RonenMars/threadbase-streamer/issues/824)) ([2a8e569](https://github.com/RonenMars/threadbase-streamer/commit/2a8e5691df0f667ff04e363a62eaeffafc287ca2)), closes [#818](https://github.com/RonenMars/threadbase-streamer/issues/818)
+
+## [1.87.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.87.0...v1.87.1) (2026-09-08)
+
+### Bug Fixes
+
+* **questions:** require a numbered menu to start at 1 ([#822](https://github.com/RonenMars/threadbase-streamer/issues/822)) ([07d6f62](https://github.com/RonenMars/threadbase-streamer/commit/07d6f6253842c504a14b10e32d123a5ee63d9547)), closes [#821](https://github.com/RonenMars/threadbase-streamer/issues/821)
+
+## [1.87.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.86.2...v1.87.0) (2026-09-08)
+
+### Features
+
+* **sessions:** carry effort on session_update ([#820](https://github.com/RonenMars/threadbase-streamer/issues/820)) ([b90040a](https://github.com/RonenMars/threadbase-streamer/commit/b90040a293fc0d1a0329acdecacea78355b3a96a))
+
 ## [1.86.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.86.1...v1.86.2) (2026-09-07)
 
 ### Performance Improvements

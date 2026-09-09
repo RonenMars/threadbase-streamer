@@ -5,22 +5,10 @@
 // Drives the extracted processJsonlQuestions() directly for determinism.
 
 import { mkdtempSync, rmSync } from "fs";
-import { createServer } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { StreamerServer } from "../src/server";
 import type { AskQuestion } from "../src/types";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 // A JSONL line carrying an AskUserQuestion tool_use, as Claude writes it.
 function qLine(question: string, labels: string[], toolUseId: string): string {
@@ -65,10 +53,9 @@ describe("processJsonlQuestions — P0.2 suppression + anti-clobber", () => {
 
   beforeAll(async () => {
     const { StreamerServer } = await import("../src/server");
-    const port = await getRandomPort();
     cacheDir = mkdtempSync(join(tmpdir(), "tb-jsonl-q-cache-"));
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: "tb_test_jsonl_q",
       localNoAuth: false,
       verbose: false,
@@ -78,7 +65,7 @@ describe("processJsonlQuestions — P0.2 suppression + anti-clobber", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(port);
+    await server.listen(0);
   });
 
   afterAll(async () => {

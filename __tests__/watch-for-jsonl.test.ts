@@ -6,8 +6,7 @@
 
 import { EventEmitter } from "events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { createServer } from "http";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { basename, join, sep } from "path";
 import WebSocket from "ws";
 import { StreamerServer } from "../src/server";
@@ -33,17 +32,6 @@ vi.mock("node-pty", () => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 const API_KEY = "tb_test_watch_for_jsonl";
 
 // Returns the Claude projects dir for a given absolute project path —
@@ -62,10 +50,31 @@ describe("watchForJsonl — conversation_event wiring", () => {
   let projectPath: string;
   let cacheDir: string;
   let origBrowseRoot: string | undefined;
+  let homeDir: string;
+  let origHome: string | undefined;
+  let origUserProfile: string | undefined;
 
   beforeEach(async () => {
-    port = await getRandomPort();
-    baseUrl = `http://localhost:${port}`;
+    // Sandbox homedir() BEFORE anything resolves a path from it.
+    //
+    // watchForJsonl derives ~/.claude/projects from homedir(), so this file has
+    // to agree with it about where home is — but pointing the test server at
+    // the developer's REAL home makes listen() attach the ConversationWatcher
+    // to the real ~/.claude/projects (and the real codex roots), which chokidar
+    // recurses into for one watch handle PER TRANSCRIPT. server.close() then
+    // awaits the in-flight corpus scan and tears every one of those handles
+    // down: measured 15.0s-27.2s per test against vitest's 30s hookTimeout, so
+    // whenever the real corpus grew or the box was busy the afterEach blew the
+    // hook and reported "Hook timed out in 30000ms" against the first test.
+    // Against an empty sandbox home the same close() takes 2-7ms.
+    //
+    // os.homedir() reads USERPROFILE on Windows (HOME is ignored), so both are
+    // set — same sandbox as __tests__/auth-set-key.test.ts.
+    homeDir = mkdtempSync(join(tmpdir(), "threadbase-wfj-home-"));
+    origHome = process.env.HOME;
+    origUserProfile = process.env.USERPROFILE;
+    process.env.HOME = homeDir;
+    process.env.USERPROFILE = homeDir;
 
     // Create a project dir directly under homedir.
     // Set THREADBASE_BROWSE_ROOT so loadBrowseRoot() (which reads server.yaml)
@@ -76,7 +85,7 @@ describe("watchForJsonl — conversation_event wiring", () => {
 
     cacheDir = mkdtempSync(join(homedir(), "threadbase-wfj-cache-"));
     server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -84,23 +93,27 @@ describe("watchForJsonl — conversation_event wiring", () => {
       cacheDir,
       scanProfiles: [],
     });
-    await server.listen(port);
+    await server.listen(0);
+    port = server.port;
+    baseUrl = `http://localhost:${port}`;
   });
 
   afterEach(async () => {
     // The cleanup runs in `finally`: when server.close() exceeds the hook
     // timeout the await throws, and anything after it never runs — which is
-    // how these directories accumulated in $HOME for a month. The
-    // ~/.claude/projects mirror the tests create themselves is removed here
-    // too; nothing else ever did, and ConversationWatcher costs roughly one
-    // watch handle per file under that root, so the pile slowed every
-    // server.close() in the suite, not just this file's.
+    // how these directories accumulated in $HOME for a month. They now live
+    // inside the sandbox home (project dir, cache dir and the
+    // ~/.claude/projects mirror the tests create themselves), so removing that
+    // one root removes all of them, and nothing is left in the real $HOME to
+    // accumulate.
     try {
       await server.close();
     } finally {
-      rmSync(claudeProjectsDir(projectPath), { recursive: true, force: true });
-      rmSync(projectPath, { recursive: true, force: true });
-      rmSync(cacheDir, { recursive: true, force: true });
+      rmSync(homeDir, { recursive: true, force: true });
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      if (origUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = origUserProfile;
       if (origBrowseRoot === undefined) {
         delete process.env.THREADBASE_BROWSE_ROOT;
       } else {

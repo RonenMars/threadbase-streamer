@@ -84,6 +84,22 @@ describe("detectShellPrompt — numbered menu", () => {
     ).toBeNull();
   });
 
+  it("returns null for a numbered block that does not start at 1 (prose mid-list)", () => {
+    // Regression: a resumed session repainted an assistant message listing open
+    // questions 1-8. Item 5 wrapped, ending the contiguous run above item 6, so
+    // items 6 and 7 were scraped as a two-option card whose keys would have
+    // typed "6\r" into the session.
+    expect(
+      detectShellPrompt([
+        "  5. Notifications-off unregister. Two ways to make it possible: (a) mobile persists the",
+        "     last registered Expo token; or (b) the streamer accepts a device-scoped DELETE with",
+        "     no body. Which — and is it in scope at all, given the toggles are currently inert?",
+        "  6. Inert notification prefs. Four switches in Settings drive nothing.",
+        "  7. plan_ready deletion timing. 4b's removal commit is independent of 4a's findings.",
+      ]),
+    ).toBeNull();
+  });
+
   it("returns null when the numbered block doesn't reach the true tail of the screen", () => {
     expect(
       detectShellPrompt(["1. apple", "2. banana", "", "Some trailing prose after the list."]),

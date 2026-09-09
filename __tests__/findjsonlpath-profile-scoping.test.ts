@@ -12,7 +12,6 @@
  * projectPath (or 400'd) instead of the JSONL's authoritative cwd.
  */
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StreamerServer } from "../src/server";
@@ -41,17 +40,6 @@ const PROFILE_UUID = "11112222-3333-4444-5555-666677778888";
 // dir name, so if resume ever fell back to a scanner/encoded-path derivation
 // instead of reading this JSONL, the spawn cwd would not match.
 const PROFILE_CWD = "/tmp/threadbase-findjsonl-profile-cwd";
-
-async function getRandomPort(): Promise<number> {
-  return new Promise((resolve) => {
-    const srv = createServer();
-    srv.listen(0, () => {
-      const addr = srv.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      srv.close(() => resolve(port));
-    });
-  });
-}
 
 describe("findJsonlPath honors scanProfiles (degraded-mode resume)", () => {
   let ptySpawn: ReturnType<typeof vi.fn>;
@@ -109,9 +97,8 @@ describe("findJsonlPath honors scanProfiles (degraded-mode resume)", () => {
   });
 
   it("resumes with cwd read from the profile JSONL, not ~/.claude/projects", async () => {
-    const port = await getRandomPort();
     const server = new StreamerServer({
-      port,
+      port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
@@ -121,7 +108,8 @@ describe("findJsonlPath honors scanProfiles (degraded-mode resume)", () => {
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(port, { awaitReady: true });
+    await server.listen(0, { awaitReady: true });
+    const port = server.port;
 
     try {
       const res = await fetch(`http://localhost:${port}/api/sessions/resume`, {
