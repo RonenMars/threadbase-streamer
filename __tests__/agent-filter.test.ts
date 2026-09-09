@@ -72,6 +72,10 @@ describe("isAgentLine", () => {
     expect(isAgentLine({ entrypoint: "claude-vscode" })).toBe(true);
   });
 
+  it("returns true for sdk-py entrypoint (default set)", () => {
+    expect(isAgentLine({ entrypoint: "sdk-py" })).toBe(true);
+  });
+
   it("returns false for cli entrypoint", () => {
     expect(isAgentLine({ entrypoint: "cli" })).toBe(false);
   });
@@ -88,7 +92,7 @@ describe("isAgentLine", () => {
 });
 
 describe("parseAgentEntrypointsEnv", () => {
-  it("defaults to sdk-cli + claude-vscode when unset", () => {
+  it("defaults to sdk-cli + sdk-py + claude-vscode when unset", () => {
     const result = parseAgentEntrypointsEnv(undefined);
     expect(result).toEqual(DEFAULT_AGENT_ENTRYPOINTS);
   });
@@ -118,6 +122,12 @@ describe("isAgentFile", () => {
   it("returns true when JSONL contains claude-vscode marker", () => {
     const vscodeLine = { ...AGENT_LINE, entrypoint: "claude-vscode" };
     const fp = writeJsonl("vscode.jsonl", [HOUSEKEEPING_LINE, vscodeLine]);
+    expect(isAgentFile(fp)).toBe(true);
+  });
+
+  it("returns true when JSONL contains sdk-py marker", () => {
+    const pyLine = { ...AGENT_LINE, entrypoint: "sdk-py" };
+    const fp = writeJsonl("sdk-py.jsonl", [HOUSEKEEPING_LINE, pyLine]);
     expect(isAgentFile(fp)).toBe(true);
   });
 
