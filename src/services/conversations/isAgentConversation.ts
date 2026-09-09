@@ -3,12 +3,19 @@ import { closeSync, openSync, readSync, statSync } from "fs";
 // Default agent entrypoints. Override via THREADBASE_AGENT_ENTRYPOINTS
 // (comma-separated). Interactive Claude Code emits entrypoint="cli" and is
 // never in this set.
-//   - sdk-cli      → Claude Agent SDK, claude-mem, hook-spawned automation
+//   - sdk-cli      → Claude Agent SDK (TypeScript), claude-mem, hook-spawned
+//                     automation
+//   - sdk-py       → Claude Agent SDK (Python), same automation, different
+//                     binding — observed on hook-spawned review agents
 //   - claude-vscode → VS Code extension when invoked headlessly (memory
 //                     summarizers, etc.). Real interactive VS Code sessions
 //                     also use this value, so toggling via env var lets users
 //                     keep them visible if they want.
-export const DEFAULT_AGENT_ENTRYPOINTS: ReadonlySet<string> = new Set(["sdk-cli", "claude-vscode"]);
+export const DEFAULT_AGENT_ENTRYPOINTS: ReadonlySet<string> = new Set([
+  "sdk-cli",
+  "sdk-py",
+  "claude-vscode",
+]);
 
 // Chunked scan: read 64 KB at a time with early-exit. We look for the first
 // `"entrypoint":` occurrence in the file:

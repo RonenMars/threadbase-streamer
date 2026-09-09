@@ -34,7 +34,7 @@ export interface ConversationCacheOptions {
   // Default false to preserve legacy behavior.
   filterAgentConversations?: boolean;
   // Set of `entrypoint` values to treat as agent traffic. Defaults to
-  // DEFAULT_AGENT_ENTRYPOINTS ({ sdk-cli, claude-vscode }).
+  // DEFAULT_AGENT_ENTRYPOINTS ({ sdk-cli, sdk-py, claude-vscode }).
   agentEntrypoints?: ReadonlySet<string>;
   // Fired the first time an agent JSONL is detected for a given file path
   // (from updateFromLine). Lets the server unwatch the file.
@@ -157,7 +157,8 @@ interface JsonlLine {
   type?: string;
   timestamp?: string;
   // Set by Claude Code / Agent SDK on every real message line. "cli" = human
-  // interactive Claude Code; "sdk-cli" = Claude Agent SDK / claude-mem / hooks.
+  // interactive Claude Code; "sdk-cli"/"sdk-py" = Claude Agent SDK / claude-mem /
+  // hooks.
   entrypoint?: string;
   // Project context: the scanner sets `cwd` from any line that carries it
   // (attachment, metadata, user, assistant). The live watcher must do the
