@@ -24,6 +24,9 @@ export default defineConfig({
     globals: true,
     include: ["__tests__/**/*.test.ts"],
     setupFiles: [
+      // FIRST: three src modules resolve homedir() once at module scope, so the
+      // sandbox has to exist before any later setup file imports src/.
+      "__tests__/setup/sandbox-home.ts",
       "__tests__/setup/silence-logs.ts",
       "__tests__/setup/isolate-runtime-db.ts",
       "__tests__/setup/neutral-feature-flags.ts",
