@@ -78,6 +78,15 @@ describe("transcript watch deadline", () => {
     vi.setSystemTime(new Date(Date.now() + ms));
   }
 
+  // Budget for a POSITIVE wait — "the watcher must bind this file". It bounds
+  // fs.watch / poll latency, not any product deadline, so it is generous: on a
+  // box under fs-event pressure (a full suite has just opened and closed
+  // thousands of watch handles) a 2s budget expired while an idle box bound the
+  // same file every time (#827). waitFor returns the moment the value appears,
+  // so a larger budget costs nothing on a passing run. NEGATIVE waits below
+  // ("must NOT bind") keep their own short budgets — there the wait IS the test.
+  const BIND_BUDGET_MS = 5_000;
+
   async function waitFor<T>(read: () => T | undefined, budgetMs: number): Promise<T | undefined> {
     const until = performance.now() + budgetMs;
     while (performance.now() < until) {
@@ -100,7 +109,7 @@ describe("transcript watch deadline", () => {
         `${JSON.stringify({ sessionId: SESSION_ID, cwd: projectPath, type: "user" })}\n`,
       );
 
-      expect(await waitFor(() => sessionFileMap.get(SESSION_ID), 2000)).toBe(jsonlPath);
+      expect(await waitFor(() => sessionFileMap.get(SESSION_ID), BIND_BUDGET_MS)).toBe(jsonlPath);
     });
 
     it("still refuses to wire once the PTY is gone, however late the file lands", async () => {
@@ -159,7 +168,9 @@ describe("transcript watch deadline", () => {
       managed.promptCount = 1;
       writeRollout("codex-late-rollout-id", dirDate);
 
-      expect(await waitFor(() => managed.boundConversationId, 2000)).toBe("codex-late-rollout-id");
+      expect(await waitFor(() => managed.boundConversationId, BIND_BUDGET_MS)).toBe(
+        "codex-late-rollout-id",
+      );
     });
 
     it("gives up polling for a session that never got a turn", async () => {
