@@ -1340,3 +1340,68 @@ Observed 2026-08-11: three consecutive sends returned `ok` and advanced `last_su
 4. **Build vs. Expo credentials** — a development build's token does not route through a production Expo project's credentials, or vice versa.
 
 **Why the server cannot tell you which.** Expo's tickets are receipts for *acceptance*; the delivery outcome lives behind a second call, `getPushNotificationReceiptsAsync`, which the streamer does not make today. Until it does, treat `healthy` as "handed to the relay" and debug the device side from the list above. Adding receipt polling would let `push_tokens.last_failure_code` carry the real reason (`DeviceNotRegistered`, `MessageRateExceeded`, an APNs rejection) instead of stopping at the relay boundary.
+
+## A deploy runs green but ships a dependency a version behind `package.json`
+
+**When:** `npm run deploy` exits 0, the healthcheck passes, and `/healthz` reports a version string matching `HEAD` — yet the running build behaves like an older release. Nothing errors, nothing warns, and the release filename looks right. The only symptom is behaviour that a merged fix was supposed to have changed.
+
+**Cause.** Three ordinary facts compose into a silent failure. A `git pull`/`merge` does **not** refresh `node_modules`, so a commit that changes `package.json` leaves the old package on disk. tsup bundles dependencies *inline* into `dist/cli.cjs`, so the build embeds whatever is installed rather than what the lockfile pins. And the release filename is derived from the **commit sha** (`releases/cli.<sha>.cjs`), so redeploying the same commit produces an identically-named artifact whose contents differ — filename, version string and healthcheck all stay truthful-looking while the bundle is a version behind. Neither `scripts/deploy.sh` nor `scripts/deploy.ps1` installs dependencies; both assume `node_modules` is already correct, and `deploy.ps1` additionally *copies* `node_modules\node-pty` into the install dir.
+
+Observed on both platforms on 2026-09-09, after `@threadbase-sh/scanner` was raised to `^0.16.0`. On macOS the active `releases/cli.5fc73102.cjs` contained `includes("/subagents/")` — the 0.15.x path check — while `package.json` declared `^0.16.0`; `npm ls --depth=0` had been reporting `invalid: "^0.16.0" from the root project`. On Windows the mechanism was visible in byte sizes: the deployed `cli.js` was 8 744 434 bytes, byte-identical to `cli.2177f5b.cjs` from an earlier deploy, against 8 747 474 after resyncing — `5fc7310` being a docs-only revert, its bundle should have matched `2177f5b` exactly, and did, because both were built from scanner 0.15.x.
+
+**Fix.** Resync before deploying, and verify the artifact rather than the exit code:
+
+```sh
+npm ls --depth=0                 # an `invalid: "<range>" from the root project` line means stale
+npm ci                           # NOT npm install — see below
+npm run deploy                   # deploy:linux / deploy:windows
+```
+
+Use `npm ci`, not `npm install`. `npm install` may rewrite `package-lock.json` to satisfy a range, which dirties the tree; the deploy scripts refuse to run on a dirty tree, and the obvious workaround (`--force` / `-Force`) also skips lint and tests. `npm ci` installs the lockfile exactly and removes `node_modules` first, so a native module built for another Node cannot survive.
+
+**Verify the shipped bundle, not the deploy's exit code.** Because the artifact name is sha-derived, an unchanged filename proves nothing about its contents. Grep the active release for a marker that exists only in the version you expect — for the 0.16.0 example, `parentSessionUuid` is present and `includes("/subagents/")` is absent:
+
+```sh
+R=~/.threadbase/cli.js                       # macOS/Linux: a symlink into releases/
+grep -c 'parentSessionUuid' "$R"             # expect > 0
+grep -c 'includes("/subagents/")' "$R"       # expect 0
+```
+
+```powershell
+$cli = Join-Path $env:USERPROFILE '.threadbase\cli.js'   # Windows: a real file at the install root
+Select-String -Path $cli -Pattern 'parentSessionUuid' -Quiet          # expect True
+Select-String -Path $cli -Pattern 'includes\("/subagents/"\)' -Quiet  # expect False
+```
+
+Comparing byte sizes against the previous `releases/cli.<sha>.cjs` works too, and is what made the mechanism obvious on Windows.
+
+**A blocked install script is not evidence either way.** npm reports `install-scripts` blocked for `better-sqlite3`, `esbuild`, `fsevents` and `protobufjs` on these machines; that is normal and says nothing about whether the native binding works, and looking for `build/Release/*.node` is the wrong test. Load the module instead — `node -e "const d=require('better-sqlite3');const db=new d(':memory:');db.exec('create table t(x)');console.log('ok')"` and `node -e "console.log(typeof require('node-pty').spawn)"`. On Windows a broken `node-pty` is worth ruling out before deploying, because `deploy.ps1` copies it into the install dir and the failure surfaces later as sessions that exit in milliseconds with a blank terminal rather than as a deploy error.
+
+## A cache-integrity alert resolved with `ignore` leaves the row listed, and can never be re-raised
+
+**When:** A `cacheAlert` on `/healthz` is resolved with `action: "ignore"`. The alert clears and `/api/cache/alert` returns `pending: null` — but a conversation whose JSONL no longer exists is still listed by `GET /api/conversations` and still opens in the app, and no later sweep ever reports it again.
+
+**Cause.** That is `ignore` working as designed, and it is a one-way door. It adds the individual ids to `ignoredIds` and deliberately keeps the rows (`cacheIntegrityMonitor.ts`, `case "ignore"`), and `runDetection` filters `ignoredIds` out of the missing set on every sweep, so an ignored id cannot resurface. `loadAlertState()` runs **once, in the constructor**, so editing `~/.threadbase/cache-alert.json` by hand has no effect until the process restarts. Separately, a row whose file is gone is not inert: `api/handlers/conversations.handlers.ts` falls back to the cached tail exactly when the scanner cannot find the file, so the conversation stays listed and readable.
+
+**Choosing the action.** The decision is *keep or drop*, and it is only cheap while the alert is still pending:
+
+| Action | Effect | Use when |
+|---|---|---|
+| `ignore` | Keeps the rows; silences the alert permanently for those ids | The rows are worth keeping **forever** |
+| `prune_selected` | Drops only the ids you name (requires a non-empty `ids`) | A specific ghost — immune to another row going missing between your read and your resolve |
+| `prune_all` | Re-verifies each entry against disk, then drops everything still missing in the pending set | Every entry is residue |
+| `reset_rescan` | Backs up and rebuilds the whole cache | Genuine large-scale drift — disproportionate for a handful of rows |
+
+`prune_all` acts strictly on `pending.missing`, which detection has already filtered against `ignoredIds`, so previously-ignored rows are structurally unreachable by it.
+
+**Two causes of missing-file rows, which want opposite answers.** Conversations aged out by Claude Code's own retention (`cleanupPeriodDays`, default 30) are real history and should be **ignored**, not pruned: their tails still render, though truncated — measured 7 cached messages against originals of 17, 31 and 51. Test residue should be **pruned**: before PR #834 the watch-for-jsonl tests wrote fixtures into the real `~/.claude/projects/`, the running streamer's watcher indexed them, and teardown deleted the files — leaving rows with synthetic ids (`aaaabbbb-…`), `hello` titles and mktemp-suffixed project directories. Read `~/.threadbase/cache-alert.json` and classify each entry before choosing.
+
+**If you already ignored a row you meant to drop**, there are only two exits, both worse than deciding at the time. Restarting the service reloads `ignoredIds`, but kills every live PTY. Otherwise delete the row directly — the cache is rebuildable, so this is safe, but back it up first:
+
+```sh
+DB=~/.threadbase/cache/cache.db
+sqlite3 "$DB" ".backup '/tmp/cache-before-prune.db'"
+sqlite3 "$DB" "delete from conversation_tail where conversation_id='<id>'; delete from conversation_meta where id='<id>';"
+```
+
+The list endpoint queries SQLite directly, so the row disappears immediately without a restart; the only residue is a dead entry in the in-memory `fileIndex`, which matters solely if that exact path ever returns.
