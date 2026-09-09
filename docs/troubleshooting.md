@@ -109,25 +109,6 @@ runners, same behaviour.
 
 ---
 
-### A Windows deploy runs no lint and no tests, unlike macOS and Linux {#windows-deploy-no-gate}
-
-**When:** Any `npm run deploy:windows`. It is not a failure — it is a missing check, which is why nothing draws attention to it.
-**Cause:** `scripts/deploy.sh` and `scripts/deploy-linux.sh` both run `npm run lint` and `npm test` before building, logging `running lint + tests`. `scripts/deploy.ps1` does not: its `Invoke-PredeployCheck` verifies only that the branch is `main` and the tree is clean, then goes straight to `npm run build`. So a Windows deploy ships whatever is in the checkout, while the other two refuse to.
-
-Two places used to claim otherwise, which is the real trap — `deploy.ps1`'s own usage header described `-Force` as skipping "lint/test gates", and the `local-deploy` skill described all three scripts as sharing one shape including "lint + tests". Both are corrected; the missing gate itself is tracked in #817.
-
-**Fix / workaround:** until #817 lands, run the suite yourself before deploying on Windows:
-
-```powershell
-npm run lint
-npm test
-npm run deploy:windows
-```
-
-**Diagnosis cue:** a gated deploy prints `running lint + tests` (or `skipping lint + tests (--force)`). A Windows deploy prints neither and goes straight to `building` — absence of both lines is the tell.
-
----
-
 ### Healthcheck fails with `ENOENT … migrations`
 
 **When:** Server starts but crashes immediately; `dist/migrations/` cannot be found at runtime.

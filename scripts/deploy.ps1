@@ -5,7 +5,7 @@
 #
 # Usage:
 #   pwsh scripts/deploy.ps1                              # build + deploy
-#   pwsh scripts/deploy.ps1 -Force                       # skip the branch + dirty-tree checks
+#   pwsh scripts/deploy.ps1 -Force                       # skip lint/test gates and dirty-tree check
 #   pwsh scripts/deploy.ps1 -InstallShim standard        # non-interactive: install global threadbase-streamer.cmd
 #                                                        #   values: standard | user-local | custom | skip
 #   pwsh scripts/deploy.ps1 -PathUpdate auto             # non-interactive: how to add the shim dir to PATH
