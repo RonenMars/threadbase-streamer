@@ -35,7 +35,10 @@ vi.mock("../src/logger", async (importOriginal) => {
 // writes server.yaml. Redirect that write to a throwaway dir so the suite never
 // clobbers the user's live ~/.threadbase/server.yaml (which would desync a
 // running prod streamer and 401 every client until restart).
-const REAL_CONFIG = join(homedir(), ".threadbase", "server.yaml");
+// homedir() is sandboxed suite-wide by __tests__/setup/sandbox-home.ts, which
+// would make the mtime guard below skip itself. TB_TEST_REAL_HOME is the real
+// one, so this still checks the file it was written to check.
+const REAL_CONFIG = join(process.env.TB_TEST_REAL_HOME || homedir(), ".threadbase", "server.yaml");
 let originalConfigDir: string | undefined;
 let realConfigMtimeBefore: number | undefined;
 
