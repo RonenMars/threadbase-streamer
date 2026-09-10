@@ -133,6 +133,40 @@ describe("CodexPtyRunner — screen helpers", () => {
     );
     expect(codexScreenLooksIdle(["gpt-5.6-sol default · ~/proj"])).toBe(false);
   });
+
+  // #539: `\b` matches at a path separator, so a cwd segment named Working or
+  // Starting used to read as busy and the session never reached Ready.
+  it("does not read a path segment named Working/Starting as busy", () => {
+    const bars = [
+      "gpt-5.5 medium · /Users/x/Working/repo · gpt-5.5 · medium · Ready · Wo…",
+      "gpt-5.5 medium · ~/dev/Starting-point · gpt-5.5 · medium · Ready · Wo…",
+      "gpt-5.5 medium · C:\\Users\\x\\Working\\repo · gpt-5.5 · medium · Ready · Wo…",
+      // positive control: a plain path was never affected
+      "gpt-5.5 medium · /Users/x/dev/tb · gpt-5.5 · medium · Ready · Wo…",
+    ];
+    for (const bar of bars) {
+      expect(codexScreenBlocksComposer([bar])).toBe(false);
+      expect(codexScreenShowsReady([bar])).toBe(true);
+    }
+  });
+
+  it("still reads a Working/Starting status field as busy under an innocent path", () => {
+    for (const status of ["Working", "Starting"]) {
+      const bar = `gpt-5.5 medium · /Users/x/dev/tb · gpt-5.5 · medium · ${status} · Wo…`;
+      expect(codexScreenBlocksComposer([bar])).toBe(true);
+      expect(codexScreenShowsReady([bar])).toBe(false);
+    }
+  });
+
+  // The same root cause in reverse: "Ready" is also a substring test on the
+  // bar. When the status field is truncated past PTY_COLS (the case
+  // CODEX_READY_FALLBACK_MS exists for), a cwd containing "Ready" must not
+  // read as boot-complete — that would release queued input into MCP boot.
+  it("does not read a path containing Ready as Ready on a truncated bar", () => {
+    expect(
+      codexScreenShowsReady(["gpt-5.5 medium · /Users/x/Ready-to-ship/repo · gpt-5.5 · me…"]),
+    ).toBe(false);
+  });
 });
 
 describe("CodexPtyRunner — spawn args", () => {
