@@ -1,3 +1,9 @@
+## [1.89.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.5...v1.89.6) (2026-09-10)
+
+### Bug Fixes
+
+* **questions:** keep the cwd out of codex status-bar word tests ([#846](https://github.com/RonenMars/threadbase-streamer/issues/846)) ([829dcec](https://github.com/RonenMars/threadbase-streamer/commit/829dcec8b31e6cc7342f4d253cd52d2877511738)), closes [#539](https://github.com/RonenMars/threadbase-streamer/issues/539)
+
 ## [1.89.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.4...v1.89.5) (2026-09-10)
 
 ### Bug Fixes
