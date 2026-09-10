@@ -543,3 +543,81 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     expect(status()).toBe(400);
   });
 });
+
+// Escape used to be exempt from prompt binding: a card's Cancel was a blind
+// "\x1b", so a Cancel whose gate had already closed landed at Claude's prompt
+// and interrupted the turn the user was waiting on. Binding is now opt-in on
+// the payload: a promptId makes Escape arbitrated like every other action,
+// and no promptId keeps it exactly as blind as before.
+describe("POST /raw-key — escape", () => {
+  const registryOf = (h: Harness) =>
+    (h.handlers as unknown as { deps: SessionHandlersDeps }).deps.promptRegistry;
+
+  it("writes one Escape and retires the focused gate as cancelled", async () => {
+    const h = harness(GATE_A_SCREEN, GATE_A_SCREEN);
+    const promptId = h.pendingPermission.get(SESSION)?.promptId;
+    if (!promptId) throw new Error("expected pending permission prompt");
+    const { res, status, body } = response();
+    await h.handlers.handleRawKey(SESSION, request({ action: "escape", promptId }), res);
+
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ ok: true });
+    expect(h.rawWritten).toEqual(["\x1b"]);
+    expect(h.written).toEqual([]);
+    expect(registryOf(h).get(promptId)).toMatchObject({
+      state: "cancelled",
+      terminalReason: "raw_key_escape",
+    });
+    expect(h.pendingPermission.has(SESSION)).toBe(false);
+    // Cleared so a still-painted box (the Escape did not take) can re-show.
+    expect(h.pendingPermissionKey.has(SESSION)).toBe(false);
+    expect(h.broadcasts).toContainEqual({ type: "permission_cancelled", sessionId: SESSION });
+  });
+
+  it("refuses a bound Escape aimed at a prompt that is not focused, writing zero bytes", async () => {
+    const h = harness(GATE_A_SCREEN, GATE_A_SCREEN);
+    const promptId = h.pendingPermission.get(SESSION)?.promptId;
+    const { res, status, body } = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      request({ action: "escape", promptId: "a-gate-that-already-closed" }),
+      res,
+    );
+
+    expect(status()).toBe(409);
+    expect(body()).toEqual({ ok: false, code: "raw_key_stale" });
+    expect(h.rawWritten).toEqual([]);
+    expect(h.written).toEqual([]);
+    // The live gate is untouched.
+    expect(h.pendingPermission.get(SESSION)?.promptId).toBe(promptId);
+  });
+
+  it("refuses a bound Escape once its gate has left the screen, writing zero bytes", async () => {
+    const h = harness(GATE_A_SCREEN, CLOSED_SCREEN);
+    const promptId = h.pendingPermission.get(SESSION)?.promptId;
+    if (!promptId) throw new Error("expected pending permission prompt");
+    const { res, status, body } = response();
+    await h.handlers.handleRawKey(SESSION, request({ action: "escape", promptId }), res);
+
+    expect(status()).toBe(409);
+    expect(body()).toEqual({ ok: false, code: "raw_key_stale" });
+    expect(h.rawWritten).toEqual([]);
+  });
+
+  // Backward compatibility: the raw-keyboard Esc key and "interrupt the agent"
+  // send no promptId and must keep reaching the PTY, gate or no gate.
+  it.each([
+    ["no gate open", null, CLOSED_SCREEN],
+    ["a gate open", GATE_A_SCREEN, GATE_A_SCREEN],
+  ] as const)("still writes an unbound Escape blindly with %s", async (_name, pending, live) => {
+    const h = harness(pending as string[] | null, live as string[]);
+    const before = h.pendingPermission.get(SESSION)?.promptId;
+    const { res, status } = response();
+    await h.handlers.handleRawKey(SESSION, request({ action: "escape" }), res);
+
+    expect(status()).toBe(200);
+    expect(h.rawWritten).toEqual(["\x1b"]);
+    // Unbound means unarbitrated in both directions: nothing is retired either.
+    expect(h.pendingPermission.get(SESSION)?.promptId).toBe(before);
+  });
+});

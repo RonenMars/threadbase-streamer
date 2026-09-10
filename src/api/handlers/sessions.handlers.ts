@@ -1724,7 +1724,14 @@ export class SessionHandlers {
       | { kind: "permission"; promptId: string; contentKey: string }
       | { kind: "question"; promptId: string; toolUseId: string }
       | null = null;
-    if (action !== "escape") {
+    // Binding is opt-in on the payload, not implied by the action. Every other
+    // action must name its prompt (the `!promptId` refusal below); Escape may,
+    // and when it does it gets the same arbitration. Without it, a card's
+    // Cancel whose gate already closed lands at Claude's prompt and interrupts
+    // the turn the user is waiting on. Escape WITHOUT a promptId stays exactly
+    // as blind as before: the raw-keyboard Esc key and mobile's "interrupt the
+    // agent" action have no prompt to name and rely on that.
+    if (action !== "escape" || promptId !== undefined) {
       // Pending maps can retain a prompt after its registry record expired or
       // was retired by another route. Sweep first, then only let a live
       // registry record authorize bytes to reach the PTY.
@@ -1810,18 +1817,25 @@ export class SessionHandlers {
       } else {
         this.ptyManager.sendRawKeys(sessionId, RAW_KEY_BYTES[action]);
       }
-      if (action === "enter") {
-        if (focused) {
-          const normalized = this.promptRegistry.get(focused.promptId);
-          if (normalized?.state === "open" || normalized?.state === "updated") {
+      // A bound Escape retires its prompt as deterministically as Enter does,
+      // but as `cancelled`: Esc dismisses the prompt, it does not answer it.
+      // Clearing the dedupe key below is deliberate for both: if the key did not
+      // take and the box is still painted, the detector must be able to show
+      // the card again — a gate still on screen must never stay hidden.
+      if (focused && (action === "enter" || action === "escape")) {
+        const normalized = this.promptRegistry.get(focused.promptId);
+        if (normalized?.state === "open" || normalized?.state === "updated") {
+          if (action === "enter") {
             this.promptRegistry.transition(normalized.promptId, "resolved", "raw_key_enter");
+          } else {
+            this.promptRegistry.transition(normalized.promptId, "cancelled", "raw_key_escape");
           }
         }
-        if (focused?.kind === "permission") {
+        if (focused.kind === "permission") {
           this.pendingPermission.delete(sessionId);
           this.pendingPermissionKey.delete(sessionId);
           this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
-        } else if (focused?.kind === "question") {
+        } else {
           this.pendingQuestions.delete(sessionId);
           this.pendingQuestionKey.delete(sessionId);
           this.broadcastToSession(sessionId, {

@@ -305,3 +305,32 @@ describe("POST /raw-key", () => {
     expect(h.pendingQuestions.has(SESSION)).toBe(false);
   });
 });
+
+describe("POST /raw-key — escape bound to a question", () => {
+  it("writes one Escape and clears the question maps", async () => {
+    const h = harness(MENU_OPEN);
+    openRawPrompt(h, "question-prompt", "question");
+    const { res, status } = response();
+    await h.handlers.handleRawKey(
+      SESSION,
+      rawRequest({ action: "escape", promptId: "question-prompt" }),
+      res,
+    );
+
+    expect(status()).toBe(200);
+    expect(h.rawWritten).toEqual(["\x1b"]);
+    expect(h.written).toEqual([]);
+    const registry = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps.promptRegistry;
+    expect(registry.get("question-prompt")).toMatchObject({
+      state: "cancelled",
+      terminalReason: "raw_key_escape",
+    });
+    expect(h.pendingQuestions.has(SESSION)).toBe(false);
+    expect(h.pendingQuestionKey.has(SESSION)).toBe(false);
+    expect(h.broadcasts).toContainEqual({
+      type: "question_cancelled",
+      sessionId: SESSION,
+      toolUseId: "toolu_1",
+    });
+  });
+});
