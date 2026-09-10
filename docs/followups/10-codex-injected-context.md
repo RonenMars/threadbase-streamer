@@ -1,6 +1,6 @@
 # Codex previews and titles are the injected AGENTS.md turn
 
-**Status: specified, not implemented.** The fix is scanner-side with a streamer follow-on. Written 2026-09-10 against `@threadbase-sh/scanner@0.16.0` and streamer 1.89.3.
+**Status: scanner half shipped in `@threadbase-sh/scanner@0.16.1` (threadbase-scanner#83); streamer half is optional cleanup.** Written 2026-09-10 against scanner 0.16.0 and streamer 1.89.3, amended the same day once the release landed.
 
 ## Symptom
 
@@ -70,8 +70,8 @@ The second group exists because Codex has no `--system-prompt` flag, so the stre
 
 ### Streamer (`tb-streamer`), after the scanner publishes
 
-5. Bump the dependency, as its own change.
-6. Have `isCodexInjectedContext` delegate the generic group to the scanner's export and keep only the streamer-injected patterns, so the two copies cannot drift.
+5. Raise the dependency. The fix released as **0.16.1**, a *patch*, so the `^0.16.0` range needed no widening — but the **lockfile still had to be committed**, because `npm ci` installs the lockfile exactly and never re-resolves a range. Landed in #843.
+6. Have `isCodexInjectedContext` delegate the generic group to the scanner's export and keep only the streamer-injected patterns, so the two copies cannot drift. This is cleanup, not delivery — the fix reaches users without it.
 
 ## Position-bounded, not content-only — the one arguable call
 
@@ -101,15 +101,22 @@ Scanner:
 
 Every negative assertion needs a positive control that has been seen to fail; a filter test that passes against the unfixed code is testing nothing.
 
-Streamer, after the bump:
+Streamer, if and when the heuristic is de-duplicated:
 
 7. `isCodexInjectedContext` still returns true for all seven current patterns once the generic group is delegated.
 
 ## Rollout order
 
-1. Scanner change, published as a minor.
-2. Streamer dependency bump, alone.
-3. Streamer de-duplication of the heuristic.
-4. A rescan on each deployed machine picks up the new previews and titles.
+1. Scanner change — shipped as **0.16.1**, a *patch*, not the minor this spec first assumed.
+2. Commit the updated lockfile (#843). A patch inside the range still does not travel on its own: `npm ci` installs what the lockfile pins and never re-resolves, so without this step every machine keeps 0.16.0 while `package.json` looks satisfied. The declared range needed no widening; the lockfile did.
+3. `npm ci` then redeploy on each machine.
+4. **Force a refresh of existing rows — this does not happen by itself.** The v7 migration governs the *scanner's own* persistent index, which the streamer does not use: the streamer runs non-persistent scans and hands the scanner a stat cache built from `conversation_meta.scanner_meta_json` (`scanner-manager.ts`, `getScannerStatCache`). That cached meta **is** the skip token, so an unchanged rollout is replayed from cache — stale preview included — and a finished rollout never changes again. Clearing the token for the affected rows is what makes the fix land:
 
-Steps 2 and 3 stay separate for the same reason they did in [09](09-scanner-subagent-identity.md): a bump that shifts behaviour must be bisectable on its own.
+   ```sql
+   UPDATE conversation_meta SET scanner_meta_json = NULL WHERE file_path LIKE '%/.codex/%';
+   ```
+
+   then restart. Measured on one machine: 379 stale previews → 1 in about 40 seconds, with visibility, subagent and empty-history counts identical before and after. The single survivor is a rollout containing *only* the injected turn, which now yields no meta at all, so its old row is never overwritten — harmless, because `has_messages = 0` keeps it out of every list.
+5. Streamer de-duplication of the heuristic, whenever convenient. Optional.
+
+The dependency-bump-as-its-own-change discipline from [09](09-scanner-subagent-identity.md) still applies whenever a scanner change lands as a **minor**, because then the range must be edited and a behaviour shift has to be bisectable. A patch inside the existing range is a different case: nothing is edited, so there is no bump commit to isolate.
