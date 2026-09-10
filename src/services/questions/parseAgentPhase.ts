@@ -26,7 +26,7 @@
 import type { ProviderName } from "../../providers";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "../../providers";
 import type { AgentPhase } from "../../types";
-import { CODEX_WORKING_STATUS_RE, codexScreenPreTurn, codexStatusBarLine } from "./codexScreen";
+import { CODEX_WORKING_STATUS_RE, codexScreenPreTurn, codexStatusBarWords } from "./codexScreen";
 
 /**
  * Codex's status bar is binary: a turn walks Ready → Working → Ready with no
@@ -41,7 +41,7 @@ import { CODEX_WORKING_STATUS_RE, codexScreenPreTurn, codexStatusBarLine } from 
  */
 function codexPhase(lines: string[]): AgentPhase | null {
   if (codexScreenPreTurn(lines)) return null;
-  return CODEX_WORKING_STATUS_RE.test(codexStatusBarLine(lines)) ? "working" : null;
+  return CODEX_WORKING_STATUS_RE.test(codexStatusBarWords(lines)) ? "working" : null;
 }
 
 /**

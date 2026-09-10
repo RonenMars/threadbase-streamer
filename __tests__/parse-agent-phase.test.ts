@@ -48,19 +48,16 @@ describe("parseAgentPhase — codex", () => {
     expect(parseAgentPhase(screen, CODEX_CLI_PROVIDER)).toBe("working");
   });
 
-  // PRE-EXISTING LIMITATION, documented rather than asserted-away. The status
-  // bar carries the cwd, and both CODEX_BUSY_STATUS_RE and the phase's
-  // CODEX_WORKING_STATUS_RE match `Working` as a whole word — which their
-  // comments claim stops a project path from false-hitting. It does not: `/` is
-  // a non-word character, so `\b` matches at a path boundary and
-  // `/Users/x/Working/repo` tests true even on a Ready bar.
-  //
-  // This affects codexScreenBlocksComposer() and codexScreenShowsReady() today,
-  // independently of this feature — a session under a path segment named
-  // "Working" or "Starting" never reads as ready. Filed separately; this test
-  // pins current behaviour so the fix has something to flip.
-  it("inherits the status-bar path false-positive (known, filed separately)", () => {
+  // The status bar carries the cwd, and `\b` matches at a `/`, so testing
+  // `Working` against the raw bar false-hit `/Users/x/Working/repo` even on a
+  // Ready bar (#539). Path-shaped fields are now dropped before the word test.
+  it("ignores a project path containing Working on a Ready bar", () => {
     const screen = ["gpt-5.5 · /Users/x/Working/repo · gpt-5.5 · medium · Ready · Wo…"];
+    expect(parseAgentPhase(screen, CODEX_CLI_PROVIDER)).toBeNull();
+  });
+
+  it("still reports working from the status field under a Working path", () => {
+    const screen = ["gpt-5.5 · /Users/x/Working/repo · gpt-5.5 · medium · Working · Wo…"];
     expect(parseAgentPhase(screen, CODEX_CLI_PROVIDER)).toBe("working");
   });
 

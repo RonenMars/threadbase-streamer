@@ -19,8 +19,9 @@ import type { CodexGateType } from "./codexGateAnswers";
 // signal) and "Working" (mid-turn) — must NOT be treated as ready.
 export const CODEX_PROMPT_READY_TEXT = "Ready";
 
-// Status-bar words that mean the composer is not accepting submits. Matched
-// as whole words so a project path containing "Working" does not false-hit.
+// Status-bar words that mean the composer is not accepting submits. `\b`
+// matches at a `/`, so these alone do NOT stop a cwd like `.../Working/repo`
+// from false-hitting — test them against codexStatusBarWords(), not the raw bar.
 export const CODEX_BUSY_STATUS_RE = /\b(?:Starting|Working)\b/;
 
 // The busy half that actually means "a turn is in flight". "Starting" is MCP
@@ -199,6 +200,19 @@ export function codexStatusBarLine(lines: string[]): string {
 }
 
 /**
+ * The status bar with its path-shaped `·` fields (containing `/` or `\`, or
+ * starting with `~`) dropped, for every status-word test. The bar carries
+ * the cwd at no fixed position — the field count varies — so filtering by shape
+ * is the only position-independent way to keep a project path out of the match.
+ */
+export function codexStatusBarWords(lines: string[]): string {
+  return codexStatusBarLine(lines)
+    .split("·")
+    .filter((f) => !/[/\\]/.test(f) && !f.trim().startsWith("~"))
+    .join("·");
+}
+
+/**
  * True while the screen shows something that precedes a turn rather than being
  * one: a blocking gate dialog, or MCP boot progress. Both keep the composer
  * shut, but neither is the agent doing work — the status-bar half of
@@ -220,13 +234,13 @@ export function codexScreenPreTurn(lines: string[]): boolean {
  */
 export function codexScreenBlocksComposer(lines: string[]): boolean {
   if (codexScreenPreTurn(lines)) return true;
-  return CODEX_BUSY_STATUS_RE.test(codexStatusBarLine(lines));
+  return CODEX_BUSY_STATUS_RE.test(codexStatusBarWords(lines));
 }
 
 /** Authoritative Ready: status-bar word present and screen not otherwise busy. */
 export function codexScreenShowsReady(lines: string[]): boolean {
   if (codexScreenBlocksComposer(lines)) return false;
-  return codexStatusBarLine(lines).includes(CODEX_PROMPT_READY_TEXT);
+  return codexStatusBarWords(lines).includes(CODEX_PROMPT_READY_TEXT);
 }
 
 /**
