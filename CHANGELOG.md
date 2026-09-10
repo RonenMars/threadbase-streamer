@@ -1,3 +1,9 @@
+## [1.89.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.4...v1.89.5) (2026-09-10)
+
+### Bug Fixes
+
+* **sessions:** close four prompt-lifecycle holes ([#851](https://github.com/RonenMars/threadbase-streamer/issues/851)) ([33e1c4b](https://github.com/RonenMars/threadbase-streamer/commit/33e1c4ba9fc546cae9057e5db0c3f5ea46b1bea1)), closes [#848](https://github.com/RonenMars/threadbase-streamer/issues/848) [#849](https://github.com/RonenMars/threadbase-streamer/issues/849) [#724](https://github.com/RonenMars/threadbase-streamer/issues/724) [#850](https://github.com/RonenMars/threadbase-streamer/issues/850)
+
 ## [1.89.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.3...v1.89.4) (2026-09-10)
 
 ### Bug Fixes
