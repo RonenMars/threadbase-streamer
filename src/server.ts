@@ -3021,9 +3021,18 @@ export class StreamerServer {
       priorPending?.origin === "pty" ? questionContentKey(priorPending.questions) : null;
     const foreignVsPty = (questions: AskQuestion[]): boolean =>
       priorPtyKey !== null && questionContentKey(questions) !== priorPtyKey;
+    // An ANSWERED question keeps its menu's key while nothing is pending — every
+    // answer path keeps it until the menu leaves the screen (#724). A JSONL flush
+    // of that same content landing after the answer is the answered question
+    // arriving late, not a new one: minting it opened a fresh actionable prompt
+    // (and re-rendered a legacy card) that the 60s timer below only cancelled a
+    // minute later — #724's 60-second phantom.
+    const answeredKey = priorPending ? null : (this.pendingQuestionKey.get(sessionId) ?? null);
+    const answeredLate = (questions: AskQuestion[]): boolean =>
+      answeredKey !== null && questionContentKey(questions) === answeredKey;
     const { messages, pending } = questionsFromLines(sessionId, lines);
     for (const p of pending) {
-      if (contended || foreignVsPty(p.questions)) continue;
+      if (contended || foreignVsPty(p.questions) || answeredLate(p.questions)) continue;
       // Preserve a same-question re-sync's "pty" origin so a later foreign JSONL
       // question still can't clobber it.
       const origin: "pty" | "jsonl" =
@@ -3047,7 +3056,7 @@ export class StreamerServer {
     for (const m of messages) {
       // Same suppression as the pending loop: never render a JSONL card for a
       // contended file, nor a foreign question over a live PTY one.
-      if (contended || foreignVsPty(m.questions)) continue;
+      if (contended || foreignVsPty(m.questions) || answeredLate(m.questions)) continue;
       const key = questionContentKey(m.questions);
       const broadcast = shouldBroadcastQuestion({
         newContentKey: key,

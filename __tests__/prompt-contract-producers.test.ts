@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import type { WebSocket } from "ws";
 import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/sessions.handlers";
+import { createLiveSessionOptions, type LiveSessionWiringDeps } from "../src/server-wiring";
 import { PromptRegistry } from "../src/services/prompts/promptRegistry";
 import {
   permissionPromptDraft,
@@ -630,5 +631,170 @@ describe("legacy and provider-neutral producer events", () => {
     const reopened = h.pendingQuestions.get(SESSION);
     expect(reopened?.promptId).not.toBe("host-question-c");
     expect(h.registry.get(reopened?.promptId ?? "")?.state).toBe("open");
+  });
+});
+
+// #724: the contract answer paths (the question adapter behind /prompt/answer,
+// and raw-key Enter) deleted pendingQuestionKey on success, unlike the legacy
+// /answer route. The next scrape of a menu still painted after its answer then
+// minted a fresh `open` revision-1 prompt and a second `question` broadcast for
+// a question already answered — reproduced as a snapshot of
+// [[resolved, 2], [open, 1]] and two `question` frames.
+describe("#724: an answered question whose menu is still painted", () => {
+  const MENU_SCREEN = [
+    "  Which language?",
+    "❯ 1. TypeScript",
+    "  2. Rust",
+    "  Enter to select · ↑/↓ to navigate · Esc to cancel",
+  ];
+  const actionable = (h: ReturnType<typeof harness>) =>
+    h.registry
+      .snapshot(SESSION)
+      .prompts.filter((prompt) => prompt.state === "open" || prompt.state === "updated");
+  const questionFrames = (h: ReturnType<typeof harness>) =>
+    h.frames.filter((frame) => frame.type === "question");
+
+  async function answerByContract(h: ReturnType<typeof harness>): Promise<void> {
+    const prompt = h.registry.snapshot(SESSION).prompts[0];
+    const outcome = await h.registry.answer(SESSION, {
+      promptId: prompt.promptId,
+      revision: prompt.revision,
+      responses: [
+        {
+          questionId: prompt.questions[0].questionId,
+          optionIds: [prompt.questions[0].options[1].optionId],
+        },
+      ],
+      idempotencyKey: "answer-724",
+    });
+    expect(outcome.ok).toBe(true);
+  }
+
+  it("does not re-mint the repaint after a contract answer", async () => {
+    const h = harness();
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS);
+    await answerByContract(h);
+
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS);
+
+    expect(actionable(h)).toEqual([]);
+    expect(questionFrames(h)).toHaveLength(1);
+  });
+
+  it("does not re-mint the repaint after a raw-key Enter", async () => {
+    const h = harness({ hasSession: true, outputLines: MENU_SCREEN });
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS);
+    const promptId = h.pendingQuestions.get(SESSION)?.promptId;
+    let status = 0;
+    const res = {
+      writeHead: (code: number) => {
+        status = code;
+      },
+      end: () => {},
+    } as unknown as ServerResponse;
+    await h.handlers.handleRawKey(
+      SESSION,
+      Readable.from([
+        Buffer.from(JSON.stringify({ action: "enter", promptId, confirm: true })),
+      ]) as unknown as IncomingMessage,
+      res,
+    );
+    expect(status).toBe(200);
+    expect(h.written).toEqual(["\r"]);
+
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS);
+
+    expect(actionable(h)).toEqual([]);
+    expect(questionFrames(h)).toHaveLength(1);
+  });
+
+  it("still opens a different question after the answer", async () => {
+    const h = harness();
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS);
+    await answerByContract(h);
+
+    h.handlers.handleLiveQuestion(SESSION, [
+      {
+        question: "Which database?",
+        header: "Database",
+        multiSelect: false,
+        options: [
+          { label: "SQLite", description: "" },
+          { label: "Postgres", description: "" },
+        ],
+      },
+    ]);
+
+    expect(actionable(h)).toHaveLength(1);
+    expect(questionFrames(h)).toHaveLength(2);
+  });
+
+  it("still opens the same question re-asked after its menu left the screen", async () => {
+    const h = harness();
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS);
+    await answerByContract(h);
+    // The production clear, through the real wiring: pty-manager saw the menu go.
+    const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+    createLiveSessionOptions({
+      pendingQuestionKey: deps.pendingQuestionKey,
+      cancelPendingQuestion: () => {},
+    } as unknown as LiveSessionWiringDeps).onLiveQuestionGone?.(SESSION);
+
+    h.handlers.handleLiveQuestion(SESSION, QUESTIONS);
+
+    expect(actionable(h)).toHaveLength(1);
+    expect(questionFrames(h)).toHaveLength(2);
+  });
+});
+
+// The permission half of #724 is deliberately NOT re-fixed: pty-manager's
+// closedGateKey trade-off lets a box still painted after its answer re-mint as
+// a transient, and that transient self-cancels (provider_closed) the moment the
+// box leaves the screen. The issue asks for that self-cancel to be pinned by a
+// test rather than relied on.
+describe("#724: the answered-gate teardown transient", () => {
+  it("leaves no permission prompt open once the box leaves the screen", async () => {
+    const h = harness();
+    const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+    // PTYManager.sendKeys closes the gate from inside the write when the bytes answer it.
+    deps.ptyManager.sendKeys = (_sessionId: string, keys: string) => {
+      h.written.push(keys);
+      h.handlers.handlePermissionChange(SESSION, null);
+    };
+    h.handlers.handlePermissionChange(SESSION, detectGateScreen(GATE_SCREEN));
+    const answered = h.registry.snapshot(SESSION).prompts[0];
+    const outcome = await h.registry.answer(SESSION, {
+      promptId: answered.promptId,
+      revision: answered.revision,
+      responses: [
+        {
+          questionId: answered.questions[0].questionId,
+          optionIds: [answered.questions[0].options[0].optionId],
+        },
+      ],
+      idempotencyKey: "gate-724",
+    });
+    expect(outcome.ok).toBe(true);
+    expect(h.written).toEqual(["2\r"]);
+    expect(h.registry.get(answered.promptId)?.state).toBe("resolved");
+
+    // Still painted: the next pass re-mints. That transient is asserted, not fixed.
+    h.handlers.handlePermissionChange(SESSION, detectGateScreen(GATE_SCREEN));
+    const transient = h.pendingPermission.get(SESSION)?.promptId ?? "";
+    expect(transient).not.toBe(answered.promptId);
+    expect(h.registry.get(transient)?.state).toBe("open");
+
+    // The box leaves the screen: the detector's close retires the transient.
+    h.handlers.handlePermissionChange(SESSION, null);
+
+    expect(h.registry.get(transient)).toMatchObject({
+      state: "cancelled",
+      terminalReason: "provider_closed",
+    });
+    expect(
+      h.registry
+        .snapshot(SESSION)
+        .prompts.filter((prompt) => prompt.state === "open" || prompt.state === "updated"),
+    ).toEqual([]);
   });
 });

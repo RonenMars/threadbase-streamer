@@ -5,7 +5,11 @@ import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/s
 import { CLAUDE_CODE_PROVIDER } from "../src/providers";
 import { clearExpiredPendingPrompt } from "../src/server-wiring";
 import { PromptRegistry } from "../src/services/prompts/promptRegistry";
-import { detectGateScreen } from "../src/services/questions/detectPermissionGate";
+import {
+  detectGateScreen,
+  permissionGateKey,
+} from "../src/services/questions/detectPermissionGate";
+import { detectShellPrompt } from "../src/services/questions/detectShellPrompt";
 import { IdempotencyStore } from "../src/services/sessions/idempotency";
 import type { AskQuestion, WSMessage } from "../src/types";
 
@@ -70,6 +74,11 @@ function harness(open: "permission" | "question" | null): Harness {
     wsHub: { broadcast: (_m: WSMessage) => {} },
     sessionStore: { get: () => null, updateManaged: () => {} },
     ptyManager: {
+      // GATE carries options but no promptId, so arbitration asks the screen
+      // about it (see the optionless-entry cases below). A gate is painted, so
+      // every case built on this harness refuses for the reason it always did.
+      hasSession: () => true,
+      getOutputLines: async () => GATE_SCREEN,
       sendInput: (_id: string, input: string) => {
         inputs.push(input);
         return 1;
@@ -595,11 +604,14 @@ describe("#703: POST /input { input } in the answered-gate window", () => {
   });
 
   // The predicate is `state === "resolved"`, not `state !== "open"`, and this is
-  // why. When the freshness scrape fails, permissionAnswerAdapter returns a
-  // `cancelled` / `provider_closed` terminal and — unlike the question adapter —
-  // does NOT delete the pending entry. So a cancelled record sits beside a live
-  // entry, and that combination is a REFUSED answer with zero bytes written. A
-  // widened predicate would tell the user their answer was sent when it was not.
+  // why. When the freshness scrape fails because a DIFFERENT gate has taken the
+  // screen before the detector announced it, permissionAnswerAdapter returns a
+  // `cancelled` / `provider_closed` terminal and keeps the pending entry — that
+  // entry is what keeps composer text off the live gate. So a cancelled record
+  // sits beside a live entry, and that combination is a REFUSED answer with zero
+  // bytes written. A widened predicate would tell the user their answer was sent
+  // when it was not. (With no gate painted at all the adapter clears the entry,
+  // like the legacy route's gateClosed() — see permission-adapter-closed-cleanup.)
   it("calls a cancelled-but-pending gate open, not answered", async () => {
     const h = gateHarness();
     h.paint(GATE_SCREEN);
@@ -608,8 +620,8 @@ describe("#703: POST /input { input } in the answered-gate window", () => {
     const prompt = h.registry.get(promptId);
     if (!prompt) throw new Error("no prompt record");
 
-    // The gate leaves the screen before the answer lands: freshness fails.
-    h.screen.lines = CLOSED_SCREEN;
+    // A different gate takes the screen before the answer lands: freshness fails.
+    h.screen.lines = OTHER_GATE_SCREEN;
     const answerRes = response();
     await h.handlers.handlePromptAnswer(
       SESSION,
@@ -741,6 +753,156 @@ describe("#757: a map entry outliving its registry record", () => {
 
     expect(status()).toBe(409);
     expect(body()).toMatchObject({ ok: false, reason: "prompt_pending", promptKind: "question" });
+    expect(h.inputs).toEqual([]);
+  });
+});
+
+// An optionless gate — the OSC 777 fired before the options painted — is stored
+// with NO promptId and no registry record, so nothing sweeps or ages it and the
+// registry-liveness test reads it as open forever. Reproduced: one
+// `handlePermissionChange(sid, { options: [] })` refused every later /input with
+// 409 prompt_pending, indefinitely. The rendered screen is now the authority for
+// that entry, and only that entry.
+describe("an optionless permission entry", () => {
+  function optionlessHarness() {
+    const h = gateHarness();
+    const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+    const frames: WSMessage[] = [];
+    deps.wsHub.broadcastToClients = (_clients, frame) => frames.push(frame);
+    h.handlers.handlePermissionChange(SESSION, { options: [] });
+    expect(h.pendingPermission.get(SESSION)?.promptId).toBeUndefined();
+    return { h, deps, frames };
+  }
+
+  it("clears itself and lets text through once no gate is on screen", async () => {
+    const { h, deps, frames } = optionlessHarness();
+    h.screen.lines = CLOSED_SCREEN;
+
+    const { status, body } = await h.send({ input: "hello" });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true });
+    expect(h.inputs).toEqual(["hello"]);
+    expect(h.pendingPermission.has(SESSION)).toBe(false);
+    expect(deps.pendingPermissionKey.has(SESSION)).toBe(false);
+    expect(frames).toContainEqual({ type: "permission_cancelled", sessionId: SESSION });
+  });
+
+  // The guard holds for the window arbitration exists for: a gate still painted.
+  it("keeps refusing while a gate is still on screen", async () => {
+    const { h, frames } = optionlessHarness();
+    h.screen.lines = GATE_SCREEN;
+
+    const { status, body } = await h.send({ input: "hello" });
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ reason: "prompt_pending", promptState: "open" });
+    expect(h.inputs).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+    expect(frames.some((f) => f.type === "permission_cancelled")).toBe(false);
+  });
+
+  // Best-effort in the refusing direction: no PTY to read is not proof of a clear screen.
+  it("keeps refusing when there is no PTY to read", async () => {
+    const { h, deps } = optionlessHarness();
+    h.screen.lines = CLOSED_SCREEN;
+    deps.ptyManager.hasSession = () => false;
+
+    const { status } = await h.send({ input: "hello" });
+
+    expect(status).toBe(409);
+    expect(h.inputs).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+  });
+
+  // Narrowness control: an entry WITH a live promptId never consults the screen,
+  // so a stale screen read cannot unblock a registry-backed gate.
+  it("leaves an entry with a live promptId to the registry, whatever the screen shows", async () => {
+    const h = gateHarness();
+    h.paint(GATE_SCREEN);
+    h.screen.lines = CLOSED_SCREEN;
+
+    const { status, body } = await h.send({ input: "hello" });
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ reason: "prompt_pending", promptState: "open" });
+    expect(h.inputs).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+  });
+});
+
+// tb-mobile #954: a card raised by detectShellPrompt (`read -p "[y/N]"`, a
+// "press Enter") is never a Claude box. The answer routes' freshness check read
+// only the box scraper, so every answer to one was refused as closed — and the
+// "is any gate painted" check could not see one either, so a failed answer
+// cleared the entry while the prompt was still up and composer text answered it.
+const SHELL_FILLER = Array.from({ length: 20 }, (_, i) => `build step ${i} ok`);
+const SHELL_SCREEN = [...SHELL_FILLER, "Overwrite existing config? [y/N]", ""];
+const OTHER_SHELL_SCREEN = [...SHELL_FILLER, "Delete the build cache? [y/N]", ""];
+
+describe("#954: shell-prompt gates and the freshness check", () => {
+  function openShellGate(h: GateHarness, lines: string[]) {
+    const gate = detectShellPrompt(lines);
+    if (!gate) throw new Error("fixture is not a shell prompt");
+    h.handlers.handlePermissionChange(SESSION, gate);
+    const promptId = h.pendingPermission.get(SESSION)?.promptId;
+    const prompt = promptId ? h.registry.get(promptId) : null;
+    if (!prompt) throw new Error("shell gate registered no prompt");
+    return { gate, prompt };
+  }
+  function answerFirstOption(prompt: NonNullable<ReturnType<PromptRegistry["get"]>>) {
+    return request({
+      promptId: prompt.promptId,
+      revision: prompt.revision,
+      responses: [
+        {
+          questionId: prompt.questions[0].questionId,
+          optionIds: [prompt.questions[0].options[0].optionId],
+        },
+      ],
+      idempotencyKey: `idem-954-${prompt.promptId}`,
+    });
+  }
+
+  it("answers a still-painted shell prompt through the contract route", async () => {
+    const h = gateHarness();
+    h.screen.lines = SHELL_SCREEN;
+    const { prompt } = openShellGate(h, SHELL_SCREEN);
+    const r = response();
+    await h.handlers.handlePromptAnswer(SESSION, answerFirstOption(prompt), r.res);
+
+    expect(r.body()).toMatchObject({ ok: true });
+    expect(h.written).toEqual(["y\r"]);
+  });
+
+  it("answers a still-painted shell prompt through the legacy route", async () => {
+    const h = gateHarness();
+    h.screen.lines = SHELL_SCREEN;
+    const { gate } = openShellGate(h, SHELL_SCREEN);
+    const r = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ contentKey: permissionGateKey(gate), optionIndex: 0 }),
+      r.res,
+    );
+
+    expect(r.body()).toMatchObject({ ok: true });
+    expect(h.written).toEqual(["y\r"]);
+  });
+
+  it("keeps refusing composer text while a different shell prompt is painted", async () => {
+    const h = gateHarness();
+    const { prompt } = openShellGate(h, SHELL_SCREEN);
+    // A different [y/N] took the screen before the answer landed.
+    h.screen.lines = OTHER_SHELL_SCREEN;
+    const r = response();
+    await h.handlers.handlePromptAnswer(SESSION, answerFirstOption(prompt), r.res);
+
+    expect(r.body()).toMatchObject({ ok: false, code: "prompt_cancelled" });
+    expect(h.written).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+    const { status } = await h.send({ input: "yes please" });
+    expect(status).toBe(409);
     expect(h.inputs).toEqual([]);
   });
 });

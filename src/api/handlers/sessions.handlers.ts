@@ -42,6 +42,7 @@ import {
 } from "../../services/prompts/ptyPromptAdapter";
 import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
 import {
+  detectGateScreen,
   permissionContentKey,
   permissionGateKey,
   scrapePermissionGate,
@@ -50,6 +51,7 @@ import {
   isQuestionMenuOnScreen,
   questionContentKey,
 } from "../../services/questions/detectQuestionFromScreen";
+import { detectShellPrompt } from "../../services/questions/detectShellPrompt";
 import { parseStatusLine } from "../../services/questions/parseStatusLine";
 import { permissionAnswerKeys } from "../../services/questions/permissionAnswerKeys";
 import { resolveAnswer } from "../../services/questions/resolveAnswer";
@@ -1124,6 +1126,31 @@ export class SessionHandlers {
     //
     // Sweeps expired prompts so their onExpire clears the pending maps before the read below.
     this.promptRegistry.sweepExpired(sessionId);
+    // One narrow exception to "no screen re-scrape". A gate whose OSC fired
+    // before its options painted is stored with `options: []` and NO promptId
+    // (handlePermissionChange opens no record for it), so isLive() below reads
+    // it as live forever, and only the detector's close retires it — which
+    // pty-manager evaluates only on a pass driven by new PTY output. A screen
+    // that went quiet left every later composer send refused indefinitely.
+    // For that entry alone, the rendered screen decides: no gate painted means
+    // the entry is stale, so clear it the way the detector's close would and
+    // let the text through; a gate still painted keeps refusing. The Claude
+    // detectors are safe here: only pty-manager's OSC path produces an
+    // optionless entry — every Codex card (gateCard, command approval,
+    // usage-limit) carries options and therefore a promptId — so this never
+    // scrapes a Codex screen.
+    const optionless = this.pendingPermission.get(sessionId);
+    if (
+      optionless &&
+      optionless.promptId === undefined &&
+      !(await this.anyPermissionGateOnScreen(sessionId)) &&
+      // Re-read after the await: a populated repaint may have replaced it.
+      this.pendingPermission.get(sessionId) === optionless
+    ) {
+      this.pendingPermission.delete(sessionId);
+      this.pendingPermissionKey.delete(sessionId);
+      this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
+    }
     // Map membership alone is not authoritative: a prompt closed by a route
     // other than sweepExpired or the answer paths (e.g. prompt_not_found)
     // leaves its pendingPermission/pendingQuestions entry behind with no
@@ -1233,7 +1260,18 @@ export class SessionHandlers {
   // real toolUseId when it lands, so answering works once JSONL catches up.
   handleLiveQuestion(sessionId: string, questions: AskQuestion[], occurrenceId?: string): void {
     const key = questionContentKey(questions);
-    if (this.pendingQuestionKey.get(sessionId) === key) return; // already shown
+    // Unchanged repaint: same content and, when the pty-host names the
+    // occurrence, one we already minted a prompt for (the registry keeps it
+    // under that id, answered or not, for PROMPT_TERMINAL_RETENTION_MS). The
+    // key now outlives an answer (#724), so without the occurrence half a
+    // genuinely new host occurrence with identical content would be swallowed
+    // by it — the same identity rule handlePermissionChange applies.
+    if (
+      this.pendingQuestionKey.get(sessionId) === key &&
+      (occurrenceId === undefined || this.promptRegistry.get(occurrenceId) !== null)
+    ) {
+      return; // already shown
+    }
     const toolUseId = `screen:${sessionId}:${key.length}`;
     const prior = this.pendingQuestions.get(sessionId);
     const priorPrompt = prior ? this.promptRegistry.get(prior.promptId) : null;
@@ -1443,6 +1481,24 @@ export class SessionHandlers {
         provider !== CODEX_CLI_PROVIDER &&
         !(await this.permissionGateStillOpen(sessionId, permissionGateKey(gate)))
       ) {
+        // The terminal below settles the registry record, but nothing else
+        // retires pendingPermission, so /input kept refusing text beside a
+        // cancelled record until retention swept it (the legacy route's
+        // gateClosed() clears it). Clear it here too — but only when NO gate is
+        // painted: a scrape also fails when a different gate has taken the
+        // screen before the detector announced it, and this entry is then what
+        // keeps composer text off that live gate (#703). The entry must still
+        // be THIS prompt, before and after the await: a newer gate that was
+        // registered meanwhile is live and must stay.
+        if (
+          this.pendingPermission.get(sessionId)?.promptId === prompt.promptId &&
+          !(await this.anyPermissionGateOnScreen(sessionId)) &&
+          this.pendingPermission.get(sessionId)?.promptId === prompt.promptId
+        ) {
+          this.pendingPermission.delete(sessionId);
+          this.pendingPermissionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
+        }
         return {
           ok: false,
           code: "prompt_cancelled",
@@ -1518,8 +1574,11 @@ export class SessionHandlers {
       } catch {
         return { ok: false, code: "provider_error" };
       }
+      // pendingQuestionKey is KEPT, exactly as the legacy /answer route keeps
+      // it: a menu still painted after its answer must dedupe as a repaint, not
+      // re-mint as a fresh open prompt for a question already answered (#724).
+      // The menu leaving the screen clears it (onLiveQuestionGone), as does exit.
       this.pendingQuestions.delete(sessionId);
-      this.pendingQuestionKey.delete(sessionId);
       this.broadcastToSession(sessionId, {
         type: "question_cancelled",
         sessionId,
@@ -1701,8 +1760,39 @@ export class SessionHandlers {
   private async permissionGateStillOpen(sessionId: string, contentKey: string): Promise<boolean> {
     if (!this.ptyManager.hasSession(sessionId)) return true;
     try {
-      const onScreen = scrapePermissionGate(await this.ptyManager.getOutputLines(sessionId, 60));
-      return onScreen !== null && permissionGateKey(onScreen) === contentKey;
+      const lines = await this.ptyManager.getOutputLines(sessionId, 60);
+      // Both producers of a Claude-session gate, not just the box scraper: a
+      // card raised by detectShellPrompt (`read -p "[y/N]"`, "press Enter") is
+      // never a Claude box, so checking scrapePermissionGate alone refused every
+      // answer to one as closed and its Continue could never write the \r.
+      return [scrapePermissionGate(lines), detectShellPrompt(lines)].some(
+        (onScreen) => onScreen !== null && permissionGateKey(onScreen) === contentKey,
+      );
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Is ANY Claude permission gate painted? Not permissionGateStillOpen's "is
+   * THIS gate": an optionless entry has no content to compare against. The test
+   * is pty-manager's own "box is still painted" rule (either detector sees a
+   * gate), so this never retires an entry the detector would have kept — which
+   * also means a numbered list left in prose reads as painted and keeps
+   * refusing, the safe side. A shell prompt counts too: pty-manager raises it
+   * as a card, and composer text typed over a `[y/N]` answers it. Best-effort
+   * in the direction opposite to the answer routes: this may only UNBLOCK
+   * input, so a session with no PTY, or a read that fails, reports a gate.
+   */
+  private async anyPermissionGateOnScreen(sessionId: string): Promise<boolean> {
+    if (!this.ptyManager.hasSession(sessionId)) return true;
+    try {
+      const lines = await this.ptyManager.getOutputLines(sessionId, 60);
+      return (
+        detectGateScreen(lines) !== null ||
+        scrapePermissionGate(lines) !== null ||
+        detectShellPrompt(lines) !== null
+      );
     } catch {
       return true;
     }
@@ -1724,7 +1814,14 @@ export class SessionHandlers {
       | { kind: "permission"; promptId: string; contentKey: string }
       | { kind: "question"; promptId: string; toolUseId: string }
       | null = null;
-    if (action !== "escape") {
+    // Binding is opt-in on the payload, not implied by the action. Every other
+    // action must name its prompt (the `!promptId` refusal below); Escape may,
+    // and when it does it gets the same arbitration. Without it, a card's
+    // Cancel whose gate already closed lands at Claude's prompt and interrupts
+    // the turn the user is waiting on. Escape WITHOUT a promptId stays exactly
+    // as blind as before: the raw-keyboard Esc key and mobile's "interrupt the
+    // agent" action have no prompt to name and rely on that.
+    if (action !== "escape" || promptId !== undefined) {
       // Pending maps can retain a prompt after its registry record expired or
       // was retired by another route. Sweep first, then only let a live
       // registry record authorize bytes to reach the PTY.
@@ -1810,20 +1907,31 @@ export class SessionHandlers {
       } else {
         this.ptyManager.sendRawKeys(sessionId, RAW_KEY_BYTES[action]);
       }
-      if (action === "enter") {
-        if (focused) {
-          const normalized = this.promptRegistry.get(focused.promptId);
-          if (normalized?.state === "open" || normalized?.state === "updated") {
+      // A bound Escape retires its prompt as deterministically as Enter does,
+      // but as `cancelled`: Esc dismisses the prompt, it does not answer it.
+      // Clearing the dedupe key below is deliberate (for a question, on Escape
+      // only — see there): if the key did not take and the box is still
+      // painted, the detector must be able to show the card again — a gate
+      // still on screen must never stay hidden.
+      if (focused && (action === "enter" || action === "escape")) {
+        const normalized = this.promptRegistry.get(focused.promptId);
+        if (normalized?.state === "open" || normalized?.state === "updated") {
+          if (action === "enter") {
             this.promptRegistry.transition(normalized.promptId, "resolved", "raw_key_enter");
+          } else {
+            this.promptRegistry.transition(normalized.promptId, "cancelled", "raw_key_escape");
           }
         }
-        if (focused?.kind === "permission") {
+        if (focused.kind === "permission") {
           this.pendingPermission.delete(sessionId);
           this.pendingPermissionKey.delete(sessionId);
           this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
-        } else if (focused?.kind === "question") {
+        } else {
           this.pendingQuestions.delete(sessionId);
-          this.pendingQuestionKey.delete(sessionId);
+          // An answered menu keeps its key like every other answer path, so a
+          // still-painted repaint does not re-mint it (#724). Escape answered
+          // nothing: a menu it failed to close must be able to show again.
+          if (action === "escape") this.pendingQuestionKey.delete(sessionId);
           this.broadcastToSession(sessionId, {
             type: "question_cancelled",
             sessionId,
