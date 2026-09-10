@@ -70,6 +70,11 @@ function harness(open: "permission" | "question" | null): Harness {
     wsHub: { broadcast: (_m: WSMessage) => {} },
     sessionStore: { get: () => null, updateManaged: () => {} },
     ptyManager: {
+      // GATE carries options but no promptId, so arbitration asks the screen
+      // about it (see the optionless-entry cases below). A gate is painted, so
+      // every case built on this harness refuses for the reason it always did.
+      hasSession: () => true,
+      getOutputLines: async () => GATE_SCREEN,
       sendInput: (_id: string, input: string) => {
         inputs.push(input);
         return 1;
@@ -595,11 +600,14 @@ describe("#703: POST /input { input } in the answered-gate window", () => {
   });
 
   // The predicate is `state === "resolved"`, not `state !== "open"`, and this is
-  // why. When the freshness scrape fails, permissionAnswerAdapter returns a
-  // `cancelled` / `provider_closed` terminal and — unlike the question adapter —
-  // does NOT delete the pending entry. So a cancelled record sits beside a live
-  // entry, and that combination is a REFUSED answer with zero bytes written. A
-  // widened predicate would tell the user their answer was sent when it was not.
+  // why. When the freshness scrape fails because a DIFFERENT gate has taken the
+  // screen before the detector announced it, permissionAnswerAdapter returns a
+  // `cancelled` / `provider_closed` terminal and keeps the pending entry — that
+  // entry is what keeps composer text off the live gate. So a cancelled record
+  // sits beside a live entry, and that combination is a REFUSED answer with zero
+  // bytes written. A widened predicate would tell the user their answer was sent
+  // when it was not. (With no gate painted at all the adapter clears the entry,
+  // like the legacy route's gateClosed() — see permission-adapter-closed-cleanup.)
   it("calls a cancelled-but-pending gate open, not answered", async () => {
     const h = gateHarness();
     h.paint(GATE_SCREEN);
@@ -608,8 +616,8 @@ describe("#703: POST /input { input } in the answered-gate window", () => {
     const prompt = h.registry.get(promptId);
     if (!prompt) throw new Error("no prompt record");
 
-    // The gate leaves the screen before the answer lands: freshness fails.
-    h.screen.lines = CLOSED_SCREEN;
+    // A different gate takes the screen before the answer lands: freshness fails.
+    h.screen.lines = OTHER_GATE_SCREEN;
     const answerRes = response();
     await h.handlers.handlePromptAnswer(
       SESSION,
@@ -742,5 +750,79 @@ describe("#757: a map entry outliving its registry record", () => {
     expect(status()).toBe(409);
     expect(body()).toMatchObject({ ok: false, reason: "prompt_pending", promptKind: "question" });
     expect(h.inputs).toEqual([]);
+  });
+});
+
+// An optionless gate — the OSC 777 fired before the options painted — is stored
+// with NO promptId and no registry record, so nothing sweeps or ages it and the
+// registry-liveness test reads it as open forever. Reproduced: one
+// `handlePermissionChange(sid, { options: [] })` refused every later /input with
+// 409 prompt_pending, indefinitely. The rendered screen is now the authority for
+// that entry, and only that entry.
+describe("an optionless permission entry", () => {
+  function optionlessHarness() {
+    const h = gateHarness();
+    const deps = (h.handlers as unknown as { deps: SessionHandlersDeps }).deps;
+    const frames: WSMessage[] = [];
+    deps.wsHub.broadcastToClients = (_clients, frame) => frames.push(frame);
+    h.handlers.handlePermissionChange(SESSION, { options: [] });
+    expect(h.pendingPermission.get(SESSION)?.promptId).toBeUndefined();
+    return { h, deps, frames };
+  }
+
+  it("clears itself and lets text through once no gate is on screen", async () => {
+    const { h, deps, frames } = optionlessHarness();
+    h.screen.lines = CLOSED_SCREEN;
+
+    const { status, body } = await h.send({ input: "hello" });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true });
+    expect(h.inputs).toEqual(["hello"]);
+    expect(h.pendingPermission.has(SESSION)).toBe(false);
+    expect(deps.pendingPermissionKey.has(SESSION)).toBe(false);
+    expect(frames).toContainEqual({ type: "permission_cancelled", sessionId: SESSION });
+  });
+
+  // The guard holds for the window arbitration exists for: a gate still painted.
+  it("keeps refusing while a gate is still on screen", async () => {
+    const { h, frames } = optionlessHarness();
+    h.screen.lines = GATE_SCREEN;
+
+    const { status, body } = await h.send({ input: "hello" });
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ reason: "prompt_pending", promptState: "open" });
+    expect(h.inputs).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+    expect(frames.some((f) => f.type === "permission_cancelled")).toBe(false);
+  });
+
+  // Best-effort in the refusing direction: no PTY to read is not proof of a clear screen.
+  it("keeps refusing when there is no PTY to read", async () => {
+    const { h, deps } = optionlessHarness();
+    h.screen.lines = CLOSED_SCREEN;
+    deps.ptyManager.hasSession = () => false;
+
+    const { status } = await h.send({ input: "hello" });
+
+    expect(status).toBe(409);
+    expect(h.inputs).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+  });
+
+  // Narrowness control: an entry WITH a live promptId never consults the screen,
+  // so a stale screen read cannot unblock a registry-backed gate.
+  it("leaves an entry with a live promptId to the registry, whatever the screen shows", async () => {
+    const h = gateHarness();
+    h.paint(GATE_SCREEN);
+    h.screen.lines = CLOSED_SCREEN;
+
+    const { status, body } = await h.send({ input: "hello" });
+
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ reason: "prompt_pending", promptState: "open" });
+    expect(h.inputs).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
   });
 });

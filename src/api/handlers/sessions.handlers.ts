@@ -42,6 +42,7 @@ import {
 } from "../../services/prompts/ptyPromptAdapter";
 import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
 import {
+  detectGateScreen,
   permissionContentKey,
   permissionGateKey,
   scrapePermissionGate,
@@ -1124,6 +1125,31 @@ export class SessionHandlers {
     //
     // Sweeps expired prompts so their onExpire clears the pending maps before the read below.
     this.promptRegistry.sweepExpired(sessionId);
+    // One narrow exception to "no screen re-scrape". A gate whose OSC fired
+    // before its options painted is stored with `options: []` and NO promptId
+    // (handlePermissionChange opens no record for it), so isLive() below reads
+    // it as live forever, and only the detector's close retires it — which
+    // pty-manager evaluates only on a pass driven by new PTY output. A screen
+    // that went quiet left every later composer send refused indefinitely.
+    // For that entry alone, the rendered screen decides: no gate painted means
+    // the entry is stale, so clear it the way the detector's close would and
+    // let the text through; a gate still painted keeps refusing. The Claude
+    // detectors are safe here: only pty-manager's OSC path produces an
+    // optionless entry — every Codex card (gateCard, command approval,
+    // usage-limit) carries options and therefore a promptId — so this never
+    // scrapes a Codex screen.
+    const optionless = this.pendingPermission.get(sessionId);
+    if (
+      optionless &&
+      optionless.promptId === undefined &&
+      !(await this.anyPermissionGateOnScreen(sessionId)) &&
+      // Re-read after the await: a populated repaint may have replaced it.
+      this.pendingPermission.get(sessionId) === optionless
+    ) {
+      this.pendingPermission.delete(sessionId);
+      this.pendingPermissionKey.delete(sessionId);
+      this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
+    }
     // Map membership alone is not authoritative: a prompt closed by a route
     // other than sweepExpired or the answer paths (e.g. prompt_not_found)
     // leaves its pendingPermission/pendingQuestions entry behind with no
@@ -1443,6 +1469,24 @@ export class SessionHandlers {
         provider !== CODEX_CLI_PROVIDER &&
         !(await this.permissionGateStillOpen(sessionId, permissionGateKey(gate)))
       ) {
+        // The terminal below settles the registry record, but nothing else
+        // retires pendingPermission, so /input kept refusing text beside a
+        // cancelled record until retention swept it (the legacy route's
+        // gateClosed() clears it). Clear it here too — but only when NO gate is
+        // painted: a scrape also fails when a different gate has taken the
+        // screen before the detector announced it, and this entry is then what
+        // keeps composer text off that live gate (#703). The entry must still
+        // be THIS prompt, before and after the await: a newer gate that was
+        // registered meanwhile is live and must stay.
+        if (
+          this.pendingPermission.get(sessionId)?.promptId === prompt.promptId &&
+          !(await this.anyPermissionGateOnScreen(sessionId)) &&
+          this.pendingPermission.get(sessionId)?.promptId === prompt.promptId
+        ) {
+          this.pendingPermission.delete(sessionId);
+          this.pendingPermissionKey.delete(sessionId);
+          this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
+        }
         return {
           ok: false,
           code: "prompt_cancelled",
@@ -1703,6 +1747,26 @@ export class SessionHandlers {
     try {
       const onScreen = scrapePermissionGate(await this.ptyManager.getOutputLines(sessionId, 60));
       return onScreen !== null && permissionGateKey(onScreen) === contentKey;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Is ANY Claude permission gate painted? Not permissionGateStillOpen's "is
+   * THIS gate": an optionless entry has no content to compare against. The test
+   * is pty-manager's own "box is still painted" rule (either detector sees a
+   * gate), so this never retires an entry the detector would have kept — which
+   * also means a numbered list left in prose reads as painted and keeps
+   * refusing, the safe side. Best-effort in the direction opposite to the
+   * answer routes: this may only UNBLOCK input, so a session with no PTY, or a
+   * read that fails, reports a gate.
+   */
+  private async anyPermissionGateOnScreen(sessionId: string): Promise<boolean> {
+    if (!this.ptyManager.hasSession(sessionId)) return true;
+    try {
+      const lines = await this.ptyManager.getOutputLines(sessionId, 60);
+      return detectGateScreen(lines) !== null || scrapePermissionGate(lines) !== null;
     } catch {
       return true;
     }
