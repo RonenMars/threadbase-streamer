@@ -1,3 +1,9 @@
+## [1.89.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.3...v1.89.4) (2026-09-10)
+
+### Bug Fixes
+
+* **sessions:** bind legacy permission answers to the displayed option ([#847](https://github.com/RonenMars/threadbase-streamer/issues/847)) ([38198ea](https://github.com/RonenMars/threadbase-streamer/commit/38198ea732b4700a68403eed3d58a4245ec7b988)), closes [#709](https://github.com/RonenMars/threadbase-streamer/issues/709)
+
 ## [1.89.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.2...v1.89.3) (2026-09-09)
 
 ### Bug Fixes
