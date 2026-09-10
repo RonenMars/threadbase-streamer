@@ -1539,6 +1539,15 @@ export class SessionHandlers {
    *   - The client sends `{ contentKey, optionIndex }` and NO keystrokes. The
    *     keys are derived here from our own copy of the gate, so the client's
    *     key-derivation can never drift from the server's.
+   *   - `optionIndex` is a 0-based POSITION in the frame's `options[]`, NOT
+   *     `options[].index` (the digit painted on screen, 1-based and not always
+   *     contiguous). Both are small integers, so a client sending the digit
+   *     selects a different option — on "1. Yes / 2. Yes, don't ask again" the
+   *     digit for "Yes" is the position of "don't ask again". Optional
+   *     `optionLabel` binds the answer to the option the client displayed: when
+   *     present it must equal `options[optionIndex].label` or the answer is
+   *     refused as unknown_option. Absent, the position alone is trusted
+   *     (released clients).
    *   - `contentKey` binds the answer to a specific gate. `isPermissionAnswer`
    *     matches structurally, and approval gates repeat constantly ("2. Yes /
    *     3. No" for every tool call), so without this a delayed answer to gate A
@@ -1559,12 +1568,17 @@ export class SessionHandlers {
     const contentKey = body?.contentKey;
     const optionIndex = body?.optionIndex;
     const gateId = body?.gateId;
+    const optionLabel = body?.optionLabel;
     if (typeof contentKey !== "string" || !Number.isInteger(optionIndex) || optionIndex < 0) {
       json(res, 400, { ok: false, reason: "Expected { contentKey: string, optionIndex: number }" });
       return;
     }
     if (gateId !== undefined && typeof gateId !== "string") {
       json(res, 400, { ok: false, reason: "Expected gateId to be a string" });
+      return;
+    }
+    if (optionLabel !== undefined && typeof optionLabel !== "string") {
+      json(res, 400, { ok: false, reason: "Expected optionLabel to be a string" });
       return;
     }
 
@@ -1618,6 +1632,14 @@ export class SessionHandlers {
     }
     const option = gate.options[optionIndex];
     if (!option) {
+      json(res, 409, { ok: false, reason: "unknown_option" });
+      return;
+    }
+    // Option check. contentKey and gateId pin the gate, not the choice: a
+    // client that sent options[].index instead of a position lands on another
+    // option of the SAME gate — possibly a persistent grant. Quiet, like
+    // unknown_option: the gate itself is fine and must stay up.
+    if (optionLabel !== undefined && option.label !== optionLabel) {
       json(res, 409, { ok: false, reason: "unknown_option" });
       return;
     }

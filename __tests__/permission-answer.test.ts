@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { Readable } from "stream";
 import { describe, expect, it } from "vitest";
 import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/sessions.handlers";
+import { CODEX_CLI_PROVIDER } from "../src/providers";
+import { gateCard } from "../src/services/questions/codexScreen";
 import { detectGateScreen } from "../src/services/questions/detectPermissionGate";
 import type { WSMessage } from "../src/types";
 
@@ -82,7 +84,7 @@ interface Harness {
 function harness(
   pendingScreen: string[] | null,
   liveScreen: string[],
-  opts: { hasSession?: boolean } = {},
+  opts: { hasSession?: boolean; provider?: string } = {},
 ): Harness {
   const written: string[] = [];
   const rawWritten: string[] = [];
@@ -97,7 +99,7 @@ function harness(
     pendingPermissionKey,
     sessionSubscribers: new Map(),
     // Provider unknown → Claude path (screen freshness), which these cases pin.
-    sessionStore: { getManaged: () => null },
+    sessionStore: { getManaged: () => (opts.provider ? { provider: opts.provider } : null) },
     log: () => ({ info: () => {}, warn: () => {}, debug: () => {} }),
     wsHub: {
       broadcast: (m: WSMessage) => broadcasts.push(m),
@@ -428,5 +430,116 @@ describe("POST /permission/answer — no PTY of ours to read", () => {
 
     expect(h.written).toEqual(["2\r"]);
     expect(status()).toBe(200);
+  });
+});
+
+// Issue #709. contentKey and gateId pin the gate; nothing pinned the option.
+// optionIndex is a position in options[], but the frame also hands clients
+// options[].index — the on-screen digit, 1-based. A client answering with the
+// digit got a 200 and a DIFFERENT option of the same gate. optionLabel closes it.
+const DONT_ASK_SCREEN = [
+  "╭──────────────────────────────────────────────────────╮",
+  "│ Bash command                                         │",
+  "│                                                      │",
+  "│ curl https://example.com/status                      │",
+  "│ Check the service status                             │",
+  "│                                                      │",
+  "│ Do you want to proceed?                              │",
+  "│ ❯ 1. Yes                                             │",
+  "│   2. Yes, and don't ask again for: curl *            │",
+  "│   3. No, and tell Claude what to do differently      │",
+  "│                                                      │",
+  "│ Esc to cancel · Tab to amend · ctrl+e to explain     │",
+  "╰──────────────────────────────────────────────────────╯",
+];
+
+/** Open `gate` and return the `permission` frame exactly as a client gets it. */
+function openGate(h: Harness, gate: Parameters<Harness["handlers"]["handlePermissionChange"]>[1]) {
+  h.handlers.handlePermissionChange(SESSION, gate);
+  const frame = h.broadcasts.find((m) => m.type === "permission") as any;
+  h.broadcasts.length = 0;
+  return frame as { contentKey: string; options: { index: number; label: string }[] };
+}
+
+describe("POST /permission/answer — optionLabel binds the option", () => {
+  it("refuses a digit sent as a position, leaving the gate up and the PTY untouched", async () => {
+    const h = harness(null, DONT_ASK_SCREEN);
+    const frame = openGate(h, detectGateScreen(DONT_ASK_SCREEN));
+    const yes = frame.options[0];
+    expect(yes.label).toBe("Yes");
+    const { res, status, body } = response();
+    // on-screen digit of "Yes" (1) is the position of "don't ask again"
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ contentKey: frame.contentKey, optionIndex: yes.index, optionLabel: yes.label }),
+      res,
+    );
+
+    expect(h.written).toEqual([]);
+    expect(status()).toBe(409);
+    expect(body()).toEqual({ ok: false, reason: "unknown_option" });
+    expect(h.broadcasts).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+  });
+
+  it("writes the intended option when position and label agree", async () => {
+    const h = harness(null, DONT_ASK_SCREEN);
+    const frame = openGate(h, detectGateScreen(DONT_ASK_SCREEN));
+    const { res, status } = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ contentKey: frame.contentKey, optionIndex: 0, optionLabel: "Yes" }),
+      res,
+    );
+
+    expect(status()).toBe(200);
+    expect(h.written).toEqual(["1\r"]);
+  });
+
+  it("trusts the position alone when optionLabel is absent (released clients)", async () => {
+    const h = harness(null, DONT_ASK_SCREEN);
+    const frame = openGate(h, detectGateScreen(DONT_ASK_SCREEN));
+    const { res, status } = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ contentKey: frame.contentKey, optionIndex: 1 }),
+      res,
+    );
+
+    expect(status()).toBe(200);
+    expect(h.written).toEqual(["2\r"]);
+  });
+
+  // Codex trust gate: digit 2 is "No, quit", position 2 is the persistent
+  // "remember for all projects" grant. A refusal must not become a grant.
+  it("refuses the Codex trust-gate inversion", async () => {
+    const h = harness(null, CLOSED_SCREEN, { provider: CODEX_CLI_PROVIDER });
+    const frame = openGate(h, gateCard("trust", []));
+    const no = frame.options.find((o) => o.label === "No, quit");
+    if (!no) throw new Error("expected a No, quit option");
+    const { res, status, body } = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ contentKey: frame.contentKey, optionIndex: no.index, optionLabel: no.label }),
+      res,
+    );
+
+    expect(h.written).toEqual([]);
+    expect(status()).toBe(409);
+    expect(body()).toEqual({ ok: false, reason: "unknown_option" });
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+  });
+
+  it("400s on a non-string optionLabel without writing", async () => {
+    const h = harness(GATE_A_SCREEN, GATE_A_SCREEN);
+    const { res, status } = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0, optionLabel: 7 }),
+      res,
+    );
+
+    expect(h.written).toEqual([]);
+    expect(status()).toBe(400);
   });
 });
