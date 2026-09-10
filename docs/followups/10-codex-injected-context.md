@@ -1,6 +1,6 @@
 # Codex previews and titles are the injected AGENTS.md turn
 
-**Status: specified, not implemented.** The fix is scanner-side with a streamer follow-on. Written 2026-09-10 against `@threadbase-sh/scanner@0.16.0` and streamer 1.89.3.
+**Status: scanner half shipped in `@threadbase-sh/scanner@0.16.1` (threadbase-scanner#83); streamer half is optional cleanup.** Written 2026-09-10 against scanner 0.16.0 and streamer 1.89.3, amended the same day once the release landed.
 
 ## Symptom
 
@@ -70,8 +70,8 @@ The second group exists because Codex has no `--system-prompt` flag, so the stre
 
 ### Streamer (`tb-streamer`), after the scanner publishes
 
-5. Bump the dependency, as its own change.
-6. Have `isCodexInjectedContext` delegate the generic group to the scanner's export and keep only the streamer-injected patterns, so the two copies cannot drift.
+5. ~~Bump the dependency, as its own change.~~ **Not needed.** The fix released as **0.16.1**, a patch, and npm's caret on a `0.x` version already admits patches — `^0.16.0` resolves to `>=0.16.0 <0.17.0-0`. An `npm ci` and a redeploy are the whole delivery.
+6. Have `isCodexInjectedContext` delegate the generic group to the scanner's export and keep only the streamer-injected patterns, so the two copies cannot drift. This is cleanup, not delivery — the fix reaches users without it.
 
 ## Position-bounded, not content-only — the one arguable call
 
@@ -101,15 +101,15 @@ Scanner:
 
 Every negative assertion needs a positive control that has been seen to fail; a filter test that passes against the unfixed code is testing nothing.
 
-Streamer, after the bump:
+Streamer, if and when the heuristic is de-duplicated:
 
 7. `isCodexInjectedContext` still returns true for all seven current patterns once the generic group is delegated.
 
 ## Rollout order
 
-1. Scanner change, published as a minor.
-2. Streamer dependency bump, alone.
-3. Streamer de-duplication of the heuristic.
-4. A rescan on each deployed machine picks up the new previews and titles.
+1. Scanner change — shipped as **0.16.1**, a *patch*, not the minor this spec first assumed.
+2. `npm ci` then redeploy on each machine. No dependency bump: `^0.16.0` already admits `0.16.1`, so the range needs no edit and there is nothing to bisect.
+3. The v7 migration resets the index cursor on first run after the upgrade, so that boot reparses every rollout and rewrites the affected previews, titles and counts. It is a one-time cost proportional to the corpus.
+4. Streamer de-duplication of the heuristic, whenever convenient. Optional.
 
-Steps 2 and 3 stay separate for the same reason they did in [09](09-scanner-subagent-identity.md): a bump that shifts behaviour must be bisectable on its own.
+The dependency-bump-as-its-own-change discipline from [09](09-scanner-subagent-identity.md) still applies whenever a scanner change lands as a **minor**, because then the range must be edited and a behaviour shift has to be bisectable. A patch inside the existing range is a different case: nothing is edited, so there is no bump commit to isolate.
