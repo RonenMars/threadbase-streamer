@@ -529,6 +529,10 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         // invalidateSession, so the prompt ends cancelled/provider_closed
         // rather than unavailable.
         deps.cancelPendingQuestion(session.id);
+        // cancelPendingQuestion clears the key only while a question is still
+        // pending, but an ANSWERED menu keeps its key with no pending entry
+        // (#724) — and that key would suppress the same menu on resume.
+        deps.pendingQuestionKey.delete(session.id);
         // A gone PTY can never have an open gate; clear silently.
         deps.pendingPermission.delete(session.id);
         deps.pendingPermissionKey.delete(session.id);

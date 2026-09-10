@@ -1259,7 +1259,18 @@ export class SessionHandlers {
   // real toolUseId when it lands, so answering works once JSONL catches up.
   handleLiveQuestion(sessionId: string, questions: AskQuestion[], occurrenceId?: string): void {
     const key = questionContentKey(questions);
-    if (this.pendingQuestionKey.get(sessionId) === key) return; // already shown
+    // Unchanged repaint: same content and, when the pty-host names the
+    // occurrence, one we already minted a prompt for (the registry keeps it
+    // under that id, answered or not, for PROMPT_TERMINAL_RETENTION_MS). The
+    // key now outlives an answer (#724), so without the occurrence half a
+    // genuinely new host occurrence with identical content would be swallowed
+    // by it — the same identity rule handlePermissionChange applies.
+    if (
+      this.pendingQuestionKey.get(sessionId) === key &&
+      (occurrenceId === undefined || this.promptRegistry.get(occurrenceId) !== null)
+    ) {
+      return; // already shown
+    }
     const toolUseId = `screen:${sessionId}:${key.length}`;
     const prior = this.pendingQuestions.get(sessionId);
     const priorPrompt = prior ? this.promptRegistry.get(prior.promptId) : null;
@@ -1562,8 +1573,11 @@ export class SessionHandlers {
       } catch {
         return { ok: false, code: "provider_error" };
       }
+      // pendingQuestionKey is KEPT, exactly as the legacy /answer route keeps
+      // it: a menu still painted after its answer must dedupe as a repaint, not
+      // re-mint as a fresh open prompt for a question already answered (#724).
+      // The menu leaving the screen clears it (onLiveQuestionGone), as does exit.
       this.pendingQuestions.delete(sessionId);
-      this.pendingQuestionKey.delete(sessionId);
       this.broadcastToSession(sessionId, {
         type: "question_cancelled",
         sessionId,
@@ -1883,9 +1897,10 @@ export class SessionHandlers {
       }
       // A bound Escape retires its prompt as deterministically as Enter does,
       // but as `cancelled`: Esc dismisses the prompt, it does not answer it.
-      // Clearing the dedupe key below is deliberate for both: if the key did not
-      // take and the box is still painted, the detector must be able to show
-      // the card again — a gate still on screen must never stay hidden.
+      // Clearing the dedupe key below is deliberate (for a question, on Escape
+      // only — see there): if the key did not take and the box is still
+      // painted, the detector must be able to show the card again — a gate
+      // still on screen must never stay hidden.
       if (focused && (action === "enter" || action === "escape")) {
         const normalized = this.promptRegistry.get(focused.promptId);
         if (normalized?.state === "open" || normalized?.state === "updated") {
@@ -1901,7 +1916,10 @@ export class SessionHandlers {
           this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
         } else {
           this.pendingQuestions.delete(sessionId);
-          this.pendingQuestionKey.delete(sessionId);
+          // An answered menu keeps its key like every other answer path, so a
+          // still-painted repaint does not re-mint it (#724). Escape answered
+          // nothing: a menu it failed to close must be able to show again.
+          if (action === "escape") this.pendingQuestionKey.delete(sessionId);
           this.broadcastToSession(sessionId, {
             type: "question_cancelled",
             sessionId,

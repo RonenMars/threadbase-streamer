@@ -119,4 +119,35 @@ describe("pty exit clears a pending question with no JSONL mapping", () => {
     expect(internals.promptRegistry.get(promptId)?.state).toBe("cancelled");
     expect(internals.sessionFileMap.has(SESSION)).toBe(false);
   });
+
+  // An answered menu keeps its dedupe key with no pending entry (#724), and
+  // cancelPendingQuestion returns before clearing anything when nothing is
+  // pending. A key surviving the exit would swallow the same menu on resume.
+  it("clears an answered menu's key so the same menu shows again on resume", async () => {
+    internals.sessionHandlers.handleLiveQuestion(SESSION, QUESTIONS);
+    const prompt = internals.promptRegistry.snapshot(SESSION).prompts[0];
+    (internals.ptyManager as unknown as { sendKeys: () => void }).sendKeys = () => {};
+    const outcome = await internals.promptRegistry.answer(SESSION, {
+      promptId: prompt.promptId,
+      revision: prompt.revision,
+      responses: [
+        {
+          questionId: prompt.questions[0].questionId,
+          optionIds: [prompt.questions[0].options[0].optionId],
+        },
+      ],
+      idempotencyKey: "exit-answered",
+    });
+    expect(outcome.ok).toBe(true);
+    expect(internals.pendingQuestions.has(SESSION)).toBe(false);
+    expect(internals.pendingQuestionKey.has(SESSION)).toBe(true);
+
+    internals.ptyManager.options.onStatusChange(idleSession());
+    expect(internals.pendingQuestionKey.has(SESSION)).toBe(false);
+
+    internals.sessionHandlers.handleLiveQuestion(SESSION, QUESTIONS);
+    const resumed = internals.pendingQuestions.get(SESSION)?.promptId ?? "";
+    expect(resumed).not.toBe(prompt.promptId);
+    expect(internals.promptRegistry.get(resumed)?.state).toBe("open");
+  });
 });

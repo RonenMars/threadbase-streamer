@@ -158,4 +158,68 @@ describe("processJsonlQuestions — P0.2 suppression + anti-clobber", () => {
       true,
     );
   });
+
+  // #724: every answer path keeps the menu's content key until the menu leaves
+  // the screen, while nothing is pending. A JSONL flush of that same question
+  // landing AFTER the answer is the answered question arriving late — it must
+  // not open a fresh actionable prompt (the live probe's 60-second phantom).
+  async function answerLiveQuestion(SID: string, questions: AskQuestion[]): Promise<void> {
+    const registry = (server as any).promptRegistry;
+    vi.spyOn((server as any).ptyManager, "sendKeys").mockImplementation(() => {});
+    (server as any).sessionHandlers.handleLiveQuestion(SID, questions);
+    const asked = registry.snapshot(SID).prompts[0];
+    const outcome = await registry.answer(SID, {
+      promptId: asked.promptId,
+      revision: asked.revision,
+      responses: [
+        {
+          questionId: asked.questions[0].questionId,
+          optionIds: [asked.questions[0].options[0].optionId],
+        },
+      ],
+      idempotencyKey: `idem-${SID}`,
+    });
+    expect(outcome.ok).toBe(true);
+    broadcasts = [];
+  }
+  const openPrompts = (SID: string) =>
+    (server as any).promptRegistry.snapshot(SID).prompts.filter((p: any) => p.state === "open");
+
+  it("#724: a JSONL flush landing after the answer does not re-open the answered question", async () => {
+    const SID = "answered-late-sess";
+    await answerLiveQuestion(SID, qParsed("Pick a db", ["pg", "sqlite"]));
+
+    (server as any).processJsonlQuestions(SID, [
+      qLine("Pick a db", ["pg", "sqlite"], "toolu_late"),
+    ]);
+
+    expect(openPrompts(SID)).toHaveLength(0);
+    expect((server as any).pendingQuestions.has(SID)).toBe(false);
+    expect(broadcasts.some((b) => b.type === "question")).toBe(false);
+  });
+
+  it("#724 control: a DIFFERENT question's JSONL flush after an answer still opens", async () => {
+    const SID = "answered-then-new-sess";
+    await answerLiveQuestion(SID, qParsed("Pick a db", ["pg", "sqlite"]));
+
+    (server as any).processJsonlQuestions(SID, [qLine("Deploy where?", ["eu", "us"], "toolu_new")]);
+
+    expect(openPrompts(SID)).toHaveLength(1);
+    expect((server as any).pendingQuestions.get(SID)?.toolUseId).toBe("toolu_new");
+    expect(broadcasts.some((b) => b.type === "question" && b.toolUseId === "toolu_new")).toBe(true);
+  });
+
+  it("#724 control: the same question re-asked after its menu left the screen still opens", async () => {
+    const SID = "answered-then-reasked-sess";
+    await answerLiveQuestion(SID, qParsed("Pick a db", ["pg", "sqlite"]));
+    // The menu leaving the screen clears the key (onLiveQuestionGone in server-wiring).
+    (server as any).pendingQuestionKey.delete(SID);
+
+    (server as any).processJsonlQuestions(SID, [
+      qLine("Pick a db", ["pg", "sqlite"], "toolu_again"),
+    ]);
+
+    expect(openPrompts(SID)).toHaveLength(1);
+    expect((server as any).pendingQuestions.get(SID)?.toolUseId).toBe("toolu_again");
+  });
 });
