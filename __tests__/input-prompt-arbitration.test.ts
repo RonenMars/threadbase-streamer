@@ -5,7 +5,11 @@ import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/s
 import { CLAUDE_CODE_PROVIDER } from "../src/providers";
 import { clearExpiredPendingPrompt } from "../src/server-wiring";
 import { PromptRegistry } from "../src/services/prompts/promptRegistry";
-import { detectGateScreen } from "../src/services/questions/detectPermissionGate";
+import {
+  detectGateScreen,
+  permissionGateKey,
+} from "../src/services/questions/detectPermissionGate";
+import { detectShellPrompt } from "../src/services/questions/detectShellPrompt";
 import { IdempotencyStore } from "../src/services/sessions/idempotency";
 import type { AskQuestion, WSMessage } from "../src/types";
 
@@ -824,5 +828,81 @@ describe("an optionless permission entry", () => {
     expect(body).toMatchObject({ reason: "prompt_pending", promptState: "open" });
     expect(h.inputs).toEqual([]);
     expect(h.pendingPermission.has(SESSION)).toBe(true);
+  });
+});
+
+// tb-mobile #954: a card raised by detectShellPrompt (`read -p "[y/N]"`, a
+// "press Enter") is never a Claude box. The answer routes' freshness check read
+// only the box scraper, so every answer to one was refused as closed — and the
+// "is any gate painted" check could not see one either, so a failed answer
+// cleared the entry while the prompt was still up and composer text answered it.
+const SHELL_FILLER = Array.from({ length: 20 }, (_, i) => `build step ${i} ok`);
+const SHELL_SCREEN = [...SHELL_FILLER, "Overwrite existing config? [y/N]", ""];
+const OTHER_SHELL_SCREEN = [...SHELL_FILLER, "Delete the build cache? [y/N]", ""];
+
+describe("#954: shell-prompt gates and the freshness check", () => {
+  function openShellGate(h: GateHarness, lines: string[]) {
+    const gate = detectShellPrompt(lines);
+    if (!gate) throw new Error("fixture is not a shell prompt");
+    h.handlers.handlePermissionChange(SESSION, gate);
+    const promptId = h.pendingPermission.get(SESSION)?.promptId;
+    const prompt = promptId ? h.registry.get(promptId) : null;
+    if (!prompt) throw new Error("shell gate registered no prompt");
+    return { gate, prompt };
+  }
+  function answerFirstOption(prompt: NonNullable<ReturnType<PromptRegistry["get"]>>) {
+    return request({
+      promptId: prompt.promptId,
+      revision: prompt.revision,
+      responses: [
+        {
+          questionId: prompt.questions[0].questionId,
+          optionIds: [prompt.questions[0].options[0].optionId],
+        },
+      ],
+      idempotencyKey: `idem-954-${prompt.promptId}`,
+    });
+  }
+
+  it("answers a still-painted shell prompt through the contract route", async () => {
+    const h = gateHarness();
+    h.screen.lines = SHELL_SCREEN;
+    const { prompt } = openShellGate(h, SHELL_SCREEN);
+    const r = response();
+    await h.handlers.handlePromptAnswer(SESSION, answerFirstOption(prompt), r.res);
+
+    expect(r.body()).toMatchObject({ ok: true });
+    expect(h.written).toEqual(["y\r"]);
+  });
+
+  it("answers a still-painted shell prompt through the legacy route", async () => {
+    const h = gateHarness();
+    h.screen.lines = SHELL_SCREEN;
+    const { gate } = openShellGate(h, SHELL_SCREEN);
+    const r = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ contentKey: permissionGateKey(gate), optionIndex: 0 }),
+      r.res,
+    );
+
+    expect(r.body()).toMatchObject({ ok: true });
+    expect(h.written).toEqual(["y\r"]);
+  });
+
+  it("keeps refusing composer text while a different shell prompt is painted", async () => {
+    const h = gateHarness();
+    const { prompt } = openShellGate(h, SHELL_SCREEN);
+    // A different [y/N] took the screen before the answer landed.
+    h.screen.lines = OTHER_SHELL_SCREEN;
+    const r = response();
+    await h.handlers.handlePromptAnswer(SESSION, answerFirstOption(prompt), r.res);
+
+    expect(r.body()).toMatchObject({ ok: false, code: "prompt_cancelled" });
+    expect(h.written).toEqual([]);
+    expect(h.pendingPermission.has(SESSION)).toBe(true);
+    const { status } = await h.send({ input: "yes please" });
+    expect(status).toBe(409);
+    expect(h.inputs).toEqual([]);
   });
 });

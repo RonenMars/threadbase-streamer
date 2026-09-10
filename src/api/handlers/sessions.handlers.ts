@@ -51,6 +51,7 @@ import {
   isQuestionMenuOnScreen,
   questionContentKey,
 } from "../../services/questions/detectQuestionFromScreen";
+import { detectShellPrompt } from "../../services/questions/detectShellPrompt";
 import { parseStatusLine } from "../../services/questions/parseStatusLine";
 import { permissionAnswerKeys } from "../../services/questions/permissionAnswerKeys";
 import { resolveAnswer } from "../../services/questions/resolveAnswer";
@@ -1759,8 +1760,14 @@ export class SessionHandlers {
   private async permissionGateStillOpen(sessionId: string, contentKey: string): Promise<boolean> {
     if (!this.ptyManager.hasSession(sessionId)) return true;
     try {
-      const onScreen = scrapePermissionGate(await this.ptyManager.getOutputLines(sessionId, 60));
-      return onScreen !== null && permissionGateKey(onScreen) === contentKey;
+      const lines = await this.ptyManager.getOutputLines(sessionId, 60);
+      // Both producers of a Claude-session gate, not just the box scraper: a
+      // card raised by detectShellPrompt (`read -p "[y/N]"`, "press Enter") is
+      // never a Claude box, so checking scrapePermissionGate alone refused every
+      // answer to one as closed and its Continue could never write the \r.
+      return [scrapePermissionGate(lines), detectShellPrompt(lines)].some(
+        (onScreen) => onScreen !== null && permissionGateKey(onScreen) === contentKey,
+      );
     } catch {
       return true;
     }
@@ -1772,15 +1779,20 @@ export class SessionHandlers {
    * is pty-manager's own "box is still painted" rule (either detector sees a
    * gate), so this never retires an entry the detector would have kept — which
    * also means a numbered list left in prose reads as painted and keeps
-   * refusing, the safe side. Best-effort in the direction opposite to the
-   * answer routes: this may only UNBLOCK input, so a session with no PTY, or a
-   * read that fails, reports a gate.
+   * refusing, the safe side. A shell prompt counts too: pty-manager raises it
+   * as a card, and composer text typed over a `[y/N]` answers it. Best-effort
+   * in the direction opposite to the answer routes: this may only UNBLOCK
+   * input, so a session with no PTY, or a read that fails, reports a gate.
    */
   private async anyPermissionGateOnScreen(sessionId: string): Promise<boolean> {
     if (!this.ptyManager.hasSession(sessionId)) return true;
     try {
       const lines = await this.ptyManager.getOutputLines(sessionId, 60);
-      return detectGateScreen(lines) !== null || scrapePermissionGate(lines) !== null;
+      return (
+        detectGateScreen(lines) !== null ||
+        scrapePermissionGate(lines) !== null ||
+        detectShellPrompt(lines) !== null
+      );
     } catch {
       return true;
     }
