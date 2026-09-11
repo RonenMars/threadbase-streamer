@@ -126,6 +126,35 @@ describe("ManagedSessionsRepository", () => {
     expect(repo.get("sess-1")?.failure_reason).toBe("binary not found");
   });
 
+  it("keeps the prompt count and last activity when a later write omits them", () => {
+    const lastActivityAt = new Date(STARTED.getTime() + 1_000);
+    repo.recordSpawn({
+      session: mkSession({ lastActivityAt }),
+      pid: 1,
+      cmdline: "c",
+      streamerInstanceId: "inst-a",
+    });
+    // The reconciler's terminal write knows only that the session is done. It
+    // used to store 0 prompts and no activity, so a prompted session read as
+    // never used.
+    repo.recordStatus("sess-1", "idle", "reconcile", { completedAt: new Date() });
+
+    expect(repo.get("sess-1")?.prompt_count).toBe(3);
+    expect(repo.get("sess-1")?.last_activity_at).toBe(lastActivityAt.getTime());
+  });
+
+  it("still writes an explicit zero prompt count", () => {
+    repo.recordSpawn({
+      session: mkSession(),
+      pid: 1,
+      cmdline: "c",
+      streamerInstanceId: "inst-a",
+    });
+    repo.recordStatus("sess-1", "running", "transition", { promptCount: 0 });
+
+    expect(repo.get("sess-1")?.prompt_count).toBe(0);
+  });
+
   describe("listNonTerminal", () => {
     it("returns only sessions with no recorded completion", () => {
       repo.recordSpawn({

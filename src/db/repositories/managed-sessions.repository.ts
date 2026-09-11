@@ -129,14 +129,17 @@ export class ManagedSessionsRepository {
     // recordSpawn — the only other writer of the column — so without a second
     // write path the registry could never hold a name at all, and every
     // recovered session came back unnamed.
+    //
+    // last_activity_at and prompt_count follow the same rule: a caller that
+    // knows only the status (the reconciler) must not zero what it never read.
     this.updateStatusStmt = db.prepare(`
       UPDATE managed_sessions
          SET status = @status,
              status_source = @status_source,
              status_updated_at = @status_updated_at,
              completed_at = @completed_at,
-             last_activity_at = @last_activity_at,
-             prompt_count = @prompt_count,
+             last_activity_at = COALESCE(@last_activity_at, last_activity_at),
+             prompt_count = COALESCE(@prompt_count, prompt_count),
              failure_reason = COALESCE(@failure_reason, failure_reason),
              session_name = COALESCE(@session_name, session_name)
        WHERE session_id = @session_id
@@ -253,7 +256,7 @@ export class ManagedSessionsRepository {
       status_updated_at: Date.now(),
       completed_at: fields.completedAt?.getTime() ?? null,
       last_activity_at: fields.lastActivityAt?.getTime() ?? null,
-      prompt_count: fields.promptCount ?? 0,
+      prompt_count: fields.promptCount ?? null,
       failure_reason: fields.failureReason ?? null,
       session_name: fields.sessionName ?? null,
     });
