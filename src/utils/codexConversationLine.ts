@@ -50,8 +50,13 @@ const KNOWN_CODEX_TYPES = new Set(["response_item", "event_msg", "session_meta",
  * Distinguishes "recognized, deliberately not rendered" (`ignored`) from "this
  * adapter has never seen this shape" (`unknown`). Both were `null` before, which
  * is why provider schema drift used to surface as an empty screen with no error.
+ *
+ * `index` is the line's message_index in its FILE, which is what the leading-turn
+ * bound needs. The default of 0 treats an unknown position as leading, so a
+ * caller that cannot say keeps the injected-context filter rather than
+ * rendering a fake AGENTS.md bubble.
  */
-export function classifyCodexLine(line: string): NormalizeResult {
+export function classifyCodexLine(line: string, index = 0): NormalizeResult {
   let entry: {
     type?: string;
     timestamp?: string;
@@ -100,8 +105,9 @@ export function classifyCodexLine(line: string): NormalizeResult {
 
   // Synthetic Codex context dumps (AGENTS.md / permissions instructions) are
   // written as `role: user` before any real user turn. Hide them from the live
-  // overlay so the chat doesn't open with fake user bubbles.
-  if (role === "user" && isCodexInjectedContext(text)) {
+  // overlay so the chat doesn't open with fake user bubbles — but only at the
+  // head, the same bound REST applies, or a user's pasted text vanishes live.
+  if (isLeadingInjectedContext(index, role, text)) {
     return { kind: "ignored", reason: "synthetic injected context" };
   }
 
@@ -116,8 +122,8 @@ export function classifyCodexLine(line: string): NormalizeResult {
  * New code should prefer classifyCodexLine, which explains WHY a line produced
  * nothing.
  */
-export function normalizeCodexLineToClaudeShape(line: string): string | null {
-  const result = classifyCodexLine(line);
+export function normalizeCodexLineToClaudeShape(line: string, index = 0): string | null {
+  const result = classifyCodexLine(line, index);
   return result.kind === "message" ? result.line : null;
 }
 
@@ -167,16 +173,29 @@ export function isCodexRolloutLine(line: string): boolean {
  * Map a batch of raw JSONL lines to client-facing lines. Codex batches are
  * normalized (and filtered); Claude batches pass through unchanged so seq
  * alignment is preserved.
+ *
+ * `seqs` are the offset index's message_index per line (extendMessageIndex),
+ * and they are the only position this batch can be trusted with: a batch is one
+ * watcher read, which may start anywhere in the file, so "first in batch" is not
+ * "first in conversation". The index numbers from its persisted
+ * last_message_index and declines a read that does not start where it left off,
+ * so a seq is a file position, never a batch-relative guess. A line with no seq
+ * (the index dropped it, cannot index this file, or declined the read) falls
+ * back to leading, which keeps the injected-context filter.
  */
-export function toClientConversationLines(lines: string[]): string[] {
+export function toClientConversationLines(
+  lines: string[],
+  seqs?: (number | null)[] | null,
+): string[] {
   if (lines.length === 0) return lines;
   // Heuristic: if any line in the batch is Codex-shaped, treat the whole batch
   // as Codex (a mixed batch shouldn't happen — one file, one provider).
   const codex = lines.some(isCodexRolloutLine);
   if (!codex) return lines;
+  const positions = seqs?.length === lines.length ? seqs : null;
   const out: string[] = [];
-  for (const line of lines) {
-    const normalized = normalizeCodexLineToClaudeShape(line);
+  for (const [i, line] of lines.entries()) {
+    const normalized = normalizeCodexLineToClaudeShape(line, positions?.[i] ?? 0);
     if (normalized) out.push(normalized);
   }
   return out;

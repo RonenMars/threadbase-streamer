@@ -2747,7 +2747,7 @@ export class StreamerServer {
     lines: string[],
     seqs?: (number | null)[] | null,
   ): void {
-    const clientLines = toClientConversationLines(lines);
+    const clientLines = toClientConversationLines(lines, seqs);
     if (clientLines.length === 0) return;
     const seqsOk = !!seqs && seqs.length === lines.length && clientLines.length === lines.length;
     this.wsHub.broadcast({
