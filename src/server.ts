@@ -577,6 +577,7 @@ export class StreamerServer {
       featureFlags: () => this.featureFlags,
       autoResumeOnBoot: () => this.autoResumeOnBoot,
       managedSessionsRepo: () => this.managedSessionsRepo,
+      cache: () => this.cache,
       streamerInstanceId: this.streamerInstanceId,
       sessionVerdicts: this.sessionVerdicts,
       selfPtyEndedAt: this.selfPtyEndedAt,

@@ -348,7 +348,8 @@ describe("pty-host reconnect on boot", () => {
       projectPath: projectDir,
       projectName: "project",
     });
-    seedRegistry([session]);
+    // A prompted session: a never-prompted one is forgotten at boot, not stubbed.
+    seedRegistry([{ ...session, promptCount: 1 }]);
     first.dispose();
     host?.dispose();
     await closeSocketServer();
