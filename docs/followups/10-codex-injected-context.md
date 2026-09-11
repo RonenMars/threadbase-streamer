@@ -117,6 +117,16 @@ Streamer, if and when the heuristic is de-duplicated:
    ```
 
    then restart. Measured on one machine: 379 stale previews → 1 in about 40 seconds, with visibility, subagent and empty-history counts identical before and after. The single survivor is a rollout containing *only* the injected turn, which now yields no meta at all, so its old row is never overwritten — harmless, because `has_messages = 0` keeps it out of every list.
+4b. **Clearing the token is necessary but may not be sufficient — the restart is not always the trigger.** On the macOS box the reparse followed the restart on its own. On the Windows box it did not: after the clear and a full `Stop-ScheduledTask` / `Start-ScheduledTask`, `scanner_meta_json` stayed `NULL` for all 32 Codex rows and the stale count sat at 16 for four minutes with no movement. The boot warm-up scan does not reconcile these rows. What does is a background full rescan with writeback, reached from the count endpoint:
+
+   ```
+   GET /api/conversations/count?refresh=1
+   ```
+
+   `refresh=1` sets `bustCache`, which calls `refreshCountInBackground()` → `scannerManager.getFresh()` + `cache.upsertFromScannerMeta(...)` (`src/api/handlers/conversations.handlers.ts:316,333`). One call converged 16 stale previews → 0 and 0/32 → 32/32 rescanned in about 15 seconds.
+
+   Verify the scanner before suspecting it. Run the installed build directly against one affected rollout — `new ConversationScanner({ persistent: false }).scan({ providers: ["claude-code", "codex-cli"], codexRoots: [~/.codex/sessions] })` — and read the preview it returns. Correct output there means the gap is writeback, not parsing, which is what points at this step rather than at the dependency.
+
 5. Streamer de-duplication of the heuristic, whenever convenient. Optional.
 
 The dependency-bump-as-its-own-change discipline from [09](09-scanner-subagent-identity.md) still applies whenever a scanner change lands as a **minor**, because then the range must be edited and a behaviour shift has to be bisectable. A patch inside the existing range is a different case: nothing is edited, so there is no bump commit to isolate.
