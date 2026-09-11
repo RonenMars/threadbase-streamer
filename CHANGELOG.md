@@ -1,3 +1,9 @@
+## [1.89.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.6...v1.89.7) (2026-09-11)
+
+### Bug Fixes
+
+* **ci:** wait for npm to serve a version before bumping to it ([#858](https://github.com/RonenMars/threadbase-streamer/issues/858)) ([fefcf85](https://github.com/RonenMars/threadbase-streamer/commit/fefcf8557c5b549786066ea1d8591976466616f2)), closes [threadbase-scanner#87](https://github.com/RonenMars/threadbase-scanner/issues/87)
+
 ## [1.89.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.5...v1.89.6) (2026-09-10)
 
 ### Bug Fixes
