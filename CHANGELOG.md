@@ -1,3 +1,9 @@
+## [1.89.10](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.9...v1.89.10) (2026-09-11)
+
+### Bug Fixes
+
+* **codex:** index rollouts in the space the API serves them in ([#862](https://github.com/RonenMars/threadbase-streamer/issues/862)) ([816290d](https://github.com/RonenMars/threadbase-streamer/commit/816290d690ae29cb2fb368f6b32a843c94915287)), closes [#824](https://github.com/RonenMars/threadbase-streamer/issues/824)
+
 ## [1.89.9](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.8...v1.89.9) (2026-09-11)
 
 ### Bug Fixes
