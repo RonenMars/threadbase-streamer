@@ -1,3 +1,9 @@
+## [1.89.9](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.8...v1.89.9) (2026-09-11)
+
+### Bug Fixes
+
+* **sessions:** forget never-prompted sessions at boot instead of rehydrating them ([#861](https://github.com/RonenMars/threadbase-streamer/issues/861)) ([df2ce1f](https://github.com/RonenMars/threadbase-streamer/commit/df2ce1f8f32f764c4cbc645629bfdb9a69e941f8))
+
 ## [1.89.8](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.7...v1.89.8) (2026-09-11)
 
 ### Bug Fixes
