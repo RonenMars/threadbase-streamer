@@ -70,29 +70,52 @@ jobs:
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "Target: $version. Current spec: $current."
 
-      - name: Wait for the version to be servable by the registry
+      - name: Wait until the version is installable
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          # The publishing repo dispatches this event from its release job, which
-          # can win the race against npm actually serving the new version — the
-          # bump below then dies with ETARGET on a version that exists moments
-          # later. Observed 2026-09-11: scanner 0.17.2 dispatched, `npm install`
-          # failed "No matching version found", and the same version resolved
-          # fine minutes afterwards.
+          # The publishing repo dispatches this event from its release job, so
+          # the bump can reach npm before npm will serve what was just
+          # published. Observed 2026-09-11: scanner 0.17.2 dispatched, the bump
+          # died with ETARGET "No matching version found", and the same version
+          # installed fine minutes later.
           #
-          # --prefer-online matters: without it npm can answer from a cached
-          # negative lookup and the poll would spin until timeout even after the
-          # version is live.
-          for i in $(seq 1 30); do
-            if npm view "@threadbase-sh/scanner@${VERSION}" version --prefer-online >/dev/null 2>&1; then
-              echo "available after $(( (i - 1) * 10 ))s"
-              exit 0
+          # Probed over plain HTTP rather than with `npm view`, on purpose. The
+          # documented cause of post-publish ETARGET is npm's own packument
+          # cache serving a copy fetched before the publish (npm/cli#7604, whose
+          # logs read "cache-miss" then "cache stale"; npm's fix is described as
+          # "bypass packument cache to prevent ETARGET errors after publish").
+          # A poll built on `npm view` can cache a packument without the new
+          # version on its FIRST attempt and be answered from it on every retry,
+          # spinning the whole timeout after the version went live.
+          # `--prefer-online` is meant to revalidate, but that issue never
+          # tested it, so this does not rest on it.
+          #
+          # Metadata and tarball availability are separate: a 200 on the version
+          # document does not mean the CDN serves the bytes yet, and the bytes
+          # are what `npm install` needs. Both are checked.
+          #
+          # Bounded on purpose. If the version never appears, that is a real
+          # release failure and this must go red rather than silently skip —
+          # skipping is what this workflow used to do before the dispatch
+          # carried a version, and it left the dependency stale with nothing
+          # signalling it.
+          MAX=60
+          for i in $(seq 1 "$MAX"); do
+            meta=$(curl -fsS --max-time 20 "https://registry.npmjs.org/@threadbase-sh%2Fscanner/${VERSION}" 2>/dev/null) || meta=""
+            if [ -n "$meta" ]; then
+              tarball=$(printf '%s' "$meta" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).dist.tarball||"")}catch{}})')
+              if [ -n "$tarball" ] && curl -fsI --max-time 20 "$tarball" >/dev/null 2>&1; then
+                echo "installable after $(( (i - 1) * 10 ))s"
+                exit 0
+              fi
+              echo "metadata is live but the tarball is not servable yet ($i/$MAX)"
+            else
+              echo "not on the registry yet ($i/$MAX)"
             fi
-            echo "not on the registry yet; retrying in 10s ($i/30)"
-            sleep 10
+            [ "$i" -lt "$MAX" ] && sleep 10
           done
-          echo "::error::@threadbase-sh/scanner@${VERSION} never appeared on the registry after 5 minutes"
+          echo "::error::@threadbase-sh/scanner@${VERSION} never became installable after $(( MAX * 10 ))s"
           exit 1
 
       - name: Bump dependency and refresh lockfile
@@ -100,29 +123,6 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          # The dispatch carries the version the scanner just published, which
-          # can be seconds ahead of what the npm registry serves — its read path
-          # is eventually consistent. Installing it immediately then fails with
-          # ETARGET ("No matching version found") for a version that is
-          # genuinely being published. Wait the propagation out rather than
-          # failing the bump on it.
-          #
-          # Bounded on purpose: if the version never appears, that is a real
-          # release failure and this must go red rather than silently skip, which
-          # is the behaviour this workflow had before the dispatch carried a
-          # version at all.
-          for attempt in 1 2 3 4 5 6; do
-            if npm view "@threadbase-sh/scanner@${VERSION}" version >/dev/null 2>&1; then
-              echo "${VERSION} is available (attempt ${attempt})."
-              break
-            fi
-            if [ "${attempt}" = "6" ]; then
-              echo "::error::${VERSION} never appeared on the registry after ~150s"
-              exit 1
-            fi
-            echo "${VERSION} not on the registry yet — retrying in 30s (attempt ${attempt}/6)."
-            sleep 30
-          done
           # Default (caret) save so the pin matches the repo convention of a
           # ^range for the threadbase-sh deps, not an exact version.
           npm install "@threadbase-sh/scanner@${VERSION}" --no-audit --no-fund
