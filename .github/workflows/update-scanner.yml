@@ -70,6 +70,31 @@ jobs:
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "Target: $version. Current spec: $current."
 
+      - name: Wait for the version to be servable by the registry
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # The publishing repo dispatches this event from its release job, which
+          # can win the race against npm actually serving the new version — the
+          # bump below then dies with ETARGET on a version that exists moments
+          # later. Observed 2026-09-11: scanner 0.17.2 dispatched, `npm install`
+          # failed "No matching version found", and the same version resolved
+          # fine minutes afterwards.
+          #
+          # --prefer-online matters: without it npm can answer from a cached
+          # negative lookup and the poll would spin until timeout even after the
+          # version is live.
+          for i in $(seq 1 30); do
+            if npm view "@threadbase-sh/scanner@${VERSION}" version --prefer-online >/dev/null 2>&1; then
+              echo "available after $(( (i - 1) * 10 ))s"
+              exit 0
+            fi
+            echo "not on the registry yet; retrying in 10s ($i/30)"
+            sleep 10
+          done
+          echo "::error::@threadbase-sh/scanner@${VERSION} never appeared on the registry after 5 minutes"
+          exit 1
+
       - name: Bump dependency and refresh lockfile
         id: bump
         env:
