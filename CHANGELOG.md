@@ -1,3 +1,9 @@
+## [1.89.11](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.10...v1.89.11) (2026-09-11)
+
+### Bug Fixes
+
+* **questions:** claim an unboxed picker at paint time ([#864](https://github.com/RonenMars/threadbase-streamer/issues/864)) ([2c4632d](https://github.com/RonenMars/threadbase-streamer/commit/2c4632d82a331805ba38dc9897a9d29c520aa8d0)), closes [#863](https://github.com/RonenMars/threadbase-streamer/issues/863)
+
 ## [1.89.10](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.9...v1.89.10) (2026-09-11)
 
 ### Bug Fixes
