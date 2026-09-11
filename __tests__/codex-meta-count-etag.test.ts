@@ -222,8 +222,8 @@ describe("meta.message_count counts in the served space", () => {
 
     // The index really is warm over the fork's own file and holds one MORE than
     // the handler may serve from it — the pre-filter space, in one assertion.
-    expect(cache.getIndexedMessageCount(FORK)).toBe(3);
-    expect(cache.readMessageWindow(fork, 0, 80)?.total).toBe(3);
+    expect(cache.getIndexedMessageCount(FORK)).toBe(2);
+    expect(cache.readMessageWindow(fork, 0, 80)?.total).toBe(2);
 
     const { body } = await get(
       makeHandlers({ [PARENT]: parent, [FORK]: fork }, () => own),
@@ -279,7 +279,7 @@ describe("meta.message_count counts in the served space", () => {
     );
     seedMeta(CONV, path, "codex-cli");
     await cache.backfillIndex(path);
-    expect(cache.getIndexedMessageCount(CONV)).toBe(3);
+    expect(cache.getIndexedMessageCount(CONV)).toBe(2);
 
     const parsed: ScannerMessage[] = [
       {
@@ -312,7 +312,7 @@ describe("meta.message_count counts in the served space", () => {
    * greater and would swing `last_updated_at` to the newest SERVED message's
    * timestamp. It must stay on the scanner's conversation timestamp.
    */
-  it("indexTotal is unreachable for Codex, so the index cannot swing meta", async () => {
+  it("a plain Codex rollout is now served from the index, in the served space", async () => {
     const CONV = "rollout-2026-09-06T11-20-26-meta-stale";
     const path = join(dir, `${CONV}.jsonl`);
     writeFileSync(
@@ -327,10 +327,12 @@ describe("meta.message_count counts in the served space", () => {
     seedMeta(CONV, path, "codex-cli");
     await cache.backfillIndex(path);
 
-    // Index total 3 > the stale snapshot's 1: the condition WOULD fire if the
-    // gate ever let a Codex window through.
-    expect(cache.getIndexedMessageCount(CONV)).toBe(3);
-    expect(cache.readMessageWindow(path, 0, 80)?.total).toBe(3);
+    // Index total 2 > the stale snapshot's 1, so the freshness condition fires —
+    // and for a plain Codex rollout the window is now taken. The 2 is the point:
+    // the index holds what the handler serves, not the 3 it used to hold with
+    // the AGENTS.md line counted.
+    expect(cache.getIndexedMessageCount(CONV)).toBe(2);
+    expect(cache.readMessageWindow(path, 0, 80)?.total).toBe(2);
 
     const stale: ScannerMessage[] = [
       { role: "user", text: "stale snapshot", timestamp: "2026-09-06T09:00:00.000Z" },
@@ -344,10 +346,16 @@ describe("meta.message_count counts in the served space", () => {
       CONV,
     );
 
-    // Served from the scanner, not the index — so meta tracks the scanner.
-    expect(texts(body)).toEqual(["stale snapshot"]);
-    expect(body.meta.last_updated_at).toBe("2026-09-06T17:32:10.000Z");
-    expect(body.meta.message_count).toBe(1);
+    // Served from the INDEX, which is fresher than the scanner's snapshot — the
+    // case the index exists for. Before this, #824's gate forced Codex onto the
+    // scanner and a live rollout served a stale body.
+    //
+    // The body is the real turns WITHOUT the AGENTS.md line: proof the index and
+    // the handler now number this file the same way. If the writer's filter were
+    // dropped, this would read ["# AGENTS.md…", "real question", "real answer"].
+    expect(texts(body)).toEqual(["real question", "real answer"]);
+    expect(body.messages.map((m: { message_index: number }) => m.message_index)).toEqual([0, 1]);
+    expect(body.meta.message_count).toBe(2);
   });
 });
 
@@ -385,9 +393,9 @@ describe("the ETag stays change-sensitive for a Codex conversation with a warm i
     seedMeta(CONV, path, "codex-cli");
     await cache.backfillIndex(path);
 
-    // Warm, and holding the PRE-filter count — one more than the body serves.
-    // This is the number the ETag reads unguarded by #824's `useOffsetIndex`.
-    expect(cache.getIndexedMessageCount(CONV)).toBe(3);
+    // Warm, and now holding the SERVED count: the index writer drops this
+    // rollout's leading AGENTS.md line the same way the handler does.
+    expect(cache.getIndexedMessageCount(CONV)).toBe(2);
     expect(cache.readMessageWindow(path, 0, 80)).not.toBeNull();
 
     // The scanner snapshot the handler will see, grown between requests the way
@@ -422,7 +430,7 @@ describe("the ETag stays change-sensitive for a Codex conversation with a warm i
       { role: "user", text: "one more question", timestamp: "2026-09-06T11:00:03.000Z" },
     ];
     convTimestamp = "2026-09-06T11:00:03.000Z";
-    expect(cache.getIndexedMessageCount(CONV)).toBe(4);
+    expect(cache.getIndexedMessageCount(CONV)).toBe(3);
 
     // The whole point of a validator: the client's old tag must NOT satisfy it.
     const grown = await get(handlers, CONV, { ifNoneMatch: first.etag });
@@ -451,7 +459,7 @@ describe("the ETag stays change-sensitive for a Codex conversation with a warm i
     const path = writeRollout();
     seedMeta(CONV, path, "codex-cli");
     await cache.backfillIndex(path);
-    expect(cache.getIndexedMessageCount(CONV)).toBe(3);
+    expect(cache.getIndexedMessageCount(CONV)).toBe(2);
 
     let snapshot: ScannerMessage[] = [injected, q, a];
     let convTimestamp = "2026-09-06T11:00:02.000Z";
@@ -473,7 +481,7 @@ describe("the ETag stays change-sensitive for a Codex conversation with a warm i
       { role: "user", text: "one more question", timestamp: "2026-09-06T11:00:03.000Z" },
     ];
     convTimestamp = "2026-09-06T11:00:03.000Z";
-    expect(cache.getIndexedMessageCount(CONV)).toBe(3);
+    expect(cache.getIndexedMessageCount(CONV)).toBe(2);
 
     const grown = await get(handlers, CONV, { ifNoneMatch: first.etag });
     expect(grown.res.statusCode).toBe(200);

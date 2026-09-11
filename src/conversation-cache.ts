@@ -26,6 +26,7 @@ import {
   isAgentLine,
 } from "./services/conversations/isAgentConversation";
 import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
+import { isLeadingInjectedContext } from "./utils/codexConversationLine";
 import { fileIdentity, type LineSpan, splitCompleteLines } from "./utils/fileIdentity";
 
 export interface ConversationCacheOptions {
@@ -665,19 +666,44 @@ export class ConversationCache {
   private lineParserFor(
     filePath: string,
     resumeState?: JsonlParseState,
-  ): { parse: (text: string) => ConversationMessage | null; state: JsonlParseState | null } | null {
+  ): {
+    parse: (text: string, index: number) => ConversationMessage | null;
+    state: JsonlParseState | null;
+  } | null {
     const row = this.stmts.getProviderByFilePath.get(canonicalizeFilePath(filePath)) as
       | { provider: string | null }
       | undefined;
     if (!row) return null;
     const provider = row.provider ?? CLAUDE_CODE_PROVIDER;
     if (provider === CODEX_CLI_PROVIDER) {
-      return { parse: (text) => parseCodexJsonlLine(text), state: null };
+      // The scanner's line parser is deliberately unfiltered — it is stateless, so
+      // it cannot know whether a line is the LEADING turn, which is the bound its
+      // own message counter applies. The index numbers messages itself, so the
+      // bound belongs here. Without it the index counts Codex's AGENTS.md /
+      // sandbox preamble that the detail handler drops, and the two end up
+      // numbering the same file differently — which is what #824 had to gate
+      // around.
+      //
+      // `index` is the message_index this line would receive, passed by both
+      // writers from persisted state (runBackfill's counter, extendMessageIndex's
+      // last_message_index + 1), so it stays correct when an append resumes
+      // mid-file. A closure counter would reset on resume and silently unbound
+      // the filter.
+      return {
+        parse: (text, index) => {
+          const msg = parseCodexJsonlLine(text);
+          if (!msg) return null;
+          return isLeadingInjectedContext(index, msg.role, msg.text) ? null : msg;
+        },
+        state: null,
+      };
     }
     if (provider !== CLAUDE_CODE_PROVIDER) return null;
     // `state` is returned so the incremental writer can persist it per file:
     // a later append must continue this reducer, not restart it.
     const state = resumeState ?? createJsonlParseState();
+    // Claude has no injected-context filter, so it ignores `index`: its raw and
+    // served spaces have always been the same one.
     return { parse: (text) => parseJsonlLine(text, state), state };
   }
 
@@ -740,7 +766,7 @@ export class ConversationCache {
     const seqs: (number | null)[] = [];
 
     for (const span of spans) {
-      const msg = parser.parse(span.text);
+      const msg = parser.parse(span.text, nextIndex);
       if (!msg) {
         seqs.push(null); // summary/sidecar/malformed → no index row, no seq
         continue;
@@ -836,7 +862,7 @@ export class ConversationCache {
 
         const rows: MessageIndexRow[] = [];
         for (const span of spans) {
-          const msg = parser.parse(span.text);
+          const msg = parser.parse(span.text, nextIndex);
           linesSinceYield++;
           if (msg) {
             rows.push({
@@ -987,7 +1013,11 @@ export class ConversationCache {
       for (const row of rows) {
         const buf = Buffer.alloc(row.byte_length);
         readSync(fd, buf, 0, row.byte_length, row.byte_offset);
-        const msg = parser.parse(buf.toString("utf-8"));
+        // Rows already exclude anything the writer filtered, so this is the
+        // post-filter index and re-applying the rule is a no-op on a current
+        // index. It only bites on rows written before the filter existed —
+        // which the index version forces to rebuild anyway.
+        const msg = parser.parse(buf.toString("utf-8"), row.message_index);
         if (msg && row.message_index >= from) messages.push(msg);
       }
     } finally {
