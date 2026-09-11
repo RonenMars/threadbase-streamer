@@ -1,3 +1,9 @@
+## [1.89.8](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.7...v1.89.8) (2026-09-11)
+
+### Bug Fixes
+
+* **ci:** wait for the scanner version to reach the registry before installing ([#859](https://github.com/RonenMars/threadbase-streamer/issues/859)) ([e559cf7](https://github.com/RonenMars/threadbase-streamer/commit/e559cf723687264fdf2d8c9c39e5d8e3caeb9b1b))
+
 ## [1.89.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.6...v1.89.7) (2026-09-11)
 
 ### Bug Fixes
