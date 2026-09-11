@@ -1,3 +1,9 @@
+## [1.89.13](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.12...v1.89.13) (2026-09-11)
+
+### Bug Fixes
+
+* **codex:** bound the live overlay's injected-context filter to the leading turn ([#866](https://github.com/RonenMars/threadbase-streamer/issues/866)) ([4e3ccda](https://github.com/RonenMars/threadbase-streamer/commit/4e3ccdac67500778ad27ad5e1050ed4d501058ef)), closes [#862](https://github.com/RonenMars/threadbase-streamer/issues/862) [#862](https://github.com/RonenMars/threadbase-streamer/issues/862)
+
 ## [1.89.12](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.11...v1.89.12) (2026-09-11)
 
 ### Bug Fixes
