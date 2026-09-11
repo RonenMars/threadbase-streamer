@@ -9,6 +9,7 @@
  * `event_msg` copies of each turn and `developer` role payloads).
  */
 
+import { isCodexInjectedContext as isCodexFormatPreamble } from "@threadbase-sh/scanner";
 import type { NormalizeResult } from "../services/providers/capabilities";
 
 type CodexContentBlock = {
@@ -181,28 +182,52 @@ export function toClientConversationLines(lines: string[]): string[] {
   return out;
 }
 
-export function isCodexInjectedContext(text: string): boolean {
-  // AGENTS.md / instruction dumps Codex prepends as the first "user" turn.
-  if (text.startsWith("# AGENTS.md") || text.includes("<INSTRUCTIONS>")) return true;
-  // Permissions / sandbox preamble sometimes arrives as a giant user-role blob.
-  if (
-    text.startsWith("<permissions instructions>") ||
-    text.includes("Filesystem sandboxing defines")
-  ) {
-    return true;
-  }
-  // Streamer-injected prompts passed as Codex CLI argv (no --system-prompt flag).
-  // DEFAULT_SYSTEM_PROMPT + BROWSE_SYSTEM_PROMPT land as role:user in the rollout.
+/**
+ * Prompts THIS server injects, passed as Codex CLI argv because there is no
+ * --system-prompt flag. DEFAULT_SYSTEM_PROMPT + BROWSE_SYSTEM_PROMPT land in the
+ * rollout as `role: user`.
+ *
+ * Deliberately NOT in the scanner: recognising our own output is not Codex
+ * format knowledge, and a general rollout reader has no business knowing what
+ * this server says.
+ */
+function isStreamerInjectedPrompt(text: string): boolean {
   if (text.includes("limit the options to at most 3")) return true;
   if (text.includes("You are working within the project boundary:")) return true;
-  if (
-    text.includes(
-      "Do not read, write, or execute commands that access files or directories outside this boundary",
-    )
-  ) {
-    return true;
-  }
-  return false;
+  return text.includes(
+    "Do not read, write, or execute commands that access files or directories outside this boundary",
+  );
+}
+
+/**
+ * Text that is machinery rather than a turn the user typed.
+ *
+ * Two concerns, one question. The Codex-format preambles (AGENTS.md dumps,
+ * sandbox blobs) come from the scanner, which owns the rollout format and
+ * applies the same predicate when it counts messages — importing it is what
+ * keeps its index space and ours identical. The argv prompts above are ours.
+ *
+ * Callers MUST bound this to the leading turn (see isLeadingInjectedContext).
+ */
+export function isCodexInjectedContext(text: string): boolean {
+  return isCodexFormatPreamble(text) || isStreamerInjectedPrompt(text);
+}
+
+/**
+ * The form every caller should actually use.
+ *
+ * Codex only injects at the head of a rollout, so the skip is bounded to the
+ * leading turn — otherwise a human who pastes instruction text mid-conversation
+ * has their message silently eaten, and message_count stops matching what they
+ * can see. The scanner bounds it the same way (`acc.messageCount === 0`), and
+ * the two must agree or the index counts in a different space than we serve.
+ */
+export function isLeadingInjectedContext(
+  index: number,
+  role: string,
+  text: string | undefined,
+): boolean {
+  return index === 0 && role === "user" && typeof text === "string" && isCodexInjectedContext(text);
 }
 
 function hashPrefix(text: string): string {

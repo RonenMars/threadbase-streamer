@@ -42,7 +42,7 @@ import {
 } from "../../services/search/searchQuery";
 import type { SessionStore } from "../../session-store";
 import type { ManagedSession, ServerWarmupState } from "../../types";
-import { isCodexInjectedContext } from "../../utils/codexConversationLine";
+import { isLeadingInjectedContext } from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
 import { createScanProgressThrottle } from "../../utils/scanProgressThrottle";
 import type { WSHub } from "../../ws-hub";
@@ -952,20 +952,15 @@ export class ConversationHandlers {
     // Fold the offset index's count into the validator: when the index is
     // fresher than the scanner snapshot (a live/appended file), the ETag must
     // change so a client holding the old tail doesn't get a 304 against grown
-    // content. Cheap count lookup, and deliberately NOT behind the
-    // `useOffsetIndex` gate the window read below sits behind — since #824 a
-    // Codex rollout is served from the scanner, so there is no window read here
-    // to share this number with, and for Codex it feeds nothing but the tag.
+    // content. Cheap count lookup, and the window read below now shares it: the
+    // index writer applies the same leading-injected-context rule this handler
+    // does, so for Codex as well as Claude this count sits in the served space
+    // rather than one higher per preamble line.
     //
-    // Reading it unguarded is safe even though for Codex it is a PRE-filter
-    // count, one higher per injected-context line than the body serves: the
-    // input it is maxed against, `etagSource.messageCount`, is the scanner's raw
-    // count in that SAME pre-filter space, and nothing here is compared against
-    // the served post-`isServable` count. A validator only has to CHANGE when
-    // the content does; it does not have to be a meaningful message count. Both
-    // inputs move on an append — the watcher's `extendMessageIndex` reduces
-    // Codex lines with the same `parseCodexJsonlLine` the backfill uses — so an
-    // append cannot leave the tag frozen and hand out a stale 304. Pinned in
+    // It is still only a validator — it has to CHANGE when the content does, not
+    // to be a meaningful message count — and both it and the
+    // `etagSource.messageCount` it is maxed against advance on an append, so the
+    // tag cannot freeze and hand out a stale 304. Pinned in
     // __tests__/codex-meta-count-etag.test.ts.
     const indexedCount =
       etagSource.filePath && this.cache
@@ -1010,8 +1005,19 @@ export class ConversationHandlers {
     // turn. Drop them from the REST payload so the chat opens as user→agent
     // rather than fake-user→fake-user→agent. Heuristic is Codex-specific text;
     // Claude messages never match.
-    const isServable = (m: { role: string; text?: string }) =>
-      !(m.role === "user" && typeof m.text === "string" && isCodexInjectedContext(m.text));
+    //
+    // Bounded to the LEADING turn, matching the scanner's own rule. Unbounded, a
+    // human who pastes instruction text mid-conversation had their message
+    // silently eaten. The bound is also what keeps this list in the same index
+    // space as the offset index, which applies the identical rule at write time.
+    //
+    // The bound is PER FILE, not per served conversation, which is why the two
+    // filter() calls below each get their own index: Codex injects at the head of
+    // every rollout, so a fork's own file has its own preamble at ITS index 0
+    // even though that message sits at index N of the stitched conversation. The
+    // scanner bounds the same way — its accumulator is per file.
+    const isServable = (m: { role: string; text?: string }, i: number) =>
+      !isLeadingInjectedContext(i, m.role, m.text);
 
     // The inherited prefix is filtered SEPARATELY from the conversation's own
     // messages, not because the result differs — concatenating then filtering
@@ -1083,30 +1089,26 @@ export class ConversationHandlers {
       // dropped by a stale upper bound.
       const isTailRequest = !url.searchParams.has("before_index") && !hasAfter && !hasAnchor;
       const indexFilePath = (conversation as { filePath?: string }).filePath;
-      // The offset index counts a Codex rollout in a DIFFERENT index space than
-      // this handler serves it in, so neither its count nor its windows can be
-      // used for one. The index is built with the scanner's parseCodexJsonlLine,
-      // which renders the AGENTS.md / permissions dumps Codex writes as
-      // `role: user`; `isServable` below drops them. Measured on a rollout whose
-      // first turn is an AGENTS.md dump, the same request served two different
-      // conversations depending only on whether the index happened to be warm:
-      // warm gave 3 messages with the dump at message_index 0, cold gave the
-      // real 2 at 0-1. So the dump renders as a user bubble AND every genuine
-      // message shifts by one, which moves what a stored before_index /
-      // after_index / search anchor_index points at.
+      // Two different reasons used to exclude Codex here (#824); only one is
+      // gone.
       //
-      // For a fork it is worse than a shift: the index window covers the fork's
-      // OWN file, so taking it discards `filtered` — the only array carrying the
-      // inherited prefix — and serves 2 messages under a meta claiming 6 with
-      // the divider at index 4.
+      // FIXED: the index counted the AGENTS.md / sandbox preamble this handler
+      // drops, so a window served a fabricated first turn and shifted every
+      // genuine message_index by one. The index writer now applies the same
+      // leading-injected-context rule, so both number a file identically, and
+      // migration 018 drops the pre-filter rows. Plain Codex rollouts get the
+      // fast path back.
       //
-      // Reader-side gate on purpose: nothing is reindexed and no row changes, so
-      // it lifts the day the two spaces agree — either the index is written with
-      // the same filter this handler serves through, or the window is filtered
-      // and recounted on read. Claude is unaffected: its index space and its
-      // served space have always been the same one.
-      const useOffsetIndex = !!indexFilePath && !this.isCodexConversation(id, indexFilePath);
-      if (isTailRequest && useOffsetIndex && indexFilePath && this.cache) {
+      // STILL EXCLUDED: a fork. Its inherited prefix lives in the PARENT's file,
+      // and this window only ever covers `indexFilePath` — the fork's own. Taking
+      // it discards `filtered`, the one array carrying the prefix, which is how a
+      // fork came to serve 2 messages under a meta claiming 6. Agreeing on the
+      // space does not help: the prefix is not in this file to be numbered.
+      // Serving a fork from the index needs a read that spans both files, which
+      // is the split-window read that docs/plans/2026-09-07-inherited-conversation
+      // -history.md records as dropped.
+      const servesInheritedPrefix = !!inherited;
+      if (isTailRequest && !servesInheritedPrefix && indexFilePath && this.cache) {
         const indexed = this.cache.getIndexedMessageCount(
           ConversationCache.conversationIdForFile(indexFilePath),
         );
@@ -1123,10 +1125,10 @@ export class ConversationHandlers {
       // wrong. Only for the linear paging windows (before/after/tail); the
       // anchored-search window keeps using the scanner's reader.
       const indexWindow =
-        scanLimit > 0 && !hasAnchor && useOffsetIndex && indexFilePath && this.cache
+        scanLimit > 0 && !hasAnchor && !servesInheritedPrefix && indexFilePath && this.cache
           ? this.cache.readMessageWindow(indexFilePath, windowStart, beforeIndex)
           : null;
-      if (!indexWindow && useOffsetIndex && indexFilePath && this.cache && !hasAnchor) {
+      if (!indexWindow && !servesInheritedPrefix && indexFilePath && this.cache && !hasAnchor) {
         // The one line that separates a fast fetch from a slow one. A miss
         // means this request falls through to the scanner and re-parses the
         // whole file, which is the entire difference between the 34 ms and
@@ -1300,13 +1302,11 @@ export class ConversationHandlers {
     //
     // Freshness is then carried across as a DELTA rather than by swapping the
     // raw `indexTotal` in for the own half, because only the delta is known to
-    // be filter-free. `indexTotal` is non-null only for CLAUDE — since #824 the
-    // offset index is gated off for Codex (`useOffsetIndex`), and `indexWindow`
-    // is the only thing that sets it — so this term is zero for every Codex
-    // conversation, fork or not, and `metaMessageCount` is simply `total` there.
-    // On the Claude path `isServable` matches nothing (the heuristic is
-    // Codex-specific text) and there is never an inherited prefix, so the delta
-    // is exactly the messages the index has read past the snapshot.
+    // be filter-free. Both `indexTotal` and `total` now count in the served
+    // space for either provider — the index writer applies the same
+    // leading-injected-context rule this handler does — so the delta is exactly
+    // the messages the index has read past the scanner's snapshot, and adding it
+    // cannot reintroduce a preamble line the body does not carry.
     //
     // Equivalent to `indexFresh ? indexTotal : total` on every input reachable
     // today: every Conversation the meta block can see is built with

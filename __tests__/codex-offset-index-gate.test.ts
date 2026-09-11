@@ -149,7 +149,7 @@ const texts = (body: { messages: Array<{ text: string }> }) => body.messages.map
 const indices = (body: { messages: Array<{ message_index: number }> }) =>
   body.messages.map((m) => m.message_index);
 
-describe("a Codex rollout is not served from the offset index", () => {
+describe("a Codex rollout is served from the offset index, in the served space", () => {
   const CONV = "rollout-2026-09-06T11-20-26-injected";
 
   function writeRollout(): string {
@@ -183,11 +183,13 @@ describe("a Codex rollout is not served from the offset index", () => {
     seedMeta(CONV, path, "codex-cli");
     await cache.backfillIndex(path);
 
-    // The index really would serve this window — otherwise the gate below is
-    // untested and this whole test passes for the wrong reason.
-    expect(cache.getIndexedMessageCount(CONV)).toBe(3);
+    // The index really does serve this window, and it now indexes the SAME
+    // messages the handler serves: the AGENTS.md preamble is absent because the
+    // index writer applies the leading-injected-context rule too. Before that it
+    // held 3 rows with the dump at message_index 0, which is what forced #824 to
+    // gate Codex off the index entirely.
+    expect(cache.getIndexedMessageCount(CONV)).toBe(2);
     expect(cache.readMessageWindow(path, 0, 80)?.messages.map((m) => m.text)).toEqual([
-      "# AGENTS.md\n\nproject instructions",
       "real question",
       "real answer",
     ]);
@@ -287,10 +289,13 @@ describe("a fork keeps its inherited history when its own file is indexed", () =
     seedMeta(FORK, fork, "codex-cli");
     await cache.backfillIndex(fork);
 
-    // A warm index over the fork's own file is the precondition for the bug:
-    // its window covers 2 messages and knows nothing of the inherited 4.
-    expect(cache.getIndexedMessageCount(FORK)).toBe(3);
-    expect(cache.readMessageWindow(fork, 0, 80)?.total).toBe(3);
+    // A warm index over the fork's own file is still the precondition for the
+    // bug: its window covers the fork's own turns and knows nothing of the
+    // inherited 4. It now holds 2 rather than 3 — the fork's own file carries an
+    // injected-context line at ITS head, which the index writer drops the same
+    // way the handler does, because Codex injects per rollout file.
+    expect(cache.getIndexedMessageCount(FORK)).toBe(2);
+    expect(cache.readMessageWindow(fork, 0, 80)?.total).toBe(2);
 
     const { body } = await get(makeHandlers({ [PARENT]: parent, [FORK]: fork }, own), FORK);
 
@@ -322,9 +327,11 @@ describe("a fork keeps its inherited history when its own file is indexed", () =
     const fork = writeFork();
     seedMeta(FORK, fork, "codex-cli");
     await cache.backfillIndex(fork);
-    // Warm, and holding one more message than the handler may serve — so this
-    // test fails if the index window is taken, degrade path or not.
-    expect(cache.readMessageWindow(fork, 0, 80)?.total).toBe(3);
+    // Warm, and covering only the fork's OWN file — so this test still fails if
+    // the index window is taken in place of the stitched list, degrade path or
+    // not. The count is the post-filter 2 now that the writer drops this file's
+    // own leading preamble.
+    expect(cache.readMessageWindow(fork, 0, 80)?.total).toBe(2);
 
     // The parent is not locatable — the degrade path, which must survive the
     // gate: a missing source is a diminished conversation, never a failure.
