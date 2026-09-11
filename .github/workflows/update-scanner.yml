@@ -75,6 +75,29 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
+          # The dispatch carries the version the scanner just published, which
+          # can be seconds ahead of what the npm registry serves — its read path
+          # is eventually consistent. Installing it immediately then fails with
+          # ETARGET ("No matching version found") for a version that is
+          # genuinely being published. Wait the propagation out rather than
+          # failing the bump on it.
+          #
+          # Bounded on purpose: if the version never appears, that is a real
+          # release failure and this must go red rather than silently skip, which
+          # is the behaviour this workflow had before the dispatch carried a
+          # version at all.
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "@threadbase-sh/scanner@${VERSION}" version >/dev/null 2>&1; then
+              echo "${VERSION} is available (attempt ${attempt})."
+              break
+            fi
+            if [ "${attempt}" = "6" ]; then
+              echo "::error::${VERSION} never appeared on the registry after ~150s"
+              exit 1
+            fi
+            echo "${VERSION} not on the registry yet — retrying in 30s (attempt ${attempt}/6)."
+            sleep 30
+          done
           # Default (caret) save so the pin matches the repo convention of a
           # ^range for the threadbase-sh deps, not an exact version.
           npm install "@threadbase-sh/scanner@${VERSION}" --no-audit --no-fund
