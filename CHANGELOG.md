@@ -1,3 +1,9 @@
+## [1.89.12](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.11...v1.89.12) (2026-09-11)
+
+### Bug Fixes
+
+* **sessions:** keep prompt count and last activity when a status write omits them ([#865](https://github.com/RonenMars/threadbase-streamer/issues/865)) ([bea2010](https://github.com/RonenMars/threadbase-streamer/commit/bea20104304359f6988d9ddcfed40485065aaf3a))
+
 ## [1.89.11](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.10...v1.89.11) (2026-09-11)
 
 ### Bug Fixes
