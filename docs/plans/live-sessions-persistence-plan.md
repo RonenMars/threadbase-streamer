@@ -289,7 +289,7 @@ Requires `managedSessionsRepo: () => ManagedSessionsRepository | null` on `ApiDe
 | Event | When |
 |---|---|
 | `sessions.rehydrated` | boot, with counts by decision |
-| `sessions.rehydrate_skipped` | per row, with reason (`project_missing`, `too_old`, `agent_exited`, `codex_unbound`) |
+| `sessions.rehydrate_skipped` | per row, with reason (`project_missing`, `too_old`, `agent_exited`, `codex_unbound`, `never_prompted` — row deleted) |
 | `registry.pruned` | retention delete, with count |
 | `registry.probe_truncated` | `listNonTerminal` hit its cap |
 | `sessions.boot_token_mismatch` | probe skipped as pre-reboot |

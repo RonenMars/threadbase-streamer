@@ -118,6 +118,35 @@ describe("rehydrateSkipReason", () => {
     const row = mkRow({ status: "running", status_source: "transition", completed_at: null });
     expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBeNull();
   });
+
+  it("skips a session that was never prompted and has no conversation", () => {
+    // Claude writes the JSONL on the first turn, so an opened-and-abandoned
+    // start has nothing to resume. Stop already forgets these; a restart used
+    // to bring them back on every boot.
+    const row = mkRow({ prompt_count: 0 });
+    const opts = { now: NOW, projectExists: exists, hasConversation: () => false };
+    expect(rehydrateSkipReason(row, opts)).toBe("never_prompted");
+  });
+
+  it("keeps a never-prompted row whose conversation is cached under any of its ids", () => {
+    const cached = new Set(["sess-1", "rollout-9"]);
+    const hasConversation = (id: string) => cached.has(id);
+    for (const over of [
+      {},
+      { session_id: "placeholder", provider: "codex-cli", bound_conversation_id: "rollout-9" },
+      { session_id: "fresh", resumed_from_conversation_id: "sess-1" },
+    ]) {
+      const row = mkRow({ prompt_count: 0, ...over });
+      expect(
+        rehydrateSkipReason(row, { now: NOW, projectExists: exists, hasConversation }),
+      ).toBeNull();
+    }
+  });
+
+  it("keeps a never-prompted row when there is no cache to prove it empty", () => {
+    const row = mkRow({ prompt_count: 0 });
+    expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBeNull();
+  });
 });
 
 describe("rowToStubSession", () => {
@@ -256,6 +285,7 @@ describe("boot rehydration", () => {
       ageMs?: number;
       /** What the session was doing when the streamer stopped it. */
       status?: SessionStatus;
+      promptCount?: number;
     }[],
   ): void {
     const store = RuntimeStore.open(runtimeDbPath);
@@ -271,7 +301,7 @@ describe("boot rehydration", () => {
           status: "running",
           startedAt: new Date(Date.now() - 600_000),
           completedAt: null,
-          promptCount: 4,
+          promptCount: s.promptCount ?? 4,
           lastOutput: "",
           sessionName: s.name ?? "recovered session",
         },
@@ -285,7 +315,7 @@ describe("boot rehydration", () => {
       // row terminal.
       repo.recordStatus(s.id, s.status ?? "idle", "shutdown", {
         completedAt: new Date(Date.now() - (s.ageMs ?? 1_000)),
-        promptCount: 4,
+        promptCount: s.promptCount ?? 4,
       });
     }
     // A shutdown row's status_updated_at is stamped by recordStatus at write
@@ -542,6 +572,33 @@ describe("boot rehydration", () => {
       store.close();
     }
   }, 60_000);
+
+  it("forgets a session that was never prompted instead of listing it", async () => {
+    // Opened on the phone, never typed into, then the streamer restarted: no
+    // transcript exists, so the stub opens on "No messages" and resumes into
+    // nothing. The row goes too, or every later boot re-probes it.
+    const EMPTY = "ffffffff-1111-4222-8333-444444444444";
+    seedRegistry([
+      { id: UUID, projectPath: projectDir },
+      { id: EMPTY, projectPath: projectDir, promptCount: 0 },
+    ]);
+    const { server, port } = await makeServer();
+    try {
+      await seededWhenSettled(port, 1);
+      expect((await listSessions(port)).map((s) => s.id)).not.toContain(EMPTY);
+
+      const store = RuntimeStore.open(runtimeDbPath);
+      try {
+        const repo = new ManagedSessionsRepository(store.getDatabase());
+        expect(repo.get(EMPTY)).toBeNull();
+        expect(repo.get(UUID)).not.toBeNull();
+      } finally {
+        store.close();
+      }
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
 
   // Phase 5: GET /api/sessions shows the outcome; this shows the reasoning.
   // The rows worth explaining are exactly the ones absent from the session list.

@@ -39,6 +39,11 @@ export interface ShouldRehydrateOptions {
   now: number;
   /** Whether the row's project directory still exists on disk. */
   projectExists: (projectPath: string) => boolean;
+  /**
+   * Whether the conversation cache holds a row for this id. Omitted when there
+   * is no cache, which leaves an unprompted row unprovable rather than empty.
+   */
+  hasConversation?: (id: string) => boolean;
 }
 
 /**
@@ -48,7 +53,12 @@ export interface ShouldRehydrateOptions {
  * `GET /api/diagnostics/sessions`, where "my session did not come back" has to
  * be answerable without reading the source.
  */
-export type RehydrateSkipReason = "codex_unbound" | "project_missing" | "too_old" | "agent_exited";
+export type RehydrateSkipReason =
+  | "never_prompted"
+  | "codex_unbound"
+  | "project_missing"
+  | "too_old"
+  | "agent_exited";
 
 /**
  * Should this registry row come back as a recovered session? `null` means yes.
@@ -66,11 +76,27 @@ export type RehydrateSkipReason = "codex_unbound" | "project_missing" | "too_old
  *
  * Plus a fourth that is not a heuristic but an impossibility: a Codex row that
  * never bound its rollout id has no id that can resume it at all (G6).
+ *
+ * And a fifth, checked first because the caller deletes its row rather than
+ * skipping it: a session that was never prompted and has no cached
+ * conversation under any of its ids. Neither provider writes a transcript
+ * before the first turn, so the stub would open on "No messages" and resume
+ * into nothing. Same evidence the stop path's `shouldForgetEmptySession` uses.
  */
 export function rehydrateSkipReason(
   row: ManagedSessionRow,
   opts: ShouldRehydrateOptions,
 ): RehydrateSkipReason | null {
+  const { hasConversation } = opts;
+  if (
+    row.prompt_count === 0 &&
+    hasConversation &&
+    ![row.session_id, row.bound_conversation_id, row.resumed_from_conversation_id].some(
+      (id) => id != null && hasConversation(id),
+    )
+  ) {
+    return "never_prompted";
+  }
   if (resumeIdForRow(row) == null) return "codex_unbound";
   if (!opts.projectExists(row.project_path)) return "project_missing";
   if (opts.now - row.status_updated_at > REHYDRATE_WINDOW_MS) return "too_old";

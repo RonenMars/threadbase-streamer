@@ -1,4 +1,5 @@
 import { existsSync } from "fs";
+import type { ConversationCache } from "./conversation-cache";
 import {
   type ManagedSessionRow,
   type ManagedSessionsRepository,
@@ -47,6 +48,7 @@ export type SessionRegistryBootDeps = {
   featureFlags: () => FeatureFlagValues;
   autoResumeOnBoot: () => boolean;
   managedSessionsRepo: () => ManagedSessionsRepository | null;
+  cache: () => ConversationCache | null;
   streamerInstanceId: string;
   sessionVerdicts: Map<string, ReconcileVerdict>;
   selfPtyEndedAt: Map<string, number>;
@@ -251,6 +253,8 @@ export class SessionRegistryBoot {
       if (!this.featureFlags.sessionRehydration || candidates.length === 0) return candidates;
 
       const verdictById = new Map(verdicts.map((v) => [v.sessionId, v]));
+      const cache = this.deps.cache();
+      const hasConversation = cache ? (id: string) => cache.hasConversation(id) : undefined;
       let rehydrated = 0;
       const skippedBy: Record<string, number> = {};
       for (const row of candidates) {
@@ -258,7 +262,11 @@ export class SessionRegistryBoot {
         // never overwrite it.
         if (this.sessionStore.getManaged(row.session_id)) continue;
 
-        const skip = rehydrateSkipReason(row, { now, projectExists: existsSync });
+        const skip = rehydrateSkipReason(row, {
+          now,
+          projectExists: existsSync,
+          hasConversation,
+        });
         if (skip) {
           skippedBy[skip] = (skippedBy[skip] ?? 0) + 1;
           // Per row, not just counted: "my session did not come back" is the
@@ -268,6 +276,10 @@ export class SessionRegistryBoot {
             sessionId: row.session_id,
             reason: skip,
           });
+          // The one skip that deletes. A session killed by a restart rather than
+          // a stop never reached `forgetSession`, and its row is never terminal,
+          // so without this every later boot re-probes it.
+          if (skip === "never_prompted") this.managedSessionsRepo.delete(row.session_id);
           continue;
         }
 
