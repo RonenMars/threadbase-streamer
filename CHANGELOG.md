@@ -1,3 +1,9 @@
+## [1.89.14](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.13...v1.89.14) (2026-09-11)
+
+### Bug Fixes
+
+* **ci:** probe the registry over HTTP, and drop the duplicate wait ([#869](https://github.com/RonenMars/threadbase-streamer/issues/869)) ([f9b121f](https://github.com/RonenMars/threadbase-streamer/commit/f9b121f61d480b6702e87a9d13e18e4c81b7a2a1)), closes [#858](https://github.com/RonenMars/threadbase-streamer/issues/858) [#859](https://github.com/RonenMars/threadbase-streamer/issues/859) [#859](https://github.com/RonenMars/threadbase-streamer/issues/859) [#858](https://github.com/RonenMars/threadbase-streamer/issues/858) [#859](https://github.com/RonenMars/threadbase-streamer/issues/859)
+
 ## [1.89.13](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.12...v1.89.13) (2026-09-11)
 
 ### Bug Fixes
