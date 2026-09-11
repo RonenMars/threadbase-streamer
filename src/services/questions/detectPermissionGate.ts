@@ -251,3 +251,39 @@ export function detectGateScreen(lines: string[]): PermissionGate | null {
   if (!gate.options.some((o) => YES_NO_LABEL_RE.test(o.label))) return null;
   return gate;
 }
+
+// Claude Code's composer draws its "❯" prompt between two full-width ─ rules.
+// A live picker replaces the composer, so a rule below a numbered block means
+// the block is not a picker the user is being asked to answer.
+const COMPOSER_RULE_RE = /^\s*─{8,}\s*$/;
+
+/**
+ * Claim an unboxed numbered picker from rendered screen lines — one that prints
+ * no gate footer, so detectGateScreen never sees it (Claude Code's first-run
+ * theme picker, which follows its options with a preview and a "Syntax theme"
+ * line; #863). The ❯ selection cursor is what separates a live picker from a
+ * numbered list in prose (#821). It is not enough on its own: ❯ is also the
+ * composer's prompt glyph, so typed or pasted "1. …" text renders as a
+ * cursor-marked numbered block between the composer's rules, and an answered
+ * menu stays painted above a live composer (#724). Both leave a composer rule
+ * below the cursor row; a live picker does not. Boxed blocks stay
+ * detectGateScreen's. Pure — no I/O.
+ */
+export function detectPickerScreen(lines: string[]): PermissionGate | null {
+  if (lines.some((l) => ASK_MENU_FOOTER_RE.test(l))) return null;
+  const gate = scrapePermissionGate(lines);
+  if (!gate || gate.cursor === undefined || gate.options.length < 2) return null;
+  let cursorRow = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = OPTION_RE.exec(stripGutter(lines[i]));
+    if (m?.[1] && Number.parseInt(m[2], 10) === gate.cursor) {
+      cursorRow = i;
+      break;
+    }
+  }
+  if (cursorRow < 0 || /^\s*│/.test(lines[cursorRow])) return null;
+  for (let i = cursorRow + 1; i < lines.length; i++) {
+    if (COMPOSER_RULE_RE.test(lines[i])) return null;
+  }
+  return gate;
+}

@@ -328,3 +328,85 @@ describe("PTYManager — paint-time gate detection (no OSC)", () => {
     mgr.dispose();
   });
 });
+
+// #863: an unboxed picker with no gate footer. Claude Code's first-run theme
+// picker follows its options with a preview and a "Syntax theme" line, so
+// neither detectGateScreen nor detectShellPrompt saw it and composer text
+// landed in the picker. Rendered by the RonenMars/threadbase-mobile#953 retest
+// rig (Claude Code 2.1.267, 120x40), from the picker's first line down.
+const THEME_PICKER_PAINT = [
+  " Let's get started.",
+  "",
+  " Choose the text style that looks best with your terminal",
+  " To change this later, run /theme",
+  "",
+  "   1. Auto (match terminal)",
+  " ❯ 2. Dark mode ✔",
+  "   3. Light mode",
+  "   4. Dark mode (colorblind-friendly)",
+  "   5. Light mode (colorblind-friendly)",
+  "   6. Dark mode (ANSI colors only)",
+  "   7. Light mode (ANSI colors only)",
+  "",
+  " ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+  "  1  function greet() {",
+  '  2 -  console.log("Hello, World!");',
+  '  2 +  console.log("Hello, Claude!");',
+  "  3  }",
+  " ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+  "  Syntax theme: Monokai Extended (ctrl+t to disable)",
+].join("\r\n");
+
+// Claude Code 2.1.267's composer holding a pasted two-line numbered message:
+// its ❯ prompt glyph lands on a numbered row between the composer's ─ rules.
+const COMPOSER_RULE = "─".repeat(120);
+const COMPOSER_WITH_NUMBERED_PASTE = [
+  "  earlier output",
+  "",
+  COMPOSER_RULE,
+  "❯\u00a01. do X",
+  "  2. do Y",
+  COMPOSER_RULE,
+  "  ⏵⏵ auto mode on (shift+tab to cycle)",
+].join("\r\n");
+
+const waitForOptions = (gates: Gate[], n: number) =>
+  vi.waitFor(() => expect(gates[gates.length - 1]?.options.length).toBe(n));
+
+describe("PTYManager — paint-time claim of an unboxed picker (#863)", () => {
+  it("claims the theme picker from the paint alone", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+
+    proc._emit("data", THEME_PICKER_PAINT);
+    await waitForOptions(gates, 7);
+
+    expect(gates[gates.length - 1]?.cursor).toBe(2);
+    mgr.dispose();
+  });
+
+  it("does not claim numbered text in the composer, but still claims a real picker", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+    const spy = vi.spyOn(mgr, "getOutputLines");
+    const firstPass = () => spy.mock.calls.findIndex((c) => c[1] === 60);
+
+    proc._emit("data", COMPOSER_WITH_NUMBERED_PASTE);
+    // Wait for the detection pass's own screen read to finish, so this
+    // negative cannot pass merely because detection had not run yet.
+    await vi.waitFor(() => expect(firstPass()).toBeGreaterThanOrEqual(0));
+    await spy.mock.results[firstPass()].value;
+    await settle();
+    expect(gates).toHaveLength(0);
+
+    // Positive control on the same session, once the scrape throttle reopens.
+    await new Promise((r) => setTimeout(r, 310));
+    proc._emit("data", `\x1b[2J\x1b[H${THEME_PICKER_PAINT}`);
+    await waitForOptions(gates, 7);
+    mgr.dispose();
+  });
+});

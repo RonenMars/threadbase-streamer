@@ -8,6 +8,7 @@ import { CLAUDE_CODE_PROVIDER } from "./providers";
 import { createScreen, type InternalSession, loadPty, PTY_ROWS, stripAnsi } from "./pty-shared";
 import {
   detectGateScreen,
+  detectPickerScreen,
   hasPermissionOsc,
   hasWaitingForInputOsc,
   type PermissionGate,
@@ -1012,7 +1013,7 @@ export class PTYManager implements SessionRunner {
       // the gate closed. The end-of-turn notify is checked FIRST and without a
       // prompt-marker requirement: it is the last chunk of the turn, so a gate
       // still waiting on a marker here would never close at all.
-      const gate = detectGateScreen(lines);
+      const gate = detectGateScreen(lines) ?? detectPickerScreen(lines);
       // "Gate is gone" must survive a mid-repaint tick: detectGateScreen needs
       // the footer, which can be briefly absent while the box repaints, and
       // hasPromptMarker matches the box's own ╭/❯ glyphs — together those would
@@ -1041,13 +1042,15 @@ export class PTYManager implements SessionRunner {
       // Paint-time claim: the gate is on screen but Claude's OSC 777 notify
       // (debounced ~6s upstream) hasn't arrived. detectGateScreen anchors on
       // the gate footer + a Yes/No option label so a numbered list in prose
-      // can't open a card. Downstream is the OSC path unchanged — same
-      // broadcast, same dedupe, same close signals. A still-painted box that
-      // arm 2 closed on an EARLIER pass reaches this arm on the very next
-      // trigger-less/throttled tick (arm 3 is an else-if of arm 2, so it can
-      // never run in the SAME pass as the close) — closedGateKey suppresses
-      // reclaiming that exact content until Claude erases the box.
-      const gate = detectGateScreen(lines);
+      // can't open a card; detectPickerScreen claims an unboxed picker with no
+      // footer (a ❯ cursor and no composer below it). Downstream is the OSC
+      // path unchanged — same broadcast, same dedupe, same close signals. A
+      // still-painted box that arm 2 closed on an EARLIER pass reaches this
+      // arm on the very next trigger-less/throttled tick (arm 3 is an else-if
+      // of arm 2, so it can never run in the SAME pass as the close) —
+      // closedGateKey suppresses reclaiming that exact content until Claude
+      // erases the box.
+      const gate = detectGateScreen(lines) ?? detectPickerScreen(lines);
       if (gate) {
         const key = permissionContentKey({ ...gate, cursor: undefined });
         if (this.closedGateKey.get(sessionId) !== key) {
