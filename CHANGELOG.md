@@ -1,3 +1,9 @@
+## [1.90.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.1...v1.90.2) (2026-09-12)
+
+### Bug Fixes
+
+* **sessions:** run the Claude transcript deadline from the turn, not the spawn ([#882](https://github.com/RonenMars/threadbase-streamer/issues/882)) ([a9375ea](https://github.com/RonenMars/threadbase-streamer/commit/a9375eab4e0ab339f7fc1823d7e44cb0ebdd4c91)), closes [#878](https://github.com/RonenMars/threadbase-streamer/issues/878)
+
 ## [1.90.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.0...v1.90.1) (2026-09-12)
 
 ### Bug Fixes
