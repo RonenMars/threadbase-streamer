@@ -184,13 +184,20 @@ describe("Codex active-writer over HTTP", () => {
   async function startServer(name: string) {
     const { StreamerServer } = await import("../src/server");
     process.env.TB_SCANNER_DB = join(codexRoot, `${name}.db`);
+    // Per-server runtime.db, not just a per-server cacheDir. The adopt cases
+    // register a managed session, and runtime.db is the authoritative store
+    // that survives server.close() — so a later server's boot reconcile would
+    // probe the previous case's pid with isPidAlive, tripping a `kill` spy in
+    // a test that never killed anything.
+    const dir = mkdtempSync(join(tmpdir(), `tb-codex-writer-${name}-`));
     const server = new StreamerServer({
       port: 0,
       apiKey: API_KEY,
       localNoAuth: false,
       verbose: false,
       disableDb: true,
-      cacheDir: mkdtempSync(join(tmpdir(), `tb-codex-writer-${name}-`)),
+      cacheDir: dir,
+      runtimeDbPath: join(dir, "runtime.db"),
       scanProfiles: [],
       codexRoots: [codexRoot],
     });
