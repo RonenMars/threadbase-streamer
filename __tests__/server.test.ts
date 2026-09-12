@@ -2938,6 +2938,60 @@ describe("StreamerServer", () => {
       expect(body.messages[0].text).toContain("hello from the cache");
     });
 
+    it("404s instead of serving tail rows that carry neither text nor content", async () => {
+      // Builds before the user/assistant role guard wrote Codex rollout
+      // envelopes into the tail with an empty text and no content blocks.
+      // Serving them is a 200 whose every row renders as nothing, which paints
+      // a blank conversation on the client instead of a handled not-found.
+      const emptyId = "11112222-3333-4444-5555-666677778888";
+      const ghostJsonl = join(cacheDir, `${emptyId}.jsonl`);
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      for (const ts of ["2026-05-20T20:00:00.000Z", "2026-05-20T20:00:01.000Z"]) {
+        cache.updateFromLine(
+          ghostJsonl,
+          JSON.stringify({ role: "user", timestamp: ts, message: { content: [] } }),
+        );
+      }
+      expect(cache.getConversationTail(emptyId)?.messages.length).toBe(2);
+      cache.close();
+
+      const res = await fetch(`${baseUrl}/api/conversations/${emptyId}?msg_limit=80`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("serves only the renderable rows when the tail mixes both", async () => {
+      const mixedId = "99998888-7777-6666-5555-444433332222";
+      const ghostJsonl = join(cacheDir, `${mixedId}.jsonl`);
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      cache.updateFromLine(
+        ghostJsonl,
+        JSON.stringify({
+          role: "user",
+          timestamp: "2026-05-20T20:00:00.000Z",
+          message: { content: [] },
+        }),
+      );
+      cache.updateFromLine(
+        ghostJsonl,
+        JSON.stringify({
+          role: "user",
+          timestamp: "2026-05-20T20:00:01.000Z",
+          message: { content: [{ type: "text", text: "a real message" }] },
+        }),
+      );
+      cache.close();
+
+      const res = await fetch(`${baseUrl}/api/conversations/${mixedId}?msg_limit=80`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { messages: Array<{ text: string }> };
+      expect(body.messages).toHaveLength(1);
+      expect(body.messages[0].text).toContain("a real message");
+    });
+
     it("prunes the ghost cache row when scanner + tail both come up empty", async () => {
       const ghostId = "deadbeef-1111-2222-3333-444455556666";
       const ghostJsonl = join(cacheDir, `${ghostId}.jsonl`); // no file, no tail data

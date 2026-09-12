@@ -573,11 +573,21 @@ export class ConversationHandlers {
       const isFirstLoad = !url.searchParams.has("before_index");
       if (isFirstLoad) {
         const tail = this.cache.getConversationTail(id);
-        if (tail && tail.messages.length > 0) {
+        // A tail row carrying neither text nor content blocks renders as
+        // nothing on a client, so serving it is a 200 that paints a blank
+        // screen — worse than the 404, which clients already handle. Builds
+        // before the user/assistant role guard in ConversationCache wrote
+        // exactly these for Codex rollouts, keying `role` off the envelope
+        // type (event_msg / response_item), and the rows survive for any
+        // conversation whose file has since stopped changing.
+        const usableTail = (tail?.messages ?? []).filter(
+          (m) => (m.text ?? "").length > 0 || (m.content?.length ?? 0) > 0,
+        );
+        if (usableTail.length > 0) {
           const cachedMeta = this.cache.getMetaById(id);
           const cachedProvider = cachedMeta?.provider ?? CLAUDE_CODE_PROVIDER;
           const availability = classifyResumability(cachedMeta?.projectPath);
-          const messagesPayload = tail.messages.map((m, idx) => ({
+          const messagesPayload = usableTail.map((m, idx) => ({
             message_index: idx,
             role: m.role,
             timestamp: m.timestamp,
@@ -603,8 +613,11 @@ export class ConversationHandlers {
             },
             messages: messagesPayload,
             message_pagination: {
-              total: tail.tailSize,
-              before_index: tail.tailSize,
+              // Count what was actually served, not what the tail holds: the
+              // filtered rows are gone from the payload, and a total the page
+              // can't account for is what a client reads as "more to load".
+              total: usableTail.length,
+              before_index: usableTail.length,
               from_index: 0,
               has_more_older: false,
               next_before_index: null,
