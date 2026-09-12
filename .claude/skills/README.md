@@ -21,7 +21,7 @@ The same four operational skills are mirrored under `.agents/skills/` for Codex 
 | [`deploy-menubar`](deploy-menubar/SKILL.md) | Building and launching the menubar Electron app from `vendor/menubar`, after the server is healthy |
 | [`setup-auto-updater`](setup-auto-updater/SKILL.md) | Walking a user through enabling the in-place auto-updater on a deployed streamer |
 | [`setup-cloudflare-tunnel`](setup-cloudflare-tunnel/SKILL.md) | Exposing a local streamer to tb-mobile through a Cloudflare quick-tunnel |
-| [`add-provider`](add-provider/SKILL.md) | Adding a new agent CLI as a live SessionRunner. Phone chips and history indexing live in mobile/scanner companion skills |
+| [`add-provider`](add-provider/SKILL.md) | Adding a new agent CLI as a live SessionRunner. Phone chips and history indexing live in mobile/scanner companion skills — edit all three together |
 
 ## Adding one
 

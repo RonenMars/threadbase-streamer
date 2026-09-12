@@ -19,6 +19,8 @@ Human procedure: [docs/compatibility/adding-a-provider.md](../../../docs/compati
 | Phone chips | [`threadbase-mobile`](https://github.com/RonenMars/threadbase-mobile) | [`.claude/skills/add-provider/SKILL.md`](https://github.com/RonenMars/threadbase-mobile/blob/HEAD/.claude/skills/add-provider/SKILL.md) |
 | History index | [`threadbase-scanner`](https://github.com/RonenMars/threadbase-scanner) | [`.claude/skills/add-provider/SKILL.md`](https://github.com/RonenMars/threadbase-scanner/blob/HEAD/.claude/skills/add-provider/SKILL.md) |
 
+**Keep companions in sync.** These three skills are one workflow. Changing this file (intake rules, wire-name convention, land order, companion links, or out-of-scope) means updating the other two in the same change set — PRs in `threadbase-streamer`, `threadbase-mobile`, and `threadbase-scanner`. Do not leave a companion on stale steps or a moved path.
+
 Streamer-only is a server that accepts the name while the phone never sends it. Land **this PR before mobile**. Do not mix an `@threadbase-sh/scanner` bump into the live-runner PR.
 
 Worktrees are siblings: `git worktree add ../tb-streamer-worktrees/<slug> -b feat/<slug> origin/main`. Never nest under the repo root.

@@ -2,7 +2,7 @@
 
 How to add support for a new agent CLI, and how to keep an existing one working when its vendor changes something.
 
-Agent workflow for *this* repo: [`.claude/skills/add-provider/SKILL.md`](../../.claude/skills/add-provider/SKILL.md). The phone half is `threadbase-mobile` `.claude/skills/add-provider/`; history indexing is `threadbase-scanner` `.claude/skills/add-provider/`. The three `ProviderName` unions are not linked.
+Agent workflow for *this* repo: [`.claude/skills/add-provider/SKILL.md`](../../.claude/skills/add-provider/SKILL.md). The phone half is `threadbase-mobile` `.claude/skills/add-provider/`; history indexing is `threadbase-scanner` `.claude/skills/add-provider/`. The three `ProviderName` unions are not linked. Changing any of those three skills means updating the other two in the same change set.
 
 Background and rationale: [`docs/architecture/2026-07-24-provider-compatibility.md`](../architecture/2026-07-24-provider-compatibility.md).
 
