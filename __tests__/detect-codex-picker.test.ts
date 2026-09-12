@@ -1,18 +1,27 @@
-import { codexScreenShowsReady, detectCodexPicker } from "../src/services/questions/codexScreen";
+import {
+  codexScreenShowsReady,
+  detectCodexPicker,
+  parseCodexNumberedOptions,
+} from "../src/services/questions/codexScreen";
 
 // #868. Captured from codex-cli 0.154.0 spawned as CodexPtyRunner spawns it
 // (`codex --cd <dir> --no-alt-screen`, @xterm/headless at 120x40) against a
 // scratch CODEX_HOME; identical to the screen the streamer rendered live.
 const SIGN_IN_PICKER = [
   "  Welcome to Codex, OpenAI's command-line coding agent",
+  "",
   "  Sign in with ChatGPT to use Codex as part of your paid plan",
   "  or connect an API key for usage-based billing",
+  "",
   "> 1. Sign in with ChatGPT",
   "     Usage included with Plus, Pro, Business, and Enterprise plans",
+  "",
   "  2. Sign in with Device Code",
   "     Sign in from another device with a one-time code",
+  "",
   "  3. Provide your own API key",
   "     Pay for what you use",
+  "",
   "  Press enter to continue",
 ];
 
@@ -26,6 +35,13 @@ const API_KEY_ENTRY = [
 ];
 
 describe("detectCodexPicker", () => {
+  // The first version of this detector passed its test and did nothing live,
+  // because the fixture had been copied from a blank-stripped print of the same
+  // capture. The real rows are separated by a blank line (#868).
+  it("uses a fixture that still has the real blank separator rows", () => {
+    expect(SIGN_IN_PICKER.filter((l) => l.trim() === "").length).toBeGreaterThan(0);
+  });
+
   it("claims the sign-in picker, with the trailing footer as neither prompt nor option", () => {
     const card = detectCodexPicker(SIGN_IN_PICKER);
     expect(card?.options).toEqual([
@@ -85,7 +101,14 @@ describe("detectCodexPicker", () => {
     expect(detectCodexPicker(["  Pick:", "  1. One", "  2. Two"])).toBeNull();
   });
 
-  it("does not claim rows separated by a blank line", () => {
-    expect(detectCodexPicker(["  Pick:", "> 1. One", "", "  2. Two"])).toBeNull();
+  it("does not claim rows separated by more than a description and a blank", () => {
+    const screen = ["  Pick:", "> 1. One", "  why one", "", "  padding prose", "  2. Two"];
+    expect(detectCodexPicker(screen)).toBeNull();
+  });
+
+  // parseCodexNumberedOptions feeds Codex's rate-limit menu card; it accepted
+  // only "›" and so dropped the cursor row of a ">"-painted menu (#868).
+  it("parses every row of the real picker, cursor row included", () => {
+    expect(parseCodexNumberedOptions(SIGN_IN_PICKER).map((o) => o.index)).toEqual([1, 2, 3]);
   });
 });

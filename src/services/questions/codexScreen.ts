@@ -162,9 +162,9 @@ const CODEX_PICKER_ROW_RE = /^\s*([>›❯])?\s*(\d+)\.\s+(.+?)\s*$/;
 // Codex's compose prefix. A picker owns the screen instead of the composer, so
 // a compose line below a numbered block means the block is transcript output.
 const CODEX_COMPOSE_LINE_RE = /^\s*›/;
-// Description rows are indented continuation lines under an option. Two is the
-// most Codex prints; more than that is prose, not a menu.
-const MAX_PICKER_DESCRIPTION_LINES = 2;
+// Lines between two option rows: Codex prints one indented description line
+// and one blank. More than that is prose, not a menu.
+const MAX_PICKER_ROW_GAP = 2;
 
 /**
  * Claim Codex's own numbered picker — the sign-in screen shown before login
@@ -202,11 +202,10 @@ export function detectCodexPicker(lines: string[]): CodexBlockingPrompt | null {
   if (block.length < 2 || block[0].index !== 1) return null;
   if (block.filter((r) => r.cursor).length !== 1) return null;
   for (let i = 1; i < block.length; i++) {
-    const gap = block[i].line - block[i - 1].line - 1;
-    if (gap > MAX_PICKER_DESCRIPTION_LINES) return null;
-    for (let l = block[i - 1].line + 1; l < block[i].line; l++) {
-      if (lines[l].trim() === "") return null; // a blank line ends a menu
-    }
+    // Codex separates its rows with a description line AND a blank line, so a
+    // blank inside the block is normal — rejecting it is what made the first
+    // version of this detector inert against the real screen (#868).
+    if (block[i].line - block[i - 1].line - 1 > MAX_PICKER_ROW_GAP) return null;
   }
   // A compose line below the block means this is transcript output, not a live
   // picker; the composer and a picker never share the screen.
@@ -214,8 +213,13 @@ export function detectCodexPicker(lines: string[]): CodexBlockingPrompt | null {
     if (CODEX_COMPOSE_LINE_RE.test(lines[i])) return null;
   }
 
+  // The intro sits above the block, separated from it by the same blank rows
+  // Codex puts between the options — skip those before collecting it, or the
+  // card carries a placeholder instead of Codex's own words.
+  let above = block[0].line - 1;
+  while (above >= 0 && lines[above].trim() === "") above--;
   const intro: string[] = [];
-  for (let i = block[0].line - 1; i >= 0 && intro.length < 3; i--) {
+  for (let i = above; i >= 0 && intro.length < 3; i--) {
     const t = lines[i].trim();
     if (t === "") break;
     intro.unshift(t);
@@ -233,7 +237,7 @@ export function detectCodexPicker(lines: string[]): CodexBlockingPrompt | null {
 export function parseCodexNumberedOptions(lines: string[]): PermissionOption[] {
   const options: PermissionOption[] = [];
   for (const line of lines) {
-    const m = /^\s*›?\s*(\d+)\.\s+(.+?)\s*$/.exec(line.trimEnd());
+    const m = /^\s*[>›❯]?\s*(\d+)\.\s+(.+?)\s*$/.exec(line.trimEnd());
     if (!m) continue;
     const label = m[2].replace(/\s*\(selected\)\s*$/i, "").trim();
     options.push({ index: Number(m[1]), label, answerKeys: `${m[1]}\r` });
