@@ -1,3 +1,9 @@
+## [1.90.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.16...v1.90.0) (2026-09-12)
+
+### Features
+
+* **deploy:** add deploy:skip-tests to skip lint+tests only ([#875](https://github.com/RonenMars/threadbase-streamer/issues/875)) ([74ca118](https://github.com/RonenMars/threadbase-streamer/commit/74ca118d95776464fe823193b24ebe63791a08fa))
+
 ## [1.89.16](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.15...v1.89.16) (2026-09-12)
 
 ### Bug Fixes
