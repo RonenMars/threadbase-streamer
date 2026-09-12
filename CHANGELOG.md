@@ -1,3 +1,9 @@
+## [1.89.15](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.14...v1.89.15) (2026-09-12)
+
+### Bug Fixes
+
+* **codex:** card Codex's numbered pickers instead of leaving them unanswerable ([#870](https://github.com/RonenMars/threadbase-streamer/issues/870)) ([92877ab](https://github.com/RonenMars/threadbase-streamer/commit/92877ab37cfc9efe17979fb82749c069b4593351)), closes [#868](https://github.com/RonenMars/threadbase-streamer/issues/868)
+
 ## [1.89.14](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.13...v1.89.14) (2026-09-11)
 
 ### Bug Fixes
