@@ -156,13 +156,18 @@ jobs:
   # name is now a slight misnomer (it runs the whole suite, not a smoke
   # subset) and that is the cheaper of the two problems.
   #
-  # Deliberately NOT reusing the run-ci composite action: its cache key has no
-  # OS component, so sharing it would let a Linux node_modules (with Linux
-  # node-pty binaries) restore onto Windows. Separate keys, own steps.
+  # Deliberately NOT reusing the run-ci composite action. Two independent
+  # reasons: its cache key has no OS component, so sharing it would restore
+  # a Linux node_modules (Linux node-pty binaries) onto Windows; and its
+  # install runs lifecycle scripts (needs a compiler), while this job uses
+  # `--ignore-scripts`. Smoke has its own cache, keyed on runner.os + Node +
+  # lockfile. See docs/testing/cross-platform-ci.md.
   smoke:
     name: Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [gate, lint]
+    # Lint is a required check on its own. Waiting for it here only delayed
+    # Windows/macOS by ~30s of PR wall clock; both jobs still have to pass.
+    needs: [gate]
     # Not advisory. A Windows or macOS regression makes the PR fail rather
     # than reporting a green check. Evidence and history:
     # docs/testing/cross-platform-ci.md.
@@ -208,6 +213,18 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
+      # Own key, not run-ci's. runner.os is the whole point: a Linux
+      # node_modules on Windows would "pass" while loading the wrong node-pty.
+      # Save happens after install+patches, before tests, so a red suite still
+      # leaves a warm cache for the next run.
+      - name: Restore node_modules cache
+        if: needs.gate.outputs.skip != 'true'
+        id: cache
+        uses: actions/cache/restore@v5
+        with:
+          path: node_modules
+          key: node-modules-smoke-v1-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('package-lock.json') }}
+
       # --ignore-scripts, then re-run by hand the two scripts that actually
       # matter. Not belt-and-braces: better-sqlite3 v13 declares no `install`
       # script, so npm synthesises `node-gyp rebuild` from its binding.gyp and
@@ -222,14 +239,15 @@ jobs:
       # from an optional platform package, and protobufjs's postinstall only
       # prints version warnings.
       - name: Install
-        if: needs.gate.outputs.skip != 'true'
+        if: needs.gate.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true'
         run: npm ci --ignore-scripts
         shell: bash
 
       # --ignore-scripts also skips our own `prepare`, which is what runs
       # patch-package. Without it qrcode-terminal keeps its legacy \033 octal
       # escapes and the tsup build dies with "Legacy octal escape sequences
-      # cannot be used in strict mode".
+      # cannot be used in strict mode". Always run it: cheap, and a cache hit
+      # whose tree predates a patch change still gets the new patch.
       - name: Apply patches
         if: needs.gate.outputs.skip != 'true'
         run: npx patch-package
@@ -238,11 +256,18 @@ jobs:
       # Likewise our own `postinstall`, which marks node-pty's spawn-helper
       # executable. Without the bit, posix_spawnp fails and every PTY test dies
       # with no useful error. POSIX only — Windows uses conpty and ships no
-      # spawn-helper.
+      # spawn-helper. Always run it: zip/tar restore is not a promise about +x.
       - name: Mark node-pty spawn-helper executable
         if: needs.gate.outputs.skip != 'true' && runner.os != 'Windows'
         run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
         shell: bash
+
+      - name: Save node_modules cache
+        if: needs.gate.outputs.skip != 'true' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: node_modules
+          key: node-modules-smoke-v1-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('package-lock.json') }}
 
       # The FULL suite, not a subset. This used to run a hand-curated allowlist
       # of eight files, which made "not covered on macOS/Windows" the default

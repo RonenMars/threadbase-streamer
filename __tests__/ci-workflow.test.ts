@@ -141,14 +141,43 @@ describe("cross-platform smoke", () => {
 
   // run-ci caches node_modules with no OS component, so reusing it here would
   // restore Linux node-pty binaries onto Windows and "pass" while testing
-  // nothing real.
-  it("installs directly rather than reusing the OS-agnostic cache", () => {
+  // nothing real. Smoke has its own cache; the key must carry runner.os, and
+  // the install on a miss must still be `npm ci --ignore-scripts`.
+  it("does not reuse the OS-agnostic run-ci cache", () => {
     const smoke = WORKFLOW.slice(
       WORKFLOW.indexOf("  smoke:"),
       WORKFLOW.indexOf("  test:", WORKFLOW.indexOf("  smoke:")),
     );
-    expect(smoke).toContain("npm ci");
+    expect(smoke).toContain("npm ci --ignore-scripts");
     expect(smoke).not.toContain("uses: ./.github/actions/run-ci");
+    expect(smoke).not.toMatch(/node-modules-v4-/);
+  });
+
+  it("caches node_modules under an OS-keyed key of its own", () => {
+    const smoke = WORKFLOW.slice(
+      WORKFLOW.indexOf("  smoke:"),
+      WORKFLOW.indexOf("  test:", WORKFLOW.indexOf("  smoke:")),
+    );
+    const keys = [...smoke.matchAll(/key:\s*(node-modules-smoke[^\n]*)/g)].map((m) => m[1].trim());
+    expect(keys.length).toBe(2);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).toContain("runner.os");
+    expect(keys[0]).toContain("matrix.node");
+    expect(keys[0]).toContain("hashFiles('package-lock.json')");
+    expect(keys[0]).toMatch(/^node-modules-smoke-v1-\$\{\{\s*runner\.os\s*\}\}/);
+    expect(smoke).toContain("actions/cache/restore@v5");
+    expect(smoke).toContain("actions/cache/save@v5");
+  });
+
+  // Lint stays a required check. Putting it on smoke.needs only delayed
+  // Windows/macOS by ~30s of PR wall clock after Gate.
+  it("starts after Gate only, not after Lint", () => {
+    const smoke = WORKFLOW.slice(
+      WORKFLOW.indexOf("  smoke:"),
+      WORKFLOW.indexOf("  test:", WORKFLOW.indexOf("  smoke:")),
+    );
+    expect(smoke).toMatch(/needs:\s*\[gate\]/);
+    expect(smoke).not.toMatch(/needs:\s*\[[^\]]*lint/);
   });
 });
 
@@ -201,10 +230,10 @@ describe("release workflow install", () => {
 });
 
 describe("run-ci cache key", () => {
-  // Documents the constraint that forces the smoke job to install directly.
-  // If an OS component is ever added to this key, the smoke job can be
-  // simplified to reuse the action — and this test should be updated then.
-  it("has no OS component, which is why smoke installs its own deps", () => {
+  // Documents the constraint that keeps smoke off this action. Adding an OS
+  // component here is still not enough to share it: run-ci's install runs
+  // lifecycle scripts (needs a compiler); smoke uses --ignore-scripts.
+  it("has no OS component, which is why smoke keeps a separate cache", () => {
     const action = readFileSync(
       join(__dirname, "..", ".github", "actions", "run-ci", "action.yml"),
       "utf8",

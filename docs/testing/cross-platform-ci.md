@@ -19,7 +19,7 @@ A regression in any of those was invisible to a Linux-only matrix until a user h
 
 `smoke` runs on `macos-latest` and `windows-latest`:
 
-1. Installs dependencies **without** lifecycle scripts (`npm ci --ignore-scripts`), then re-runs by hand the two of ours that matter: `npx patch-package`, and a `chmod +x` on node-pty's `spawn-helper` (POSIX only).
+1. Restores an OS-keyed `node_modules` cache, or on a miss installs **without** lifecycle scripts (`npm ci --ignore-scripts`). Then re-runs by hand the two of ours that matter: `npx patch-package`, and a `chmod +x` on node-pty's `spawn-helper` (POSIX only). The miss path saves the cache before tests so a red suite still warms the next run.
 2. Runs `npm test` — the **whole** suite, the same command the Linux `Test` jobs run.
 3. Verifies `require('node-pty')` succeeds.
 
@@ -136,7 +136,11 @@ Eighteen test files already do this. The property that matters is that exclusion
 
 ### Why it does not reuse the `run-ci` action
 
-`run-ci` caches `node_modules` with a key of `node-modules-v4-node<version>-<lockfile hash>` — **no OS component**. Reusing it on Windows would happily restore a Linux `node_modules`, including Linux `node-pty` binaries, and the job would then "pass" while testing nothing real. The smoke job installs directly instead.
+`run-ci` caches `node_modules` with a key of `node-modules-v4-node<version>-<lockfile hash>` — **no OS component**. Reusing it on Windows would happily restore a Linux `node_modules`, including Linux `node-pty` binaries, and the job would then "pass" while testing nothing real.
+
+Smoke therefore keeps its own cache (`node-modules-smoke-v1-<os>-node<version>-<lockfile hash>`), restore-then-save around `npm ci --ignore-scripts`, never the Linux action. A miss still pays the ~23s install; a hit skips it. The first run after a lockfile change is always a miss.
+
+`smoke.needs` is `[gate]` only. Lint stays a required check; waiting for it here delayed Windows/macOS by ~30s of PR wall clock after Gate without making either job safer.
 
 ### Why it is no longer `continue-on-error`
 
