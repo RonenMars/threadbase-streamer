@@ -1,3 +1,9 @@
+## [1.90.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.0...v1.90.1) (2026-09-12)
+
+### Bug Fixes
+
+* **conversations:** stop 404ing a session between its first prompt and its transcript ([#878](https://github.com/RonenMars/threadbase-streamer/issues/878)) ([d7b7175](https://github.com/RonenMars/threadbase-streamer/commit/d7b7175addd7cd52c70b33e859548ea2bac1547c))
+
 ## [1.90.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.16...v1.90.0) (2026-09-12)
 
 ### Features
