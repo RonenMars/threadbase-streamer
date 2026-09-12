@@ -25,7 +25,7 @@ import type { WSHub } from "./ws-hub";
  * the user's first turn rather than from the spawn, because that turn is what
  * causes the file to exist. See the notes in watchForJsonl/watchForCodexRollout.
  */
-const TRANSCRIPT_WATCH_DEADLINE_MS = 120_000;
+export const TRANSCRIPT_WATCH_DEADLINE_MS = 120_000;
 
 /**
  * Everything SessionWatchers reads from the server. Collaborators constructed
