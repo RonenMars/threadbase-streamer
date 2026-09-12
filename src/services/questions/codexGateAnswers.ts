@@ -37,8 +37,8 @@ export function saveGateAnswer<K extends keyof GateAnswers>(key: K, value: GateA
 
 /**
  * The digit that answers a gate per the remembered choice, or null when the
- * user must be asked. Digits are the dialogs' literal on-screen numbers
- * (probe-verified: a digit keypress selects AND confirms, no Enter needed).
+ * user must be asked. Digits are the dialogs' literal on-screen numbers;
+ * the runner appends Enter because current Codex only highlights on the digit.
  */
 export function rememberedGateDigit(gate: CodexGateType): string | null {
   const answers = loadGateAnswers();
