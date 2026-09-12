@@ -253,6 +253,16 @@ export class ExternalTailManager {
     if (!conversationId) return;
     entry.conversationId = conversationId;
 
+    // A provider-created child session is hidden everywhere over HTTP when the
+    // subagentSessions flag is off — the list omits it, /api/sessions omits it,
+    // the detail 404s, and subscribe_session refuses it. This path was the one
+    // surface that ignored that: chokidar watches project dirs recursively, so
+    // Claude's <project>/<parentId>/subagents/agent-<id>.jsonl looks exactly
+    // like a JSONL an external agent is writing, and its every line — including
+    // the fork boilerplate the parent never sees — went out to all clients.
+    // Same predicate the HTTP path uses, so the two cannot disagree.
+    if (this.deps.cache()?.isExcludedSubagent(conversationId)) return;
+
     this.deps.broadcastConversationLines(conversationId, lines, seqs);
 
     // List-row refresh hint so clients don't have to poll ?refresh=1 to notice
