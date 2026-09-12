@@ -30,6 +30,7 @@ import {
   codexStatusBarLine,
   detectCodexBlockingPrompt,
   detectCodexCommandApproval,
+  detectCodexPicker,
   gateCard,
 } from "./services/questions/codexScreen";
 import { parseAgentPhase } from "./services/questions/parseAgentPhase";
@@ -145,6 +146,9 @@ export class CodexPtyRunner implements SessionRunner {
   // permission transport, but a repaint/removal of one must not suppress the
   // other detector's state.
   private openCommandApproval = new Map<string, string>();
+  // Codex's own numbered pickers (the sign-in screen before login, plain
+  // menus). Keyed by content so TUI repaints do not re-broadcast (#868).
+  private openPicker = new Map<string, string>();
   // Last codex.screen fingerprint per session — only emit when it changes so
   // MCP boot redraw storms don't flood the log.
   private lastScreenLog = new Map<string, string>();
@@ -370,7 +374,12 @@ export class CodexPtyRunner implements SessionRunner {
     }
     const gate = this.openGate.get(sessionId);
     const digit = gate ? /^([0-9])\r?$/.exec(keys)?.[1] : undefined;
-    const out = gate && digit ? this.resolveGateAnswer(sessionId, gate, digit) : keys;
+    // A picker digit selects AND confirms (verified on codex-cli 0.154.0), so a
+    // trailing \r an older client appends would land on the NEXT screen.
+    const pickerDigit =
+      !gate && this.openPicker.has(sessionId) ? /^(\d+)\r?$/.exec(keys)?.[1] : undefined;
+    const out =
+      gate && digit ? this.resolveGateAnswer(sessionId, gate, digit) : (pickerDigit ?? keys);
     this.log.info(`[codex.keys.write] ${sessionId.slice(0, 8)} bytes=${out.length}`, {
       event: "codex.keys_write",
       sessionId,
@@ -437,7 +446,8 @@ export class CodexPtyRunner implements SessionRunner {
     if (
       this.pendingReady.has(sessionId) ||
       this.openGate.has(sessionId) ||
-      this.openCommandApproval.has(sessionId)
+      this.openCommandApproval.has(sessionId) ||
+      this.openPicker.has(sessionId)
     ) {
       const queue = this.queuedInputs.get(sessionId) ?? [];
       queue.push(input);
@@ -579,6 +589,7 @@ export class CodexPtyRunner implements SessionRunner {
     if (
       this.openGate.has(sessionId) ||
       this.openCommandApproval.has(sessionId) ||
+      this.openPicker.has(sessionId) ||
       this.pendingReady.has(sessionId)
     ) {
       return;
@@ -930,6 +941,19 @@ export class CodexPtyRunner implements SessionRunner {
       this.onPermissionChange?.(sessionId, null);
     }
 
+    // ── Numbered picker ───────────────────────────────────────────
+    // Last of the card detectors: every dialog above owns the screen while it
+    // is up. Without this, Codex's sign-in picker raised no card at all and
+    // nothing refused composer text, so a sent message picked the highlighted
+    // option and started an auth flow (#868).
+    const picker = gate || commandApproval || blocking ? null : detectCodexPicker(lines);
+    if (picker) {
+      this.handlePicker(sessionId, picker);
+    } else if (this.openPicker.delete(sessionId)) {
+      this.onPermissionChange?.(sessionId, null);
+      this.flushQueuedInputs(sessionId);
+    }
+
     // ── Readiness ──────────────────────────────────────────────────
     const hasReady = codexScreenShowsReady(lines);
     const busy = codexScreenBlocksComposer(lines);
@@ -1046,6 +1070,24 @@ export class CodexPtyRunner implements SessionRunner {
       sessionId,
     });
     this.onPermissionChange?.(sessionId, approval);
+  }
+
+  // Surface a numbered picker over the permission transport. Keyed by content:
+  // the picker repaints as its ASCII banner animates, and only a real change of
+  // prompt or options is a new card.
+  private handlePicker(sessionId: string, picker: CodexBlockingPrompt): void {
+    const key = `${picker.prompt}\0${picker.options.map((o) => `${o.index}.${o.label}`).join(",")}`;
+    if (this.openPicker.get(sessionId) === key) return;
+    this.openPicker.set(sessionId, key);
+    this.log.info(
+      `[codex.picker_prompt] ${sessionId.slice(0, 8)} options=${picker.options.length}`,
+      {
+        event: "codex.picker_prompt",
+        sessionId,
+        optionCount: picker.options.length,
+      },
+    );
+    this.onPermissionChange?.(sessionId, picker);
   }
 
   // Answer a gate from the persisted remember-store, or surface it as a

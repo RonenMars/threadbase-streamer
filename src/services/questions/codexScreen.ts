@@ -156,6 +156,79 @@ export function detectCodexCommandApproval(lines: string[]): CodexBlockingPrompt
   };
 }
 
+// A Codex picker row: an optional selection cursor (Codex paints ">", the
+// compose prefix is "›"), the number, and the label.
+const CODEX_PICKER_ROW_RE = /^\s*([>›❯])?\s*(\d+)\.\s+(.+?)\s*$/;
+// Codex's compose prefix. A picker owns the screen instead of the composer, so
+// a compose line below a numbered block means the block is transcript output.
+const CODEX_COMPOSE_LINE_RE = /^\s*›/;
+// Description rows are indented continuation lines under an option. Two is the
+// most Codex prints; more than that is prose, not a menu.
+const MAX_PICKER_DESCRIPTION_LINES = 2;
+
+/**
+ * Claim Codex's own numbered picker — the sign-in screen shown before login
+ * ("1. Sign in with ChatGPT / 2. Sign in with Device Code / 3. Provide your own
+ * API key"), and any menu of that shape (#868). Codex's other dialogs have
+ * their own detectors and are checked before this one.
+ *
+ * Rows may be separated by one indented description line each, which is what
+ * defeats the Claude-side readers: scrapePermissionGate stops at the first
+ * non-option line, and detectShellPrompt's bare-confirmation branch turns the
+ * trailing "Press enter to continue" into a single Continue option whose Enter
+ * silently picks the highlighted row — signing the user in on one tap.
+ *
+ * Answer keys are the bare digit: verified live on codex-cli 0.154.0, a digit
+ * selects AND confirms, the same as Codex's trust and hooks gates.
+ */
+export function detectCodexPicker(lines: string[]): CodexBlockingPrompt | null {
+  const screenText = lines.join("\n");
+  if (CODEX_TRUST_GATE_REGEX.test(screenText) || CODEX_HOOKS_GATE_REGEX.test(screenText)) {
+    return null;
+  }
+  if (codexScreenShowsReady(lines)) return null;
+
+  const rows: { line: number; index: number; label: string; cursor: boolean }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = CODEX_PICKER_ROW_RE.exec(lines[i]);
+    if (m) rows.push({ line: i, index: Number(m[2]), label: m[3], cursor: Boolean(m[1]) });
+  }
+  if (rows.length < 2) return null;
+
+  // The LAST contiguous 1..N run: an earlier menu may sit in the scrollback.
+  let start = rows.length - 1;
+  while (start > 0 && rows[start - 1].index === rows[start].index - 1) start--;
+  const block = rows.slice(start);
+  if (block.length < 2 || block[0].index !== 1) return null;
+  if (block.filter((r) => r.cursor).length !== 1) return null;
+  for (let i = 1; i < block.length; i++) {
+    const gap = block[i].line - block[i - 1].line - 1;
+    if (gap > MAX_PICKER_DESCRIPTION_LINES) return null;
+    for (let l = block[i - 1].line + 1; l < block[i].line; l++) {
+      if (lines[l].trim() === "") return null; // a blank line ends a menu
+    }
+  }
+  // A compose line below the block means this is transcript output, not a live
+  // picker; the composer and a picker never share the screen.
+  for (let i = block[block.length - 1].line + 1; i < lines.length; i++) {
+    if (CODEX_COMPOSE_LINE_RE.test(lines[i])) return null;
+  }
+
+  const intro: string[] = [];
+  for (let i = block[0].line - 1; i >= 0 && intro.length < 3; i--) {
+    const t = lines[i].trim();
+    if (t === "") break;
+    intro.unshift(t);
+  }
+  const prompt = intro.length > 0 ? intro[intro.length - 1] : "Codex is asking you to choose";
+  const detail = intro.slice(0, -1).join("\n");
+  return {
+    prompt,
+    ...(detail ? { detail } : {}),
+    options: block.map((r) => ({ index: r.index, label: r.label, answerKeys: `${r.index}` })),
+  };
+}
+
 /** Parse Codex's numbered TUI menus (`1. …`, `› 2. …`). */
 export function parseCodexNumberedOptions(lines: string[]): PermissionOption[] {
   const options: PermissionOption[] = [];
