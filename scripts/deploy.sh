@@ -907,6 +907,9 @@ cmd_deploy() {
   mkdir -p "$RELEASES_DIR/node_modules"
   for mod in node-pty better-sqlite3 bindings file-uri-to-path; do
     if [[ -d "node_modules/$mod" ]]; then
+      # Remove first: `cp -r src dst` copies INTO dst when dst already exists,
+      # so every deploy after the first nested another copy at dst/$mod/$mod.
+      rm -rf "$RELEASES_DIR/node_modules/$mod"
       cp -r "node_modules/$mod" "$RELEASES_DIR/node_modules/$mod"
     fi
   done

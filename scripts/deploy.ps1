@@ -606,6 +606,11 @@ function Invoke-Deploy {
     $nodePtySrc = Join-Path $repoRoot 'node_modules\node-pty'
     if (Test-Path $nodePtySrc) {
       $nodePtyDst = Join-Path $installDir 'node_modules\node-pty'
+      # Remove first, for the same reason the two blocks around this one do:
+      # Copy-Item -Recurse into an existing dir copies the source INTO it, so
+      # every deploy after the first left a nested copy of node-pty inside
+      # itself that nothing ever loads.
+      if (Test-Path $nodePtyDst) { Remove-Item -Path $nodePtyDst -Recurse -Force }
       New-Item -ItemType Directory -Path (Split-Path $nodePtyDst) -Force | Out-Null
       Copy-Item -Path $nodePtySrc -Destination $nodePtyDst -Recurse -Force
     }
