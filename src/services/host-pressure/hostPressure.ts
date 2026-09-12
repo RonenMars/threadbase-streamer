@@ -1,10 +1,16 @@
 import { execFile } from "node:child_process";
 import { type CpuInfo, cpus, freemem, loadavg, totalmem } from "os";
-import { type IntervalHistogram, monitorEventLoopDelay } from "perf_hooks";
+import { monitorEventLoopDelay } from "perf_hooks";
 import type { HostPressureLevel, HostPressureOs, HostPressureReason, WSMessage } from "../../types";
 import type { WSHub } from "../../ws-hub";
 
 export type CpuTimesSnapshot = CpuInfo["times"];
+
+// Derived from the function rather than imported by name: @types/node renamed
+// this interface IntervalHistogram -> ELDHistogram in 26.5.0, and the two
+// versions share neither name, so importing either one pins the repo to one
+// side of that bump. ReturnType tracks whatever the installed types call it.
+type EventLoopHistogram = ReturnType<typeof monitorEventLoopDelay>;
 
 export const HOST_PRESSURE_SAMPLE_MS = 5_000;
 
@@ -276,7 +282,7 @@ export type HostPressureMonitorOpts = {
   readSample: () => HostSample;
   now?: () => Date;
   platform?: NodeJS.Platform;
-  histogram?: IntervalHistogram;
+  histogram?: EventLoopHistogram;
   intervalMs?: number;
 };
 
