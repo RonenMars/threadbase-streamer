@@ -405,9 +405,8 @@ export class CodexPtyRunner implements SessionRunner {
   // Map a gate-card digit to the PTY bytes that answer the real dialog,
   // persisting the choice when the digit was a synthetic "remember for all
   // projects" option (those numbers don't exist on the actual dialog and must
-  // never reach codex). The trailing \r mobile sends is dropped: a digit alone
-  // selects AND confirms (live-probe verified), and a stray Enter would land
-  // on whatever screen follows.
+  // never reach codex). Current Codex trust/hooks pickers highlight on the
+  // digit and wait for Enter (`Press enter to continue`); write both.
   private resolveGateAnswer(sessionId: string, gate: CodexGateType, digit: string): string {
     let real = digit;
     let remembered = false;
@@ -431,7 +430,7 @@ export class CodexPtyRunner implements SessionRunner {
       digit: real,
       remembered,
     });
-    return real;
+    return `${real}\r`;
   }
 
   sendInput(sessionId: string, input: string): number {
@@ -1091,8 +1090,9 @@ export class CodexPtyRunner implements SessionRunner {
   }
 
   // Answer a gate from the persisted remember-store, or surface it as a
-  // question card over the permission transport. Actioned once per session and
-  // gate type — repaints of the same dialog neither re-write nor re-broadcast.
+  // question card over the permission transport. Auto-answer is one write;
+  // if the dialog is still painted on the next scrape, fall through to a
+  // card so a digit-only Codex picker cannot swallow the prompt.
   private handleGate(
     sessionId: string,
     session: InternalSession,
@@ -1100,21 +1100,24 @@ export class CodexPtyRunner implements SessionRunner {
     lines: string[],
   ): void {
     const key = `${sessionId}:${gate}`;
-    if (this.gateActioned.has(key)) return;
-    this.gateActioned.add(key);
+    if (this.openGate.get(sessionId) === gate) return;
 
     const remembered = rememberedGateDigit(gate);
-    if (remembered) {
+    if (remembered && !this.gateActioned.has(key)) {
+      this.gateActioned.add(key);
       this.log.info(`[codex.gate_auto_answer] ${sessionId.slice(0, 8)} ${gate} → ${remembered}`, {
         event: "codex.gate_auto_answer",
         sessionId,
         gate,
         digit: remembered,
       });
-      session.process.write(remembered);
+      session.process.write(`${remembered}\r`);
       return;
     }
 
+    if (this.gateActioned.has(key) && !remembered) return;
+
+    this.gateActioned.add(key);
     this.openGate.set(sessionId, gate);
     const card = gateCard(gate, lines);
     this.log.info(`[codex.gate_prompt] ${sessionId.slice(0, 8)} ${gate}`, {

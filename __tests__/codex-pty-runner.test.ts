@@ -265,7 +265,23 @@ describe("CodexPtyRunner — directory-trust gate", () => {
 
     expect(cards).toHaveLength(0);
     expect(proc.write).toHaveBeenCalledTimes(1);
-    expect(proc.write).toHaveBeenCalledWith("1");
+    expect(proc.write).toHaveBeenCalledWith("1\r");
+  });
+
+  it("surfaces the card if a remembered answer leaves the trust dialog painted", async () => {
+    writeRememberedAnswers({ codexTrustGate: "yes" });
+    const { runner, cards } = gateRunner();
+    const session = await spawnFresh(runner);
+    const proc = getMockProc(runner, session.id);
+
+    proc._emit("data", TRUST_GATE_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cards).toHaveLength(0);
+
+    proc._emit("data", TRUST_GATE_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.prompt).toContain("trust the contents");
   });
 });
 
@@ -305,7 +321,7 @@ describe("CodexPtyRunner — hooks-review gate", () => {
 
     expect(cards).toHaveLength(0);
     expect(proc.write).toHaveBeenCalledTimes(1);
-    expect(proc.write).toHaveBeenCalledWith("3");
+    expect(proc.write).toHaveBeenCalledWith("3\r");
   });
 });
 
@@ -377,7 +393,7 @@ describe("CodexPtyRunner — gate answer interception (sendKeys)", () => {
     const { runner, session, proc } = await openHooksGate();
 
     runner.sendKeys(session.id, "4\r");
-    expect(proc.write).toHaveBeenCalledWith("2");
+    expect(proc.write).toHaveBeenCalledWith("2\r");
     expect(readRememberedAnswers()).toEqual({ codexHooksGate: "trust_all" });
   });
 
@@ -385,15 +401,15 @@ describe("CodexPtyRunner — gate answer interception (sendKeys)", () => {
     const { runner, session, proc } = await openHooksGate();
 
     runner.sendKeys(session.id, "5\r");
-    expect(proc.write).toHaveBeenCalledWith("3");
+    expect(proc.write).toHaveBeenCalledWith("3\r");
     expect(readRememberedAnswers()).toEqual({ codexHooksGate: "continue_untrusted" });
   });
 
-  it("real digits pass through (Enter stripped) and persist nothing", async () => {
+  it("real digits pass through with Enter and persist nothing", async () => {
     const { runner, session, proc } = await openHooksGate();
 
     runner.sendKeys(session.id, "2\r");
-    expect(proc.write).toHaveBeenCalledWith("2");
+    expect(proc.write).toHaveBeenCalledWith("2\r");
     expect(() => readRememberedAnswers()).toThrow();
   });
 
