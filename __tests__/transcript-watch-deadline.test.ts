@@ -112,6 +112,65 @@ describe("transcript watch deadline", () => {
       expect(await waitFor(() => sessionFileMap.get(SESSION_ID), BIND_BUDGET_MS)).toBe(jsonlPath);
     });
 
+    it("survives a neighbouring session's write after the deadline, then binds", async () => {
+      // The regression. fs.watch is armed on the whole PROJECT directory, not on
+      // our one file, and one real project holds 406 transcripts. So any other
+      // session writing its own JSONL fires tryWire for us. Before this fix that
+      // callback found our file absent, saw the spawn-anchored deadline had
+      // passed, and closed OUR watch for good — so the user's own first prompt,
+      // whenever it came, bound nothing at all.
+      watchers.watchForJsonl(SESSION_ID, projectPath);
+      const dir = claudeProjectsDir(projectPath);
+      const jsonlPath = join(dir, `${SESSION_ID}.jsonl`);
+
+      jumpClock(300_000);
+      // A different session in the same project writes its transcript. Our user
+      // has still never typed, so promptCount stays 0 and our file cannot exist.
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "cccccccc-0000-4000-8000-00000000000c.jsonl"), "{}\n");
+      // Let that event be delivered and processed before our own file appears.
+      await new Promise((r) => setTimeout(r, 300));
+
+      managed.promptCount = 1;
+      writeFileSync(
+        jsonlPath,
+        `${JSON.stringify({ sessionId: SESSION_ID, cwd: projectPath, type: "user" })}\n`,
+      );
+
+      expect(await waitFor(() => sessionFileMap.get(SESSION_ID), BIND_BUDGET_MS)).toBe(jsonlPath);
+    });
+
+    it("does give up once a session that HAS typed goes overdue", async () => {
+      // The negative control: past the first turn the file is genuinely overdue,
+      // so the deadline still ends the watch rather than running for the life of
+      // the session. Without this, `prompts === 0` could be widened to "never
+      // expire" and nothing would notice.
+      watchers.watchForJsonl(SESSION_ID, projectPath);
+      const dir = claudeProjectsDir(projectPath);
+      const jsonlPath = join(dir, `${SESSION_ID}.jsonl`);
+
+      // The turn happens; the first callback after it observes the new
+      // promptCount and re-arms the deadline from THAT moment. The transcript
+      // never arrives.
+      mkdirSync(dir, { recursive: true });
+      managed.promptCount = 1;
+      writeFileSync(join(dir, "dddddddd-0000-4000-8000-00000000000d.jsonl"), "{}\n");
+      await new Promise((r) => setTimeout(r, 300));
+
+      // Now run past the re-armed deadline and let another event observe it.
+      jumpClock(300_000);
+      writeFileSync(join(dir, "eeeeeeee-0000-4000-8000-00000000000e.jsonl"), "{}\n");
+      await new Promise((r) => setTimeout(r, 300));
+
+      // The watch is closed now, so even our own file no longer binds.
+      writeFileSync(
+        jsonlPath,
+        `${JSON.stringify({ sessionId: SESSION_ID, cwd: projectPath, type: "user" })}\n`,
+      );
+
+      expect(await waitFor(() => sessionFileMap.get(SESSION_ID), 800)).toBeUndefined();
+    });
+
     it("still refuses to wire once the PTY is gone, however late the file lands", async () => {
       watchers.watchForJsonl(SESSION_ID, projectPath);
       const jsonlPath = join(claudeProjectsDir(projectPath), `${SESSION_ID}.jsonl`);
