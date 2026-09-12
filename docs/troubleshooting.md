@@ -1239,11 +1239,11 @@ error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeSc
 
 The ESM/CJS bundles build fine — only declaration generation fails.
 
-**Cause:** `tsconfig.json` **must** keep `"ignoreDeprecations": "6.0"`. The deprecated `baseUrl` is **not** in our tsconfig — tsup's DTS worker injects `baseUrl` internally when generating declarations, and TypeScript 6.0 flags that injected option. `ignoreDeprecations: "6.0"` is the only way to silence it. Removing the option (on the mistaken belief that TS 6.0 dropped it — it didn't; that happens in TS 7.0) breaks the build. This is exactly what closed PR #152 did.
+**Cause (historical, TypeScript 6.0):** the deprecated `baseUrl` was **not** in our tsconfig — tsup's DTS worker injected `baseUrl` internally when generating declarations, and TypeScript 6.0 flagged that injected option. `"ignoreDeprecations": "6.0"` in `tsconfig.json` was the only way to silence it, so removing it broke the build (which is what closed PR #152 did).
 
-**Fix:** Keep `"ignoreDeprecations": "6.0"` in `tsconfig.json`'s `compilerOptions`. `main` already has it (added in the TS 6.0 bump, #119). Do not remove it.
+**Resolved on TypeScript 7.0.** Declarations no longer come from tsup — `tsup.config.ts` sets `dts: false` and the build runs a separate `tsc -p tsconfig.build.json` pass — so nothing injects `baseUrl` any more. TS 7 also dropped the `"6.0"` value, and an editor language service on TS 7 reports `Invalid value for --ignoreDeprecations` on it (the `tsc` CLI accepts it silently, so the build never flagged it). The option is therefore **removed** from `tsconfig.json`; do not re-add it.
 
-**TypeScript 7.0 heads-up:** `ignoreDeprecations: "6.0"` stops working in TS 7.0, so this recurs on that upgrade. The real fix then is to move DTS generation off tsup's worker (which is what injects `baseUrl`) — e.g. a separate `tsc --emitDeclarationOnly` pass — rather than touching our tsconfig.
+**If `TS5101` ever returns:** find what re-introduced `baseUrl` — a tool-injected compiler option, not our tsconfig — rather than adding `ignoreDeprecations` back.
 
 ---
 
