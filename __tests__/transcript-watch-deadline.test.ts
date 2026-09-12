@@ -82,10 +82,17 @@ describe("transcript watch deadline", () => {
   // fs.watch / poll latency, not any product deadline, so it is generous: on a
   // box under fs-event pressure (a full suite has just opened and closed
   // thousands of watch handles) a 2s budget expired while an idle box bound the
-  // same file every time (#827). waitFor returns the moment the value appears,
-  // so a larger budget costs nothing on a passing run. NEGATIVE waits below
-  // ("must NOT bind") keep their own short budgets — there the wait IS the test.
-  const BIND_BUDGET_MS = 5_000;
+  // same file every time (#827). File parallelism raises that pressure again —
+  // 5s expired once in a 61s parallel run. waitFor returns the moment the
+  // value appears, so a larger budget costs nothing on a passing run. NEGATIVE
+  // waits below ("must NOT bind") keep their own short budgets — there the
+  // wait IS the test.
+  const BIND_BUDGET_MS = 15_000;
+  // Neighbor-write settle. tryWire only runs when fs.watch delivers, and
+  // under a parallel suite that can take longer than the 300ms that was
+  // enough on an idle box. Too short here and the overdue test writes our
+  // own file while the watch is still open, then binds.
+  const WATCH_SETTLE_MS = 1_000;
 
   async function waitFor<T>(read: () => T | undefined, budgetMs: number): Promise<T | undefined> {
     const until = performance.now() + budgetMs;
@@ -129,7 +136,7 @@ describe("transcript watch deadline", () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "cccccccc-0000-4000-8000-00000000000c.jsonl"), "{}\n");
       // Let that event be delivered and processed before our own file appears.
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, WATCH_SETTLE_MS));
 
       managed.promptCount = 1;
       writeFileSync(
@@ -155,12 +162,12 @@ describe("transcript watch deadline", () => {
       mkdirSync(dir, { recursive: true });
       managed.promptCount = 1;
       writeFileSync(join(dir, "dddddddd-0000-4000-8000-00000000000d.jsonl"), "{}\n");
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, WATCH_SETTLE_MS));
 
       // Now run past the re-armed deadline and let another event observe it.
       jumpClock(300_000);
       writeFileSync(join(dir, "eeeeeeee-0000-4000-8000-00000000000e.jsonl"), "{}\n");
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, WATCH_SETTLE_MS));
 
       // The watch is closed now, so even our own file no longer binds.
       writeFileSync(

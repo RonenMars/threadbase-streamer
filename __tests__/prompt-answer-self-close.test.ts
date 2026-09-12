@@ -81,6 +81,18 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 // Past SCRAPE_THROTTLE_MS (300), so the next chunk runs a full detection pass.
 const settlePastThrottle = () => new Promise((r) => setTimeout(r, 350));
 
+async function waitForPromptState(
+  read: () => string | undefined,
+  expected: string,
+  budgetMs = 2_000,
+): Promise<void> {
+  const until = performance.now() + budgetMs;
+  while (performance.now() < until) {
+    if (read() === expected) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 type MockProc = { _emit: (e: string, d: string) => void; write: ReturnType<typeof vi.fn> };
 
 // The server holds a LiveSessionManager that delegates to a per-provider
@@ -254,7 +266,9 @@ describe("/prompt/answer on a scraped gate our own write closes", () => {
     try {
       await settlePastThrottle();
       h.proc._emit("data", GATE_GONE);
-      await settle();
+      // detectLivePrompts awaits getOutputLines; a 20ms settle lost that on a
+      // loaded Windows runner once files ran in parallel (state still "open").
+      await waitForPromptState(() => h.prompt()?.state, "cancelled");
       expect(h.prompt()?.state).toBe("cancelled");
       expect(h.prompt()?.terminalReason).toBe("provider_closed");
 
