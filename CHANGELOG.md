@@ -1,3 +1,9 @@
+## [1.89.16](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.15...v1.89.16) (2026-09-12)
+
+### Bug Fixes
+
+* **codex:** claim the sign-in picker whose rows are separated by blank lines ([#873](https://github.com/RonenMars/threadbase-streamer/issues/873)) ([3916dbe](https://github.com/RonenMars/threadbase-streamer/commit/3916dbe4b5bcbf2ab307d82d26b5e2fe85f68018)), closes [#870](https://github.com/RonenMars/threadbase-streamer/issues/870) [#868](https://github.com/RonenMars/threadbase-streamer/issues/868)
+
 ## [1.89.15](https://github.com/RonenMars/threadbase-streamer/compare/v1.89.14...v1.89.15) (2026-09-12)
 
 ### Bug Fixes
