@@ -1,3 +1,9 @@
+## [1.90.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.4...v1.90.5) (2026-09-12)
+
+### Bug Fixes
+
+* **api:** bound POST /api/__client-log for release-build clients ([#890](https://github.com/RonenMars/threadbase-streamer/issues/890)) ([4425bf0](https://github.com/RonenMars/threadbase-streamer/commit/4425bf013b7fc9f5087d69f9cd2bafff2239a872))
+
 ## [1.90.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.3...v1.90.4) (2026-09-12)
 
 ### Bug Fixes
