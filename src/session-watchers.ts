@@ -23,7 +23,8 @@ import type { WSHub } from "./ws-hub";
  * the real UUID — a mechanism that no longer exists. It survives only as a
  * bound on an abandoned session's watch, and it is deliberately measured from
  * the user's first turn rather than from the spawn, because that turn is what
- * causes the file to exist. See the notes in watchForJsonl/watchForCodexRollout.
+ * causes the file to exist. Both watchers re-arm it per turn and neither applies
+ * it before the first one. See the notes in watchForJsonl/watchForCodexRollout.
  */
 export const TRANSCRIPT_WATCH_DEADLINE_MS = 120_000;
 
@@ -156,7 +157,8 @@ export class SessionWatchers {
     const expectedFile = `${sessionId}.jsonl`;
     const filePath = join(projectsDir, expectedFile);
     const armedAt = Date.now();
-    const deadline = armedAt + TRANSCRIPT_WATCH_DEADLINE_MS;
+    let deadline = armedAt + TRANSCRIPT_WATCH_DEADLINE_MS;
+    let seenPrompts = 0;
 
     let watcher: ReturnType<typeof fsWatch> | null = null;
     const cleanup = () => {
@@ -209,10 +211,33 @@ export class SessionWatchers {
         // that has arrived. Claude writes <sessionId>.jsonl only on the user's
         // FIRST turn, so what this races is human think time: across a 20.5-day
         // production log the gap from pty.ready to the first prompt ran 3.6s to
-        // 405.7s, and the two sessions past 120s were never wired at all.
-        // Deciding here rather than at the top of tryWire costs nothing — this
-        // fs.watch handle is only ever closed from inside this callback, so the
-        // first post-deadline directory event ends the watch either way.
+        // 405.7s, and 17% of spawns were past 120s.
+        //
+        // So the deadline runs from the TURN, never from the spawn, and before
+        // the first turn it does not run at all. Two separate reasons:
+        //
+        //  - Before any prompt the file CANNOT exist yet, so failing to find it
+        //    is not evidence of anything and must not end the watch. This is
+        //    what `fsWatch(projectsDir, …)` made dangerous: the handle is on the
+        //    whole project directory (406 transcripts in one real project), so
+        //    ANY neighbouring session writing its own JSONL fired tryWire, found
+        //    ours absent, and closed our watch for good — after which the user's
+        //    own first prompt bound nothing. The session then silently loses live
+        //    line streaming; `locateJsonlPath` rung 4 still answers REST reads,
+        //    which is why this never surfaced as a visible failure.
+        //  - What the deadline was ever bounding is an ABANDONED session's watch,
+        //    and abandonment is already covered above: `hasSession()` ends the
+        //    watch when the PTY goes (hold, grace, or the 6h idle reaper).
+        //
+        // Past the first turn the deadline is meaningful again — there the file
+        // is genuinely overdue — and it re-arms per turn, matching the identical
+        // reasoning in watchForCodexRollout.
+        const prompts = this.deps.sessionStore.getManaged(sessionId)?.promptCount ?? 0;
+        if (prompts > seenPrompts) {
+          seenPrompts = prompts;
+          deadline = Date.now() + TRANSCRIPT_WATCH_DEADLINE_MS;
+        }
+        if (prompts === 0) return;
         if (Date.now() > deadline) {
           this.log.warn(
             `[startFresh] gave up watching for the JSONL of ${sessionId}`,
