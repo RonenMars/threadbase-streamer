@@ -897,3 +897,75 @@ describe("CodexPtyRunner — exit handling", () => {
     expect(runner.hasSession(session.id)).toBe(false);
   });
 });
+
+// #868: Codex's sign-in picker, captured from codex-cli 0.154.0 spawned as the
+// runner spawns it. Rows carry an indented description line, and the trailing
+// footer is not an option: Enter there picks the highlighted row.
+const SIGN_IN_PICKER_SCREEN =
+  "  Welcome to Codex, OpenAI's command-line coding agent\r\n" +
+  "  Sign in with ChatGPT to use Codex as part of your paid plan\r\n" +
+  "  or connect an API key for usage-based billing\r\n" +
+  "> 1. Sign in with ChatGPT\r\n" +
+  "     Usage included with Plus, Pro, Business, and Enterprise plans\r\n" +
+  "  2. Sign in with Device Code\r\n" +
+  "     Sign in from another device with a one-time code\r\n" +
+  "  3. Provide your own API key\r\n" +
+  "     Pay for what you use\r\n" +
+  "  Press enter to continue\r\n";
+
+// What choosing option 3 paints — no numbered rows, so the picker is gone.
+const API_KEY_ENTRY_SCREEN =
+  "\x1b[2J\x1b[H  Welcome to Codex, OpenAI's command-line coding agent\r\n" +
+  "> Use your own OpenAI API key for usage-based billing\r\n" +
+  "  Paste or type your API key below. It will be stored locally in auth.json.\r\n" +
+  "  Press enter to save\r\n";
+
+describe("CodexPtyRunner — numbered picker (#868)", () => {
+  it("broadcasts the sign-in picker once, with bare-digit answers and no write", async () => {
+    const { runner, cards } = gateRunner();
+    const session = await spawnFresh(runner);
+    const proc = getMockProc(runner, session.id);
+
+    proc._emit("data", SIGN_IN_PICKER_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(proc.write).not.toHaveBeenCalled();
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.options).toEqual([
+      { index: 1, label: "Sign in with ChatGPT", answerKeys: "1" },
+      { index: 2, label: "Sign in with Device Code", answerKeys: "2" },
+      { index: 3, label: "Provide your own API key", answerKeys: "3" },
+    ]);
+
+    // The banner animates; a repaint of the same picker must not re-broadcast.
+    proc._emit("data", SIGN_IN_PICKER_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cards).toHaveLength(1);
+  });
+
+  it("holds composer input while the picker is up and flushes it once the picker goes", async () => {
+    const { runner, cards } = gateRunner();
+    const session = await spawnFresh(runner);
+    const proc = getMockProc(runner, session.id);
+
+    proc._emit("data", SIGN_IN_PICKER_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    proc.write.mockClear();
+
+    // This is the reported defect: sent text used to reach the picker, where
+    // its Enter selected "Sign in with ChatGPT".
+    runner.sendInput(session.id, "hello");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(proc.write).not.toHaveBeenCalled();
+
+    proc._emit("data", API_KEY_ENTRY_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(cards[cards.length - 1]).toBeNull();
+    // Still held: the picker closing does not by itself make a booting session
+    // ready, and flushQueuedInputs refuses while pendingReady is set.
+    expect(proc.write).not.toHaveBeenCalled();
+
+    proc._emit("data", READY_STATUS_BAR);
+    await vi.waitFor(() => expect(proc.write).toHaveBeenCalled());
+  });
+});
