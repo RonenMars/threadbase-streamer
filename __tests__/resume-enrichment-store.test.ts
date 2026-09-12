@@ -59,7 +59,10 @@ describe("enrichResumedSessionAsync — writes land in the store", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(0);
+    // Same gate as discovery-cache.test.ts: GET /api/sessions 503s while
+    // warm-up is in flight. The third test here GETs immediately, and under
+    // file parallelism that window lasted long enough to fail Node 24 CI.
+    await server.listen(0, { awaitReady: true });
     return { server, port: server.port, internals: server as unknown as Internals };
   }
 

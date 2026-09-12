@@ -61,8 +61,14 @@ it("replays the whole render terminal, not just its tail", async () => {
     log: () => ({ warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() }),
   } as unknown as ApiDepsWiring);
 
-  handleWsMessage(ws, JSON.stringify({ type: "subscribe_session", sessionId: session.id }), null);
-  await new Promise((r) => setTimeout(r, 20));
+  // handleWsMessage is async and awaits getOutputLines before unicasting
+  // terminal_replay. A fixed 20ms sleep lost that race once files ran in
+  // parallel (macOS smoke, 66ms test, replay still undefined).
+  await handleWsMessage(
+    ws,
+    JSON.stringify({ type: "subscribe_session", sessionId: session.id }),
+    null,
+  );
 
   const replay = sent.map((s) => JSON.parse(s)).find((m) => m.type === "terminal_replay");
   expect(replay).toBeDefined();
