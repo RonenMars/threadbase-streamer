@@ -1,3 +1,9 @@
+## [1.90.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.3...v1.90.4) (2026-09-12)
+
+### Bug Fixes
+
+* **external-tails:** stop pushing subagent transcripts over the WS ([#886](https://github.com/RonenMars/threadbase-streamer/issues/886)) ([a9af56c](https://github.com/RonenMars/threadbase-streamer/commit/a9af56c1c7739430c5190be94999b6fb366b1a4f))
+
 ## [1.90.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.2...v1.90.3) (2026-09-12)
 
 ### Bug Fixes
