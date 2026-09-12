@@ -37,16 +37,16 @@ function sample(over: Partial<HostSample>): HostSample {
 }
 
 describe("HOST_PRESSURE_BARS", () => {
-  it("locks the starting enter bars", () => {
-    expect(HOST_PRESSURE_BARS.memFreeRatio.enterElevated).toBe(0.15);
-    expect(HOST_PRESSURE_BARS.memFreeRatio.enterCritical).toBe(0.08);
-    expect(HOST_PRESSURE_BARS.eventLoopP99Ms.enterElevated).toBe(100);
-    expect(HOST_PRESSURE_BARS.eventLoopP99Ms.enterCritical).toBe(250);
-    expect(HOST_PRESSURE_BARS.loadPerCpu.enterElevated).toBe(1.25);
-    expect(HOST_PRESSURE_BARS.loadPerCpu.enterCritical).toBe(2.0);
-    expect(HOST_PRESSURE_BARS.cpuBusy.enterElevated).toBe(0.85);
-    expect(HOST_PRESSURE_BARS.cpuBusy.enterCritical).toBe(0.97);
-    expect(HOST_PRESSURE_BARS.liveAgentsPair).toBe(4);
+  it("locks the relaxed enter bars", () => {
+    expect(HOST_PRESSURE_BARS.memFreeRatio.enterElevated).toBe(0.08);
+    expect(HOST_PRESSURE_BARS.memFreeRatio.enterCritical).toBe(0.04);
+    expect(HOST_PRESSURE_BARS.eventLoopP99Ms.enterElevated).toBe(250);
+    expect(HOST_PRESSURE_BARS.eventLoopP99Ms.enterCritical).toBe(500);
+    expect(HOST_PRESSURE_BARS.loadPerCpu.enterElevated).toBe(2.0);
+    expect(HOST_PRESSURE_BARS.loadPerCpu.enterCritical).toBe(3.0);
+    expect(HOST_PRESSURE_BARS.cpuBusy.enterElevated).toBe(0.95);
+    expect(HOST_PRESSURE_BARS.cpuBusy.enterCritical).toBe(0.99);
+    expect(HOST_PRESSURE_BARS.liveAgentsPair).toBe(8);
   });
 });
 
@@ -123,26 +123,46 @@ describe("hostMemoryFreeRatio", () => {
 });
 
 describe("classifyHostPressure", () => {
+  it.each(["ok", "elevated", "critical"] as const)(
+    "treats moderate load and pressure as ok after %s",
+    (previous) => {
+      expect(
+        classifyHostPressure(
+          sample({ load1: 13.77, ncpu: 10, memFreeRatio: 0.14, eventLoopP99Ms: 120 }),
+          previous,
+          "darwin",
+        ),
+      ).toEqual({ level: "ok", reasons: [] });
+    },
+  );
+
+  it("treats 85% Windows CPU usage as recovered", () => {
+    expect(classifyHostPressure(sample({ cpuBusyRatio: 0.85 }), "critical", WIN32)).toEqual({
+      level: "ok",
+      reasons: [],
+    });
+  });
+
   it("is ok on a quiet host", () => {
     expect(classifyHostPressure(healthy, "ok", POSIX)).toEqual({ level: "ok", reasons: [] });
   });
 
-  it("is elevated on free memory below 15%", () => {
-    expect(classifyHostPressure(sample({ memFreeRatio: 0.14 }), "ok", POSIX)).toEqual({
+  it("is elevated on free memory below 8%", () => {
+    expect(classifyHostPressure(sample({ memFreeRatio: 0.07 }), "ok", POSIX)).toEqual({
       level: "elevated",
       reasons: ["memory"],
     });
   });
 
-  it("is critical on free memory below 8%", () => {
-    expect(classifyHostPressure(sample({ memFreeRatio: 0.07 }), "ok", POSIX)).toEqual({
+  it("is critical on free memory below 4%", () => {
+    expect(classifyHostPressure(sample({ memFreeRatio: 0.03 }), "ok", POSIX)).toEqual({
       level: "critical",
       reasons: ["memory"],
     });
   });
 
   it("allows pressure-aware Darwin memory to become critical", () => {
-    expect(classifyHostPressure(sample({ memFreeRatio: 0.07 }), "ok", "darwin")).toEqual({
+    expect(classifyHostPressure(sample({ memFreeRatio: 0.03 }), "ok", "darwin")).toEqual({
       level: "critical",
       reasons: ["memory"],
     });
@@ -150,29 +170,29 @@ describe("classifyHostPressure", () => {
 
   it("still allows critical on Darwin from event-loop stall", () => {
     expect(
-      classifyHostPressure(sample({ memFreeRatio: 0.5, eventLoopP99Ms: 260 }), "ok", "darwin"),
+      classifyHostPressure(sample({ memFreeRatio: 0.5, eventLoopP99Ms: 600 }), "ok", "darwin"),
     ).toEqual({
       level: "critical",
       reasons: ["event_loop"],
     });
   });
 
-  it("is elevated on event-loop p99 above 100ms", () => {
-    expect(classifyHostPressure(sample({ eventLoopP99Ms: 120 }), "ok", POSIX)).toEqual({
+  it("is elevated on event-loop p99 above 250ms", () => {
+    expect(classifyHostPressure(sample({ eventLoopP99Ms: 300 }), "ok", POSIX)).toEqual({
       level: "elevated",
       reasons: ["event_loop"],
     });
   });
 
-  it("is critical on event-loop p99 above 250ms", () => {
-    expect(classifyHostPressure(sample({ eventLoopP99Ms: 260 }), "ok", POSIX)).toEqual({
+  it("is critical on event-loop p99 above 500ms", () => {
+    expect(classifyHostPressure(sample({ eventLoopP99Ms: 600 }), "ok", POSIX)).toEqual({
       level: "critical",
       reasons: ["event_loop"],
     });
   });
 
-  it("is elevated when POSIX load per cpu crosses 1.25", () => {
-    expect(classifyHostPressure(sample({ load1: 11, ncpu: 8 }), "ok", POSIX)).toEqual({
+  it("is elevated when POSIX load per cpu crosses 2.0", () => {
+    expect(classifyHostPressure(sample({ load1: 17, ncpu: 8 }), "ok", POSIX)).toEqual({
       level: "elevated",
       reasons: ["load"],
     });
@@ -185,8 +205,8 @@ describe("classifyHostPressure", () => {
     });
   });
 
-  it("is critical when POSIX load per cpu crosses 2.0", () => {
-    expect(classifyHostPressure(sample({ load1: 17, ncpu: 8 }), "ok", POSIX)).toEqual({
+  it("is critical when POSIX load per cpu crosses 3.0", () => {
+    expect(classifyHostPressure(sample({ load1: 25, ncpu: 8 }), "ok", POSIX)).toEqual({
       level: "critical",
       reasons: ["load"],
     });
@@ -199,27 +219,27 @@ describe("classifyHostPressure", () => {
     });
   });
 
-  it("is elevated on win32 when cpu busy crosses 0.85", () => {
-    expect(classifyHostPressure(sample({ cpuBusyRatio: 0.9 }), "ok", WIN32)).toEqual({
+  it("is elevated on win32 when cpu busy crosses 0.95", () => {
+    expect(classifyHostPressure(sample({ cpuBusyRatio: 0.97 }), "ok", WIN32)).toEqual({
       level: "elevated",
       reasons: ["load"],
     });
   });
 
-  it("is critical on win32 when cpu busy crosses 0.97", () => {
-    expect(classifyHostPressure(sample({ cpuBusyRatio: 0.99 }), "ok", WIN32)).toEqual({
+  it("is critical on win32 when cpu busy crosses 0.99", () => {
+    expect(classifyHostPressure(sample({ cpuBusyRatio: 1 }), "ok", WIN32)).toEqual({
       level: "critical",
       reasons: ["load"],
     });
   });
 
-  it("pairs liveAgents >= 4 with win32 cpu busy", () => {
-    expect(classifyHostPressure(sample({ liveAgents: 4, cpuBusyRatio: 0.9 }), "ok", WIN32)).toEqual(
-      {
-        level: "elevated",
-        reasons: ["load", "agents"],
-      },
-    );
+  it("pairs liveAgents >= 8 with win32 cpu busy", () => {
+    expect(
+      classifyHostPressure(sample({ liveAgents: 8, cpuBusyRatio: 0.97 }), "ok", WIN32),
+    ).toEqual({
+      level: "elevated",
+      reasons: ["load", "agents"],
+    });
   });
 
   it("does not use cpuBusyRatio on POSIX", () => {
@@ -234,16 +254,16 @@ describe("classifyHostPressure", () => {
     });
   });
 
-  it("does not elevate on liveAgents >= 4 alone", () => {
-    expect(classifyHostPressure(sample({ liveAgents: 4 }), "ok", POSIX)).toEqual({
+  it("does not elevate on liveAgents >= 8 alone", () => {
+    expect(classifyHostPressure(sample({ liveAgents: 8 }), "ok", POSIX)).toEqual({
       level: "ok",
       reasons: [],
     });
   });
 
-  it("pairs liveAgents >= 4 with a resource signal", () => {
+  it("pairs liveAgents >= 8 with a resource signal", () => {
     expect(
-      classifyHostPressure(sample({ liveAgents: 4, memFreeRatio: 0.14 }), "ok", POSIX),
+      classifyHostPressure(sample({ liveAgents: 8, memFreeRatio: 0.07 }), "ok", POSIX),
     ).toEqual({
       level: "elevated",
       reasons: ["memory", "agents"],
@@ -255,10 +275,10 @@ describe("classifyHostPressure", () => {
     expect(
       classifyHostPressure(
         sample({
-          liveAgents: 4,
-          memFreeRatio: 0.07,
-          eventLoopP99Ms: 260,
-          load1: 17,
+          liveAgents: 8,
+          memFreeRatio: 0.03,
+          eventLoopP99Ms: 600,
+          load1: 25,
           ncpu: 8,
         }),
         "ok",
@@ -268,26 +288,26 @@ describe("classifyHostPressure", () => {
   });
 
   it("enters a level on one sample above the enter bar", () => {
-    expect(classifyHostPressure(sample({ eventLoopP99Ms: 120 }), "ok", POSIX).level).toBe(
+    expect(classifyHostPressure(sample({ eventLoopP99Ms: 300 }), "ok", POSIX).level).toBe(
       "elevated",
     );
-    expect(classifyHostPressure(sample({ eventLoopP99Ms: 260 }), "ok", POSIX).level).toBe(
+    expect(classifyHostPressure(sample({ eventLoopP99Ms: 600 }), "ok", POSIX).level).toBe(
       "critical",
     );
   });
 
   it("stays critical between the critical and elevated bars", () => {
-    const entered = classifyHostPressure(sample({ memFreeRatio: 0.07 }), "ok", POSIX);
+    const entered = classifyHostPressure(sample({ memFreeRatio: 0.03 }), "ok", POSIX);
     expect(entered.level).toBe("critical");
-    expect(classifyHostPressure(sample({ memFreeRatio: 0.1 }), "critical", POSIX).level).toBe(
+    expect(classifyHostPressure(sample({ memFreeRatio: 0.06 }), "critical", POSIX).level).toBe(
       "critical",
     );
   });
 
-  it("does not flicker on a 14.9% ↔ 15.1% free-mem wiggle once elevated", () => {
-    const entered = classifyHostPressure(sample({ memFreeRatio: 0.149 }), "ok", POSIX);
+  it("does not flicker on a 7.9% ↔ 8.1% free-mem wiggle once elevated", () => {
+    const entered = classifyHostPressure(sample({ memFreeRatio: 0.079 }), "ok", POSIX);
     expect(entered.level).toBe("elevated");
-    expect(classifyHostPressure(sample({ memFreeRatio: 0.151 }), "elevated", POSIX).level).toBe(
+    expect(classifyHostPressure(sample({ memFreeRatio: 0.081 }), "elevated", POSIX).level).toBe(
       "elevated",
     );
   });
@@ -352,7 +372,7 @@ describe("HostPressureMonitor", () => {
       platform: POSIX,
       now: () => new Date(),
     });
-    current = sample({ memFreeRatio: 0.14, liveAgents: 2 });
+    current = sample({ memFreeRatio: 0.07, liveAgents: 2 });
     monitor.start();
 
     vi.advanceTimersByTime(HOST_PRESSURE_SAMPLE_MS);
@@ -367,7 +387,7 @@ describe("HostPressureMonitor", () => {
       },
     ]);
 
-    current = sample({ memFreeRatio: 0.13, liveAgents: 3 });
+    current = sample({ memFreeRatio: 0.06, liveAgents: 3 });
     vi.advanceTimersByTime(HOST_PRESSURE_SAMPLE_MS);
     expect(broadcasts).toHaveLength(1);
 
@@ -391,7 +411,7 @@ describe("HostPressureMonitor", () => {
         platform,
         now: () => new Date(),
       });
-      current = sample({ memFreeRatio: 0.14 });
+      current = sample({ memFreeRatio: 0.07 });
       monitor.start();
       vi.advanceTimersByTime(HOST_PRESSURE_SAMPLE_MS);
       monitor.dispose();
@@ -428,7 +448,7 @@ describe("handleWsOpen host_pressure replay", () => {
     type: "host_pressure",
     level: "elevated",
     reasons: ["memory"],
-    liveAgents: 4,
+    liveAgents: 8,
     updatedAt: "2026-08-18T12:00:00.000Z",
     os: "linux",
   };
