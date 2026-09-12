@@ -16,6 +16,7 @@ import { serverIdentityPublicKey } from "../../server-identity";
 import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
+import { createRateLimiter } from "../rate-limit";
 import type { ApiDeps } from "../types/api-deps";
 
 /**
@@ -30,11 +31,45 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function readJsonBody(req: IncomingMessage): Promise<unknown> {
+/**
+ * Ceiling on any JSON body `readJsonBody` accepts, enforced as bytes arrive
+ * rather than after the whole request is buffered.
+ *
+ * Shared by all three callers (push register, push unregister, client-log)
+ * rather than a per-route bound: none of them legitimately posts more than a
+ * few KB, so one ceiling well above any real payload — and far below what
+ * would pressure memory — covers all three. A release-build client shipping
+ * this is the reason it's needed at all: a dev build behind Metro never sent
+ * enough to matter.
+ */
+export const MAX_JSON_BODY_BYTES = 1024 * 1024; // 1 MiB
+
+class BodyTooLargeError extends Error {}
+
+function readJsonBody(
+  req: IncomingMessage,
+  maxBytes: number = MAX_JSON_BODY_BYTES,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    let chunks: Buffer[] = [];
+    let size = 0;
+    let refused = false;
+    req.on("data", (chunk: Buffer) => {
+      if (refused) return;
+      size += chunk.length;
+      if (size > maxBytes) {
+        // Stop buffering but keep draining, so a slow/chunked oversized body
+        // doesn't grow memory further while the socket stays healthy enough
+        // to carry the 413 back.
+        refused = true;
+        chunks = [];
+        reject(new BodyTooLargeError("request body is too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
+      if (refused) return;
       try {
         const raw = Buffer.concat(chunks).toString("utf-8");
         resolve(raw ? JSON.parse(raw) : {});
@@ -277,6 +312,42 @@ type ClientLogEntry = {
   tag?: string;
   fields?: Record<string, unknown>;
 };
+
+/**
+ * Requests per window this endpoint accepts per authenticated caller. A log
+ * sink, not a handshake, so it's generous: legitimate batching (mobile
+ * shipping slow-request timings) lands well under one request per second.
+ * 120/min gives 2x headroom over "a batch every second" before refusing.
+ */
+export const CLIENT_LOG_RATE_LIMIT = 120;
+export const CLIENT_LOG_RATE_WINDOW_MS = 60_000;
+
+/** Entries beyond this in one batch are dropped, not logged. */
+export const MAX_CLIENT_LOG_ENTRIES = 200;
+/** Characters kept from an entry's `msg` before the rest is dropped. */
+const MAX_CLIENT_LOG_MSG_LEN = 2000;
+/** Characters kept from an entry's serialized `fields` before the rest is dropped. */
+const MAX_CLIENT_LOG_FIELDS_LEN = 4000;
+
+function truncateString(value: string, maxLen: number): string {
+  return value.length > maxLen ? `${value.slice(0, maxLen)}…(truncated)` : value;
+}
+
+/**
+ * `fields` is an arbitrary client-supplied object, unbounded in shape and
+ * depth — stringifying it is what actually bounds the log line it ends up
+ * inside, since a nested structure can be small in entry count but huge once
+ * rendered.
+ */
+function truncateFields(
+  fields: Record<string, unknown> | undefined,
+  maxLen: number,
+): Record<string, unknown> {
+  if (!fields) return {};
+  const serialized = JSON.stringify(fields);
+  if (serialized.length <= maxLen) return fields;
+  return { fieldsTruncated: truncateString(serialized, maxLen) };
+}
 
 export const createMiscRoutes = (
   deps: Pick<
@@ -563,23 +634,44 @@ export const createMiscRoutes = (
     return c.json({ accepted: true, pid: child.pid }, 202);
   });
 
+  const clientLogRateLimit = createRateLimiter({
+    limit: CLIENT_LOG_RATE_LIMIT,
+    windowMs: CLIENT_LOG_RATE_WINDOW_MS,
+  });
+
   app.post("/api/__client-log", async (c) => {
+    const principal = c.get("principal");
+    const rateLimitKey =
+      principal?.kind === "device" && principal.deviceId
+        ? `device:${principal.deviceId}`
+        : "legacy";
+    if (!clientLogRateLimit(rateLimitKey)) {
+      return c.json({ ok: false, error: "rate limited" }, 429);
+    }
+
     const ua = c.req.header("user-agent") ?? "";
     let body: { entries?: ClientLogEntry[] } = {};
     try {
       body = (await readJsonBody(c.env.incoming)) as { entries?: ClientLogEntry[] };
-    } catch {
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        return c.json({ ok: false, error: "request body is too large" }, 413);
+      }
       return c.json({ ok: false, error: "invalid json" }, 400);
     }
-    const entries = Array.isArray(body.entries) ? body.entries : [];
+    const entries = (Array.isArray(body.entries) ? body.entries : []).slice(
+      0,
+      MAX_CLIENT_LOG_ENTRIES,
+    );
     for (const e of entries) {
       const level =
         e.level === "debug" || e.level === "warn" || e.level === "error" ? e.level : "info";
-      clientLog[level](`[client] ${e.tag ?? "log"}: ${e.msg ?? ""}`, {
+      const msg = truncateString(e.msg ?? "", MAX_CLIENT_LOG_MSG_LEN);
+      clientLog[level](`[client] ${e.tag ?? "log"}: ${msg}`, {
         clientTs: e.ts,
         tag: e.tag,
         ua,
-        ...(e.fields ?? {}),
+        ...truncateFields(e.fields, MAX_CLIENT_LOG_FIELDS_LEN),
       });
     }
     return c.json({ ok: true, accepted: entries.length });
