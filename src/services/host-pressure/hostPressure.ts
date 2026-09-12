@@ -17,38 +17,38 @@ export const HOST_PRESSURE_SAMPLE_MS = 5_000;
 /**
  * Enter a level at the more extreme bar; leave at the less extreme bar so a
  * value sitting between them does not flicker. The elevated→ok leave bars sit
- * a little past the enter bars so a 14.9% ↔ 15.1% free-mem wiggle stays put.
+ * a little past the enter bars so a 7.9% ↔ 8.1% free-mem wiggle stays put.
  *
  * Tune these only together with `__tests__/host-pressure.test.ts`.
  */
 export const HOST_PRESSURE_BARS = {
   memFreeRatio: {
-    enterElevated: 0.15,
-    leaveElevated: 0.17,
-    enterCritical: 0.08,
-    leaveCritical: 0.15,
+    enterElevated: 0.08,
+    leaveElevated: 0.1,
+    enterCritical: 0.04,
+    leaveCritical: 0.08,
   },
   eventLoopP99Ms: {
-    enterElevated: 100,
-    leaveElevated: 80,
-    enterCritical: 250,
-    leaveCritical: 100,
+    enterElevated: 250,
+    leaveElevated: 200,
+    enterCritical: 500,
+    leaveCritical: 250,
   },
   loadPerCpu: {
-    enterElevated: 1.25,
-    leaveElevated: 1.05,
-    enterCritical: 2.0,
-    leaveCritical: 1.25,
+    enterElevated: 2.0,
+    leaveElevated: 1.5,
+    enterCritical: 3.0,
+    leaveCritical: 2.0,
   },
   // win32 has no loadavg. Busy ratio from os.cpus()[].times deltas is 0–1, so
-  // it cannot reuse loadPerCpu's 2.0 critical bar. Reason on the wire stays `load`.
+  // it cannot reuse loadPerCpu's 3.0 critical bar. Reason on the wire stays `load`.
   cpuBusy: {
-    enterElevated: 0.85,
-    leaveElevated: 0.7,
-    enterCritical: 0.97,
-    leaveCritical: 0.85,
+    enterElevated: 0.95,
+    leaveElevated: 0.85,
+    enterCritical: 0.99,
+    leaveCritical: 0.95,
   },
-  liveAgentsPair: 4,
+  liveAgentsPair: 8,
 } as const;
 
 export type HostSample = {
