@@ -1,3 +1,9 @@
+## [1.90.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.6...v1.90.7) (2026-09-12)
+
+### Bug Fixes
+
+* **codex:** confirm directory-trust gates with Enter ([7bb11f1](https://github.com/RonenMars/threadbase-streamer/commit/7bb11f199f458ddf544402e3d6ff51e4167f0436))
+
 ## [1.90.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.5...v1.90.6) (2026-09-12)
 
 ### Bug Fixes
