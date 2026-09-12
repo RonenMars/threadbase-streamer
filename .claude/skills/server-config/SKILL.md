@@ -36,6 +36,8 @@ Moved out of the repo root `CLAUDE.md` so it loads on demand rather than in ever
 
 `server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`, `claude_flags`, `claude_extra_args`, `feature_flags`) from it, but most runtime knobs come exclusively from CLI flags.
 
+`--prod` does not change which directory is read. Leave `THREADBASE_CONFIG_DIR` unset so both the launchd / Task Scheduler instance and an ad-hoc `serve` share `~/.threadbase/`. See [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
+
 The file is parsed by **single-line regex, not a YAML library** — every value must stay on one line. `claude_flags:` and `feature_flags:` therefore store one line of JSON (`{"permissionMode":"bypassPermissions"}`, `{"ptyHost":true}`), which keeps colons/quotes/spaces escaped for free; a corrupt line is logged and ignored rather than failing the boot. `feature_flags:` keys are the `FEATURE_FLAGS` object keys, not env names. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
 
 `--default-permission-mode <mode>` (or `default_permission_mode:` in `server.yaml`) controls the Claude Code `--permission-mode` used to spawn every PTY session. All six CLI values are accepted: `acceptEdits` (default — auto-approves file edits, still prompts for shell commands), `manual`, `auto`, `plan`, `bypassPermissions`, `dontAsk`.

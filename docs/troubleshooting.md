@@ -779,7 +779,7 @@ The streamer can be supervised by launchd ("prod") or run ad-hoc from a shell ("
 
 **When:** Running `tb-streamer serve` from a non-interactive context (CI, a background job, a launchd-but-not-marked-prod plist) and the process appears to hang.
 **Cause:** Prod is running on the requested port, the action enters the conflict path, and the interactive prompt is reading from a closed stdin.
-**Fix:** Pass `--replace-prod` (always take the port) or `--port <N>` with a different port. For launchd-spawned services, the shim's plist already includes `--prod` which short-circuits the prompt logic entirely; if you wrote a custom plist, add `--prod`.
+**Fix:** Pass `--replace-prod` (always take the port) or `--port <N>` with a different port. For launchd-spawned services, the shim's plist already includes `--prod` which short-circuits the prompt logic entirely; if you wrote a custom plist, add `--prod`. `--prod` does not switch config — ad-hoc `serve` and supervised prod both read `~/.threadbase/`. See [guides/prod-dev-lifecycle.md](guides/prod-dev-lifecycle.md#one-config-two-invocation-modes).
 
 ---
 

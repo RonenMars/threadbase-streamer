@@ -30,7 +30,7 @@ The legacy `tb` shim (`scripts/install-tb.*`) is deprecated but still supported 
 
 ## Homebrew distribution
 
-`brew install RonenMars/threadbase/tb-streamer` is an alternate end-user install. The formula (in `RonenMars/homebrew-threadbase`) is auto-regenerated on every stable release. It runs the streamer under launchd/systemd via `brew services`, on port 8766, without `--prod` — Homebrew installs sit outside the prod/dev lifecycle scheme.
+`brew install RonenMars/threadbase/tb-streamer` is an alternate end-user install. The formula (in `RonenMars/homebrew-threadbase`) is auto-regenerated on every stable release. `brew services` runs `serve --prod` under the `homebrew.mxcl.tb-streamer` launchd label (systemd on Linux). The prod/dev lifecycle resolves the loaded label at runtime, so `tb-streamer prod …` controls a brew-supervised instance the same way it controls a `scripts/deploy.sh` one. Manual test: [testing/homebrew-prod-manual-test.md](../testing/homebrew-prod-manual-test.md) (PR #71).
 
 A machine can have the Homebrew install **or** the `scripts/deploy.sh` install, not both — they'd fight over port 8766.
 

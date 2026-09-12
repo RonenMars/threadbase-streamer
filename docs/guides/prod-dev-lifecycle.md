@@ -2,6 +2,33 @@
 
 Only one streamer can bind port 8766 at a time. The platform-supervised "prod" instance and an ad-hoc "dev" instance (`tb-streamer serve` from a shell) coordinate via a JSON marker file rather than racing. The high-level summary lives in `CLAUDE.md`; this is the full reference.
 
+## One config, two invocation modes
+
+`--prod` is process behaviour, not a config profile. Supervised prod (`tb-streamer prod start`, launchd, Task Scheduler, Homebrew `brew services`, Docker) and an ad-hoc `tb-streamer serve` both read `~/.threadbase/` — `server.yaml`, `cache/`, `runtime.db`, paired devices. There is no `~/.threadbase-dev`. `THREADBASE_CONFIG_DIR` redirects that directory, but it is a test hook (rotate / `set-key` must not rewrite live config) and stays unset on a real machine.
+
+What `--prod` changes:
+
+- Skip the first-run permission-mode and auto-resume prompts. A supervised service must never block on stdin.
+- Skip the "replace prod / pick another port" takeover prompt.
+- Truncate oversized supervised logs at boot. An ad-hoc `serve` logs to the terminal, so it must not truncate prod's files.
+- Simple SIGINT / SIGTERM handlers; no takeover cleanup.
+
+`isProdInvocation` is `opts.prod === true || process.ppid === 1` (PPID 1 = launchd on macOS).
+
+To run a checkout against the live config without those prompts, stop the supervised instance first so 8766 is free:
+
+```bash
+tb-streamer prod stop
+npm run build
+node dist/cli.cjs serve --port 8766 --verbose --prod
+```
+
+Restore it with `tb-streamer prod start`. `npm run dev` only watches tsup; `npm run dev:verbose` is `serve` without `--prod`.
+
+Linux has no unsupervised lifecycle (`tb-streamer prod …` is macOS / Windows), so a checkout there is `node dist/cli.cjs serve --prod` with the same `~/.threadbase/` as above.
+
+Fly's `deploy:fly --prod` is a different flag: which Fly app, not this `serve` mode. Both Fly apps still run `serve --prod` in the container. See [fly.md](fly.md).
+
 ## macOS (launchd)
 
 **Components:**
@@ -25,7 +52,7 @@ Only one streamer can bind port 8766 at a time. The platform-supervised "prod" i
 - `--replace-prod` — unconditionally bootout prod, take its port, install signal handlers that flip `userHeld=true` on clean exit.
 - `--forget` — clear this repo's remembered choice and re-prompt.
 - `--forget-all` — clear every repo's remembered choice.
-- `--prod` — internal: tells the action to skip dev-takeover logic. Set by the plist; auto-detected when `process.ppid === 1`.
+- `--prod` — skip first-run prompts, takeover, and the log-cap at boot. Set by the plist / task / formula; auto-detected when `process.ppid === 1`. Does not change which directory is read (still `~/.threadbase/`).
 
 **Prod-side commands:**
 

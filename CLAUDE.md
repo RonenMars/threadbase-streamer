@@ -148,6 +148,8 @@ Things that will bite if you forget:
 
 Only one streamer can bind port 8766. The supervised "prod" instance (launchd on macOS, Task Scheduler on Windows) and an ad-hoc "dev" instance coordinate via a marker file at `~/.threadbase/prod-suspended.json` (dev writes it when taking over the port; `--replace-prod` / `--forget` flags on `serve`). Manage prod with `tb-streamer prod start|stop|status|restart|doctor [--fix]|logs`.
 
+Both invocations read the same `~/.threadbase/` (`server.yaml`, cache, `runtime.db`). `--prod` skips prompts and takeover — it is not a config profile, and there is no second local env. `THREADBASE_CONFIG_DIR` is a test hook and stays unset. To run a checkout as prod against that dir: `tb-streamer prod stop`, then `node dist/cli.cjs serve --port 8766 --verbose --prod`.
+
 Don't break without coordination: the marker shape is versioned (`shimVersion` — bump on change); the plist `ProgramArguments` must run `launchd-entry.cjs … --prod`; the Windows `TASK_NAME` constant in `src/lifecycle/constants.ts` must match `deploy.ps1`. Full component/flag/decision-table reference: [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
 
 ## Code Conventions

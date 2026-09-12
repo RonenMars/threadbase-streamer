@@ -33,6 +33,7 @@ Vitest globals are enabled. Every new feature requires tests under `__tests__/`.
 ## Configuration invariants
 
 - `server.yaml` is not complete runtime configuration. `port:` is ignored; services must pass `--port` explicitly (default `8766`).
+- `--prod` on `serve` is process behaviour (skip first-run prompts and prod-takeover), not a separate config. Ad-hoc `tb-streamer serve` and supervised `serve --prod` both read `~/.threadbase/`. `THREADBASE_CONFIG_DIR` redirects that directory for tests; leave it unset. See [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
 - Feature flags resolve at boot in this order: `THREADBASE_FEATURE_*` environment variables, `--feature`, `feature_flags` in YAML, registry defaults. YAML and CLI use keys from `FEATURE_FLAGS`, not environment-variable names. See [docs/guides/feature-flags.md](docs/guides/feature-flags.md).
 - `permissionMode`, `model`, and `effort` are spawn positionals. If `buildFlagArgs` skips one via `SPAWN_POSITIONAL_FLAG_IDS`, `StreamerServer.spawnFlagOverrides()` must resolve it; otherwise the API becomes a silent no-op.
 - `ptyGracePeriodMs: 0` means hold immediately, not never.
@@ -52,7 +53,7 @@ Vitest globals are enabled. Every new feature requires tests under `__tests__/`.
 
 ## Deployment and platform safeguards
 
-- Only one streamer may bind port 8766. Prod/dev takeover uses `~/.threadbase/prod-suspended.json`; bump its `shimVersion` when its shape changes. Keep the macOS `launchd-entry.cjs --prod` invocation and Windows `TASK_NAME` aligned with deploy scripts. See [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
+- Only one streamer may bind port 8766. Prod/dev takeover uses `~/.threadbase/prod-suspended.json`; bump its `shimVersion` when its shape changes. Keep the macOS `launchd-entry.cjs --prod` invocation and Windows `TASK_NAME` aligned with deploy scripts. Homebrew services also pass `--prod` (`homebrew.mxcl.tb-streamer`). See [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
 - macOS launchd plists must include Homebrew paths in `EnvironmentVariables.PATH`; retain the absolute-path fallback in `resolveClaudeExe()`.
 - Auto-update must stop the Windows service before replacing `current`, preserve service-label resolution, defer when active-session state is unknown, and keep `/api/__update` protected by HMAC rather than bearer auth. See [docs/guides/auto-update.md](docs/guides/auto-update.md).
 - On Windows, use `path.sep` for resolved-path prefix guards and `mtimeMs` for timestamp tests. Start setup or diagnosis with [docs/guides/windows-setup.md](docs/guides/windows-setup.md).
@@ -95,7 +96,7 @@ Where a real value is genuinely needed to run something, it belongs in untracked
 
 Node 22–24 is supported; use the repository `.nvmrc` when available. Build before running because `npm run dev` only watches the tsup build.
 
-On Linux, run `node dist/cli.cjs serve --prod`; the unsupervised lifecycle path supports only macOS and Windows. Live PTY testing requires a `claude` executable; `docker/claude-code-stub/claude.js` is the reviewer-safe stub. Session start also requires `--browse-root`. Postgres and Temporal are optional and off by default.
+On Linux, run `node dist/cli.cjs serve --prod`; the unsupervised lifecycle path supports only macOS and Windows. That still reads `~/.threadbase/` unless `THREADBASE_CONFIG_DIR` is set. Live PTY testing requires a `claude` executable; `docker/claude-code-stub/claude.js` is the reviewer-safe stub. Session start also requires `--browse-root`. Postgres and Temporal are optional and off by default.
 
 ## Issue status updates
 

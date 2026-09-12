@@ -33,6 +33,15 @@ npm run build
 node dist/cli.cjs serve --verbose --local-no-auth
 ```
 
+That is the interactive path: same `~/.threadbase/` as a supervised install (`server.yaml`, cache, `runtime.db`), but it will prompt if port 8766 is already taken. `--prod` skips those prompts and the prod-takeover flow; it is not a separate environment. To run the checkout as launchd would:
+
+```bash
+tb-streamer prod stop
+node dist/cli.cjs serve --port 8766 --verbose --prod
+```
+
+Restore the supervised instance with `tb-streamer prod start`. Detail: [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
+
 #### Server address
 
 By default, the server listens on port `8766` on all interfaces (WebSocket path: `/ws`).
@@ -61,7 +70,8 @@ npm test                  # run tests
 npm run lint              # type-check + lint
 npm run format            # auto-format
 npm run build             # build ESM/CJS + copy migrations
-npm run dev               # watch mode
+npm run dev               # tsup watch only — does not start the server
+npm run dev:verbose       # build + serve without --prod; tee to ~/.threadbase/logs/dev.log
 npm run migrate           # apply SQLite migrations
 npm run db:validate       # check for missing/duplicate/orphaned project_id data
 ```
