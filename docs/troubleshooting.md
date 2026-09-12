@@ -1405,3 +1405,72 @@ sqlite3 "$DB" "delete from conversation_tail where conversation_id='<id>'; delet
 ```
 
 The list endpoint queries SQLite directly, so the row disappears immediately without a restart; the only residue is a dead entry in the in-memory `fileIndex`, which matters solely if that exact path ever returns.
+
+## A `@types/node` bump fails `Lint` and `Build` with `TS2305: … has no exported member`
+
+**When:** A dependabot `@types/node` bump goes red on exactly two jobs, `Lint` and `Build`, with an identical message on both and nothing wrong at runtime:
+
+```
+src/services/host-pressure/hostPressure.ts(3,15): error TS2305:
+Module '"perf_hooks"' has no exported member 'IntervalHistogram'.
+```
+
+Observed 2026-09-11 on [#853](https://github.com/RonenMars/threadbase-streamer/pull/853), `@types/node` 26.4.0 → 26.5.0.
+
+**Cause.** `@types/node` renames interfaces between minor versions without a deprecation window.
+26.5.0 renamed the `perf_hooks` event-loop-delay histogram `IntervalHistogram` → `ELDHistogram`, and the two versions share **neither** name — 26.4.0 declares only the old one, 26.5.0 only the new one.
+So any `import { type IntervalHistogram }` compiles against exactly one side of the bump.
+This is a *type-only* break: nothing is wrong with the code, no runtime behaviour changes, and the only symptom is `tsc` refusing the name.
+
+**Fix — derive the type from the value, do not rename it.**
+Swapping `IntervalHistogram` for `ELDHistogram` moves the breakage to the other side of the bump rather than removing it, and leaves the identical trap for the next rename.
+Derive it from the function that produces it instead ([#874](https://github.com/RonenMars/threadbase-streamer/pull/874)):
+
+```ts
+// not: import { type IntervalHistogram, monitorEventLoopDelay } from "perf_hooks";
+import { monitorEventLoopDelay } from "perf_hooks";
+
+type EventLoopHistogram = ReturnType<typeof monitorEventLoopDelay>;
+```
+
+`ReturnType` resolves to whatever the installed `@types/node` calls it, so no future rename can break it.
+
+**The general rule.** A type imported *by name* from a `@types/*` package is a version coupling; a type *derived from a value* is not.
+Prefer `ReturnType<typeof fn>`, `Parameters<typeof fn>`, `InstanceType<typeof C>` and `Awaited<…>` over importing a library's interface name, whenever the name exists only to annotate something that library already returns.
+This costs one line and removes a whole class of bump failures.
+
+**Verify against both versions before merging.** The fix is worthless if it only compiles against the version you happen to have installed:
+
+```sh
+npx tsc --noEmit -p tsconfig.json --pretty false          # current pin
+npm install --no-save @types/node@<new>                   # the bump
+npx tsc --noEmit -p tsconfig.json --pretty false          # must also pass
+npm ci                                                    # restore the pin
+```
+
+Confirm it is a real fix by reverting the change under the *new* types and watching the original `TS2305` come back.
+A type fix that passes both ways proves nothing.
+
+**Sequencing.** The code fix and the bump cannot land in one step unless you push onto dependabot's branch.
+Land the derived-type fix on `main` first (it compiles against the *current* pin, which is the point), then rebase the dependabot PR — it goes green on its own.
+
+## A major test-runner bump passes every check and still is not fully proven
+
+**When:** A dependabot major bump of `vitest` (or any test runner) comes back green on all checks, including both `Test` jobs and both `Smoke` jobs, and there is a temptation to treat that as a clean bill of health.
+
+`vitest` 4.1.11 → **5.0.0** landed this way on 2026-09-12 ([#855](https://github.com/RonenMars/threadbase-streamer/pull/855)), green across two independent CI cycles.
+
+**Cause.** CI runs the suite *under* the new runner, so a green suite is genuinely strong evidence — much stronger than for an ordinary library bump, because the bump largely tests itself.
+But it only covers what the suite exercises.
+A major can still change config resolution, reporter output, worker pooling, default timeouts, coverage thresholds or globals handling, and none of those necessarily fails a passing assertion.
+The failure mode is not a red build later; it is output that looks subtly wrong, or a suite that starts behaving differently under load, with no version change in sight to blame.
+
+**Fix / what to do about it.**
+
+- After a major runner bump, **suspect the runner first** when local test output turns odd — reporters, config resolution, worker pooling, timeouts — rather than bisecting product code.
+- `npx vitest --version` confirms which runner actually ran; the banner in any `vitest run` output prints it too (`RUN v5.0.0 …`).
+- Do not read a green suite as covering the runner's *own* configuration surface. `vitest.config.*` and `__tests__/setup*` are the places a major bump changes meaning silently.
+- The load-sensitive suites documented above still need their isolation re-run before a failure is called real; a runner bump changes scheduling, so it can move which suites are load-sensitive.
+
+**The general rule.** For a dev-dependency major, "CI is green" answers *did the suite still pass*, not *does the tool still mean the same thing*.
+Merge it if green, then keep the version in mind for the next unexplained tooling symptom instead of treating the bump as settled history.

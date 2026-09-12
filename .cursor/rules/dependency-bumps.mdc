@@ -1,0 +1,52 @@
+---
+description: Dependency-bump traps — @types type renames, and what a green suite does and does not prove for a major test-runner bump.
+globs: ["**/*.ts", "package.json", "package-lock.json", "tsup.config.ts"]
+alwaysApply: false
+---
+
+# Dependency bumps
+
+Canonical detail lives in [docs/troubleshooting.md](../../docs/troubleshooting.md);
+this rule is the short form. `AGENTS.md` carries the same two points.
+
+## Never import a `@types/*` type by name when you can derive it from a value
+
+`@types/node` renames interfaces between **minor** versions with no deprecation
+window. 26.5.0 renamed the `perf_hooks` histogram `IntervalHistogram` →
+`ELDHistogram`, and neither version declares both names. A bump therefore fails
+`Lint` and `Build` with `TS2305: … has no exported member` while nothing is
+wrong at runtime.
+
+Renaming the import moves the break to the other side of the bump and leaves the
+same trap for the next rename. Derive the type from the value that produces it:
+
+```ts
+// not: import { type IntervalHistogram, monitorEventLoopDelay } from "perf_hooks";
+import { monitorEventLoopDelay } from "perf_hooks";
+
+type EventLoopHistogram = ReturnType<typeof monitorEventLoopDelay>;
+```
+
+Prefer `ReturnType<typeof fn>`, `Parameters<typeof fn>`, `InstanceType<typeof C>`
+and `Awaited<…>` over importing a library's interface name, whenever that name
+exists only to annotate something the library already returns.
+
+Before merging, typecheck against **both** the current pin and the bump, then
+revert the fix under the new types and confirm the original error returns. A
+type fix that passes either way proves nothing.
+
+Sequencing: land the derived-type fix on `main` first (it compiles against the
+current pin, which is the point), then rebase the dependabot PR — the two cannot
+land in one step without pushing onto dependabot's branch.
+
+## A green suite does not fully clear a major test-runner bump
+
+`vitest` 4.1.11 → 5.0.0 landed green on every check on 2026-09-12. CI runs the
+suite *under* the new runner, so that is strong evidence — much stronger than for
+an ordinary library bump, because the bump largely tests itself.
+
+It still only covers what the suite exercises. A major can change config
+resolution, reporter output, worker pooling, default timeouts or globals
+handling without failing a passing assertion. After a runner major, suspect the
+runner first when tooling output turns odd, rather than bisecting product code.
+`npx vitest --version` confirms which runner actually ran.

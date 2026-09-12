@@ -14,6 +14,8 @@ Codex discovers the same four operational workflows from `.agents/skills/`. Keep
 
 ## Other agents
 
-Cursor, Copilot, and the rest read none of the files above — the formats are Claude Code's and Codex's own. This page is the whole handoff; equivalent optional tooling in another runtime is fine.
+Cursor reads `AGENTS.md` natively, and `.cursor/rules/*.mdc` carries the short form of guidance that would otherwise reach only Claude Code and Codex — currently one rule, `dependency-bumps.mdc`. Those rules are pointers, not a third copy: the canonical text stays in `docs/`, because three hand-maintained copies of the same paragraph drift.
+
+Copilot and the rest read none of the files above — the remaining formats are Claude Code's and Codex's own. This page is the whole handoff; equivalent optional tooling in another runtime is fine.
 
 No marketplace or plugin is registered by this repository.
