@@ -1286,7 +1286,7 @@ and install `pm2-logrotate` so no single log can grow unbounded.
 
 *No bound.* Nothing ever truncated the file.
 
-**Fix (shipped).** `defaultDest()` now picks by `process.stdout.isTTY`: `pino` under a supervisor (launchd, systemd, Task Scheduler, Docker — fd 1 is a file or pipe), `console` at a human terminal. An explicit `dest` still wins, which is what the CLI's user-facing output (banners, QR, `prod doctor`) passes, and what the high-frequency query-timing lines pass. Debug lines are now genuinely filtered by `LOG_LEVEL`. `truncateOversizedLogs()` (`src/lifecycle/log-cap.ts`) empties either log above 32 MB, at boot, on a `--prod` invocation only.
+**Fix (shipped).** `defaultDest()` now picks by `process.stdout.isTTY`: `pino` under a supervisor (launchd, systemd, Task Scheduler, Docker — fd 1 is a file or pipe), `console` at a human terminal. An explicit `dest` still wins, which is what the CLI's user-facing output (banners, QR, `prod doctor`) passes, and what the high-frequency query-timing lines pass. Under a supervisor, debug lines are filtered by `LOG_LEVEL`. At a TTY they are not — see the next section. `truncateOversizedLogs()` (`src/lifecycle/log-cap.ts`) empties either log above 32 MB, at boot, on a `--prod` invocation only.
 
 *Separately, same log:* those request lines also printed `→ 597`, the `ALREADY_HANDLED` sentinel that routes past Hono's response piping rather than a real HTTP status — 96% of lines, so the log could not tell a 200 from a 500 on any direct-write route. Fixed by the query-timing work, which reads the status off the Node response the handler actually wrote to.
 
@@ -1297,6 +1297,24 @@ and install `pm2-logrotate` so no single log can grow unbounded.
 **Manual escape hatch:** `tb-streamer prod logs --clear` truncates both files in place and kickstarts so the descriptors reopen at 0.
 
 **Known ceiling:** the cap bounds growth *across restarts only*. An instance running for months without one still grows unbounded. If that becomes real, move the same truncate-in-place call onto an interval. A pino transport that owns its own file does not replace this on its own — real stdout (uncaught stack traces, node warnings, PTY noise) still lands in the supervisor-held file.
+
+## Interactive `serve` floods with `Scanner invalidated by directory event`
+
+**When:** An ad-hoc `node dist/cli.cjs serve --port 8766 --verbose --prod` (or the same without `--verbose`) prints `Scanner invalidated by directory event: <path>.jsonl` in a tight loop. A handful of transcripts under `~/.claude/projects` (and the Codex equivalent) repeat; it is not a walk of the whole corpus. The same terminal often also repeats `[codex.ready_fallback] … busy=true`.
+
+**Cause — the events are real; the terminal is over-reporting them.**
+
+The conversation directory watcher fires `onConversationChanged` on every JSONL append (`src/server-wiring.ts`). That callback pokes or attaches the live tail, records the path, and trailing-debounces a scanner-stale flag (`THREADBASE_DIR_SCAN_DEBOUNCE_MS`, default 1 s). It does **not** drop the cache row: `invalidateByFilePath(..., { skipIfTailed: true })` is upsert-or-leave. The log wording is leftover — `event: cache.directory_change` means “this file changed,” not a full rescan per line.
+
+Those writes come from live Claude/Codex turns (including other tools on the same machine). One hot transcript can emit the line many times per second.
+
+The reason an interactive serve *shows* every one of them: `defaultDest()` is `console` when stdout is a TTY, and the console half of `emit()` does not consult `LOG_LEVEL`. So `debug()` prints at a human terminal even when pino is at `info`. `--verbose` does not control this line (it only adds browse-root / public-URL info). `--prod` does not either. The supervised-log fix in the previous section only silences the line when fd 1 is a pipe or file.
+
+**Not a cache thrash.** A burst of directory events collapses into one stale-flag flip after the quiet period. The process is doing the designed per-write poke.
+
+**Workaround:** treat the line as expected on a TTY while sessions are writing. To hide it, run under a supervisor (or otherwise with stdout not a TTY) at default `LOG_LEVEL=info`. Setting `LOG_LEVEL=info` on an interactive terminal does not help today.
+
+**The other repeating line.** `[codex.ready_fallback]` is independent. Codex’s 8 s boot timer (`CODEX_READY_FALLBACK_MS`) re-arms while the screen is still busy (`Starting` / `Working` / MCP load). That one is `info`, so it shows even without the debug hole.
 
 ## `EMFILE: too many open files` from unrelated code paths, or `watcher.limit_exhausted` in the log
 
