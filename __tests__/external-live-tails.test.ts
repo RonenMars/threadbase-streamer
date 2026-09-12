@@ -27,6 +27,28 @@ function userLine(convId: string, text: string, projectPath: string, ts: string)
   })}\n`;
 }
 
+// A line as Claude writes it into a fork's own transcript. Every line carries
+// the PARENT's sessionId and isSidechain:true — which is exactly why the tail
+// must be keyed off the file, not the line.
+function sidechainLine(
+  parentId: string,
+  agentId: string,
+  text: string,
+  projectPath: string,
+  ts: string,
+): string {
+  return `${JSON.stringify({
+    sessionId: parentId,
+    isSidechain: true,
+    agentId,
+    type: "user",
+    uuid: `s-${text}`,
+    cwd: projectPath,
+    timestamp: ts,
+    message: { role: "user", content: [{ type: "text", text }] },
+  })}\n`;
+}
+
 async function waitFor(pred: () => boolean, timeoutMs = 10_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -302,5 +324,70 @@ describe("external live tails", () => {
     (server as any).externalTailManager.handleJsonlDeleted(filePath);
 
     expect(externalTails().size).toBe(0);
+  });
+
+  it("never pushes a subagent transcript, which every HTTP surface hides", async () => {
+    // Claude writes a fork's transcript to <project>/<parentId>/subagents/
+    // agent-<id>.jsonl. chokidar watches project dirs recursively, so that file
+    // looks exactly like a JSONL an external agent is writing — and its first
+    // user line is the fork boilerplate the parent conversation never contains.
+    // With subagentSessions off, the list, /api/sessions, the detail and
+    // subscribe_session all refuse it; this path must too.
+    const parentId = "aaaa1111-0000-0000-0000-00000000e008";
+    const agentId = "agent-atestfork00000001";
+    const subagentDir = join(projectDir, parentId, "subagents");
+    mkdirSync(subagentDir, { recursive: true });
+    const parentPath = join(projectDir, `${parentId}.jsonl`);
+    const subagentPath = join(subagentDir, `${agentId}.jsonl`);
+
+    // Positive control: the parent streams over the very same mechanism, so a
+    // silent watcher can't pass this test by pushing nothing at all.
+    writeFileSync(
+      parentPath,
+      userLine(parentId, "parent-first", projectPath, "2026-07-21T17:00:00.000Z"),
+    );
+    writeFileSync(
+      subagentPath,
+      sidechainLine(parentId, agentId, "fork-first", projectPath, "2026-07-21T17:00:01.000Z"),
+    );
+    expect(await waitFor(() => externalTails().size === 2)).toBe(true);
+
+    appendFileSync(
+      parentPath,
+      userLine(parentId, "parent-second", projectPath, "2026-07-21T17:00:02.000Z"),
+    );
+    appendFileSync(
+      subagentPath,
+      sidechainLine(
+        parentId,
+        agentId,
+        "FORK-BOILERPLATE-MARKER",
+        projectPath,
+        "2026-07-21T17:00:03.000Z",
+      ),
+    );
+
+    expect(
+      await waitFor(() =>
+        events.some(
+          (e) =>
+            e.type === "conversation_events" && String(e.lines.join("")).includes("parent-second"),
+        ),
+      ),
+    ).toBe(true);
+
+    // The fork's line was appended first-to-last alongside one that did arrive,
+    // so "not yet" cannot be mistaken for "never".
+    const pushed = JSON.stringify(events);
+    expect(pushed).not.toContain("FORK-BOILERPLATE-MARKER");
+    expect(events.some((e) => e.type === "conversation_events" && e.sessionId === agentId)).toBe(
+      false,
+    );
+    expect(events.some((e) => e.type === "conversation_event" && e.sessionId === agentId)).toBe(
+      false,
+    );
+    expect(
+      events.some((e) => e.type === "conversation_updated" && e.conversationId === agentId),
+    ).toBe(false);
   });
 });
