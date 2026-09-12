@@ -1,3 +1,9 @@
+## [1.91.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.91.0...v1.91.1) (2026-09-12)
+
+### Bug Fixes
+
+* **deploy:** clear the native-module destination before copying into it ([#905](https://github.com/RonenMars/threadbase-streamer/issues/905)) ([551c1b8](https://github.com/RonenMars/threadbase-streamer/commit/551c1b8ad1e68ae64c421cb6e4b0186d956fabe6))
+
 ## [1.91.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.7...v1.91.0) (2026-09-12)
 
 ### Features
