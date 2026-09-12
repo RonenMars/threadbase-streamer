@@ -1,3 +1,9 @@
+## [1.90.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.2...v1.90.3) (2026-09-12)
+
+### Bug Fixes
+
+* **scanner:** never build a persistent scanner for a cold-start scan ([#879](https://github.com/RonenMars/threadbase-streamer/issues/879)) ([51a9b46](https://github.com/RonenMars/threadbase-streamer/commit/51a9b460bbfe6c3858566bbdc6ffa549349f2445))
+
 ## [1.90.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.1...v1.90.2) (2026-09-12)
 
 ### Bug Fixes
