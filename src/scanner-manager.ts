@@ -559,8 +559,11 @@ export class ScannerManager {
     }
     this.takeStaleFiles();
     const statCache = this.buildStatCache(this.scanner);
-    // Scanner 0.9.4 reads statCache only in non-persistent scans.
-    this.scanner = this.newScanner(statCache ? { persistent: false } : undefined);
+    // Scanner 0.9.4 reads statCache only in non-persistent scans, and the
+    // streamer never serves from the scanner's persistent index. Letting the
+    // no-statCache case fall through to the persistent default made an empty
+    // cache import rows for files deleted long ago (#876).
+    this.scanner = this.newScanner({ persistent: false });
     this.allScanners.add(this.scanner);
     this.scannerReady = this.scanner.scan({
       ...(this.deps.scanProfiles ? { profiles: this.deps.scanProfiles } : {}),
@@ -609,7 +612,7 @@ export class ScannerManager {
     this.takeStaleFiles();
     const previous = this.scanner;
     const statCache = this.buildStatCache(previous);
-    const shadow = this.newScanner(statCache ? { persistent: false } : undefined);
+    const shadow = this.newScanner({ persistent: false });
     this.allScanners.add(shadow);
     this.scannerReady = shadow.scan({
       ...(this.deps.scanProfiles ? { profiles: this.deps.scanProfiles } : {}),
