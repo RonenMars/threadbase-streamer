@@ -41,11 +41,14 @@ Vitest globals are enabled. Every new feature requires tests under `__tests__/`.
 
 ## Dependencies and build
 
-- `vendor/scanner`, `vendor/agent-types`, and `vendor/menubar` are git submodules. Initialize submodules before `npm install`; CI checkouts remain recursive. Use HTTPS on machines without GitHub SSH keys.
-- `@threadbase/scanner` and `@threadbase/agent-types` are `file:` dependencies built by `postinstall` and bundled into `dist`.
-- Do not suppress install scripts unless you manually preserve `prepare` (`patch-package`) and `postinstall` (including the executable `node-pty` spawn helper).
-- For the CLI bundle, only `node-pty` is external. `pg` and all other runtime dependencies must be bundled because deployed releases have no `node_modules`.
-- Preserve both SQLite and Postgres migration copies in the build. Deployment details live in [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
+- `vendor/menubar` is the **only** git submodule. Build and test never need it: every `ci.yml` and `release.yml` checkout sets `submodules: false`, and only `update-menubar.yml` uses `submodules: recursive`. A fresh checkout runs `npm install` with no submodule init.
+- `@threadbase-sh/scanner` and `@threadbase-sh/agent-types` are published **public npm packages** on normal semver ranges — note the `-sh` scope. They are not `file:` deps and not submodules; tsup bundles them inline into `dist/`, so the runtime does not need them installed. Bump by raising the range here and publishing from `tb-scanner` / `threadbase-agent-types`.
+- Do not suppress install scripts unless you manually preserve `prepare` (`patch-package`, which also sets `core.hooksPath` to `scripts/git-hooks`) and `postinstall` (the `node-pty` spawn-helper `chmod`).
+- **Externals differ per tsup entry.** The library entry (`src/index.ts`) externalizes `node-pty` and `pg`. The CLI entry (`cli/index.ts` and the docker helpers) externalizes `node-pty` and `better-sqlite3` and bundles everything else, including `pg`, because deployed releases have no `node_modules`. Both externals are native modules and must resolve at runtime on the target machine.
+- The build copies **three** migration directories into `dist/`: `migrations/` (SQLite cache), `runtime-migrations/` (SQLite session registry), and `pg-migrations/` (Postgres). Both SQLite folders are required at runtime, and a missing `runtime-migrations/` disables session persistence silently while the server keeps serving. Deployment details live in [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
+- `git pull` does not refresh `node_modules`. A pull that changes `package.json`/`package-lock.json` leaves the old packages on disk, and the build bundles what is installed rather than what the lockfile pins. Check with `npm ls --depth=0` (an `invalid: "<range>" from the root project` line means stale) and resync with `npm ci`.
+- Never import a type by name from a `@types/*` package when you can derive it from a value. `@types/node` renames interfaces between minors with no deprecation window (26.5.0: `IntervalHistogram` -> `ELDHistogram`, with neither version declaring both), which fails `Lint` and `Build` on `TS2305` while runtime behaviour is unchanged. Use `ReturnType<typeof fn>` and friends. Land the derived-type fix on `main` first, then rebase the dependabot PR; verify against both the current pin and the bump, and revert under the new types to confirm the error returns. See [docs/troubleshooting.md](docs/troubleshooting.md).
+- A green suite does not fully clear a major test-runner bump. `vitest` 5.0.0 landed green on 2026-09-12; CI runs the suite under the new runner, which is strong evidence, but it does not cover config resolution, reporters, worker pooling or default timeouts. After a runner major, suspect the runner first when tooling output turns odd. See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Deployment and platform safeguards
 

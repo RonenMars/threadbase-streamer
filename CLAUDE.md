@@ -82,9 +82,21 @@ When `MULTI_AGENT_FLOW=true`, session start/input route through a Temporal-orche
 
 **`git pull` does not refresh `node_modules`.** A pull (or branch switch) that changes `package.json`/`package-lock.json` leaves the existing `node_modules` on disk untouched — `npm run build`/`deploy` will silently bundle whatever versions are already installed, not what the new lockfile pins. Check with `npm ls --depth=0` (an `invalid: "<range>" from the root project` line means `node_modules` is stale) and resync with `npm ci` before building/deploying after any dependency-affecting pull.
 
+**A `@types/*` type imported by name is a version coupling.**
+`@types/node` renames interfaces between minors with no deprecation window — 26.5.0 renamed `IntervalHistogram` to `ELDHistogram`, and neither version declares both — so the bump fails `Lint` and `Build` with `TS2305: … has no exported member` while nothing is wrong at runtime.
+Renaming the import moves the break to the other side of the bump; derive the type from the value instead (`ReturnType<typeof monitorEventLoopDelay>`), which tracks whatever the installed types call it.
+Land the derived-type fix on `main` first, then rebase the dependabot PR — it cannot go green before the fix exists, and the two cannot land in one step without pushing onto dependabot's branch.
+Verify against **both** versions, and revert under the new types to confirm the original error returns.
+See [docs/troubleshooting.md](docs/troubleshooting.md) → "A `@types/node` bump fails `Lint` and `Build`".
+
+**A green suite does not fully clear a major test-runner bump.**
+`vitest` 5.0.0 landed green on every check (2026-09-12), which is strong evidence because CI runs the suite *under* the new runner — but it covers only what the suite exercises, not config resolution, reporters, worker pooling or default timeouts.
+After a runner major, suspect the runner first when tooling output turns odd, rather than bisecting product code.
+See [docs/troubleshooting.md](docs/troubleshooting.md) → "A major test-runner bump passes every check".
+
 ## Build notes
 
-- **CLI externals**: only `node-pty` is external for the CLI tsup entry. `pg` and everything else must be bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`.
+- **CLI externals**: `node-pty` and `better-sqlite3` are external for the CLI tsup entry; `pg` and everything else is bundled — the deployed CLI lives in `~/.threadbase/releases/` with no `node_modules`, so anything not bundled has to resolve natively on the target machine. The library entry (`src/index.ts`) has a *different* external list: `node-pty` and `pg`.
 - `npm run build` copies `src/db/migrations/` (SQLite cache), `src/db/runtime-migrations/` (SQLite session registry) and `src/db/pg-migrations/` (Postgres) into `dist/`. Deploy ships the first two unconditionally and `pg-migrations/` only when it exists (`scripts/deploy.sh`) — both SQLite folders are required at runtime, and a missing `runtime-migrations/` disables session persistence silently while the server keeps serving. Details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
 
 ## Deploy & distribution
