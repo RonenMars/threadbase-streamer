@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "../../providers";
+import { PROVIDER_NAMES } from "../../providers";
 import { providerHealth } from "../../services/providers/providerHealth";
 import type { AppEnv } from "../app";
 
@@ -22,10 +22,7 @@ export const createProviderRoutes = () => {
   const app = new Hono<AppEnv>();
 
   app.get("/", async (c) => {
-    const providers = await Promise.all([
-      providerHealth(CLAUDE_CODE_PROVIDER),
-      providerHealth(CODEX_CLI_PROVIDER),
-    ]);
+    const providers = await Promise.all(PROVIDER_NAMES.map((name) => providerHealth(name)));
 
     return c.json({ providers });
   });

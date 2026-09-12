@@ -1,6 +1,11 @@
 import { execFile } from "child_process";
 import { isWindows, locateProviderExe } from "../../platform";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "../../providers";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
+  type ProviderName,
+} from "../../providers";
 import { capabilitiesFor, type ProviderCapabilities, type VerifiedAgainst } from "./capabilities";
 
 /**
@@ -20,6 +25,9 @@ import { capabilitiesFor, type ProviderCapabilities, type VerifiedAgainst } from
 export const VERIFIED_AGAINST: Record<ProviderName, VerifiedAgainst> = {
   [CLAUDE_CODE_PROVIDER]: { captured: ["2.1.214"], min: "2.1.0" },
   [CODEX_CLI_PROVIDER]: { captured: ["0.140.0-alpha.19"], min: "0.140.0" },
+  // Transcript *shape* era (agent-transcripts JSONL), not a live `agent --version`
+  // pin — we have no captured CLI build yet, so any installed version warns.
+  [CURSOR_CLI_PROVIDER]: { captured: ["2026.1.0"] },
 };
 
 export type ProviderWarningCode =

@@ -1,0 +1,9 @@
+{
+  "provider": "cursor-cli",
+  "providerVersion": "2026.1.0",
+  "capturedAt": "2026-09-12",
+  "source": "sanitized agent-transcripts JSONL shape (role + message.content text blocks). Directory name is the transcript-format era, not a live `agent --version` pin.",
+  "sanitized": true,
+  "notes": "Cursor CLI transcripts do not carry a per-line CLI version. Free-text payloads replaced with [redacted]. Pins envelope shape only.",
+  "envelopeTypes": ["user", "assistant", "tool"]
+}

@@ -100,6 +100,7 @@ import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
   coerceProviderForRunner,
+  PROVIDER_NAMES,
   type ProviderName,
 } from "./providers";
 import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
@@ -1426,7 +1427,7 @@ export class StreamerServer {
    * a session anyway; before it, it would have delayed binding the port.
    */
   private logProviderAvailability(): void {
-    for (const provider of [CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER] as const) {
+    for (const provider of PROVIDER_NAMES) {
       if (locateProviderExe(provider)) {
         this.log.info(`Provider ${provider}: found`, { event: "config.provider", provider });
       } else {

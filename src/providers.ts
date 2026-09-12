@@ -1,9 +1,29 @@
 export const CLAUDE_CODE_PROVIDER = "claude-code" as const;
 export const CODEX_CLI_PROVIDER = "codex-cli" as const;
-export type ProviderName = typeof CLAUDE_CODE_PROVIDER | typeof CODEX_CLI_PROVIDER;
+export const CURSOR_CLI_PROVIDER = "cursor-cli" as const;
+
+export const PROVIDER_NAMES = [
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
+] as const;
+
+export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
 export function isProviderName(value: unknown): value is ProviderName {
-  return value === CLAUDE_CODE_PROVIDER || value === CODEX_CLI_PROVIDER;
+  return typeof value === "string" && (PROVIDER_NAMES as readonly string[]).includes(value);
+}
+
+/** The argv[0] we look for / tell the user to install. */
+export function commandNameForProvider(provider: ProviderName): string {
+  switch (provider) {
+    case CLAUDE_CODE_PROVIDER:
+      return "claude";
+    case CODEX_CLI_PROVIDER:
+      return "codex";
+    case CURSOR_CLI_PROVIDER:
+      return "agent";
+  }
 }
 
 // Resolve a provider for a runner lookup. A `??` chain only defends against

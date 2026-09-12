@@ -2,7 +2,12 @@ import { execFile } from "child_process";
 import { platform } from "os";
 import { basename, dirname } from "path";
 import { isWindows } from "./platform";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
+  type ProviderName,
+} from "./providers";
 import type { DiscoveredProcess } from "./types";
 
 export async function discoverClaudeProcesses(): Promise<DiscoveredProcess[]> {
@@ -147,10 +152,51 @@ export function looksLikeCodexProcess(commandLine: string): boolean {
   return true;
 }
 
+const CURSOR_NON_INTERACTIVE_SUBCOMMANDS = new Set([
+  "login",
+  "logout",
+  "mcp",
+  "sandbox",
+  "worker",
+  "acp",
+  "update",
+  "create-chat",
+  "generate-rule",
+  "rule",
+  "help",
+  "about",
+  "status",
+  "whoami",
+  "models",
+  "install-shell-integration",
+  "uninstall-shell-integration",
+]);
+
+export function looksLikeCursorProcess(commandLine: string): boolean {
+  const tokens = tokenizeCommandLine(commandLine);
+  if (tokens.length === 0) return false;
+
+  const exe = exeBaseName(tokens[0]).toLowerCase();
+  if (
+    exe !== "agent" &&
+    exe !== "agent.exe" &&
+    exe !== "cursor-agent" &&
+    exe !== "cursor-agent.exe"
+  ) {
+    return false;
+  }
+
+  for (const token of tokens.slice(1)) {
+    if (CURSOR_NON_INTERACTIVE_SUBCOMMANDS.has(token.toLowerCase())) return false;
+  }
+  return true;
+}
+
 /** Which agent a command line is, or null when it is neither. */
 export function providerForCommandLine(commandLine: string): ProviderName | null {
   if (looksLikeClaudeProcess(commandLine)) return CLAUDE_CODE_PROVIDER;
   if (looksLikeCodexProcess(commandLine)) return CODEX_CLI_PROVIDER;
+  if (looksLikeCursorProcess(commandLine)) return CURSOR_CLI_PROVIDER;
   return null;
 }
 

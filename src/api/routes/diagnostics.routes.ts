@@ -1,7 +1,7 @@
 import { existsSync } from "fs";
 import { Hono } from "hono";
 import { locateProviderExe } from "../../platform";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "../../providers";
+import { PROVIDER_NAMES, type ProviderName } from "../../providers";
 import {
   buildReport,
   type DiagnosticCheck,
@@ -75,8 +75,9 @@ export const createDiagnosticsRoutes = (deps: ApiDeps) => {
       detail: { version: getVersion(), uptimeSeconds: Math.floor(process.uptime()) },
     });
 
-    checks.push(providerCheck(CLAUDE_CODE_PROVIDER));
-    checks.push(providerCheck(CODEX_CLI_PROVIDER));
+    for (const name of PROVIDER_NAMES) {
+      checks.push(providerCheck(name));
+    }
 
     // The cache backs conversation reads; without it every request falls back
     // to slower disk-only scans, which is degraded rather than broken.

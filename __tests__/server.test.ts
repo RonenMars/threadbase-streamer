@@ -2454,6 +2454,7 @@ describe("StreamerServer", () => {
       expect(body.providers.map((p: { name: string }) => p.name).sort()).toEqual([
         "claude-code",
         "codex-cli",
+        "cursor-cli",
       ]);
 
       for (const p of body.providers) {

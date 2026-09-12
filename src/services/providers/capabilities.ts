@@ -1,4 +1,9 @@
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "../../providers";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
+  type ProviderName,
+} from "../../providers";
 
 /**
  * Provider capability declarations (C2).
@@ -112,6 +117,18 @@ export const CODEX_CLI_CAPABILITIES: ProviderCapabilities = {
   liveControl: true,
 };
 
+// Cursor CLI (`agent`): `--resume=<chatId>` and a positional opening prompt are
+// documented. Fresh chats mint their own id (no `--session-id`). We do not yet
+// scrape its TUI for questions or permission cards, so those stay false.
+export const CURSOR_CLI_CAPABILITIES: ProviderCapabilities = {
+  freshSessionId: "late-bound",
+  resume: "native",
+  systemPrompt: "positional",
+  structuredQuestions: false,
+  permissionGates: false,
+  liveControl: true,
+};
+
 /**
  * Capabilities for a provider we do not recognize.
  *
@@ -137,5 +154,7 @@ export function capabilitiesFor(provider: ProviderName): ProviderCapabilities {
       return CLAUDE_CODE_CAPABILITIES;
     case CODEX_CLI_PROVIDER:
       return CODEX_CLI_CAPABILITIES;
+    case CURSOR_CLI_PROVIDER:
+      return CURSOR_CLI_CAPABILITIES;
   }
 }

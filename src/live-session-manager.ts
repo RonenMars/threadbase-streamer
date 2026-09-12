@@ -1,7 +1,14 @@
 import { basename } from "path";
 import { CodexPtyRunner } from "./codex-pty-runner";
+import { CursorPtyRunner } from "./cursor-pty-runner";
 import { locateProviderExe } from "./platform";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
+  commandNameForProvider,
+  type ProviderName,
+} from "./providers";
 import type { HostHeartbeatState, HostTransport } from "./pty-host/protocol";
 import { RemoteSessionRunner } from "./pty-host/remote-session-runner";
 import { PTYManager } from "./pty-manager";
@@ -25,6 +32,7 @@ export class LiveSessionManager {
     this.runners = new Map<ProviderName, SessionRunner>([
       [CLAUDE_CODE_PROVIDER, new PTYManager(options)],
       [CODEX_CLI_PROVIDER, new CodexPtyRunner(options)],
+      [CURSOR_CLI_PROVIDER, new CursorPtyRunner(options)],
     ]);
   }
 
@@ -210,7 +218,7 @@ export class LiveSessionManager {
     // in its "Failed to start" alert, so it names the command to install and
     // the other thing that produces this — a CLI the streamer's PATH cannot
     // see, which is the usual shape under launchd/Task Scheduler.
-    const command = provider === CODEX_CLI_PROVIDER ? "codex" : "claude";
+    const command = commandNameForProvider(provider);
     const err = new Error(
       `The ${command} command was not found on this server. Install the ${provider} CLI, ` +
         "or make sure it is on the PATH the streamer runs with.",

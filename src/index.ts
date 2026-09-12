@@ -22,8 +22,11 @@ export { discoverClaudeProcesses } from "./process-discovery";
 export {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
+  commandNameForProvider,
   isProviderName,
   isProviderResumable,
+  PROVIDER_NAMES,
   type ProviderName,
 } from "./providers";
 export { PTYManager } from "./pty-manager";
