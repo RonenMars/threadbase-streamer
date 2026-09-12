@@ -1,3 +1,9 @@
+## [1.91.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.7...v1.91.0) (2026-09-12)
+
+### Features
+
+* **providers:** add cursor-cli PTY runner and health ([6f57c3e](https://github.com/RonenMars/threadbase-streamer/commit/6f57c3efc1a8cf48ba8dbd129cb9db36540222ef))
+
 ## [1.90.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.6...v1.90.7) (2026-09-12)
 
 ### Bug Fixes
