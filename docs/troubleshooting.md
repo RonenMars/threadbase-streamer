@@ -1474,3 +1474,37 @@ The failure mode is not a red build later; it is output that looks subtly wrong,
 
 **The general rule.** For a dev-dependency major, "CI is green" answers *did the suite still pass*, not *does the tool still mean the same thing*.
 Merge it if green, then keep the version in mind for the next unexplained tooling symptom instead of treating the bump as settled history.
+
+## `cache clear` leaves a second index behind — conversations you never had, or ghosts in an integrity alert
+
+**Symptom:** you run `tb-streamer cache clear`, restart, and the rebuilt cache is not the clean slate you asked for.
+Conversations appear that exist nowhere in `~/.claude` or `~/.codex` — test-shaped ids, or transcripts deleted months ago — and a cache-integrity alert fires listing them as missing files.
+Measured on this machine 2026-09-11: a wipe-and-rescan produced 7 such rows within seconds, each with `mtime_ms` NULL while genuine rows carried real mtimes, which is the tell that they were *imported* rather than read off disk.
+
+**Cause: there are two indexes, and `cache clear` only deletes one.**
+
+| Store | Path | Cleared by `cache clear` | Read by the server |
+|---|---|---|---|
+| Conversation cache | `~/.threadbase/cache/cache.db` (+`-wal`/`-shm`) | yes | yes |
+| Scanner persistent index | `~/.config/threadbase-scanner/index.db` | **no** | **no** |
+
+The scanner's index lives outside `~/.threadbase` entirely, so nothing in the streamer's own config directory hints that it exists.
+Before [#879](https://github.com/RonenMars/threadbase-streamer/pull/879) a cold-start scan fell through to the scanner's *persistent* default when there was no stat cache to hand — and an empty cache is exactly the no-stat-cache case — so the rescan imported that index's stale rows into the fresh `cache.db` ([#876](https://github.com/RonenMars/threadbase-streamer/issues/876)).
+Those rows point at files that are long gone, which is what raises the ghost alert.
+
+**Fix.**
+
+- **Upgrade.** From 1.90.4 onward `ScannerManager.get()`, the `rescanForRefresh` shadow and the boot warm-up all construct with `{ persistent: false }`, so a cold scan can no longer import from the index.
+- **If residue is already in the cache**, it clears itself: the startup ghost prune removes rows whose file is gone, once no integrity alert is pending (a pending alert freezes the prune by design — resolve it first, see the `ignore` entry above).
+- **To clear the index itself**, delete it. It is derived data and **nothing the server serves reads it** — search included (`handleSearch` → `ScannerManager.get()`, which is non-persistent), so deleting it cannot degrade an endpoint.
+  The only consumer that *reads* it is the standalone `threadbase-scanner` CLI, and `threadbase-scanner scan` rebuilds it.
+  Two single-file parse fallbacks (`conversations.handlers.ts` `coldScanner` / `singleFileScanner`) still construct a bare `newScanner()` when no scanner instance exists yet, so the streamer can still *open* the index on a cold start or mid-rescan — which is why its mtime can move without anything reading a row from it:
+
+```bash
+cp ~/.config/threadbase-scanner/index.db{,.bak-$(date -u +%Y%m%dT%H%M%SZ)}   # it is 100+ MB; keep a copy
+rm ~/.config/threadbase-scanner/index.db ~/.config/threadbase-scanner/index.db-wal ~/.config/threadbase-scanner/index.db-shm
+```
+
+**Why the index accumulates test data.** Before [#837](https://github.com/RonenMars/threadbase-streamer/pull/837) the suite had no HOME sandbox and no scanner-index isolation, so any test building a `ConversationScanner` without pinning `persistent.dbPath` indexed its fixtures into the developer's real index — measured on this machine 2026-09-12: 674 of 2,563 rows were fixtures, and 914 of 1,046 `scanned_dirs` rows pointed at `__tests__/fixtures/…` under various worktrees.
+`__tests__/setup/sandbox-home.ts` and `__tests__/setup/isolate-scanner-index.ts` closed that; the newest fixture row on this machine predates them.
+So a developer seeing test conversations in `threadbase-scanner` CLI output is looking at history, not a live leak — but the rows persist until the index is cleared, because a vanished fixture directory only marks a row deleted rather than removing it.

@@ -467,6 +467,16 @@ program
           }
         }
         log.info("Cache cleared. Restart the server to rebuild.", undefined, "console");
+        // The scanner keeps its OWN index outside ~/.threadbase, so a user who
+        // cleared "the cache" has not cleared that one — and before #879 a cold
+        // rescan imported its stale rows straight back into the fresh cache
+        // (#876). Nothing the server serves reads that index, so this is a
+        // pointer, not an instruction. See docs/troubleshooting.md.
+        log.info(
+          "Note: the scanner's separate index at ~/.config/threadbase-scanner/index.db is NOT cleared by this command.",
+          undefined,
+          "console",
+        );
       }),
   );
 
