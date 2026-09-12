@@ -1762,10 +1762,9 @@ export class StreamerServer {
         // that onConversationChanged invalidations during the scan cannot cause
         // getScanner() to restart indefinitely and leave the warm-up stuck.
         const warmupStatCache = this.scannerManager.buildStatCache(null);
-        // Scanner 0.9.4 reads statCache only in non-persistent scans.
-        const warmupScanner = this.scannerManager.newScanner(
-          warmupStatCache ? { persistent: false } : undefined,
-        );
+        // Scanner 0.9.4 reads statCache only in non-persistent scans, and a
+        // cold start has none — see the note in ScannerManager.get (#876).
+        const warmupScanner = this.scannerManager.newScanner({ persistent: false });
         this.scannerManager.track(warmupScanner);
         // Throttle the per-file onProgress firings to ~one frame per whole
         // percent (plus the final tick) so a large scan doesn't flood every
