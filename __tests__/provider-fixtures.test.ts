@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { classifyCodexLine } from "../src/utils/codexConversationLine";
+import { classifyCursorLine } from "../src/utils/cursorConversationLine";
 
 /**
  * Versioned provider fixtures (C2).
@@ -48,7 +49,7 @@ describe("versioned provider fixtures", () => {
   const providers = readdirSync(ROOT).filter((d) => statSync(join(ROOT, d)).isDirectory());
 
   it("has at least one versioned fixture per supported provider", () => {
-    expect(providers.sort()).toEqual(["claude-code", "codex-cli"]);
+    expect(providers.sort()).toEqual(["claude-code", "codex-cli", "cursor-cli"]);
     for (const p of providers) expect(versionDirs(p).length).toBeGreaterThan(0);
   });
 
@@ -130,6 +131,36 @@ describe("versioned provider fixtures", () => {
     // Sanitization is a claim the fixture makes about itself; verify it rather
     // than trusting the manifest, since a bad scrub leaks private transcript
     // content into the repo permanently.
+    it("contains no absolute home paths or credential-shaped strings", () => {
+      const raw = lines.join("\n");
+      expect(raw).not.toMatch(/\/Users\/[a-z]/i);
+      expect(raw).not.toMatch(/sk-ant-|ghp_|Bearer\s+\S/);
+    });
+  });
+
+  describe("cursor-cli 2026.1.0", () => {
+    const VERSION = "2026.1.0";
+    const lines = readLines("cursor-cli", VERSION, "conversation.jsonl");
+
+    it("produces zero unknown events through the adapter", () => {
+      const unknown = lines
+        .map((line) => ({ line, result: classifyCursorLine(line) }))
+        .filter(({ result }) => result.kind === "unknown");
+      expect(unknown.map((u) => u.result)).toEqual([]);
+    });
+
+    it("yields at least one renderable message", () => {
+      const messages = lines.filter((l) => classifyCursorLine(l).kind === "message");
+      expect(messages.length).toBeGreaterThan(0);
+    });
+
+    it("exercises every role its manifest claims", () => {
+      const seen = new Set(lines.map((l) => JSON.parse(l).role));
+      for (const t of readManifest("cursor-cli", VERSION).envelopeTypes) {
+        expect(seen).toContain(t);
+      }
+    });
+
     it("contains no absolute home paths or credential-shaped strings", () => {
       const raw = lines.join("\n");
       expect(raw).not.toMatch(/\/Users\/[a-z]/i);

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLAUDE_CODE_CAPABILITIES,
   CODEX_CLI_CAPABILITIES,
+  CURSOR_CLI_CAPABILITIES,
   capabilitiesFor,
   GENERIC_TERMINAL_CAPABILITIES,
 } from "../src/services/providers/capabilities";
@@ -11,19 +12,23 @@ import {
 const SRC = join(__dirname, "..", "src");
 const read = (p: string) => readFileSync(join(SRC, p), "utf8");
 
-/**
- * Codex runner source with comments and blank lines stripped, so assertions
- * about which flags are PASSED aren't satisfied by comments that merely mention
- * a flag while explaining that Codex doesn't have it.
- */
-function codexSpawnArgs(): string {
-  return read("codex-pty-runner.ts")
+function spawnArgsFrom(file: string): string {
+  return read(file)
     .split("\n")
     .filter((l) => {
       const t = l.trim();
       return t.length > 0 && !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
     })
     .join("\n");
+}
+
+/**
+ * Codex runner source with comments and blank lines stripped, so assertions
+ * about which flags are PASSED aren't satisfied by comments that merely mention
+ * a flag while explaining that Codex doesn't have it.
+ */
+function codexSpawnArgs(): string {
+  return spawnArgsFrom("codex-pty-runner.ts");
 }
 
 /**
@@ -90,6 +95,29 @@ describe("declared capabilities match runner behaviour", () => {
     });
   });
 
+  describe("cursor-cli", () => {
+    it("declares late-bound session ids, and no spawn passes --session-id", () => {
+      expect(CURSOR_CLI_CAPABILITIES.freshSessionId).toBe("late-bound");
+      expect(spawnArgsFrom("cursor-pty-runner.ts")).not.toContain("--session-id");
+    });
+
+    it("declares native resume, and the runner passes --resume=", () => {
+      expect(CURSOR_CLI_CAPABILITIES.resume).toBe("native");
+      expect(spawnArgsFrom("cursor-pty-runner.ts")).toContain("--resume=");
+    });
+
+    it("declares a positional system prompt, and no spawn passes a prompt flag", () => {
+      expect(CURSOR_CLI_CAPABILITIES.systemPrompt).toBe("positional");
+      expect(spawnArgsFrom("cursor-pty-runner.ts")).not.toContain("--system-prompt");
+    });
+
+    it("declares live control without gates or structured questions", () => {
+      expect(CURSOR_CLI_CAPABILITIES.liveControl).toBe(true);
+      expect(CURSOR_CLI_CAPABILITIES.permissionGates).toBe(false);
+      expect(CURSOR_CLI_CAPABILITIES.structuredQuestions).toBe(false);
+    });
+  });
+
   describe("generic terminal fallback", () => {
     // The honest state for a provider we do not recognize. Today
     // coerceProviderForRunner silently drives an unknown provider with the
@@ -102,7 +130,11 @@ describe("declared capabilities match runner behaviour", () => {
     });
 
     it("is strictly weaker than every real provider's claims", () => {
-      for (const real of [CLAUDE_CODE_CAPABILITIES, CODEX_CLI_CAPABILITIES]) {
+      for (const real of [
+        CLAUDE_CODE_CAPABILITIES,
+        CODEX_CLI_CAPABILITIES,
+        CURSOR_CLI_CAPABILITIES,
+      ]) {
         expect(real.structuredQuestions || !GENERIC_TERMINAL_CAPABILITIES.structuredQuestions).toBe(
           true,
         );
@@ -114,5 +146,6 @@ describe("declared capabilities match runner behaviour", () => {
   it("resolves capabilities for every known provider", () => {
     expect(capabilitiesFor("claude-code")).toBe(CLAUDE_CODE_CAPABILITIES);
     expect(capabilitiesFor("codex-cli")).toBe(CODEX_CLI_CAPABILITIES);
+    expect(capabilitiesFor("cursor-cli")).toBe(CURSOR_CLI_CAPABILITIES);
   });
 });

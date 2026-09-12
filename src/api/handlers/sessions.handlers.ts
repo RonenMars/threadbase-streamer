@@ -40,6 +40,7 @@ import {
   permissionPromptDraft,
   questionPromptDraft,
 } from "../../services/prompts/ptyPromptAdapter";
+import { capabilitiesFor } from "../../services/providers/capabilities";
 import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
 import {
   detectGateScreen,
@@ -864,7 +865,9 @@ export class SessionHandlers {
     const classificationPath = historyPath || jsonlPath;
     if (classification?.isSubagent == null && classificationPath) {
       try {
-        classification = classifyConversationFile(classificationPath, provider);
+        if (provider === CLAUDE_CODE_PROVIDER || provider === CODEX_CLI_PROVIDER) {
+          classification = classifyConversationFile(classificationPath, provider);
+        }
       } catch {
         // The existing target/readiness checks own unreadable-history errors.
       }
@@ -2569,11 +2572,11 @@ export class SessionHandlers {
       typeof clientPrompt === "string" ? clientPrompt : null,
     ].filter(Boolean);
 
-    // Codex has no --system-prompt flag — sending one is a positional
-    // [PROMPT] arg that Codex treats as the opening turn, not a system-level
-    // instruction. Gate it behind codexSystemPromptEnabled so a fresh Codex
-    // session never gets an uninvited first message unless opted in.
-    const includeSystemPrompt = provider !== CODEX_CLI_PROVIDER || this.codexSystemPromptEnabled;
+    // Positional systemPrompt is the opening user turn (Codex, Cursor), not a
+    // system-level instruction. Gate it so a fresh session never gets an
+    // uninvited first message unless opted in.
+    const includeSystemPrompt =
+      capabilitiesFor(provider).systemPrompt !== "positional" || this.codexSystemPromptEnabled;
 
     try {
       const session = await this.ptyManager.startFresh({
@@ -2620,7 +2623,7 @@ export class SessionHandlers {
       if (provider === CODEX_CLI_PROVIDER) {
         // Wire up rollout-file binding once Codex creates its persisted session.
         this.sessionWatchers.watchForCodexRollout(session.id, resolvedPath);
-      } else {
+      } else if (provider === CLAUDE_CODE_PROVIDER) {
         // Wire up JSONL watching once Claude creates the conversation file.
         this.sessionWatchers.watchForJsonl(session.id, resolvedPath);
       }

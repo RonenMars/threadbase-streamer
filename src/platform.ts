@@ -2,7 +2,7 @@ import { execFileSync } from "child_process";
 import { accessSync, constants, existsSync, statSync } from "fs";
 import { homedir, platform } from "os";
 import { delimiter, join } from "path";
-import { CODEX_CLI_PROVIDER, type ProviderName } from "./providers";
+import { CODEX_CLI_PROVIDER, CURSOR_CLI_PROVIDER, type ProviderName } from "./providers";
 
 export const isWindows = platform() === "win32";
 
@@ -189,6 +189,77 @@ export function resolveCodexExe(): string {
   return _codexExe;
 }
 
+// ─── Cursor executable resolution ─────────────────────────────────────────────
+// Cursor CLI's published command is `agent` (cursor.com/install). Some
+// installs also ship `cursor-agent`. Same launchd/Task Scheduler PATH
+// problem as the other two resolvers.
+
+let _cursorExe: string | undefined;
+
+export function clearCursorExeCache(): void {
+  _cursorExe = undefined;
+}
+
+function resolveNamedAgentCommand(command: string): string | null {
+  if (isWindows) {
+    try {
+      const found = execFileSync("where.exe", [command], {
+        encoding: "utf-8",
+        windowsHide: true,
+        timeout: 3000,
+      })
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .find(isWindowsExecutablePath);
+      if (found) return found;
+    } catch {}
+
+    const candidates = [
+      join(homedir(), ".local", "bin", `${command}.exe`),
+      join(
+        process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
+        "Microsoft",
+        "WindowsApps",
+        `${command}.exe`,
+      ),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  try {
+    const found = execFileSync("/usr/bin/which", [command], {
+      encoding: "utf-8",
+      timeout: 3000,
+    })
+      .trim()
+      .split("\n")[0]
+      .trim();
+    if (found && existsSync(found)) return found;
+  } catch {}
+
+  const candidates = [
+    `/opt/homebrew/bin/${command}`,
+    `/usr/local/bin/${command}`,
+    join(homedir(), ".local", "bin", command),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+export function resolveCursorExe(): string {
+  if (_cursorExe !== undefined) return _cursorExe;
+
+  const found = resolveNamedAgentCommand("agent") ?? resolveNamedAgentCommand("cursor-agent");
+  _cursorExe = found ?? "agent";
+  return _cursorExe;
+}
+
 // ─── Is the provider actually installed? ──────────────────────────────────────
 // Neither resolver above can fail. Each exhausts its lookups and then returns
 // the bare command name, which is handed to execvp/CreateProcess to try its own
@@ -250,13 +321,19 @@ export function locateExecutable(exe: string): string | null {
 
 /** Where this provider's CLI lives on this machine, or null if it is absent. */
 export function locateProviderExe(provider: ProviderName): string | null {
-  const isCodex = provider === CODEX_CLI_PROVIDER;
-  const found = locateExecutable(isCodex ? resolveCodexExe() : resolveClaudeExe());
+  const resolved =
+    provider === CODEX_CLI_PROVIDER
+      ? resolveCodexExe()
+      : provider === CURSOR_CLI_PROVIDER
+        ? resolveCursorExe()
+        : resolveClaudeExe();
+  const found = locateExecutable(resolved);
   if (found === null) {
     // Resolution is memoized for the process lifetime, so a path that has since
     // been uninstalled would otherwise keep answering "missing" until the next
     // restart — including after the user reinstalls to fix exactly this.
-    if (isCodex) clearCodexExeCache();
+    if (provider === CODEX_CLI_PROVIDER) clearCodexExeCache();
+    else if (provider === CURSOR_CLI_PROVIDER) clearCursorExeCache();
     else clearClaudeExeCache();
   }
   return found;

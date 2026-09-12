@@ -16,7 +16,10 @@ vi.mock("fs", async () => {
   const actual = await vi.importActual<typeof import("fs")>("fs");
   return {
     ...actual,
-    existsSync: (p: string) => p === "/opt/homebrew/bin/claude" || p === "/opt/homebrew/bin/codex",
+    existsSync: (p: string) =>
+      p === "/opt/homebrew/bin/claude" ||
+      p === "/opt/homebrew/bin/codex" ||
+      p === "/opt/homebrew/bin/agent",
   };
 });
 
@@ -31,6 +34,14 @@ describe("resolveClaudeExe (macOS fallback)", () => {
     vi.resetModules();
     const { resolveClaudeExe } = await import("../src/platform");
     expect(resolveClaudeExe()).toBe("/opt/homebrew/bin/claude");
+  });
+});
+
+describe("resolveCursorExe (macOS fallback)", () => {
+  it("returns the Homebrew agent path when which fails but the binary exists", async () => {
+    vi.resetModules();
+    const { resolveCursorExe } = await import("../src/platform");
+    expect(resolveCursorExe()).toBe("/opt/homebrew/bin/agent");
   });
 });
 
