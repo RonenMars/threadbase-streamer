@@ -1,3 +1,9 @@
+## [1.90.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.5...v1.90.6) (2026-09-12)
+
+### Bug Fixes
+
+* **host-pressure:** relax warning thresholds ([#897](https://github.com/RonenMars/threadbase-streamer/issues/897)) ([2ea507d](https://github.com/RonenMars/threadbase-streamer/commit/2ea507dad2cd314753d9e4424b82bdc31221a020))
+
 ## [1.90.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.90.4...v1.90.5) (2026-09-12)
 
 ### Bug Fixes
