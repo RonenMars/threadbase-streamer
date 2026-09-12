@@ -41,6 +41,7 @@ import {
   SearchQueryError,
 } from "../../services/search/searchQuery";
 import type { SessionStore } from "../../session-store";
+import { TRANSCRIPT_WATCH_DEADLINE_MS } from "../../session-watchers";
 import type { ManagedSession, ServerWarmupState } from "../../types";
 import { isLeadingInjectedContext } from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
@@ -919,7 +920,31 @@ export class ConversationHandlers {
         this.sessionStore.getManaged(id) ??
         this.sessionStore.listManaged().find((s) => s.boundConversationId === id) ??
         null;
-      if (unusedStart && unusedStart.promptCount === 0) {
+      //
+      // `promptCount === 0` alone left a hole exactly one prompt wide. Sending
+      // the first prompt is what flips the counter to 1, and it is also what
+      // makes Claude create the file — so for the 0.3s-1.7s between the two this
+      // endpoint 404'd a session that was working fine. Measured on 4 sessions /
+      // 8 of 203 conversation 404s in a 20.5-day log, every one bracketed by
+      // `pty.input_write` -> 404 -> `session.jsonl_wired`; mobile refetches
+      // messages on submit and lands squarely in that window.
+      //
+      // So the in-flight case is its own clause: no transcript bound yet
+      // (`findLiveSessionFilePath` is the sessionFileMap the wiring writes to),
+      // and the session still recently active. Recency is anchored on
+      // `lastActivityAt ?? startedAt` — the same "is this session live" reading
+      // `session-store.ts` takes — not on `startedAt` alone, because the gap
+      // from spawn to first prompt is human think time and ran to 405.7s in
+      // production; anchoring on the spawn would leave the hole open for anyone
+      // slow to type. Past the watcher's own deadline with nothing on disk it
+      // 404s again: that is data loss, and it must not be dressed up as empty.
+      const bound = this.deps.findLiveSessionFilePath(id);
+      const activeAt = unusedStart?.lastActivityAt ?? unusedStart?.startedAt;
+      const transcriptPending =
+        !bound &&
+        activeAt != null &&
+        Date.now() - activeAt.getTime() < TRANSCRIPT_WATCH_DEADLINE_MS;
+      if (unusedStart && (unusedStart.promptCount === 0 || transcriptPending)) {
         json(res, 200, this.emptyConversationPayload(id, unusedStart));
         return;
       }

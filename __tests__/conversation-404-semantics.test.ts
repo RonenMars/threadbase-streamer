@@ -64,6 +64,8 @@ type Opts = {
   session?: ManagedSession | null;
   metaFilePath?: string;
   lookupId?: string;
+  /** What the sessionFileMap holds for this session — null until wiring lands. */
+  liveFilePath?: string | null;
 };
 
 function makeHandlers(opts: Opts) {
@@ -72,7 +74,14 @@ function makeHandlers(opts: Opts) {
     // ready:null + no scan profiles = the cold-start path, which resolves via
     // locateJsonlPath alone. No projects dir and no cached path means it finds
     // nothing, which is exactly the state under test.
-    scannerManager: { ready: null, current: undefined, projectsDirs: () => [] },
+    scannerManager: {
+      ready: null,
+      // A bound file path sends findConversationByUuid down the cold-scanner
+      // rung before the guard is reached; parsing to null is "the file is there
+      // but resolved to nothing", which is the miss the control needs.
+      current: opts.liveFilePath ? { parseSingleFilePage: async () => null } : undefined,
+      projectsDirs: () => [],
+    },
     scanProfiles: undefined,
     sessionStore: {
       getManaged: (sid: string) => (opts.session?.id === sid ? opts.session : null),
@@ -87,7 +96,7 @@ function makeHandlers(opts: Opts) {
     log: () => ({ warn: vi.fn(), info: vi.fn() }),
     rejectIfWarmingUp: () => false,
     resolveConversationLookupId: (id: string) => opts.lookupId ?? id,
-    findLiveSessionFilePath: () => null,
+    findLiveSessionFilePath: () => opts.liveFilePath ?? null,
     isBoundConversationLive: () => false,
   } as unknown as ConstructorParameters<typeof ConversationHandlers>[0]);
   return { handlers, invalidate };
@@ -142,10 +151,68 @@ describe("a session with no transcript yet", () => {
     expect(invalidate).not.toHaveBeenCalled();
   });
 
-  it("still 404s once the session HAS been prompted", async () => {
-    // The guard has to stay narrow. A session with turns behind it and no
-    // transcript on disk is real data loss, and must not be dressed up as empty.
+  it("still 404s once a prompted session has gone quiet past the watch deadline", async () => {
+    // The guard has to stay narrow. A session with turns behind it, no transcript
+    // on disk and no activity since is real data loss — the transcript watcher
+    // has given up by now — and must not be dressed up as empty. `startedAt` on
+    // the fixture is days old and nothing refreshed it.
     const { handlers } = makeHandlers({ session: managedSession({ promptCount: 3 }) });
+    const res = makeRes();
+
+    await handlers.handleGetConversation("sess-1", url, res);
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("answers 200 in the window between the first prompt and the JSONL appearing", async () => {
+    // The regression. Sending the first prompt flips promptCount to 1 AND is what
+    // makes Claude create the file, so `promptCount === 0` was shut for exactly
+    // the interval the file did not exist yet. Production, session fe2e9043:
+    //   01:35:35.130  pty.input_write promptCount=1
+    //   01:35:35.396  GET /api/conversations/... -> 404   <- rendered as an error
+    //   01:35:35.546  session.jsonl_wired
+    // Mobile refetches messages on submit, so it lands here every time.
+    const { handlers, invalidate } = makeHandlers({
+      session: managedSession({ promptCount: 1, lastActivityAt: new Date() }),
+      liveFilePath: null,
+    });
+    const res = makeRes();
+
+    await handlers.handleGetConversation("sess-1", url, res);
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.messages).toEqual([]);
+    expect(body.meta.id).toBe("sess-1");
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("covers a user who sat on the prompt longer than the watch deadline", async () => {
+    // Anchoring recency on `startedAt` would reopen the hole for anyone slow to
+    // type: spawn-to-first-prompt is human think time and ran to 405.7s in
+    // production. It is the activity that has to be recent, not the spawn.
+    const { handlers } = makeHandlers({
+      session: managedSession({
+        promptCount: 1,
+        startedAt: new Date(Date.now() - 400_000),
+        lastActivityAt: new Date(),
+      }),
+    });
+    const res = makeRes();
+
+    await handlers.handleGetConversation("sess-1", url, res);
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("still 404s when the transcript IS bound and resolution failed anyway", async () => {
+    // Positive control for the `!bound` half. A wired transcript means the file
+    // exists, so failing to resolve the conversation is a real miss, not a
+    // session waiting to speak — even though it was prompted moments ago.
+    const { handlers } = makeHandlers({
+      session: managedSession({ promptCount: 1, lastActivityAt: new Date() }),
+      liveFilePath: "/tmp/already-wired.jsonl",
+    });
     const res = makeRes();
 
     await handlers.handleGetConversation("sess-1", url, res);
