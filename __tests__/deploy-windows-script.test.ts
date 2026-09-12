@@ -50,6 +50,33 @@ describe("Windows deploy script", () => {
     expect(deployScript).toContain("if ($content -notmatch '>>')");
   });
 
+  // Every native-module copy must clear its destination first. Copy-Item -Recurse
+  // into an existing directory copies the source INTO it, so an unguarded copy
+  // left a nested node-pty/node-pty on every deploy after the first — 64 MB that
+  // require.resolve never reaches. Scoped to the node-pty block, because a
+  // whole-file check passes on the better-sqlite3 loop's guard alone.
+  const nodePtyBlock = (() => {
+    const start = deployScript.indexOf("$nodePtySrc = Join-Path $repoRoot");
+    expect(start).toBeGreaterThan(-1);
+    const end = deployScript.indexOf("better-sqlite3 is external", start);
+    expect(end).toBeGreaterThan(start);
+    return deployScript.slice(start, end);
+  })();
+
+  it("clears the node-pty destination before copying into it", () => {
+    expect(nodePtyBlock).toContain(
+      "if (Test-Path $nodePtyDst) { Remove-Item -Path $nodePtyDst -Recurse -Force }",
+    );
+  });
+
+  it("removes before it copies, not after", () => {
+    const remove = nodePtyBlock.indexOf("Remove-Item -Path $nodePtyDst");
+    const copy = nodePtyBlock.indexOf("Copy-Item -Path $nodePtySrc");
+    expect(remove).toBeGreaterThan(-1);
+    expect(copy).toBeGreaterThan(-1);
+    expect(remove).toBeLessThan(copy);
+  });
+
   it("resolves the same log paths the supervisor backend reports", () => {
     // Not getLogPaths() vs logPaths() — task-scheduler's getLogPaths is
     // `return logPaths()`, so that compared a function to itself and could
