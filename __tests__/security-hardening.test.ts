@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "http";
@@ -35,12 +35,53 @@ vi.mock("../src/logger", async (importOriginal) => {
 // writes server.yaml. Redirect that write to a throwaway dir so the suite never
 // clobbers the user's live ~/.threadbase/server.yaml (which would desync a
 // running prod streamer and 401 every client until restart).
-// homedir() is sandboxed suite-wide by __tests__/setup/sandbox-home.ts, which
-// would make the mtime guard below skip itself. TB_TEST_REAL_HOME is the real
-// one, so this still checks the file it was written to check.
-const REAL_CONFIG = join(process.env.TB_TEST_REAL_HOME || homedir(), ".threadbase", "server.yaml");
+// homedir() is sandboxed suite-wide by __tests__/setup/sandbox-home.ts, so
+// TB_TEST_REAL_HOME is the only handle on the developer's actual home — the one
+// the guard below has to watch.
+//
+// Every config file here resolves through the same
+// `THREADBASE_CONFIG_DIR ?? join(homedir(), ".threadbase")` pattern (alertStore,
+// runtime-store, server-identity, pty-host/socket), so one escape exposes all of
+// them. Guarding only server.yaml is how a stray `ignore` resolution wrote test
+// fixture ids into a real cache-alert.json and went unnoticed for weeks.
+//
+// Runtime state (logs/, cache/, runtime.db*) is deliberately NOT guarded: a prod
+// streamer running on the developer's machine rewrites those throughout any test
+// run, so watching them would fail on someone else's writes.
+const GUARDED_CONFIG_FILES = [
+  "server.yaml",
+  "cache-alert.json",
+  "gate-answers.json",
+  "update.yaml",
+  "shim.conf",
+] as const;
+
+const REAL_CONFIG_DIR = join(process.env.TB_TEST_REAL_HOME || homedir(), ".threadbase");
+
+/**
+ * mtime+size per guarded file, `null` when absent.
+ *
+ * Absence is recorded rather than skipped so a CI runner with no ~/.threadbase
+ * asserts the suite did not CREATE one — the old guard read a single mtime and
+ * silently checked nothing whenever the file was missing, which is every CI run.
+ * Size rides along because two writes inside the same millisecond share an mtime.
+ */
+function snapshotConfigDir(dir: string): Record<string, string | null> {
+  const snapshot: Record<string, string | null> = {};
+  for (const name of GUARDED_CONFIG_FILES) {
+    const path = join(dir, name);
+    if (!existsSync(path)) {
+      snapshot[name] = null;
+      continue;
+    }
+    const stat = statSync(path);
+    snapshot[name] = `${stat.mtimeMs}:${stat.size}`;
+  }
+  return snapshot;
+}
+
 let originalConfigDir: string | undefined;
-let realConfigMtimeBefore: number | undefined;
+let realConfigBefore: Record<string, string | null>;
 
 let originalCorsEnv: string | undefined;
 
@@ -50,7 +91,7 @@ beforeAll(() => {
   // CORS is off by default; the allowlist tests below assert the enabled path.
   originalCorsEnv = process.env.THREADBASE_ALLOW_BROWSER_CORS;
   process.env.THREADBASE_ALLOW_BROWSER_CORS = "true";
-  realConfigMtimeBefore = existsSync(REAL_CONFIG) ? statSync(REAL_CONFIG).mtimeMs : undefined;
+  realConfigBefore = snapshotConfigDir(REAL_CONFIG_DIR);
 });
 
 afterAll(() => {
@@ -61,10 +102,35 @@ afterAll(() => {
   } else {
     delete process.env.THREADBASE_CONFIG_DIR;
   }
-  // Guard: prove the suite never touched the real config.
-  if (realConfigMtimeBefore !== undefined) {
-    expect(statSync(REAL_CONFIG).mtimeMs).toBe(realConfigMtimeBefore);
-  }
+  // Guard: prove the suite never touched the real config directory.
+  expect(snapshotConfigDir(REAL_CONFIG_DIR)).toEqual(realConfigBefore);
+});
+
+describe("real config guard", () => {
+  // The guard above only fires on a machine where something escapes the sandbox,
+  // so the comparison it relies on is exercised here against a temp directory.
+  it("notices a created, modified, or deleted config file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tb-guard-"));
+    try {
+      const empty = snapshotConfigDir(dir);
+      expect(empty["server.yaml"]).toBeNull();
+
+      const configPath = join(dir, "server.yaml");
+      writeFileSync(configPath, "api_key: tb_first\n");
+      const created = snapshotConfigDir(dir);
+      expect(created).not.toEqual(empty);
+
+      // Longer content, so the size differs even when both writes land in the
+      // same millisecond and share an mtime.
+      writeFileSync(configPath, "api_key: tb_second_and_longer\n");
+      expect(snapshotConfigDir(dir)).not.toEqual(created);
+
+      rmSync(configPath);
+      expect(snapshotConfigDir(dir)).toEqual(empty);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 const API_KEY = "tb_sectest_key_0000000000000000";
