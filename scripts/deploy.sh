@@ -4,6 +4,7 @@
 # Usage:
 #   scripts/deploy.sh                       # build + deploy current HEAD
 #   scripts/deploy.sh --force               # deploy even if working tree is dirty / not on main
+#   scripts/deploy.sh --skip-tests          # skip lint + tests only (still enforces branch/dirty checks)
 #   scripts/deploy.sh --clear-logs          # clear stdout/stderr logs after deploy (default: preserve)
 #   scripts/deploy.sh --install-shim=<m>    # m = standard|user-local|custom|skip; non-interactive choice
 #                                           #   for the global `threadbase-streamer` shim. Default: prompt.
@@ -825,10 +826,11 @@ activate_release() {
 }
 
 cmd_deploy() {
-  local force="" clear_logs_flag=0
+  local force="" clear_logs_flag=0 skip_tests=0
   for arg in "$@"; do
     case "$arg" in
       --force)                 force="--force" ;;
+      --skip-tests)            skip_tests=1 ;;
       --clear-logs)            clear_logs_flag=1 ;;
       --install-shim=*)        export TB_INSTALL_SHIM="${arg#--install-shim=}" ;;
       --path-update=*)         export TB_PATH_UPDATE="${arg#--path-update=}" ;;
@@ -851,8 +853,8 @@ cmd_deploy() {
 
   cd "$REPO_ROOT"
   ensure_native_modules_match_node
-  if [[ "$force" == "--force" ]]; then
-    warn "skipping lint + tests (--force)"
+  if [[ "$force" == "--force" || "$skip_tests" == 1 ]]; then
+    warn "skipping lint + tests"
   else
     log "running lint + tests"
     npm run lint
@@ -965,7 +967,7 @@ case "${1:-deploy}" in
     shift
     cmd_deploy "$@"
     ;;
-  --force|--install-shim=*|--path-update=*)
+  --force|--skip-tests|--install-shim=*|--path-update=*)
     cmd_deploy "$@"
     ;;
   "")
@@ -980,7 +982,7 @@ case "${1:-deploy}" in
   nightly-uninstall) uninstall_nightly_restart_job ;;
   *)
     err "unknown command: $1"
-    echo "usage: $0 [deploy [--force] | rollback | status | healthcheck | restart | free-port | nightly-install | nightly-uninstall]" >&2
+    echo "usage: $0 [deploy [--force|--skip-tests] | rollback | status | healthcheck | restart | free-port | nightly-install | nightly-uninstall]" >&2
     exit 2
     ;;
 esac

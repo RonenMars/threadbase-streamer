@@ -75,6 +75,7 @@
     "update-schema:shared": "tsx scripts/update-schema.ts --shared",
     "deploy": "scripts/deploy.sh deploy",
     "deploy:force": "scripts/deploy.sh deploy --force",
+    "deploy:skip-tests": "scripts/deploy.sh deploy --skip-tests",
     "deploy:rollback": "scripts/deploy.sh rollback",
     "deploy:status": "scripts/deploy.sh status",
     "deploy:healthcheck": "scripts/deploy.sh healthcheck",
