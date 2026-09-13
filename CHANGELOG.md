@@ -1,3 +1,9 @@
+## [1.91.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.91.1...v1.91.2) (2026-09-13)
+
+### Bug Fixes
+
+* **cors:** let browser clients send X-Client-Id and open the WebSocket ([#906](https://github.com/RonenMars/threadbase-streamer/issues/906)) ([f770635](https://github.com/RonenMars/threadbase-streamer/commit/f7706355479b17f8f272d3ae81f15cc54c0ae3e3))
+
 ## [1.91.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.91.0...v1.91.1) (2026-09-12)
 
 ### Bug Fixes
