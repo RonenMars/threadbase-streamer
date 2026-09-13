@@ -345,6 +345,167 @@ describe("a fork keeps its inherited history when its own file is indexed", () =
   });
 });
 
+/**
+ * Codex can inject TWO messages before the first real turn — its own AGENTS.md
+ * dump, then this server's argv prompt (there is no --system-prompt flag, so
+ * DEFAULT_SYSTEM_PROMPT lands in the rollout as role:user). 17 of 685 rollouts
+ * on the machine this was measured on have that head.
+ *
+ * The handler used to bound the skip by ARRAY POSITION, so it dropped only the
+ * first; the scanner's accumulator and the offset-index writer both bound by
+ * KEPT COUNT, so they drop the whole run. Same file, two numberings.
+ */
+describe("a two-message injected head is one space, warm or cold", () => {
+  const CONV = "rollout-2026-09-06T11-20-26-twoinjected";
+  const AGENTS = "# AGENTS.md instructions\n\n<INSTRUCTIONS>project</INSTRUCTIONS>";
+  const ARGV = "When presenting options or choices, limit the options to at most 3.";
+
+  function writeRollout(): string {
+    const path = join(dir, `${CONV}.jsonl`);
+    writeFileSync(
+      path,
+      `${[
+        codexLine(0, { type: "session_meta", payload: { id: "plain", cwd: "/tmp/p" } }),
+        codexMessage(1, "user", AGENTS),
+        codexMessage(2, "user", ARGV),
+        codexMessage(3, "assistant", "Understood."),
+        codexMessage(4, "user", "real question"),
+        codexMessage(5, "assistant", "real answer"),
+      ].join("\n")}\n`,
+    );
+    return path;
+  }
+
+  // The scanner's own parse is UNFILTERED — parseCodexConversation pushes every
+  // parseCodexJsonlLine result and applies no injected-context rule — so the
+  // handler is the only thing standing between these five and the payload.
+  const parsed: ScannerMessage[] = [
+    { role: "user", text: AGENTS, timestamp: "2026-09-06T11:00:00.000Z" },
+    { role: "user", text: ARGV, timestamp: "2026-09-06T11:00:01.000Z" },
+    { role: "assistant", text: "Understood.", timestamp: "2026-09-06T11:00:02.000Z" },
+    { role: "user", text: "real question", timestamp: "2026-09-06T11:00:03.000Z" },
+    { role: "assistant", text: "real answer", timestamp: "2026-09-06T11:00:04.000Z" },
+  ];
+
+  it("drops the whole leading run, and says so in meta", async () => {
+    const path = writeRollout();
+    seedMeta(CONV, path, "codex-cli");
+    await cache.backfillIndex(path);
+
+    expect(cache.getIndexedMessageCount(CONV)).toBe(3);
+    expect(cache.readMessageWindow(path, 0, 80)).not.toBeNull();
+
+    const { body } = await get(makeHandlers({ [CONV]: path }, parsed), CONV);
+
+    expect(texts(body)).toEqual(["Understood.", "real question", "real answer"]);
+    expect(indices(body)).toEqual([0, 1, 2]);
+    // The body carried 3 under a meta claiming 4: `meta.message_count` is built
+    // from `filtered.length` while the body came from the index window, and the
+    // two counted the head differently. Same shape as the fork bug above.
+    expect(body.meta.message_count).toBe(3);
+    expect(body.meta.message_count).toBe(body.message_pagination.total);
+  });
+
+  it("serves the same index space whether or not the index is warm", async () => {
+    const path = writeRollout();
+    seedMeta(CONV, path, "codex-cli");
+    const cold = await get(makeHandlers({ [CONV]: path }, parsed), CONV);
+
+    await cache.backfillIndex(path);
+    expect(cache.readMessageWindow(path, 0, 80)).not.toBeNull();
+    const warm = await get(makeHandlers({ [CONV]: path }, parsed), CONV);
+
+    expect(texts(warm.body)).toEqual(texts(cold.body));
+    expect(indices(warm.body)).toEqual(indices(cold.body));
+    expect(warm.body.message_pagination.total).toBe(cold.body.message_pagination.total);
+  });
+});
+
+describe("a fork inherits none of its parent's injected head", () => {
+  const PARENT = "rollout-2026-09-06T11-20-26-twoinjected-parent";
+  const FORK = "rollout-2026-09-06T20-31-07-twoinjected-fork";
+  const AGENTS = "# AGENTS.md instructions\n\n<INSTRUCTIONS>project</INSTRUCTIONS>";
+  const ARGV = "When presenting options or choices, limit the options to at most 3.";
+
+  /** Four parsed messages before the cut at ordinal 5, two of them machinery. */
+  function writeParent(): string {
+    const path = join(dir, `${PARENT}.jsonl`);
+    writeFileSync(
+      path,
+      `${[
+        codexLine(0, { type: "session_meta", payload: { id: "parent2", cwd: "/tmp/p" } }),
+        codexMessage(1, "user", AGENTS),
+        codexMessage(2, "user", ARGV),
+        codexMessage(3, "user", "first question"),
+        codexMessage(4, "assistant", "first answer"),
+        codexEvent(5, "thread_settings_applied"),
+        codexMessage(6, "user", "after the fork"),
+      ].join("\n")}\n`,
+    );
+    return path;
+  }
+
+  function writeFork(): string {
+    const path = join(dir, `${FORK}.jsonl`);
+    writeFileSync(
+      path,
+      `${[
+        codexLine(5, {
+          type: "session_meta",
+          payload: {
+            id: "fork2",
+            forked_from_id: PARENT,
+            forked_from_ordinal_exclusive: 5,
+            timestamp: "2026-09-06T17:31:07.482Z",
+            cwd: "/tmp/p",
+          },
+        }),
+        codexMessage(5, "user", "<permissions instructions>sandbox</permissions instructions>"),
+        codexMessage(6, "user", "continue with the merge"),
+        codexMessage(7, "assistant", "merging"),
+      ].join("\n")}\n`,
+    );
+    return path;
+  }
+
+  const own: ScannerMessage[] = [
+    {
+      role: "user",
+      text: "<permissions instructions>sandbox</permissions instructions>",
+      timestamp: "2026-09-06T17:31:50.000Z",
+    },
+    { role: "user", text: "continue with the merge", timestamp: "2026-09-06T17:32:00.000Z" },
+    { role: "assistant", text: "merging", timestamp: "2026-09-06T17:32:10.000Z" },
+  ];
+
+  it("does not render the server's own argv prompt as an inherited user turn", async () => {
+    const parent = writeParent();
+    const fork = writeFork();
+    seedMeta(PARENT, parent, "codex-cli");
+    seedMeta(FORK, fork, "codex-cli");
+    await cache.backfillIndex(fork);
+    expect(cache.readMessageWindow(fork, 0, 80)?.total).toBe(2);
+
+    const { body } = await get(makeHandlers({ [PARENT]: parent, [FORK]: fork }, own), FORK);
+
+    // The inherited half is read with the scanner's raw line parser, so BOTH
+    // preamble lines arrive and both have to go. Array position kept the argv
+    // prompt, which rendered "When presenting options or choices…" as something
+    // the user had typed.
+    expect(texts(body)).toEqual([
+      "first question",
+      "first answer",
+      "continue with the merge",
+      "merging",
+    ]);
+    expect(indices(body)).toEqual([0, 1, 2, 3]);
+    expect(body.message_pagination.total).toBe(4);
+    expect(body.meta.message_count).toBe(body.message_pagination.total);
+    // The divider moves with the prefix it names: 2 inherited turns, not 3.
+    expect(body.meta.inherited_history.through_message_index).toBe(2);
+  });
+});
+
 describe("Claude keeps the offset-index fast path", () => {
   const CONV = "claude-conv-gate";
 

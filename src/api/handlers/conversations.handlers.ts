@@ -1037,12 +1037,26 @@ export class ConversationHandlers {
     // space as the offset index, which applies the identical rule at write time.
     //
     // The bound is PER FILE, not per served conversation, which is why the two
-    // filter() calls below each get their own index: Codex injects at the head of
-    // every rollout, so a fork's own file has its own preamble at ITS index 0
+    // filter() calls below each get their own counter: Codex injects at the head
+    // of every rollout, so a fork's own file has its own preamble at ITS index 0
     // even though that message sits at index N of the stitched conversation. The
     // scanner bounds the same way — its accumulator is per file.
-    const isServable = (m: { role: string; text?: string }, i: number) =>
-      !isLeadingInjectedContext(i, m.role, m.text);
+    //
+    // The counter counts KEPT messages, not array positions. Position was wrong
+    // for a head of TWO injected lines — the AGENTS.md dump followed by this
+    // server's own argv prompt, measured on 17 of 685 rollouts — because it drops
+    // only the first while the scanner's accumulator (`acc.messageCount === 0`)
+    // and the offset-index writer both drop the whole leading run. A warm index
+    // then served 3 messages under a meta claiming 4, and every message_index
+    // moved by one depending on nothing but whether the index was warm.
+    const servableFilter = () => {
+      let kept = 0;
+      return (m: { role: string; text?: string }) => {
+        if (isLeadingInjectedContext(kept, m.role, m.text)) return false;
+        kept++;
+        return true;
+      };
+    };
 
     // The inherited prefix is filtered SEPARATELY from the conversation's own
     // messages, not because the result differs — concatenating then filtering
@@ -1051,8 +1065,8 @@ export class ConversationHandlers {
     // served index, and injected-context lines are dropped before indices are
     // assigned, so counting the prefix beforehand puts the divider in the wrong
     // place by however many lines the filter removed.
-    const inheritedFiltered = inherited ? inherited.messages.filter(isServable) : [];
-    const filtered = [...inheritedFiltered, ...conversation.messages.filter(isServable)];
+    const inheritedFiltered = inherited ? inherited.messages.filter(servableFilter()) : [];
+    const filtered = [...inheritedFiltered, ...conversation.messages.filter(servableFilter())];
     const total = filtered.length;
 
     const hasAnchor = url.searchParams.has("anchor_index");
@@ -1314,14 +1328,14 @@ export class ConversationHandlers {
     // index total and the newest served message's timestamp.
     //
     // The base is `total` (= `filtered.length`): the inherited prefix plus this
-    // file's own turns, each through `isServable`, so the whole number sits in
+    // file's own turns, each through `servableFilter`, so the whole number sits in
     // the one space this response serves in. Taking it whole is also what counts
     // the prefix, so a fork's meta does not say "0 messages" while its body
     // carries 21 and the hub row disagrees with the open conversation.
     //
     // It replaces `conv.messageCount + inheritedFiltered.length`, which added a
     // POST-filter prefix length to the scanner's RAW count — for Codex that
-    // count still holds the AGENTS.md / permissions lines `isServable` drops —
+    // count still holds the AGENTS.md / permissions lines `servableFilter` drops —
     // producing a number in neither space: a fork carrying one injected line in
     // its own file reported 7 against a body of 6.
     //
