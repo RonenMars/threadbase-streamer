@@ -416,6 +416,47 @@ git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 ---
 
+## Browser clients (Expo web)
+
+### The web app pairs, then fails with `TypeError: Failed to fetch`
+
+**When:** tb-mobile running in a browser (`npx expo start --web`, or a hosted static export) against a streamer with `browser_cors:` set.
+The connection test succeeds, then the session or conversation list fails with `Failed to reach https://…/api/conversations?…: TypeError: Failed to fetch`.
+
+**Cause:** the preflight answered, but without a header the request carries.
+The browser then cancels the real request and reports a network failure, so the streamer logs nothing for it.
+tb-mobile adds `X-Client-Id` to every REST call; streamers that predate it being in `Access-Control-Allow-Headers` fail every list call from a browser.
+Two other causes produce the same message: the page's origin is not in `browser_cors:`, or the page is `https://` and the server URL is `http://` (mixed content).
+
+**Diagnose:** replay the preflight the browser sends and read the allow-list:
+```bash
+curl -si -X OPTIONS https://tb.example.com/api/conversations \
+  -H 'Origin: https://app.example.com' \
+  -H 'Access-Control-Request-Method: GET' \
+  -H 'Access-Control-Request-Headers: authorization,content-type,x-client-id' \
+  | grep -i '^access-control-allow'
+```
+A missing `access-control-allow-origin` means the origin is not allowed (check the value is unquoted in `server.yaml`); an `access-control-allow-headers` without `X-Client-Id` means the streamer needs upgrading.
+
+### The web app loads data but shows the server as disconnected
+
+**When:** same setup; lists render over REST, but the server dot is red and the banner reads "Disconnected from <server>. Showing cached sessions."
+
+**Cause:** the WebSocket upgrade fails while REST succeeds.
+Browsers always send `Origin` on an upgrade, `@hono/node-ws` runs the upgrade through the middleware stack with no Node response object, and a streamer whose CORS middleware wrote to that missing object answered every allowed-origin upgrade with `500`.
+The native app sends no `Origin`, so it never hit this.
+
+**Diagnose:** the streamer log shows `[req] GET /ws → 500` with a browser user agent.
+Reproduce without a browser:
+```bash
+curl -si --http1.1 http://localhost:8766/ws?key=<api_key> \
+  -H 'Origin: https://app.example.com' -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' | head -1
+```
+`101 Switching Protocols` is healthy; `500` means the streamer needs upgrading.
+
+---
+
 ## Cloudflare Tunnel / Access
 
 ### External requests to `/healthz` (or any endpoint) are refused

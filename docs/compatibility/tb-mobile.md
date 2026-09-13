@@ -103,6 +103,11 @@ On macOS, memory uses the pressure-aware free percentage from `/usr/bin/memory_p
 
 **Auth format** — mobile sends `Authorization: Bearer <token>` and constructs WebSocket URLs as `/ws?key=<token>`. Both forms must continue to work.
 
+**Browser clients (Expo web)** — the same app also runs in a browser, where every request carries an `Origin` header and is subject to CORS (`src/api/middleware/cors.middleware.ts`, enabled by `browser_cors:` / `THREADBASE_ALLOW_BROWSER_CORS`).
+Two things the native app never exercises are therefore part of this surface:
+- Every REST call carries `X-Client-Id`, so it must stay in `Access-Control-Allow-Headers`. A header missing from that list does not produce an error status — the browser cancels the request after the preflight and the client sees only `TypeError: Failed to fetch`.
+- The `/ws` upgrade arrives with an allowed `Origin` and runs through the Hono middleware stack with no Node `ServerResponse` (`c.env.outgoing` is `undefined` under `@hono/node-ws`). Middleware that writes to `c.env.outgoing` unconditionally turns every browser socket into a `500` while REST keeps working.
+
 **API key format** — mobile uses `tb_` prefix detection in pairing logic. Key format `tb_<32-hex-chars>` must be preserved.
 
 **Push endpoints** — `POST /api/push/register` and `GET /api/push/health` both have shipped mobile consumers and belong to this contract.
