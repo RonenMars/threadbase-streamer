@@ -1,3 +1,9 @@
+## [1.91.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.91.2...v1.91.3) (2026-09-13)
+
+### Bug Fixes
+
+* **conversations:** bound the codex injected-head skip by kept count ([#908](https://github.com/RonenMars/threadbase-streamer/issues/908)) ([6997435](https://github.com/RonenMars/threadbase-streamer/commit/6997435f460793cf1458188feed4cb9861c5514c))
+
 ## [1.91.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.91.1...v1.91.2) (2026-09-13)
 
 ### Bug Fixes
