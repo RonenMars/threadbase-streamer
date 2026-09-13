@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import WebSocket from "ws";
 import { resolveAllowedOrigins } from "../src/api/middleware/cors.middleware";
 import { StreamerServer } from "../src/server";
 
@@ -103,5 +104,68 @@ describe("browser_cors in server.yaml", () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+describe("browser clients (Expo web)", () => {
+  const API_KEY = "tb_browser_cors_test_key_000000";
+  const ORIGIN = "https://app.example.com";
+  let originalCorsEnv: string | undefined;
+  let server: StreamerServer;
+  let ws: WebSocket | undefined;
+
+  beforeEach(async () => {
+    originalCorsEnv = process.env.THREADBASE_ALLOW_BROWSER_CORS;
+    process.env.THREADBASE_ALLOW_BROWSER_CORS = ORIGIN;
+    server = new StreamerServer({
+      port: EPHEMERAL_PORT,
+      apiKey: API_KEY,
+      localNoAuth: false,
+      verbose: false,
+      disableDb: true,
+      cacheDir: mkdtempSync(join(tmpdir(), "tb-browser-cors-cache-")),
+      scanProfiles: [],
+    });
+    await server.listen(EPHEMERAL_PORT);
+  });
+
+  afterEach(async () => {
+    ws?.terminate();
+    ws = undefined;
+    await server.close();
+    if (originalCorsEnv === undefined) delete process.env.THREADBASE_ALLOW_BROWSER_CORS;
+    else process.env.THREADBASE_ALLOW_BROWSER_CORS = originalCorsEnv;
+  });
+
+  // tb-mobile sends X-Client-Id on every REST call. A preflight that omits it
+  // makes the browser cancel the request as "Failed to fetch".
+  it("allows the X-Client-Id request header in a preflight", async () => {
+    const res = await fetch(`http://localhost:${server.port}/api/conversations`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: ORIGIN,
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization,content-type,x-client-id",
+      },
+    });
+    expect(res.status).toBe(204);
+    const allowed = (res.headers.get("access-control-allow-headers") ?? "").toLowerCase();
+    expect(allowed).toContain("x-client-id");
+  });
+
+  // Browsers always send Origin on a WebSocket upgrade. @hono/node-ws runs the
+  // upgrade through the app with no Node response object, so the CORS branch for
+  // an allowed origin must not assume one exists.
+  it("upgrades a WebSocket that carries an allowed Origin", async () => {
+    const socket = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`, {
+      origin: ORIGIN,
+    });
+    ws = socket;
+    const outcome = await new Promise<string>((resolve) => {
+      socket.on("open", () => resolve("open"));
+      socket.on("unexpected-response", (_req, res) => resolve(`http ${res.statusCode}`));
+      socket.on("error", (err) => resolve(`error ${err.message}`));
+    });
+    expect(outcome).toBe("open");
   });
 });

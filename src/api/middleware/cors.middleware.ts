@@ -47,25 +47,26 @@ export const corsMiddleware = (configValue?: string): MiddlewareHandler<AppEnv> 
     const allowedOrigin = allowedOrigins && origin && allowedOrigins.has(origin) ? origin : null;
 
     if (allowedOrigin) {
+      const headers: Record<string, string> = {
+        "Access-Control-Allow-Origin": allowedOrigin,
+        Vary: "Origin",
+        "Access-Control-Allow-Methods": "GET, POST, PATCH, QUERY, OPTIONS",
+        // X-Client-Id rides on every tb-mobile REST call; without it here a
+        // browser cancels the request after the preflight ("Failed to fetch").
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, If-None-Match, X-Client-Id",
+        "Access-Control-Expose-Headers": "ETag, Accept-Query",
+      };
       // Set on the raw ServerResponse too: many handlers write directly to
       // c.env.outgoing and return the ALREADY_HANDLED sentinel, so Hono never
       // pipes c.res.headers onto the actual response. writeHead() merges (does
       // not clear) setHeader()-set headers, so these survive the direct write.
-      const raw = c.env.outgoing;
-      raw.setHeader("Access-Control-Allow-Origin", allowedOrigin);
-      raw.setHeader("Vary", "Origin");
-      raw.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, QUERY, OPTIONS");
-      raw.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match");
-      raw.setHeader("Access-Control-Expose-Headers", "ETag, Accept-Query");
-
-      c.res.headers.set("Access-Control-Allow-Origin", allowedOrigin);
-      c.res.headers.set("Vary", "Origin");
-      c.res.headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, QUERY, OPTIONS");
-      c.res.headers.set(
-        "Access-Control-Allow-Headers",
-        "Authorization, Content-Type, If-None-Match",
-      );
-      c.res.headers.set("Access-Control-Expose-Headers", "ETag, Accept-Query");
+      // A WebSocket upgrade has no ServerResponse: @hono/node-ws runs it through
+      // the app with `outgoing: undefined`, and browsers always send Origin on
+      // one, so an unguarded setHeader turned every browser socket into a 500.
+      for (const [name, value] of Object.entries(headers)) {
+        c.env.outgoing?.setHeader(name, value);
+        c.res.headers.set(name, value);
+      }
     }
 
     if (c.req.method === "OPTIONS") {
