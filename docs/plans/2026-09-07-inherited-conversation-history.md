@@ -301,14 +301,64 @@ If a profile later shows fork prefix parsing actually hurting users, reopen this
 `cache_metadata` is a generic key/value store with a working repository, so persisting a resolved cut would be a type widening rather than a migration.
 Recorded here so the question does not get re-litigated from scratch.
 
+### Addendum — re-measured 2026-09-12
+
+Everything above is left as written: it was the correct call on the information available on 2026-09-08.
+Two of its three blockers have since been resolved, and the reasoning — not the decision — is now out of date.
+Options and full measurements: [2026-09-12-split-window-read-options.md](./2026-09-12-split-window-read-options.md).
+
+**Blocker 1 — the two index spaces — is fixed.**
+#862 made the index writer apply the same leading-injected-context rule the handler does, so a Codex rollout is numbered identically on both sides.
+That fix was incomplete in one shape found while re-measuring: the handler bounded the skip by ARRAY POSITION while the writer and the scanner bound it by KEPT COUNT, so a head of *two* injected lines — the AGENTS.md dump plus this server's own argv prompt, 17 of 685 rollouts here — numbered differently again.
+End to end, a warm index served 3 messages under a `meta.message_count` of 4 and shifted every `message_index` by one, on plain non-fork conversations.
+`servableFilter()` in `conversations.handlers.ts` now counts kept messages; pinned by three cases in `__tests__/codex-offset-index-gate.test.ts`.
+
+**Blocker 2 — `N` cannot be derived from the index — is resolved.**
+The claim above that "the correction cannot be computed from rows" no longer holds.
+Locate the cut's byte offset by walking the parent's lines, then `SELECT COUNT(*) … WHERE byte_offset < <cut>`: measured **0 mismatches across 330 cut cases on 110 real rollouts**, against what the API actually serves.
+It was 13 before the bound fix above, always −1, and all 13 were that same two-injected head.
+`byte_offset` ordering matches `message_index` ordering in 110 of 110 files, and is structural — both are assigned in file order, and the contiguity guard refuses any out-of-order write.
+
+Two caveats the row-count carries, neither fatal, both real:
+a bare `COUNT` has no staleness gate, so a parent indexed *before* the cut existed answers 1 where the truth is 4 and a never-indexed parent answers 0 — silently, in states where `readMessageWindow` correctly declines;
+and the cut cannot be located by counting newlines alone, because 359 of 685 rollouts carry no `ordinal` field, one repeats an ordinal, and a parent that is itself a fork starts its ordinals at its own cut.
+
+**Blocker 3 — the payoff — still stands, and is now a measurement rather than a judgement.**
+The machinery it prices has shrunk: the reindex is already paid, the durable cut is unnecessary (an in-process integer reuses `prefixCache`'s own immutability argument), and the invalidation key collapses to a two-line staleness gate.
+Only the seam arithmetic is irreducible.
+But the payoff measured smaller than the machinery shrank:
+
+| | measured 2026-09-12 |
+|---|---|
+| per-request work a split-window read would delete | **0.006 ms** (largest prefix here, N=353) |
+| memory held by `prefixCache` at cap, median-size parents | **2.9 MB** (23.7 MB across the 32 largest) |
+| finding the cut correctly, vs. today's full parse | **0.75×–1.17×** — no saving on the first request either |
+| Codex conversation size | p50 11 messages, p90 145, p99 799, max 2406 |
+
+So the shape of the problem is that the cheap version and the payoff are mutually exclusive.
+An in-process `N` avoids the persistence machinery and buys six microseconds a request.
+The version that delivers the design's actual promise — `from >= N` never opening the parent, including cold after a restart — requires the persisted cut, and with it the invalidation key, and with that the class of silently-wrong answer this section was right to refuse.
+
+**The trigger to reopen is unchanged and now falsifiable.**
+A profile showing fork prefix parsing hurting a user. The profile now exists and says it does not.
+If the cost ever presents as *memory* rather than latency, the lever is a byte budget on `prefixCache` — roughly five lines, no seam arithmetic, no new way to be silently wrong.
+
 ## Risks
 
 - **The ordinal→index translation is the one silent failure.** A wrong `N` shows
-  a plausible conversation with the wrong number of inherited turns. Mitigation:
-  it is computed once, stored, and pinned by a fixture test against the real
-  pair on this machine (parent 331 lines / 27 rendered messages / cut at
-  ordinal 297 → 21). Drafting this plan produced the wrong number (27) on the
-  first pass, from exactly the shortcut the test now forbids.
+  a plausible conversation with the wrong number of inherited turns. Drafting
+  this plan produced the wrong number (27) on the first pass, from exactly the
+  shortcut the mitigation below forbids.
+
+  Mitigation, as actually built: `__tests__/inherited-history.test.ts` reproduces
+  each discriminator in miniature on synthetic fixtures. It does **not** pin the
+  real pair — an earlier version of this line said it did, and no such test was
+  ever written. Re-measured against the real pair 2026-09-12: the parent has
+  since grown to 561 lines, and `readMessagesBeforeOrdinal` returns **21**
+  messages before ordinal 297, which is the number this section means. What the
+  API *serves* is **20**: the handler applies the leading-injected-context filter
+  to the prefix afterwards, dropping the parent's AGENTS.md line. The two numbers
+  are one filter apart and neither is a substitute for the other.
 - **A live parent.** The prefix is frozen, but the parent's *file* keeps
   growing, so any check comparing file size to an indexed offset must be scoped
   to the prefix, not the file. This is exactly the `readMessageWindow` decline
@@ -341,9 +391,11 @@ Cases:
 
 1. Cut translation: 297 → 21, with the 3 unrendered `developer` lines as the
    discriminator — an implementation that counts message-shaped lines returns
-   24 and passes any looser assertion.
-2. Tail request on a fresh fork returns the parent's first 21 messages,
-   `total: 21`.
+   24 and passes any looser assertion. 21 is the count *before* the
+   leading-injected-context filter; see the first Risk for why the served number
+   is 20.
+2. Tail request on a fresh fork returns the parent's first 20 messages,
+   `total: 20`.
 3. `before_index` paging across the seam returns one contiguous run with no gap
    or duplicate at `N`.
 4. After the fork takes 3 turns: indices 21–23 are its own, the parent is not
