@@ -1,5 +1,4 @@
 import type { MiddlewareHandler } from "hono";
-import type { ServerResponse } from "http";
 import type { AppEnv } from "../app";
 
 // Local dev origins allowed when browser CORS is enabled.
@@ -64,9 +63,8 @@ export const corsMiddleware = (configValue?: string): MiddlewareHandler<AppEnv> 
       // A WebSocket upgrade has no ServerResponse: @hono/node-ws runs it through
       // the app with `outgoing: undefined`, and browsers always send Origin on
       // one, so an unguarded setHeader turned every browser socket into a 500.
-      const raw = c.env.outgoing as ServerResponse | undefined;
       for (const [name, value] of Object.entries(headers)) {
-        raw?.setHeader(name, value);
+        c.env.outgoing?.setHeader(name, value);
         c.res.headers.set(name, value);
       }
     }

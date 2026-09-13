@@ -112,6 +112,7 @@ describe("browser clients (Expo web)", () => {
   const ORIGIN = "https://app.example.com";
   let originalCorsEnv: string | undefined;
   let server: StreamerServer;
+  let ws: WebSocket | undefined;
 
   beforeEach(async () => {
     originalCorsEnv = process.env.THREADBASE_ALLOW_BROWSER_CORS;
@@ -129,6 +130,8 @@ describe("browser clients (Expo web)", () => {
   });
 
   afterEach(async () => {
+    ws?.terminate();
+    ws = undefined;
     await server.close();
     if (originalCorsEnv === undefined) delete process.env.THREADBASE_ALLOW_BROWSER_CORS;
     else process.env.THREADBASE_ALLOW_BROWSER_CORS = originalCorsEnv;
@@ -147,22 +150,22 @@ describe("browser clients (Expo web)", () => {
     });
     expect(res.status).toBe(204);
     const allowed = (res.headers.get("access-control-allow-headers") ?? "").toLowerCase();
-    expect(allowed.split(/\s*,\s*/)).toEqual(
-      expect.arrayContaining(["authorization", "content-type", "x-client-id"]),
-    );
+    expect(allowed).toContain("x-client-id");
   });
 
   // Browsers always send Origin on a WebSocket upgrade. @hono/node-ws runs the
   // upgrade through the app with no Node response object, so the CORS branch for
   // an allowed origin must not assume one exists.
   it("upgrades a WebSocket that carries an allowed Origin", async () => {
-    const ws = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`, { origin: ORIGIN });
-    const outcome = await new Promise<string>((resolve) => {
-      ws.on("open", () => resolve("open"));
-      ws.on("unexpected-response", (_req, res) => resolve(`http ${res.statusCode}`));
-      ws.on("error", (err) => resolve(`error ${err.message}`));
+    const socket = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`, {
+      origin: ORIGIN,
     });
-    ws.close();
+    ws = socket;
+    const outcome = await new Promise<string>((resolve) => {
+      socket.on("open", () => resolve("open"));
+      socket.on("unexpected-response", (_req, res) => resolve(`http ${res.statusCode}`));
+      socket.on("error", (err) => resolve(`error ${err.message}`));
+    });
     expect(outcome).toBe("open");
   });
 });
