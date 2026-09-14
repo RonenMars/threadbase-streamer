@@ -47,5 +47,8 @@ describe("runSqliteMigrations", () => {
       .all() as Array<{ name: string }>;
     expect(cols.map((c) => c.name)).toContain("project_id");
     expect(cols.map((c) => c.name)).toContain("scanner_meta_json");
+    expect(cols.map((c) => c.name)).toContain("is_imported_from_claude");
+    expect(cols.map((c) => c.name)).toContain("is_imported_from_codex");
+    expect(cols.map((c) => c.name)).toContain("is_imported_from_cursor");
   });
 });

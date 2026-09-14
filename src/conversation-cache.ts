@@ -68,6 +68,9 @@ export interface ConversationListItem {
   preview: string | null;
   source: string | null;
   provider: ProviderName;
+  isImportedFromClaude: boolean;
+  isImportedFromCodex: boolean;
+  isImportedFromCursor: boolean;
 }
 
 export interface CachedTailMessage {
@@ -124,6 +127,9 @@ export interface ScannerMeta {
   lastMessage?: unknown;
   preview?: string;
   provider?: ProviderName;
+  isImportedFromClaude?: boolean;
+  isImportedFromCodex?: boolean;
+  isImportedFromCursor?: boolean;
 }
 
 interface MetaRow {
@@ -148,6 +154,9 @@ interface MetaRow {
   provider: ProviderName;
   updated_at: number;
   scanner_meta_json: string | null;
+  is_imported_from_claude: number;
+  is_imported_from_codex: number;
+  is_imported_from_cursor: number;
 }
 
 interface TailRow {
@@ -353,7 +362,7 @@ export class ConversationCache {
     // getFullById deliberately keeps `SELECT *`: it is a single row by primary
     // key and its callers want every column.
     const LIST_COLUMNS =
-      "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id";
+      "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor";
     const visible = `has_messages IS NOT 0${this.includeSubagentSessions ? "" : " AND is_subagent IS NOT 1"}`;
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
@@ -395,11 +404,13 @@ export class ConversationCache {
         INSERT INTO conversation_meta
           (id, file_path, project_path, project_name, title, model, account, branch,
            message_count, last_activity, first_message, last_message, preview, updated_at,
-           mtime_ms, file_size, provider, scanner_meta_json)
+           mtime_ms, file_size, provider, scanner_meta_json,
+           is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor)
         VALUES
           (@id, @file_path, @project_path, @project_name, @title, @model, @account, @branch,
            @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at,
-           @mtime_ms, @file_size, @provider, @scanner_meta_json)
+           @mtime_ms, @file_size, @provider, @scanner_meta_json,
+           @is_imported_from_claude, @is_imported_from_codex, @is_imported_from_cursor)
         ON CONFLICT(id) DO UPDATE SET
           file_path     = excluded.file_path,
           project_path  = excluded.project_path,
@@ -420,7 +431,10 @@ export class ConversationCache {
           mtime_ms      = excluded.mtime_ms,
           file_size     = excluded.file_size,
           provider      = excluded.provider,
-          scanner_meta_json = excluded.scanner_meta_json
+          scanner_meta_json = excluded.scanner_meta_json,
+          is_imported_from_claude = excluded.is_imported_from_claude,
+          is_imported_from_codex = excluded.is_imported_from_codex,
+          is_imported_from_cursor = excluded.is_imported_from_cursor
         WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
@@ -1573,6 +1587,9 @@ export class ConversationCache {
           file_size: fileSize,
           provider: classification?.provider ?? m.provider ?? CLAUDE_CODE_PROVIDER,
           scanner_meta_json: scannerMetaJson,
+          is_imported_from_claude: m.isImportedFromClaude ? 1 : 0,
+          is_imported_from_codex: m.isImportedFromCodex ? 1 : 0,
+          is_imported_from_cursor: m.isImportedFromCursor ? 1 : 0,
         });
         this.stmts.updateScannerCache.run(mtimeMs, fileSize, scannerMetaJson, id);
         if (classification) {
@@ -1716,6 +1733,9 @@ export class ConversationCache {
         preview: r.preview,
         source: r.source,
         provider: r.provider ?? CLAUDE_CODE_PROVIDER,
+        isImportedFromClaude: r.is_imported_from_claude === 1,
+        isImportedFromCodex: r.is_imported_from_codex === 1,
+        isImportedFromCursor: r.is_imported_from_cursor === 1,
       })),
     };
   }
@@ -1794,6 +1814,9 @@ export class ConversationCache {
       preview: row.preview,
       source: row.source,
       provider: row.provider ?? CLAUDE_CODE_PROVIDER,
+      isImportedFromClaude: row.is_imported_from_claude === 1,
+      isImportedFromCodex: row.is_imported_from_codex === 1,
+      isImportedFromCursor: row.is_imported_from_cursor === 1,
     };
   }
 
