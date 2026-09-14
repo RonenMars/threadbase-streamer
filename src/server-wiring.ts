@@ -600,6 +600,7 @@ export type ApiDepsWiring = {
   hostPressureMonitor: () => HostPressureMonitor | null;
   pushRepo: () => PushRepository | null;
   liveActivityPushEnabled: () => boolean;
+  expoPushEnabled: () => boolean;
   devicesRepo: () => DevicesRepository | null;
   projectsRepo: () => ProjectsRepository | null;
   conversationsRepo: () => ConversationsRepository | null;
@@ -670,6 +671,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     hostPressureMonitor: () => deps.hostPressureMonitor(),
     pushRepo: () => deps.pushRepo(),
     liveActivityPushEnabled: () => deps.liveActivityPushEnabled(),
+    expoPushEnabled: () => deps.expoPushEnabled(),
 
     devicesRepo: () => deps.devicesRepo(),
     projectsRepo: () => deps.projectsRepo(),
