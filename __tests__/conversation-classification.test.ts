@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { ConversationCache } from "../src/conversation-cache";
@@ -197,6 +197,72 @@ it.each([
   expect(classifyConversationFile(path)).toMatchObject({
     isSubagent: true,
     parentConversationId: null,
+  });
+});
+
+it("sniffs Cursor {role} lines and does not parse them as Claude", () => {
+  const path = file("510d9919-aaaa-bbbb-cccc-ddddeeeeffff", [
+    {
+      role: "user",
+      message: {
+        content: [{ type: "text", text: "<user_query>How do I reverse a list?</user_query>" }],
+      },
+    },
+    {
+      role: "assistant",
+      message: { content: [{ type: "text", text: "Use list.reverse()." }] },
+    },
+  ]);
+  expect(classifyConversationFile(path)).toMatchObject({
+    provider: "cursor-cli",
+    hasMessages: true,
+    isSubagent: false,
+  });
+});
+
+it("keeps Codex envelopes under agent-transcripts as cursor-cli", () => {
+  const sessionDir = join(dir, "Users-dev-widget", "agent-transcripts", "sess-imported-codex");
+  mkdirSync(sessionDir, { recursive: true });
+  const path = join(sessionDir, "sess-imported-codex.jsonl");
+  writeFileSync(
+    path,
+    `${JSON.stringify({ type: "session_meta", payload: { id: "sess-imported-codex", source: "cli" } })}\n${JSON.stringify(codex("How did this Codex session get here?"))}\n`,
+  );
+  expect(classifyConversationFile(path, "cursor-cli")).toMatchObject({
+    provider: "cursor-cli",
+    hasMessages: true,
+    isSubagent: false,
+  });
+});
+
+it("keeps Claude envelopes under agent-transcripts as cursor-cli", () => {
+  const sessionDir = join(dir, "Users-dev-widget", "agent-transcripts", "sess-imported-claude");
+  mkdirSync(sessionDir, { recursive: true });
+  const path = join(sessionDir, "sess-imported-claude.jsonl");
+  writeFileSync(path, `${JSON.stringify(text("user"))}\n${JSON.stringify(text("assistant"))}\n`);
+  expect(classifyConversationFile(path, "cursor-cli")).toMatchObject({
+    provider: "cursor-cli",
+    hasMessages: true,
+  });
+});
+
+it("marks Cursor files under subagents/ as children of the parent uuid", () => {
+  const parent = "510d9919-aaaa-bbbb-cccc-ddddeeeeffff";
+  const childDir = join(dir, "agent-transcripts", parent, "subagents");
+  mkdirSync(childDir, { recursive: true });
+  const path = join(childDir, "child-aaaa.jsonl");
+  writeFileSync(
+    path,
+    `${JSON.stringify({
+      role: "assistant",
+      message: { content: [{ type: "text", text: "subagent reply" }] },
+    })}\n`,
+  );
+  expect(classifyConversationFile(path, "cursor-cli")).toMatchObject({
+    provider: "cursor-cli",
+    isSubagent: true,
+    parentConversationId: parent,
+    hasMessages: true,
   });
 });
 

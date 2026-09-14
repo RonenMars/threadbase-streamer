@@ -5,6 +5,7 @@ import {
   type FileStatEntry,
   type JsonlParseState,
   parseCodexJsonlLine,
+  parseCursorJsonlLine,
   parseJsonlLine,
 } from "@threadbase-sh/scanner";
 import Database from "better-sqlite3";
@@ -15,7 +16,12 @@ import { setImmediate as yieldToEventLoop } from "timers/promises";
 import { instrumentDatabase, labelStatements } from "./db/query-timing";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
 import { getLogger } from "./logger";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
+  type ProviderName,
+} from "./providers";
 import {
   ConversationClassifier,
   classifyConversationFile,
@@ -61,7 +67,7 @@ export interface ConversationListItem {
   lastMessage: string | null;
   preview: string | null;
   source: string | null;
-  provider: "claude-code" | "codex-cli";
+  provider: ProviderName;
 }
 
 export interface CachedTailMessage {
@@ -117,7 +123,7 @@ export interface ScannerMeta {
   firstMessage?: unknown;
   lastMessage?: unknown;
   preview?: string;
-  provider?: "claude-code" | "codex-cli";
+  provider?: ProviderName;
 }
 
 interface MetaRow {
@@ -139,7 +145,7 @@ interface MetaRow {
   last_message: string | null;
   preview: string | null;
   source: string | null;
-  provider: "claude-code" | "codex-cli";
+  provider: ProviderName;
   updated_at: number;
   scanner_meta_json: string | null;
 }
@@ -695,6 +701,12 @@ export class ConversationCache {
           if (!msg) return null;
           return isLeadingInjectedContext(index, msg.role, msg.text) ? null : msg;
         },
+        state: null,
+      };
+    }
+    if (provider === CURSOR_CLI_PROVIDER) {
+      return {
+        parse: (text) => parseCursorJsonlLine(text),
         state: null,
       };
     }

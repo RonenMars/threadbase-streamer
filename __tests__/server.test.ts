@@ -58,7 +58,11 @@ const FIXTURE_PROFILES = [
 // scanner package's shared persistent index at
 // ~/.config/threadbase-scanner/index.db (unscoped by scanProfiles). Spread
 // first in each StreamerServer config so a test-specific override still wins.
-const HOST_ISOLATION = { codexRoots: [] as string[], scannerPersistent: false };
+const HOST_ISOLATION = {
+  codexRoots: [] as string[],
+  cursorRoots: [] as string[],
+  scannerPersistent: false,
+};
 
 // Ask the kernel for an ephemeral port at bind time. Probing for a free port
 // up front and releasing it is a TOCTOU race: test files run in parallel, so

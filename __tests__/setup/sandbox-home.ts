@@ -10,10 +10,11 @@ import { afterAll, beforeEach } from "vitest";
  * attach a test server to the developer's real corpus:
  *
  *   - `codexRoots` defaults to `~/.codex/sessions`
+ *   - `cursorRoots` defaults to `~/.cursor/projects`
  *   - `scanProfiles` unset OR EMPTY falls back to `~/.claude/projects`
  *     (`ScannerManager.projectsDirs()` — an empty array is not isolation)
  *
- * `listen()` then walks both roots and ConversationWatcher takes roughly one
+ * `listen()` then walks those roots and ConversationWatcher takes roughly one
  * OS watch handle per transcript under them; `close()` awaits the in-flight
  * scan and tears every handle down. Measured 2026-09-08 against this machine's
  * corpus (1153 Claude transcripts, 679 Codex rollouts), one listen/close cycle
@@ -33,7 +34,7 @@ import { afterAll, beforeEach } from "vitest";
  * `config/update-config.ts`, `services/conversations/shouldRefreshProjectsFromHdd.ts`),
  * so the sandbox has to exist before any later setup file imports `src/`.
  *
- * `.claude/projects` and `.codex/sessions` are pre-created empty so the roots
+ * `.claude/projects`, `.codex/sessions` and `.cursor/projects` are pre-created empty so the roots
  * exist-but-are-empty, as they are on a real machine, rather than exercising
  * a missing-directory branch no production install hits.
  *
@@ -49,6 +50,7 @@ import { afterAll, beforeEach } from "vitest";
 const SANDBOX_HOME = mkdtempSync(join(tmpdir(), "tb-test-home-"));
 mkdirSync(join(SANDBOX_HOME, ".claude", "projects"), { recursive: true });
 mkdirSync(join(SANDBOX_HOME, ".codex", "sessions"), { recursive: true });
+mkdirSync(join(SANDBOX_HOME, ".cursor", "projects"), { recursive: true });
 
 const REAL_HOME = homedir();
 const originalHome = process.env.HOME;

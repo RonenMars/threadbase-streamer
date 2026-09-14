@@ -30,6 +30,7 @@ const makeManager = () =>
   new ScannerManager({
     scanProfiles: [],
     codexRoots: [],
+    cursorRoots: [],
     directoryDebounceMs: 0,
     persistenceDisabled: false,
     // No cache at all is the same condition an emptied cache.db produces:

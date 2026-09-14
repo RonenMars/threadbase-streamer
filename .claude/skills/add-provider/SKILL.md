@@ -47,7 +47,7 @@ Short binaries (`agent`, `code`) collide. Discovery must require distinctive arg
 
 1. **Honest capabilities.** Unknown TUI → `structuredQuestions: false`, `permissionGates: false`, `liveControl: true`. Inventing gates is worse than a raw terminal.
 2. **Do not watch another provider's JSONL.** Claude's watcher is Claude's layout.
-3. **Do not classify another provider's files.** `classifyConversationFile` is Claude/Codex until this layout is added there.
+3. **Do not classify another provider's files.** `classifyConversationFile` knows Claude, Codex, and Cursor (`cursor-cli` agent-transcripts). Unknown layouts stay unclassified until that parser is added there.
 4. **`PROVIDER_NAMES` must include the new id.** Replace leftover two-item lists with the array (`server.ts` log, `/api/providers`, diagnostics).
 5. **Do not install the vendor CLI** unless asked. Missing → `available: false` / `PROVIDER_NOT_INSTALLED`.
 6. **Do not invent terminal chrome filters** until the TUI is captured.
@@ -108,4 +108,4 @@ npx vitest run __tests__/provider-capabilities.test.ts \
 
 Bulk history — [scanner skill](https://github.com/RonenMars/threadbase-scanner/blob/HEAD/.claude/skills/add-provider/SKILL.md). Phone chips — [mobile skill](https://github.com/RonenMars/threadbase-mobile/blob/HEAD/.claude/skills/add-provider/SKILL.md). TUI scraping. Installing the vendor CLI. VS Code-only / protobuf agents.
 
-Worked example: `cursor-cli` in PR #892.
+Worked example: `cursor-cli` live runner in PR #892. History indexing is a **later** scanner + `@threadbase-sh/scanner` bump (`cursorRoots`, default `~/.cursor/projects`); do not mix that bump into the live-runner PR.

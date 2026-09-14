@@ -1,11 +1,23 @@
-import { createJsonlParseState, parseCodexJsonlLine, parseJsonlLine } from "@threadbase-sh/scanner";
+import {
+  createJsonlParseState,
+  parseCodexJsonlLine,
+  parseCursorJsonlLine,
+  parseJsonlLine,
+} from "@threadbase-sh/scanner";
 import { closeSync, openSync, readSync } from "fs";
 import { StringDecoder } from "string_decoder";
 import { z } from "zod";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_CLI_PROVIDER,
+  type ProviderName,
+} from "../../providers";
 import { isCodexInjectedContext } from "../../utils/codexConversationLine";
 
 const identityRecord = z.object({
   type: z.string().optional(),
+  role: z.string().optional(),
   isSidechain: z.boolean().optional(),
   agentId: z.string().optional(),
   sessionId: z.string().optional(),
@@ -29,7 +41,7 @@ export class ConversationClassifier {
   isSubagent = false;
   parentConversationId: string | null = null;
   id: string;
-  provider: "claude-code" | "codex-cli";
+  provider: ProviderName;
   private explicitClaudeIdentity = false;
   private sawIdentity = false;
   private readonly fileStem: string;
@@ -45,7 +57,7 @@ export class ConversationClassifier {
     return this.hasMessages && this.sawIdentity;
   }
 
-  constructor(filePath: string, provider: "claude-code" | "codex-cli" = "claude-code") {
+  constructor(filePath: string, provider: ProviderName = CLAUDE_CODE_PROVIDER) {
     this.id =
       filePath
         .split(/[/\\]/)
@@ -53,7 +65,15 @@ export class ConversationClassifier {
         ?.replace(/\.jsonl$/, "") ?? filePath;
     this.fileStem = this.id;
     this.provider = provider;
-    this.isSubagent = /[/\\]subagents[/\\]agent-[^/\\]+\.jsonl$/.test(filePath);
+    if (this.provider === CLAUDE_CODE_PROVIDER && /[/\\]agent-transcripts[/\\]/.test(filePath)) {
+      this.provider = CURSOR_CLI_PROVIDER;
+    }
+    this.isSubagent = /[/\\]subagents[/\\][^/\\]+\.jsonl$/.test(filePath);
+    if (this.isSubagent) {
+      const parts = filePath.split(/[/\\]/);
+      const subIdx = parts.lastIndexOf("subagents");
+      if (subIdx > 0) this.parentConversationId = parts[subIdx - 1] ?? null;
+    }
   }
 
   append(raw: string) {
@@ -68,7 +88,12 @@ export class ConversationClassifier {
     if (parsed.success) {
       const entry = parsed.data;
       if (entry.type === "session_meta" && entry.payload) {
-        this.provider = "codex-cli";
+        // Copies under agent-transcripts stay cursor-cli; native Codex rollouts
+        // still flip here. Overwriting would store imported Cursor history as
+        // provider=codex-cli and drop isImportedFromCodex on the list row.
+        if (this.provider !== CURSOR_CLI_PROVIDER) {
+          this.provider = "codex-cli";
+        }
         this.sawIdentity = true;
         if (entry.payload.id) this.id = entry.payload.id;
         // A `subagent` key is what makes it provider-created; the value varies
@@ -76,13 +101,28 @@ export class ConversationClassifier {
         // parent. Keying on the full thread_spawn shape classified the other
         // values as ordinary top-level history and showed them to the user.
         // A string source ("cli", "vscode", "exec", …) is never a subagent.
-        const source = entry.payload.source;
-        this.isSubagent = typeof source === "object" && source !== null && "subagent" in source;
-        const spawn = spawnSource.safeParse(source);
-        this.parentConversationId = spawn.success
-          ? spawn.data.subagent.thread_spawn.parent_thread_id
-          : null;
-      } else if (this.provider === "claude-code" && entry.isSidechain !== undefined) {
+        // Cursor path-based subagent identity wins over Codex source on imports.
+        if (this.provider !== CURSOR_CLI_PROVIDER) {
+          const source = entry.payload.source;
+          this.isSubagent = typeof source === "object" && source !== null && "subagent" in source;
+          const spawn = spawnSource.safeParse(source);
+          this.parentConversationId = spawn.success
+            ? spawn.data.subagent.thread_spawn.parent_thread_id
+            : null;
+        }
+      } else if (
+        (this.provider === CURSOR_CLI_PROVIDER && entry.role) ||
+        (this.provider === CLAUDE_CODE_PROVIDER &&
+          !entry.type &&
+          (entry.role === "user" || entry.role === "assistant"))
+      ) {
+        // Cursor agent-transcripts are `{ role, message }` with no envelope
+        // `type`. Claude lines always carry `type: user|assistant`. Sniffing
+        // here means a cache miss still classifies the file instead of running
+        // it through parseJsonlLine and concluding it has no messages.
+        this.provider = CURSOR_CLI_PROVIDER;
+        this.sawIdentity = true;
+      } else if (this.provider === CLAUDE_CODE_PROVIDER && entry.isSidechain !== undefined) {
         this.sawIdentity = true;
         if (entry.isSidechain === true && entry.agentId?.trim()) {
           this.explicitClaudeIdentity = true;
@@ -95,7 +135,11 @@ export class ConversationClassifier {
       }
     }
     const message =
-      this.provider === "codex-cli" ? parseCodexJsonlLine(raw) : parseJsonlLine(raw, this.state);
+      this.provider === CODEX_CLI_PROVIDER
+        ? parseCodexJsonlLine(raw)
+        : this.provider === CURSOR_CLI_PROVIDER
+          ? parseCursorJsonlLine(raw)
+          : parseJsonlLine(raw, this.state);
     if (message?.role === "user" && isCodexInjectedContext(message.text ?? "")) return null;
     if (message) this.hasMessages = true;
     return message;
@@ -103,8 +147,8 @@ export class ConversationClassifier {
 }
 
 /** Bounded memory, using exactly the adapters used by conversation detail. */
-export function classifyConversationFile(filePath: string, provider?: "claude-code" | "codex-cli") {
-  const classifier = new ConversationClassifier(filePath, provider);
+export function classifyConversationFile(filePath: string, provider?: ProviderName) {
+  const classifier = new ConversationClassifier(filePath, provider ?? CLAUDE_CODE_PROVIDER);
   const fd = openSync(filePath, "r");
   try {
     const buffer = Buffer.alloc(64 * 1024);
