@@ -134,7 +134,7 @@ export class ConversationHandlers {
     try {
       const classification = this.cache
         ? this.cache.reconcileClassification(filePath)
-        : classifyConversationFile(filePath);
+        : classifyConversationFile(filePath, meta?.provider);
       return classification?.isSubagent ?? false;
     } catch {
       return false;
@@ -469,6 +469,13 @@ export class ConversationHandlers {
     const indexed = this.scannerManager.current?.getMetadataCache().get(lookupId)?.filePath;
     if (indexed && (await this.isJsonlPathFor(indexed, lookupId))) return indexed;
 
+    // Codex and Cursor index keys are file paths (`ConversationMeta.id`), while
+    // the client looks up the session uuid. The map above misses that spelling;
+    // sessionId lookup is how the scanner itself resolves `getConversation(uuid)`.
+    const bySession =
+      this.scannerManager.current?.getConversationsBySessionId(lookupId)?.[0]?.filePath;
+    if (bySession && (await this.isJsonlPathFor(bySession, lookupId))) return bySession;
+
     // Claude-layout directory walk, kept as the self-heal for ids the cache
     // never learned about — and for the 49 above, where it happens to be right.
     return this.findJsonlPath(lookupId);
@@ -477,8 +484,10 @@ export class ConversationHandlers {
   /**
    * Does `filePath` actually hold the conversation `requestedId` names?
    *
-   * The filename settles it for both providers: Claude writes `<uuid>.jsonl`
-   * (or `agent-<agentId>.jsonl`), Codex writes `rollout-<ts>-<uuid>.jsonl`.
+   * The filename settles it for every JSONL provider: Claude writes
+   * `<uuid>.jsonl` (or `agent-<agentId>.jsonl`), Codex writes
+   * `rollout-<ts>-<uuid>.jsonl`, Cursor writes `<runId>.jsonl` under
+   * `agent-transcripts/`.
    * Only when the name says nothing do we open the file — and there the naive
    * rule is wrong, because **a Claude subagent transcript carries the PARENT's
    * `sessionId`**. Matching on `sessionId` alone therefore verifies exactly the

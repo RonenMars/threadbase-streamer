@@ -41,6 +41,7 @@ export async function createTestServer(fixtureDir: string, overrides: Partial<Se
     // unscoped by scanProfiles, and codexRoots defaults to ~/.codex/sessions.
     scannerPersistent: false,
     codexRoots: [],
+    cursorRoots: [],
     ...overrides,
     // Bind the real server to port 0 and read the OS-assigned port back off
     // it, rather than probing with a throwaway listener and closing it — a

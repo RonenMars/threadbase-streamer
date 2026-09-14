@@ -74,7 +74,19 @@ Then add the version to `VERIFIED_AGAINST` in `src/services/providers/providerHe
 
 Add the `SessionRunner` implementation to the `LiveSessionManager` map. Unknown providers throw a 501 from `assertSupportedProvider`.
 
-### 6. Verify
+### 6. History indexing (separate PR, after scanner publish)
+
+Bulk history is `@threadbase-sh/scanner`, not this framework. After the scanner package ships the new `ScannerProvider`:
+
+1. Bump `@threadbase-sh/scanner` (do **not** fold this into the live-runner PR).
+2. Pass the new name in `ScannerManager.codexScanOpts()` `providers`, plus a `*Roots` field on `ServerConfig` / `ScannerManagerDeps` (mirror `codexRoots`).
+3. Default a root only when the vendor path is stable. Cursor: `~/.cursor/projects`. Empty array disables.
+4. Watch those roots in `listen()` via `fileWatcher.watchDirectory` so externally written JSONL invalidates the index. That is **directory discovery**, not a live-PTY transcript bind — do not attach Claude's `watchForJsonl` to another provider's layout.
+5. Teach `classifyConversationFile` / `lineParserFor` the new line shape so cache rows and REST detail use the same parser as the scanner.
+
+Worked example: `cursor-cli` live runner is PR #892; history indexing is the scanner `cursorRoots` follow-up (`CursorCliProvider` + streamer `cursorRoots`).
+
+### 7. Verify
 
 ```bash
 npx vitest run __tests__/provider-capabilities.test.ts \
