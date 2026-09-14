@@ -129,6 +129,14 @@ describe("e2ee capability over HTTP", () => {
     expect(typeof body.e2ee.reason).toBe("string");
   });
 
+  // tb-mobile's web build checks this exact path before a browser attempts a
+  // sealed socket, so it is pinned by name rather than through the helper.
+  it("advertises e2ee.wsTicketSubprotocol on /api/info", async () => {
+    await boot(true);
+    const body = await (await fetch(`${baseUrl}/api/info`, { headers: AUTH })).json();
+    expect(body.e2ee.wsTicketSubprotocol).toBe(true);
+  });
+
   // The reachability guarantee end to end, and the positive control for the
   // flag-off case above: without this, that test also passes on a build where
   // the capability can never be enabled by any configuration at all.

@@ -455,6 +455,21 @@ curl -si --http1.1 http://localhost:8766/ws?key=<api_key> \
 ```
 `101 Switching Protocols` is healthy; `500` means the streamer needs upgrading.
 
+### The web app refuses encrypted pairing, or its sealed socket never opens
+
+**When:** tb-mobile in a browser against a streamer with E2EE enabled.
+
+**Cause:** a browser cannot send `X-TB-Ticket`, so it presents the WebSocket ticket as a `tb-ticket.<ticket>` subprotocol beside `threadbase-e2ee-v1`.
+A streamer that predates this ignores the offer and either refuses the upgrade or selects no protocol, which the browser treats as a failed connection.
+The web client checks `GET /api/info` for `e2ee.wsTicketSubprotocol: true` first and refuses encrypted pairing without it — it never falls back to plaintext.
+
+**Diagnose:**
+```bash
+curl -s -H 'Authorization: Bearer <api_key>' http://localhost:8766/api/info | jq .e2ee.wsTicketSubprotocol
+```
+`true` is healthy; `null` means the streamer needs upgrading.
+A sealed REST call that fails with `the server answered a sealed request without a sealed response` from a browser means `X-TB-E2EE` is not in `Access-Control-Expose-Headers` — also fixed by upgrading.
+
 ---
 
 ## Cloudflare Tunnel / Access

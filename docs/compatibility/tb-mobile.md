@@ -107,6 +107,8 @@ On macOS, memory uses the pressure-aware free percentage from `/usr/bin/memory_p
 Two things the native app never exercises are therefore part of this surface:
 - Every REST call carries `X-Client-Id`, so it must stay in `Access-Control-Allow-Headers`. A header missing from that list does not produce an error status — the browser cancels the request after the preflight and the client sees only `TypeError: Failed to fetch`.
 - The `/ws` upgrade arrives with an allowed `Origin` and runs through the Hono middleware stack with no Node `ServerResponse` (`c.env.outgoing` is `undefined` under `@hono/node-ws`). Middleware that writes to `c.env.outgoing` unconditionally turns every browser socket into a `500` while REST keeps working.
+- A sealed REST request sends `X-TB-E2EE`, `X-TB-Ctx`, `X-TB-Seq` and `X-TB-Env` instead of `Authorization`, and uses `PUT`/`DELETE`/`QUERY` as well as `GET`/`POST`/`PATCH`; the client reads `X-TB-E2EE` and `X-TB-Env` (and `ETag`) off the response. All of them must stay in `Access-Control-Allow-Headers` / `-Methods` / `-Expose-Headers` — an unexposed `X-TB-E2EE` makes the client refuse every sealed response as unsealed.
+- A browser cannot set `X-TB-Ticket`, so a sealed socket offers subprotocols `threadbase-e2ee-v1, tb-ticket.<ticket>` instead (NONCE-DESIGN §10). The 101 must select `threadbase-e2ee-v1` — a browser fails a socket that offered protocols and got none — and must never echo the ticket. Gated on `GET /api/info` → `e2ee.wsTicketSubprotocol: true`.
 
 **API key format** — mobile uses `tb_` prefix detection in pairing logic. Key format `tb_<32-hex-chars>` must be preserved.
 
