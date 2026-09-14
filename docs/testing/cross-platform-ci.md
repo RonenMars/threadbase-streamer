@@ -118,6 +118,8 @@ The repo's documented bar for promoting a cross-platform job to blocking was fiv
 
 The Windows miss was `__tests__/session-status-line.test.ts` answering `503` (`STORE_UNAVAILABLE`) instead of `200` on `GET /api/sessions/:id` — a store-readiness race on a loaded runner, not a portability defect. It passed on an immediate re-run.
 
+**File parallelism on macOS was reversed after #894.** Turning files parallel (`maxWorkers: 4`) dropped Windows smoke from ~8.5 min toward ~3–4 min and stayed green on Linux, but `Smoke (macos-latest)` went from 2 failures in 66 runs (3%) to 8 in 29 (28%). Every miss was a paint-time or `fs.watch` wait: `codex-active-writer` (`expected undefined to be 'idle'`), `pty-live-question-close`, `pty-shell-prompt-detection`, `transcript-watch-deadline`, `codex-multi-choice-transport`. macOS is serial again; Linux and Windows × Node 22 still parallelize. The tests that lost to a 0–10 ms sleep now poll with `vi.waitFor` so a loaded serial runner is not read as a broken detector.
+
 **Do not read that as harmless.** A flaky required check is the failure mode that teaches people to re-run without reading, which is how a true positive gets waved through. If Windows flakes again, fix the readiness race in the test rather than re-running past it; the standing rule is re-run once, and stop and report if the re-run also fails.
 
 ### What stays out, and how

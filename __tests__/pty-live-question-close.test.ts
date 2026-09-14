@@ -29,7 +29,12 @@ async function spawnFresh(mgr: PTYManager) {
   return mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
 }
 
+// Fixed wait for NEGATIVE assertions only (no menu, gone-count stays 0) —
+// there is no event to await there. Positive assertions poll: detectLivePrompts
+// awaits getOutputLines, and a 10ms sleep races that flush (#697, Smoke
+// macos-latest after #894: `expected [] to have a length of 1`).
 const settle = () => new Promise((r) => setTimeout(r, 10));
+const waitForOpened = (opened: AskQuestion[][]) => vi.waitFor(() => expect(opened).toHaveLength(1));
 
 // A rendered AskUserQuestion menu (the footer "Enter to select" is the trigger).
 const MENU =
@@ -47,7 +52,7 @@ describe("PTYManager — AskUserQuestion screen menu open → close", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", MENU);
-    await settle();
+    await waitForOpened(opened);
 
     expect(opened).toHaveLength(1);
     expect(opened[0][0].question).toBe("Which area are you focused on?");
@@ -71,7 +76,7 @@ describe("PTYManager — AskUserQuestion screen menu open → close", () => {
     proc._emit("data", "\x1b]777;notify;Claude Code;A question is ready\x07");
     await settle();
     proc._emit("data", MENU);
-    await settle();
+    await waitForOpened(opened);
 
     expect(opened).toHaveLength(1);
     expect(opened[0][0].question).toBe("Which area are you focused on?");
@@ -101,13 +106,13 @@ describe("PTYManager — AskUserQuestion screen menu open → close", () => {
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", MENU);
-    await settle();
+    await waitForOpened(opened);
     expect(opened).toHaveLength(1);
     expect(goneCount).toBe(0);
 
     // The user answered: the menu/footer is gone and Claude repainted its ❯ prompt.
     proc._emit("data", "\x1b[2J\x1b[H❯ ");
-    await settle();
+    await vi.waitFor(() => expect(goneCount).toBe(1));
 
     expect(goneCount).toBe(1);
     mgr.dispose();
@@ -147,7 +152,7 @@ describe("PTYManager — AskUserQuestion submit confirmation surfaces as a card"
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", SUBMIT_SCREEN);
-    await settle();
+    await waitForOpened(opened);
 
     expect(opened).toHaveLength(1);
     expect(opened[0][0].question).toBe("Ready to submit your answers?");

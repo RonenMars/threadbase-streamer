@@ -56,6 +56,8 @@ function getMockProc(runner: CodexPtyRunner, sessionId: string): MockProc {
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+// detectScreenState awaits getOutputLines. A 0ms tick races that flush:
+// Smoke (macos-latest) after #894 saw `expected 0 to be greater than 0`.
 
 // A real rendered screen — the "Approaching rate limits" model picker, three
 // options, each answered by its own digit. Captured in codex-pty-runner.test.ts.
@@ -119,7 +121,7 @@ describe("CodexPtyRunner routes prompts over permission, never over live-questio
     const session = await spawnFresh(runner);
 
     getMockProc(runner, session.id)._emit("data", RATE_LIMIT_SCREEN);
-    await tick();
+    await vi.waitFor(() => expect(permissions.filter((p) => p !== null).length).toBeGreaterThan(0));
 
     const carded = permissions.filter((p): p is { options: PermissionOption[] } => p !== null);
     expect(carded.length).toBeGreaterThan(0);
@@ -136,7 +138,7 @@ describe("CodexPtyRunner routes prompts over permission, never over live-questio
     const session = await spawnFresh(runner);
 
     getMockProc(runner, session.id)._emit("data", TRUST_GATE_SCREEN);
-    await tick();
+    await vi.waitFor(() => expect(permissions.filter((p) => p !== null).length).toBeGreaterThan(0));
 
     expect(permissions.filter((p) => p !== null).length).toBeGreaterThan(0);
     expect(liveQuestions).toEqual([]);
