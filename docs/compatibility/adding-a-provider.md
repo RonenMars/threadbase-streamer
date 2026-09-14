@@ -83,6 +83,7 @@ Bulk history is `@threadbase-sh/scanner`, not this framework. After the scanner 
 3. Default a root only when the vendor path is stable. Cursor: `~/.cursor/projects`. Empty array disables.
 4. Watch those roots in `listen()` via `fileWatcher.watchDirectory` so externally written JSONL invalidates the index. That is **directory discovery**, not a live-PTY transcript bind — do not attach Claude's `watchForJsonl` to another provider's layout.
 5. Teach `classifyConversationFile` / `lineParserFor` the new line shape so cache rows and REST detail use the same parser as the scanner.
+6. Persist scanner import flags on `conversation_meta` when a file can be a copy of another provider (Cursor: `isImportedFromClaude` / `isImportedFromCodex`). `isImportedFromCursor` is reserved. Additive on the list API (`019_add_import_provenance.sql`).
 
 Worked example: `cursor-cli` live runner is PR #892; history indexing is the scanner `cursorRoots` follow-up (`CursorCliProvider` + streamer `cursorRoots`).
 
