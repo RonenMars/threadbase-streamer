@@ -158,6 +158,7 @@ describe("what a disabled run tells a client and an operator", () => {
       localNoAuth: true,
       pushRepo: () => null,
       liveActivityPushEnabled: () => false,
+      expoPushEnabled: () => false,
       featureFlagsConfig: () => ({ registry: [], values, sources: { e2ee: source } }),
     } as never);
     const res = await app.request("/api/info");

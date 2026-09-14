@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { describePushCapability } from "../src/api/routes/misc.routes";
+import { ConversationCache } from "../src/conversation-cache";
 import { StreamerServer } from "../src/server";
 
 /**
@@ -28,21 +29,36 @@ const AUTH = { Authorization: `Bearer ${API_KEY}` };
 const HOST_ISOLATION = { codexRoots: [] as string[], scannerPersistent: false };
 
 describe("describePushCapability", () => {
-  it("reports both push kinds, not just Live Activities", () => {
-    // The pairing matters: ordinary push has no server-side implementation
-    // either, so a client must not read a configured APNs key as "notifications
-    // work". Both fields are always present.
-    const on = describePushCapability(true, FULL_APNS_ENV);
-    expect(on).toEqual({ liveActivity: true, notifications: false });
+  const wired = (liveActivity: boolean, notifications = true) => ({ liveActivity, notifications });
 
-    const off = describePushCapability(false, {});
-    expect(off.liveActivity).toBe(false);
+  // The two kinds are independent facts: ordinary notifications go through Expo's
+  // relay and need no APNs credential, so a client must not infer either from the
+  // other. Both fields are always present.
+  it("reports each push kind from its own wiring", () => {
+    expect(describePushCapability(wired(true), FULL_APNS_ENV)).toEqual({
+      liveActivity: true,
+      notifications: true,
+    });
+
+    const onlyNotifications = describePushCapability(wired(false), {});
+    expect(onlyNotifications.liveActivity).toBe(false);
+    expect(onlyNotifications.notifications).toBe(true);
+    expect(onlyNotifications.notificationsReason).toBeUndefined();
+
+    const onlyLiveActivity = describePushCapability(wired(true, false), FULL_APNS_ENV);
+    expect(onlyLiveActivity.liveActivity).toBe(true);
+    expect(onlyLiveActivity.notifications).toBe(false);
+  });
+
+  it("explains why notifications are off", () => {
+    const off = describePushCapability(wired(false, false), {});
     expect(off.notifications).toBe(false);
+    expect(off.notificationsReason).toContain("token store is unavailable");
   });
 
   it("names the missing variable when credentials are absent", () => {
-    expect(describePushCapability(false, {}).liveActivityReason).toContain("APNS_KEY");
-    expect(describePushCapability(false, { APNS_KEY: "k" }).liveActivityReason).toContain(
+    expect(describePushCapability(wired(false), {}).liveActivityReason).toContain("APNS_KEY");
+    expect(describePushCapability(wired(false), { APNS_KEY: "k" }).liveActivityReason).toContain(
       "APNS_KEY_ID",
     );
   });
@@ -51,7 +67,7 @@ describe("describePushCapability", () => {
   // complete credentials are not sufficient. Without this branch the reason
   // would be undefined on a disabled feature — exactly the silence #519 is about.
   it("still explains itself when the credentials are complete but push is off", () => {
-    const off = describePushCapability(false, FULL_APNS_ENV);
+    const off = describePushCapability(wired(false), FULL_APNS_ENV);
     expect(off.liveActivity).toBe(false);
     expect(off.liveActivityReason).toContain("token store is unavailable");
   });
@@ -59,7 +75,7 @@ describe("describePushCapability", () => {
   // The string is served over the API, not just logged. It may name a variable;
   // it must never carry one's value.
   it("never leaks credential material into the reason", () => {
-    const reason = describePushCapability(false, {
+    const reason = describePushCapability(wired(false), {
       APNS_KEY: "SUPER-SECRET-PEM",
     }).liveActivityReason;
     expect(reason).not.toContain("SUPER-SECRET-PEM");
@@ -114,7 +130,9 @@ describe("push capability over HTTP", () => {
     it("reports Live Activity push as unavailable on /api/info", async () => {
       const body = await (await fetch(`${baseUrl}/api/info`, { headers: AUTH })).json();
       expect(body.push.liveActivity).toBe(false);
-      expect(body.push.notifications).toBe(false);
+      // Expo relay needs no credential, so the store opening is enough.
+      expect(body.push.notifications).toBe(true);
+      expect(body.push.notificationsReason).toBeUndefined();
       expect(body.push.liveActivityReason).toContain("APNS_KEY");
     });
 
@@ -125,6 +143,7 @@ describe("push capability over HTTP", () => {
       const body = await (await fetch(`${baseUrl}/api/push/health`, { headers: AUTH })).json();
       expect(body.available).toBe(true);
       expect(body.push.liveActivity).toBe(false);
+      expect(body.push.notifications).toBe(true);
       expect(Array.isArray(body.tokens)).toBe(true);
     });
   });
@@ -206,13 +225,38 @@ describe("push capability over HTTP", () => {
 
     it("reports Live Activity push as available, with no reason to give", async () => {
       const body = await (await fetch(`${baseUrl}/api/info`, { headers: AUTH })).json();
-      expect(body.push).toEqual({ liveActivity: true, notifications: false });
+      expect(body.push).toEqual({ liveActivity: true, notifications: true });
     });
 
     it("agrees with /api/push/health", async () => {
       const body = await (await fetch(`${baseUrl}/api/push/health`, { headers: AUTH })).json();
       expect(body.push.liveActivity).toBe(true);
+      expect(body.push.notifications).toBe(true);
       expect(body.available).toBe(true);
+    });
+  });
+
+  // The only way the "your turn" notifier is not wired: the SQLite cache — and
+  // with it the push token store — failed to open, which the server survives.
+  describe("when the push token store cannot open", () => {
+    beforeEach(async () => {
+      vi.spyOn(ConversationCache, "open").mockImplementation(() => {
+        throw new Error("simulated cache open failure");
+      });
+      await boot();
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("reports notifications as unavailable, with a reason, on both endpoints", async () => {
+      const info = await (await fetch(`${baseUrl}/api/info`, { headers: AUTH })).json();
+      expect(info.push.notifications).toBe(false);
+      expect(info.push.notificationsReason).toContain("token store is unavailable");
+
+      const health = await (await fetch(`${baseUrl}/api/push/health`, { headers: AUTH })).json();
+      expect(health.available).toBe(false);
+      expect(health.push.notifications).toBe(false);
     });
   });
 });

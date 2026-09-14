@@ -163,6 +163,7 @@ describe("attributing a token to the authenticated device", () => {
       devicesRepo: () => devices,
       pushRepo: () => push,
       liveActivityPushEnabled: () => false,
+      expoPushEnabled: () => false,
       sessionStore: { list: () => [] },
       ptyAttachedIds: () => new Set<string>(),
       rotateApiKey: () => ({ newKey: "x", persisted: false }),
