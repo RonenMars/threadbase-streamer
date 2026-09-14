@@ -550,6 +550,7 @@ describe("what a capture of a real socket shows", () => {
     expect(wire).toContain("terminal_output");
     expect(wire).toContain("drwxr-xr-x");
     expect(hub.sealedCount).toBe(0);
+    expect(httpLines.some((l) => l.includes("e2ee.upgrade"))).toBe(false);
   });
 });
 
@@ -721,6 +722,7 @@ describe("(b) the ticket is single-use", () => {
     // "the ticket is absent" is a statement about the line rather than about an
     // empty array.
     expect(http.some((l) => l.includes("/ws"))).toBe(true);
+    expect(httpLines.some((l) => l.includes("[e2ee.upgrade] encrypted websocket"))).toBe(true);
     for (const line of httpLines) {
       expect(line.includes(ctx.ticket)).toBe(false);
       // And no long-term credential either: a ticketed upgrade sends none, so
@@ -755,6 +757,7 @@ describe("a browser presents its ticket as a subprotocol", () => {
     expect(client.upgradeHeaders.join("\n").toLowerCase()).toContain("sec-websocket-protocol");
     expect(client.upgradeHeaders.join("\n")).not.toContain(ctx.ticket);
     expect(httpLines.some((l) => l.includes("http.request") && l.includes("/ws"))).toBe(true);
+    expect(httpLines.some((l) => l.includes("e2ee.upgrade"))).toBe(true);
     for (const line of httpLines) expect(line.includes(ctx.ticket)).toBe(false);
   });
 

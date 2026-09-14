@@ -462,6 +462,7 @@ curl -si --http1.1 http://localhost:8766/ws?key=<api_key> \
 **Cause:** a browser cannot send `X-TB-Ticket`, so it presents the WebSocket ticket as a `tb-ticket.<ticket>` subprotocol beside `threadbase-e2ee-v1`.
 A streamer that predates this ignores the offer and either refuses the upgrade or selects no protocol, which the browser treats as a failed connection.
 The web client checks `GET /api/info` for `e2ee.wsTicketSubprotocol: true` first and refuses encrypted pairing without it — it never falls back to plaintext.
+A live streamer that *does* accept the ticket logs `[e2ee.upgrade] encrypted websocket` on the sealed 101. If that line is missing while REST is sealed, the upgrade did not take the ticket path.
 
 **Diagnose:**
 ```bash
