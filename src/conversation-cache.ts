@@ -19,7 +19,9 @@ import { getLogger } from "./logger";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
-  CURSOR_CLI_PROVIDER,
+  CURSOR_PROVIDER,
+  canonicalizeProviderName,
+  LEGACY_CURSOR_PROVIDER,
   type ProviderName,
 } from "./providers";
 import {
@@ -71,6 +73,17 @@ export interface ConversationListItem {
   isImportedFromClaude: boolean;
   isImportedFromCodex: boolean;
   isImportedFromCursor: boolean;
+}
+
+export type ConversationInclude = "all" | "conversations" | "subagents";
+
+export interface ConversationListFilters {
+  project?: string;
+  provider?: string;
+  include?: ConversationInclude;
+  isImportedFromClaude?: boolean;
+  isImportedFromCodex?: boolean;
+  isImportedFromCursor?: boolean;
 }
 
 export interface CachedTailMessage {
@@ -718,7 +731,7 @@ export class ConversationCache {
         state: null,
       };
     }
-    if (provider === CURSOR_CLI_PROVIDER) {
+    if (provider === CURSOR_PROVIDER) {
       return {
         parse: (text) => parseCursorJsonlLine(text),
         state: null,
@@ -1585,7 +1598,9 @@ export class ConversationCache {
           updated_at: seq,
           mtime_ms: mtimeMs,
           file_size: fileSize,
-          provider: classification?.provider ?? m.provider ?? CLAUDE_CODE_PROVIDER,
+          provider:
+            canonicalizeProviderName(classification?.provider ?? m.provider) ??
+            CLAUDE_CODE_PROVIDER,
           scanner_meta_json: scannerMetaJson,
           is_imported_from_claude: m.isImportedFromClaude ? 1 : 0,
           is_imported_from_codex: m.isImportedFromCodex ? 1 : 0,
@@ -1689,25 +1704,27 @@ export class ConversationCache {
     return true;
   }
 
-  listConversations(opts: { project?: string; provider?: string; limit: number; offset: number }): {
+  listConversations(opts: ConversationListFilters & { limit: number; offset: number }): {
     conversations: ConversationListItem[];
     total: number;
   } {
-    const { project, provider, limit, offset } = opts;
-    let total: number;
-    let rows: MetaRow[];
-
-    if (project) {
-      total = (this.stmts.countByProject.get(project) as { n: number }).n;
-      rows = limit === 0 ? [] : (this.stmts.listByProject.all(project, limit, offset) as MetaRow[]);
-    } else if (provider) {
-      total = (this.stmts.countByProvider.get(provider) as { n: number }).n;
-      rows =
-        limit === 0 ? [] : (this.stmts.listByProvider.all(provider, limit, offset) as MetaRow[]);
-    } else {
-      total = (this.stmts.count.get() as { n: number }).n;
-      rows = limit === 0 ? [] : (this.stmts.list.all(limit, offset) as MetaRow[]);
-    }
+    const { limit, offset } = opts;
+    const { where, params } = this.conversationListWhere(opts);
+    const total = (
+      this.db
+        .prepare(`SELECT COUNT(*) as n FROM conversation_meta WHERE ${where}`)
+        .get(...params) as {
+        n: number;
+      }
+    ).n;
+    const rows =
+      limit === 0
+        ? []
+        : (this.db
+            .prepare(
+              `SELECT ${this.listColumns} FROM conversation_meta WHERE ${where} ORDER BY last_activity DESC LIMIT ? OFFSET ?`,
+            )
+            .all(...params, limit, offset) as MetaRow[]);
 
     return {
       total,
@@ -1732,12 +1749,54 @@ export class ConversationCache {
         lastMessage: r.last_message,
         preview: r.preview,
         source: r.source,
-        provider: r.provider ?? CLAUDE_CODE_PROVIDER,
+        provider: canonicalizeProviderName(r.provider) ?? r.provider ?? CLAUDE_CODE_PROVIDER,
         isImportedFromClaude: r.is_imported_from_claude === 1,
         isImportedFromCodex: r.is_imported_from_codex === 1,
         isImportedFromCursor: r.is_imported_from_cursor === 1,
       })),
     };
+  }
+
+  private get listColumns(): string {
+    return "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor";
+  }
+
+  private conversationListWhere(opts: ConversationListFilters): {
+    where: string;
+    params: unknown[];
+  } {
+    const clauses = ["has_messages IS NOT 0"];
+    const params: unknown[] = [];
+    const include = opts.include ?? (this.includeSubagentSessions ? "all" : "conversations");
+    if (include === "conversations") clauses.push("is_subagent IS NOT 1");
+    else if (include === "subagents") clauses.push("is_subagent = 1");
+    if (opts.project) {
+      clauses.push("project_path = ?");
+      params.push(opts.project);
+    }
+    if (opts.provider) {
+      const provider = canonicalizeProviderName(opts.provider) ?? opts.provider;
+      if (provider === CURSOR_PROVIDER) {
+        clauses.push("(provider = ? OR provider = ?)");
+        params.push(CURSOR_PROVIDER, LEGACY_CURSOR_PROVIDER);
+      } else {
+        clauses.push("provider = ?");
+        params.push(provider);
+      }
+    }
+    if (opts.isImportedFromClaude !== undefined) {
+      clauses.push("is_imported_from_claude = ?");
+      params.push(opts.isImportedFromClaude ? 1 : 0);
+    }
+    if (opts.isImportedFromCodex !== undefined) {
+      clauses.push("is_imported_from_codex = ?");
+      params.push(opts.isImportedFromCodex ? 1 : 0);
+    }
+    if (opts.isImportedFromCursor !== undefined) {
+      clauses.push("is_imported_from_cursor = ?");
+      params.push(opts.isImportedFromCursor ? 1 : 0);
+    }
+    return { where: clauses.join(" AND "), params };
   }
 
   /** Returns a map of filePath → { mtimeMs, size } for all rows that have

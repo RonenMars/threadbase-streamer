@@ -85,7 +85,7 @@ Bulk history is `@threadbase-sh/scanner`, not this framework. After the scanner 
 5. Teach `classifyConversationFile` / `lineParserFor` the new line shape so cache rows and REST detail use the same parser as the scanner.
 6. Persist scanner import flags on `conversation_meta` when a file can be a copy of another provider (Cursor: `isImportedFromClaude` / `isImportedFromCodex`). `isImportedFromCursor` is reserved. Additive on the list API (`019_add_import_provenance.sql`).
 
-Worked example: `cursor-cli` live runner is PR #892; history indexing is the scanner `cursorRoots` follow-up (`CursorCliProvider` + streamer `cursorRoots`).
+Worked example: `cursor` live runner is PR #892 (shipped as `cursor-cli`; the wire name is now `cursor`, with `cursor-cli` accepted as an alias). History indexing is the scanner `cursorRoots` follow-up (`CursorProvider` + streamer `cursorRoots`).
 
 ### 7. Verify
 

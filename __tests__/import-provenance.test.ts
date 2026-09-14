@@ -40,7 +40,7 @@ describe("conversation_meta import provenance", () => {
         projectName: "widget",
         messageCount: 2,
         timestamp: "2026-06-18T17:22:08.000Z",
-        provider: "cursor-cli",
+        provider: "cursor",
         isImportedFromClaude: true,
       },
     ]);

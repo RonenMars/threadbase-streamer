@@ -31,7 +31,7 @@ describe("CursorPtyRunner — spawn args", () => {
     const runner = new CursorPtyRunner();
     const session = await runner.startFresh({ projectPath: "/tmp/proj", projectName: "test" });
 
-    expect(session.provider).toBe("cursor-cli");
+    expect(session.provider).toBe("cursor");
     expect(spawnArgs()).toEqual(["--workspace", "/tmp/proj", "--trust"]);
   });
 

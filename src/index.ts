@@ -22,10 +22,12 @@ export { discoverClaudeProcesses } from "./process-discovery";
 export {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
-  CURSOR_CLI_PROVIDER,
+  CURSOR_PROVIDER,
+  canonicalizeProviderName,
   commandNameForProvider,
   isProviderName,
   isProviderResumable,
+  LEGACY_CURSOR_PROVIDER,
   PROVIDER_NAMES,
   type ProviderName,
 } from "./providers";

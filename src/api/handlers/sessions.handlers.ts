@@ -21,6 +21,7 @@ import { discoverClaudeProcesses } from "../../process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  canonicalizeProviderName,
   isProviderName,
   type ProviderName,
 } from "../../providers";
@@ -2540,7 +2541,7 @@ export class SessionHandlers {
       json(res, 400, { error: "Invalid provider" });
       return;
     }
-    const provider = requestedProvider ?? CLAUDE_CODE_PROVIDER;
+    const provider = canonicalizeProviderName(requestedProvider) ?? CLAUDE_CODE_PROVIDER;
 
     if (!this.browseRoot) {
       json(res, 403, {

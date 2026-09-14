@@ -8,7 +8,7 @@ const FIXTURE_PATH = join(__dirname, "fixtures", "cursor-transcript.jsonl");
 
 const CURSOR_ONLY_SCAN = {
   profiles: [] as [],
-  providers: ["cursor-cli"] as ["cursor-cli"],
+  providers: ["cursor"] as ["cursor"],
 };
 
 function makeCursorRoot(): { root: string; cleanup: () => void } {
@@ -20,14 +20,12 @@ function makeCursorRoot(): { root: string; cleanup: () => void } {
 }
 
 describe("cursor scan plumbing", () => {
-  it("discovers cursor sessions with provider=cursor-cli when cursorRoots is set", async () => {
+  it("discovers cursor sessions with provider=cursor when cursorRoots is set", async () => {
     const { root, cleanup } = makeCursorRoot();
     try {
       const scanner = new ConversationScanner({ persistent: false });
       await scanner.scan({ ...CURSOR_ONLY_SCAN, cursorRoots: [root] });
-      const items = [...scanner.getMetadataCache().values()].filter(
-        (m) => m.provider === "cursor-cli",
-      );
+      const items = [...scanner.getMetadataCache().values()].filter((m) => m.provider === "cursor");
       expect(items.length).toBeGreaterThan(0);
       expect(items[0].sessionId).toBe(CURSOR_SESSION_ID);
     } finally {
@@ -42,16 +40,14 @@ describe("cursor scan plumbing", () => {
     try {
       const scanner = new ConversationScanner({ persistent: false });
       await scanner.scan({ ...CURSOR_ONLY_SCAN, cursorRoots: [] });
-      const items = [...scanner.getMetadataCache().values()].filter(
-        (m) => m.provider === "cursor-cli",
-      );
+      const items = [...scanner.getMetadataCache().values()].filter((m) => m.provider === "cursor");
       expect(items.length).toBe(0);
     } finally {
       cleanup();
     }
   });
 
-  it("cursor items from the fixture have provider=cursor-cli", async () => {
+  it("cursor items from the fixture have provider=cursor", async () => {
     const { root, cleanup } = makeCursorRoot();
     try {
       const scanner = new ConversationScanner({ persistent: false });
@@ -60,7 +56,7 @@ describe("cursor scan plumbing", () => {
         m.sessionId?.includes(CURSOR_SESSION_ID),
       );
       expect(items.length).toBeGreaterThan(0);
-      expect(items[0].provider).toBe("cursor-cli");
+      expect(items[0].provider).toBe("cursor");
     } finally {
       cleanup();
     }

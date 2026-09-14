@@ -214,13 +214,13 @@ it("sniffs Cursor {role} lines and does not parse them as Claude", () => {
     },
   ]);
   expect(classifyConversationFile(path)).toMatchObject({
-    provider: "cursor-cli",
+    provider: "cursor",
     hasMessages: true,
     isSubagent: false,
   });
 });
 
-it("keeps Codex envelopes under agent-transcripts as cursor-cli", () => {
+it("keeps Codex envelopes under agent-transcripts as cursor", () => {
   const sessionDir = join(dir, "Users-dev-widget", "agent-transcripts", "sess-imported-codex");
   mkdirSync(sessionDir, { recursive: true });
   const path = join(sessionDir, "sess-imported-codex.jsonl");
@@ -228,20 +228,20 @@ it("keeps Codex envelopes under agent-transcripts as cursor-cli", () => {
     path,
     `${JSON.stringify({ type: "session_meta", payload: { id: "sess-imported-codex", source: "cli" } })}\n${JSON.stringify(codex("How did this Codex session get here?"))}\n`,
   );
-  expect(classifyConversationFile(path, "cursor-cli")).toMatchObject({
-    provider: "cursor-cli",
+  expect(classifyConversationFile(path, "cursor")).toMatchObject({
+    provider: "cursor",
     hasMessages: true,
     isSubagent: false,
   });
 });
 
-it("keeps Claude envelopes under agent-transcripts as cursor-cli", () => {
+it("keeps Claude envelopes under agent-transcripts as cursor", () => {
   const sessionDir = join(dir, "Users-dev-widget", "agent-transcripts", "sess-imported-claude");
   mkdirSync(sessionDir, { recursive: true });
   const path = join(sessionDir, "sess-imported-claude.jsonl");
   writeFileSync(path, `${JSON.stringify(text("user"))}\n${JSON.stringify(text("assistant"))}\n`);
-  expect(classifyConversationFile(path, "cursor-cli")).toMatchObject({
-    provider: "cursor-cli",
+  expect(classifyConversationFile(path, "cursor")).toMatchObject({
+    provider: "cursor",
     hasMessages: true,
   });
 });
@@ -258,8 +258,8 @@ it("marks Cursor files under subagents/ as children of the parent uuid", () => {
       message: { content: [{ type: "text", text: "subagent reply" }] },
     })}\n`,
   );
-  expect(classifyConversationFile(path, "cursor-cli")).toMatchObject({
-    provider: "cursor-cli",
+  expect(classifyConversationFile(path, "cursor")).toMatchObject({
+    provider: "cursor",
     isSubagent: true,
     parentConversationId: parent,
     hasMessages: true,
