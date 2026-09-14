@@ -108,4 +108,4 @@ npx vitest run __tests__/provider-capabilities.test.ts \
 
 Bulk history — [scanner skill](https://github.com/RonenMars/threadbase-scanner/blob/HEAD/.claude/skills/add-provider/SKILL.md). Phone chips — [mobile skill](https://github.com/RonenMars/threadbase-mobile/blob/HEAD/.claude/skills/add-provider/SKILL.md). TUI scraping. Installing the vendor CLI. VS Code-only / protobuf agents.
 
-Worked example: `cursor-cli` live runner in PR #892. History indexing is a **later** scanner + `@threadbase-sh/scanner` bump (`cursorRoots`, default `~/.cursor/projects`); do not mix that bump into the live-runner PR.
+Worked example: `cursor-cli` live runner in PR #892. History indexing is a **later** scanner + `@threadbase-sh/scanner` bump (`cursorRoots`, default `~/.cursor/projects`); do not mix that bump into the live-runner PR. Copy scanner import flags onto `conversation_meta` / list items (`isImportedFromClaude` / `isImportedFromCodex` / `isImportedFromCursor`).
