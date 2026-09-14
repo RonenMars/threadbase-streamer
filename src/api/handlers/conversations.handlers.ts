@@ -19,6 +19,7 @@ import type { Logger } from "../../logger";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  canonicalizeProviderName,
   coerceProviderForRunner,
   isProviderResumable,
 } from "../../providers";
@@ -47,7 +48,14 @@ import { isLeadingInjectedContext } from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
 import { createScanProgressThrottle } from "../../utils/scanProgressThrottle";
 import type { WSHub } from "../../ws-hub";
-import { classifyResumability, intParam, json, readBody } from "./http-helpers";
+import {
+  boolQueryParam,
+  classifyResumability,
+  includeQueryParam,
+  intParam,
+  json,
+  readBody,
+} from "./http-helpers";
 
 // Search filters are applied after the scanner returns, so we ask it for more
 // than one page. The multiplier bounds the common case; SEARCH_MAX_SCAN caps a
@@ -100,17 +108,20 @@ export type ConversationHandlersDeps = {
  * server: this class only reads it through `deps`.
  */
 export class ConversationHandlers {
-  private publicScannerMeta(meta: ConversationMeta): ConversationMeta | null {
+  private publicScannerMeta(
+    meta: ConversationMeta,
+    include?: "all" | "conversations" | "subagents",
+  ): ConversationMeta | null {
     const id = this.cache?.getIdByFilePath(meta.filePath);
     const row = id ? this.cache?.getMetaById(id) : null;
     if (row) return this.cache?.isVisible(row.id) ? { ...meta, sessionId: row.id } : null;
     try {
       const classification = classifyConversationFile(meta.filePath, meta.provider);
-      if (
-        !classification.hasMessages ||
-        (classification.isSubagent && !(this.deps.includeSubagentSessions?.() ?? false))
-      )
-        return null;
+      const showSubagents =
+        include === "all" ||
+        include === "subagents" ||
+        (this.deps.includeSubagentSessions?.() ?? false);
+      if (!classification.hasMessages || (classification.isSubagent && !showSubagents)) return null;
       return {
         ...meta,
         sessionId:
@@ -170,14 +181,61 @@ export class ConversationHandlers {
     return this.deps.log();
   }
 
+  private listFilters(url: URL) {
+    return {
+      project: url.searchParams.get("project") ?? undefined,
+      provider: url.searchParams.get("provider") ?? undefined,
+      include: includeQueryParam(url),
+      isImportedFromClaude: boolQueryParam(url, "isImportedFromClaude"),
+      isImportedFromCodex: boolQueryParam(url, "isImportedFromCodex"),
+      isImportedFromCursor: boolQueryParam(url, "isImportedFromCursor"),
+    };
+  }
+
+  private importFlags(c: {
+    isImportedFromClaude?: boolean;
+    isImportedFromCodex?: boolean;
+    isImportedFromCursor?: boolean;
+  }) {
+    return {
+      isImportedFromClaude: c.isImportedFromClaude === true,
+      isImportedFromCodex: c.isImportedFromCodex === true,
+      isImportedFromCursor: c.isImportedFromCursor === true,
+    };
+  }
+
+  private matchesImportFilters(
+    meta: ConversationMeta,
+    filters: ReturnType<ConversationHandlers["listFilters"]>,
+  ): boolean {
+    if (
+      filters.isImportedFromClaude !== undefined &&
+      Boolean(meta.isImportedFromClaude) !== filters.isImportedFromClaude
+    ) {
+      return false;
+    }
+    if (
+      filters.isImportedFromCodex !== undefined &&
+      Boolean(meta.isImportedFromCodex) !== filters.isImportedFromCodex
+    ) {
+      return false;
+    }
+    if (
+      filters.isImportedFromCursor !== undefined &&
+      Boolean(meta.isImportedFromCursor) !== filters.isImportedFromCursor
+    ) {
+      return false;
+    }
+    return true;
+  }
+
   async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
     if (this.deps.rejectIfWarmingUp(res)) return;
 
     const limit = intParam(url, "limit", 50);
     const offset = intParam(url, "offset", 0);
     const sort = (url.searchParams.get("sort") ?? "recent") as SortOrder;
-    const project = url.searchParams.get("project") ?? undefined;
-    const providerFilter = url.searchParams.get("provider") ?? undefined;
+    const filters = this.listFilters(url);
     const bustCache = url.searchParams.get("refresh") === "1";
 
     // Reconcile (not wipe): fullRescan bypasses the scanner dir-mtime gate, then
@@ -217,8 +275,7 @@ export class ConversationHandlers {
 
     if (this.cache) {
       const { conversations, total } = this.cache.listConversations({
-        project,
-        provider: providerFilter,
+        ...filters,
         limit,
         offset,
       });
@@ -243,7 +300,8 @@ export class ConversationHandlers {
         firstMessage: c.firstMessage ? (JSON.parse(c.firstMessage) as unknown) : undefined,
         lastMessage: c.lastMessage ? (JSON.parse(c.lastMessage) as unknown) : undefined,
         model: c.model ?? undefined,
-        provider: c.provider ?? CLAUDE_CODE_PROVIDER,
+        provider: canonicalizeProviderName(c.provider) ?? c.provider ?? CLAUDE_CODE_PROVIDER,
+        ...this.importFlags(c),
       }));
       json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
       return;
@@ -251,11 +309,20 @@ export class ConversationHandlers {
 
     const scanner = await this.scannerManager.get();
     let metas = [...scanner.getMetadataCache().values()];
-    metas = metas.flatMap((meta) => this.publicScannerMeta(meta) ?? []);
-    metas = applyIncludeFilter(metas, "conversations");
-    if (project) metas = applyProjectFilter(metas, project);
-    if (providerFilter)
-      metas = metas.filter((m) => (m.provider ?? CLAUDE_CODE_PROVIDER) === providerFilter);
+    const include =
+      filters.include ??
+      ((this.deps.includeSubagentSessions?.() ?? false) ? "all" : "conversations");
+    metas = metas.flatMap((meta) => this.publicScannerMeta(meta, include) ?? []);
+    metas = applyIncludeFilter(metas, include);
+    if (filters.project) metas = applyProjectFilter(metas, filters.project);
+    if (filters.provider) {
+      const wanted = canonicalizeProviderName(filters.provider) ?? filters.provider;
+      metas = metas.filter(
+        (m) =>
+          (canonicalizeProviderName(m.provider) ?? m.provider ?? CLAUDE_CODE_PROVIDER) === wanted,
+      );
+    }
+    metas = metas.filter((m) => this.matchesImportFilters(m, filters));
     metas = applySort(metas, sort);
     const total = metas.length;
     const page = applyPagination(metas, limit, offset);
@@ -270,6 +337,8 @@ export class ConversationHandlers {
         c.id;
       return {
         id,
+        isSubagent: c.isSubagent,
+        parentConversationId: c.parentSessionId ?? undefined,
         title: deriveProjectChatTitle({
           title: c.sessionName,
           projectName: c.projectName,
@@ -287,7 +356,8 @@ export class ConversationHandlers {
         firstMessage: c.firstMessage ?? undefined,
         lastMessage: c.lastMessage ?? undefined,
         model: c.model ?? undefined,
-        provider: (c as any).provider ?? CLAUDE_CODE_PROVIDER,
+        provider: canonicalizeProviderName(c.provider) ?? c.provider ?? CLAUDE_CODE_PROVIDER,
+        ...this.importFlags(c),
       };
     });
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
@@ -296,8 +366,7 @@ export class ConversationHandlers {
   async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
     if (this.deps.rejectIfWarmingUp(res)) return;
 
-    const project = url.searchParams.get("project") ?? undefined;
-    const providerFilter = url.searchParams.get("provider") ?? undefined;
+    const filters = this.listFilters(url);
     const bustCache = url.searchParams.get("refresh") === "1";
 
     // refresh=1 historically forced a full synchronous scan() to recount from
@@ -308,8 +377,7 @@ export class ConversationHandlers {
     // fast regardless of refresh.
     if (this.cache) {
       const { total } = this.cache.listConversations({
-        project,
-        provider: providerFilter,
+        ...filters,
         limit: 0,
         offset: 0,
       });
@@ -320,11 +388,20 @@ export class ConversationHandlers {
 
     const scanner = await this.scannerManager.get(true);
     let metas = [...scanner.getMetadataCache().values()];
-    metas = metas.flatMap((meta) => this.publicScannerMeta(meta) ?? []);
-    metas = applyIncludeFilter(metas, "conversations");
-    if (project) metas = applyProjectFilter(metas, project);
-    if (providerFilter)
-      metas = metas.filter((m) => (m.provider ?? CLAUDE_CODE_PROVIDER) === providerFilter);
+    const include =
+      filters.include ??
+      ((this.deps.includeSubagentSessions?.() ?? false) ? "all" : "conversations");
+    metas = metas.flatMap((meta) => this.publicScannerMeta(meta, include) ?? []);
+    metas = applyIncludeFilter(metas, include);
+    if (filters.project) metas = applyProjectFilter(metas, filters.project);
+    if (filters.provider) {
+      const wanted = canonicalizeProviderName(filters.provider) ?? filters.provider;
+      metas = metas.filter(
+        (m) =>
+          (canonicalizeProviderName(m.provider) ?? m.provider ?? CLAUDE_CODE_PROVIDER) === wanted,
+      );
+    }
+    metas = metas.filter((m) => this.matchesImportFilters(m, filters));
     json(res, 200, { total: metas.length });
   }
 

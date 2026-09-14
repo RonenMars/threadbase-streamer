@@ -10,7 +10,7 @@ import { z } from "zod";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
-  CURSOR_CLI_PROVIDER,
+  CURSOR_PROVIDER,
   type ProviderName,
 } from "../../providers";
 import { isCodexInjectedContext } from "../../utils/codexConversationLine";
@@ -66,7 +66,7 @@ export class ConversationClassifier {
     this.fileStem = this.id;
     this.provider = provider;
     if (this.provider === CLAUDE_CODE_PROVIDER && /[/\\]agent-transcripts[/\\]/.test(filePath)) {
-      this.provider = CURSOR_CLI_PROVIDER;
+      this.provider = CURSOR_PROVIDER;
     }
     this.isSubagent = /[/\\]subagents[/\\][^/\\]+\.jsonl$/.test(filePath);
     if (this.isSubagent) {
@@ -88,10 +88,10 @@ export class ConversationClassifier {
     if (parsed.success) {
       const entry = parsed.data;
       if (entry.type === "session_meta" && entry.payload) {
-        // Copies under agent-transcripts stay cursor-cli; native Codex rollouts
+        // Copies under agent-transcripts stay cursor; native Codex rollouts
         // still flip here. Overwriting would store imported Cursor history as
         // provider=codex-cli and drop isImportedFromCodex on the list row.
-        if (this.provider !== CURSOR_CLI_PROVIDER) {
+        if (this.provider !== CURSOR_PROVIDER) {
           this.provider = "codex-cli";
         }
         this.sawIdentity = true;
@@ -102,7 +102,7 @@ export class ConversationClassifier {
         // values as ordinary top-level history and showed them to the user.
         // A string source ("cli", "vscode", "exec", …) is never a subagent.
         // Cursor path-based subagent identity wins over Codex source on imports.
-        if (this.provider !== CURSOR_CLI_PROVIDER) {
+        if (this.provider !== CURSOR_PROVIDER) {
           const source = entry.payload.source;
           this.isSubagent = typeof source === "object" && source !== null && "subagent" in source;
           const spawn = spawnSource.safeParse(source);
@@ -111,7 +111,7 @@ export class ConversationClassifier {
             : null;
         }
       } else if (
-        (this.provider === CURSOR_CLI_PROVIDER && entry.role) ||
+        (this.provider === CURSOR_PROVIDER && entry.role) ||
         (this.provider === CLAUDE_CODE_PROVIDER &&
           !entry.type &&
           (entry.role === "user" || entry.role === "assistant"))
@@ -120,7 +120,7 @@ export class ConversationClassifier {
         // `type`. Claude lines always carry `type: user|assistant`. Sniffing
         // here means a cache miss still classifies the file instead of running
         // it through parseJsonlLine and concluding it has no messages.
-        this.provider = CURSOR_CLI_PROVIDER;
+        this.provider = CURSOR_PROVIDER;
         this.sawIdentity = true;
       } else if (this.provider === CLAUDE_CODE_PROVIDER && entry.isSidechain !== undefined) {
         this.sawIdentity = true;
@@ -137,7 +137,7 @@ export class ConversationClassifier {
     const message =
       this.provider === CODEX_CLI_PROVIDER
         ? parseCodexJsonlLine(raw)
-        : this.provider === CURSOR_CLI_PROVIDER
+        : this.provider === CURSOR_PROVIDER
           ? parseCursorJsonlLine(raw)
           : parseJsonlLine(raw, this.state);
     if (message?.role === "user" && isCodexInjectedContext(message.text ?? "")) return null;

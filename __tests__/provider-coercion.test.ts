@@ -16,7 +16,8 @@ describe("coerceProviderForRunner", () => {
   it("passes through real runner providers", () => {
     expect(coerceProviderForRunner(CLAUDE_CODE_PROVIDER)).toBe(CLAUDE_CODE_PROVIDER);
     expect(coerceProviderForRunner(CODEX_CLI_PROVIDER)).toBe(CODEX_CLI_PROVIDER);
-    expect(coerceProviderForRunner("cursor-cli")).toBe("cursor-cli");
+    expect(coerceProviderForRunner("cursor")).toBe("cursor");
+    expect(coerceProviderForRunner("cursor-cli")).toBe("cursor");
   });
 
   it("coerces the legacy 'threadbase' default to claude-code (the 501 fix)", () => {

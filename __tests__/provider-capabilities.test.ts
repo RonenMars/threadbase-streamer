@@ -95,7 +95,7 @@ describe("declared capabilities match runner behaviour", () => {
     });
   });
 
-  describe("cursor-cli", () => {
+  describe("cursor", () => {
     it("declares late-bound session ids, and no spawn passes --session-id", () => {
       expect(CURSOR_CLI_CAPABILITIES.freshSessionId).toBe("late-bound");
       expect(spawnArgsFrom("cursor-pty-runner.ts")).not.toContain("--session-id");
@@ -146,6 +146,6 @@ describe("declared capabilities match runner behaviour", () => {
   it("resolves capabilities for every known provider", () => {
     expect(capabilitiesFor("claude-code")).toBe(CLAUDE_CODE_CAPABILITIES);
     expect(capabilitiesFor("codex-cli")).toBe(CODEX_CLI_CAPABILITIES);
-    expect(capabilitiesFor("cursor-cli")).toBe(CURSOR_CLI_CAPABILITIES);
+    expect(capabilitiesFor("cursor")).toBe(CURSOR_CLI_CAPABILITIES);
   });
 });

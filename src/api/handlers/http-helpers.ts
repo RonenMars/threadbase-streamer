@@ -110,6 +110,21 @@ export function intParam(url: URL, name: string, defaultValue: number): number {
   return Number.isNaN(parsed) ? defaultValue : parsed;
 }
 
+/** `refresh=1` style: 1/true → true, 0/false → false, absent/invalid → undefined. */
+export function boolQueryParam(url: URL, name: string): boolean | undefined {
+  const val = url.searchParams.get(name);
+  if (val == null || val === "") return undefined;
+  if (val === "1" || val === "true") return true;
+  if (val === "0" || val === "false") return false;
+  return undefined;
+}
+
+export function includeQueryParam(url: URL): "all" | "conversations" | "subagents" | undefined {
+  const val = url.searchParams.get("include");
+  if (val === "all" || val === "conversations" || val === "subagents") return val;
+  return undefined;
+}
+
 const VALID_SORT_KEYS: SessionSortKey[] = ["startedAt", "lastActivityAt", "projectName", "status"];
 const VALID_ORDERS: SessionSortOrder[] = ["asc", "desc"];
 const VALID_STATUSES: SessionStatus[] = ["running", "waiting_input", "idle"];

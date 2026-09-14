@@ -5,7 +5,7 @@ import { isWindows } from "./platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
-  CURSOR_CLI_PROVIDER,
+  CURSOR_PROVIDER,
   type ProviderName,
 } from "./providers";
 import type { DiscoveredProcess } from "./types";
@@ -196,7 +196,7 @@ export function looksLikeCursorProcess(commandLine: string): boolean {
 export function providerForCommandLine(commandLine: string): ProviderName | null {
   if (looksLikeClaudeProcess(commandLine)) return CLAUDE_CODE_PROVIDER;
   if (looksLikeCodexProcess(commandLine)) return CODEX_CLI_PROVIDER;
-  if (looksLikeCursorProcess(commandLine)) return CURSOR_CLI_PROVIDER;
+  if (looksLikeCursorProcess(commandLine)) return CURSOR_PROVIDER;
   return null;
 }
 

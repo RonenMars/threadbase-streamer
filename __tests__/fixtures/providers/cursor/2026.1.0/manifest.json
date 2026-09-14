@@ -1,5 +1,5 @@
 {
-  "provider": "cursor-cli",
+  "provider": "cursor",
   "providerVersion": "2026.1.0",
   "capturedAt": "2026-09-12",
   "source": "sanitized agent-transcripts JSONL shape (role + message.content text blocks). Directory name is the transcript-format era, not a live `agent --version` pin.",

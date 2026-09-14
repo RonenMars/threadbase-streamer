@@ -1,5 +1,5 @@
 import type { ProviderName } from "../../providers";
-import { isProviderName } from "../../providers";
+import { canonicalizeProviderName, isProviderName } from "../../providers";
 
 /**
  * Search query parsing, pagination, and filters (C8).
@@ -83,7 +83,7 @@ export function parseSearchQuery(params: URLSearchParams): ParsedSearchQuery {
     if (!isProviderName(provider)) {
       throw new SearchQueryError(`Unknown provider: ${provider}`, "invalid_filter");
     }
-    filters.provider = provider;
+    filters.provider = canonicalizeProviderName(provider) ?? provider;
   }
 
   const projectPath = params.get("projectPath");
