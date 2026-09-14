@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { IncomingMessage, Server } from "http";
 import type { WebSocket } from "ws";
-import { contextRegistry, refuseUnsealedIfPinned } from "../../e2ee/context";
+import { contextRegistry, E2EE_WS_SUBPROTOCOL, refuseUnsealedIfPinned } from "../../e2ee/context";
 import { getLogger } from "../../logger";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
@@ -145,6 +145,14 @@ export function mountWebSocket(
 ): { wss: ReturnType<typeof createNodeWebSocket>["wss"] } {
   const { wss, injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   wss.options.maxPayload = WS_MAX_CLIENT_FRAME_BYTES;
+  // Same per-upgrade read, same reach: `ws` selects the FIRST offered
+  // subprotocol unless `handleProtocols` is set, and a browser offering
+  // `threadbase-e2ee-v1, tb-ticket.<ticket>` in the other order would get its
+  // ticket echoed in the 101. Only the one protocol this server speaks can be
+  // selected; `authMiddleware` refuses any offer of it that no ticket
+  // authenticated, so selecting it is never a claim about a plaintext socket.
+  wss.options.handleProtocols = (offered) =>
+    offered.has(E2EE_WS_SUBPROTOCOL) ? E2EE_WS_SUBPROTOCOL : false;
   app.route("/", createWsRoutes(deps, upgradeWebSocket));
   httpServer.prependListener("upgrade", keepOwnUpgradeHeaders);
   injectWebSocket(httpServer);

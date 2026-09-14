@@ -201,6 +201,14 @@ export interface E2eeCapability {
   enabled: boolean;
   version: number;
   required: boolean;
+  /**
+   * This build accepts the WebSocket ticket as a `tb-ticket.<ticket>`
+   * subprotocol offer and selects `threadbase-e2ee-v1`, which is the only way a
+   * browser can present one. A property of the build, like `supported`. Absent
+   * means an older server that only reads `X-TB-Ticket`: a browser client must
+   * refuse encrypted pairing there rather than fall back to plaintext.
+   */
+  wsTicketSubprotocol: boolean;
   /** Why `enabled` is false while `supported` is true; absent otherwise. */
   reason?: string;
 }
@@ -221,6 +229,7 @@ export function describeE2eeCapability(
     enabled,
     version: E2EE_PROTOCOL_VERSION,
     required: false,
+    wsTicketSubprotocol: true,
   };
   if (enabled) return base;
   return {

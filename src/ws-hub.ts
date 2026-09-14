@@ -184,6 +184,7 @@ export class WSHub {
       // this socket has spent a ticket, and everything downstream that asks
       // "was this ever sealed?" must be true from the 101 onwards.
       this.everSealed.add(ws);
+      log.info("[e2ee.upgrade] encrypted websocket", { event: "e2ee.upgrade" });
       // The clock starts at the 101.
       this.unprovenTimers.set(
         ws,
