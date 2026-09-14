@@ -498,6 +498,7 @@ describe("GET /api/info hostPressure", () => {
       localNoAuth: true,
       pushRepo: () => null,
       liveActivityPushEnabled: () => false,
+      expoPushEnabled: () => false,
       featureFlagsConfig: () => ({
         registry: [],
         values: flags.values,

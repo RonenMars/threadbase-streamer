@@ -885,6 +885,7 @@ export class StreamerServer {
       hostPressureMonitor: () => this.hostPressureMonitor,
       pushRepo: () => this.pushRepo,
       liveActivityPushEnabled: () => this.liveActivityNotifier !== null,
+      expoPushEnabled: () => this.waitingInputNotifier !== null,
       devicesRepo: () => this.devicesRepo,
       projectsRepo: () => this.projectsRepo,
       conversationsRepo: () => this.conversationsRepo,
