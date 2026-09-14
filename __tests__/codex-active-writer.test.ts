@@ -55,6 +55,8 @@ const CODEX_SESSION_ID = "019fe355-2773-7950-8d17-f45f47feff4c";
 const FIXTURE = join(__dirname, "fixtures", "codex-rollout.jsonl");
 
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+// Detection awaits getOutputLines (xterm flush). A single 0ms tick races that
+// flush: Smoke (macos-latest) saw `expected undefined to be 'idle'` at 98ms.
 
 // Shrink the post-spawn handshake window: these tests feed the mock PTY the
 // moment it is spawned, so the production 4s allowance is pure dead time on a
@@ -71,7 +73,7 @@ afterAll(() => {
 });
 
 describe("CodexPtyRunner — writer-lock detection", () => {
-  async function spawnAndFail(chunks: string[]) {
+  async function spawnAndFeed(chunks: string[]) {
     const events: ManagedSession[] = [];
     const ready: ManagedSession[] = [];
     const runner = new CodexPtyRunner({
@@ -81,14 +83,14 @@ describe("CodexPtyRunner — writer-lock detection", () => {
     const session = await runner.start(CODEX_SESSION_ID, { projectPath: "/tmp/proj" });
     const proc = (runner as any).sessions.get(session.id).process;
     for (const chunk of chunks) proc._emit("data", chunk);
-    await tick();
     return { runner, events, ready, proc };
   }
 
   it("fails the startup when Codex reports the active writer", async () => {
-    const { runner, events, ready, proc } = await spawnAndFail([
+    const { runner, events, ready, proc } = await spawnAndFeed([
       `\x1b[2J\x1b[H${ACTIVE_WRITER_TEXT}\r\n`,
     ]);
+    await vi.waitFor(() => expect(events.at(-1)?.status).toBe("idle"));
 
     const last = events.at(-1);
     expect(last?.status).toBe("idle");
@@ -115,13 +117,15 @@ describe("CodexPtyRunner — writer-lock detection", () => {
     expect(CODEX_ACTIVE_WRITER_RE.test(first)).toBe(false);
     expect(CODEX_ACTIVE_WRITER_RE.test(second)).toBe(true); // carries the code half
 
-    const { runner, events } = await spawnAndFail([first, "wri", "ter (code ", "-326", "00)\r\n"]);
+    const { runner, events } = await spawnAndFeed([first, "wri", "ter (code ", "-326", "00)\r\n"]);
+    await vi.waitFor(() => expect(events.at(-1)?.failureCode).toBe(CODEX_ACTIVE_WRITER_CODE));
     expect(events.at(-1)?.failureCode).toBe(CODEX_ACTIVE_WRITER_CODE);
     runner.dispose();
   });
 
   it("positive control: a normal boot still becomes ready and stays alive", async () => {
-    const { runner, events, ready } = await spawnAndFail([READY_STATUS_BAR]);
+    const { runner, events, ready } = await spawnAndFeed([READY_STATUS_BAR]);
+    await vi.waitFor(() => expect(events.at(-1)?.status).toBe("waiting_input"));
     expect(events.at(-1)?.status).toBe("waiting_input");
     expect(events.at(-1)?.failureCode).toBeUndefined();
     expect(ready).toHaveLength(1);
