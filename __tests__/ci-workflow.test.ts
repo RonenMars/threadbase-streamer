@@ -281,12 +281,15 @@ describe("test discovery covers the nested suites", () => {
   });
 
   // Sequential files were the Windows smoke critical path (~8.5 min, 92% of
-  // it `npm test`). Parallelism is safe everywhere except Windows × Node 24,
-  // which kills fork workers; that combo stays serial. A hardcoded `false`
-  // would silently put the 4-core runners back to one file at a time.
-  it("parallelizes test files except on Windows Node 24", () => {
+  // it `npm test`). Parallelism stays on Linux and on Windows × Node 22. Two
+  // serial cases: Windows × Node 24 (fork workers die) and macOS (file
+  // parallelism after #894 made Smoke (macos-latest) fail ~28% of runs on
+  // paint-time / fs.watch waits). A hardcoded `false` would silently put the
+  // remaining 4-core runners back to one file at a time.
+  it("parallelizes test files except on macOS and Windows Node 24", () => {
     expect(config).not.toMatch(/fileParallelism:\s*false/);
     expect(config).toMatch(/fileParallelism/);
+    expect(config).toMatch(/darwin/);
     expect(config).toMatch(/win32/);
     expect(config).toMatch(/nodeMajor >= 24/);
     expect(config).toMatch(/maxWorkers:\s*4/);

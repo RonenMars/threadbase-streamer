@@ -30,6 +30,7 @@ describe("transcript watch deadline", () => {
   let managed: { startedAt: Date; promptCount: number; boundConversationId?: string };
   let hasSession: boolean;
   let watchers: SessionWatchers;
+  let tryWireProbes: number;
 
   beforeEach(() => {
     projectPath = mkdtempSync(join(tmpdir(), "tb-watch-deadline-proj-"));
@@ -37,11 +38,15 @@ describe("transcript watch deadline", () => {
     sessionFileMap = new Map();
     managed = { startedAt: new Date(), promptCount: 0 };
     hasSession = true;
+    tryWireProbes = 0;
 
     watchers = new SessionWatchers({
       ptyManager: { hasSession: () => hasSession },
       sessionStore: {
-        getManaged: () => managed,
+        getManaged: () => {
+          tryWireProbes += 1;
+          return managed;
+        },
         listManaged: () => [],
         updateManaged: (_id: string, patch: Record<string, unknown>) =>
           Object.assign(managed, patch),
@@ -104,6 +109,29 @@ describe("transcript watch deadline", () => {
     return read();
   }
 
+  // tryWire logs this exactly once, when it closes the watch. Waiting on it
+  // (instead of a fixed settle after the neighbor write) is what stops the
+  // overdue test writing our own file while fs.watch is still open — the
+  // failure `expected '/var/folders/…' to be undefined` on Smoke (macos-latest).
+  function captureExpiry(): () => string | undefined {
+    let sessionId: string | undefined;
+    const log = (
+      watchers as unknown as {
+        log: {
+          warn: (msg: string, fields?: Record<string, unknown>, dest?: string) => void;
+        };
+      }
+    ).log;
+    const original = log.warn.bind(log);
+    log.warn = (msg, fields, dest) => {
+      if (fields?.event === "session.transcript_watch_expired") {
+        sessionId = fields.sessionId as string;
+      }
+      original(msg, fields, dest);
+    };
+    return () => sessionId;
+  }
+
   describe("watchForJsonl (Claude)", () => {
     it("wires {sessionId}.jsonl created five minutes after the spawn", async () => {
       watchers.watchForJsonl(SESSION_ID, projectPath);
@@ -152,9 +180,11 @@ describe("transcript watch deadline", () => {
       // so the deadline still ends the watch rather than running for the life of
       // the session. Without this, `prompts === 0` could be widened to "never
       // expire" and nothing would notice.
+      const expired = captureExpiry();
       watchers.watchForJsonl(SESSION_ID, projectPath);
       const dir = claudeProjectsDir(projectPath);
       const jsonlPath = join(dir, `${SESSION_ID}.jsonl`);
+      const probesAtArm = tryWireProbes;
 
       // The turn happens; the first callback after it observes the new
       // promptCount and re-arms the deadline from THAT moment. The transcript
@@ -162,12 +192,14 @@ describe("transcript watch deadline", () => {
       mkdirSync(dir, { recursive: true });
       managed.promptCount = 1;
       writeFileSync(join(dir, "dddddddd-0000-4000-8000-00000000000d.jsonl"), "{}\n");
-      await new Promise((r) => setTimeout(r, WATCH_SETTLE_MS));
+      expect(
+        await waitFor(() => (tryWireProbes > probesAtArm ? true : undefined), BIND_BUDGET_MS),
+      ).toBe(true);
 
       // Now run past the re-armed deadline and let another event observe it.
       jumpClock(300_000);
       writeFileSync(join(dir, "eeeeeeee-0000-4000-8000-00000000000e.jsonl"), "{}\n");
-      await new Promise((r) => setTimeout(r, WATCH_SETTLE_MS));
+      expect(await waitFor(expired, BIND_BUDGET_MS)).toBe(SESSION_ID);
 
       // The watch is closed now, so even our own file no longer binds.
       writeFileSync(

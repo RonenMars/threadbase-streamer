@@ -33,9 +33,12 @@ async function spawnFresh(mgr: PTYManager) {
   return mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
 }
 
-// detectLivePrompts runs async (awaits getOutputLines). Give the microtask +
-// xterm write-callback a tick to settle after emitting a chunk.
+// detectLivePrompts awaits getOutputLines. A 10ms sleep races that flush
+// (#697; Smoke macos-latest after #894: `expected undefined to be truthy`).
+// Positive assertions poll; settle() stays for negative / de-dupe gaps.
 const settle = () => new Promise((r) => setTimeout(r, 10));
+const waitForYn = (gates: Gate[]) =>
+  vi.waitFor(() => expect(gates.find((g) => g && g.options.length === 2)).toBeTruthy());
 
 describe("PTYManager — unstructured shell prompt → permission event", () => {
   it("broadcasts a y/N prompt as a permission gate with literal answer keys", async () => {
@@ -45,7 +48,7 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", "Running script...\r\nContinue? [y/N] ");
-    await settle();
+    await waitForYn(gates);
 
     const gate = gates.find((g) => g && g.options.length === 2);
     expect(gate).toBeTruthy();
@@ -66,7 +69,7 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
     // A real TUI repaint clears + redraws the same screen position, so the
     // rendered tail is identical across both chunks → de-duped to one broadcast.
     proc._emit("data", "\x1b[2J\x1b[HContinue? [y/N] ");
-    await settle();
+    await waitForYn(gates);
     proc._emit("data", "\x1b[2J\x1b[HContinue? [y/N] ");
     await settle();
 
@@ -81,12 +84,12 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
     const proc = getMockProc(mgr, session.id);
 
     proc._emit("data", "Continue? [y/N] ");
-    await settle();
+    await waitForYn(gates);
     expect(gates.some((g) => g && g.options.length === 2)).toBe(true);
 
     // Bash command finished, the shell scrolled, Claude repainted its ❯ prompt.
     proc._emit("data", "\x1b[2J\x1b[H❯ ");
-    await settle();
+    await vi.waitFor(() => expect(gates[gates.length - 1]).toBeNull());
 
     expect(gates[gates.length - 1]).toBeNull();
     mgr.dispose();
@@ -104,7 +107,7 @@ describe("PTYManager — unstructured shell prompt → permission event", () => 
       "data",
       "\x1b]777;notify;Claude Code;Claude needs your permission\x07\r\n❯ 2. Yes\r\n  3. No\r\n",
     );
-    await settle();
+    await vi.waitFor(() => expect(gates.find((g) => g && g.options.length > 0)).toBeTruthy());
 
     const gate = gates.find((g) => g && g.options.length > 0);
     expect(gate?.options.every((o) => o.answerKeys === undefined)).toBe(true);
