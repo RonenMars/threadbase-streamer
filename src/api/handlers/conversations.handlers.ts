@@ -550,7 +550,7 @@ export class ConversationHandlers {
     // the client looks up the session uuid. The map above misses that spelling;
     // sessionId lookup is how the scanner itself resolves `getConversation(uuid)`.
     const bySession =
-      this.scannerManager.current?.getConversationsBySessionId(lookupId)?.[0]?.filePath;
+      this.scannerManager.current?.getConversationsBySessionId?.(lookupId)?.[0]?.filePath;
     if (bySession && (await this.isJsonlPathFor(bySession, lookupId))) return bySession;
 
     // Claude-layout directory walk, kept as the self-heal for ids the cache
