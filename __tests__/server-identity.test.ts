@@ -179,7 +179,11 @@ describe("server identity key over HTTP", () => {
   const AUTH = { Authorization: `Bearer ${API_KEY}` };
   // Same host isolation server.test.ts uses: keep the scanner off the
   // developer's real ~/.codex and off the shared persistent index.
-  const HOST_ISOLATION = { codexRoots: [] as string[], scannerPersistent: false };
+  const HOST_ISOLATION = {
+    codexRoots: [] as string[],
+    cursorRoots: [] as string[],
+    scannerPersistent: false,
+  };
 
   const saved = process.env.THREADBASE_CONFIG_DIR;
   let configDir: string;

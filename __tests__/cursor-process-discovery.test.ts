@@ -35,9 +35,9 @@ describe("looksLikeCursorProcess", () => {
   });
 });
 
-describe("providerForCommandLine — cursor-cli", () => {
+describe("providerForCommandLine — cursor", () => {
   it("identifies an agent session", () => {
-    expect(providerForCommandLine("agent --workspace /tmp/proj")).toBe("cursor-cli");
+    expect(providerForCommandLine("agent --workspace /tmp/proj")).toBe("cursor");
   });
 
   it("does not steal Claude or Codex sessions", () => {
@@ -46,8 +46,8 @@ describe("providerForCommandLine — cursor-cli", () => {
   });
 });
 
-describe("extractConversationId — cursor-cli", () => {
+describe("extractConversationId — cursor", () => {
   it("reads --resume=<id>", () => {
-    expect(extractConversationId("agent --resume=chat-99", "cursor-cli")).toBe("chat-99");
+    expect(extractConversationId("agent --resume=chat-99", "cursor")).toBe("chat-99");
   });
 });

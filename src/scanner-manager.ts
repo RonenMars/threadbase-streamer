@@ -12,7 +12,7 @@ import type { CacheMetadataRepository } from "./db/repositories/cacheMetadata.re
 import type { ConversationsRepository } from "./db/repositories/conversations.repository";
 import type { ProjectsRepository } from "./db/repositories/projects.repository";
 import { getLogger } from "./logger";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, CURSOR_PROVIDER } from "./providers";
 import { setCacheMetadata } from "./services/cache/cacheMetadata";
 import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import { refreshConversationCache } from "./services/conversations/refreshConversationCache";
@@ -110,6 +110,7 @@ export type ScanProfile = {
 export type ScannerManagerDeps = {
   scanProfiles: ScanProfile[] | undefined;
   codexRoots: string[];
+  cursorRoots: string[];
   directoryDebounceMs: number;
   persistenceDisabled: boolean;
   cache: () => ConversationCache | null;
@@ -274,12 +275,13 @@ export class ScannerManager {
     return statCache.size > 0 ? statCache : undefined;
   }
 
-  // Returns the provider + codexRoots fragment to spread into every scan()/search() call.
-  // codexRoots=[] disables codex scanning (safe no-op per scanner contract).
+  // Returns the provider + roots fragment to spread into every scan()/search() call.
+  // Empty *Roots disables that provider (safe no-op per scanner contract).
   codexScanOpts() {
     return {
-      providers: [CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER],
+      providers: [CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, CURSOR_PROVIDER],
       codexRoots: this.deps.codexRoots,
+      cursorRoots: this.deps.cursorRoots,
     };
   }
 

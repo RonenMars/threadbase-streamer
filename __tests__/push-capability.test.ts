@@ -25,7 +25,11 @@ const AUTH = { Authorization: `Bearer ${API_KEY}` };
 
 // Same host isolation server.test.ts uses: keep the scanner off the developer's
 // real ~/.codex and off the shared persistent index.
-const HOST_ISOLATION = { codexRoots: [] as string[], scannerPersistent: false };
+const HOST_ISOLATION = {
+  codexRoots: [] as string[],
+  cursorRoots: [] as string[],
+  scannerPersistent: false,
+};
 
 describe("describePushCapability", () => {
   it("reports both push kinds, not just Live Activities", () => {

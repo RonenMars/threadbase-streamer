@@ -56,6 +56,7 @@ function makeManager(): ScannerManager {
   return new ScannerManager({
     scanProfiles: [],
     codexRoots: [],
+    cursorRoots: [],
     directoryDebounceMs: 0,
     persistenceDisabled: true,
     cache: () => null,

@@ -46,6 +46,7 @@ describe.each([
     manager = new ScannerManager({
       scanProfiles: [],
       codexRoots: [dir],
+      cursorRoots: [],
       directoryDebounceMs: 0,
       persistenceDisabled: true,
       cache: () => null,
