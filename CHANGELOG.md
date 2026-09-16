@@ -1,3 +1,9 @@
+## [1.93.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.93.1...v1.93.2) (2026-09-16)
+
+### Bug Fixes
+
+* **deploy:** raise launchd nofile limit to 65536 ([#916](https://github.com/RonenMars/threadbase-streamer/issues/916)) ([821eb75](https://github.com/RonenMars/threadbase-streamer/commit/821eb75fac433926a60944a5e1a086a87787a874))
+
 ## [1.93.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.93.0...v1.93.1) (2026-09-16)
 
 ### Bug Fixes
