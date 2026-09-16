@@ -117,39 +117,48 @@ export interface PushCapability {
    */
   liveActivity: boolean;
   /**
-   * Ordinary (non-Live-Activity) notifications. Always false: `expo-server-sdk`
-   * is not a dependency and `PushRepository.listDeliverable()` has no caller, so
-   * nothing sends them. Reported rather than omitted so a client cannot infer
-   * that ordinary push works because Live Activity push happens to be configured.
+   * Ordinary "your turn" notifications over Expo's relay (`WaitingInputNotifier`).
+   * True when the notifier was wired, which needs only the push token store:
+   * Expo holds the app's credentials, so no APNs key or env var is involved.
+   * Independent of `liveActivity` — neither implies the other.
    */
   notifications: boolean;
   /** Why `liveActivity` is false; absent when it is true. Names env vars, never values. */
   liveActivityReason?: string;
+  /** Why `notifications` is false; absent when it is true. */
+  notificationsReason?: string;
 }
 
 /**
  * Describe push capability for a client.
  *
- * `liveActivityEnabled` is the server's own wiring state rather than a re-read of
- * the environment: credentials alone are not enough, since the notifier is only
+ * `wired` is the server's own wiring state rather than a re-read of the
+ * environment: credentials alone are not enough, since each notifier is only
  * built when the push token store opened too.
  */
 export function describePushCapability(
-  liveActivityEnabled: boolean,
+  wired: { liveActivity: boolean; notifications: boolean },
   env: NodeJS.ProcessEnv = process.env,
 ): PushCapability {
-  if (liveActivityEnabled) return { liveActivity: true, notifications: false };
-  return {
-    liveActivity: false,
-    notifications: false,
+  const capability: PushCapability = {
+    liveActivity: wired.liveActivity,
+    notifications: wired.notifications,
+  };
+  if (!wired.liveActivity) {
     // describeMissingApnsCredentials only explains a *credential* gap and
     // returns null once the credentials are complete — reachable here, because
     // an unavailable token store disables the feature with the key still set.
-    liveActivityReason:
+    capability.liveActivityReason =
       describeMissingApnsCredentials(env) ??
       "APNs credentials are set but the push token store is unavailable, so Live Activity " +
-        "push is disabled.",
-  };
+        "push is disabled.";
+  }
+  if (!wired.notifications) {
+    capability.notificationsReason =
+      "The push token store is unavailable (the SQLite cache failed to open), so " +
+      "notifications cannot be sent.";
+  }
+  return capability;
 }
 
 /**
@@ -368,6 +377,7 @@ export const createMiscRoutes = (
     | "localNoAuth"
     | "pushRepo"
     | "liveActivityPushEnabled"
+    | "expoPushEnabled"
     | "featureFlagsConfig"
   >,
 ) => {
@@ -403,7 +413,10 @@ export const createMiscRoutes = (
       // actually send a push, so mobile can hide an affordance instead of
       // registering tokens nothing will ever send to. Absent on older servers,
       // which a client should read as "unknown", not "unavailable".
-      push: describePushCapability(deps.liveActivityPushEnabled()),
+      push: describePushCapability({
+        liveActivity: deps.liveActivityPushEnabled(),
+        notifications: deps.expoPushEnabled(),
+      }),
       // This server's long-term X25519 public key, base64url. The same value the
       // pair QR carries as `spk`, served here so an already-paired client can
       // learn it without re-scanning. Additive: absent means a server with no
@@ -601,7 +614,10 @@ export const createMiscRoutes = (
     // unavailable (registration cannot persist)". Retargeting it at credentials
     // would make every credential-less server tell users their registrations do
     // not persist, which is false. Credential state is the additive `push` object.
-    const push = describePushCapability(deps.liveActivityPushEnabled());
+    const push = describePushCapability({
+      liveActivity: deps.liveActivityPushEnabled(),
+      notifications: deps.expoPushEnabled(),
+    });
     const repo = deps.pushRepo();
     if (!repo) return c.json({ tokens: [], available: false, push });
     return c.json({ tokens: repo.listHealth(), available: true, push });

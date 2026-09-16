@@ -67,6 +67,11 @@ export type ApiDeps = {
    * do not enable it: the sender is only wired when the token store opened too.
    */
   liveActivityPushEnabled: () => boolean;
+  /**
+   * Whether "your turn" notifications over Expo's relay are wired — true once the
+   * token store opened, since that transport needs no credential of its own.
+   */
+  expoPushEnabled: () => boolean;
 
   /** Paired-device registry (C5). Null when the cache DB is unavailable. */
   devicesRepo: () => DevicesRepository | null;
