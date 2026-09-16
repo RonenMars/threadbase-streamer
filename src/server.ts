@@ -497,6 +497,7 @@ export class StreamerServer {
   private tailSize: number;
   private directoryDebounceMs: number;
   private codexRoots: string[];
+  private cursorRoots: string[];
   private includeAgents: boolean;
   private agentEntrypoints: ReadonlySet<string>;
   private honoApp: Hono<AppEnv>;
@@ -524,6 +525,7 @@ export class StreamerServer {
     this.autoResumeOnBoot = config.autoResumeOnBoot ?? false;
     this.scanProfiles = config.scanProfiles;
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
+    this.cursorRoots = config.cursorRoots ?? [join(homedir(), ".cursor", "projects")];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     // env > CLI > server.yaml > registry default, then the legacy explicit
@@ -557,6 +559,7 @@ export class StreamerServer {
     this.scannerManager = new ScannerManager({
       scanProfiles: this.scanProfiles,
       codexRoots: this.codexRoots,
+      cursorRoots: this.cursorRoots,
       directoryDebounceMs: this.directoryDebounceMs,
       persistenceDisabled: config.scannerPersistent === false,
       // Thunks, not values: these are opened during listen() and rebound by
@@ -1707,6 +1710,14 @@ export class StreamerServer {
           // it strictly pull-only. The roots are date-partitioned
           // (<root>/YYYY/MM/DD), so watch the root and let chokidar recurse.
           for (const dir of this.codexRoots) {
+            if (!existsSync(dir)) continue;
+            this.fileWatcher.watchDirectory(dir);
+          }
+          // Cursor agent-transcripts (opt-in cursorRoots, default
+          // ~/.cursor/projects). Same reason as Codex: an externally-written
+          // JSONL must flip the scanner-stale flag. This is directory discovery,
+          // not a live-PTY transcript bind — Cursor PTY still has no JSONL watcher.
+          for (const dir of this.cursorRoots) {
             if (!existsSync(dir)) continue;
             this.fileWatcher.watchDirectory(dir);
           }

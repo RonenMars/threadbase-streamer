@@ -1,7 +1,8 @@
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
-  CURSOR_CLI_PROVIDER,
+  CURSOR_PROVIDER,
+  canonicalizeProviderName,
   type ProviderName,
 } from "../../providers";
 
@@ -149,12 +150,14 @@ export const GENERIC_TERMINAL_CAPABILITIES: ProviderCapabilities = {
 };
 
 export function capabilitiesFor(provider: ProviderName): ProviderCapabilities {
-  switch (provider) {
+  switch (canonicalizeProviderName(provider) ?? provider) {
     case CLAUDE_CODE_PROVIDER:
       return CLAUDE_CODE_CAPABILITIES;
     case CODEX_CLI_PROVIDER:
       return CODEX_CLI_CAPABILITIES;
-    case CURSOR_CLI_PROVIDER:
+    case CURSOR_PROVIDER:
       return CURSOR_CLI_CAPABILITIES;
+    default:
+      return GENERIC_TERMINAL_CAPABILITIES;
   }
 }

@@ -3,7 +3,7 @@ import { isWindows, locateProviderExe } from "../../platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
-  CURSOR_CLI_PROVIDER,
+  CURSOR_PROVIDER,
   type ProviderName,
 } from "../../providers";
 import { capabilitiesFor, type ProviderCapabilities, type VerifiedAgainst } from "./capabilities";
@@ -27,7 +27,7 @@ export const VERIFIED_AGAINST: Record<ProviderName, VerifiedAgainst> = {
   [CODEX_CLI_PROVIDER]: { captured: ["0.140.0-alpha.19"], min: "0.140.0" },
   // Transcript *shape* era (agent-transcripts JSONL), not a live `agent --version`
   // pin — we have no captured CLI build yet, so any installed version warns.
-  [CURSOR_CLI_PROVIDER]: { captured: ["2026.1.0"] },
+  [CURSOR_PROVIDER]: { captured: ["2026.1.0"] },
 };
 
 export type ProviderWarningCode =

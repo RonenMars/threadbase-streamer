@@ -48,7 +48,11 @@ vi.mock("../src/logger", async (importOriginal) => {
 
 const API_KEY = "tb_test_key_for_client_log_bounds";
 const AUTH = { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" };
-const HOST_ISOLATION = { codexRoots: [] as string[], scannerPersistent: false };
+const HOST_ISOLATION = {
+  codexRoots: [] as string[],
+  cursorRoots: [] as string[],
+  scannerPersistent: false,
+};
 
 describe("POST /api/__client-log bounds", () => {
   let server: StreamerServer;

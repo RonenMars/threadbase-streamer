@@ -1,0 +1,4 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Monday, Jun 18, 2026, 5:22 PM (UTC+0)</timestamp>\n<user_query>\nHow do I reverse a list in Python?\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Use list.reverse() in place, or reversed(lst) for an iterator."}]}}
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Monday, Jun 18, 2026, 5:22 PM (UTC+0)</timestamp>\n<user_query>\nAnd to sort it?\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Call lst.sort() to sort in place, or sorted(lst) to get a new list."}]}}

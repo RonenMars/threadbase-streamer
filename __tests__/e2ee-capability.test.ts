@@ -23,7 +23,11 @@ const AUTH = { Authorization: `Bearer ${API_KEY}` };
 
 // Same host isolation the other HTTP tests use: keep the scanner off the
 // developer's real ~/.codex and off the shared persistent index.
-const HOST_ISOLATION = { codexRoots: [] as string[], scannerPersistent: false };
+const HOST_ISOLATION = {
+  codexRoots: [] as string[],
+  cursorRoots: [] as string[],
+  scannerPersistent: false,
+};
 
 describe("describeE2eeCapability", () => {
   it("reports the version and never claims to require encryption", () => {

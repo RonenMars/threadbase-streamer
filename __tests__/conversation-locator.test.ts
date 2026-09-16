@@ -29,7 +29,13 @@ function makeHandlers(opts: {
   return new ConversationHandlers({
     scannerManager: {
       projectsDirs: () => (opts.projectsDir ? [opts.projectsDir] : []),
-      current: { getMetadataCache: () => metadata },
+      current: {
+        getMetadataCache: () => metadata,
+        getConversationsBySessionId: (sessionId: string) => {
+          const hit = metadata.get(sessionId);
+          return hit ? [hit] : [];
+        },
+      },
     },
     cache: () => (opts.cachedPath ? { getMetaById: () => ({ filePath: opts.cachedPath }) } : null),
     findLiveSessionFilePath: () => opts.livePath ?? null,

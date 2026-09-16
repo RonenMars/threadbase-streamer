@@ -5,7 +5,7 @@ import { locateProviderExe } from "./platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
-  CURSOR_CLI_PROVIDER,
+  CURSOR_PROVIDER,
   commandNameForProvider,
   type ProviderName,
 } from "./providers";
@@ -32,7 +32,7 @@ export class LiveSessionManager {
     this.runners = new Map<ProviderName, SessionRunner>([
       [CLAUDE_CODE_PROVIDER, new PTYManager(options)],
       [CODEX_CLI_PROVIDER, new CodexPtyRunner(options)],
-      [CURSOR_CLI_PROVIDER, new CursorPtyRunner(options)],
+      [CURSOR_PROVIDER, new CursorPtyRunner(options)],
     ]);
   }
 

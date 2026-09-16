@@ -649,6 +649,7 @@ export interface ServerConfig {
     emoji: string;
   }>;
   codexRoots?: string[]; // paths to codex sessions dirs; empty array disables codex scanning
+  cursorRoots?: string[]; // paths to Cursor project dirs; empty array disables cursor scanning
   // false forces every ConversationScanner to run in-memory (persistent: false)
   // instead of the scanner package's shared default SQLite index at
   // ~/.config/threadbase-scanner/index.db. That index isn't scoped by

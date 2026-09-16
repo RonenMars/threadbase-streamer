@@ -2,7 +2,7 @@ import { execFileSync } from "child_process";
 import { accessSync, constants, existsSync, statSync } from "fs";
 import { homedir, platform } from "os";
 import { delimiter, join } from "path";
-import { CODEX_CLI_PROVIDER, CURSOR_CLI_PROVIDER, type ProviderName } from "./providers";
+import { CODEX_CLI_PROVIDER, CURSOR_PROVIDER, type ProviderName } from "./providers";
 
 export const isWindows = platform() === "win32";
 
@@ -324,7 +324,7 @@ export function locateProviderExe(provider: ProviderName): string | null {
   const resolved =
     provider === CODEX_CLI_PROVIDER
       ? resolveCodexExe()
-      : provider === CURSOR_CLI_PROVIDER
+      : provider === CURSOR_PROVIDER
         ? resolveCursorExe()
         : resolveClaudeExe();
   const found = locateExecutable(resolved);
@@ -333,7 +333,7 @@ export function locateProviderExe(provider: ProviderName): string | null {
     // been uninstalled would otherwise keep answering "missing" until the next
     // restart — including after the user reinstalls to fix exactly this.
     if (provider === CODEX_CLI_PROVIDER) clearCodexExeCache();
-    else if (provider === CURSOR_CLI_PROVIDER) clearCursorExeCache();
+    else if (provider === CURSOR_PROVIDER) clearCursorExeCache();
     else clearClaudeExeCache();
   }
   return found;

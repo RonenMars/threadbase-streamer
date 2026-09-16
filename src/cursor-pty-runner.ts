@@ -3,7 +3,7 @@ import { existsSync } from "fs";
 import { basename } from "path";
 import { getLogger, type Logger } from "./logger";
 import { clearCursorExeCache, resolveCursorExe } from "./platform";
-import { CURSOR_CLI_PROVIDER } from "./providers";
+import { CURSOR_PROVIDER } from "./providers";
 import {
   createScreen,
   type InternalSession,
@@ -124,7 +124,7 @@ export class CursorPtyRunner implements SessionRunner {
 
     const session: InternalSession = {
       id: sessionId,
-      provider: CURSOR_CLI_PROVIDER,
+      provider: CURSOR_PROVIDER,
       projectPath: options.projectPath,
       projectName,
       branch: options.branch ?? "",
@@ -507,7 +507,7 @@ export class CursorPtyRunner implements SessionRunner {
 function toPublicSession(s: InternalSession): ManagedSession {
   return {
     id: s.id,
-    provider: s.provider ?? CURSOR_CLI_PROVIDER,
+    provider: s.provider ?? CURSOR_PROVIDER,
     projectPath: s.projectPath,
     projectName: s.projectName,
     branch: s.branch,

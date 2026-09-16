@@ -49,7 +49,7 @@ describe("versioned provider fixtures", () => {
   const providers = readdirSync(ROOT).filter((d) => statSync(join(ROOT, d)).isDirectory());
 
   it("has at least one versioned fixture per supported provider", () => {
-    expect(providers.sort()).toEqual(["claude-code", "codex-cli", "cursor-cli"]);
+    expect(providers.sort()).toEqual(["claude-code", "codex-cli", "cursor"]);
     for (const p of providers) expect(versionDirs(p).length).toBeGreaterThan(0);
   });
 
@@ -138,9 +138,9 @@ describe("versioned provider fixtures", () => {
     });
   });
 
-  describe("cursor-cli 2026.1.0", () => {
+  describe("cursor 2026.1.0", () => {
     const VERSION = "2026.1.0";
-    const lines = readLines("cursor-cli", VERSION, "conversation.jsonl");
+    const lines = readLines("cursor", VERSION, "conversation.jsonl");
 
     it("produces zero unknown events through the adapter", () => {
       const unknown = lines
@@ -156,7 +156,7 @@ describe("versioned provider fixtures", () => {
 
     it("exercises every role its manifest claims", () => {
       const seen = new Set(lines.map((l) => JSON.parse(l).role));
-      for (const t of readManifest("cursor-cli", VERSION).envelopeTypes) {
+      for (const t of readManifest("cursor", VERSION).envelopeTypes) {
         expect(seen).toContain(t);
       }
     });
