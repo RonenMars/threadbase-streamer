@@ -27,4 +27,9 @@ describe("POSIX deploy script", () => {
     expect(copy).toBeGreaterThan(-1);
     expect(remove).toBeLessThan(copy);
   });
+
+  it("sets launchd NumberOfFiles to 65536 and heals the previous 16384 cap", () => {
+    expect(deployScript).toMatch(/<key>NumberOfFiles<\/key>\s*<integer>65536<\/integer>/);
+    expect(deployScript).toContain("plist SoftResourceLimits is still 16384 — rewriting to 65536");
+  });
 });

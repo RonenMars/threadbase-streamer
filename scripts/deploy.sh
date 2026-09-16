@@ -459,7 +459,7 @@ write_plist() {
   <key>SoftResourceLimits</key>
   <dict>
     <key>NumberOfFiles</key>
-    <integer>16384</integer>
+    <integer>65536</integer>
   </dict>
   <key>StandardOutPath</key>
   <string>$logs_dir/stdout.log</string>
@@ -526,6 +526,9 @@ ensure_plist_healthy() {
   # conversation transcript the watcher holds.
   if ! grep -q "SoftResourceLimits" "$plist_path"; then
     warn "plist is missing SoftResourceLimits — the server can hit EMFILE once the conversation corpus grows"
+    needs_rewrite="true"
+  elif grep -A8 '<key>SoftResourceLimits</key>' "$plist_path" | grep -q '<integer>16384</integer>'; then
+    warn "plist SoftResourceLimits is still 16384 — rewriting to 65536"
     needs_rewrite="true"
   fi
 
