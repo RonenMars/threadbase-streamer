@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "../app";
+import { HEADER_CTX, HEADER_ENVELOPE, HEADER_MARKER, HEADER_SEQ } from "./e2ee-envelope.middleware";
 
 // Local dev origins allowed when browser CORS is enabled.
 const DEFAULT_DEV_ORIGINS = [
@@ -50,11 +51,31 @@ export const corsMiddleware = (configValue?: string): MiddlewareHandler<AppEnv> 
       const headers: Record<string, string> = {
         "Access-Control-Allow-Origin": allowedOrigin,
         Vary: "Origin",
-        "Access-Control-Allow-Methods": "GET, POST, PATCH, QUERY, OPTIONS",
+        // tb-mobile's api-client issues PUT and DELETE too, sealed or not.
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, QUERY, OPTIONS",
         // X-Client-Id rides on every tb-mobile REST call; without it here a
         // browser cancels the request after the preflight ("Failed to fetch").
-        "Access-Control-Allow-Headers": "Authorization, Content-Type, If-None-Match, X-Client-Id",
-        "Access-Control-Expose-Headers": "ETag, Accept-Query",
+        // The four envelope headers are what a sealed request sends instead of
+        // Authorization — named from the envelope middleware, not retyped.
+        "Access-Control-Allow-Headers": [
+          "Authorization",
+          "Content-Type",
+          "If-None-Match",
+          "X-Client-Id",
+          HEADER_MARKER,
+          HEADER_CTX,
+          HEADER_SEQ,
+          HEADER_ENVELOPE,
+        ].join(", "),
+        // A sealed response is recognised by its marker, and a bodiless one
+        // (204/304) carries its record in X-TB-Env: a browser hides both
+        // unless they are exposed, and the client then refuses the response.
+        "Access-Control-Expose-Headers": [
+          "ETag",
+          "Accept-Query",
+          HEADER_MARKER,
+          HEADER_ENVELOPE,
+        ].join(", "),
       };
       // Set on the raw ServerResponse too: many handlers write directly to
       // c.env.outgoing and return the ALREADY_HANDLED sentinel, so Hono never

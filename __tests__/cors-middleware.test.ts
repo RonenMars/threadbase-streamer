@@ -153,6 +153,36 @@ describe("browser clients (Expo web)", () => {
     expect(allowed).toContain("x-client-id");
   });
 
+  // A sealed REST request sends the envelope headers instead of Authorization,
+  // and the client refuses a response whose marker or bodiless record it cannot
+  // read. Literal names: they are the wire contract tb-mobile sends.
+  it("allows the sealed REST headers and methods, and exposes the sealed response headers", async () => {
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "QUERY"]) {
+      const res = await fetch(`http://localhost:${server.port}/api/conversations`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: ORIGIN,
+          "Access-Control-Request-Method": method,
+          "Access-Control-Request-Headers":
+            "content-type,if-none-match,x-client-id,x-tb-ctx,x-tb-e2ee,x-tb-env,x-tb-seq",
+        },
+      });
+      expect(res.status).toBe(204);
+      const methods = (res.headers.get("access-control-allow-methods") ?? "").split(/,\s*/);
+      expect(methods).toContain(method);
+      const allowed = (res.headers.get("access-control-allow-headers") ?? "")
+        .toLowerCase()
+        .split(/,\s*/);
+      for (const h of ["x-tb-e2ee", "x-tb-ctx", "x-tb-seq", "x-tb-env", "x-client-id"]) {
+        expect(allowed).toContain(h);
+      }
+      const exposed = (res.headers.get("access-control-expose-headers") ?? "")
+        .toLowerCase()
+        .split(/,\s*/);
+      expect(exposed).toEqual(expect.arrayContaining(["x-tb-e2ee", "x-tb-env", "etag"]));
+    }
+  });
+
   // Browsers always send Origin on a WebSocket upgrade. @hono/node-ws runs the
   // upgrade through the app with no Node response object, so the CORS branch for
   // an allowed origin must not assume one exists.

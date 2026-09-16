@@ -4,8 +4,11 @@ import { parseCapabilities } from "../../db/repositories/devices.repository";
 import {
   authenticateContext,
   contextRegistry,
+  E2EE_WS_SUBPROTOCOL,
+  parseSubprotocols,
   refuseUnsealedIfPinned,
   TICKET_HEADER,
+  TICKET_SUBPROTOCOL_PREFIX,
 } from "../../e2ee/context";
 import { E2EE_DEVICE_REVOKED } from "../../e2ee/protocol";
 import { getLogger } from "../../logger";
@@ -116,7 +119,37 @@ export const authMiddleware =
       method === "GET" &&
       path === WS_PATH &&
       c.req.header("upgrade")?.toLowerCase() === "websocket";
-    const ticket = isWsUpgrade ? c.req.header(TICKET_HEADER) : undefined;
+    //
+    // A browser presents the same ticket as a `tb-ticket.<ticket>` subprotocol
+    // offer (see `E2EE_WS_SUBPROTOCOL`). Everything above holds for it
+    // unchanged: the parse below is synchronous, and the consume is the same
+    // call. Offering `threadbase-e2ee-v1` at all declares a sealed attempt, so
+    // an offer with no ticket is refused rather than served as legacy — that is
+    // also what makes the static protocol selection in `mountWebSocket` honest:
+    // the protocol can only be selected on an upgrade a ticket authenticated.
+    const offered = isWsUpgrade ? parseSubprotocols(c.req.header("sec-websocket-protocol")) : [];
+    if (offered === null) return c.json({ error: "Bad Request" }, 400);
+    const presentedTickets = offered
+      .filter((p) => p.startsWith(TICKET_SUBPROTOCOL_PREFIX))
+      .map((p) => p.slice(TICKET_SUBPROTOCOL_PREFIX.length));
+    const headerTicket = isWsUpgrade ? c.req.header(TICKET_HEADER) : undefined;
+    if (headerTicket !== undefined) presentedTickets.push(headerTicket);
+    if (presentedTickets.length > 1) {
+      // Two tickets — header plus subprotocol, or two offers — is refused, not
+      // resolved by preferring one: the same rule as a ticket beside a
+      // credential naming another device, since "which one authenticates"
+      // should never be a precedence a client can be unsure of. Every presented
+      // ticket is still spent, and a context this orphans is destroyed, exactly
+      // as the capability refusal below does: only a caller holding a ticket
+      // can resolve one, so the destroy is never someone else's to trigger.
+      const registry = contextRegistry();
+      for (const presented of presentedTickets) {
+        const spent = registry.consumeTicket(presented);
+        if (spent) registry.destroy(spent);
+      }
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    const ticket = presentedTickets[0] ?? (offered.includes(E2EE_WS_SUBPROTOCOL) ? "" : undefined);
     if (ticket !== undefined) {
       const registry = contextRegistry();
       const ctxId = registry.consumeTicket(ticket);

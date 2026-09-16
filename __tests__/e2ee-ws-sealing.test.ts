@@ -309,6 +309,8 @@ async function openContext(device: Device): Promise<OpenedContext> {
  */
 interface Client {
   ws: WsClient;
+  /** The 101's raw header lines, exactly as the server wrote them. */
+  upgradeHeaders: string[];
   frames: Buffer[];
   closes: Array<{ code: number; reason: string }>;
   /** Resolves once the server has sent `n` frames. */
@@ -316,8 +318,12 @@ interface Client {
   closed(ms?: number): Promise<{ code: number; reason: string }>;
 }
 
-function connect(headers: Record<string, string>, query = ""): Promise<Client> {
-  const ws = new WsClient(wsUrl + query, { headers });
+function connect(
+  headers: Record<string, string>,
+  query = "",
+  protocols?: string[],
+): Promise<Client> {
+  const ws = new WsClient(wsUrl + query, protocols, { headers });
   open.push(ws);
   const frames: Buffer[] = [];
   const closes: Array<{ code: number; reason: string }> = [];
@@ -329,6 +335,7 @@ function connect(headers: Record<string, string>, query = ""): Promise<Client> {
   });
   const client: Client = {
     ws,
+    upgradeHeaders: [],
     frames,
     closes,
     until: (n, ms = 2000) => poll(() => frames.length >= n, ms, `${n} frames`),
@@ -337,6 +344,9 @@ function connect(headers: Record<string, string>, query = ""): Promise<Client> {
       return closes[0];
     },
   };
+  ws.once("upgrade", (res) => {
+    client.upgradeHeaders = res.rawHeaders;
+  });
   return new Promise((resolve, reject) => {
     ws.once("open", () => resolve(client));
     ws.once("error", reject);
@@ -344,8 +354,12 @@ function connect(headers: Record<string, string>, query = ""): Promise<Client> {
 }
 
 /** The upgrade's HTTP status, for a connection that is meant to be refused. */
-function refusedStatus(headers: Record<string, string>, query = ""): Promise<number> {
-  const ws = new WsClient(wsUrl + query, { headers });
+function refusedStatus(
+  headers: Record<string, string>,
+  query = "",
+  protocols?: string[],
+): Promise<number> {
+  const ws = new WsClient(wsUrl + query, protocols, { headers });
   open.push(ws);
   return new Promise((resolve, reject) => {
     ws.once("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
@@ -536,6 +550,7 @@ describe("what a capture of a real socket shows", () => {
     expect(wire).toContain("terminal_output");
     expect(wire).toContain("drwxr-xr-x");
     expect(hub.sealedCount).toBe(0);
+    expect(httpLines.some((l) => l.includes("e2ee.upgrade"))).toBe(false);
   });
 });
 
@@ -707,12 +722,180 @@ describe("(b) the ticket is single-use", () => {
     // "the ticket is absent" is a statement about the line rather than about an
     // empty array.
     expect(http.some((l) => l.includes("/ws"))).toBe(true);
+    expect(httpLines.some((l) => l.includes("[e2ee.upgrade] encrypted websocket"))).toBe(true);
     for (const line of httpLines) {
       expect(line.includes(ctx.ticket)).toBe(false);
       // And no long-term credential either: a ticketed upgrade sends none, so
       // there is nothing for a log to leak in the first place (§13).
       expect(line.includes(device.deviceToken)).toBe(false);
     }
+  });
+});
+
+// ─── browsers present the ticket as a subprotocol ───────────────────
+//
+// A browser `WebSocket` cannot set `X-TB-Ticket`, but it can offer
+// subprotocols. The wire contract is pinned here as LITERALS, not imported
+// constants: tb-mobile's web build is coded against these exact strings, and a
+// test derived from the constant would move with a rename and never fail.
+
+const E2EE_PROTOCOL = "threadbase-e2ee-v1";
+const ticketProtocol = (ticket: string) => `tb-ticket.${ticket}`;
+
+describe("a browser presents its ticket as a subprotocol", () => {
+  it("upgrades, selects threadbase-e2ee-v1, and never echoes or logs the ticket", async () => {
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    const client = await connect({}, "", [E2EE_PROTOCOL, ticketProtocol(ctx.ticket)]);
+    await client.until(2);
+
+    expect(client.ws.protocol).toBe(E2EE_PROTOCOL);
+    expect(hub.sealedCount).toBe(1);
+    expect(drain(client, ctx).map((m) => m.type)).toEqual(["session_list", "cache_ready"]);
+    expect(registry.ticketCount).toBe(0);
+    // Positive control: the 101 was captured, so its absence below means something.
+    expect(client.upgradeHeaders.join("\n").toLowerCase()).toContain("sec-websocket-protocol");
+    expect(client.upgradeHeaders.join("\n")).not.toContain(ctx.ticket);
+    expect(httpLines.some((l) => l.includes("http.request") && l.includes("/ws"))).toBe(true);
+    expect(httpLines.some((l) => l.includes("e2ee.upgrade"))).toBe(true);
+    for (const line of httpLines) expect(line.includes(ctx.ticket)).toBe(false);
+  });
+
+  it("selects threadbase-e2ee-v1 even when the ticket is offered first", async () => {
+    // `ws` defaults to the FIRST offered protocol, which here would put the
+    // ticket in the 101. Selection must not depend on offer order.
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    const client = await connect({}, "", [ticketProtocol(ctx.ticket), E2EE_PROTOCOL]);
+
+    expect(client.ws.protocol).toBe(E2EE_PROTOCOL);
+    expect(client.upgradeHeaders.join("\n")).not.toContain(ctx.ticket);
+  });
+
+  it("refuses a second use of the same subprotocol ticket", async () => {
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    const protocols = [E2EE_PROTOCOL, ticketProtocol(ctx.ticket)];
+    await connect({}, "", protocols);
+
+    await expect(refusedStatus({}, "", protocols)).resolves.toBe(401);
+    expect(hub.sealedCount).toBe(1);
+  });
+
+  it("refuses an expired subprotocol ticket", async () => {
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    // `?key=` rides along so an expired ticket that fell through would open a
+    // plaintext socket instead of answering 401.
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + 30_000);
+    try {
+      await expect(
+        refusedStatus({}, `?key=${API_KEY}`, [E2EE_PROTOCOL, ticketProtocol(ctx.ticket)]),
+      ).resolves.toBe(401);
+    } finally {
+      vi.mocked(Date.now).mockRestore();
+    }
+    expect(hub.sealedCount).toBe(0);
+  });
+
+  it("never falls through to the shared key when the subprotocol ticket does not resolve", async () => {
+    // Positive control: this `?key=` alone DOES open a plaintext socket, so the
+    // 401s below are the ticket path refusing, not the key being wrong.
+    await connect({}, `?key=${API_KEY}`);
+    const bogus = randomBytes(16).toString("base64url");
+
+    await expect(
+      refusedStatus({}, `?key=${API_KEY}`, [E2EE_PROTOCOL, ticketProtocol(bogus)]),
+    ).resolves.toBe(401);
+    await expect(
+      refusedStatus({ authorization: `Bearer ${API_KEY}` }, "", [
+        E2EE_PROTOCOL,
+        ticketProtocol(bogus),
+      ]),
+    ).resolves.toBe(401);
+    // Offering the sealed protocol with no ticket at all is a sealed attempt too.
+    await expect(refusedStatus({}, `?key=${API_KEY}`, [E2EE_PROTOCOL])).resolves.toBe(401);
+    expect(hub.sealedCount).toBe(0);
+  });
+
+  it("refuses a ticket in BOTH the header and a subprotocol, and spends both", async () => {
+    const device = pairDevice();
+    const a = await openContext(device);
+    const b = await openContext(device);
+
+    await expect(
+      refusedStatus({ [TICKET_HEADER]: a.ticket }, "", [E2EE_PROTOCOL, ticketProtocol(b.ticket)]),
+    ).resolves.toBe(401);
+    expect(hub.sealedCount).toBe(0);
+    expect(registry.ticketCount).toBe(0);
+    expect(registry.get(a.ctxId)).toBeNull();
+    expect(registry.get(b.ctxId)).toBeNull();
+  });
+
+  it("answers a malformed offer 400 without spending the ticket", async () => {
+    // `ws` refuses a duplicated offer only AFTER the app answered; checked
+    // first, the ticket would be spent on an upgrade that can never open.
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(wsUrl.replace(/^ws/, "http"), {
+        headers: {
+          connection: "Upgrade",
+          upgrade: "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": randomBytes(16).toString("base64"),
+          "sec-websocket-protocol": `${E2EE_PROTOCOL}, ${ticketProtocol(ctx.ticket)}, ${E2EE_PROTOCOL}`,
+        },
+      });
+      req.on("response", (res) => resolve(res.statusCode ?? 0));
+      req.on("upgrade", () => reject(new Error("upgraded")));
+      req.on("error", reject);
+      req.end();
+    });
+
+    expect(status).toBe(400);
+    expect(registry.ticketCount).toBe(1);
+    const client = await connect({}, "", [E2EE_PROTOCOL, ticketProtocol(ctx.ticket)]);
+    expect(client.ws.protocol).toBe(E2EE_PROTOCOL);
+  });
+
+  it("answers a ticket offer without threadbase-e2ee-v1 400, and the ticket still upgrades after", async () => {
+    // No protocol could be selected for this offer, so a browser would drop the
+    // socket: spending the ticket on it would orphan the context.
+    const device = pairDevice();
+    const ctx = await openContext(device);
+
+    await expect(refusedStatus({}, "", [ticketProtocol(ctx.ticket)])).resolves.toBe(400);
+    expect(registry.ticketCount).toBe(1);
+
+    const client = await connect({}, "", [E2EE_PROTOCOL, ticketProtocol(ctx.ticket)]);
+    await client.until(2);
+    expect(client.ws.protocol).toBe(E2EE_PROTOCOL);
+    expect(drain(client, ctx).map((m) => m.type)).toEqual(["session_list", "cache_ready"]);
+  });
+
+  it("leaves the header path unchanged: no subprotocol offered, none selected", async () => {
+    const device = pairDevice();
+    const ctx = await openContext(device);
+    const client = await connect({ [TICKET_HEADER]: ctx.ticket });
+    await client.until(2);
+
+    expect(client.ws.protocol).toBe("");
+    expect(drain(client, ctx).map((m) => m.type)).toEqual(["session_list", "cache_ready"]);
+  });
+
+  it("selects no subprotocol for a legacy client offering some other one", async () => {
+    // A browser fails a socket whose server selects none of its offers, which
+    // is the right answer for a protocol this server does not speak.
+    await expect(
+      new Promise<string>((resolve) => {
+        const ws = new WsClient(`${wsUrl}?key=${API_KEY}`, ["something-else"]);
+        open.push(ws);
+        ws.once("open", () => resolve("open"));
+        ws.once("error", (err) => resolve(err.message));
+      }),
+    ).resolves.toBe("Server sent no subprotocol");
   });
 });
 

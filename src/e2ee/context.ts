@@ -52,7 +52,8 @@ import { RestReceiveWindow } from "./rest-window";
  * **A header, never a query parameter** (§10). `?ticket=` lands in every ingress
  * access log — Cloudflare logs full request URLs — and single-use plus thirty
  * seconds bounds that damage without removing it. React Native's `WebSocket`
- * takes custom headers, so the ticket never needs to touch a URL at all. The
+ * takes custom headers, so the ticket never needs to touch a URL at all; a
+ * browser, which cannot, uses `Sec-WebSocket-Protocol` instead (below). The
  * property that buys is stronger than redaction: there is nothing to redact,
  * because `http.request` logs a method, a path and a summarised query, never a
  * header.
@@ -62,6 +63,42 @@ import { RestReceiveWindow } from "./rest-window";
  * module is not something the auth middleware should have to import.
  */
 export const TICKET_HEADER = "x-tb-ticket";
+
+/**
+ * The browser spelling of the same ticket: a `Sec-WebSocket-Protocol` offer.
+ *
+ * A browser `WebSocket` cannot set `X-TB-Ticket`, but `new WebSocket(url,
+ * protocols)` sets `Sec-WebSocket-Protocol`, which is still a header — so "never
+ * a query parameter" holds for browsers too. The client offers exactly
+ * `threadbase-e2ee-v1, tb-ticket.<ticket>`; the server consumes the ticket with
+ * the header path's semantics and selects ONLY `E2EE_WS_SUBPROTOCOL` in the 101
+ * (`mountWebSocket` pins that), because `ws` would otherwise echo the first
+ * offer and a browser that offered protocols fails a 101 that selects none.
+ * A ticket (22 base64url characters) is a valid RFC 6455 token as it stands.
+ */
+export const E2EE_WS_SUBPROTOCOL = "threadbase-e2ee-v1";
+export const TICKET_SUBPROTOCOL_PREFIX = "tb-ticket.";
+
+const SUBPROTOCOL_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * `Sec-WebSocket-Protocol` as a list, or `null` where no socket can follow: an
+ * offer `ws` would refuse (a non-token or a duplicate), or a `tb-ticket.` offer
+ * without `E2EE_WS_SUBPROTOCOL`, for which the 101 selects nothing and a browser
+ * drops the socket. Checked BEFORE a ticket is consumed: `ws` parses the header
+ * only after the app has answered, so either offer would otherwise spend a
+ * ticket, promote its context, and open no socket.
+ */
+export function parseSubprotocols(header: string | undefined): string[] | null {
+  if (header === undefined) return [];
+  const offered = header.split(",").map((p) => p.trim());
+  const valid =
+    offered.every((p) => SUBPROTOCOL_TOKEN.test(p)) &&
+    new Set(offered).size === offered.length &&
+    (offered.includes(E2EE_WS_SUBPROTOCOL) ||
+      !offered.some((p) => p.startsWith(TICKET_SUBPROTOCOL_PREFIX)));
+  return valid ? offered : null;
+}
 
 /** §8: a provisional context, and its ticket, die at 30 s. */
 export const TICKET_TTL_MS = 30_000;

@@ -54,11 +54,11 @@ const log = getLogger("e2ee");
 const ALREADY_HANDLED = 597;
 
 /** Pure marker: its presence says "this request is sealed", nothing more. */
-const HEADER_MARKER = "x-tb-e2ee";
+export const HEADER_MARKER = "x-tb-e2ee";
 /** The `ctxId`, base64url unpadded — 16 bytes is exactly 22 characters. */
-const HEADER_CTX = "x-tb-ctx";
+export const HEADER_CTX = "x-tb-ctx";
 /** The request counter, decimal. Read early (§9 needs it), acted on late (§5). */
-const HEADER_SEQ = "x-tb-seq";
+export const HEADER_SEQ = "x-tb-seq";
 /**
  * A sealed record whose HTTP framing cannot carry a body, base64url.
  *
@@ -66,7 +66,7 @@ const HEADER_SEQ = "x-tb-seq";
  * drops a `GET` body) and the one bodiless response (`304`) put the record
  * here; everything whose framing allows a body puts it in the body.
  */
-const HEADER_ENVELOPE = "x-tb-env";
+export const HEADER_ENVELOPE = "x-tb-env";
 
 /** 16 raw bytes, base64url unpadded. Checked as a shape, never decoded. */
 const CTX_ID_PATTERN = new RegExp(`^[A-Za-z0-9_-]{${Math.ceil((CTX_ID_BYTES * 4) / 3)}}$`);
