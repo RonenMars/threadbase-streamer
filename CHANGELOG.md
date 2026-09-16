@@ -1,3 +1,9 @@
+## [1.93.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.92.1...v1.93.0) (2026-09-16)
+
+### Features
+
+* **conversations:** index cursor history and filter by import origin ([#912](https://github.com/RonenMars/threadbase-streamer/issues/912)) ([2fe5f69](https://github.com/RonenMars/threadbase-streamer/commit/2fe5f69ed7c953be5fea3a9d889195627fef113d))
+
 ## [1.92.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.92.0...v1.92.1) (2026-09-16)
 
 ### Bug Fixes
