@@ -1383,7 +1383,7 @@ Nothing asked the OS for room to do that. **Node does not raise `RLIMIT_NOFILE` 
 
 A development machine usually will not show this: a launchd domain that inherited an unlimited soft limit passes it down, leaving the effective ceiling at `kern.maxfilesperproc` (122880 here). That is inheritance, not anything the deploy asked for, which is why the failure only appears on other people's machines.
 
-**Fix (shipped).** Both service definitions now set the limit explicitly: `SoftResourceLimits`/`NumberOfFiles` in the launchd plist (`scripts/deploy.sh`) and `LimitNOFILE=` in the systemd unit (`scripts/deploy-linux.sh`), both at **16384** — about 7× the measured steady state, which covers several years of growth at the observed ~41 conversations/day while staying far under the per-process ceiling. `ensure_plist_healthy()` rewrites and re-bootstraps any existing plist that predates the key, so installs from before this change pick it up on the next deploy.
+**Fix (shipped).** Both service definitions now set the limit explicitly: `SoftResourceLimits`/`NumberOfFiles` in the launchd plist (`scripts/deploy.sh`) at **65536**, and `LimitNOFILE=` in the systemd unit (`scripts/deploy-linux.sh`) at **16384**. `ensure_plist_healthy()` rewrites and re-bootstraps any existing plist that predates the key or still carries the old 16384 cap, so installs from before this change pick it up on the next deploy.
 
 Not "unlimited": a real number is what makes a runaway show up as a failure instead of as swap pressure.
 
