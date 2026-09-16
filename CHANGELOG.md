@@ -1,3 +1,9 @@
+## [1.92.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.92.0...v1.92.1) (2026-09-16)
+
+### Bug Fixes
+
+* **push:** report expo notification capability from the notifier wiring ([#911](https://github.com/RonenMars/threadbase-streamer/issues/911)) ([0d7a3cd](https://github.com/RonenMars/threadbase-streamer/commit/0d7a3cd664e208ac0bab27d2405c8b483e86b73d))
+
 ## [1.92.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.91.3...v1.92.0) (2026-09-16)
 
 ### Features
