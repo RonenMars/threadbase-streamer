@@ -1,3 +1,9 @@
+## [1.92.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.91.3...v1.92.0) (2026-09-16)
+
+### Features
+
+* **e2ee:** accept the websocket ticket as a subprotocol for browser clients ([#910](https://github.com/RonenMars/threadbase-streamer/issues/910)) ([fb56f45](https://github.com/RonenMars/threadbase-streamer/commit/fb56f45b5bcc2d1098f292598f3000702d61962f))
+
 ## [1.91.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.91.2...v1.91.3) (2026-09-13)
 
 ### Bug Fixes
