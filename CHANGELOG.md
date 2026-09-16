@@ -1,3 +1,9 @@
+## [1.93.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.93.0...v1.93.1) (2026-09-16)
+
+### Bug Fixes
+
+* **conversations:** watch only cursor agent-transcripts folders ([#915](https://github.com/RonenMars/threadbase-streamer/issues/915)) ([8e06857](https://github.com/RonenMars/threadbase-streamer/commit/8e068571e7d9f2ea2a5623f25c26c1831dd1ce26))
+
 ## [1.93.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.92.1...v1.93.0) (2026-09-16)
 
 ### Features
