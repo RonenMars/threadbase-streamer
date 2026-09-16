@@ -54,6 +54,7 @@ import {
   validateFlagValues,
 } from "./claude-flags";
 import { ConversationCache } from "./conversation-cache";
+import { listCursorTranscriptWatchDirs } from "./cursor-transcript-watch";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
 import { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import { ConversationsRepository } from "./db/repositories/conversations.repository";
@@ -1714,12 +1715,11 @@ export class StreamerServer {
             this.fileWatcher.watchDirectory(dir);
           }
           // Cursor agent-transcripts (opt-in cursorRoots, default
-          // ~/.cursor/projects). Same reason as Codex: an externally-written
-          // JSONL must flip the scanner-stale flag. This is directory discovery,
-          // not a live-PTY transcript bind — Cursor PTY still has no JSONL watcher.
-          for (const dir of this.cursorRoots) {
-            if (!existsSync(dir)) continue;
-            this.fileWatcher.watchDirectory(dir);
+          // ~/.cursor/projects/<slug>/agent-transcripts). Watch only those
+          // folders — chokidar on the projects root also sees canvases and
+          // node_modules and will EMFILE a machine with many Cursor worktrees.
+          for (const transcripts of listCursorTranscriptWatchDirs(this.cursorRoots)) {
+            this.fileWatcher.watchDirectory(transcripts);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
