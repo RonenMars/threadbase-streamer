@@ -732,6 +732,7 @@ export class StreamerServer {
       sessionFileMap: this.sessionFileMap,
       scannerManager: this.scannerManager,
       codexRoots: this.codexRoots,
+      cursorRoots: this.cursorRoots,
       // Thunks, not values: these are opened during listen() and rebound by
       // the integrity monitor's reset-and-rescan.
       cache: () => this.cache,

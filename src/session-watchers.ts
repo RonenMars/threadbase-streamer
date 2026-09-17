@@ -3,6 +3,7 @@ import { existsSync, watch as fsWatch, readdirSync, readFileSync, statSync } fro
 import { homedir } from "os";
 import { basename, join } from "path";
 import type { ConversationCache } from "./conversation-cache";
+import { cursorAgentTranscriptsDir } from "./cursor-transcript-watch";
 import type { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "./db/repositories/conversations.repository";
 import type { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
@@ -10,7 +11,7 @@ import type { ProjectsRepository } from "./db/repositories/projects.repository";
 import type { SessionsRepository } from "./db/repositories/sessions.repository";
 import type { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
-import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, CURSOR_PROVIDER } from "./providers";
 import type { ScannerManager } from "./scanner-manager";
 import type { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import type { SessionStore } from "./session-store";
@@ -47,6 +48,8 @@ export type SessionWatchersDeps = {
   sessionFileMap: Map<string, string>;
   scannerManager: ScannerManager;
   codexRoots: string[];
+  /** Cursor project roots (`~/.cursor/projects`); empty disables Cursor binding. */
+  cursorRoots: string[];
   cache: () => ConversationCache | null;
   projectsRepo: () => ProjectsRepository | null;
   conversationsRepo: () => ConversationsRepository | null;
@@ -60,8 +63,9 @@ export type SessionWatchersDeps = {
 
 /**
  * Binds a live session to the transcript file its provider writes: finds the
- * JSONL (Claude) or rollout (Codex), starts the tail watcher, replays whatever
- * was written before the watcher attached, and links the session to its project.
+ * JSONL (Claude), rollout (Codex), or agent-transcripts run (Cursor), starts
+ * the tail watcher, replays whatever was written before the watcher attached,
+ * and links the session to its project.
  *
  * Extracted from StreamerServer so watcher work stops editing the server file
  * (see docs/plans/2026-07-12-server-ts-split.md, PR 5).
@@ -492,6 +496,182 @@ export class SessionWatchers {
     tryWire();
     if (!intervalHandle && Date.now() <= deadline) {
       // Only keep polling if tryWire() didn't already find + cleanup() the match.
+      const alreadyBound =
+        this.deps.sessionStore.getManaged(sessionId)?.boundConversationId != null;
+      if (!alreadyBound) {
+        intervalHandle = setInterval(tryWire, 250);
+      }
+    }
+  }
+
+  // Cursor-equivalent of watchForCodexRollout(). Cursor mints its own run id
+  // under `~/.cursor/projects/<slug>/agent-transcripts/<runId>/<runId>.jsonl`
+  // and never writes our placeholder into the file (no `sessionId` field).
+  // Without this bind, mobile keeps deep-linking to the placeholder while REST
+  // history is indexed only under the run id — GET /api/conversations/:id 404s
+  // after the empty-unused window closes. Same two-id shape as Codex:
+  // `id`/`conversationId` stay the placeholder; `boundConversationId` is the
+  // run id resume and history use.
+  watchForCursorTranscript(sessionId: string, projectPath: string): void {
+    if (this.deps.cursorRoots.length === 0) return;
+
+    let deadline = Date.now() + TRANSCRIPT_WATCH_DEADLINE_MS;
+    let seenPrompts = 0;
+    const sessionStartedAtMs =
+      (this.deps.sessionStore.getManaged(sessionId)?.startedAt?.getTime() ?? Date.now()) - 5_000;
+    // Threadbase uploads for this PTY land under `.threadbase-uploads/<sessionId>/`
+    // and Cursor's first user turn often @-mentions those paths — a strong signal
+    // when several chats share one project slug.
+    const uploadMarker = `.threadbase-uploads/${sessionId}/`;
+
+    let intervalHandle: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (intervalHandle) clearInterval(intervalHandle);
+      intervalHandle = null;
+    };
+
+    const tryWire = () => {
+      if (!this.deps.ptyManager.hasSession(sessionId)) {
+        cleanup();
+        return;
+      }
+
+      const prompts = this.deps.sessionStore.getManaged(sessionId)?.promptCount ?? 0;
+      if (prompts > seenPrompts) {
+        seenPrompts = prompts;
+        deadline = Date.now() + TRANSCRIPT_WATCH_DEADLINE_MS;
+      }
+      // Mirror Claude: the file cannot exist before the first turn, so failing
+      // to find it then is not abandonment. Codex still expires from spawn; Cursor
+      // follows the Claude contract because human think time was the production
+      // failure mode (empty 200 → permanent 404 once promptCount > 0 and no bind).
+      if (prompts === 0) return;
+      if (Date.now() > deadline) {
+        this.log.warn(
+          `[startFresh] gave up watching for the Cursor transcript of ${sessionId}`,
+          {
+            event: "session.transcript_watch_expired",
+            sessionId,
+            provider: CURSOR_PROVIDER,
+            projectPath,
+            promptCount: prompts,
+          },
+          "pino",
+        );
+        cleanup();
+        return;
+      }
+
+      const boundElsewhere = new Set(
+        this.deps.sessionStore
+          .listManaged()
+          .filter((s) => s.id !== sessionId && s.boundConversationId != null)
+          .map((s) => s.boundConversationId as string),
+      );
+
+      type Candidate = { runId: string; filePath: string; mtime: number; mentionsUpload: boolean };
+      const candidates: Candidate[] = [];
+      const nowMs = Date.now();
+
+      for (const root of this.deps.cursorRoots) {
+        const transcriptsDir = cursorAgentTranscriptsDir(root, projectPath);
+        if (!existsSync(transcriptsDir)) continue;
+
+        let runDirs: string[];
+        try {
+          runDirs = readdirSync(transcriptsDir, { withFileTypes: true })
+            .filter((e) => e.isDirectory())
+            .map((e) => e.name);
+        } catch {
+          continue;
+        }
+
+        for (const runId of runDirs) {
+          if (boundElsewhere.has(runId)) continue;
+          const filePath = join(transcriptsDir, runId, `${runId}.jsonl`);
+          if (!existsSync(filePath)) continue;
+
+          let mtime: number;
+          try {
+            mtime = statSync(filePath).mtimeMs;
+          } catch {
+            continue;
+          }
+          // Same recency window as Codex: the poll is continuous, so a just-
+          // written file is always recent when it appears.
+          if (nowMs - mtime >= 10_000) continue;
+          if (mtime < sessionStartedAtMs) continue;
+
+          let mentionsUpload = false;
+          try {
+            // Cap the read — we only need the opening user turn for the upload
+            // path marker, not the whole transcript.
+            const head = readFileSync(filePath, { encoding: "utf8" }).slice(0, 8_192);
+            mentionsUpload = head.includes(uploadMarker);
+          } catch {
+            continue;
+          }
+
+          candidates.push({ runId, filePath, mtime, mentionsUpload });
+        }
+      }
+
+      if (candidates.length === 0) return;
+
+      candidates.sort((a, b) => {
+        if (a.mentionsUpload !== b.mentionsUpload) return a.mentionsUpload ? -1 : 1;
+        return b.mtime - a.mtime;
+      });
+      const match = candidates[0];
+
+      cleanup();
+      this.deps.sessionStore.updateManaged(sessionId, {
+        boundConversationId: match.runId,
+      });
+      try {
+        this.deps.managedSessionsRepo()?.recordBinding(sessionId, match.runId);
+      } catch (err) {
+        this.log.warn("[registry] failed to record Cursor transcript binding", {
+          event: "registry.binding_write_failed",
+          sessionId,
+          err,
+        });
+      }
+
+      this.deps.sessionFileMap.set(sessionId, match.filePath);
+      this.deps.fileWatcher.watch(match.filePath);
+      try {
+        const existing = readFileSync(match.filePath, "utf8").split("\n").filter(Boolean);
+        if (existing.length > 0) {
+          this.deps.broadcastConversationLines(sessionId, existing);
+        }
+      } catch {
+        /* ignore — file may not be readable yet; watcher will catch future writes */
+      }
+
+      this.deps.scannerManager.markStaleOrDrop();
+      this.linkSessionToProject(sessionId, projectPath, match.filePath);
+      this.deps.cache()?.markAsStreamer(sessionId);
+
+      const resp = this.deps.sessionStore.get(sessionId, this.deps.ptyAttachedIds());
+      if (resp) {
+        this.deps.wsHub.broadcast({ type: "session_update", session: resp });
+      }
+
+      this.log.info(
+        `[startFresh] bound Cursor transcript for ${sessionId}`,
+        {
+          event: "session.cursor_transcript_bound",
+          sessionId,
+          boundConversationId: match.runId,
+          filePath: match.filePath,
+        },
+        "pino",
+      );
+    };
+
+    tryWire();
+    if (!intervalHandle) {
       const alreadyBound =
         this.deps.sessionStore.getManaged(sessionId)?.boundConversationId != null;
       if (!alreadyBound) {

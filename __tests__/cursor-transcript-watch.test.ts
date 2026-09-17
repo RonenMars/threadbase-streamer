@@ -1,7 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { listCursorTranscriptWatchDirs } from "../src/cursor-transcript-watch";
+import {
+  cursorAgentTranscriptsDir,
+  cursorProjectSlug,
+  listCursorTranscriptWatchDirs,
+} from "../src/cursor-transcript-watch";
 
 describe("listCursorTranscriptWatchDirs", () => {
   let root: string;
@@ -36,5 +40,13 @@ describe("listCursorTranscriptWatchDirs", () => {
     } finally {
       rmSync(other, { recursive: true, force: true });
     }
+  });
+});
+
+describe("cursorAgentTranscriptsDir", () => {
+  it("joins root + slug + agent-transcripts", () => {
+    expect(cursorAgentTranscriptsDir("/tmp/cursor-projects", "/Users/me/app")).toBe(
+      join("/tmp/cursor-projects", cursorProjectSlug("/Users/me/app"), "agent-transcripts"),
+    );
   });
 });

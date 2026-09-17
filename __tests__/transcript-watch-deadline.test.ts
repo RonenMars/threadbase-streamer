@@ -57,6 +57,7 @@ describe("transcript watch deadline", () => {
       sessionFileMap,
       scannerManager: { markStaleOrDrop: () => {} },
       codexRoots: [codexRoot],
+      cursorRoots: [],
       cache: () => null,
       projectsRepo: () => null,
       conversationsRepo: () => null,
@@ -70,6 +71,7 @@ describe("transcript watch deadline", () => {
   });
 
   afterEach(() => {
+    hasSession = false;
     vi.useRealTimers();
     rmSync(claudeProjectsDir(projectPath), { recursive: true, force: true });
     rmSync(projectPath, { recursive: true, force: true });

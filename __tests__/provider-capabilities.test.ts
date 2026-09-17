@@ -96,9 +96,13 @@ describe("declared capabilities match runner behaviour", () => {
   });
 
   describe("cursor", () => {
-    it("declares late-bound session ids, and no spawn passes --session-id", () => {
+    it("declares late-bound session ids, and startFresh wires transcript binding", () => {
       expect(CURSOR_CLI_CAPABILITIES.freshSessionId).toBe("late-bound");
       expect(spawnArgsFrom("cursor-pty-runner.ts")).not.toContain("--session-id");
+      // Late-bound without a watcher is the production 404: mobile deep-links
+      // the placeholder while history lives under Cursor's run id.
+      expect(read("api/handlers/sessions.handlers.ts")).toContain("watchForCursorTranscript");
+      expect(read("session-watchers.ts")).toContain("watchForCursorTranscript");
     });
 
     it("declares native resume, and the runner passes --resume=", () => {
