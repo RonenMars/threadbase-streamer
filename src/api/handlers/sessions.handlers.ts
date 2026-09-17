@@ -21,6 +21,7 @@ import { discoverClaudeProcesses } from "../../process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  CURSOR_PROVIDER,
   canonicalizeProviderName,
   isProviderName,
   type ProviderName,
@@ -2627,6 +2628,10 @@ export class SessionHandlers {
       } else if (provider === CLAUDE_CODE_PROVIDER) {
         // Wire up JSONL watching once Claude creates the conversation file.
         this.sessionWatchers.watchForJsonl(session.id, resolvedPath);
+      } else if (provider === CURSOR_PROVIDER) {
+        // Cursor mints its own run id under agent-transcripts/; bind it so
+        // GET /api/conversations/:placeholderId resolves like Codex.
+        this.sessionWatchers.watchForCursorTranscript(session.id, resolvedPath);
       }
 
       this.deps.broadcastOrUnicastSessionList(req);
