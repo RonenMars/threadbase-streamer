@@ -1,3 +1,9 @@
+## [1.93.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.93.2...v1.93.3) (2026-09-17)
+
+### Bug Fixes
+
+* **sessions:** bind Cursor agent-transcripts to managed session ids ([#917](https://github.com/RonenMars/threadbase-streamer/issues/917)) ([8ea61f2](https://github.com/RonenMars/threadbase-streamer/commit/8ea61f26667bbdc181877a50cb15908445a4eab6))
+
 ## [1.93.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.93.1...v1.93.2) (2026-09-16)
 
 ### Bug Fixes
