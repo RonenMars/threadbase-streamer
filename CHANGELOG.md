@@ -1,3 +1,9 @@
+## [1.98.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.97.0...v1.98.0) (2026-09-18)
+
+### Features
+
+* **conversations:** stream codex and cursor tool calls, results and reasoning ([#931](https://github.com/RonenMars/threadbase-streamer/issues/931)) ([0a9a134](https://github.com/RonenMars/threadbase-streamer/commit/0a9a134b138a68d9ce5a5a8167f14748f049054c)), closes [RonenMars/threadbase-scanner#95](https://github.com/RonenMars/threadbase-scanner/issues/95) [#930](https://github.com/RonenMars/threadbase-streamer/issues/930)
+
 ## [1.97.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.96.0...v1.97.0) (2026-09-18)
 
 ### Features
