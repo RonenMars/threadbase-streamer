@@ -1701,6 +1701,127 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("POST /api/sessions/:id/stop?when=idle", () => {
+    const SID = "rest-idle-sess";
+
+    function liveSession(over: Record<string, unknown> = {}) {
+      return {
+        id: SID,
+        status: "waiting_input",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: null,
+        lastOutput: "",
+        provider: "claude-code",
+        ...over,
+      } as any;
+    }
+
+    function mockRunner(session: { id: string; status?: string }) {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      vi.spyOn(PTYManager.prototype, "getSession").mockImplementation(() => session as any);
+      return vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {
+        session.status = "idle";
+      });
+    }
+
+    async function postStopIdle(sessionId: string, ignoreWatchers = false): Promise<Response> {
+      const qs = ignoreWatchers ? "when=idle&ignoreWatchers=true" : "when=idle";
+      return fetch(`${baseUrl}/api/sessions/${sessionId}/stop?${qs}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+    }
+
+    afterEach(() => {
+      (server as any).holdWhenIdle.clear();
+      (server as any).sessionSubscribers.delete(SID);
+      vi.restoreAllMocks();
+    });
+
+    it("returns 404 for unknown session", async () => {
+      const res = await postStopIdle("nonexistent-idle-sess");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns watchers_present and does not kill when someone is watching", async () => {
+      const session = liveSession({ status: "waiting_input" });
+      const holdSpy = mockRunner(session);
+      (server as any).sessionSubscribers.set(
+        SID,
+        new Set([{ readyState: 1, OPEN: 1 } as unknown as WebSocket]),
+      );
+
+      const res = await postStopIdle(SID);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "watchers_present", watcherCount: 1, sessionId: SID });
+      expect(holdSpy).not.toHaveBeenCalled();
+    });
+
+    it("kills immediately when already settled and no watchers", async () => {
+      const session = liveSession({ status: "waiting_input" });
+      const holdSpy = mockRunner(session);
+
+      const res = await postStopIdle(SID);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "killed", sessionId: SID });
+      expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
+    });
+
+    it("arms the latch when still running, and fires on the next idle transition", async () => {
+      const session = liveSession({ status: "running" });
+      const holdSpy = mockRunner(session);
+
+      const res = await postStopIdle(SID);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "armed", sessionId: SID });
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect((server as any).holdWhenIdle.has(SID)).toBe(true);
+
+      (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
+      expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
+    });
+
+    it("ignoreWatchers bypasses the upfront watcher block", async () => {
+      const session = liveSession({ status: "waiting_input" });
+      const holdSpy = mockRunner(session);
+      (server as any).sessionSubscribers.set(
+        SID,
+        new Set([{ readyState: 1, OPEN: 1 } as unknown as WebSocket]),
+      );
+
+      const res = await postStopIdle(SID, true);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "killed", sessionId: SID });
+      expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
+    });
+
+    it("ignoreWatchers also skips the fire-time and later-subscribe checks", async () => {
+      const session = liveSession({ status: "running" });
+      const holdSpy = mockRunner(session);
+
+      const res = await postStopIdle(SID, true);
+      expect(res.status).toBe(200);
+      expect((server as any).holdWhenIdle.get(SID)).toEqual({ ignoreWatchers: true });
+
+      // A watcher subscribing while armed must NOT cancel an ignoreWatchers latch
+      // (contrast with the default flow, covered under "hold_session when: waiting_input").
+      const fakeWs = { readyState: 1, OPEN: 1 } as unknown as WebSocket;
+      (server as any).addSessionSubscriber(SID, fakeWs);
+      expect((server as any).holdWhenIdle.has(SID)).toBe(true);
+
+      (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
+      expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
+    });
+  });
+
   describe("grace timer", () => {
     // Drive the private startGraceTimer directly with a short delay and spy on
     // the PTY/session accessors to assert it never holds a running session.

@@ -126,7 +126,9 @@ export const createSessionRoutes = (deps: ApiDeps) => {
   });
 
   app.post("/:id/stop", async (c) => {
-    await deps.handleStopSession(c.req.param("id"), c.env.outgoing);
+    const when = c.req.query("when") === "idle" ? "idle" : "now";
+    const ignoreWatchers = c.req.query("ignoreWatchers") === "true";
+    await deps.handleStopSession(c.req.param("id"), c.env.outgoing, { when, ignoreWatchers });
     return alreadyHandled();
   });
 

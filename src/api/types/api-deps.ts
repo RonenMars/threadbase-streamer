@@ -107,7 +107,11 @@ export type ApiDeps = {
     res: ServerResponse,
   ) => Promise<void>;
   handleCancel: (sessionId: string, res: ServerResponse) => void;
-  handleStopSession: (sessionId: string, res: ServerResponse) => Promise<void>;
+  handleStopSession: (
+    sessionId: string,
+    res: ServerResponse,
+    opts?: { when?: "now" | "idle"; ignoreWatchers?: boolean },
+  ) => Promise<void>;
   handleKillSession: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleSetSessionName: (
     sessionId: string,
