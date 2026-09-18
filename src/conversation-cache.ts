@@ -716,7 +716,15 @@ export class ConversationCache {
       | { provider: string | null }
       | undefined;
     if (!row) return null;
-    const provider = row.provider ?? CLAUDE_CODE_PROVIDER;
+    // A newly discovered Cursor transcript is first tailed before the
+    // classifier updates conversation_meta.provider. Match the classifier's
+    // path rule here so that the first append cannot consume Cursor lines with
+    // Claude's reducer and advance the offset past them.
+    const provider =
+      (row.provider == null || row.provider === CLAUDE_CODE_PROVIDER) &&
+      /[/\\]agent-transcripts[/\\]/.test(filePath)
+        ? CURSOR_PROVIDER
+        : (row.provider ?? CLAUDE_CODE_PROVIDER);
     if (provider === CODEX_CLI_PROVIDER) {
       // The scanner's line parser is deliberately unfiltered — it is stateless, so
       // it cannot know whether a line is the LEADING turn, which is the bound its
