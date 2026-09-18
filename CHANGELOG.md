@@ -1,3 +1,9 @@
+## [1.96.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.95.0...v1.96.0) (2026-09-18)
+
+### Features
+
+* **cache:** soft-delete conversations via /stop and /kill delete=true ([#922](https://github.com/RonenMars/threadbase-streamer/issues/922)) ([b68c9ee](https://github.com/RonenMars/threadbase-streamer/commit/b68c9ee9d5b661e7f0b15dfbd0d570443613a468))
+
 ## [1.95.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.94.0...v1.95.0) (2026-09-18)
 
 ### Features
