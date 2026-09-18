@@ -836,6 +836,53 @@ describe("hasConversation()", () => {
   });
 });
 
+describe("softDeleteConversation()", () => {
+  it("returns false for an unknown id — nothing to delete", () => {
+    expect(cache.softDeleteConversation("unknown")).toBe(false);
+  });
+
+  it("returns true the first time, false on a repeat call", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.softDeleteConversation("abc-123")).toBe(true);
+    expect(cache.softDeleteConversation("abc-123")).toBe(false);
+  });
+
+  it("sets deletedAt on getMetaById without removing the row", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    expect(cache.getMetaById("abc-123")?.deletedAt).toBeNull();
+    cache.softDeleteConversation("abc-123");
+    const meta = cache.getMetaById("abc-123");
+    expect(meta).not.toBeNull();
+    expect(meta?.deletedAt).not.toBeNull();
+    // The row itself is untouched — still findable, just flagged.
+    expect(cache.hasConversation("abc-123")).toBe(true);
+  });
+
+  it("excludes a soft-deleted conversation from listConversations()", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "keep-me", sessionId: "keep-me", filePath: "/p/keep.jsonl" },
+      { ...BASE_META, id: "delete-me", sessionId: "delete-me", filePath: "/p/delete.jsonl" },
+    ] as any);
+    cache.softDeleteConversation("delete-me");
+
+    const r = cache.listConversations({ limit: 10, offset: 0 });
+    expect(r.total).toBe(1);
+    expect(r.conversations.map((c) => c.id)).toEqual(["keep-me"]);
+  });
+
+  it("a later rescan of the same file does not resurrect the deleted row", () => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+    cache.softDeleteConversation("abc-123");
+
+    // Simulates the scanner finding the (still on-disk) JSONL again — same id,
+    // bumped updated_at, exactly what a normal rescan/refresh does.
+    cache.upsertFromScannerMeta([{ ...BASE_META, preview: "updated on rescan" } as any]);
+
+    expect(cache.getMetaById("abc-123")?.deletedAt).not.toBeNull();
+    expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(0);
+  });
+});
+
 describe("getPopularProjects()", () => {
   it("returns projects ranked by conversation count descending", () => {
     cache.upsertFromScannerMeta([

@@ -128,12 +128,18 @@ export const createSessionRoutes = (deps: ApiDeps) => {
   app.post("/:id/stop", async (c) => {
     const when = c.req.query("when") === "idle" ? "idle" : "now";
     const ignoreWatchers = c.req.query("ignoreWatchers") === "true";
-    await deps.handleStopSession(c.req.param("id"), c.env.outgoing, { when, ignoreWatchers });
+    const deleteConversation = c.req.query("delete") === "true";
+    await deps.handleStopSession(c.req.param("id"), c.env.outgoing, {
+      when,
+      ignoreWatchers,
+      delete: deleteConversation,
+    });
     return alreadyHandled();
   });
 
   app.post("/:id/kill", async (c) => {
-    await deps.handleKillSession(c.req.param("id"), c.env.outgoing);
+    const deleteConversation = c.req.query("delete") === "true";
+    await deps.handleKillSession(c.req.param("id"), c.env.outgoing, { delete: deleteConversation });
     return alreadyHandled();
   });
 

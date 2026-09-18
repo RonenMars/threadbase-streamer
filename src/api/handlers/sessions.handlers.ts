@@ -326,7 +326,7 @@ export type SessionHandlersDeps = {
   abandonFailedStart: (sessionId: string) => void;
   armHoldWhenIdle: (
     sessionId: string,
-    opts?: { ignoreWatchers?: boolean },
+    opts?: { ignoreWatchers?: boolean; deleteAfter?: boolean },
   ) => "held" | "armed" | "no_session";
   enrichResumedSessionAsync: (sessionId: string, projectPath: string, conv: any) => void;
   findJsonlPath: (uuid: string) => string | null;
@@ -612,7 +612,7 @@ export class SessionHandlers {
     // UUIDs, not live sessions. Returning a resumable shape (status=on_hold)
     // lets the mobile open flow proceed to /api/sessions/resume.
     const conversation = this.cache?.getMetaById(sessionId);
-    if (conversation) {
+    if (conversation && !conversation.deletedAt) {
       json(res, 200, conversationToResumableSession(conversation));
       return;
     }
@@ -2148,20 +2148,35 @@ export class SessionHandlers {
   }
 
   /** Force-kill: SIGKILL instead of /stop's graceful SIGINT. */
-  async handleKillSession(sessionId: string, res: ServerResponse): Promise<void> {
-    await this.handleStopSession(sessionId, res, { signal: "SIGKILL" });
+  async handleKillSession(
+    sessionId: string,
+    res: ServerResponse,
+    opts: { delete?: boolean } = {},
+  ): Promise<void> {
+    await this.handleStopSession(sessionId, res, { signal: "SIGKILL", delete: opts.delete });
   }
 
   async handleStopSession(
     sessionId: string,
     res: ServerResponse,
-    opts: { signal?: NodeJS.Signals; when?: "now" | "idle"; ignoreWatchers?: boolean } = {},
+    opts: {
+      signal?: NodeJS.Signals;
+      when?: "now" | "idle";
+      ignoreWatchers?: boolean;
+      delete?: boolean;
+    } = {},
   ): Promise<void> {
     if (opts.when === "idle") {
-      this.handleStopSessionWhenIdle(sessionId, res, opts.ignoreWatchers ?? false);
+      this.handleStopSessionWhenIdle(
+        sessionId,
+        res,
+        opts.ignoreWatchers ?? false,
+        opts.delete ?? false,
+      );
       return;
     }
     const signal = opts.signal ?? "SIGINT";
+    const deleteAfter = opts.delete ?? false;
     const STOP_TIMEOUT_MS = 5000;
 
     const session = this.ptyManager.getSession(sessionId);
@@ -2178,6 +2193,7 @@ export class SessionHandlers {
 
     if (session.status === "idle") {
       if (shouldForget) this.forgetEmptyStoppedSession(sessionId);
+      if (deleteAfter) this.softDeleteConversation(sessionId);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "already_idle", sessionId }));
       return;
@@ -2211,6 +2227,7 @@ export class SessionHandlers {
     const outcome = await Promise.race([idlePromise, timeoutPromise]);
 
     if (shouldForget) this.forgetEmptyStoppedSession(sessionId);
+    if (deleteAfter) this.softDeleteConversation(sessionId);
 
     if (outcome === "idle") {
       res.write(`${JSON.stringify({ event: "stopped", sessionId })}\n`);
@@ -2266,6 +2283,7 @@ export class SessionHandlers {
     sessionId: string,
     res: ServerResponse,
     ignoreWatchers: boolean,
+    deleteAfter: boolean,
   ): void {
     if (!ignoreWatchers) {
       const watcherCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
@@ -2274,7 +2292,10 @@ export class SessionHandlers {
         return;
       }
     }
-    const result = this.deps.armHoldWhenIdle(sessionId, { ignoreWatchers });
+    // The delete itself happens in server.ts once the latch actually fires
+    // (immediately, for "held", or later for "armed") — never here, since an
+    // "armed" result hasn't killed anything yet.
+    const result = this.deps.armHoldWhenIdle(sessionId, { ignoreWatchers, deleteAfter });
     if (result === "no_session") {
       json(res, 404, { error: "Session not found" });
       return;
@@ -2306,6 +2327,25 @@ export class SessionHandlers {
     if (!session) return;
     if (!this.shouldForgetEmptySession(session)) return;
     this.forgetEmptyStoppedSession(sessionId);
+  }
+
+  /**
+   * Soft-deletes the cached conversation(s) this session maps to — the
+   * session id itself, plus any bound/resumed-from alias `hasCachedConversationFor`
+   * already knows how to chase (a Codex placeholder id vs. its real rollout
+   * id, etc.). Reads from `sessionStore`, not `ptyManager`, so it's safe to
+   * call after `putOnHold` has already dropped the live session.
+   */
+  softDeleteConversation(sessionId: string): void {
+    const cache = this.cache;
+    if (!cache) return;
+    const stored = this.sessionStore.getManaged(sessionId);
+    const ids = new Set<string>([sessionId]);
+    if (stored?.boundConversationId) ids.add(stored.boundConversationId);
+    if (stored?.resumedFromConversationId) ids.add(stored.resumedFromConversationId);
+    for (const id of ids) {
+      if (cache.hasConversation(id)) cache.softDeleteConversation(id);
+    }
   }
 
   /**

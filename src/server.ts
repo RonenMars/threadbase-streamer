@@ -427,8 +427,9 @@ export class StreamerServer {
   // Same lifetime as ptyGraceTimers: in-memory, dropped on close/restart.
   // Last writer wins against the grace timer — never both armed. Value
   // records whether THIS arming should ignore watchers, both at fire time
-  // and against a later subscriber connecting while it's still armed.
-  private holdWhenIdle = new Map<string, { ignoreWatchers: boolean }>();
+  // and against a later subscriber connecting while it's still armed, and
+  // whether the cached conversation should be soft-deleted once it fires.
+  private holdWhenIdle = new Map<string, { ignoreWatchers: boolean; deleteAfter: boolean }>();
   // Map of sessionId → set of subscribed WS clients
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
   // sessionId → wall-clock ms of the last PTY chunk. Written from onOutput for
@@ -1326,11 +1327,12 @@ export class StreamerServer {
    */
   private armHoldWhenIdle(
     sessionId: string,
-    opts: { ignoreWatchers?: boolean } = {},
+    opts: { ignoreWatchers?: boolean; deleteAfter?: boolean } = {},
   ): "held" | "armed" | "no_session" {
     if (!this.ptyManager.hasSession(sessionId)) return "no_session";
     this.clearGrace(sessionId);
     const ignoreWatchers = opts.ignoreWatchers ?? false;
+    const deleteAfter = opts.deleteAfter ?? false;
     const status =
       this.ptyManager.getSession(sessionId)?.status ??
       this.sessionStore.getManaged(sessionId)?.status;
@@ -1338,12 +1340,13 @@ export class StreamerServer {
       this.holdWhenIdle.delete(sessionId);
       this.ptyManager.putOnHold(sessionId);
       this.forgetIfEmptyUnused(sessionId);
+      if (deleteAfter) this.softDeleteConversation(sessionId);
       return "held";
     }
-    this.holdWhenIdle.set(sessionId, { ignoreWatchers });
+    this.holdWhenIdle.set(sessionId, { ignoreWatchers, deleteAfter });
     this.log.info(
       `[hold-when-idle] armed ${sessionId}`,
-      { sessionId, event: "pty.hold_when_idle_armed", ignoreWatchers },
+      { sessionId, event: "pty.hold_when_idle_armed", ignoreWatchers, deleteAfter },
       "pino",
     );
     return "armed";
@@ -1373,10 +1376,15 @@ export class StreamerServer {
     );
     this.ptyManager.putOnHold(session.id);
     this.forgetIfEmptyUnused(session.id);
+    if (armed.deleteAfter) this.softDeleteConversation(session.id);
   }
 
   private forgetIfEmptyUnused(sessionId: string): void {
     this.sessionHandlers.forgetIfEmptyUnused(sessionId);
+  }
+
+  private softDeleteConversation(sessionId: string): void {
+    this.sessionHandlers.softDeleteConversation(sessionId);
   }
 
   get port(): number {

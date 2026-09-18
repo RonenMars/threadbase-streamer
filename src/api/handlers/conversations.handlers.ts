@@ -887,6 +887,15 @@ export class ConversationHandlers {
       return;
     }
 
+    // Soft-deleted: the JSONL may still be on disk (the scanner would happily
+    // find it below), so this has to reject before any of that runs — a
+    // cache-row check alone wouldn't stop the scanner fallback from serving
+    // deleted content straight off the file.
+    if (this.cache?.getMetaById(id)?.deletedAt) {
+      json(res, 404, { error: "Conversation not found" });
+      return;
+    }
+
     // Try the scanner first (has full content including tool_use blocks).
     // Fall back to the cache tail only when the scanner can't find the file —
     // e.g. a conversation that existed in a previous run but whose JSONL was deleted.

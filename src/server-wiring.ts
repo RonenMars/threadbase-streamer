@@ -697,7 +697,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
       deps.sessionHandlers.handlePermissionAnswer(id, req, res),
     handleCancel: (id, res) => deps.sessionHandlers.handleCancel(id, res),
     handleStopSession: (id, res, opts) => deps.sessionHandlers.handleStopSession(id, res, opts),
-    handleKillSession: (id, res) => deps.sessionHandlers.handleKillSession(id, res),
+    handleKillSession: (id, res, opts) => deps.sessionHandlers.handleKillSession(id, res, opts),
     handleSetSessionName: (id, req, res) => deps.sessionHandlers.handleSetSessionName(id, req, res),
     handleSetSessionModel: (id, req, res) => deps.applyLiveSessionSetting(id, req, res, "model"),
     handleSetSessionEffort: (id, req, res) => deps.applyLiveSessionSetting(id, req, res, "effort"),

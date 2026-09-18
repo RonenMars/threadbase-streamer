@@ -73,6 +73,8 @@ export interface ConversationListItem {
   isImportedFromClaude: boolean;
   isImportedFromCodex: boolean;
   isImportedFromCursor: boolean;
+  /** ISO timestamp if soft-deleted from the cache, else null. The JSONL is untouched. */
+  deletedAt: string | null;
 }
 
 export type ConversationInclude = "all" | "conversations" | "subagents";
@@ -170,6 +172,7 @@ interface MetaRow {
   is_imported_from_claude: number;
   is_imported_from_codex: number;
   is_imported_from_cursor: number;
+  deleted_at: number | null;
 }
 
 interface TailRow {
@@ -301,6 +304,7 @@ export class ConversationCache {
     listByProvider: Database.Statement;
     countByProvider: Database.Statement;
     deleteById: Database.Statement;
+    softDeleteById: Database.Statement;
     deleteTailById: Database.Statement;
     deleteAll: Database.Statement;
     deleteTailAll: Database.Statement;
@@ -376,7 +380,7 @@ export class ConversationCache {
     // key and its callers want every column.
     const LIST_COLUMNS =
       "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor";
-    const visible = `has_messages IS NOT 0${this.includeSubagentSessions ? "" : " AND is_subagent IS NOT 1"}`;
+    const visible = `has_messages IS NOT 0 AND deleted_at IS NULL${this.includeSubagentSessions ? "" : " AND is_subagent IS NOT 1"}`;
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
       getFullById: db.prepare("SELECT * FROM conversation_meta WHERE id = ?"),
@@ -478,6 +482,11 @@ export class ConversationCache {
         `SELECT COUNT(*) as n FROM conversation_meta WHERE ${visible} AND provider = ?`,
       ),
       deleteById: db.prepare("DELETE FROM conversation_meta WHERE id = ?"),
+      // Only sets it the first time — a repeat call is a no-op (`changes`
+      // reports 0), not a second, later timestamp.
+      softDeleteById: db.prepare(
+        "UPDATE conversation_meta SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+      ),
       deleteTailById: db.prepare("DELETE FROM conversation_tail WHERE conversation_id = ?"),
       deleteAll: db.prepare("DELETE FROM conversation_meta"),
       deleteTailAll: db.prepare("DELETE FROM conversation_tail"),
@@ -1753,6 +1762,8 @@ export class ConversationCache {
         isImportedFromClaude: r.is_imported_from_claude === 1,
         isImportedFromCodex: r.is_imported_from_codex === 1,
         isImportedFromCursor: r.is_imported_from_cursor === 1,
+        // The WHERE clause below already excludes deleted rows.
+        deletedAt: null,
       })),
     };
   }
@@ -1765,7 +1776,7 @@ export class ConversationCache {
     where: string;
     params: unknown[];
   } {
-    const clauses = ["has_messages IS NOT 0"];
+    const clauses = ["has_messages IS NOT 0", "deleted_at IS NULL"];
     const params: unknown[] = [];
     const include = opts.include ?? (this.includeSubagentSessions ? "all" : "conversations");
     if (include === "conversations") clauses.push("is_subagent IS NOT 1");
@@ -1876,6 +1887,7 @@ export class ConversationCache {
       isImportedFromClaude: row.is_imported_from_claude === 1,
       isImportedFromCodex: row.is_imported_from_codex === 1,
       isImportedFromCursor: row.is_imported_from_cursor === 1,
+      deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
     };
   }
 
@@ -1934,6 +1946,20 @@ export class ConversationCache {
 
   hasConversation(id: string): boolean {
     return !!this.stmts.getById.get(id);
+  }
+
+  /**
+   * Hides a conversation from every list/get read path without touching its
+   * JSONL or the row itself — just a `deleted_at` flag, so an upsert from a
+   * later rescan (the file is still on disk) leaves it alone rather than
+   * resurrecting it. Returns true if this call is what set the flag.
+   *
+   * Not preserved across the cache-integrity monitor's `reset_rescan` action,
+   * which wipes and rebuilds `conversation_meta` from scratch — an explicit
+   * operator recovery step, not routine background rescanning.
+   */
+  softDeleteConversation(id: string): boolean {
+    return this.stmts.softDeleteById.run(Date.now(), id).changes > 0;
   }
 
   upsertSessionName(sessionId: string, name: string): void {

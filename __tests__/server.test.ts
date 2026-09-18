@@ -1809,7 +1809,10 @@ describe("StreamerServer", () => {
 
       const res = await postStopIdle(SID, true);
       expect(res.status).toBe(200);
-      expect((server as any).holdWhenIdle.get(SID)).toEqual({ ignoreWatchers: true });
+      expect((server as any).holdWhenIdle.get(SID)).toEqual({
+        ignoreWatchers: true,
+        deleteAfter: false,
+      });
 
       // A watcher subscribing while armed must NOT cancel an ignoreWatchers latch
       // (contrast with the default flow, covered under "hold_session when: waiting_input").
@@ -1819,6 +1822,142 @@ describe("StreamerServer", () => {
 
       (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
       expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
+    });
+  });
+
+  describe("delete=true soft-deletes the cached conversation", () => {
+    const SID = "delete-wiring-sess";
+
+    function liveSession(over: Record<string, unknown> = {}) {
+      return {
+        id: SID,
+        status: "waiting_input",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: null,
+        lastOutput: "",
+        provider: "claude-code",
+        ...over,
+      } as any;
+    }
+
+    function mockRunner(session: { id: string; status?: string }) {
+      vi.spyOn(PTYManager.prototype, "hasSession").mockReturnValue(true);
+      vi.spyOn(PTYManager.prototype, "getSession").mockImplementation(() => session as any);
+      return vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {
+        session.status = "idle";
+        setImmediate(() => {
+          (server as any).sessionStatusBus.emit(`status:${SID}`, "idle");
+        });
+      });
+    }
+
+    function seedConversation(id: string): void {
+      const cache = (server as any).cache as ConversationCache;
+      cache.upsertFromScannerMeta([
+        {
+          id,
+          sessionId: id,
+          filePath: join(cacheDir, `${id}.jsonl`),
+          projectPath: "/tmp",
+          projectName: "test",
+          title: "test",
+          model: null,
+          account: null,
+          gitBranch: null,
+          messageCount: 1,
+          timestamp: "2026-05-20T20:00:00.000Z",
+          firstMessage: null,
+          lastMessage: null,
+          preview: "hi",
+        },
+      ] as any);
+    }
+
+    function isDeleted(id: string): boolean {
+      const cache = (server as any).cache as ConversationCache;
+      return !!cache.getMetaById(id)?.deletedAt;
+    }
+
+    afterEach(() => {
+      (server as any).holdWhenIdle.clear();
+      vi.restoreAllMocks();
+    });
+
+    it("/stop?delete=true deletes once the kill completes", async () => {
+      const session = liveSession({ status: "waiting_input" });
+      mockRunner(session);
+      seedConversation(SID);
+      expect(isDeleted(SID)).toBe(false);
+
+      const res = await fetch(`${baseUrl}/api/sessions/${SID}/stop?delete=true`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      expect(isDeleted(SID)).toBe(true);
+    });
+
+    it("/stop?delete=true on an already-idle session deletes immediately", async () => {
+      const session = liveSession({ status: "idle" });
+      vi.spyOn(PTYManager.prototype, "getSession").mockImplementation(() => session as any);
+      seedConversation(SID);
+
+      const res = await fetch(`${baseUrl}/api/sessions/${SID}/stop?delete=true`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "already_idle", sessionId: SID });
+      expect(isDeleted(SID)).toBe(true);
+    });
+
+    it("/kill?delete=true deletes too", async () => {
+      const session = liveSession({ status: "waiting_input" });
+      mockRunner(session);
+      seedConversation(SID);
+
+      const res = await fetch(`${baseUrl}/api/sessions/${SID}/kill?delete=true`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      expect(isDeleted(SID)).toBe(true);
+    });
+
+    it("without delete=true, the conversation is untouched", async () => {
+      const session = liveSession({ status: "waiting_input" });
+      mockRunner(session);
+      seedConversation(SID);
+
+      const res = await fetch(`${baseUrl}/api/sessions/${SID}/stop`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      expect(isDeleted(SID)).toBe(false);
+    });
+
+    it("/stop?when=idle&delete=true only deletes once the latch actually fires", async () => {
+      const session = liveSession({ status: "running" });
+      mockRunner(session);
+      seedConversation(SID);
+
+      const res = await fetch(`${baseUrl}/api/sessions/${SID}/stop?when=idle&delete=true`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "armed", sessionId: SID });
+      expect(isDeleted(SID)).toBe(false);
+
+      (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
+      expect(isDeleted(SID)).toBe(true);
     });
   });
 
@@ -3279,6 +3418,65 @@ describe("StreamerServer", () => {
       const reopened = ConversationCache.open(join(cacheDir, "cache.db"), 10);
       expect(reopened.hasConversation(ghostId)).toBe(false);
       reopened.close();
+    });
+  });
+
+  describe("soft-deleted conversations are hidden from read paths", () => {
+    function seedDeletedConversation(id: string): void {
+      const jsonlPath = join(cacheDir, `${id}.jsonl`);
+      const cache = ConversationCache.open(join(cacheDir, "cache.db"), 10);
+      cache.upsertFromScannerMeta([
+        {
+          id,
+          sessionId: id,
+          filePath: jsonlPath,
+          projectPath: "/some/project",
+          projectName: "some-project",
+          title: "some-project",
+          model: null,
+          account: null,
+          gitBranch: null,
+          messageCount: 1,
+          timestamp: "2026-05-20T20:00:00.000Z",
+          firstMessage: null,
+          lastMessage: null,
+          preview: "hi",
+        },
+      ] as any);
+      expect(cache.softDeleteConversation(id)).toBe(true);
+      cache.close();
+    }
+
+    it("GET /api/conversations/:id 404s even though the row (and file path) still exist", async () => {
+      const id = "aaaa1111-bbbb-2222-cccc-333344445555";
+      seedDeletedConversation(id);
+
+      const res = await fetch(`${baseUrl}/api/conversations/${id}?msg_limit=80`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("GET /api/sessions/:id 404s via the conversation-cache fallback", async () => {
+      const id = "aaaa2222-bbbb-3333-cccc-444455556666";
+      seedDeletedConversation(id);
+
+      const res = await fetch(`${baseUrl}/api/sessions/${id}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("does not appear in GET /api/conversations", async () => {
+      const id = "aaaa3333-bbbb-4444-cccc-555566667777";
+      seedDeletedConversation(id);
+
+      const res = await fetch(`${baseUrl}/api/conversations`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { conversations: Array<{ id: string }> };
+      expect(body.conversations.find((c) => c.id === id)).toBeUndefined();
     });
   });
 
