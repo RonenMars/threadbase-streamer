@@ -306,14 +306,14 @@ export class CursorPtyRunner implements SessionRunner {
     }
   }
 
-  putOnHold(sessionId: string): void {
+  putOnHold(sessionId: string, signal: NodeJS.Signals = "SIGINT"): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.pendingReady.delete(sessionId);
     this.queuedInputs.delete(sessionId);
     this.clearSessionDetectors(sessionId);
     try {
-      session.process.kill("SIGINT");
+      session.process.kill(signal);
     } catch {
       // already dead
     }

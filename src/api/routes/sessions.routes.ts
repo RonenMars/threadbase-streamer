@@ -130,6 +130,11 @@ export const createSessionRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
+  app.post("/:id/kill", async (c) => {
+    await deps.handleKillSession(c.req.param("id"), c.env.outgoing);
+    return alreadyHandled();
+  });
+
   app.get("/:id", async (c) => {
     await deps.handleGetSession(c.req.param("id"), c.env.outgoing);
     return alreadyHandled();
