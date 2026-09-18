@@ -9,8 +9,13 @@
  * `event_msg` copies of each turn and `developer` role payloads).
  */
 
-import { isCodexInjectedContext as isCodexFormatPreamble } from "@threadbase-sh/scanner";
+import {
+  isCodexInjectedContext as isCodexFormatPreamble,
+  parseCodexJsonlLine,
+} from "@threadbase-sh/scanner";
 import type { NormalizeResult } from "../services/providers/capabilities";
+import { toClaudeShapedLine } from "./claudeShapedLine";
+import { classifyCursorLine, isCursorTranscriptLine } from "./cursorConversationLine";
 
 type CodexContentBlock = {
   type?: string;
@@ -88,6 +93,9 @@ export function classifyCodexLine(line: string, index = 0): NormalizeResult {
   }
 
   const payload = entry.payload;
+  if (payload?.type && CODEX_BLOCK_PAYLOADS.has(payload.type)) {
+    return classifyCodexBlockItem(line, entry, payload.type);
+  }
   if (payload?.type !== "message") {
     return { kind: "ignored", reason: `response_item payload is ${String(payload?.type)}` };
   }
@@ -112,6 +120,33 @@ export function classifyCodexLine(line: string, index = 0): NormalizeResult {
   }
 
   return { kind: "message", line: buildClaudeShapedLine(entry, payload, role, text) };
+}
+
+// Tool calls, their outputs and reasoning. The scanner owns how these render
+// (the same parse serves them over REST), so the live line is built from its
+// result rather than a second reading of the rollout format.
+const CODEX_BLOCK_PAYLOADS = new Set([
+  "function_call",
+  "custom_tool_call",
+  "web_search_call",
+  "function_call_output",
+  "custom_tool_call_output",
+  "reasoning",
+]);
+
+function classifyCodexBlockItem(
+  line: string,
+  entry: { timestamp?: string; payload?: { id?: string; call_id?: string } },
+  payloadType: string,
+): NormalizeResult {
+  const message = parseCodexJsonlLine(line);
+  if (!message) {
+    return { kind: "ignored", reason: `${payloadType} has nothing renderable` };
+  }
+  const uuid =
+    message.uuid ??
+    `codex-${payloadType}-${entry.timestamp ?? ""}-${entry.payload?.call_id ?? hashPrefix(line)}`;
+  return { kind: "message", line: toClaudeShapedLine(message, uuid) };
 }
 
 /**
@@ -170,9 +205,8 @@ export function isCodexRolloutLine(line: string): boolean {
 }
 
 /**
- * Map a batch of raw JSONL lines to client-facing lines. Codex batches are
- * normalized (and filtered); Claude batches pass through unchanged so seq
- * alignment is preserved.
+ * Map a batch of raw JSONL lines to client-facing lines. Codex and Cursor
+ * batches are normalized (and filtered); Claude batches pass through unchanged.
  *
  * `seqs` are the offset index's message_index per line (extendMessageIndex),
  * and they are the only position this batch can be trusted with: a batch is one
@@ -182,23 +216,32 @@ export function isCodexRolloutLine(line: string): boolean {
  * so a seq is a file position, never a batch-relative guess. A line with no seq
  * (the index dropped it, cannot index this file, or declined the read) falls
  * back to leading, which keeps the injected-context filter.
+ *
+ * The returned `seqs` stay parallel to the returned `lines` — filtered with
+ * them — or are null when the caller passed none that line up with `lines`.
  */
 export function toClientConversationLines(
   lines: string[],
   seqs?: (number | null)[] | null,
-): string[] {
-  if (lines.length === 0) return lines;
-  // Heuristic: if any line in the batch is Codex-shaped, treat the whole batch
-  // as Codex (a mixed batch shouldn't happen — one file, one provider).
-  const codex = lines.some(isCodexRolloutLine);
-  if (!codex) return lines;
+): { lines: string[]; seqs: (number | null)[] | null } {
   const positions = seqs?.length === lines.length ? seqs : null;
+  // Heuristic: the first recognisable line decides the batch's provider (a
+  // mixed batch shouldn't happen — one file, one provider).
+  const classify = lines.some(isCodexRolloutLine)
+    ? (line: string, i: number) => classifyCodexLine(line, positions?.[i] ?? 0)
+    : lines.some(isCursorTranscriptLine)
+      ? (line: string) => classifyCursorLine(line)
+      : null;
+  if (!classify) return { lines, seqs: positions };
   const out: string[] = [];
+  const outSeqs: (number | null)[] = [];
   for (const [i, line] of lines.entries()) {
-    const normalized = normalizeCodexLineToClaudeShape(line, positions?.[i] ?? 0);
-    if (normalized) out.push(normalized);
+    const result = classify(line, i);
+    if (result.kind !== "message") continue;
+    out.push(result.line);
+    outSeqs.push(positions?.[i] ?? null);
   }
-  return out;
+  return { lines: out, seqs: positions ? outSeqs : null };
 }
 
 /**

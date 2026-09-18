@@ -2772,23 +2772,24 @@ export class StreamerServer {
   }
 
   /**
-   * Broadcast conversation JSONL lines to WS clients. Codex rollout lines are
-   * normalized to the Claude `type:user|assistant` shape mobile understands;
-   * Claude lines pass through unchanged so seq alignment stays intact.
+   * Broadcast conversation JSONL lines to WS clients. Codex rollout and Cursor
+   * transcript lines are normalized to the Claude `type:user|assistant` shape
+   * mobile understands; Claude lines pass through unchanged.
    */
   private broadcastConversationLines(
     sessionId: string,
     lines: string[],
     seqs?: (number | null)[] | null,
   ): void {
-    const clientLines = toClientConversationLines(lines, seqs);
+    // Filtered seqs come back parallel to the kept lines, so a normalized batch
+    // keeps its message_index instead of losing every seq to one dropped line.
+    const { lines: clientLines, seqs: clientSeqs } = toClientConversationLines(lines, seqs);
     if (clientLines.length === 0) return;
-    const seqsOk = !!seqs && seqs.length === lines.length && clientLines.length === lines.length;
     this.wsHub.broadcast({
       type: "conversation_events",
       sessionId,
       lines: clientLines,
-      ...(seqsOk ? { seqs } : {}),
+      ...(clientSeqs ? { seqs: clientSeqs } : {}),
     });
     // ...plus per-line conversation_event so older mobile clients,
     // which only know that shape, keep working byte-for-byte.

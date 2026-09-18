@@ -44,6 +44,7 @@ import {
 import type { SessionStore } from "../../session-store";
 import { TRANSCRIPT_WATCH_DEADLINE_MS } from "../../session-watchers";
 import type { ManagedSession, ServerWarmupState } from "../../types";
+import { toolResultText } from "../../utils/claudeShapedLine";
 import { isLeadingInjectedContext } from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
 import { createScanProgressThrottle } from "../../utils/scanProgressThrottle";
@@ -1349,7 +1350,7 @@ export class ConversationHandlers {
         content.push({
           type: "tool_result",
           tool_use_id: r.toolUseId,
-          content: JSON.stringify(r.content),
+          content: toolResultText(r.content),
           is_error: r.isError ?? false,
         });
       }
