@@ -1,3 +1,9 @@
+## [1.95.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.94.0...v1.95.0) (2026-09-18)
+
+### Features
+
+* **sessions:** add POST /:id/stop?when=idle for watcher-aware kill-on-idle ([#921](https://github.com/RonenMars/threadbase-streamer/issues/921)) ([1392c41](https://github.com/RonenMars/threadbase-streamer/commit/1392c41f0fa4034c84dab4c0ac0f647b6ace4598))
+
 ## [1.94.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.93.3...v1.94.0) (2026-09-18)
 
 ### Features
