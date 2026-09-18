@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { toolResultText } from "../src/utils/claudeShapedLine";
 import {
   classifyCodexLine,
   isCodexInjectedContext,
@@ -231,7 +232,7 @@ describe("toClientConversationLines", () => {
       timestamp: "2026-01-01T00:00:00Z",
       message: { role: "user", content: [{ type: "text", text: "hi" }] },
     });
-    expect(toClientConversationLines([claude])).toEqual([claude]);
+    expect(toClientConversationLines([claude], [4])).toEqual({ lines: [claude], seqs: [4] });
     expect(isCodexRolloutLine(claude)).toBe(false);
   });
 
@@ -259,9 +260,136 @@ describe("toClientConversationLines", () => {
         },
       }),
     ];
-    const out = toClientConversationLines(lines);
+    const { lines: out, seqs } = toClientConversationLines(lines);
+    expect(seqs).toBeNull();
     expect(out).toHaveLength(2);
     expect(JSON.parse(out[0]).type).toBe("user");
     expect(JSON.parse(out[1]).type).toBe("assistant");
+  });
+});
+
+// Tool/reasoning items keep the key shape a real Codex 0.15x rollout item has
+// (values shortened): the live line is built from the scanner's parse of it.
+describe("classifyCodexLine tool and reasoning items", () => {
+  const item = (payload: Record<string, unknown>) =>
+    JSON.stringify({
+      timestamp: "2026-09-18T10:00:00.000Z",
+      ordinal: 10,
+      type: "response_item",
+      payload: { ...payload, internal_chat_message_metadata_passthrough: { turn_id: "t1" } },
+    });
+  const content = (raw: string) => {
+    const result = classifyCodexLine(raw);
+    expect(result.kind).toBe("message");
+    if (result.kind !== "message") throw new Error("not a message");
+    return JSON.parse(result.line);
+  };
+
+  it("renders a function call as an assistant tool_use keyed on call_id", () => {
+    const parsed = content(
+      item({
+        type: "function_call",
+        id: "fc_1",
+        name: "exec_command",
+        arguments: '{"cmd":"ls"}',
+        call_id: "call_A",
+      }),
+    );
+    expect(parsed).toMatchObject({ type: "assistant", uuid: "fc_1" });
+    expect(parsed.message.content).toEqual([
+      { type: "tool_use", id: "call_A", name: "exec_command", input: { cmd: "ls" } },
+    ]);
+  });
+
+  it("renders a tool output as a user tool_result carrying the plain output", () => {
+    const parsed = content(
+      item({
+        type: "custom_tool_call_output",
+        id: "ctco_1",
+        call_id: "call_A",
+        output: [{ type: "input_text", text: "Script completed" }],
+      }),
+    );
+    expect(parsed).toMatchObject({ type: "user", uuid: "ctco_1" });
+    expect(parsed.message.content).toEqual([
+      { type: "tool_result", tool_use_id: "call_A", content: "Script completed", is_error: false },
+    ]);
+  });
+
+  it("renders a readable reasoning summary as thinking", () => {
+    const parsed = content(
+      item({
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "**Checking**" }],
+        encrypted_content: "gAAAA",
+      }),
+    );
+    expect(parsed.message.content).toEqual([{ type: "thinking", thinking: "**Checking**" }]);
+  });
+
+  it("ignores encrypted-only reasoning", () => {
+    expect(
+      classifyCodexLine(
+        item({ type: "reasoning", id: "rs_2", summary: [], encrypted_content: "gAAAA" }),
+      ).kind,
+    ).toBe("ignored");
+  });
+});
+
+describe("toClientConversationLines seq alignment", () => {
+  it("keeps seqs parallel to the kept lines when a Codex batch is filtered", () => {
+    const lines = [
+      JSON.stringify({ type: "event_msg", payload: { type: "token_count" } }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          id: "m1",
+          role: "assistant",
+          content: [{ type: "output_text", text: "answer" }],
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: { type: "function_call", id: "fc", name: "shell", arguments: "{}", call_id: "c" },
+      }),
+    ];
+    const out = toClientConversationLines(lines, [null, 7, 8]);
+    expect(out.seqs).toEqual([7, 8]);
+    expect(out.lines.map((l) => JSON.parse(l).uuid)).toEqual(["m1", "fc"]);
+  });
+
+  it("routes a Cursor batch through the Cursor normalizer", () => {
+    const lines = [
+      JSON.stringify({
+        role: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "Looking." },
+            { type: "tool_use", name: "Shell", input: { command: "ls" } },
+          ],
+        },
+      }),
+      JSON.stringify({ type: "turn_ended", status: "success" }),
+    ];
+    const out = toClientConversationLines(lines, [3, null]);
+    expect(out.seqs).toEqual([3]);
+    const parsed = JSON.parse(out.lines[0]);
+    expect(parsed.type).toBe("assistant");
+    expect(parsed.message.content.map((b: { type: string }) => b.type)).toEqual([
+      "text",
+      "tool_use",
+    ]);
+  });
+});
+
+describe("toolResultText", () => {
+  it("sends a Codex result's output verbatim so newlines are not escaped", () => {
+    expect(toolResultText({ output: "line 1\nline 2" })).toBe("line 1\nline 2");
+  });
+
+  it("keeps any other result in its JSON form", () => {
+    expect(toolResultText({ stdout: "ok", exitCode: 0 })).toBe('{"stdout":"ok","exitCode":0}');
   });
 });
