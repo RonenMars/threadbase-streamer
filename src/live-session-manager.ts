@@ -128,15 +128,15 @@ export class LiveSessionManager {
   // methods — route to the owning runner when found, otherwise broadcast to
   // every runner rather than throwing; this matches the pre-extraction
   // behavior of delegating straight through with no existence check.
-  putOnHold(sessionId: string): void {
+  putOnHold(sessionId: string, signal: NodeJS.Signals = "SIGINT"): void {
     for (const runner of this.activeRunners()) {
       if (runner.hasSession(sessionId) || runner.getSession(sessionId)) {
-        runner.putOnHold(sessionId);
+        runner.putOnHold(sessionId, signal);
         return;
       }
     }
     for (const runner of this.activeRunners()) {
-      runner.putOnHold(sessionId);
+      runner.putOnHold(sessionId, signal);
     }
   }
 

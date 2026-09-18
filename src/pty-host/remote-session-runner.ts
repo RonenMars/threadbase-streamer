@@ -405,7 +405,12 @@ export class RemoteSessionRunner implements SessionRunner {
     this.fireAndForget({ type: "kill", pid });
   }
 
-  putOnHold(sessionId: string): void {
+  // ponytail: `signal` is accepted for interface parity but not forwarded —
+  // the "kill" wire message has no signal field (PTY_HOST_PROTOCOL_VERSION 6),
+  // so a host-backed session always gets the host's existing SIGINT hold
+  // regardless of what's asked for. Bump the protocol if a forced SIGKILL
+  // needs to reach a session running under `ptyHost` (off by default).
+  putOnHold(sessionId: string, _signal: NodeJS.Signals = "SIGINT"): void {
     this.fireAndForget({ type: "kill", sessionId, hold: true });
     // Matches PTYManager.putOnHold, which deletes from its map — a held session
     // must read as absent from the runner, not as an idle one it still owns.

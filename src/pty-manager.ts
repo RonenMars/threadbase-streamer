@@ -674,7 +674,9 @@ export class PTYManager implements SessionRunner {
   }
 
   // Kill the PTY and mark the session idle. Called by the WS grace timer.
-  putOnHold(sessionId: string): void {
+  // `signal` defaults to SIGINT (graceful); pass SIGKILL to force-kill a
+  // process that isn't responding to it.
+  putOnHold(sessionId: string, signal: NodeJS.Signals = "SIGINT"): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     this.pendingReady.delete(sessionId);
@@ -690,7 +692,7 @@ export class PTYManager implements SessionRunner {
     this.quietCheckers.delete(sessionId);
     this.clearReadyFallback(sessionId);
     try {
-      session.process.kill("SIGINT");
+      session.process.kill(signal);
     } catch {
       // already dead
     }

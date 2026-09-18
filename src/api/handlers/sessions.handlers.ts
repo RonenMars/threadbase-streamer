@@ -2143,7 +2143,16 @@ export class SessionHandlers {
     }
   }
 
-  async handleStopSession(sessionId: string, res: ServerResponse): Promise<void> {
+  /** Force-kill: SIGKILL instead of /stop's graceful SIGINT. */
+  async handleKillSession(sessionId: string, res: ServerResponse): Promise<void> {
+    await this.handleStopSession(sessionId, res, "SIGKILL");
+  }
+
+  async handleStopSession(
+    sessionId: string,
+    res: ServerResponse,
+    signal: NodeJS.Signals = "SIGINT",
+  ): Promise<void> {
     const STOP_TIMEOUT_MS = 5000;
 
     const session = this.ptyManager.getSession(sessionId);
@@ -2187,7 +2196,7 @@ export class SessionHandlers {
       setTimeout(() => resolve("timeout"), STOP_TIMEOUT_MS),
     );
 
-    this.ptyManager.putOnHold(sessionId);
+    this.ptyManager.putOnHold(sessionId, signal);
     this.discoveryCache = null;
 
     const outcome = await Promise.race([idlePromise, timeoutPromise]);

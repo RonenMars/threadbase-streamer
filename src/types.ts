@@ -829,7 +829,7 @@ export interface SessionRunner {
   resize(sessionId: string, cols: number, rows: number): void;
   cancel(sessionId: string): void;
   killPid(pid: number): void;
-  putOnHold(sessionId: string): void;
+  putOnHold(sessionId: string, signal?: NodeJS.Signals): void;
   getOutput(sessionId: string): string;
   getOutputLines(sessionId: string, maxLines: number): Promise<string[]>;
   // Recorded user messages submitted to the PTY, oldest-first. Empty for an

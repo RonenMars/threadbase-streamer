@@ -108,6 +108,7 @@ export type ApiDeps = {
   ) => Promise<void>;
   handleCancel: (sessionId: string, res: ServerResponse) => void;
   handleStopSession: (sessionId: string, res: ServerResponse) => Promise<void>;
+  handleKillSession: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleSetSessionName: (
     sessionId: string,
     req: IncomingMessage,

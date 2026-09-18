@@ -1431,7 +1431,7 @@ describe("StreamerServer", () => {
         .map((l) => JSON.parse(l));
       expect(lines[0]).toEqual({ event: "stopping", sessionId });
       expect(lines[1]).toEqual({ event: "stopped", sessionId });
-      expect(holdSpy).toHaveBeenCalledWith(sessionId);
+      expect(holdSpy).toHaveBeenCalledWith(sessionId, "SIGINT");
 
       holdSpy.mockRestore();
       getSessionSpy.mockRestore();
@@ -1559,7 +1559,7 @@ describe("StreamerServer", () => {
           .map((l) => JSON.parse(l));
         expect(lines[0]).toEqual({ event: "stopping", sessionId: session.id });
         expect(lines[1]).toEqual({ event: "stopped", sessionId: session.id });
-        expect(holdSpy).toHaveBeenCalledWith(session.id);
+        expect(holdSpy).toHaveBeenCalledWith(session.id, "SIGINT");
 
         await expectForgotten(session.id);
       });
@@ -1571,7 +1571,7 @@ describe("StreamerServer", () => {
 
         const res = await postStop(session.id);
         expect(res.status).toBe(200);
-        expect(holdSpy).toHaveBeenCalledWith(session.id);
+        expect(holdSpy).toHaveBeenCalledWith(session.id, "SIGINT");
 
         await expectForgotten(session.id);
       });
@@ -1625,6 +1625,79 @@ describe("StreamerServer", () => {
 
         await expectHeld(session.id, holdSpy);
       });
+    });
+  });
+
+  describe("POST /api/sessions/:id/kill", () => {
+    it("returns 404 for unknown session", async () => {
+      const res = await fetch(`${baseUrl}/api/sessions/nonexistent-kill/kill`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns already_idle when session status is idle", async () => {
+      const getSessionSpy = vi.spyOn(PTYManager.prototype, "getSession").mockReturnValueOnce({
+        id: "idle-sess-kill",
+        status: "idle",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: new Date(),
+        lastOutput: "",
+      } as any);
+
+      const res = await fetch(`${baseUrl}/api/sessions/idle-sess-kill/kill`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "already_idle", sessionId: "idle-sess-kill" });
+
+      getSessionSpy.mockRestore();
+    });
+
+    it("SIGKILLs a running session, unlike /stop's SIGINT", async () => {
+      const sessionId = "running-sess-kill";
+
+      const getSessionSpy = vi.spyOn(PTYManager.prototype, "getSession").mockReturnValueOnce({
+        id: sessionId,
+        status: "running",
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 0,
+        startedAt: new Date(),
+        completedAt: null,
+        lastOutput: "",
+      } as any);
+
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementationOnce(() => {
+        setImmediate(() => {
+          (server as any).sessionStatusBus.emit(`status:${sessionId}`, "idle");
+        });
+      });
+
+      const res = await fetch(`${baseUrl}/api/sessions/${sessionId}/kill`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+
+      expect(res.status).toBe(200);
+      const lines = (await res.text())
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
+      expect(lines[0]).toEqual({ event: "stopping", sessionId });
+      expect(lines[1]).toEqual({ event: "stopped", sessionId });
+      expect(holdSpy).toHaveBeenCalledWith(sessionId, "SIGKILL");
+
+      holdSpy.mockRestore();
+      getSessionSpy.mockRestore();
     });
   });
 
@@ -1687,7 +1760,7 @@ describe("StreamerServer", () => {
       // GRACE_MAX_DEFERS defers, then one more fire that exceeds the cap and holds.
       vi.advanceTimersByTime(10 * (GRACE_MAX_DEFERS + 1));
 
-      expect(holdSpy).toHaveBeenCalledWith(SID);
+      expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
       // count is cleared once it holds
       expect((server as any).ptyGraceDeferCounts.has(SID)).toBe(false);
     });
@@ -1701,7 +1774,7 @@ describe("StreamerServer", () => {
       (server as any).startGraceTimer(SID, 10);
       vi.advanceTimersByTime(10);
 
-      expect(holdSpy).toHaveBeenCalledWith(SID);
+      expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
     });
   });
 
@@ -1822,7 +1895,7 @@ describe("StreamerServer", () => {
 
       const reaped = (server as any).reapIdleSessions(IDLE_REAP_AFTER_MS + 1);
 
-      expect(holdSpy).toHaveBeenCalledWith("reap-sess");
+      expect(holdSpy).toHaveBeenCalledWith("reap-sess", "SIGINT");
       expect(reaped).toEqual(["reap-sess"]);
     });
 
@@ -1982,7 +2055,7 @@ describe("StreamerServer", () => {
         await new Promise<void>((r) => ws.on("open", () => r()));
         ws.send(JSON.stringify({ type: "hold_session", sessionId: SID }));
         await waitFor(() => holdSpy.mock.calls.length > 0);
-        expect(holdSpy).toHaveBeenCalledWith(SID);
+        expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
         ws.close();
       } finally {
         vi.restoreAllMocks();
@@ -2123,7 +2196,7 @@ describe("StreamerServer", () => {
       ws.send(JSON.stringify({ type: "hold_session", sessionId: SID, when: "waiting_input" }));
       await waitFor(() => holdSpy.mock.calls.length > 0);
 
-      expect(holdSpy).toHaveBeenCalledWith(SID);
+      expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
       expect((server as any).ptyGraceTimers.has(SID)).toBe(false);
       expect((server as any).holdWhenIdle.has(SID)).toBe(false);
       expect((server as any).sessionStore.getManaged(SID)).toBeNull();
@@ -2159,7 +2232,7 @@ describe("StreamerServer", () => {
 
       (server as any).maybeFireHoldWhenIdle({ id: SID, status: "waiting_input" });
 
-      expect(holdSpy).toHaveBeenCalledWith(SID);
+      expect(holdSpy).toHaveBeenCalledWith(SID, "SIGINT");
       expect((server as any).holdWhenIdle.has(SID)).toBe(false);
       ws.close();
     });
