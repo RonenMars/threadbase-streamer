@@ -1,3 +1,9 @@
+## [1.97.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.96.0...v1.97.0) (2026-09-18)
+
+### Features
+
+* **scripts:** add resume-sessions-tmux helper with live-session guard ([#923](https://github.com/RonenMars/threadbase-streamer/issues/923)) ([440b0d2](https://github.com/RonenMars/threadbase-streamer/commit/440b0d2ff8bd441346a8cf470baf79db7e704c22))
+
 ## [1.96.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.95.0...v1.96.0) (2026-09-18)
 
 ### Features
