@@ -324,6 +324,10 @@ export type SessionHandlersDeps = {
   ) => Promise<{ outcome: "ready" | "failed" | "timeout"; session: ManagedSession | null }>;
   forgetSession: (sessionId: string) => void;
   abandonFailedStart: (sessionId: string) => void;
+  armHoldWhenIdle: (
+    sessionId: string,
+    opts?: { ignoreWatchers?: boolean },
+  ) => "held" | "armed" | "no_session";
   enrichResumedSessionAsync: (sessionId: string, projectPath: string, conv: any) => void;
   findJsonlPath: (uuid: string) => string | null;
   readCwdFromJsonl: (filePath: string) => Promise<string | null>;
@@ -2145,14 +2149,19 @@ export class SessionHandlers {
 
   /** Force-kill: SIGKILL instead of /stop's graceful SIGINT. */
   async handleKillSession(sessionId: string, res: ServerResponse): Promise<void> {
-    await this.handleStopSession(sessionId, res, "SIGKILL");
+    await this.handleStopSession(sessionId, res, { signal: "SIGKILL" });
   }
 
   async handleStopSession(
     sessionId: string,
     res: ServerResponse,
-    signal: NodeJS.Signals = "SIGINT",
+    opts: { signal?: NodeJS.Signals; when?: "now" | "idle"; ignoreWatchers?: boolean } = {},
   ): Promise<void> {
+    if (opts.when === "idle") {
+      this.handleStopSessionWhenIdle(sessionId, res, opts.ignoreWatchers ?? false);
+      return;
+    }
+    const signal = opts.signal ?? "SIGINT";
     const STOP_TIMEOUT_MS = 5000;
 
     const session = this.ptyManager.getSession(sessionId);
@@ -2243,6 +2252,34 @@ export class SessionHandlers {
       if (cache.hasConversation(id)) return true;
     }
     return false;
+  }
+
+  /**
+   * `when=idle`: hold now if the session is already settled, otherwise arm the
+   * existing kill-on-idle latch (`armHoldWhenIdle`, the same one mobile's
+   * `hold_session {when: "waiting_input"}` uses) to fire on the next natural
+   * idle transition. Unlike `when=now`, this checks watchers UP FRONT and
+   * reports the count rather than silently no-op'ing later — `ignoreWatchers`
+   * skips that check (and the latch's own fire-time check) entirely.
+   */
+  private handleStopSessionWhenIdle(
+    sessionId: string,
+    res: ServerResponse,
+    ignoreWatchers: boolean,
+  ): void {
+    if (!ignoreWatchers) {
+      const watcherCount = this.sessionSubscribers.get(sessionId)?.size ?? 0;
+      if (watcherCount > 0) {
+        json(res, 200, { status: "watchers_present", watcherCount, sessionId });
+        return;
+      }
+    }
+    const result = this.deps.armHoldWhenIdle(sessionId, { ignoreWatchers });
+    if (result === "no_session") {
+      json(res, 404, { error: "Session not found" });
+      return;
+    }
+    json(res, 200, { status: result === "held" ? "killed" : "armed", sessionId });
   }
 
   private forgetEmptyStoppedSession(sessionId: string): void {

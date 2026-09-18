@@ -425,8 +425,10 @@ export class StreamerServer {
   private ptyGraceDeferCounts = new Map<string, number>();
   // Session ids that should be putOnHold at the next waiting_input/idle.
   // Same lifetime as ptyGraceTimers: in-memory, dropped on close/restart.
-  // Last writer wins against the grace timer — never both armed.
-  private holdWhenIdle = new Set<string>();
+  // Last writer wins against the grace timer — never both armed. Value
+  // records whether THIS arming should ignore watchers, both at fire time
+  // and against a later subscriber connecting while it's still armed.
+  private holdWhenIdle = new Map<string, { ignoreWatchers: boolean }>();
   // Map of sessionId → set of subscribed WS clients
   private sessionSubscribers = new Map<string, Set<WebSocket>>();
   // sessionId → wall-clock ms of the last PTY chunk. Written from onOutput for
@@ -855,6 +857,7 @@ export class StreamerServer {
         this.waitForStartupOutcome(sessionId, timeoutMs),
       forgetSession: (sessionId) => this.forgetSession(sessionId),
       abandonFailedStart: (sessionId) => this.abandonFailedStart(sessionId),
+      armHoldWhenIdle: (sessionId, opts) => this.armHoldWhenIdle(sessionId, opts),
       enrichResumedSessionAsync: (sessionId, projectPath, conv) =>
         this.enrichResumedSessionAsync(sessionId, projectPath, conv),
       findJsonlPath: (uuid) => this.conversationHandlers.findJsonlPath(uuid),
@@ -1067,7 +1070,12 @@ export class StreamerServer {
       this.ptyGraceTimers.delete(sessionId);
     }
     this.ptyGraceDeferCounts.delete(sessionId);
-    if (this.holdWhenIdle.delete(sessionId)) {
+    // A latch armed with ignoreWatchers stays armed through a later connect —
+    // "ignore them" means ignore watchers who show up after arming too, not
+    // just the ones present at arm time.
+    const armed = this.holdWhenIdle.get(sessionId);
+    if (armed && !armed.ignoreWatchers) {
+      this.holdWhenIdle.delete(sessionId);
       this.log.info(
         `[hold-when-idle] cancelled ${sessionId} (subscribe)`,
         { sessionId, event: "pty.hold_when_idle_cancel", reason: "subscribe" },
@@ -1316,9 +1324,13 @@ export class StreamerServer {
    * on the next running → waiting_input (or idle). No grace delay, no defer cap.
    * A subscribed leaving socket must not block an immediate hold.
    */
-  private armHoldWhenIdle(sessionId: string): "held" | "armed" | "no_session" {
+  private armHoldWhenIdle(
+    sessionId: string,
+    opts: { ignoreWatchers?: boolean } = {},
+  ): "held" | "armed" | "no_session" {
     if (!this.ptyManager.hasSession(sessionId)) return "no_session";
     this.clearGrace(sessionId);
+    const ignoreWatchers = opts.ignoreWatchers ?? false;
     const status =
       this.ptyManager.getSession(sessionId)?.status ??
       this.sessionStore.getManaged(sessionId)?.status;
@@ -1328,10 +1340,10 @@ export class StreamerServer {
       this.forgetIfEmptyUnused(sessionId);
       return "held";
     }
-    this.holdWhenIdle.add(sessionId);
+    this.holdWhenIdle.set(sessionId, { ignoreWatchers });
     this.log.info(
       `[hold-when-idle] armed ${sessionId}`,
-      { sessionId, event: "pty.hold_when_idle_armed" },
+      { sessionId, event: "pty.hold_when_idle_armed", ignoreWatchers },
       "pino",
     );
     return "armed";
@@ -1343,9 +1355,10 @@ export class StreamerServer {
    */
   private maybeFireHoldWhenIdle(session: { id: string; status: string }): void {
     if (session.status !== "waiting_input" && session.status !== "idle") return;
-    if (!this.holdWhenIdle.has(session.id)) return;
+    const armed = this.holdWhenIdle.get(session.id);
+    if (!armed) return;
     this.holdWhenIdle.delete(session.id);
-    if (this.hasSessionSubscriber(session.id)) {
+    if (!armed.ignoreWatchers && this.hasSessionSubscriber(session.id)) {
       this.log.info(
         `[hold-when-idle] cancelled ${session.id} (subscriber)`,
         { sessionId: session.id, event: "pty.hold_when_idle_cancel", reason: "subscriber" },
