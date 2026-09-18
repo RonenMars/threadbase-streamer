@@ -1,3 +1,9 @@
+## [1.94.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.93.3...v1.94.0) (2026-09-18)
+
+### Features
+
+* **sessions:** add POST /:id/kill for a forced SIGKILL ([#919](https://github.com/RonenMars/threadbase-streamer/issues/919)) ([99591b0](https://github.com/RonenMars/threadbase-streamer/commit/99591b0a9e6fd9a392d0adbde224e53dcbbf95fd))
+
 ## [1.93.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.93.2...v1.93.3) (2026-09-17)
 
 ### Bug Fixes
