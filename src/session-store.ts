@@ -48,6 +48,10 @@ export class SessionStore {
     // carries no status) can never be dropped by a store copy that has not yet
     // seen the running transition.
     if (updates.status != null && updates.status !== "running") session.subStatus = null;
+    // Likewise a suggestion exists only while the composer is waiting on input.
+    if (updates.status != null && updates.status !== "waiting_input") {
+      session.promptSuggestion = null;
+    }
     return session;
   }
 
@@ -324,6 +328,9 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     // key keeps the previous value and the indicator latches on a finished
     // turn — the tb-mobile PR #647 bug, arriving through the serialiser.
     subStatus: s.subStatus ?? null,
+    // Unconditional for the same reason as subStatus: absence must never be a
+    // third state on the wire.
+    promptSuggestion: s.promptSuggestion ?? null,
     ptyAttached,
     ...(s.projectId != null && { projectId: s.projectId }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
@@ -380,6 +387,7 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
     // explicitly rather than omitted, for the same reason as in
     // managedToResponse: absence must never be a third state on the wire.
     subStatus: null,
+    promptSuggestion: null,
     projectPath: d.projectPath,
     projectName: d.projectName,
     branch: d.branch,
