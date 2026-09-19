@@ -1,3 +1,9 @@
+## [1.98.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.3...v1.98.4) (2026-09-19)
+
+### Bug Fixes
+
+* **conversations:** match live cursor messages to history by uuid ([#936](https://github.com/RonenMars/threadbase-streamer/issues/936)) ([1f019a4](https://github.com/RonenMars/threadbase-streamer/commit/1f019a44f5fe34f20da4415df0873d324a9d762a)), closes [#931](https://github.com/RonenMars/threadbase-streamer/issues/931) [RonenMars/threadbase-scanner#96](https://github.com/RonenMars/threadbase-scanner/issues/96) [#931](https://github.com/RonenMars/threadbase-streamer/issues/931)
+
 ## [1.98.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.2...v1.98.3) (2026-09-19)
 
 ### Bug Fixes
