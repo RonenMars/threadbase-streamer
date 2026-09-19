@@ -738,6 +738,7 @@ describe("#724: an answered question whose menu is still painted", () => {
     createLiveSessionOptions({
       pendingQuestionKey: deps.pendingQuestionKey,
       cancelPendingQuestion: () => {},
+      waitingInputNotifier: () => null,
     } as unknown as LiveSessionWiringDeps).onLiveQuestionGone?.(SESSION);
 
     h.handlers.handleLiveQuestion(SESSION, QUESTIONS);

@@ -428,6 +428,84 @@ describe("PTYManager — ready detection", () => {
   });
 });
 
+// Claude keeps its `❯` input box painted for the whole turn, so the marker
+// alone flipped a session to waiting_input ~50ms after every submit — and the
+// "waiting for your input" push fired as the agent started. OSC 9;4 (terminal
+// progress) is Claude's own turn signal: 9;4;3 at turn start, 9;4;0 at turn
+// end. Real timers: the turn-end path reads the rendered screen.
+describe("PTYManager — turn end follows OSC 9;4, not the always-painted ❯", () => {
+  const PROGRESS_IDLE = "\x1b]9;4;0;\x07";
+  const PROGRESS_BUSY = "\x1b]9;4;3;\x07";
+  const ECHO_WITH_BOX = "────\r\n❯ what's next?\r\n────\r\n";
+  const settle = () => new Promise((r) => setTimeout(r, 700));
+
+  async function bootedWithProgress() {
+    const statusChanges: ManagedSession[] = [];
+    const mgr = new PTYManager({ onStatusChange: (s) => statusChanges.push(s) });
+    const session = await spawnFresh(mgr);
+    const proc = getMockProc(mgr, session.id);
+    proc._emit("data", PROGRESS_IDLE + MCP_SPLASH_BOOT);
+    expect(statusChanges.at(-1)?.status).toBe("waiting_input");
+    statusChanges.length = 0;
+    return { mgr, session, proc, statusChanges };
+  }
+
+  it("stays running while the turn is open, and settles when 9;4;0 arrives", async () => {
+    const { mgr, session, proc, statusChanges } = await bootedWithProgress();
+
+    mgr.sendInput(session.id, "what's next?");
+    // The echo lands before Claude's 9;4;3 and already carries ❯.
+    proc._emit("data", ECHO_WITH_BOX);
+    proc._emit("data", PROGRESS_BUSY + ECHO_WITH_BOX);
+    await settle();
+    expect(statusChanges.map((s) => s.status)).toEqual(["running"]);
+
+    proc._emit("data", `✻ Baked for 3s${PROGRESS_IDLE}`);
+    await vi.waitFor(() => expect(statusChanges.at(-1)?.status).toBe("waiting_input"));
+    mgr.dispose();
+  });
+
+  it("counts a 9;4 escape split across two chunks", async () => {
+    const { mgr, session, proc, statusChanges } = await bootedWithProgress();
+
+    mgr.sendInput(session.id, "what's next?");
+    proc._emit("data", PROGRESS_BUSY + ECHO_WITH_BOX);
+    proc._emit("data", "done\x1b]9;4");
+    await settle();
+    expect(statusChanges.at(-1)?.status).toBe("running");
+    proc._emit("data", ";0;\x07");
+    await vi.waitFor(() => expect(statusChanges.at(-1)?.status).toBe("waiting_input"));
+    mgr.dispose();
+  });
+
+  it("releases a submit that never opens a turn (slash command)", async () => {
+    const { mgr, session, proc, statusChanges } = await bootedWithProgress();
+
+    mgr.sendInput(session.id, "/help");
+    proc._emit("data", ECHO_WITH_BOX);
+    await settle();
+    expect(statusChanges.at(-1)?.status).toBe("running");
+
+    await new Promise((r) => setTimeout(r, 3_000));
+    await vi.waitFor(() => expect(statusChanges.at(-1)?.status).toBe("waiting_input"));
+    mgr.dispose();
+  }, 10_000);
+
+  it("keeps marker-only readiness for a CLI that never emits 9;4", async () => {
+    const statusChanges: ManagedSession[] = [];
+    const mgr = new PTYManager({ onStatusChange: (s) => statusChanges.push(s) });
+    const session = await spawnFresh(mgr);
+    const proc = getMockProc(mgr, session.id);
+    proc._emit("data", MCP_SPLASH_BOOT);
+    statusChanges.length = 0;
+
+    mgr.sendInput(session.id, "what's next?");
+    proc._emit("data", ECHO_WITH_BOX);
+    expect(statusChanges.map((s) => s.status)).toEqual(["running", "waiting_input"]);
+    mgr.dispose();
+  });
+});
+
 // Regression for the resume side of the "dot bug": before the fix, start()
 // (resume path) did NOT add the session to pendingReady and fired onReady
 // synchronously at spawn time. Input written during the JSONL restore window

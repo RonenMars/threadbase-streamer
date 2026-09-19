@@ -1,6 +1,7 @@
 import { getLogger } from "../../logger";
 import type { ManagedSession } from "../../types";
-import type { ExpoPushMessage, ExpoPushSender } from "./expoPushSender";
+import type { ExpoPushContent, ExpoPushSender } from "./expoPushSender";
+import { type AttentionKind, attentionBody, attentionTitle } from "./notificationCopy";
 
 /**
  * "Your turn" notifications.
@@ -20,6 +21,12 @@ import type { ExpoPushMessage, ExpoPushSender } from "./expoPushSender";
  * `running → waiting_input`. A session's very first `waiting_input` — boot or
  * resume ready, with no prior turn — opens nothing, so starting a session never
  * notifies the user about the session they just started.
+ *
+ * The same notifier covers the agent stopping mid-turn for the user — a
+ * permission gate or an AskUserQuestion menu. Those keep the turn open (Claude
+ * holds its turn signal across them), so without a push of their own an
+ * away-from-desk user would never learn the agent was blocked on them. One
+ * push per prompt: repaints and cursor moves of the same prompt are not new.
  *
  * Always notifies for a closed turn, including when a WebSocket client is still
  * subscribed. Suppression-while-watched used to skip those pushes as noise when
@@ -49,17 +56,29 @@ const log = getLogger("expo-push");
  * The streamer's own hostname is not a substitute: the app keys servers by a
  * hash of their URL and cannot resolve a hostname.
  */
-export function waitingInputMessage(session: ManagedSession): ExpoPushMessage {
-  return {
-    title: session.projectName || "Threadbase",
-    body: "Waiting for your input",
-    data: { sessionId: session.id },
-  };
+export function waitingInputMessage(
+  session: Pick<ManagedSession, "id" | "projectName" | "provider">,
+  kind: AttentionKind = "turn_done",
+): ExpoPushContent {
+  return (locale) => ({
+    title: attentionTitle(kind, session.projectName),
+    body: attentionBody(kind, session.provider, locale),
+    data: { sessionId: session.id, kind },
+    sound: "default",
+    priority: "high",
+    // One stack per session, and the newest state replaces the older banner:
+    // "needs your go-ahead" is stale the moment the turn finishes.
+    threadId: session.id,
+    collapseId: session.id,
+    tag: session.id,
+  });
 }
 
 export class WaitingInputNotifier {
   /** Sessions with a turn the user started that has not yet been answered. */
   private openTurn = new Set<string>();
+  /** Sessions with a prompt (gate or question) already pushed and still open. */
+  private openPrompt = new Set<string>();
 
   constructor(private readonly sender: ExpoPushSender) {}
 
@@ -76,6 +95,7 @@ export class WaitingInputNotifier {
         if (previousStatus === "waiting_input") this.openTurn.add(session.id);
         return;
       }
+      this.openPrompt.delete(session.id);
       if (session.status !== "waiting_input") {
         // idle: the PTY is gone, so any open turn ended without a prompt.
         this.openTurn.delete(session.id);
@@ -87,20 +107,55 @@ export class WaitingInputNotifier {
       // not owed a second notification for one turn.
       if (!this.openTurn.delete(session.id)) return;
 
-      const outcome = await this.sender.send(waitingInputMessage(session));
-      if (outcome.attempted > 0) {
-        log.info("expo_push.waiting_input", {
-          event: "expo_push.waiting_input",
-          sessionId: session.id,
-          ...outcome,
-        });
-      }
+      await this.push(session, "turn_done");
     } catch (err) {
       log.error("expo_push.notify_failed", {
         event: "expo_push.notify_failed",
         sessionId: session.id,
         status: session.status,
         err: String(err),
+      });
+    }
+  }
+
+  /**
+   * A permission gate or question opened (`open`) or closed on this session.
+   * Fire-and-forget like onStatusChange.
+   */
+  async onPrompt(
+    session: Pick<ManagedSession, "id" | "projectName" | "provider">,
+    kind: "permission" | "question",
+    open: boolean,
+  ): Promise<void> {
+    try {
+      if (!open) {
+        this.openPrompt.delete(session.id);
+        return;
+      }
+      if (this.openPrompt.has(session.id)) return;
+      this.openPrompt.add(session.id);
+      await this.push(session, kind);
+    } catch (err) {
+      log.error("expo_push.notify_failed", {
+        event: "expo_push.notify_failed",
+        sessionId: session.id,
+        kind,
+        err: String(err),
+      });
+    }
+  }
+
+  private async push(
+    session: Pick<ManagedSession, "id" | "projectName" | "provider">,
+    kind: AttentionKind,
+  ): Promise<void> {
+    const outcome = await this.sender.send(waitingInputMessage(session, kind));
+    if (outcome.attempted > 0) {
+      log.info("expo_push.waiting_input", {
+        event: "expo_push.waiting_input",
+        sessionId: session.id,
+        kind,
+        ...outcome,
       });
     }
   }

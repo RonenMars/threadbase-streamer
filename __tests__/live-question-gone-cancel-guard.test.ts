@@ -57,6 +57,8 @@ function buildDeps(pendingQuestion: PendingQuestion | undefined): {
       pendingQuestionKey,
       broadcast,
     ),
+    // Push is off here; the guard is what is under test.
+    waitingInputNotifier: () => null,
   } as unknown as LiveSessionWiringDeps;
 
   return { deps, broadcast, pendingQuestions };
