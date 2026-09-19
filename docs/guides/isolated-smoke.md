@@ -23,9 +23,13 @@ thing: a platform-specific vitest subset, not a boot of the built CLI. See
 ## Usage
 
 ```bash
-npm run build
-scripts/smoke-isolated.sh
+npm run test:smoke          # builds, then runs the smoke
+scripts/smoke-isolated.sh   # the smoke alone, against the existing dist/
 ```
+
+`test:smoke` is `npm run build && scripts/smoke-isolated.sh`. It is deliberately
+not part of `npm test`: a full build plus a server boot on a fixed port is too
+heavy to put in front of every test run.
 
 | Variable | Default | Meaning |
 |---|---|---|
