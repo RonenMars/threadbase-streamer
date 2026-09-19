@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -23,8 +23,10 @@ let cache: ConversationCache;
 
 const CODEX_CONV = "rollout-codex-1";
 const CLAUDE_CONV = "claude-conv-1";
+const CURSOR_CONV = "cursor-conv-1";
 let codexPath: string;
 let claudePath: string;
+let cursorPath: string;
 
 const codexLine = JSON.stringify({
   timestamp: "2026-07-13T11:33:44.087Z",
@@ -69,6 +71,12 @@ const claudeLine = (i: number) =>
     },
   });
 
+const cursorLine = (role: "user" | "assistant", text: string) =>
+  JSON.stringify({
+    role,
+    message: { role, content: [{ type: "text", text }] },
+  });
+
 function seedMeta(id: string, filePath: string, provider: string): void {
   cache
     .getDatabase()
@@ -84,11 +92,17 @@ beforeEach(() => {
   cache = ConversationCache.open(join(dbDir, "cache.db"));
   codexPath = join(dbDir, `${CODEX_CONV}.jsonl`);
   claudePath = join(dbDir, `${CLAUDE_CONV}.jsonl`);
+  cursorPath = join(dbDir, "agent-transcripts", CURSOR_CONV, `${CURSOR_CONV}.jsonl`);
+  mkdirSync(join(dbDir, "agent-transcripts", CURSOR_CONV), { recursive: true });
   writeFileSync(
     codexPath,
     `${[codexLine, codexMessage(0), codexMessage(1), codexDeveloperLine, codexMessage(2)].join("\n")}\n`,
   );
   writeFileSync(claudePath, `${[0, 1, 2, 3].map(claudeLine).join("\n")}\n`);
+  writeFileSync(
+    cursorPath,
+    `${[cursorLine("user", "cursor question"), cursorLine("assistant", "cursor answer")].join("\n")}\n`,
+  );
 });
 
 afterEach(() => {
@@ -197,6 +211,25 @@ describe("offset index provider guard", () => {
     const window = cache.readMessageWindow(claudePath, 0, 80);
     expect(window?.total).toBe(4);
     expect(window?.messages).toHaveLength(4);
+  });
+
+  it("uses the Cursor parser before live-tail classification updates the cached provider", () => {
+    // A newly discovered agent-transcripts file starts with the cache's
+    // default claude-code provider. The watcher extends the offset index
+    // before classifying the lines, so path-based provider detection must keep
+    // that first append from consuming Cursor messages as unreadable.
+    seedMeta(CURSOR_CONV, cursorPath, "claude-code");
+    const stat = statSync(cursorPath);
+    const buf = readFileSync(cursorPath);
+    const { spans } = splitCompleteLines(buf, 0);
+
+    const seqs = cache.extendMessageIndex(cursorPath, spans, stat, 0, buf.length);
+
+    expect(seqs).toEqual([0, 1]);
+    expect(cache.readMessageWindow(cursorPath, 0, 80)?.messages.map((m) => m.text)).toEqual([
+      "cursor question",
+      "cursor answer",
+    ]);
   });
 
   it("files with no cached meta are NOT indexable (provider unknown = unsafe)", async () => {
