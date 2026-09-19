@@ -9,3 +9,4 @@ Start from [`_template.md`](_template.md), which explains the conventions each s
 | Runbook | Purpose |
 |---|---|
 | [2026-07-22-land-open-prs.md](2026-07-22-land-open-prs.md) | Land the 18 open streamer PRs onto `main`, in order, without re-hitting the documented conflicts or the two silent-drop traps. |
+| [warmup-race/](warmup-race/README.md) | Reproduce and measure the startup warm-up race (`503 SERVER_WARMING_UP` right after `listen()`) with a test-only patch and a stats script. |
