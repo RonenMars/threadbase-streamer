@@ -1,3 +1,9 @@
+## [1.98.9](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.8...v1.98.9) (2026-09-19)
+
+### Bug Fixes
+
+* **push:** route each notification to the server id the app registered with ([#942](https://github.com/RonenMars/threadbase-streamer/issues/942)) ([52d4b8e](https://github.com/RonenMars/threadbase-streamer/commit/52d4b8e90226a9a7ef06331d7c70e861e6c4bb46))
+
 ## [1.98.8](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.7...v1.98.8) (2026-09-19)
 
 ### Bug Fixes
