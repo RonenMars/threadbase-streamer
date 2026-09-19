@@ -108,7 +108,7 @@ describe("PATCH /api/sessions/:id/{model,effort}", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await s.listen(EPHEMERAL_PORT);
+    await s.listen(EPHEMERAL_PORT, { awaitReady: true });
     port = s.port;
     server = s;
     internals = s as unknown as Internals;

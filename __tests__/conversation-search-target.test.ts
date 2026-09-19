@@ -147,7 +147,7 @@ describe("QUERY /api/conversations/:id/search-target", () => {
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(0);
+    await server.listen(0, { awaitReady: true });
     port = server.port;
   });
 
