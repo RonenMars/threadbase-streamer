@@ -61,13 +61,13 @@ fail=0
 check() { # check <label> <ok: 0|1>
   if [ "$2" = 0 ]; then echo "  ok   $1"; else echo "  FAIL $1"; fail=1; fi
 }
-api() { curl -s -H "Authorization: Bearer $KEY" "$@"; }
+api() { curl -s -m 5 -H "Authorization: Bearer $KEY" "$@"; }
 
-for _ in $(seq 1 30); do curl -fs "localhost:$PORT/healthz" > /dev/null 2>&1 && break; sleep 1; done
-HEALTH=$(curl -s "localhost:$PORT/healthz")
+for _ in $(seq 1 30); do curl -fs -m 2 "localhost:$PORT/healthz" > /dev/null 2>&1 && break; sleep 1; done
+HEALTH=$(curl -s -m 5 "localhost:$PORT/healthz")
 echo "$HEALTH" | grep -q '"ok":true'; check "healthz answers ($HEALTH)" $?
 
-CODE=$(curl -s -o /dev/null -w '%{http_code}' "localhost:$PORT/api/conversations")
+CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "localhost:$PORT/api/conversations")
 [ "$CODE" = 401 ]; check "no-auth /api/conversations is 401 (got $CODE)" $?
 
 sleep 3 # let the watcher scan the fixture into the cache
