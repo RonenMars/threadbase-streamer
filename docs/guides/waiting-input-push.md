@@ -55,6 +55,16 @@ It is also why starting a session never notifies the user about the session they
 `PTYManager` guards the same case one layer down, verified rather than assumed: all three `markReady` call sites require `status === "running"`, and `markReady` itself sets `waiting_input`, clears `pendingReady` and cancels the fallback timer — so the timeout fallback cannot fire after a marker already settled the turn.
 The notifier's own guard still earns its place: it covers the Codex runner and any future detector through the same funnel.
 
+For Claude, `running → waiting_input` means the turn really ended: readiness follows Claude's OSC 9;4 turn signal, not the `❯` input box that stays painted all turn (see `CLAUDE.md` → Session lifecycle).
+Before that, the push fired about 50 ms after every submit.
+
+### Mid-turn prompts
+
+A permission gate or an AskUserQuestion menu keeps the turn open, since Claude holds its turn signal across both, so the turn-end push cannot cover them.
+`WaitingInputNotifier.onPrompt` pushes once when one opens, wired from `onPermissionChange` / `onLiveQuestion` in `server-wiring.ts`.
+Repaints and cursor moves of the same prompt are not new prompts; the next push waits until that prompt closes (`gate === null`, `onLiveQuestionGone`) or the turn ends.
+Codex usage-limit cards travel the same permission path, which is why that copy says "go-ahead" rather than "approval".
+
 ## Always notify for a closed turn
 
 A push goes out for every closed turn, including when a WebSocket client is still subscribed to that session.
@@ -69,13 +79,27 @@ This is a privacy decision, not a formatting one.
 ```json
 {
   "to": "ExponentPushToken[...]",
-  "title": "<projectName>",
-  "body": "Waiting for your input",
-  "data": { "sessionId": "...", "serverId": "..." }   // serverId omitted for tokens registered without one
+  "title": "✅ <projectName>",                        // ✋ permission, 💬 question
+  "body": "Claude finished — tap to read the reply and continue.",
+  "data": { "sessionId": "...", "kind": "turn_done", "serverId": "..." },   // serverId omitted for tokens registered without one
+  "sound": "default",
+  "priority": "high",
+  "threadId": "<sessionId>",
+  "collapseId": "<sessionId>",
+  "tag": "<sessionId>"
 }
 ```
 
 That is the whole payload.
+`sound` is what makes the push audible on iOS at all; Expo plays nothing when it is omitted, which it was until this change.
+`priority: "high"` delivers immediately on Android rather than in a batch.
+`threadId` stacks one session's pushes together on iOS, and `collapseId`/`tag` let the newer push replace the older banner, so a "needs your go-ahead" that has been answered gives way to "finished".
+`data.kind` (`turn_done`, `permission`, `question`) is additive; mobile routes on `sessionId` and ignores it today.
+
+The body is written per recipient token in the language its app registered (`locale` in `POST /api/push/register`, else the first `Accept-Language` tag, which iOS sends on every request; migration 025).
+The copy lives in `src/services/push/notificationCopy.ts` for the languages tb-mobile ships (en, he, ar, ru); anything else gets English.
+The non-English strings are machine-written and want a native review.
+The agent name comes from the session's provider (Claude, Codex, Cursor) and is not session content.
 `sessionId` and `serverId` are what mobile's `sessionRouteFromNotificationData` needs to route the tap to the session. `serverId` is the id the app files *this* server under, sent by the app as `serverId` in `POST /api/push/register` and echoed back per token — not the streamer's hostname, which the app has no entry for. One phone registers the same push token with every server it has paired, so each server's row carries a different id. A token with none (an app that predates this) gets no `serverId` and the app falls back to its default server; `projectName` is what makes the notification actionable when several sessions are live.
 
 **Deliberately absent: `lastOutput` and `sessionName`.**

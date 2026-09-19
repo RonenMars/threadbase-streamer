@@ -360,6 +360,13 @@ export type LiveSessionWiringDeps = {
  * above; the server keeps every Map and Set these callbacks mutate.
  */
 export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManagerOptions {
+  // The agent stopped mid-turn for the user. Fire-and-forget, like the status
+  // notifiers below; the notifier dedupes repaints of one prompt itself.
+  const notifyPrompt = (sessionId: string, kind: "permission" | "question", open: boolean) => {
+    const notifier = deps.waitingInputNotifier();
+    const session = notifier && deps.sessionStore.get(sessionId, deps.ptyAttachedIds());
+    if (session) void notifier.onPrompt(session, kind, open);
+  };
   return {
     logger: getLogger("pty"),
     onOutput: (sessionId, data) => {
@@ -405,11 +412,14 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
     },
     onPermissionChange: (sessionId, gate, occurrenceId) => {
       deps.sessionHandlers().handlePermissionChange(sessionId, gate, occurrenceId);
+      notifyPrompt(sessionId, "permission", gate !== null);
     },
     onLiveQuestion: (sessionId, questions, occurrenceId) => {
       deps.sessionHandlers().handleLiveQuestion(sessionId, questions, occurrenceId);
+      notifyPrompt(sessionId, "question", true);
     },
     onLiveQuestionGone: (sessionId) => {
+      notifyPrompt(sessionId, "question", false);
       // The rendered AskUserQuestion menu closed on this streamer's own live
       // PTY — authoritative regardless of whether pendingQuestions still holds
       // the screen-synthesized id or the real toolUseId a JSONL flush swapped

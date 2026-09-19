@@ -209,11 +209,17 @@ describe("WaitingInputNotifier", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(bodyOf(calls[0])[0]).toEqual({
       to: "ExponentPushToken[a]",
-      title: "my-project",
-      body: "Waiting for your input",
+      title: "✅ my-project",
+      body: "Claude finished — tap to read the reply and continue.",
       // No serverId: this token registered without one, and the streamer's own
       // hostname is not a name the app can resolve.
-      data: { sessionId: "sess-1" },
+      data: { sessionId: "sess-1", kind: "turn_done" },
+      // iOS is silent without a sound; the rest group and replace per session.
+      sound: "default",
+      priority: "high",
+      threadId: "sess-1",
+      collapseId: "sess-1",
+      tag: "sess-1",
     });
   });
 
@@ -231,11 +237,66 @@ describe("WaitingInputNotifier", () => {
     await runTurn(new WaitingInputNotifier(new ExpoPushSender(repo)));
 
     expect(bodyOf(calls[0]).map((m) => [m.to, m.data])).toEqual([
-      ["ExponentPushToken[a]", { sessionId: "sess-1", serverId: "srv_aaa" }],
-      ["ExponentPushToken[b]", { sessionId: "sess-1", serverId: "srv_bbb" }],
+      ["ExponentPushToken[a]", { sessionId: "sess-1", kind: "turn_done", serverId: "srv_aaa" }],
+      ["ExponentPushToken[b]", { sessionId: "sess-1", kind: "turn_done", serverId: "srv_bbb" }],
       // An older client registered no id: it gets none, and the app falls back
       // to its default server rather than to a name it cannot resolve.
-      ["ExponentPushToken[old]", { sessionId: "sess-1" }],
+      ["ExponentPushToken[old]", { sessionId: "sess-1", kind: "turn_done" }],
+    ]);
+  });
+
+  it("writes each recipient's push in the language its app registered", async () => {
+    repo.register({ token: "ExponentPushToken[he]", platform: "ios", locale: "he-IL" });
+    repo.register({ token: "ExponentPushToken[ru]", platform: "android", locale: "ru" });
+    repo.register({ token: "ExponentPushToken[fr]", platform: "ios", locale: "fr-FR" });
+    repo.register({ token: "ExponentPushToken[old]", platform: "ios" });
+    const { calls } = stubFetch([{ body: { data: Array(4).fill({ status: "ok" }) } }]);
+
+    await runTurn(
+      new WaitingInputNotifier(new ExpoPushSender(repo)),
+      session({ provider: "codex-cli" }),
+    );
+
+    expect(bodyOf(calls[0]).map((m) => m.body)).toEqual([
+      "התשובה של Codex מוכנה — הקישו כדי לקרוא ולהמשיך.",
+      "Ответ Codex готов — нажмите, чтобы прочитать и продолжить.",
+      // A language the app does not ship, and a client that sent none: English.
+      "Codex finished — tap to read the reply and continue.",
+      "Codex finished — tap to read the reply and continue.",
+    ]);
+  });
+
+  it("pushes once when a permission gate opens, however often it repaints", async () => {
+    const { notifier: n, fetch, calls } = notifier();
+    await n.onStatusChange(session({ status: "running" }), "waiting_input");
+
+    await n.onPrompt(session(), "permission", true);
+    await n.onPrompt(session(), "permission", true); // cursor moved / repaint
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(bodyOf(calls[0])[0]).toMatchObject({
+      title: "✋ my-project",
+      body: "Claude needs your go-ahead to continue.",
+      data: { sessionId: "sess-1", kind: "permission" },
+    });
+  });
+
+  it("pushes again for the next gate, and still for the turn's end", async () => {
+    repo.register({ token: "ExponentPushToken[a]", platform: "ios" });
+    const { fn: fetch, calls } = stubFetch([{ body: { data: [{ status: "ok" }] } }]);
+    const n = new WaitingInputNotifier(new ExpoPushSender(repo));
+    await n.onStatusChange(session({ status: "running" }), "waiting_input");
+
+    await n.onPrompt(session(), "permission", true);
+    await n.onPrompt(session(), "permission", false); // answered
+    await n.onPrompt(session(), "question", true);
+    await n.onStatusChange(session({ status: "waiting_input" }), "running");
+
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(calls.map((c) => (bodyOf(c)[0].data as { kind: string }).kind)).toEqual([
+      "permission",
+      "question",
+      "turn_done",
     ]);
   });
 

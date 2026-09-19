@@ -27,7 +27,20 @@ export interface ExpoPushMessage {
   body: string;
   /** Delivered to the app as `notification.request.content.data`. */
   data: Record<string, string>;
+  /** iOS plays nothing unless this is set — "default" is the device sound. */
+  sound?: "default";
+  /** "high" wakes an Android device immediately instead of batching. */
+  priority?: "default" | "normal" | "high";
+  /** iOS: groups one session's notifications into a single stack. */
+  threadId?: string;
+  /** iOS + Android: a newer push with the same id replaces the shown one. */
+  collapseId?: string;
+  /** Android: the same replacement, for an already-displayed notification. */
+  tag?: string;
 }
+
+/** A message fixed for every device, or one built per device's language. */
+export type ExpoPushContent = ExpoPushMessage | ((locale: string | null) => ExpoPushMessage);
 
 export interface ExpoPushOutcome {
   attempted: number;
@@ -70,7 +83,7 @@ export class ExpoPushSender {
    * a dead device is recorded against its own row and never silences the other
    * devices in the batch.
    */
-  async send(message: ExpoPushMessage, now: number = Date.now()): Promise<ExpoPushOutcome> {
+  async send(message: ExpoPushContent, now: number = Date.now()): Promise<ExpoPushOutcome> {
     const rows = this.repo.listDeliverable();
     const outcome: ExpoPushOutcome = { attempted: rows.length, succeeded: 0, retired: 0 };
     if (rows.length === 0) return outcome;
@@ -84,7 +97,7 @@ export class ExpoPushSender {
 
   private async sendChunk(
     rows: PushTokenRow[],
-    message: ExpoPushMessage,
+    content: ExpoPushContent,
     now: number,
     outcome: ExpoPushOutcome,
   ): Promise<void> {
@@ -98,18 +111,21 @@ export class ExpoPushSender {
           ...(this.accessToken && { authorization: `Bearer ${this.accessToken}` }),
         },
         body: JSON.stringify(
-          rows.map((row) => ({
-            to: row.token,
-            ...message,
-            // Per token, not per message: the same push token is registered
-            // with every server the phone pairs, and each server stores the id
-            // the app files *it* under. A token with none (an older client)
-            // gets no serverId, so the app uses its default server instead of
-            // failing to resolve a name it has no entry for.
-            data: row.client_server_id
-              ? { ...message.data, serverId: row.client_server_id }
-              : message.data,
-          })),
+          rows.map((row) => {
+            const message = typeof content === "function" ? content(row.locale) : content;
+            return {
+              to: row.token,
+              ...message,
+              // Per token, not per message: the same push token is registered
+              // with every server the phone pairs, and each server stores the id
+              // the app files *it* under. A token with none (an older client)
+              // gets no serverId, so the app uses its default server instead of
+              // failing to resolve a name it has no entry for.
+              data: row.client_server_id
+                ? { ...message.data, serverId: row.client_server_id }
+                : message.data,
+            };
+          }),
         ),
       });
       if (!res.ok) {
