@@ -1,0 +1,64 @@
+diff --git a/src/server.ts b/src/server.ts
+index 6ab61160..04763817 100644
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -291,6 +291,15 @@ export type ResumeOutcome =
+       response: SessionResponse | null;
+     };
+ 
++
++// WARMUP-AUDIT instrumentation (never commit; see docs/runbooks/warmup-race)
++function __wuLog(rec: Record<string, unknown>): void {
++  const f = process.env.TB_WARMUP_LOG;
++  if (!f) return;
++  const st = (globalThis as any).expect?.getState?.() ?? {};
++  const file = typeof st.testPath === "string" ? st.testPath.split("__tests__/")[1] : undefined;
++  (process as any).getBuiltinModule("node:fs").appendFileSync(f, JSON.stringify({ file, test: st.currentTestName, pid: process.pid, ...rec }) + "\n");
++}
+ export class StreamerServer {
+   private httpServer: ReturnType<typeof createServer>;
+   private ptyManager: LiveSessionManager;
+@@ -1418,6 +1427,7 @@ export class StreamerServer {
+ 
+   private rejectIfWarmingUp(res: ServerResponse): boolean {
+     const warmupState = this.currentWarmupState();
++    { const w = this as any; if (!w.__wuGated) { w.__wuGated = true; __wuLog({ ev: "firstGated", sinceListenMs: w.__wuReturn == null ? null : +(performance.now() - w.__wuReturn).toFixed(1), rejected: warmupState, startupCleared: !!w.__wuCleared }); } else if (warmupState) __wuLog({ ev: "rejected", state: warmupState }); }
+     if (!warmupState) return false;
+     const body: ServerWarmingUpResponse = {
+       error: "Server is warming up",
+@@ -1568,6 +1578,7 @@ export class StreamerServer {
+       () => this.ptyAttachedIds().size,
+     );
+ 
++    (this as any).__wuStart = performance.now(); (this as any).__wuAwait = opts?.awaitReady;
+     const warmUp = new Promise<void>((resolveWarm) => {
+       {
+         this.log.info(`Streamer server listening on port ${port}`, {
+@@ -1925,14 +1936,25 @@ export class StreamerServer {
+             });
+           })
+           .finally(() => {
+-            this.finishWarmup(0);
+-            resolveWarm();
++            const __d = Number(process.env.TB_WARMUP_DELAY_MS ?? 0);
++            const __done = () => {
++              const __t = performance.now();
++              const w = this as any;
++              __wuLog({ ev: "clear", delay: __d, awaitReady: !!w.__wuAwait, scanMs: +(__t - __d - w.__wuStart).toFixed(1), windowMs: w.__wuReturn == null ? null : +(__t - w.__wuReturn).toFixed(1), potentialWindowMs: w.__wuPre == null ? null : +(__t - __d - w.__wuPre).toFixed(1) });
++              w.__wuCleared = true;
++              this.finishWarmup(0);
++              resolveWarm();
++            };
++            if (__d > 0) setTimeout(__done, __d);
++            else __done();
+           });
+       }
+     });
+     // Track the warm-up's scan→cache-write chain so close() can await it.
+     this.trackCacheWrite(warmUp);
++    (this as any).__wuPre = performance.now();
+     if (opts?.awaitReady) await warmUp;
++    (this as any).__wuReturn = performance.now();
+   }
+ 
+   // Bind the HTTP listener, retrying on a transient EADDRINUSE. See the call
