@@ -1,3 +1,9 @@
+## [1.98.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.4...v1.98.5) (2026-09-19)
+
+### Bug Fixes
+
+* **conversations:** add camelCase aliases to conversation detail meta ([#937](https://github.com/RonenMars/threadbase-streamer/issues/937)) ([e2cd4ff](https://github.com/RonenMars/threadbase-streamer/commit/e2cd4ff8982f32de07f8e3cb0f8bd6afdb6b08a9))
+
 ## [1.98.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.3...v1.98.4) (2026-09-19)
 
 ### Bug Fixes
