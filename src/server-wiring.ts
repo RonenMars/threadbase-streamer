@@ -402,6 +402,17 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         updatedAt: new Date().toISOString(),
       });
     },
+    onPromptSuggestionChange: (sessionId, text) => {
+      // Same shape as onPhaseChange above: mirror into the store so REST carries
+      // it, then a minimal frame to this session's subscribers only.
+      deps.sessionStore.updateManaged(sessionId, { promptSuggestion: text });
+      deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(sessionId) ?? [], {
+        type: "prompt_suggestion",
+        sessionId,
+        text,
+        updatedAt: new Date().toISOString(),
+      });
+    },
     onUserMessage: (sessionId, text, ts) => {
       deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(sessionId) ?? [], {
         type: "user_message",

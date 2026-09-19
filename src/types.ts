@@ -138,6 +138,14 @@ export interface ManagedSession {
    * `running`, so leaving it clears the field.
    */
   subStatus?: AgentPhase | null;
+  /**
+   * Claude Code's dim "next prompt" suggestion from the composer row, scraped
+   * from cell attributes (see detectPromptSuggestion). Exists only while the
+   * status is `waiting_input`; SessionStore.updateManaged() clears it on any
+   * other status. Emitted unconditionally as `?? null` for the same reason as
+   * `subStatus`.
+   */
+  promptSuggestion?: string | null;
   filePath?: string;
   resumedFromConversationId?: string;
 
@@ -302,6 +310,17 @@ export type WSMessage =
       type: "session_phase";
       sessionId: string;
       phase: AgentPhase | null;
+      updatedAt: string; // ISO 8601
+    }
+  /**
+   * The composer's predicted next prompt changed. Scoped to the session's
+   * subscribers and minimal like `session_phase`. `text` is always present and
+   * `null` means cleared — absence must never carry meaning.
+   */
+  | {
+      type: "prompt_suggestion";
+      sessionId: string;
+      text: string | null;
       updatedAt: string; // ISO 8601
     }
   | { type: "session_list"; sessions: readonly SessionResponse[] }
@@ -541,6 +560,13 @@ export interface SessionResponse {
    * alike and would convert an explicit clear back into absence.
    */
   subStatus: AgentPhase | null;
+  /**
+   * Claude Code's predicted next prompt, or `null`. Always serialised, never
+   * omitted — a merging client cannot express a removed key, so an absent
+   * field would keep a stale suggestion on screen. Do not move it into a
+   * `...(x != null && { x })` block.
+   */
+  promptSuggestion: string | null;
   account?: string;
   messageCount?: number;
   preview?: string;
@@ -748,6 +774,9 @@ export interface PTYManagerOptions {
    * session for the whole turn.
    */
   onPhaseChange?: (sessionId: string, phase: AgentPhase | null) => void;
+  // Fired when the composer's dim next-prompt suggestion appears, changes or is
+  // cleared (`null`). Change-guarded like onPhaseChange: the scrape runs per chunk.
+  onPromptSuggestionChange?: (sessionId: string, text: string | null) => void;
   // Fired when an AskUserQuestion menu is detected on the rendered screen (before
   // the JSONL tool_use block flushes). The server de-dupes against the JSONL path.
   onLiveQuestion?: (sessionId: string, questions: AskQuestion[], occurrenceId?: string) => void;
