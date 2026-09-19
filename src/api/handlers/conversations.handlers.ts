@@ -70,6 +70,36 @@ const SEARCH_MAX_SCAN = 1000;
 // (22.8 MB), so it clamps mistakes rather than legitimate requests.
 const MAX_BYTES_CEILING = 32 * 1024 * 1024;
 
+interface SnakeConversationMeta {
+  profile_id?: string;
+  project_name?: string;
+  session_name?: string;
+  project_path?: string;
+  file_path?: string;
+  last_updated_at?: string;
+  message_count?: number;
+}
+
+/**
+ * The conversation detail `meta` predates the camelCase wire and names the same
+ * concepts differently from `SessionResponse` (`profile_id` vs `account`,
+ * `last_updated_at` vs `lastActivityAt`, ...). Released mobile builds read the
+ * snake_case keys, so those stay; the camelCase names ride alongside so a
+ * client can read one field set from either endpoint.
+ */
+function withCamelMetaAliases<T extends SnakeConversationMeta>(meta: T) {
+  return {
+    ...meta,
+    account: meta.profile_id,
+    projectName: meta.project_name,
+    sessionName: meta.session_name,
+    projectPath: meta.project_path,
+    filePath: meta.file_path,
+    lastActivityAt: meta.last_updated_at,
+    messageCount: meta.message_count,
+  };
+}
+
 /**
  * Everything ConversationHandlers reads from the server. Collaborators
  * constructed once in the server constructor are passed by reference; anything
@@ -298,6 +328,7 @@ export class ConversationHandlers {
         preview: c.preview ?? undefined,
         messageCount: c.messageCount,
         lastActivity: c.lastActivity,
+        lastActivityAt: c.lastActivity,
         firstMessage: c.firstMessage ? (JSON.parse(c.firstMessage) as unknown) : undefined,
         lastMessage: c.lastMessage ? (JSON.parse(c.lastMessage) as unknown) : undefined,
         model: c.model ?? undefined,
@@ -354,6 +385,7 @@ export class ConversationHandlers {
         preview: c.preview || undefined,
         messageCount: c.messageCount,
         lastActivity: c.timestamp,
+        lastActivityAt: c.timestamp,
         firstMessage: c.firstMessage ?? undefined,
         lastMessage: c.lastMessage ?? undefined,
         model: c.model ?? undefined,
@@ -796,7 +828,7 @@ export class ConversationHandlers {
     const provider = coerceProviderForRunner(session.provider);
     const availability = classifyResumability(session.projectPath);
     return {
-      meta: {
+      meta: withCamelMetaAliases({
         id,
         profile_id: session.account ?? undefined,
         project_name: session.projectName,
@@ -809,7 +841,7 @@ export class ConversationHandlers {
         ...(availability.unavailable_reason && {
           unavailable_reason: availability.unavailable_reason,
         }),
-      },
+      }),
       messages: [] as unknown[],
       message_pagination: {
         total: 0,
@@ -967,7 +999,7 @@ export class ConversationHandlers {
             content: (m.content ?? []).filter((b: any) => b.type !== "text"),
           }));
           json(res, 200, {
-            meta: {
+            meta: withCamelMetaAliases({
               id,
               profile_id: cachedMeta?.account ?? undefined,
               project_name: cachedMeta?.projectName ?? undefined,
@@ -981,7 +1013,7 @@ export class ConversationHandlers {
               ...(availability.unavailable_reason && {
                 unavailable_reason: availability.unavailable_reason,
               }),
-            },
+            }),
             messages: messagesPayload,
             message_pagination: {
               // Count what was actually served, not what the tail holds: the
@@ -1464,7 +1496,7 @@ export class ConversationHandlers {
         ? (slice.at(-1)?.timestamp ?? conv.timestamp)
         : conv.timestamp;
     const body: Record<string, unknown> = {
-      meta: {
+      meta: withCamelMetaAliases({
         id,
         isSubagent: this.cache?.getMetaById(id)?.isSubagent,
         parentConversationId: this.cache?.getMetaById(id)?.parentConversationId,
@@ -1492,7 +1524,7 @@ export class ConversationHandlers {
             unavailable_reason: inherited.unavailableReason,
           },
         }),
-      },
+      }),
       messages: messagesPayload,
     };
     if (messagePagination) body.message_pagination = messagePagination;
