@@ -1161,9 +1161,7 @@ export class StreamerServer {
   private initWaitingInputPush(pushRepo: PushRepository): void {
     const sender = new ExpoPushSender(pushRepo, process.env.THREADBASE_EXPO_ACCESS_TOKEN);
     const serverId = process.env.THREADBASE_INSTANCE_ID ?? hostname();
-    this.waitingInputNotifier = new WaitingInputNotifier(sender, serverId, (id) =>
-      this.hasSessionSubscriber(id),
-    );
+    this.waitingInputNotifier = new WaitingInputNotifier(sender, serverId);
   }
 
   /** Whether any live socket is subscribed to this session — "someone is looking". */

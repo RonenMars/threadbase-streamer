@@ -55,16 +55,14 @@ It is also why starting a session never notifies the user about the session they
 `PTYManager` guards the same case one layer down, verified rather than assumed: all three `markReady` call sites require `status === "running"`, and `markReady` itself sets `waiting_input`, clears `pendingReady` and cancels the fallback timer — so the timeout fallback cannot fire after a marker already settled the turn.
 The notifier's own guard still earns its place: it covers the Codex runner and any future detector through the same funnel.
 
-## Not notifying someone who is already looking
+## Always notify for a closed turn
 
-No push goes out while any WebSocket client is subscribed to that session (`sessionSubscribers` in `server.ts`, live sockets only).
-
-Mobile subscribes when the session screen opens and the OS tears the socket down when the app is backgrounded, so subscription is the available proxy for "foregrounded on this session".
-Suppression cannot get stuck on a phone that vanished without a close frame: `WSHub`'s ping/pong reaper terminates a silent socket within ~40 s, and the check ignores any socket not in `OPEN` regardless.
-It errs toward silence in one case worth knowing: a desktop browser or a second device left subscribed to a session suppresses the phone's notification too.
-The alternative — per-device foreground state pushed to the server — is state mobile does not report today, and inventing it would be a cross-repo change.
+A push goes out for every closed turn, including when a WebSocket client is still subscribed to that session.
+Suppression-while-watched used to skip those as noise when the phone was already on the session screen, but the same check also silenced the phone whenever a desktop browser or a second device held a subscription — worse than a duplicate banner.
+`sessionSubscribers` still drives hold-when-idle and fan-out; it no longer gates waiting-input push.
 
 ## Payload
+
 
 This is a privacy decision, not a formatting one.
 

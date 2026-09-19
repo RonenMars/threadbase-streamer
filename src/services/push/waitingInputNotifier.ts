@@ -20,6 +20,12 @@ import type { ExpoPushMessage, ExpoPushSender } from "./expoPushSender";
  * `running → waiting_input`. A session's very first `waiting_input` — boot or
  * resume ready, with no prior turn — opens nothing, so starting a session never
  * notifies the user about the session they just started.
+ *
+ * Always notifies for a closed turn, including when a WebSocket client is still
+ * subscribed. Suppression-while-watched used to skip those pushes as noise when
+ * the phone was on the session screen; that also silenced the phone when a
+ * desktop browser (or a second device) was subscribed, which is worse than a
+ * duplicate banner.
  */
 
 const log = getLogger("expo-push");
@@ -50,17 +56,9 @@ export class WaitingInputNotifier {
   /** Sessions with a turn the user started that has not yet been answered. */
   private openTurn = new Set<string>();
 
-  /**
-   * @param isWatched Whether a client is currently subscribed to this session
-   * over WebSocket. Mobile subscribes while the session screen is open and the
-   * socket dies when the app is backgrounded, so this is the available signal
-   * for "the user is already looking" — and a push to someone already reading
-   * the output is pure noise.
-   */
   constructor(
     private readonly sender: ExpoPushSender,
     private readonly serverId: string,
-    private readonly isWatched: (sessionId: string) => boolean,
   ) {}
 
   /**
@@ -86,14 +84,6 @@ export class WaitingInputNotifier {
       // emit of a status we have already notified for. Either way the user is
       // not owed a second notification for one turn.
       if (!this.openTurn.delete(session.id)) return;
-
-      if (this.isWatched(session.id)) {
-        log.debug("expo_push.suppressed_watched", {
-          event: "expo_push.suppressed_watched",
-          sessionId: session.id,
-        });
-        return;
-      }
 
       const outcome = await this.sender.send(waitingInputMessage(session, this.serverId));
       if (outcome.attempted > 0) {

@@ -191,11 +191,11 @@ describe("ExpoPushSender", () => {
 });
 
 describe("WaitingInputNotifier", () => {
-  function notifier(watched: (id: string) => boolean = () => false) {
+  function notifier() {
     repo.register({ token: "ExponentPushToken[a]", platform: "ios" });
     const { fn, calls } = stubFetch([{ body: { data: [{ status: "ok" }] } }]);
     return {
-      notifier: new WaitingInputNotifier(new ExpoPushSender(repo), "srv-1", watched),
+      notifier: new WaitingInputNotifier(new ExpoPushSender(repo), "srv-1"),
       fetch: fn,
       calls,
     };
@@ -226,14 +226,6 @@ describe("WaitingInputNotifier", () => {
     const raw = String(calls[0].init.body);
     expect(raw).not.toContain("sk-secret-token");
     expect(raw).not.toContain("fix the login bug");
-  });
-
-  it("does not notify when the session is being watched", async () => {
-    const { notifier: n, fetch } = notifier((id) => id === "sess-1");
-
-    await runTurn(n);
-
-    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("does not notify on boot ready, before the user has prompted", async () => {
@@ -274,7 +266,7 @@ describe("WaitingInputNotifier", () => {
         throw new Error("relay down");
       }),
     );
-    const n = new WaitingInputNotifier(new ExpoPushSender(repo), "srv-1", () => false);
+    const n = new WaitingInputNotifier(new ExpoPushSender(repo), "srv-1");
 
     await expect(runTurn(n)).resolves.toBeUndefined();
   });
