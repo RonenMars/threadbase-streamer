@@ -148,6 +148,8 @@ describe("PATCH /api/sessions/:id/{model,effort}", () => {
     const res = await fetch(`http://localhost:${port}/api/sessions/${id}`, {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
+    // A non-200 body has no effort/model, so without this a 503 reads as `undefined`.
+    expect(res.status).toBe(200);
     return (await res.json()) as { effort?: string; model?: string };
   }
 
