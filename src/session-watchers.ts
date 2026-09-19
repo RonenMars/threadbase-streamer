@@ -1,4 +1,4 @@
-import type { Conversation } from "@threadbase-sh/scanner";
+import { type Conversation, parseCursorJsonlLine } from "@threadbase-sh/scanner";
 import { existsSync, watch as fsWatch, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, join } from "path";
@@ -57,7 +57,11 @@ export type SessionWatchersDeps = {
   cacheMetadataRepo: () => CacheMetadataRepository | null;
   managedSessionsRepo: () => ManagedSessionsRepository | null;
   findConversationByUuid: (uuid: string) => Promise<Conversation | null>;
-  broadcastConversationLines: (sessionId: string, lines: string[]) => void;
+  broadcastConversationLines: (
+    sessionId: string,
+    lines: string[],
+    seqs?: (number | null)[] | null,
+  ) => void;
   ptyAttachedIds: () => Set<string>;
 };
 
@@ -643,7 +647,13 @@ export class SessionWatchers {
       try {
         const existing = readFileSync(match.filePath, "utf8").split("\n").filter(Boolean);
         if (existing.length > 0) {
-          this.deps.broadcastConversationLines(sessionId, existing);
+          // The replay starts at the top of the file, so each line's message
+          // index is its count among the lines that parse — the numbering the
+          // offset index and REST use. It goes into the Cursor uuid, which is
+          // what lets the client match these against their history copies.
+          let next = 0;
+          const seqs = existing.map((l) => (parseCursorJsonlLine(l) ? next++ : null));
+          this.deps.broadcastConversationLines(sessionId, existing, seqs);
         }
       } catch {
         /* ignore — file may not be readable yet; watcher will catch future writes */

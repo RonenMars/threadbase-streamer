@@ -745,8 +745,8 @@ export class StreamerServer {
       cacheMetadataRepo: () => this.cacheMetadataRepo,
       managedSessionsRepo: () => this.managedSessionsRepo,
       findConversationByUuid: (uuid) => this.conversationHandlers.findConversationByUuid(uuid),
-      broadcastConversationLines: (sessionId, lines) =>
-        this.broadcastConversationLines(sessionId, lines),
+      broadcastConversationLines: (sessionId, lines, seqs) =>
+        this.broadcastConversationLines(sessionId, lines, seqs),
       ptyAttachedIds: () => this.ptyAttachedIds(),
     });
 
