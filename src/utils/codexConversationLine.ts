@@ -230,7 +230,7 @@ export function toClientConversationLines(
   const classify = lines.some(isCodexRolloutLine)
     ? (line: string, i: number) => classifyCodexLine(line, positions?.[i] ?? 0)
     : lines.some(isCursorTranscriptLine)
-      ? (line: string) => classifyCursorLine(line)
+      ? (line: string, i: number) => classifyCursorLine(line, positions?.[i])
       : null;
   if (!classify) return { lines, seqs: positions };
   const out: string[] = [];

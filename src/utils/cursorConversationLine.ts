@@ -8,7 +8,6 @@
  * shape from the scanner's parse — the same one REST serves them from.
  */
 
-import { createHash } from "node:crypto";
 import { parseCursorJsonlLine } from "@threadbase-sh/scanner";
 import type { NormalizeResult } from "../services/providers/capabilities";
 import { toClaudeShapedLine } from "./claudeShapedLine";
@@ -40,7 +39,12 @@ export function isCursorTranscriptLine(line: string): boolean {
   return typeof entry.role === "string" && KNOWN_ROLES.has(entry.role);
 }
 
-export function classifyCursorLine(line: string): NormalizeResult {
+/**
+ * `index` is the line's message index in its file (the offset index's seq),
+ * when the caller knows it. It goes into the message uuid, which is how a
+ * client matches this live copy against the same message served over REST.
+ */
+export function classifyCursorLine(line: string, index?: number | null): NormalizeResult {
   const entry = parseEntry(line);
   if (!entry) return { kind: "unknown", raw: line, reason: "line is not valid JSON" };
 
@@ -61,13 +65,12 @@ export function classifyCursorLine(line: string): NormalizeResult {
     return { kind: "ignored", reason: `role ${role} is not rendered` };
   }
 
-  const message = parseCursorJsonlLine(line);
+  const message = parseCursorJsonlLine(line, index ?? undefined);
   if (!message) {
     return { kind: "ignored", reason: "message has no text or tool calls" };
   }
 
-  // Cursor lines carry no id. Derive one from the line itself so the same line
-  // read twice (replay, reconnect) dedupes on the client.
-  const uuid = `cursor-${role}-${createHash("sha1").update(line).digest("hex").slice(0, 16)}`;
-  return { kind: "message", line: toClaudeShapedLine(message, uuid) };
+  // The scanner derives the uuid (Cursor lines carry none) from the line and
+  // its index — the same call REST's parse makes, so the ids match.
+  return { kind: "message", line: toClaudeShapedLine(message, message.uuid ?? "") };
 }

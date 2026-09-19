@@ -742,7 +742,7 @@ export class ConversationCache {
     }
     if (provider === CURSOR_PROVIDER) {
       return {
-        parse: (text) => parseCursorJsonlLine(text),
+        parse: (text, index) => parseCursorJsonlLine(text, index),
         state: null,
       };
     }

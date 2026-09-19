@@ -376,6 +376,8 @@ describe("toClientConversationLines seq alignment", () => {
     const out = toClientConversationLines(lines, [3, null]);
     expect(out.seqs).toEqual([3]);
     const parsed = JSON.parse(out.lines[0]);
+    // The seq reaches the Cursor uuid, which is what REST's parse produces too.
+    expect(parsed.uuid).toMatch(/^cursor-assistant-3-[0-9a-f]{16}$/);
     expect(parsed.type).toBe("assistant");
     expect(parsed.message.content.map((b: { type: string }) => b.type)).toEqual([
       "text",

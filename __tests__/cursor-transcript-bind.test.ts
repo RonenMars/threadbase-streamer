@@ -18,6 +18,7 @@ describe("watchForCursorTranscript", () => {
   let managed: { startedAt: Date; promptCount: number; boundConversationId?: string };
   let hasSession: boolean;
   let watchers: SessionWatchers;
+  let broadcasts: { lines: string[]; seqs?: (number | null)[] | null }[];
 
   beforeEach(() => {
     projectPath = mkdtempSync(join(tmpdir(), "tb-cursor-bind-proj-"));
@@ -25,6 +26,7 @@ describe("watchForCursorTranscript", () => {
     sessionFileMap = new Map();
     managed = { startedAt: new Date(), promptCount: 0 };
     hasSession = true;
+    broadcasts = [];
 
     watchers = new SessionWatchers({
       ptyManager: { hasSession: () => hasSession },
@@ -48,7 +50,8 @@ describe("watchForCursorTranscript", () => {
       cacheMetadataRepo: () => null,
       managedSessionsRepo: () => null,
       findConversationByUuid: async () => null,
-      broadcastConversationLines: () => {},
+      broadcastConversationLines: (_id: string, lines: string[], seqs?: (number | null)[] | null) =>
+        broadcasts.push({ lines, seqs }),
       ptyAttachedIds: () => new Set<string>(),
     } as unknown as SessionWatchersDeps);
   });
@@ -120,6 +123,25 @@ describe("watchForCursorTranscript", () => {
 
     expect(await waitFor(() => managed.boundConversationId, BIND_BUDGET_MS)).toBe(runId);
     expect(sessionFileMap.get(SESSION_ID)).toBe(file);
+  });
+
+  it("replays the bound transcript with seqs numbered like the offset index", async () => {
+    watchers.watchForCursorTranscript(SESSION_ID, projectPath);
+    managed.promptCount = 1;
+    const runId = "c3c3c3c3-0000-4000-8000-0000000000c3";
+    const same = JSON.stringify({
+      role: "user",
+      message: { content: [{ type: "text", text: "continue" }] },
+    });
+    writeCursorTranscript(
+      runId,
+      `${[same, JSON.stringify({ type: "turn_ended", status: "success" }), same].join("\n")}\n`,
+    );
+
+    expect(await waitFor(() => managed.boundConversationId, BIND_BUDGET_MS)).toBe(runId);
+    // turn_ended is not a message, so it gets no seq; the repeated line is 1,
+    // which keeps its uuid distinct from the first copy's.
+    expect(broadcasts.at(-1)?.seqs).toEqual([0, null, 1]);
   });
 
   it("prefers a transcript that mentions this session's upload path", async () => {

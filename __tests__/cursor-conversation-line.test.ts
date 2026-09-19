@@ -1,3 +1,4 @@
+import { parseCursorJsonlLine } from "@threadbase-sh/scanner";
 import { classifyCursorLine } from "../src/utils/cursorConversationLine";
 
 describe("classifyCursorLine", () => {
@@ -79,5 +80,19 @@ describe("classifyCursorLine", () => {
     expect(
       classifyCursorLine(JSON.stringify({ role: "assistant", message: { content: [] } })).kind,
     ).toBe("ignored");
+  });
+
+  it("uses the scanner's uuid for the line's index, so a live copy matches REST", () => {
+    const live = classifyCursorLine(toolLine, 4);
+    if (live.kind !== "message") throw new Error(live.kind);
+    expect(JSON.parse(live.line).uuid).toBe(parseCursorJsonlLine(toolLine, 4)?.uuid);
+    expect(JSON.parse(live.line).uuid).toMatch(/^cursor-assistant-4-[0-9a-f]{16}$/);
+  });
+
+  it("keeps two identical lines distinct when their indexes differ", () => {
+    const a = classifyCursorLine(toolLine, 4);
+    const b = classifyCursorLine(toolLine, 9);
+    if (a.kind !== "message" || b.kind !== "message") throw new Error("not a message");
+    expect(JSON.parse(a.line).uuid).not.toBe(JSON.parse(b.line).uuid);
   });
 });
