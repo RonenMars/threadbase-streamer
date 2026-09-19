@@ -282,25 +282,28 @@ export class ConversationHandlers {
     // explicitly with ?refresh=1.
     const reconcileMode = this.scannerManager.reconcileMode();
     if (this.cache && (bustCache || reconcileMode)) {
-      const canServeStale =
-        !bustCache && this.cache.listConversations({ limit: 0, offset: 0 }).total > 0;
-      if (canServeStale) {
+      const warm = this.cache.listConversations({ limit: 0, offset: 0 }).total > 0;
+      if (warm && !bustCache) {
         this.scannerManager.startBackgroundReconcile(reconcileMode ?? "full");
       } else {
-        // Cold cache (or explicit refresh): nothing to serve, so gate with the
-        // warm-up state — the client shows the one-time "building history"
-        // screen instead of an empty list — and await the build. Emit throttled
+        // Cold cache or explicit refresh: await the rescan. Emit throttled
         // scan_progress so the client renders a live progress bar during the
         // wait instead of a frozen one; the routine background path above stays
         // silent (no onProgress) so normal-use polls never flicker a bar.
         const shouldEmitProgress = createScanProgressThrottle();
-        await this.deps.withWarmup("conversation_refresh", () =>
+        const rescan = () =>
           this.scannerManager.reconcileFromDisk((scanned, total) => {
             if (shouldEmitProgress(scanned, total)) {
               this.wsHub.broadcast({ type: "scan_progress", scanned, total });
             }
-          }),
-        );
+          });
+        // Gate with the warm-up state only when the cache is cold: there is
+        // nothing to serve, so the client shows the one-time "building history"
+        // screen instead of an empty list. The gate is server-wide, so raising
+        // it for an explicit refresh on a warm cache would 503 every other gated
+        // route (e.g. /api/sessions) for the length of the rescan.
+        if (warm) await rescan();
+        else await this.deps.withWarmup("conversation_refresh", rescan);
       }
     }
 
@@ -442,21 +445,25 @@ export class ConversationHandlers {
   // later count reflects new/removed conversations. Never awaited by the request
   // path — refresh=1 returns the cached total synchronously and this catches up.
   private refreshCountInBackground(): void {
+    // Gate only a cold cache, as handleListConversations does: the gate is
+    // server-wide, and a warm cache has data every other route can serve.
+    const warm = (this.cache?.listConversations({ limit: 0, offset: 0 }).total ?? 0) > 0;
+    const rescan = async () => {
+      try {
+        const scanner = await this.scannerManager.getFresh();
+        if (this.cache) {
+          this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
+        }
+      } catch (err) {
+        this.log.warn(
+          `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+          { event: "count.refresh_failed" },
+        );
+      }
+    };
     // Tracked so close() awaits this scan→cache-write before closing cache.db.
     this.deps.trackCacheWrite(
-      this.deps.withWarmup("conversation_refresh", async () => {
-        try {
-          const scanner = await this.scannerManager.getFresh();
-          if (this.cache) {
-            this.cache.upsertFromScannerMeta([...scanner.getMetadataCache().values()] as any[]);
-          }
-        } catch (err) {
-          this.log.warn(
-            `Background count refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-            { event: "count.refresh_failed" },
-          );
-        }
-      }),
+      warm ? rescan() : this.deps.withWarmup("conversation_refresh", rescan),
     );
   }
 

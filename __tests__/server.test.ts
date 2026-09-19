@@ -4577,7 +4577,7 @@ describe("StreamerServer", () => {
       }
     });
 
-    it("returns conversation_refresh while an explicit conversation refresh is running", async () => {
+    it("keeps other gated routes serving while an explicit refresh runs on a warm cache", async () => {
       reusePort = await getRandomPort();
       reuseServer = new StreamerServer({
         port: reusePort,
@@ -4614,14 +4614,55 @@ describe("StreamerServer", () => {
       const duringRefresh = await fetch(`http://localhost:${reusePort}/api/sessions/count`, {
         headers: auth,
       });
-      expect(duringRefresh.status).toBe(503);
-      await expect(duringRefresh.json()).resolves.toMatchObject({
-        code: "SERVER_WARMING_UP",
-        warmupState: "conversation_refresh",
-      });
+      expect(duringRefresh.status).toBe(200);
 
       releaseScan();
       expect((await refresh).status).toBe(200);
+    });
+
+    it("keeps other gated routes serving while a count refresh runs on a warm cache", async () => {
+      reusePort = await getRandomPort();
+      reuseServer = new StreamerServer({
+        port: reusePort,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir: mkdtempSync(join(tmpdir(), "threadbase-count-refresh-status-cache-")),
+        scanProfiles: FIXTURE_PROFILES,
+        ...HOST_ISOLATION,
+      });
+      await reuseServer.listen(reusePort, { awaitReady: true });
+      reusePort = reuseServer.port;
+
+      let releaseScan!: () => void;
+      let markScanStarted!: () => void;
+      const scanPending = new Promise<void>((resolve) => {
+        releaseScan = resolve;
+      });
+      const scanStarted = new Promise<void>((resolve) => {
+        markScanStarted = resolve;
+      });
+      vi.spyOn(ConversationScanner.prototype, "scan").mockImplementationOnce((async () => {
+        markScanStarted();
+        await scanPending;
+      }) as never);
+
+      try {
+        const count = await fetch(
+          `http://localhost:${reusePort}/api/conversations/count?refresh=1`,
+          { headers: auth },
+        );
+        expect(count.status).toBe(200);
+        await scanStarted;
+
+        const duringRefresh = await fetch(`http://localhost:${reusePort}/api/sessions/count`, {
+          headers: auth,
+        });
+        expect(duringRefresh.status).toBe(200);
+      } finally {
+        releaseScan();
+      }
     });
 
     it("acknowledges reset_rescan while fetches report cache_reset", async () => {
