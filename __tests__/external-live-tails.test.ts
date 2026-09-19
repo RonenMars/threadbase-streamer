@@ -90,7 +90,7 @@ describe("external live tails", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(0);
+    await server.listen(0, { awaitReady: true });
     port = server.port;
     baseUrl = `http://localhost:${port}`;
 
