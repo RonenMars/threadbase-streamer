@@ -1415,8 +1415,14 @@ export class ConversationHandlers {
     }
 
     const conv = conversation as any;
-    const cachedConvMeta = this.cache?.getMetaById(id);
-    const convProvider = coerceProviderForRunner(conv.provider ?? cachedConvMeta?.provider);
+    // `id` may be a live session's PTY placeholder; the cache row is keyed by the
+    // bound transcript id, and a miss here would default the label to claude-code.
+    const cachedConvMeta =
+      this.cache?.getMetaById(this.deps.resolveConversationLookupId(id)) ??
+      this.cache?.getMetaById(id);
+    const convProvider = coerceProviderForRunner(
+      this.sessionStore.getManaged(id)?.provider ?? conv.provider ?? cachedConvMeta?.provider,
+    );
     const availability = classifyResumability(conv.projectPath);
     // When the offset index served a fresher view than the scanner snapshot,
     // the meta (message_count / last_updated_at) must reflect what was actually
