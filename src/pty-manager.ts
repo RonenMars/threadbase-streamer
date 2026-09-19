@@ -15,6 +15,7 @@ import {
   permissionContentKey,
   scrapePermissionGate,
 } from "./services/questions/detectPermissionGate";
+import { readPromptSuggestion } from "./services/questions/detectPromptSuggestion";
 import {
   detectQuestionFromScreen,
   questionContentKey,
@@ -174,6 +175,7 @@ export class PTYManager implements SessionRunner {
   private onReady: PTYManagerOptions["onReady"];
   private onPermissionChange: PTYManagerOptions["onPermissionChange"];
   private onPhaseChange: PTYManagerOptions["onPhaseChange"];
+  private onPromptSuggestionChange: PTYManagerOptions["onPromptSuggestionChange"];
   private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
   private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
   private onUserMessage: PTYManagerOptions["onUserMessage"];
@@ -247,6 +249,7 @@ export class PTYManager implements SessionRunner {
     this.onReady = options.onReady;
     this.onPermissionChange = options.onPermissionChange;
     this.onPhaseChange = options.onPhaseChange;
+    this.onPromptSuggestionChange = options.onPromptSuggestionChange;
     this.onLiveQuestion = options.onLiveQuestion;
     this.onLiveQuestionGone = options.onLiveQuestionGone;
     this.onUserMessage = options.onUserMessage;
@@ -463,6 +466,8 @@ export class PTYManager implements SessionRunner {
       // Observed by construction: we are the ones writing the input.
       session.statusSource = "user-input";
       session.statusUpdatedAt = new Date();
+      // Sending anything consumes the suggestion — don't wait for a scrape.
+      this.setPromptSuggestion(sessionId, session, null);
       this.onStatusChange?.(toPublicSession(session));
     }
     this.log.info(`[pty.keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length}`, {
@@ -547,6 +552,8 @@ export class PTYManager implements SessionRunner {
       // Observed by construction: we are the ones writing the input.
       session.statusSource = "user-input";
       session.statusUpdatedAt = new Date();
+      // Sending anything consumes the suggestion — don't wait for a scrape.
+      this.setPromptSuggestion(sessionId, session, null);
       this.onStatusChange?.(toPublicSession(session));
     }
     this.openTurnOnSubmit(sessionId);
@@ -971,6 +978,14 @@ export class PTYManager implements SessionRunner {
         stripped,
       );
 
+    // A suggestion is painted as SGR 2 (faint) after the turn's last chunk and
+    // can land inside the throttle window of the previous pass; handleQuiet only
+    // re-scans a `running` session, so without this trigger it would be missed
+    // for good. Also keep scanning while one is shown so its clear is seen.
+    const suggestionTrigger =
+      session.status === "waiting_input" &&
+      (rawData.includes("\x1b[2m") || session.promptSuggestion != null);
+
     // Paint-time throttle: when the last full pass is ≥ SCRAPE_THROTTLE_MS
     // old, a chunk's arrival alone is enough to scrape — the gate paint has
     // no reliable chunk-level signal and its OSC arrives ~6s late.
@@ -983,6 +998,7 @@ export class PTYManager implements SessionRunner {
       !oscWaitingForInput &&
       !hasAskFooter &&
       !hasShellPromptHint &&
+      !suggestionTrigger &&
       !scrapeDue &&
       !this.permissionOpen.has(sessionId) &&
       !this.shellPromptOpen.has(sessionId) &&
@@ -1003,6 +1019,15 @@ export class PTYManager implements SessionRunner {
     if (phaseSession?.status === "running") {
       this.setPhase(sessionId, phaseSession, parseAgentPhase(lines, CLAUDE_CODE_PROVIDER));
     }
+
+    // Composer suggestion, read from cell attributes off the same flushed screen
+    // (getOutputLines awaited the xterm write queue). Not `waiting_input` -> no
+    // suggestion, which also clears one left over from before a new turn.
+    this.setPromptSuggestion(
+      sessionId,
+      session,
+      session.status === "waiting_input" ? readPromptSuggestion(session.screen) : null,
+    );
 
     // Authoritative footer test on the FULL rendered screen (not just the
     // trigger chunk). The "Enter to select · Tab/Arrow keys to navigate" footer
@@ -1294,6 +1319,17 @@ export class PTYManager implements SessionRunner {
     this.onPhaseChange?.(sessionId, next);
   }
 
+  /** Record the composer suggestion and notify only on a real change. */
+  private setPromptSuggestion(
+    sessionId: string,
+    session: InternalSession,
+    text: string | null,
+  ): void {
+    if ((session.promptSuggestion ?? null) === text) return;
+    session.promptSuggestion = text;
+    this.onPromptSuggestionChange?.(sessionId, text);
+  }
+
   private markReady(
     sessionId: string,
     session: InternalSession,
@@ -1403,5 +1439,6 @@ function toPublicSession(s: InternalSession): ManagedSession {
     // the phase — no snapshot or replay event carries it, and setPhase's change
     // guard means the host will never re-emit it for the rest of that turn.
     subStatus: s.subStatus ?? null,
+    promptSuggestion: s.promptSuggestion ?? null,
   };
 }

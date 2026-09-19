@@ -140,6 +140,13 @@ export type HostEvent =
    * absence must never mean "cleared", because the consumer merges state.
    */
   | { type: "event"; event: "phase-change"; sessionId: string; phase: AgentPhase | null }
+  /**
+   * Composer next-prompt suggestion changed (`null` = cleared). Additive host ->
+   * server event, so PTY_HOST_PROTOCOL_VERSION is deliberately not bumped: a
+   * bump makes connect() shut down a surviving host and its sessions, and an
+   * older streamer's event switch simply ignores an unknown event.
+   */
+  | { type: "event"; event: "prompt-suggestion-change"; sessionId: string; text: string | null }
   | {
       type: "event";
       event: "live-question";

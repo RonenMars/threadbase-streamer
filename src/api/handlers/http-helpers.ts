@@ -57,6 +57,7 @@ export function conversationToResumableSession(c: ConversationListItem) {
     // value and the indicator latches. `GET /api/sessions/:id` serves this
     // shape whenever the id is a conversation rather than a live session.
     subStatus: null,
+    promptSuggestion: null,
     promptCount: c.messageCount,
     startedAt: c.lastActivity,
     completedAt: null,

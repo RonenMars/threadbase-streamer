@@ -310,6 +310,9 @@ export class RemoteSessionRunner implements SessionRunner {
       case "phase-change":
         this.options.onPhaseChange?.(event.sessionId, event.phase);
         break;
+      case "prompt-suggestion-change":
+        this.options.onPromptSuggestionChange?.(event.sessionId, event.text);
+        break;
       case "live-question":
         this.options.onLiveQuestion?.(event.sessionId, event.questions, event.occurrenceId);
         break;

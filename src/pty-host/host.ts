@@ -126,6 +126,8 @@ export class SessionHost {
       },
       onPhaseChange: (sessionId, phase) =>
         this.emit({ type: "event", event: "phase-change", sessionId, phase }),
+      onPromptSuggestionChange: (sessionId, text) =>
+        this.emit({ type: "event", event: "prompt-suggestion-change", sessionId, text }),
       onLiveQuestion: (sessionId, questions) => {
         const prior = this.promptSnapshots.get(sessionId);
         const occurrenceId =
