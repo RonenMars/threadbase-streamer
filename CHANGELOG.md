@@ -1,3 +1,9 @@
+## [1.98.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.0...v1.98.1) (2026-09-19)
+
+### Bug Fixes
+
+* **cursor:** clear the compose line before writing the next turn ([#932](https://github.com/RonenMars/threadbase-streamer/issues/932)) ([fb6154d](https://github.com/RonenMars/threadbase-streamer/commit/fb6154d8e350060296a505ecb84fa503766794ff))
+
 ## [1.98.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.97.0...v1.98.0) (2026-09-18)
 
 ### Features
