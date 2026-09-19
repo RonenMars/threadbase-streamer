@@ -1,3 +1,9 @@
+## [1.98.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.6...v1.98.7) (2026-09-19)
+
+### Bug Fixes
+
+* **cache:** rebuild the offset index for cursor transcripts ([#938](https://github.com/RonenMars/threadbase-streamer/issues/938)) ([0766321](https://github.com/RonenMars/threadbase-streamer/commit/07663218b4fd6c3c815e994f462ccc34eb6cbe0a)), closes [#929](https://github.com/RonenMars/threadbase-streamer/issues/929) [#936](https://github.com/RonenMars/threadbase-streamer/issues/936) [#929](https://github.com/RonenMars/threadbase-streamer/issues/929)
+
 ## [1.98.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.5...v1.98.6) (2026-09-19)
 
 ### Bug Fixes
