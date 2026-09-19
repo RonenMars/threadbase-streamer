@@ -7,6 +7,7 @@
 | Server feature flags (`--feature`, `feature_flags:`, env) | [guides/feature-flags.md](guides/feature-flags.md) |
 | Exposing the streamer remotely (tunnels, proxies) | [guides/remote-access/](guides/remote-access/) |
 | Manual Windows lifecycle verification | [guides/lifecycle-windows-test.md](guides/lifecycle-windows-test.md) |
+| Smoke-testing the built CLI in an isolated `HOME` (`scripts/smoke-isolated.sh`) | [guides/isolated-smoke.md](guides/isolated-smoke.md) |
 | How the streamer was designed (per-feature design docs) | [architecture/](architecture/) |
 | Postmortems for resolved incidents | [postmortems/](postmortems/) |
 | Known bugs | [BACKLOG.md](BACKLOG.md) |
