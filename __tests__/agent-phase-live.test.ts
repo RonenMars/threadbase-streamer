@@ -328,7 +328,7 @@ describe("agent phase — server wiring", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(0);
+    await server.listen(0, { awaitReady: true });
     const port = server.port;
 
     const internals = server as unknown as {
