@@ -28,6 +28,8 @@ const INPUT_HISTORY_MAX = 50;
 const QUIET_DETECT_MS = 500;
 const CURSOR_READY_FALLBACK_MS = 8_000;
 const SUBMIT_BYTES = "\r";
+/** Ctrl+U — kill the compose line before pasting the next turn. */
+const CLEAR_COMPOSE_BYTES = "\x15";
 const CURSOR_SUBMIT_DELAY_MS = 16;
 const CURSOR_SUBMIT_MAX_WAIT_MS = 500;
 const CURSOR_SUBMIT_STALE_MS = 2_000;
@@ -40,6 +42,9 @@ const CURSOR_SUBMIT_STALE_MS = 2_000;
  * opening prompt. TUI detection is deliberately generic: we have no verified
  * Ready/gate scrape, so boot settles on quiet or the 8s fallback, and a turn
  * returns to waiting_input after submit-stale silence.
+ *
+ * Input clears the compose line (`Ctrl+U`) before writing text — Cursor leaves
+ * the previous prompt editable, and a bare write would concatenate turns.
  */
 export class CursorPtyRunner implements SessionRunner {
   private sessions = new Map<string, InternalSession>();
@@ -224,7 +229,12 @@ export class CursorPtyRunner implements SessionRunner {
   private writeSubmit(sessionId: string, session: InternalSession, input: string): void {
     this.recordUserMessage(session, input);
     const writeAt = Date.now();
-    session.process.write(input);
+    // Cursor's TUI leaves the previous prompt in the compose box after a turn.
+    // Writing the next input on top concatenates ("Commit it" + "Yes, commit it"
+    // → "Commit itYes, commit it") and that smashed string is what lands in
+    // agent-transcripts. Clear the line first (same kill-line byte readline
+    // uses), then write the new text, then \r once the PTY is quiet.
+    session.process.write(CLEAR_COMPOSE_BYTES + input);
 
     const trySubmit = () => {
       const current = this.sessions.get(sessionId);
