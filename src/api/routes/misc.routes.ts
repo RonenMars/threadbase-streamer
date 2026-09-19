@@ -8,12 +8,15 @@ import {
   DEFAULT_PUSH_TOKEN_KIND,
   isPushTokenKind,
   PUSH_TOKEN_KINDS,
+  tokenState,
 } from "../../db/repositories/push.repository";
 import { E2EE_PROTOCOL_VERSION } from "../../e2ee/protocol";
 import type { FeatureFlagSource } from "../../feature-flags";
 import { getLogger } from "../../logger";
+import { NotificationPrefsSchema } from "../../schemas/notification-prefs.schema";
 import { serverIdentityPublicKey } from "../../server-identity";
 import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
+import { testNotificationBody } from "../../services/push/notificationCopy";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
 import { createRateLimiter } from "../rate-limit";
@@ -123,6 +126,12 @@ export interface PushCapability {
    * Independent of `liveActivity` — neither implies the other.
    */
   notifications: boolean;
+  /**
+   * The server stores and enforces per-device notification preferences
+   * (`PATCH /api/push/preferences`, `POST /api/push/test`). Absent on an older
+   * server, which is how a client tells "not supported" from "turned off".
+   */
+  preferences: boolean;
   /** Why `liveActivity` is false; absent when it is true. Names env vars, never values. */
   liveActivityReason?: string;
   /** Why `notifications` is false; absent when it is true. */
@@ -143,6 +152,7 @@ export function describePushCapability(
   const capability: PushCapability = {
     liveActivity: wired.liveActivity,
     notifications: wired.notifications,
+    preferences: wired.notifications,
   };
   if (!wired.liveActivity) {
     // describeMissingApnsCredentials only explains a *credential* gap and
@@ -381,6 +391,7 @@ export const createMiscRoutes = (
     | "pushRepo"
     | "liveActivityPushEnabled"
     | "expoPushEnabled"
+    | "expoPushSender"
     | "featureFlagsConfig"
   >,
 ) => {
@@ -492,6 +503,7 @@ export const createMiscRoutes = (
       startedAt?: unknown;
       serverId?: unknown;
       locale?: unknown;
+      notificationPrefs?: unknown;
     } | null;
     const token = body?.token;
     const platform = body?.platform;
@@ -515,6 +527,18 @@ export const createMiscRoutes = (
       (typeof bodyLocale !== "string" || !LOCALE_TAG_RE.test(bodyLocale))
     ) {
       return c.json({ error: "locale must be a BCP 47 language tag" }, 400);
+    }
+    // Optional: a build that predates preferences sends none and keeps getting
+    // everything. Validated here because it is stored and later drives sends.
+    const parsedPrefs =
+      body?.notificationPrefs === undefined
+        ? undefined
+        : NotificationPrefsSchema.safeParse(body.notificationPrefs);
+    if (parsedPrefs && !parsedPrefs.success) {
+      return c.json(
+        { error: `Invalid notificationPrefs: ${parsedPrefs.error.issues[0]?.message}` },
+        400,
+      );
     }
     const headerLocale = c.env.incoming.headers["accept-language"]?.split(/[,;]/)[0]?.trim();
     const locale =
@@ -587,8 +611,108 @@ export const createMiscRoutes = (
       startedAt: numberOrNull(body?.startedAt),
       clientServerId,
       locale,
+      notificationPrefs: parsedPrefs?.data,
     });
     return c.json({ ok: true });
+  });
+
+  /**
+   * Change one token's notification preferences without re-registering it.
+   *
+   * Its own route because registering resets failure_streak and revoked_at:
+   * toggling a switch through it would wipe the delivery-health state the
+   * health screen reports. Same device-ownership rule as the delete below; the
+   * shared api key names no device and may set any token.
+   *
+   * 404 rather than the delete's idempotent 204: a client whose token is not
+   * registered here yet must find out its preferences were NOT stored, so it
+   * can register with them. A token owned by another device answers the same
+   * 404 so this cannot be used to probe for tokens.
+   */
+  app.patch("/api/push/preferences", async (c) => {
+    const body = (await readJsonBody(c.env.incoming).catch(() => null)) as {
+      token?: unknown;
+      prefs?: unknown;
+    } | null;
+    const token = body?.token;
+    if (typeof token !== "string" || token.length === 0) {
+      return c.json({ error: "Missing token" }, 400);
+    }
+    const prefs = NotificationPrefsSchema.safeParse(body?.prefs);
+    if (!prefs.success) {
+      return c.json({ error: `Invalid prefs: ${prefs.error.issues[0]?.message}` }, 400);
+    }
+    const repo = deps.pushRepo();
+    if (!repo) {
+      return c.json({ error: "Push registration is unavailable", code: "STORE_UNAVAILABLE" }, 503);
+    }
+    const principal = c.get("principal");
+    const deviceId = principal?.kind === "device" && principal.deviceId ? principal.deviceId : null;
+    if (!repo.setPrefs(token, prefs.data, deviceId)) {
+      return c.json({ error: "Unknown token", code: "TOKEN_NOT_FOUND" }, 404);
+    }
+    return c.body(null, 204);
+  });
+
+  /**
+   * Send one real push to a token the caller owns, ignoring its preferences.
+   *
+   * The settings screen's test button used to schedule a LOCAL notification,
+   * which proves the phone can show a banner and nothing about whether this
+   * server can reach it. This goes through Expo like every other push and
+   * reports what came back, so a failing relay or a dead token is visible.
+   * Preferences are bypassed on purpose: a test muted by the user's own quiet
+   * hours would answer "does delivery work?" with silence.
+   */
+  app.post("/api/push/test", async (c) => {
+    const body = (await readJsonBody(c.env.incoming).catch(() => null)) as {
+      token?: unknown;
+    } | null;
+    const token = body?.token;
+    if (typeof token !== "string" || token.length === 0) {
+      return c.json({ error: "Missing token" }, 400);
+    }
+    const repo = deps.pushRepo();
+    const sender = deps.expoPushSender();
+    if (!repo || !sender) {
+      return c.json(
+        { error: "Push notifications are unavailable", code: "STORE_UNAVAILABLE" },
+        503,
+      );
+    }
+    const principal = c.get("principal");
+    const row = repo.get(token);
+    const ownedElsewhere =
+      principal?.kind === "device" &&
+      principal.deviceId &&
+      row?.device_id != null &&
+      row.device_id !== principal.deviceId;
+    if (!row || ownedElsewhere) {
+      return c.json({ error: "Unknown token", code: "TOKEN_NOT_FOUND" }, 404);
+    }
+    if (row.kind !== "expo") {
+      return c.json(
+        { error: "Only Expo tokens can receive a test push", code: "INVALID_KIND" },
+        400,
+      );
+    }
+
+    const outcome = await sender.sendTo([row], (locale) => ({
+      title: "Threadbase",
+      body: testNotificationBody(locale),
+      data: { kind: "test" },
+      sound: "default",
+      priority: "high",
+    }));
+    // Re-read: the send just recorded success or failure against the row, and
+    // that state is the answer the caller wants.
+    const after = repo.get(token);
+    return c.json({
+      ok: outcome.succeeded > 0,
+      attempted: outcome.attempted,
+      succeeded: outcome.succeeded,
+      state: after ? tokenState(after) : "revoked",
+    });
   });
 
   /**

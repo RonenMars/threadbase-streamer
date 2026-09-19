@@ -42,6 +42,7 @@ describe("describePushCapability", () => {
     expect(describePushCapability(wired(true), FULL_APNS_ENV)).toEqual({
       liveActivity: true,
       notifications: true,
+      preferences: true,
     });
 
     const onlyNotifications = describePushCapability(wired(false), {});
@@ -52,6 +53,9 @@ describe("describePushCapability", () => {
     const onlyLiveActivity = describePushCapability(wired(true, false), FULL_APNS_ENV);
     expect(onlyLiveActivity.liveActivity).toBe(true);
     expect(onlyLiveActivity.notifications).toBe(false);
+    // Preferences ride on the notification path: no notifier, nothing to enforce.
+    expect(onlyLiveActivity.preferences).toBe(false);
+    expect(onlyNotifications.preferences).toBe(true);
   });
 
   it("explains why notifications are off", () => {
@@ -263,7 +267,7 @@ describe("push capability over HTTP", () => {
 
     it("reports Live Activity push as available, with no reason to give", async () => {
       const body = await (await fetch(`${baseUrl}/api/info`, { headers: AUTH })).json();
-      expect(body.push).toEqual({ liveActivity: true, notifications: true });
+      expect(body.push).toEqual({ liveActivity: true, notifications: true, preferences: true });
     });
 
     it("agrees with /api/push/health", async () => {

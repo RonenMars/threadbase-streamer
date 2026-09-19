@@ -1,5 +1,6 @@
 import type { PushRepository, PushTokenRow } from "../../db/repositories/push.repository";
 import { getLogger } from "../../logger";
+import { allows, type PushEvent, parseStoredPrefs } from "./notificationPrefs";
 
 /**
  * Ordinary push notifications, sent through Expo's relay.
@@ -43,10 +44,13 @@ export interface ExpoPushMessage {
 export type ExpoPushContent = ExpoPushMessage | ((locale: string | null) => ExpoPushMessage);
 
 export interface ExpoPushOutcome {
+  /** Tokens the send was actually attempted for, after preferences were applied. */
   attempted: number;
   succeeded: number;
   /** Tokens Expo rejected as permanently dead, now revoked locally. */
   retired: number;
+  /** Deliverable tokens skipped because their owner's preferences said not to send. */
+  suppressed: number;
 }
 
 /** One entry of Expo's `data` array, positionally matched to the request. */
@@ -77,15 +81,58 @@ export class ExpoPushSender {
   ) {}
 
   /**
-   * Send one message to every deliverable Expo token.
+   * Send one message to every deliverable Expo token whose preferences allow it.
    *
    * Sends are independent: Expo returns a ticket per token in one response, so
    * a dead device is recorded against its own row and never silences the other
-   * devices in the batch.
+   * devices in the batch. The same holds for preferences — they are applied per
+   * token, so one device's quiet hours never mute another phone.
+   *
+   * `event` names what the push is about so the right toggle applies; leaving
+   * it out sends to every deliverable token regardless of preferences.
    */
-  async send(message: ExpoPushContent, now: number = Date.now()): Promise<ExpoPushOutcome> {
-    const rows = this.repo.listDeliverable();
-    const outcome: ExpoPushOutcome = { attempted: rows.length, succeeded: 0, retired: 0 };
+  async send(
+    message: ExpoPushContent,
+    opts: { event?: PushEvent; now?: number } = {},
+  ): Promise<ExpoPushOutcome> {
+    const now = opts.now ?? Date.now();
+    const deliverable = this.repo.listDeliverable();
+    const { event } = opts;
+    const rows = event
+      ? deliverable.filter((row) =>
+          allows(parseStoredPrefs(row.notification_prefs), event, new Date(now)),
+        )
+      : deliverable;
+    return this.deliver(rows, message, now, deliverable.length - rows.length);
+  }
+
+  /**
+   * Send to exactly these tokens, ignoring preferences.
+   *
+   * For a push the user asked for by name (the settings screen's test button):
+   * muting it because their own quiet hours are on would answer "does delivery
+   * work?" with silence.
+   */
+  sendTo(
+    rows: PushTokenRow[],
+    message: ExpoPushContent,
+    now: number = Date.now(),
+  ): Promise<ExpoPushOutcome> {
+    return this.deliver(rows, message, now, 0);
+  }
+
+  private async deliver(
+    rows: PushTokenRow[],
+    message: ExpoPushContent,
+    now: number,
+    suppressed: number,
+  ): Promise<ExpoPushOutcome> {
+    const outcome: ExpoPushOutcome = {
+      attempted: rows.length,
+      succeeded: 0,
+      retired: 0,
+      suppressed,
+    };
     if (rows.length === 0) return outcome;
 
     for (let i = 0; i < rows.length; i += EXPO_PUSH_BATCH_SIZE) {

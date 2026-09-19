@@ -488,6 +488,7 @@ export class StreamerServer {
   // its own, so unlike the Live Activity path it is on wherever the cache DB
   // opened — with no registered device it simply sends nothing.
   private waitingInputNotifier: WaitingInputNotifier | null = null;
+  private expoPushSender: ExpoPushSender | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
     fetchedAt: number;
@@ -895,6 +896,7 @@ export class StreamerServer {
       pushRepo: () => this.pushRepo,
       liveActivityPushEnabled: () => this.liveActivityNotifier !== null,
       expoPushEnabled: () => this.waitingInputNotifier !== null,
+      expoPushSender: () => this.expoPushSender,
       devicesRepo: () => this.devicesRepo,
       projectsRepo: () => this.projectsRepo,
       conversationsRepo: () => this.conversationsRepo,
@@ -1160,6 +1162,7 @@ export class StreamerServer {
    */
   private initWaitingInputPush(pushRepo: PushRepository): void {
     const sender = new ExpoPushSender(pushRepo, process.env.THREADBASE_EXPO_ACCESS_TOKEN);
+    this.expoPushSender = sender;
     this.waitingInputNotifier = new WaitingInputNotifier(sender);
   }
 

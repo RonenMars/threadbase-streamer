@@ -1,0 +1,11 @@
+-- Which notifications this device wants, and when it does not want any.
+--
+-- JSON, validated by `NotificationPrefsSchema` before it is stored. NULL means
+-- the client never sent any (every build that predates this column), and the
+-- send path treats that as "everything on" so a released app keeps receiving
+-- exactly what it received before.
+--
+-- Kept as one column rather than one per toggle: the shape is owned by the
+-- client's settings screen and will keep changing, and a migration per toggle
+-- is a lot of ceremony for a value the server only ever reads whole.
+ALTER TABLE push_tokens ADD COLUMN notification_prefs TEXT;
