@@ -487,9 +487,21 @@ export const createMiscRoutes = (
       expiresAt?: unknown;
       staleDate?: unknown;
       startedAt?: unknown;
+      serverId?: unknown;
     } | null;
     const token = body?.token;
     const platform = body?.platform;
+    // The id the client files this server under, echoed back in the push so a
+    // tap opens the right server. Absent from older clients, which is fine.
+    // Bounded and charset-checked because it is stored and sent to a third
+    // party (Expo) verbatim.
+    const clientServerId = body?.serverId;
+    if (
+      clientServerId !== undefined &&
+      (typeof clientServerId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(clientServerId))
+    ) {
+      return c.json({ error: "serverId must be 1-128 characters of [A-Za-z0-9_.:-]" }, 400);
+    }
 
     if (typeof token !== "string" || token.length === 0) {
       return c.json({ error: "Missing token" }, 400);
@@ -556,6 +568,7 @@ export const createMiscRoutes = (
       expiresAt: numberOrNull(body?.expiresAt),
       staleDate: numberOrNull(body?.staleDate),
       startedAt: numberOrNull(body?.startedAt),
+      clientServerId,
     });
     return c.json({ ok: true });
   });

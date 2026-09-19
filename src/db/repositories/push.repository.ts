@@ -67,6 +67,8 @@ export interface PushTokenRow {
   stale_date: number | null;
   started_at: number | null;
   renewed_at: number | null;
+  /** The id the registering client files this server under; null for older clients. */
+  client_server_id: string | null;
 }
 
 /**
@@ -153,15 +155,20 @@ export class PushRepository {
     this.upsertStmt = db.prepare(`
       INSERT INTO push_tokens (
         token, platform, device_id, registered_at,
-        kind, activity_id, session_id, expires_at, stale_date, started_at
+        kind, activity_id, session_id, expires_at, stale_date, started_at,
+        client_server_id
       )
       VALUES (
         @token, @platform, @device_id, @registered_at,
-        @kind, @activity_id, @session_id, @expires_at, @stale_date, @started_at
+        @kind, @activity_id, @session_id, @expires_at, @stale_date, @started_at,
+        @client_server_id
       )
       ON CONFLICT(token) DO UPDATE SET
         platform = excluded.platform,
         device_id = COALESCE(excluded.device_id, push_tokens.device_id),
+        -- Take a newer id (the client's id for a server changes when its URL is
+        -- edited), keep the stored one when this registration carries none.
+        client_server_id = COALESCE(excluded.client_server_id, push_tokens.client_server_id),
         registered_at = excluded.registered_at,
         kind = excluded.kind,
         activity_id = COALESCE(excluded.activity_id, push_tokens.activity_id),
@@ -292,6 +299,7 @@ export class PushRepository {
     expiresAt?: number | null;
     staleDate?: number | null;
     startedAt?: number | null;
+    clientServerId?: string | null;
     now?: number;
   }): void {
     this.upsertStmt.run({
@@ -305,6 +313,7 @@ export class PushRepository {
       expires_at: args.expiresAt ?? null,
       stale_date: args.staleDate ?? null,
       started_at: args.startedAt ?? null,
+      client_server_id: args.clientServerId ?? null,
     });
   }
 

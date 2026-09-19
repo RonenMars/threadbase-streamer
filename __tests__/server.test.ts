@@ -2894,6 +2894,10 @@ describe("StreamerServer", () => {
       ["missing token", { platform: "ios" }],
       ["empty token", { token: "", platform: "ios" }],
       ["bad platform", { token: "t", platform: "windows" }],
+      ["non-string serverId", { token: "t", platform: "ios", serverId: 7 }],
+      ["empty serverId", { token: "t", platform: "ios", serverId: "" }],
+      ["serverId with a path separator", { token: "t", platform: "ios", serverId: "a/b" }],
+      ["oversized serverId", { token: "t", platform: "ios", serverId: "s".repeat(129) }],
     ])("rejects an invalid registration (%s)", async (_name, payload) => {
       const res = await fetch(`${baseUrl}/api/push/register`, {
         method: "POST",
@@ -2901,6 +2905,15 @@ describe("StreamerServer", () => {
         body: JSON.stringify(payload),
       });
       expect(res.status).toBe(400);
+    });
+
+    it("accepts the client's own server id", async () => {
+      const res = await fetch(`${baseUrl}/api/push/register`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "t-sid", platform: "ios", serverId: "srv_7xgq3m" }),
+      });
+      expect(res.status).toBe(200);
     });
 
     it("requires authentication", async () => {

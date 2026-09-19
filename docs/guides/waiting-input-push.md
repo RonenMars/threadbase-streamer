@@ -71,12 +71,12 @@ This is a privacy decision, not a formatting one.
   "to": "ExponentPushToken[...]",
   "title": "<projectName>",
   "body": "Waiting for your input",
-  "data": { "sessionId": "...", "serverId": "..." }
+  "data": { "sessionId": "...", "serverId": "..." }   // serverId omitted for tokens registered without one
 }
 ```
 
 That is the whole payload.
-`sessionId` and `serverId` are what mobile's `sessionRouteFromNotificationData` needs to route the tap to the session; `projectName` is what makes the notification actionable when several sessions are live.
+`sessionId` and `serverId` are what mobile's `sessionRouteFromNotificationData` needs to route the tap to the session. `serverId` is the id the app files *this* server under, sent by the app as `serverId` in `POST /api/push/register` and echoed back per token — not the streamer's hostname, which the app has no entry for. One phone registers the same push token with every server it has paired, so each server's row carries a different id. A token with none (an app that predates this) gets no `serverId` and the app falls back to its default server; `projectName` is what makes the notification actionable when several sessions are live.
 
 **Deliberately absent: `lastOutput` and `sessionName`.**
 `lastOutput` is raw PTY output, so any session that prints a token or an env var would put it in a notification; `sessionName` is derived from the user's first message, which is prompt content.

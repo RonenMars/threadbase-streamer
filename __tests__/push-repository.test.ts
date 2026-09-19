@@ -73,6 +73,34 @@ describe("registration", () => {
   });
 });
 
+describe("client server id", () => {
+  it("stores the id the client files this server under", () => {
+    repo.register({ token: "t", platform: "ios", clientServerId: "srv_7xgq3m" });
+
+    expect(repo.get("t")?.client_server_id).toBe("srv_7xgq3m");
+  });
+
+  it("is null for a client that sends none", () => {
+    repo.register({ token: "t", platform: "ios" });
+
+    expect(repo.get("t")?.client_server_id).toBeNull();
+  });
+
+  it("takes a newer id, since a server's id changes when its URL is edited", () => {
+    repo.register({ token: "t", platform: "ios", clientServerId: "srv_old" });
+    repo.register({ token: "t", platform: "ios", clientServerId: "srv_new" });
+
+    expect(repo.get("t")?.client_server_id).toBe("srv_new");
+  });
+
+  it("keeps the stored id when a re-registration carries none", () => {
+    repo.register({ token: "t", platform: "ios", clientServerId: "srv_7xgq3m" });
+    repo.register({ token: "t", platform: "ios" });
+
+    expect(repo.get("t")?.client_server_id).toBe("srv_7xgq3m");
+  });
+});
+
 describe("delivery health", () => {
   // "Not yet delivered" and "your notifications are broken" look identical
   // without this distinction, and they need very different UI.

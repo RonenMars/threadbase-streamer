@@ -195,7 +195,7 @@ describe("WaitingInputNotifier", () => {
     repo.register({ token: "ExponentPushToken[a]", platform: "ios" });
     const { fn, calls } = stubFetch([{ body: { data: [{ status: "ok" }] } }]);
     return {
-      notifier: new WaitingInputNotifier(new ExpoPushSender(repo), "srv-1"),
+      notifier: new WaitingInputNotifier(new ExpoPushSender(repo)),
       fetch: fn,
       calls,
     };
@@ -211,8 +211,32 @@ describe("WaitingInputNotifier", () => {
       to: "ExponentPushToken[a]",
       title: "my-project",
       body: "Waiting for your input",
-      data: { sessionId: "sess-1", serverId: "srv-1" },
+      // No serverId: this token registered without one, and the streamer's own
+      // hostname is not a name the app can resolve.
+      data: { sessionId: "sess-1" },
     });
+  });
+
+  // One phone, one push token, registered with every server it has paired. Each
+  // server files the id the app uses for *it*, so a tap on this notification
+  // opens the server that sent it rather than whichever the app lists first.
+  it("routes each recipient to the server id it registered with", async () => {
+    repo.register({ token: "ExponentPushToken[a]", platform: "ios", clientServerId: "srv_aaa" });
+    repo.register({ token: "ExponentPushToken[b]", platform: "ios", clientServerId: "srv_bbb" });
+    repo.register({ token: "ExponentPushToken[old]", platform: "ios" });
+    const { calls } = stubFetch([
+      { body: { data: [{ status: "ok" }, { status: "ok" }, { status: "ok" }] } },
+    ]);
+
+    await runTurn(new WaitingInputNotifier(new ExpoPushSender(repo)));
+
+    expect(bodyOf(calls[0]).map((m) => [m.to, m.data])).toEqual([
+      ["ExponentPushToken[a]", { sessionId: "sess-1", serverId: "srv_aaa" }],
+      ["ExponentPushToken[b]", { sessionId: "sess-1", serverId: "srv_bbb" }],
+      // An older client registered no id: it gets none, and the app falls back
+      // to its default server rather than to a name it cannot resolve.
+      ["ExponentPushToken[old]", { sessionId: "sess-1" }],
+    ]);
   });
 
   it("says which session, never what the agent said", async () => {
@@ -266,7 +290,7 @@ describe("WaitingInputNotifier", () => {
         throw new Error("relay down");
       }),
     );
-    const n = new WaitingInputNotifier(new ExpoPushSender(repo), "srv-1");
+    const n = new WaitingInputNotifier(new ExpoPushSender(repo));
 
     await expect(runTurn(n)).resolves.toBeUndefined();
   });

@@ -97,7 +97,20 @@ export class ExpoPushSender {
           accept: "application/json",
           ...(this.accessToken && { authorization: `Bearer ${this.accessToken}` }),
         },
-        body: JSON.stringify(rows.map((row) => ({ to: row.token, ...message }))),
+        body: JSON.stringify(
+          rows.map((row) => ({
+            to: row.token,
+            ...message,
+            // Per token, not per message: the same push token is registered
+            // with every server the phone pairs, and each server stores the id
+            // the app files *it* under. A token with none (an older client)
+            // gets no serverId, so the app uses its default server instead of
+            // failing to resolve a name it has no entry for.
+            data: row.client_server_id
+              ? { ...message.data, serverId: row.client_server_id }
+              : message.data,
+          })),
+        ),
       });
       if (!res.ok) {
         // A request-level rejection (bad access token, malformed batch) says
