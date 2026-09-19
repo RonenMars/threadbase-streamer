@@ -1,3 +1,9 @@
+## [1.99.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.9...v1.99.0) (2026-09-19)
+
+### Features
+
+* **push:** notify when the agent finishes or needs you, in the app's language ([#948](https://github.com/RonenMars/threadbase-streamer/issues/948)) ([3ba1e19](https://github.com/RonenMars/threadbase-streamer/commit/3ba1e191dd979cb74d26ff9ee0920be3e9fb026e)), closes [RonenMars/threadbase-mobile#1129](https://github.com/RonenMars/threadbase-mobile/issues/1129)
+
 ## [1.98.9](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.8...v1.98.9) (2026-09-19)
 
 ### Bug Fixes
