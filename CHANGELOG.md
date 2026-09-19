@@ -1,3 +1,9 @@
+## [1.98.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.5...v1.98.6) (2026-09-19)
+
+### Bug Fixes
+
+* **cache:** use the cursor parser for agent-transcripts before classification ([#929](https://github.com/RonenMars/threadbase-streamer/issues/929)) ([35c4e72](https://github.com/RonenMars/threadbase-streamer/commit/35c4e72d867556f84410f138a3abecb3d514d3a8))
+
 ## [1.98.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.4...v1.98.5) (2026-09-19)
 
 ### Bug Fixes
