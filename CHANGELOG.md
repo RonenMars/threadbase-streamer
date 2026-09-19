@@ -1,3 +1,9 @@
+## [1.98.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.1...v1.98.2) (2026-09-19)
+
+### Bug Fixes
+
+* **push:** always notify when a turn closes, even if a client is watching ([#933](https://github.com/RonenMars/threadbase-streamer/issues/933)) ([3cfd0e4](https://github.com/RonenMars/threadbase-streamer/commit/3cfd0e4d3c3ef1eb752f24d2d49d06756e9caeee))
+
 ## [1.98.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.0...v1.98.1) (2026-09-19)
 
 ### Bug Fixes
