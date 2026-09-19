@@ -1,3 +1,9 @@
+## [1.100.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.99.0...v1.100.0) (2026-09-19)
+
+### Features
+
+* **push:** enforce per-device notification preferences and add a failed-start push ([#951](https://github.com/RonenMars/threadbase-streamer/issues/951)) ([cd19a61](https://github.com/RonenMars/threadbase-streamer/commit/cd19a61763ca84e82ed7159830abf63a23f5a79c)), closes [#950](https://github.com/RonenMars/threadbase-streamer/issues/950)
+
 ## [1.99.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.9...v1.99.0) (2026-09-19)
 
 ### Features
