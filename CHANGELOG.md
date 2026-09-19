@@ -1,3 +1,9 @@
+## [1.98.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.2...v1.98.3) (2026-09-19)
+
+### Bug Fixes
+
+* **conversations:** resolve meta.provider from the bound id and live session ([#934](https://github.com/RonenMars/threadbase-streamer/issues/934)) ([adf62f8](https://github.com/RonenMars/threadbase-streamer/commit/adf62f8d8317744efc188a4cbff11868357f355b))
+
 ## [1.98.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.1...v1.98.2) (2026-09-19)
 
 ### Bug Fixes
