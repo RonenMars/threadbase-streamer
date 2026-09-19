@@ -1,6 +1,6 @@
 # Cursor live session returns `provider: "claude-code"` when looked up by streamer id
 
-**Status: fixed in branch `fix/cursor-conversation-provider-label` (pending merge).** Written 2026-09-19 against a live Cursor session (`4367097c-7334-4905-a57f-8e0aa7b09ba6` → bound transcript `f22ba10f-30e9-40b6-b27e-e35974fd7bf3`).
+**Status: fixed in #934 (released in 1.98.3).** Written 2026-09-19 against a live Cursor session (`4367097c-7334-4905-a57f-8e0aa7b09ba6` → bound transcript `f22ba10f-30e9-40b6-b27e-e35974fd7bf3`).
 
 ## Symptom
 
