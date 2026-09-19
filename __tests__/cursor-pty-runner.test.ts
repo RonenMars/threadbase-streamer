@@ -11,6 +11,7 @@ vi.mock("node-pty", () => {
       onExit: (cb: (e: { exitCode: number }) => void) => ee.on("exit", cb),
       write: vi.fn(),
       kill: vi.fn(),
+      resize: vi.fn(),
       _emit: ee.emit.bind(ee),
     };
   }
@@ -20,6 +21,17 @@ vi.mock("node-pty", () => {
 function spawnArgs(): string[] {
   const calls = (mockSpawn as any).mock.calls;
   return calls[calls.length - 1][1] as string[];
+}
+
+function getMockProc(
+  runner: CursorPtyRunner,
+  sessionId: string,
+): {
+  write: ReturnType<typeof vi.fn>;
+  _emit: (event: string, data: string) => boolean;
+} {
+  const session = (runner as any).sessions.get(sessionId);
+  return session.process;
 }
 
 describe("CursorPtyRunner — spawn args", () => {
@@ -56,5 +68,54 @@ describe("CursorPtyRunner — spawn args", () => {
 
     expect(spawnArgs()).toEqual(["--workspace", "/tmp/proj", "--trust", "--resume=chat-id"]);
     expect(session.id).toBe("placeholder-uuid");
+  });
+});
+
+describe("CursorPtyRunner — sendInput clears compose before write", () => {
+  it("prefixes Ctrl+U then text, then submits \\r after quiet", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CursorPtyRunner();
+      const session = await runner.startFresh({ projectPath: "/tmp/proj", projectName: "test" });
+      const proc = getMockProc(runner, session.id);
+
+      // Settle boot so sendInput is not queued.
+      proc._emit("data", "ready\r\n");
+      await vi.advanceTimersByTimeAsync(600);
+      proc.write.mockClear();
+
+      runner.sendInput(session.id, "Yes, commit it");
+      expect(proc.write).toHaveBeenCalledWith("\x15Yes, commit it");
+      expect(proc.write).not.toHaveBeenCalledWith("\r");
+
+      await vi.advanceTimersByTimeAsync(20);
+      expect(proc.write).toHaveBeenCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears before each flush so queued turns do not concatenate", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CursorPtyRunner();
+      const session = await runner.startFresh({ projectPath: "/tmp/proj", projectName: "test" });
+      const proc = getMockProc(runner, session.id);
+
+      runner.sendInput(session.id, "Commit it");
+      runner.sendInput(session.id, "Yes, commit it");
+      expect(proc.write).not.toHaveBeenCalled();
+
+      proc._emit("data", "ready\r\n");
+      await vi.advanceTimersByTimeAsync(600);
+
+      const writes = proc.write.mock.calls.map((c: unknown[]) => c[0]);
+      expect(writes.filter((w: string) => typeof w === "string" && w.startsWith("\x15"))).toEqual([
+        "\x15Commit it",
+        "\x15Yes, commit it",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
