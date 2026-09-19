@@ -152,6 +152,40 @@ describe("push capability over HTTP", () => {
     });
   });
 
+  // The push is written in the language the app displays, so registration has
+  // to carry it: an explicit `locale`, else the Accept-Language iOS sends on
+  // every request, so builds that predate the field still get theirs.
+  describe("registering a token's language", () => {
+    beforeEach(async () => {
+      await boot();
+    });
+
+    const register = (body: Record<string, unknown>, headers: Record<string, string> = {}) =>
+      fetch(`${baseUrl}/api/push/register`, {
+        method: "POST",
+        headers: { ...AUTH, "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ platform: "ios", ...body }),
+      });
+    // biome-ignore lint/suspicious/noExplicitAny: reaching the private store
+    const stored = (token: string) => (server as any).pushRepo.get(token)?.locale;
+
+    it("stores the locale the app sends, over the header", async () => {
+      const res = await register({ token: "t1", locale: "he" }, { "Accept-Language": "en-US" });
+      expect(res.status).toBe(200);
+      expect(stored("t1")).toBe("he");
+    });
+
+    it("falls back to the first Accept-Language tag", async () => {
+      await register({ token: "t2" }, { "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8" });
+      expect(stored("t2")).toBe("ru-RU");
+    });
+
+    it("rejects a locale that is not a language tag", async () => {
+      const res = await register({ token: "t3", locale: "<script>" });
+      expect(res.status).toBe(400);
+    });
+  });
+
   /**
    * Unregister (`DELETE /api/push/register`).
    *

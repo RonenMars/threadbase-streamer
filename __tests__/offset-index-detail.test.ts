@@ -58,7 +58,7 @@ describe("GET /api/conversations/:id served from the offset index", () => {
       codexRoots: [],
       scannerPersistent: false,
     });
-    await server.listen(0);
+    await server.listen(0, { awaitReady: true });
     port = server.port;
   });
 

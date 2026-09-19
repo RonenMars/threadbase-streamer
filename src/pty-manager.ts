@@ -53,6 +53,21 @@ const INPUT_HISTORY_MAX = 50;
 // the worst case is flushing queued input slightly early, which Claude buffers.
 const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
 
+// Claude's turn signal: OSC 9;4 (terminal progress) — `9;4;3` when a turn
+// starts, `9;4;0` exactly when it ends, including across a permission gate
+// (verified on Claude Code v2.1.278). Mid-conversation the `❯` input box stays
+// painted for the whole turn, so the marker alone flipped the session to
+// waiting_input ~50ms after every submit and the "waiting for your input" push
+// fired as the agent started. While a turn is open the markers are ignored.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching the literal OSC 9;4 escape
+const CLAUDE_PROGRESS_RE = /\x1b\]9;4;(\d)/g;
+
+// A submit opens the turn before Claude's `9;4;3` arrives (~300ms later),
+// because the echo of the pasted prompt already carries `❯`. A submit that
+// starts no turn at all (a slash command) never sends one, so the optimistic
+// open lapses after this long and readiness is re-checked from the screen.
+const TURN_START_GRACE_MS = 3_000;
+
 // Re-run ready/prompt detection this long after the PTY goes quiet, instead of
 // waiting for another chunk (which may never come if Claude is blocked on a
 // prompt) or the full CLAUDE_READY_FALLBACK_MS. 500ms was picked from real
@@ -173,6 +188,14 @@ export class PTYManager implements SessionRunner {
   // Last chunk's raw tail per session — prepended to the next chunk before
   // the OSC regex test so a split escape still matches. Consumed on match.
   private oscTail = new Map<string, string>();
+  // Open turn per session, from OSC 9;4: "submitted" between our submit and
+  // Claude's 9;4;3, "working" after it. Absent = no turn open.
+  private turnOpen = new Map<string, "submitted" | "working">();
+  // Sessions whose Claude has emitted OSC 9;4 at all — an older CLI that never
+  // does keeps the marker-only behaviour instead of waiting on a signal.
+  private progressSeen = new Set<string>();
+  // An OSC 9;4 escape cut off at the end of the previous chunk, if any.
+  private progressTail = new Map<string, string>();
   // When the last full detection pass ran per session (any trigger) — the
   // clock the SCRAPE_THROTTLE_MS ceiling is measured against.
   private lastDetectAt = new Map<string, number>();
@@ -533,6 +556,7 @@ export class PTYManager implements SessionRunner {
       this.setPromptSuggestion(sessionId, session, null);
       this.onStatusChange?.(toPublicSession(session));
     }
+    this.openTurnOnSubmit(sessionId);
     this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
     session.lastActivityAt = new Date();
     session.promptCount++;
@@ -691,6 +715,9 @@ export class PTYManager implements SessionRunner {
     this.firstChunkAt.delete(sessionId);
     this.permissionOpen.delete(sessionId);
     this.oscTail.delete(sessionId);
+    this.turnOpen.delete(sessionId);
+    this.progressSeen.delete(sessionId);
+    this.progressTail.delete(sessionId);
     this.lastDetectAt.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);
@@ -809,6 +836,9 @@ export class PTYManager implements SessionRunner {
     this.readyFallbackTimers.clear();
     this.permissionOpen.clear();
     this.oscTail.clear();
+    this.turnOpen.clear();
+    this.progressSeen.clear();
+    this.progressTail.clear();
     this.lastDetectAt.clear();
     this.lastScreenQuestionKey.clear();
     this.shellPromptOpen.clear();
@@ -861,10 +891,13 @@ export class PTYManager implements SessionRunner {
     const stripped = stripAnsi(data);
     session.lastOutput = stripped;
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => stripped.includes(m));
+    const turnEnded = this.trackProgress(sessionId, data);
 
-    if (session.status === "running" && matchedMarker) {
+    if (session.status === "running" && matchedMarker && !this.turnOpen.has(sessionId)) {
       this.markReady(sessionId, session, "prompt-marker", `marker:${matchedMarker}`);
     }
+    // The turn-end chunk rarely repaints the box, so ask the screen.
+    if (turnEnded && session.status === "running") this.recheckReadyLogged(sessionId);
     // The no-marker backstop lives in armReadyFallback() rather than here: this
     // branch only ran when a chunk happened to arrive, so a boot that fell
     // silent before showing a marker was never rescued by it.
@@ -1188,6 +1221,48 @@ export class PTYManager implements SessionRunner {
     });
   }
 
+  /** Update the open turn from OSC 9;4 in this chunk; true when it just closed. */
+  private trackProgress(sessionId: string, data: string): boolean {
+    // Prepend an escape the previous chunk cut off, so a split one still counts.
+    const window = (this.progressTail.get(sessionId) ?? "") + data;
+    let state: string | undefined;
+    for (const m of window.matchAll(CLAUDE_PROGRESS_RE)) state = m[1];
+    // Carry only a trailing escape too short to be a whole `ESC]9;4;N` (7
+    // chars), so a complete one is never counted twice.
+    const esc = window.lastIndexOf("\x1b");
+    const rest = esc >= 0 ? window.slice(esc) : "";
+    if (rest.length < 7) this.progressTail.set(sessionId, rest);
+    else this.progressTail.delete(sessionId);
+    if (state === undefined) return false;
+    this.progressSeen.add(sessionId);
+    if (state !== "0") {
+      this.turnOpen.set(sessionId, "working");
+      return false;
+    }
+    return this.turnOpen.delete(sessionId);
+  }
+
+  private openTurnOnSubmit(sessionId: string): void {
+    if (!this.progressSeen.has(sessionId)) return;
+    this.turnOpen.set(sessionId, "submitted");
+    const timer = setTimeout(() => {
+      if (this.turnOpen.get(sessionId) !== "submitted") return;
+      this.turnOpen.delete(sessionId);
+      this.recheckReadyLogged(sessionId);
+    }, TURN_START_GRACE_MS);
+    timer.unref?.();
+  }
+
+  private recheckReadyLogged(sessionId: string): void {
+    this.recheckReadyFromScreen(sessionId).catch((err) => {
+      this.log.warn("[pty.ready] screen recheck failed", {
+        event: "pty.ready_recheck_failed",
+        sessionId,
+        err,
+      });
+    });
+  }
+
   // Re-check the rendered screen (not just the last chunk) for a prompt
   // marker. Only meaningful once pendingReady is already clear — the boot
   // fallback above covers the first prompt after spawn/resume. Scoped to a
@@ -1198,7 +1273,7 @@ export class PTYManager implements SessionRunner {
     if (session?.status !== "running") return;
     const lines = await this.getOutputLines(sessionId, PTY_ROWS);
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => lines.some((l) => l.includes(m)));
-    if (matchedMarker && session.status === "running") {
+    if (matchedMarker && session.status === "running" && !this.turnOpen.has(sessionId)) {
       this.markReady(sessionId, session, "screen-marker", `quiet:screen-marker:${matchedMarker}`);
     }
   }
@@ -1326,6 +1401,9 @@ export class PTYManager implements SessionRunner {
     this.firstChunkAt.delete(sessionId);
     this.permissionOpen.delete(sessionId);
     this.oscTail.delete(sessionId);
+    this.turnOpen.delete(sessionId);
+    this.progressSeen.delete(sessionId);
+    this.progressTail.delete(sessionId);
     this.lastDetectAt.delete(sessionId);
     this.lastScreenQuestionKey.delete(sessionId);
     this.shellPromptOpen.delete(sessionId);

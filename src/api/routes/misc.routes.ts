@@ -323,6 +323,9 @@ export function describeServerIdentityKey(): string | undefined {
 
 const clientLog = getLogger("client");
 
+// A BCP 47 language tag ("he", "en-US", "zh-Hant-TW"), bounded.
+const LOCALE_TAG_RE = /^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,4}$/;
+
 type ClientLogEntry = {
   level?: "debug" | "info" | "warn" | "error";
   msg?: string;
@@ -488,6 +491,7 @@ export const createMiscRoutes = (
       staleDate?: unknown;
       startedAt?: unknown;
       serverId?: unknown;
+      locale?: unknown;
     } | null;
     const token = body?.token;
     const platform = body?.platform;
@@ -502,6 +506,19 @@ export const createMiscRoutes = (
     ) {
       return c.json({ error: "serverId must be 1-128 characters of [A-Za-z0-9_.:-]" }, 400);
     }
+    // The app's display language, so pushes arrive in it. Stored and sent on
+    // to Expo, hence the shape check. A build that predates the field still
+    // gets its device language from Accept-Language (iOS sends one).
+    const bodyLocale = body?.locale;
+    if (
+      bodyLocale !== undefined &&
+      (typeof bodyLocale !== "string" || !LOCALE_TAG_RE.test(bodyLocale))
+    ) {
+      return c.json({ error: "locale must be a BCP 47 language tag" }, 400);
+    }
+    const headerLocale = c.env.incoming.headers["accept-language"]?.split(/[,;]/)[0]?.trim();
+    const locale =
+      bodyLocale ?? (headerLocale && LOCALE_TAG_RE.test(headerLocale) ? headerLocale : null);
 
     if (typeof token !== "string" || token.length === 0) {
       return c.json({ error: "Missing token" }, 400);
@@ -569,6 +586,7 @@ export const createMiscRoutes = (
       staleDate: numberOrNull(body?.staleDate),
       startedAt: numberOrNull(body?.startedAt),
       clientServerId,
+      locale,
     });
     return c.json({ ok: true });
   });
