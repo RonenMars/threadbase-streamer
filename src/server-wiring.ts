@@ -611,6 +611,7 @@ export type ApiDepsWiring = {
   pushRepo: () => PushRepository | null;
   liveActivityPushEnabled: () => boolean;
   expoPushEnabled: () => boolean;
+  expoPushSender: ApiDeps["expoPushSender"];
   devicesRepo: () => DevicesRepository | null;
   projectsRepo: () => ProjectsRepository | null;
   conversationsRepo: () => ConversationsRepository | null;
@@ -682,6 +683,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     pushRepo: () => deps.pushRepo(),
     liveActivityPushEnabled: () => deps.liveActivityPushEnabled(),
     expoPushEnabled: () => deps.expoPushEnabled(),
+    expoPushSender: () => deps.expoPushSender(),
 
     devicesRepo: () => deps.devicesRepo(),
     projectsRepo: () => deps.projectsRepo(),

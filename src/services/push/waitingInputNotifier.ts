@@ -2,6 +2,7 @@ import { getLogger } from "../../logger";
 import type { ManagedSession } from "../../types";
 import type { ExpoPushContent, ExpoPushSender } from "./expoPushSender";
 import { type AttentionKind, attentionBody, attentionTitle } from "./notificationCopy";
+import type { PushEvent } from "./notificationPrefs";
 
 /**
  * "Your turn" notifications.
@@ -27,6 +28,16 @@ import { type AttentionKind, attentionBody, attentionTitle } from "./notificatio
  * holds its turn signal across them), so without a push of their own an
  * away-from-desk user would never learn the agent was blocked on them. One
  * push per prompt: repaints and cursor moves of the same prompt are not new.
+ *
+ * A session that dies at birth — the process exits at once, or Codex refuses to
+ * start — gets one push of its own, since otherwise a user who started it and
+ * walked away sees nothing. The text never carries `failureReason`, which
+ * embeds project paths. Codex usage-limit screens are not this: they already
+ * arrive as a permission prompt.
+ *
+ * Every push is gated by the receiving device's own preferences, per token, in
+ * ExpoPushSender: "waitingInput" for the three kinds that mean the agent needs
+ * the user, "sessionFailed" for the failure push.
  *
  * Always notifies for a closed turn, including when a WebSocket client is still
  * subscribed. Suppression-while-watched used to skip those pushes as noise when
@@ -79,6 +90,13 @@ export class WaitingInputNotifier {
   private openTurn = new Set<string>();
   /** Sessions with a prompt (gate or question) already pushed and still open. */
   private openPrompt = new Set<string>();
+  /** Sessions that have reached a prompt at least once, so they did start. */
+  private readySeen = new Set<string>();
+  /**
+   * Sessions whose going idle has already been looked at, so a repeat emit is
+   * not read as a second death. Cleared when the session is alive again.
+   */
+  private idleHandled = new Set<string>();
 
   constructor(private readonly sender: ExpoPushSender) {}
 
@@ -92,6 +110,7 @@ export class WaitingInputNotifier {
   async onStatusChange(session: ManagedSession, previousStatus?: string): Promise<void> {
     try {
       if (session.status === "running") {
+        this.idleHandled.delete(session.id);
         if (previousStatus === "waiting_input") this.openTurn.add(session.id);
         return;
       }
@@ -99,8 +118,20 @@ export class WaitingInputNotifier {
       if (session.status !== "waiting_input") {
         // idle: the PTY is gone, so any open turn ended without a prompt.
         this.openTurn.delete(session.id);
+        // "Could not start" means it never got as far as a prompt. A Codex
+        // session that hit a usage limit keeps its failureReason and goes idle
+        // when the user closes it much later — that is not a failed start.
+        const neverReady = !this.readySeen.delete(session.id);
+        const firstIdle = !this.idleHandled.has(session.id);
+        this.idleHandled.add(session.id);
+        if (firstIdle && neverReady && session.failureReason != null) {
+          await this.push(session, "failed");
+        }
         return;
       }
+      // Alive again (a resume after a failed start), so the next failure counts.
+      this.idleHandled.delete(session.id);
+      this.readySeen.add(session.id);
 
       // Delete-as-test: no open turn means boot/resume ready, or a repeat
       // emit of a status we have already notified for. Either way the user is
@@ -149,8 +180,9 @@ export class WaitingInputNotifier {
     session: Pick<ManagedSession, "id" | "projectName" | "provider">,
     kind: AttentionKind,
   ): Promise<void> {
-    const outcome = await this.sender.send(waitingInputMessage(session, kind));
-    if (outcome.attempted > 0) {
+    const event: PushEvent = kind === "failed" ? "sessionFailed" : "waitingInput";
+    const outcome = await this.sender.send(waitingInputMessage(session, kind), { event });
+    if (outcome.attempted > 0 || outcome.suppressed > 0) {
       log.info("expo_push.waiting_input", {
         event: "expo_push.waiting_input",
         sessionId: session.id,

@@ -23,6 +23,7 @@ import type {
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
 import type { HostPressureMonitor } from "../../services/host-pressure/hostPressure";
+import type { ExpoPushSender } from "../../services/push/expoPushSender";
 import type { Principal } from "../../services/security/capabilities";
 import type { ReconcileVerdict } from "../../services/sessions/reconcileSessions";
 import type { SessionStore } from "../../session-store";
@@ -72,6 +73,8 @@ export type ApiDeps = {
    * token store opened, since that transport needs no credential of its own.
    */
   expoPushEnabled: () => boolean;
+  /** The Expo sender, for the test-push endpoint. Null while notifications are unwired. */
+  expoPushSender: () => ExpoPushSender | null;
 
   /** Paired-device registry (C5). Null when the cache DB is unavailable. */
   devicesRepo: () => DevicesRepository | null;

@@ -91,7 +91,7 @@ describe("ExpoPushSender", () => {
       "ExponentPushToken[a]",
       "ExponentPushToken[b]",
     ]);
-    expect(outcome).toEqual({ attempted: 2, succeeded: 2, retired: 0 });
+    expect(outcome).toEqual({ attempted: 2, succeeded: 2, retired: 0, suppressed: 0 });
   });
 
   it("never sends ActivityKit tokens to the relay", async () => {
@@ -124,7 +124,7 @@ describe("ExpoPushSender", () => {
 
     const outcome = await new ExpoPushSender(repo).send({ title: "p", body: "b", data: {} });
 
-    expect(outcome).toEqual({ attempted: 2, succeeded: 1, retired: 1 });
+    expect(outcome).toEqual({ attempted: 2, succeeded: 1, retired: 1, suppressed: 0 });
     expect(repo.get("ExponentPushToken[dead]")?.revoked_at).not.toBeNull();
     expect(repo.get("ExponentPushToken[live]")?.last_success_at).not.toBeNull();
     // Retired means gone from the next fan-out, not merely marked.
@@ -139,7 +139,7 @@ describe("ExpoPushSender", () => {
 
     const outcome = await new ExpoPushSender(repo).send({ title: "p", body: "b", data: {} });
 
-    expect(outcome).toEqual({ attempted: 1, succeeded: 0, retired: 0 });
+    expect(outcome).toEqual({ attempted: 1, succeeded: 0, retired: 0, suppressed: 0 });
     expect(repo.get("ExponentPushToken[a]")?.failure_streak).toBe(1);
     expect(repo.listDeliverable()).toHaveLength(1);
   });
@@ -151,7 +151,7 @@ describe("ExpoPushSender", () => {
 
     const outcome = await new ExpoPushSender(repo).send({ title: "p", body: "b", data: {} });
 
-    expect(outcome).toEqual({ attempted: 2, succeeded: 0, retired: 0 });
+    expect(outcome).toEqual({ attempted: 2, succeeded: 0, retired: 0, suppressed: 0 });
     expect(repo.get("ExponentPushToken[a]")?.last_failure_code).toBe("HTTP_400");
     expect(repo.get("ExponentPushToken[b]")?.last_failure_code).toBe("HTTP_400");
   });
@@ -167,7 +167,7 @@ describe("ExpoPushSender", () => {
 
     const outcome = await new ExpoPushSender(repo).send({ title: "p", body: "b", data: {} });
 
-    expect(outcome).toEqual({ attempted: 1, succeeded: 0, retired: 0 });
+    expect(outcome).toEqual({ attempted: 1, succeeded: 0, retired: 0, suppressed: 0 });
     expect(repo.get("ExponentPushToken[a]")?.last_failure_code).toBe("SendError");
   });
 
@@ -175,7 +175,7 @@ describe("ExpoPushSender", () => {
     const { fn } = stubFetch([{}]);
     const outcome = await new ExpoPushSender(repo).send({ title: "p", body: "b", data: {} });
     expect(fn).not.toHaveBeenCalled();
-    expect(outcome).toEqual({ attempted: 0, succeeded: 0, retired: 0 });
+    expect(outcome).toEqual({ attempted: 0, succeeded: 0, retired: 0, suppressed: 0 });
   });
 
   it("authorizes only when an access token is configured", async () => {

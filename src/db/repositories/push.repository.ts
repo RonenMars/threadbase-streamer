@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import type { NotificationPrefs } from "../../schemas/notification-prefs.schema";
 
 /**
  * Push registration and delivery state (C7).
@@ -71,6 +72,8 @@ export interface PushTokenRow {
   client_server_id: string | null;
   /** The app's display language (BCP 47); null for older clients. */
   locale: string | null;
+  /** JSON `NotificationPrefs`; null = the client never sent any, i.e. everything on. */
+  notification_prefs: string | null;
 }
 
 /**
@@ -140,6 +143,8 @@ export class PushRepository {
   private revokeStmt: Database.Statement;
   private deleteByTokenStmt: Database.Statement;
   private deleteTokenForDeviceStmt: Database.Statement;
+  private setPrefsStmt: Database.Statement;
+  private setPrefsAnyDeviceStmt: Database.Statement;
   private deleteByDeviceStmt: Database.Statement;
   private claimEventStmt: Database.Statement;
   private markDeliveredStmt: Database.Statement;
@@ -158,12 +163,12 @@ export class PushRepository {
       INSERT INTO push_tokens (
         token, platform, device_id, registered_at,
         kind, activity_id, session_id, expires_at, stale_date, started_at,
-        client_server_id, locale
+        client_server_id, locale, notification_prefs
       )
       VALUES (
         @token, @platform, @device_id, @registered_at,
         @kind, @activity_id, @session_id, @expires_at, @stale_date, @started_at,
-        @client_server_id, @locale
+        @client_server_id, @locale, @notification_prefs
       )
       ON CONFLICT(token) DO UPDATE SET
         platform = excluded.platform,
@@ -172,6 +177,9 @@ export class PushRepository {
         -- edited), keep the stored one when this registration carries none.
         client_server_id = COALESCE(excluded.client_server_id, push_tokens.client_server_id),
         locale = COALESCE(excluded.locale, push_tokens.locale),
+        -- A registration that carries no preferences (an older build, or a
+        -- re-register after a token refresh) must not wipe the ones the user set.
+        notification_prefs = COALESCE(excluded.notification_prefs, push_tokens.notification_prefs),
         registered_at = excluded.registered_at,
         kind = excluded.kind,
         activity_id = COALESCE(excluded.activity_id, push_tokens.activity_id),
@@ -224,6 +232,15 @@ export class PushRepository {
       "DELETE FROM push_tokens WHERE token = @token AND (device_id = @device_id OR device_id IS NULL)",
     );
     this.deleteByDeviceStmt = db.prepare("DELETE FROM push_tokens WHERE device_id = ?");
+    // Same ownership term as the delete above. Deliberately its own statement
+    // rather than a re-register: the upsert clears failure_streak and
+    // revoked_at, so changing a toggle through it would wipe delivery health.
+    this.setPrefsStmt = db.prepare(
+      "UPDATE push_tokens SET notification_prefs = @prefs WHERE token = @token AND (device_id = @device_id OR device_id IS NULL)",
+    );
+    this.setPrefsAnyDeviceStmt = db.prepare(
+      "UPDATE push_tokens SET notification_prefs = @prefs WHERE token = @token",
+    );
 
     // Live Activity sends are driven by a session status change, so they select
     // by (kind, session) rather than scanning every token. Expired rows are
@@ -304,6 +321,7 @@ export class PushRepository {
     startedAt?: number | null;
     clientServerId?: string | null;
     locale?: string | null;
+    notificationPrefs?: NotificationPrefs | null;
     now?: number;
   }): void {
     this.upsertStmt.run({
@@ -319,7 +337,23 @@ export class PushRepository {
       started_at: args.startedAt ?? null,
       client_server_id: args.clientServerId ?? null,
       locale: args.locale ?? null,
+      notification_prefs: args.notificationPrefs ? JSON.stringify(args.notificationPrefs) : null,
     });
+  }
+
+  /**
+   * Store new notification preferences for one token, touching nothing else.
+   *
+   * `deviceId` scopes the write to this device's own tokens (or an unattributed
+   * one), so a `notifications`-holding device cannot mute another's. Pass
+   * `null` for the shared api key, which names no device and may set any token.
+   * Returns whether a row matched.
+   */
+  setPrefs(token: string, prefs: NotificationPrefs, deviceId: string | null): boolean {
+    const json = JSON.stringify(prefs);
+    if (deviceId === null)
+      return this.setPrefsAnyDeviceStmt.run({ token, prefs: json }).changes > 0;
+    return this.setPrefsStmt.run({ token, prefs: json, device_id: deviceId }).changes > 0;
   }
 
   get(token: string): PushTokenRow | null {

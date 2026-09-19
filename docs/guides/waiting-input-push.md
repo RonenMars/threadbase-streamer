@@ -94,7 +94,7 @@ That is the whole payload.
 `sound` is what makes the push audible on iOS at all; Expo plays nothing when it is omitted, which it was until this change.
 `priority: "high"` delivers immediately on Android rather than in a batch.
 `threadId` stacks one session's pushes together on iOS, and `collapseId`/`tag` let the newer push replace the older banner, so a "needs your go-ahead" that has been answered gives way to "finished".
-`data.kind` (`turn_done`, `permission`, `question`) is additive; mobile routes on `sessionId` and ignores it today.
+`data.kind` (`turn_done`, `permission`, `question`, `failed`) is additive; mobile routes on `sessionId` and ignores it today.
 
 The body is written per recipient token in the language its app registered (`locale` in `POST /api/push/register`, else the first `Accept-Language` tag, which iOS sends on every request; migration 025).
 The copy lives in `src/services/push/notificationCopy.ts` for the languages tb-mobile ships (en, he, ar, ru); anything else gets English.
@@ -118,6 +118,39 @@ It also survives a rewrite of that paragraph: no wording of "excludes prompts, t
 Adding *any* session content here is a maintainer decision that changes legal copy in two repos.
 Change the policy text first.
 
+## Notification preferences
+
+What the phone's Settings → Notifications screen controls is enforced here, per token, at send time.
+Before this the toggles lived only in the app, so none of them changed what was sent.
+
+- **Storage.** `push_tokens.notification_prefs` (migration 026), one JSON blob validated by `NotificationPrefsSchema` (`src/schemas/notification-prefs.schema.ts`).
+  `NULL` means the client never sent any, and that is read as everything on, so a released app keeps receiving exactly what it did.
+  A stored blob that no longer parses is read the same way: failing open is deliberate, because a corrupt row must not silently mute the one push the user is waiting for.
+- **Shape.** `{ waitingInput, sessionFailed, quietHours?: { enabled, tz, default: {from, to}, days?: { mon..sun: {from, to} | null } } }`.
+  `waitingInput` gates the three "agent needs you" kinds (`turn_done`, `permission`, `question`).
+  `sessionFailed` gates the failure push.
+- **Quiet hours** drop the push; nothing is sent, and the token's delivery health is untouched.
+  They are evaluated in `tz`, the phone's IANA zone, so "22:00" means the user's 22:00 and not the server's.
+  A window that ends before it starts runs overnight and belongs to the day it *starts* on: Friday 22:00–08:00 covers Saturday until 08:00 and uses Friday's entry.
+  A weekday in `days` replaces `default` for the window starting that day, and `null` means no quiet hours that day.
+  `from === to` is an empty window, not 24 hours.
+- **Per token.** `ExpoPushSender.send(message, { event })` filters rows one by one, so one device's quiet hours never mute another phone.
+  `ExpoPushOutcome.suppressed` counts what was skipped, separately from `attempted`.
+- **Routes.**
+  `POST /api/push/register` accepts an optional `notificationPrefs` and keeps the stored ones when a later registration sends none.
+  `PATCH /api/push/preferences` `{ token, prefs }` changes them without re-registering, which matters because a re-register resets `failure_streak` and `revoked_at` and would wipe the delivery health the health screen reports.
+  It answers 404 `TOKEN_NOT_FOUND` for an unknown token, and for another device's token, so a client whose token is not registered yet learns its preferences were not stored.
+  `POST /api/push/test` `{ token }` sends one real push to a token the caller owns and returns `{ ok, attempted, succeeded, state }`.
+  It ignores preferences on purpose: a test muted by the user's own quiet hours would answer "does delivery work?" with silence.
+- **Capability.** `push.preferences` on `GET /api/info` and `/api/push/health` is true when the server enforces preferences, so a client can tell an older server from one where the feature is off.
+
+### The failure push
+
+A session that dies before it ever reached a prompt — the process exits at once, or Codex refuses to start — gets one `failed` push: "*Claude* could not start.".
+The text never carries `failureReason`, which embeds project paths.
+It fires only on a session's first idle after it was never ready: a Codex session that hit a usage limit keeps its `failureReason` and goes idle when closed much later, and that is not a failed start.
+Codex usage-limit screens already arrive as a `permission` push.
+
 ## Failure handling
 
 Expo returns one ticket per message, positionally matched to the request array, so a batch is not all-or-nothing.
@@ -136,6 +169,7 @@ Tokens are batched 100 per request (Expo's cap) and `listDeliverable()` returns 
 
 ## What is not here
 
-- **No quiet hours.** Mobile owns that setting client-side today.
+- **No silent delivery.** Quiet hours drop a push rather than sending it without sound; that mode is tracked in RonenMars/threadbase-streamer#949.
+- **No "session completed", "diff ready" or badge count.** The streamer has no event for the first two, and a badge count cannot be kept right across devices and servers, so the mobile toggles for them were removed rather than left inert.
 - **No per-device targeting.** Every device paired with this streamer is notified; `expo` tokens carry no session scope, and the streamer has no model of which device is interested in which session.
 - **No kill switch.** With no registered token the sender makes no request at all, which is the off state for a streamer nobody has paired a phone to.
