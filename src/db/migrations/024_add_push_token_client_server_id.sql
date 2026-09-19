@@ -1,0 +1,15 @@
+-- The id the registering client uses for THIS server.
+--
+-- A push notification has to tell the app which of its servers the session
+-- lives on. The streamer cannot work that out itself: the app keys each server
+-- by a hash of the URL it paired with, and the streamer only knows its own
+-- hostname, which the app never uses as a key. A tap on a notification carrying
+-- the hostname therefore fails with "Unknown server" before any request is
+-- made, on every server, whichever sent it.
+--
+-- The client already knows the id it files this server under, so it sends it at
+-- registration and the send path echoes it back as `data.serverId`. NULL for a
+-- client that predates this column (registrations from older builds), in which
+-- case the push carries no serverId and the app falls back to its default
+-- server rather than to a name it cannot resolve.
+ALTER TABLE push_tokens ADD COLUMN client_server_id TEXT;

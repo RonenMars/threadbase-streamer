@@ -40,15 +40,20 @@ const log = getLogger("expo-push");
  * both deliberately absent — carrying them is what made the Live Activity
  * payload diverge from that text (RonenMars/threadbase-mobile#636).
  *
- * `projectName` and the two ids stay: mobile needs `sessionId` + `serverId` to
- * route the tap to the session, and a notification that cannot say which
- * project it is about is not actionable.
+ * `projectName` and `sessionId` stay: mobile needs the session id to route the
+ * tap, and a notification that cannot say which project it is about is not
+ * actionable.
+ *
+ * There is no `serverId` here on purpose. Which server the app files this one
+ * under is per registered token, so `ExpoPushSender` adds it per recipient.
+ * The streamer's own hostname is not a substitute: the app keys servers by a
+ * hash of their URL and cannot resolve a hostname.
  */
-export function waitingInputMessage(session: ManagedSession, serverId: string): ExpoPushMessage {
+export function waitingInputMessage(session: ManagedSession): ExpoPushMessage {
   return {
     title: session.projectName || "Threadbase",
     body: "Waiting for your input",
-    data: { sessionId: session.id, serverId },
+    data: { sessionId: session.id },
   };
 }
 
@@ -56,10 +61,7 @@ export class WaitingInputNotifier {
   /** Sessions with a turn the user started that has not yet been answered. */
   private openTurn = new Set<string>();
 
-  constructor(
-    private readonly sender: ExpoPushSender,
-    private readonly serverId: string,
-  ) {}
+  constructor(private readonly sender: ExpoPushSender) {}
 
   /**
    * React to a session status change.
@@ -85,7 +87,7 @@ export class WaitingInputNotifier {
       // not owed a second notification for one turn.
       if (!this.openTurn.delete(session.id)) return;
 
-      const outcome = await this.sender.send(waitingInputMessage(session, this.serverId));
+      const outcome = await this.sender.send(waitingInputMessage(session));
       if (outcome.attempted > 0) {
         log.info("expo_push.waiting_input", {
           event: "expo_push.waiting_input",

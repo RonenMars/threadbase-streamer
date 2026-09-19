@@ -115,7 +115,7 @@ Two things the native app never exercises are therefore part of this surface:
 
 **API key format** — mobile uses `tb_` prefix detection in pairing logic. Key format `tb_<32-hex-chars>` must be preserved.
 
-**Push endpoints** — `POST /api/push/register` and `GET /api/push/health` both have shipped mobile consumers and belong to this contract.
+**Push endpoints** — `POST /api/push/register` and `GET /api/push/health` both have shipped mobile consumers and belong to this contract. `POST /api/push/register` accepts an optional `serverId` (the id the app files this server under, 1-128 characters of `[A-Za-z0-9_.:-]`, else 400); the push then carries it as `data.serverId`. Older apps send none and get a push with no `serverId`.
 
 `available` on `/api/push/health` means "the SQLite token store opened", **not** "credentials are present". Mobile renders it verbatim as "Push store is available / unavailable (registration cannot persist)" (`app/notification-health.tsx`), so retargeting it at credentials would tell every credential-less server's user that their registrations do not persist — false, and it points debugging at the database instead of the missing `.p8`. `parsePushHealthResponse` only type-checks it as a boolean, so the wrong sentence would render with no parse error.
 
