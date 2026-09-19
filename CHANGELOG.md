@@ -1,3 +1,9 @@
+## [1.98.8](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.7...v1.98.8) (2026-09-19)
+
+### Bug Fixes
+
+* **api:** don't raise the warm-up gate for a refresh on a warm cache ([#941](https://github.com/RonenMars/threadbase-streamer/issues/941)) ([0f3fc6b](https://github.com/RonenMars/threadbase-streamer/commit/0f3fc6ba3a6a468b8c4ae2ed72b1e30850ae8f27))
+
 ## [1.98.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.98.6...v1.98.7) (2026-09-19)
 
 ### Bug Fixes
