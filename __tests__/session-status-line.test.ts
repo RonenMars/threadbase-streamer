@@ -72,7 +72,7 @@ describe("GET /api/sessions/:id — status-line enrichment", () => {
       scannerPersistent: false,
       codexRoots: [],
     });
-    await server.listen(0);
+    await server.listen(0, { awaitReady: true });
     return { server, port: server.port };
   }
 
