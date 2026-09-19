@@ -1,3 +1,9 @@
+## [1.101.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.100.0...v1.101.0) (2026-09-19)
+
+### Features
+
+* **pty:** surface Claude Code's prompt suggestion to clients ([#946](https://github.com/RonenMars/threadbase-streamer/issues/946)) ([bc71567](https://github.com/RonenMars/threadbase-streamer/commit/bc71567f0851ae2e7730d0aa29976cafaedd2e4e)), closes [RonenMars/threadbase-mobile#1126](https://github.com/RonenMars/threadbase-mobile/issues/1126)
+
 ## [1.100.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.99.0...v1.100.0) (2026-09-19)
 
 ### Features
