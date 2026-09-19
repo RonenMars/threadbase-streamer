@@ -126,6 +126,21 @@ describe("a session with no transcript yet", () => {
     expect(invalidate).not.toHaveBeenCalled();
   });
 
+  it("carries camelCase aliases matching the session response names", async () => {
+    const { handlers } = makeHandlers({ session: managedSession() });
+    const res = makeRes();
+
+    await handlers.handleGetConversation("sess-1", url, res);
+
+    const { meta } = JSON.parse(res.body);
+    expect(meta.messageCount).toBe(meta.message_count);
+    expect(meta.projectName).toBe(meta.project_name);
+    expect(meta.projectPath).toBe(meta.project_path);
+    expect(meta.lastActivityAt).toBe(meta.last_updated_at);
+    expect(meta.projectPath).toBeDefined();
+    expect(meta.lastActivityAt).toBeDefined();
+  });
+
   it("answers 200 when requested by a live Codex session's bound rollout id", async () => {
     // Mobile always fetches by the bound rollout UUID once Codex binds it
     // (server.ts:2653's resolveConversationLookupId comment), but the managed
