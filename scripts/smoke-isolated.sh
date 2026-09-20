@@ -53,8 +53,11 @@ printf 'api_key: %s\nbrowse_root: %s\n' "$KEY" "$S" > "$S/.threadbase/server.yam
 chmod 600 "$S/.threadbase/server.yaml"
 cp "$FIXTURE" "$S/.claude/projects/-tmp-smoke/$ID.jsonl"
 
-# No --prod and no --replace-prod: with the port free, serve never touches launchd.
-HOME="$S" "$(command -v node)" dist/cli.cjs serve --port "$PORT" --verbose > "$S/out.log" 2>&1 &
+# --prod, never --replace-prod. --prod is how launchd/systemd run the shipped
+# artifact, and it skips dev-takeover, so no supervisor is consulted: without it
+# serve throws on Linux ("lifecycle: unsupported platform") and on macOS would
+# probe launchd. Its log-cap only touches $S/.threadbase/logs, inside the temp HOME.
+HOME="$S" "$(command -v node)" dist/cli.cjs serve --port "$PORT" --verbose --prod > "$S/out.log" 2>&1 &
 PID=$!
 
 fail=0
@@ -70,8 +73,13 @@ echo "$HEALTH" | grep -q '"ok":true'; check "healthz answers ($HEALTH)" $?
 CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "localhost:$PORT/api/conversations")
 [ "$CODE" = 401 ]; check "no-auth /api/conversations is 401 (got $CODE)" $?
 
-sleep 3 # let the watcher scan the fixture into the cache
-api "localhost:$PORT/api/conversations" | grep -q "\"id\":\"$ID\""; check "fixture $ID is listed" $?
+# The watcher scans the fixture into the cache asynchronously: poll, don't guess.
+LISTED=1
+for _ in $(seq 1 20); do
+  if api "localhost:$PORT/api/conversations" | grep -q "\"id\":\"$ID\""; then LISTED=0; break; fi
+  sleep 1
+done
+check "fixture $ID is listed" $LISTED
 
 CODE=$(api -o /dev/null -w '%{http_code}' "localhost:$PORT/api/conversations/$ID")
 [ "$CODE" = 200 ]; check "conversation detail is 200 (got $CODE)" $?

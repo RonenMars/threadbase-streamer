@@ -21,6 +21,30 @@ const PACKAGE = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "
   scripts: Record<string, string>;
 };
 
+describe("built-CLI boot job", () => {
+  const job = WORKFLOW.slice(
+    WORKFLOW.indexOf("  boot-dist:"),
+    WORKFLOW.indexOf("  # Cross-platform coverage"),
+  );
+
+  // It boots the artifact Build produced; building again would test a different one.
+  it("runs the isolated smoke against Build's dist artifact", () => {
+    expect(job).toMatch(/needs:\s*\[[^\]]*\bbuild\b/);
+    expect(job).toContain("actions/download-artifact");
+    expect(job).toContain("scripts/smoke-isolated.sh");
+  });
+
+  it("does not let a boot failure report as a passing check", () => {
+    expect(job).not.toMatch(/continue-on-error:\s*true/);
+  });
+
+  // A job id or name matching a required context would either shadow it or be
+  // mistaken for it; ruleset 17561930 requires `Smoke (<os>)` by name.
+  it("does not borrow a required check name", () => {
+    expect(job).not.toMatch(/name:\s*Smoke/);
+  });
+});
+
 describe("CI triggers", () => {
   // `pull_request.branches` filters on the BASE branch, so the only thing it can
   // ever do is withhold CI from a PR. That produced the same silent failure
