@@ -156,6 +156,7 @@ function stripGutter(line: string): string {
 export function scrapePermissionGate(lines: string[]): PermissionGate | null {
   const options: PermissionOption[] = [];
   let cursor: number | undefined;
+  let cursorRows = 0;
   let firstOptionLine = -1;
 
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -165,7 +166,10 @@ export function scrapePermissionGate(lines: string[]): PermissionGate | null {
       const index = Number.parseInt(m[2], 10);
       if (!Number.isFinite(index)) continue;
       firstOptionLine = i; // overwritten as we walk up — ends up topmost
-      if (m[1]) cursor = index; // `❯` marks the highlighted option
+      if (m[1]) {
+        cursor = index; // the glyph marks the highlighted option
+        cursorRows++;
+      }
       options.unshift({ index, label: m[3] }); // keep top-to-bottom screen order
       continue;
     }
@@ -176,6 +180,17 @@ export function scrapePermissionGate(lines: string[]): PermissionGate | null {
   }
 
   if (options.length === 0) return null;
+
+  // A selection cursor marks exactly ONE row; a line PREFIX marks every row.
+  // Markdown blockquotes are the case that matters — `> 1. Rebase` / `> 2. Squash`
+  // in Claude's prose is option-shaped and carries a `>` on both rows — but the
+  // rule is about the shape, not the glyph, so a quoted `❯` list is caught too.
+  // Reporting a highlight here would be wrong data on its own, and it is what
+  // let detectPickerScreen claim such a block whenever no composer rule
+  // happened to sit below it. The two guards are complementary: this one
+  // rejects quoted prose (every row marked), the composer-rule test rejects
+  // typed or pasted text (one row marked, by the composer's own `❯` prompt).
+  if (cursorRows > 1) cursor = undefined;
 
   // Prompt = nearest non-empty, non-chrome line above the first option row.
   let prompt: string | undefined;

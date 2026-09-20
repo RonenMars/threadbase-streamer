@@ -248,11 +248,8 @@ describe("scrapePermissionGate — cursor glyph variants", () => {
 // `needs your permission` notify, and the refresh arm only ever updates a gate
 // that is already open.
 describe("blockquoted prose is not a gate", () => {
-  const prose = [
-    "⏺ Here is the plan:",
-    "",
-    "  > 1. Rebase onto main",
-    "  > 2. Squash-merge",
+  const quoted = ["⏺ Here is the plan:", "", "  > 1. Rebase onto main", "  > 2. Squash-merge"];
+  const composer = [
     "",
     "────────────────────────────────────────────────",
     " ❯ ",
@@ -261,10 +258,43 @@ describe("blockquoted prose is not a gate", () => {
   ];
 
   it("has no gate footer, so detectGateScreen refuses it", () => {
-    expect(detectGateScreen(prose)).toBeNull();
+    expect(detectGateScreen([...quoted, ...composer])).toBeNull();
+    expect(detectGateScreen(quoted)).toBeNull();
   });
 
   it("sits above a live composer, so detectPickerScreen refuses it", () => {
-    expect(detectPickerScreen(prose)).toBeNull();
+    expect(detectPickerScreen([...quoted, ...composer])).toBeNull();
+  });
+
+  // The composer rule was the ONLY thing refusing this, so a quoted list with
+  // nothing painted below it was claimed as a live picker. A `>` on every row
+  // is a line prefix, not a selection cursor, and is now refused on its own.
+  it("is refused even with no composer rule below it", () => {
+    expect(detectPickerScreen(quoted)).toBeNull();
+  });
+
+  it("reports no cursor at all, since every row carries the glyph", () => {
+    expect(scrapePermissionGate(quoted)?.cursor).toBeUndefined();
+  });
+
+  // The rule is about shape, not glyph: a quoted `❯` list is refused the same
+  // way. This is the case that was already reachable before `>` was accepted.
+  it("applies to a quoted `❯` list too, not just the ASCII form", () => {
+    const unicodeQuoted = ["⏺ Here is the plan:", "", "  ❯ 1. Rebase", "  ❯ 2. Squash-merge"];
+    expect(scrapePermissionGate(unicodeQuoted)?.cursor).toBeUndefined();
+    expect(detectPickerScreen(unicodeQuoted)).toBeNull();
+  });
+
+  // The guard must not cost a real picker its highlight: exactly one marked row.
+  it("still claims a real picker, whose cursor marks exactly one row", () => {
+    const picker = [
+      "  Select a conversation to resume",
+      "",
+      "  > 1. Resume from summary (recommended)",
+      "    2. Start fresh",
+    ];
+    const gate = detectPickerScreen(picker);
+    expect(gate?.cursor).toBe(1);
+    expect(gate?.options.map((o) => o.index)).toEqual([1, 2]);
   });
 });
