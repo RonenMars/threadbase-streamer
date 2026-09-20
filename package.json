@@ -66,6 +66,7 @@
     "prepublishOnly": "npm run build",
     "test:contracts": "vitest run __tests__/contracts/",
     "test:e2e": "vitest run __tests__/e2e/",
+    "test:smoke-isolated": "npm run build && scripts/smoke-isolated.sh",
     "migrate": "tsx scripts/migrate.ts",
     "migrate:projects": "tsx scripts/migrate-projects.ts",
     "db:validate": "tsx scripts/validate-db.ts",

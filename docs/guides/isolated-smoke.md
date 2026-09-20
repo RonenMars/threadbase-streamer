@@ -17,15 +17,24 @@ it disables session persistence silently while the server keeps serving, so
 this script cannot see it (see [deploy-internals.md](deploy-internals.md)).
 
 CI's `Smoke (macos-latest)` / `Smoke (windows-latest)` jobs are a different
-thing: a platform-specific vitest subset, not a boot of the built CLI. See
+thing: they run the whole vitest suite (`npm test`) and a `node-pty` load check
+on macOS and Windows, with no build step and no server boot. See
 [cross-platform-ci.md](../testing/cross-platform-ci.md).
 
 ## Usage
 
 ```bash
-npm run build
-scripts/smoke-isolated.sh
+npm run test:smoke-isolated   # builds, then runs the smoke
+scripts/smoke-isolated.sh     # the smoke alone, against the existing dist/
 ```
+
+`test:smoke-isolated` is `npm run build && scripts/smoke-isolated.sh`. It is
+deliberately not part of `npm test`: a full build plus a server boot on a fixed
+port is too heavy to put in front of every test run.
+
+It is not called `test:smoke`. That name once belonged to a local fast subset
+that was mistaken for the CI `Smoke` jobs above, and `ci-workflow.test.ts`
+asserts it stays unused.
 
 | Variable | Default | Meaning |
 |---|---|---|
