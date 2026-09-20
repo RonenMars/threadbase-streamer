@@ -70,8 +70,13 @@ echo "$HEALTH" | grep -q '"ok":true'; check "healthz answers ($HEALTH)" $?
 CODE=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "localhost:$PORT/api/conversations")
 [ "$CODE" = 401 ]; check "no-auth /api/conversations is 401 (got $CODE)" $?
 
-sleep 3 # let the watcher scan the fixture into the cache
-api "localhost:$PORT/api/conversations" | grep -q "\"id\":\"$ID\""; check "fixture $ID is listed" $?
+# The watcher scans the fixture into the cache asynchronously: poll, don't guess.
+LISTED=1
+for _ in $(seq 1 20); do
+  if api "localhost:$PORT/api/conversations" | grep -q "\"id\":\"$ID\""; then LISTED=0; break; fi
+  sleep 1
+done
+check "fixture $ID is listed" $LISTED
 
 CODE=$(api -o /dev/null -w '%{http_code}' "localhost:$PORT/api/conversations/$ID")
 [ "$CODE" = 200 ]; check "conversation detail is 200 (got $CODE)" $?

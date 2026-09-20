@@ -3,7 +3,8 @@
 Boots the **built** CLI (`dist/cli.cjs`) in a throwaway `HOME` on a spare port
 and exercises it over HTTP, so a change can be checked against the real
 bundle without touching your `~/.threadbase`, your `~/.claude`, or a running
-prod streamer. It is a local check, not part of CI or the deploy pipeline.
+prod streamer. CI runs it too, as the `Boot built CLI` job; it is not part of
+the deploy pipeline.
 
 ## Why it exists
 
@@ -21,6 +22,15 @@ thing: they run the whole vitest suite (`npm test`) and a `node-pty` load check
 on macOS and Windows, with no build step and no server boot. See
 [cross-platform-ci.md](../testing/cross-platform-ci.md).
 
+## In CI
+
+The `Boot built CLI` job (`boot-dist` in `ci.yml`) runs `scripts/smoke-isolated.sh` on
+`ubuntu-latest`, Node 22, against the `dist` artifact that `Build` uploads, so it
+costs a download rather than a second build. It has no job-level `if:`; its steps
+follow `needs.gate.outputs.skip` like every other job. It is deliberately **not**
+a required check yet: promote it after it has run clean on about ten PRs, as the
+Windows smoke was. Windows is not covered — the script is bash and uses `/tmp`.
+
 ## Usage
 
 ```bash
@@ -29,8 +39,9 @@ scripts/smoke-isolated.sh     # the smoke alone, against the existing dist/
 ```
 
 `test:smoke-isolated` is `npm run build && scripts/smoke-isolated.sh`. It is
-deliberately not part of `npm test`: a full build plus a server boot on a fixed
-port is too heavy to put in front of every test run.
+deliberately not part of `npm test`: it checks a different artifact (the
+bundle, not `src/`), needs a built `dist/` and a free fixed port, and a boot
+failure would be one test among thousands instead of its own named result.
 
 It is not called `test:smoke`. That name once belonged to a local fast subset
 that was mistaken for the CI `Smoke` jobs above, and `ci-workflow.test.ts`

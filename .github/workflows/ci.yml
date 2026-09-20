@@ -142,6 +142,36 @@ jobs:
           name: dist
           path: dist/
 
+  # Boots the bundled dist/cli.cjs in a throwaway HOME (scripts/smoke-isolated.sh).
+  # `npm test` imports from src/, so nothing else here would notice a dependency
+  # bump that breaks the tsup bundle. Reuses Build's `dist` artifact, so it
+  # costs a download rather than a second build. Named so it cannot be mistaken
+  # for the required `Smoke (<os>)` contexts, and not itself a required check.
+  boot-dist:
+    name: Boot built CLI
+    runs-on: ubuntu-latest
+    needs: [gate, setup, build]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
+
+      - name: Setup
+        if: needs.gate.outputs.skip != 'true'
+        uses: ./.github/actions/setup
+        with:
+          node-version: 22
+
+      - if: needs.gate.outputs.skip != 'true'
+        uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist/
+
+      - name: Boot dist/cli.cjs
+        if: needs.gate.outputs.skip != 'true'
+        run: scripts/smoke-isolated.sh
+
   # Cross-platform coverage (C10). Every other job runs ubuntu-only, yet the
   # repo ships Windows and macOS deploy scripts, has Windows-specific process
   # discovery (wmic/CIM), and depends on node-pty — a native addon whose
