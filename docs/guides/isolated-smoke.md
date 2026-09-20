@@ -84,10 +84,16 @@ root.
 tree, but the cache (`server.ts`) and the scanner roots resolve from
 `homedir()` and would still point at the real ones.
 
-It also never passes `--prod` or `--replace-prod`. Without `--replace-prod`,
-`serve` on a free port takes the `use-port` path in `resolveDevPlan` and never
-reaches `takeoverProd`, so the launchd-supervised prod instance is left alone.
+It passes `--prod` and never `--replace-prod`. `--prod` is how launchd and
+systemd run the shipped artifact, and it skips the dev-takeover block in
+`cli/index.ts` entirely, so no supervisor is consulted and the launchd-supervised
+prod instance is left alone. It is also required on Linux: without it `serve`
+calls `getSupervisor()`, which throws `lifecycle: unsupported platform linux`
+(the first CI run of this smoke failed exactly that way).
 The script aborts (exit `2`) rather than start if its port is taken.
+
+`THREADBASE_INSTALL_DIR`, if set in your shell, overrides where the lifecycle
+files (and `--prod`'s log cap) look, and bypasses the temp `HOME`; leave it unset.
 
 The temp directory is under `/tmp`, not `$TMPDIR`. macOS caps a unix socket
 path at 104 bytes, and `$TMPDIR` (`/var/folders/…`) plus the config path

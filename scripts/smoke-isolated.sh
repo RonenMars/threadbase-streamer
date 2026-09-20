@@ -53,8 +53,11 @@ printf 'api_key: %s\nbrowse_root: %s\n' "$KEY" "$S" > "$S/.threadbase/server.yam
 chmod 600 "$S/.threadbase/server.yaml"
 cp "$FIXTURE" "$S/.claude/projects/-tmp-smoke/$ID.jsonl"
 
-# No --prod and no --replace-prod: with the port free, serve never touches launchd.
-HOME="$S" "$(command -v node)" dist/cli.cjs serve --port "$PORT" --verbose > "$S/out.log" 2>&1 &
+# --prod, never --replace-prod. --prod is how launchd/systemd run the shipped
+# artifact, and it skips dev-takeover, so no supervisor is consulted: without it
+# serve throws on Linux ("lifecycle: unsupported platform") and on macOS would
+# probe launchd. Its log-cap only touches $S/.threadbase/logs, inside the temp HOME.
+HOME="$S" "$(command -v node)" dist/cli.cjs serve --port "$PORT" --verbose --prod > "$S/out.log" 2>&1 &
 PID=$!
 
 fail=0
