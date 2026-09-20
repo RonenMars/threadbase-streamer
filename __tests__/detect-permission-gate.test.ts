@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectGateScreen,
+  detectPickerScreen,
   hasPermissionOsc,
   hasWaitingForInputOsc,
   scrapePermissionGate,
@@ -184,5 +186,85 @@ describe("scrapePermissionGate", () => {
     const gate = scrapePermissionGate(lines);
     expect(gate?.options.map((o) => o.index)).toEqual([1, 2, 3]);
     expect(gate?.prompt).toBe("Do you want to proceed?");
+  });
+});
+
+// The selection cursor is NOT always `❯`. Claude Code paints a plain ASCII `>`
+// (U+003E — measured from the PTY bytes of a real Windows gate, whose rows
+// render as " > 1. Yes" / "   2. No"). While the regex took `❯` alone, the
+// highlighted row matched nothing, so it was dropped from the options AND then
+// picked up by the prompt search as the question: the user saw a bold
+// "1. Yes" caption over two radio rows, leaving "switch to auto mode" as the
+// only way to approve a single command.
+describe("scrapePermissionGate — cursor glyph variants", () => {
+  // Same gate, one glyph swapped. The `❯` case is the control: it already
+  // worked, and proves the widening did not disturb it.
+  const gateWithCursor = (cursor: string) => [
+    " Bash command",
+    ' cd "C:/Users/PC/Desktop/dev/x" && ls -R . | head -50',
+    " List subdirectories and read project README",
+    "",
+    " Do you want to proceed?",
+    `${cursor} 1. Yes`,
+    "   2. Yes, and switch to auto mode",
+    "   3. Yes, and don't ask again for ls commands",
+    "   4. No",
+    "",
+    " Esc to cancel · Tab to amend · ctrl+e to explain",
+  ];
+
+  for (const [name, cursor] of [
+    ["❯ (U+276F, the original)", " ❯"],
+    ["> (U+003E, what Windows paints)", " >"],
+    ["› (U+203A, the single-angle form)", " ›"],
+  ] as const) {
+    it(`scrapes every option and the real prompt when the cursor is ${name}`, () => {
+      const gate = scrapePermissionGate(gateWithCursor(cursor));
+      expect(gate?.options).toEqual([
+        { index: 1, label: "Yes" },
+        { index: 2, label: "Yes, and switch to auto mode" },
+        { index: 3, label: "Yes, and don't ask again for ls commands" },
+        { index: 4, label: "No" },
+      ]);
+      // The highlighted row must be reported as the cursor, never swallowed...
+      expect(gate?.cursor).toBe(1);
+      // ...and never promoted into the prompt.
+      expect(gate?.prompt).toBe("Do you want to proceed?");
+    });
+  }
+});
+
+// `>` is also the Markdown blockquote marker, so `> 1. Foo` in Claude's prose
+// is option-shaped now that the class is widened. Nothing downstream opens a
+// card from it, and two independent guards are why:
+//
+//   detectGateScreen   — requires the "Esc to cancel" gate footer, which prose
+//                        never has. Untouched by the widening.
+//   detectPickerScreen — requires no composer rule below the cursor row, and
+//                        Claude keeps its composer (drawn between two full-width
+//                        `─` rules) painted for the whole turn.
+//
+// The two remaining callers cannot open a card at all: the OSC arm needs a real
+// `needs your permission` notify, and the refresh arm only ever updates a gate
+// that is already open.
+describe("blockquoted prose is not a gate", () => {
+  const prose = [
+    "⏺ Here is the plan:",
+    "",
+    "  > 1. Rebase onto main",
+    "  > 2. Squash-merge",
+    "",
+    "────────────────────────────────────────────────",
+    " ❯ ",
+    "────────────────────────────────────────────────",
+    "  ? for shortcuts",
+  ];
+
+  it("has no gate footer, so detectGateScreen refuses it", () => {
+    expect(detectGateScreen(prose)).toBeNull();
+  });
+
+  it("sits above a live composer, so detectPickerScreen refuses it", () => {
+    expect(detectPickerScreen(prose)).toBeNull();
   });
 });

@@ -121,10 +121,18 @@ export function hasWaitingForInputOsc(rawData: string): boolean {
   return OSC_777_WAITING_RE.test(rawData);
 }
 
-// A rendered option row: optional `❯` cursor, then "N. label". Leading spaces
+// A rendered option row: optional cursor, then "N. label". Leading spaces
 // from the box/indent are tolerated (the box gutter is stripped first). We
 // capture N and the label separately.
-const OPTION_RE = /^\s*(❯)?\s*(\d+)\.\s+(.+?)\s*$/;
+//
+// The cursor may be `❯`, `›` or ASCII `>`. Claude Code paints it as a plain `>`
+// (U+003E) on Windows — measured from a real gate's PTY bytes, which render the
+// highlighted row as " > 1. Yes" against "   2. No" for the rest. Accepting only
+// `❯` dropped that row from the options entirely, and the prompt search below
+// then picked it up as the question — so the plain "Yes" never reached the
+// client and "switch to auto mode" was left as the only way to approve.
+// PROMPT_ARROW_RE below and codexScreen.ts already accept all three.
+const OPTION_RE = /^\s*([❯›>])?\s*(\d+)\.\s+(.+?)\s*$/;
 
 // Chrome lines that are never the prompt: footers, box-drawing, prompt arrows.
 const FOOTER_RE = /Enter to select|Esc to cancel|↑|↓|to navigate|to cancel/i;
