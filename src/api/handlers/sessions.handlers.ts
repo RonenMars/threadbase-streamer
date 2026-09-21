@@ -55,6 +55,7 @@ import {
   questionContentKey,
 } from "../../services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "../../services/questions/detectShellPrompt";
+import { detectStartupChoiceGate } from "../../services/questions/detectStartupChoiceGate";
 import { parseStatusLine } from "../../services/questions/parseStatusLine";
 import { permissionAnswerKeys } from "../../services/questions/permissionAnswerKeys";
 import { resolveAnswer } from "../../services/questions/resolveAnswer";
@@ -1774,9 +1775,15 @@ export class SessionHandlers {
       // card raised by detectShellPrompt (`read -p "[y/N]"`, "press Enter") is
       // never a Claude box, so checking scrapePermissionGate alone refused every
       // answer to one as closed and its Continue could never write the \r.
-      return [scrapePermissionGate(lines), detectShellPrompt(lines)].some(
-        (onScreen) => onScreen !== null && permissionGateKey(onScreen) === contentKey,
-      );
+      // Every producer of a Claude-session gate, not just the box scraper: a
+      // card raised by detectShellPrompt, or the unnumbered startup choices
+      // (workspace trust) that no numbered scraper can see, would otherwise be
+      // refused as closed and its answer keys never written.
+      return [
+        scrapePermissionGate(lines),
+        detectShellPrompt(lines),
+        detectStartupChoiceGate(lines),
+      ].some((onScreen) => onScreen !== null && permissionGateKey(onScreen) === contentKey);
     } catch {
       return true;
     }
@@ -1800,7 +1807,11 @@ export class SessionHandlers {
       return (
         detectGateScreen(lines) !== null ||
         scrapePermissionGate(lines) !== null ||
-        detectShellPrompt(lines) !== null
+        detectShellPrompt(lines) !== null ||
+        // The unnumbered startup choices (workspace trust) are a gate too, and
+        // none of the scrapers above can see them — without this an answer to
+        // one would be refused as "no gate on screen".
+        detectStartupChoiceGate(lines) !== null
       );
     } catch {
       return true;
