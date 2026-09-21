@@ -1,3 +1,9 @@
+## [1.101.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.2...v1.101.3) (2026-09-21)
+
+### Bug Fixes
+
+* **questions:** raise Claude's workspace-trust gate as a question card ([#958](https://github.com/RonenMars/threadbase-streamer/issues/958)) ([b719655](https://github.com/RonenMars/threadbase-streamer/commit/b7196556ff187aa7df7c92c4358c254993e4ca8d)), closes [#957](https://github.com/RonenMars/threadbase-streamer/issues/957) [#957](https://github.com/RonenMars/threadbase-streamer/issues/957)
+
 ## [1.101.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.1...v1.101.2) (2026-09-21)
 
 ### Bug Fixes
