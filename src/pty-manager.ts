@@ -21,6 +21,7 @@ import {
   questionContentKey,
 } from "./services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "./services/questions/detectShellPrompt";
+import { detectStartupChoiceGate } from "./services/questions/detectStartupChoiceGate";
 import { parseAgentPhase } from "./services/questions/parseAgentPhase";
 import { isPermissionAnswer } from "./services/questions/permissionAnswerKeys";
 import type {
@@ -1073,7 +1074,8 @@ export class PTYManager implements SessionRunner {
       // the gate closed. The end-of-turn notify is checked FIRST and without a
       // prompt-marker requirement: it is the last chunk of the turn, so a gate
       // still waiting on a marker here would never close at all.
-      const gate = detectGateScreen(lines) ?? detectPickerScreen(lines);
+      const gate =
+        detectGateScreen(lines) ?? detectPickerScreen(lines) ?? detectStartupChoiceGate(lines);
       // "Gate is gone" must survive a mid-repaint tick: detectGateScreen needs
       // the footer, which can be briefly absent while the box repaints, and
       // hasPromptMarker matches the box's own ╭/❯ glyphs — together those would
@@ -1110,7 +1112,8 @@ export class PTYManager implements SessionRunner {
       // of arm 2, so it can never run in the SAME pass as the close) —
       // closedGateKey suppresses reclaiming that exact content until Claude
       // erases the box.
-      const gate = detectGateScreen(lines) ?? detectPickerScreen(lines);
+      const gate =
+        detectGateScreen(lines) ?? detectPickerScreen(lines) ?? detectStartupChoiceGate(lines);
       if (gate) {
         const key = permissionContentKey({ ...gate, cursor: undefined });
         if (this.closedGateKey.get(sessionId) !== key) {
@@ -1178,7 +1181,30 @@ export class PTYManager implements SessionRunner {
   // screen) may never produce another chunk to trigger detection otherwise.
   private handleQuiet(sessionId: string): void {
     const session = this.sessions.get(sessionId);
-    if (session?.status !== "running") return;
+    if (!session) return;
+    if (session.status !== "running") {
+      // A blocking startup gate (workspace trust) paints its own `❯` cursor on
+      // the selected option, which readiness cannot tell from a composer prompt
+      // — so the session settles to `waiting_input` at boot with the gate still
+      // on screen. The screen then goes static, so the per-chunk paint-time
+      // claim never runs again and the gate is never broadcast: it reaches the
+      // client as raw terminal text with no way to answer it but raw keys.
+      //
+      // Scan once more here for exactly that case. Bounded the same way every
+      // other unsolicited scrape is (the SCRAPE_THROTTLE_MS gate inside
+      // detectLivePrompts), and skipped when a card is already open so an
+      // answered gate is not re-claimed.
+      if (session.status === "waiting_input" && !this.permissionOpen.has(sessionId)) {
+        this.detectLivePrompts(sessionId, "", session.lastOutput).catch((err) => {
+          this.log.warn("[pty.prompt_detect] idle rescan failed", {
+            event: "pty.prompt_detect_failed",
+            sessionId,
+            err,
+          });
+        });
+      }
+      return;
+    }
 
     if (this.pendingReady.has(sessionId)) {
       // Silence is NOT evidence of readiness while booting. `--resume` replays
