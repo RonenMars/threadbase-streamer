@@ -27,6 +27,7 @@ describe("PTYManager — spawn env sanitization", () => {
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_API_KEY",
+    "TERM",
   ];
 
   beforeEach(() => {
@@ -67,5 +68,28 @@ describe("PTYManager — spawn env sanitization", () => {
     const env = lastSpawnEnv();
     expect(env.ANTHROPIC_API_KEY).toBe("sk-test-123");
     expect(env.CLAUDE_API_KEY).toBe("sk-test-123");
+  });
+
+  // Claude Code paints ASCII fallbacks (`>` for the composer prompt, `>` for the
+  // gate cursor) when TERM is absent, which permanently defeats
+  // CLAUDE_PROMPT_MARKERS and pins a session at `running`. A supervised streamer
+  // inherits no TERM, and node-pty's `name` does not supply one through Windows
+  // ConPTY, so the spawn has to.
+  it("declares TERM so Claude Code renders its Unicode chrome, not ASCII fallbacks", async () => {
+    delete process.env.TERM;
+
+    const mgr = new PTYManager({ onOutput: () => {}, onStatusChange: () => {} });
+    await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+
+    expect(lastSpawnEnv().TERM).toBe("xterm-256color");
+  });
+
+  it("does not override a TERM the operator already set", async () => {
+    process.env.TERM = "screen-256color";
+
+    const mgr = new PTYManager({ onOutput: () => {}, onStatusChange: () => {} });
+    await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+
+    expect(lastSpawnEnv().TERM).toBe("screen-256color");
   });
 });

@@ -1,3 +1,15 @@
+## [1.101.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.1...v1.101.2) (2026-09-21)
+
+### Bug Fixes
+
+* **pty:** declare TERM so spawned sessions never settle at running ([#957](https://github.com/RonenMars/threadbase-streamer/issues/957)) ([df39386](https://github.com/RonenMars/threadbase-streamer/commit/df39386544db0793828d4b05a05e6bbd3891022a)), closes [#955](https://github.com/RonenMars/threadbase-streamer/issues/955)
+
+## [1.101.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.0...v1.101.1) (2026-09-21)
+
+### Bug Fixes
+
+* **questions:** accept ASCII cursor glyphs in the permission gate scrape ([#955](https://github.com/RonenMars/threadbase-streamer/issues/955)) ([ce0ba02](https://github.com/RonenMars/threadbase-streamer/commit/ce0ba0285b52a7ff70d80cdc2a0ad24061fb3df1))
+
 ## [1.101.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.100.0...v1.101.0) (2026-09-19)
 
 ### Features

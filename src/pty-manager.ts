@@ -166,6 +166,27 @@ function buildSpawnEnv(): Record<string, string> {
       delete env[key];
     }
   }
+  // Claude Code reads TERM to decide whether the terminal can render its Unicode
+  // chrome, and with TERM absent it paints ASCII fallbacks: `>` for the composer
+  // prompt instead of `❯`, and `>` for the gate selection cursor. The composer
+  // one is the damaging half — CLAUDE_PROMPT_MARKERS is `["╭", "❯"]`, so with
+  // neither glyph ever painted `hasPromptMarker` is permanently false, a session
+  // never leaves `running`, and mobile shows "Working" for a session that has
+  // been idle for hours.
+  //
+  // TERM is absent here for the normal deployment, not an exotic one: a
+  // supervised streamer (Task Scheduler / launchd / systemd) inherits no TERM of
+  // its own, and node-pty's `name` option sets TERM on POSIX but does not reach
+  // the child through Windows ConPTY. So the spawn declares `xterm-256color` in
+  // `name` while the child sees no TERM at all — this makes the two agree.
+  //
+  // Measured A/B, same binary, same `name`, same cwd, only the env differing:
+  // TERM absent -> the composer paints `> `; TERM=xterm-256color -> `❯ `.
+  // (`WT_SESSION` flips it too, which is why a hand-run `claude` in Windows
+  // Terminal never showed this and only the supervised spawn did.)
+  if (!env.TERM) {
+    env.TERM = "xterm-256color";
+  }
   return env;
 }
 
