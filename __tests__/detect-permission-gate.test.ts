@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectGateScreen,
+  detectPickerScreen,
   hasPermissionOsc,
   hasWaitingForInputOsc,
   scrapePermissionGate,
@@ -184,5 +186,115 @@ describe("scrapePermissionGate", () => {
     const gate = scrapePermissionGate(lines);
     expect(gate?.options.map((o) => o.index)).toEqual([1, 2, 3]);
     expect(gate?.prompt).toBe("Do you want to proceed?");
+  });
+});
+
+// The selection cursor is NOT always `❯`. Claude Code paints a plain ASCII `>`
+// (U+003E — measured from the PTY bytes of a real Windows gate, whose rows
+// render as " > 1. Yes" / "   2. No"). While the regex took `❯` alone, the
+// highlighted row matched nothing, so it was dropped from the options AND then
+// picked up by the prompt search as the question: the user saw a bold
+// "1. Yes" caption over two radio rows, leaving "switch to auto mode" as the
+// only way to approve a single command.
+describe("scrapePermissionGate — cursor glyph variants", () => {
+  // Same gate, one glyph swapped. The `❯` case is the control: it already
+  // worked, and proves the widening did not disturb it.
+  const gateWithCursor = (cursor: string) => [
+    " Bash command",
+    ' cd "C:/Users/PC/Desktop/dev/x" && ls -R . | head -50',
+    " List subdirectories and read project README",
+    "",
+    " Do you want to proceed?",
+    `${cursor} 1. Yes`,
+    "   2. Yes, and switch to auto mode",
+    "   3. Yes, and don't ask again for ls commands",
+    "   4. No",
+    "",
+    " Esc to cancel · Tab to amend · ctrl+e to explain",
+  ];
+
+  for (const [name, cursor] of [
+    ["❯ (U+276F, the original)", " ❯"],
+    ["> (U+003E, what Windows paints)", " >"],
+    ["› (U+203A, the single-angle form)", " ›"],
+  ] as const) {
+    it(`scrapes every option and the real prompt when the cursor is ${name}`, () => {
+      const gate = scrapePermissionGate(gateWithCursor(cursor));
+      expect(gate?.options).toEqual([
+        { index: 1, label: "Yes" },
+        { index: 2, label: "Yes, and switch to auto mode" },
+        { index: 3, label: "Yes, and don't ask again for ls commands" },
+        { index: 4, label: "No" },
+      ]);
+      // The highlighted row must be reported as the cursor, never swallowed...
+      expect(gate?.cursor).toBe(1);
+      // ...and never promoted into the prompt.
+      expect(gate?.prompt).toBe("Do you want to proceed?");
+    });
+  }
+});
+
+// `>` is also the Markdown blockquote marker, so `> 1. Foo` in Claude's prose
+// is option-shaped now that the class is widened. Nothing downstream opens a
+// card from it, and two independent guards are why:
+//
+//   detectGateScreen   — requires the "Esc to cancel" gate footer, which prose
+//                        never has. Untouched by the widening.
+//   detectPickerScreen — requires no composer rule below the cursor row, and
+//                        Claude keeps its composer (drawn between two full-width
+//                        `─` rules) painted for the whole turn.
+//
+// The two remaining callers cannot open a card at all: the OSC arm needs a real
+// `needs your permission` notify, and the refresh arm only ever updates a gate
+// that is already open.
+describe("blockquoted prose is not a gate", () => {
+  const quoted = ["⏺ Here is the plan:", "", "  > 1. Rebase onto main", "  > 2. Squash-merge"];
+  const composer = [
+    "",
+    "────────────────────────────────────────────────",
+    " ❯ ",
+    "────────────────────────────────────────────────",
+    "  ? for shortcuts",
+  ];
+
+  it("has no gate footer, so detectGateScreen refuses it", () => {
+    expect(detectGateScreen([...quoted, ...composer])).toBeNull();
+    expect(detectGateScreen(quoted)).toBeNull();
+  });
+
+  it("sits above a live composer, so detectPickerScreen refuses it", () => {
+    expect(detectPickerScreen([...quoted, ...composer])).toBeNull();
+  });
+
+  // The composer rule was the ONLY thing refusing this, so a quoted list with
+  // nothing painted below it was claimed as a live picker. A `>` on every row
+  // is a line prefix, not a selection cursor, and is now refused on its own.
+  it("is refused even with no composer rule below it", () => {
+    expect(detectPickerScreen(quoted)).toBeNull();
+  });
+
+  it("reports no cursor at all, since every row carries the glyph", () => {
+    expect(scrapePermissionGate(quoted)?.cursor).toBeUndefined();
+  });
+
+  // The rule is about shape, not glyph: a quoted `❯` list is refused the same
+  // way. This is the case that was already reachable before `>` was accepted.
+  it("applies to a quoted `❯` list too, not just the ASCII form", () => {
+    const unicodeQuoted = ["⏺ Here is the plan:", "", "  ❯ 1. Rebase", "  ❯ 2. Squash-merge"];
+    expect(scrapePermissionGate(unicodeQuoted)?.cursor).toBeUndefined();
+    expect(detectPickerScreen(unicodeQuoted)).toBeNull();
+  });
+
+  // The guard must not cost a real picker its highlight: exactly one marked row.
+  it("still claims a real picker, whose cursor marks exactly one row", () => {
+    const picker = [
+      "  Select a conversation to resume",
+      "",
+      "  > 1. Resume from summary (recommended)",
+      "    2. Start fresh",
+    ];
+    const gate = detectPickerScreen(picker);
+    expect(gate?.cursor).toBe(1);
+    expect(gate?.options.map((o) => o.index)).toEqual([1, 2]);
   });
 });
