@@ -213,6 +213,9 @@ function replaceRequestBody(
   // `IncomingMessage` and are read directly for the same reason.
   const headers = { ...original.headers };
   delete headers["transfer-encoding"];
+  // `application/octet-stream` names the sealed record, not the plaintext; left
+  // in place it made search-target's content-type guard 415 every sealed QUERY.
+  delete headers["content-type"];
   headers["content-length"] = String(plaintext.byteLength);
   replacement.headers = headers;
   // Everything this stream will ever hold is pushed below, so there is nothing
