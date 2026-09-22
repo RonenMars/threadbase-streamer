@@ -1,3 +1,9 @@
+## [1.101.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.3...v1.101.4) (2026-09-22)
+
+### Bug Fixes
+
+* **e2ee:** drop the envelope content-type from unsealed requests ([#961](https://github.com/RonenMars/threadbase-streamer/issues/961)) ([1e14947](https://github.com/RonenMars/threadbase-streamer/commit/1e14947cd4d2c425bc4a10c0791c9e73a5c6aff1))
+
 ## [1.101.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.2...v1.101.3) (2026-09-21)
 
 ### Bug Fixes
