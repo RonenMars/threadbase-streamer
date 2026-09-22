@@ -171,6 +171,7 @@ function mountProbe(app: ReturnType<typeof createHonoApp>): void {
     }
     if (read === "both" || read === "incoming") {
       out.viaIncoming = await readBody(c.env.incoming);
+      out.incomingContentType = c.env.incoming.headers["content-type"] ?? null;
     }
     return c.json(out);
   });
@@ -504,6 +505,24 @@ describe("REST envelope: the plaintext reaches both body-read paths", () => {
     expect(seen.viaArrayBuffer).toBe(plaintext);
     // …and `text()`/`json()` derive from the same seeded cache.
     expect(seen.viaText).toBe(plaintext);
+  });
+
+  it("does not describe the plaintext with the envelope's content-type", async () => {
+    // The octet-stream type labels the sealed record, not the plaintext. A
+    // handler that checks it (search-target's 415 guard) refused every sealed
+    // request while it leaked through.
+    const ctx = await openRestContext();
+    const res = await sealedCall(ctx, {
+      method: "POST",
+      target: PROBE_PATH,
+      counter: 0n,
+      body: JSON.stringify({ q: "port" }),
+    });
+    expect(res.status).toBe(200);
+    const seen = JSON.parse(unsealResponse(ctx, "POST", PROBE_PATH, 0n, res)) as {
+      incomingContentType: string | null;
+    };
+    expect(seen.incomingContentType).toBeNull();
   });
 
   it("CONTROL — each path on its own reads the real bytes of an UNSEALED request", async () => {
