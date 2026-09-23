@@ -576,6 +576,14 @@ Restart the streamer to pick it up.
 
 ## Mobile app error messages
 
+### "Claude finished — tap to read the reply" arrives a second after sending a message {#finished-push-at-submit}
+
+**When:** A "[Claude/Codex/Cursor] finished" push arrives one to two seconds after the user sends a message, while the agent has only started working (#962).
+**Cause:** The push fires on the session's `running → waiting_input` edge, and every runner used to take that edge on a guess. Claude's `❯` input box stays painted all turn, and the OSC 9;4 progress signal meant to hold the turn open is never emitted into the streamer's PTY (Claude Code 2.1.280), so the marker settled each turn 50–330 ms after the submit. Codex 0.156.1 dropped Working/Ready from its status bar, and Cursor never had a detector, so both settled through `submit-stale` at 2 s.
+**Fix:** Each runner now reads the provider's own turn signal (Claude's title glyph, Codex's title spinner, Cursor's `ctrl+c to stop` hint) and marks the end `statusSource: "turn-signal"`, the only source `WaitingInputNotifier` pushes on. To check a live case, grep the log for `push.turn_decision`: `skip_unconfirmed_end` with a small `turnAgeMs` is a guessed end that was correctly kept quiet, and a `push_turn_done` with `turnAgeMs` near the submit means a provider's signal has changed — recapture it into `__tests__/fixtures/turn-signals/`.
+
+---
+
 ### "Failed to start session — File not found:" via public URL
 
 **When:** Session start works fine from `localhost` but the mobile app shows "Failed to start session — File not found:" (or similar) when connecting through `https://tb.example.com`.

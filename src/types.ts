@@ -54,6 +54,7 @@ export type StatusSource =
   | "spawn" // initial state when the process started
   | "prompt-marker" // a provider prompt marker appeared in the stream
   | "screen-marker" // marker found by re-reading the rendered screen
+  | "turn-signal" // the provider signalled its turn ended (title spinner, OSC 9;4, Working line)
   | "user-input" // we wrote input, so it is running by construction
   | "process-exit" // the process exited; status follows from that
   | "timeout-fallback" // NO marker appeared; a timer elapsed and we assumed

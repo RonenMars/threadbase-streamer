@@ -433,6 +433,8 @@ describe("PTYManager — ready detection", () => {
 // "waiting for your input" push fired as the agent started. OSC 9;4 (terminal
 // progress) is Claude's own turn signal: 9;4;3 at turn start, 9;4;0 at turn
 // end. Real timers: the turn-end path reads the rendered screen.
+// The title-spinner encoding of the same signal (what Claude 2.1.280 emits) is
+// replayed from a raw capture in turn-signal-replay.test.ts.
 describe("PTYManager — turn end follows OSC 9;4, not the always-painted ❯", () => {
   const PROGRESS_IDLE = "\x1b]9;4;0;\x07";
   const PROGRESS_BUSY = "\x1b]9;4;3;\x07";
@@ -462,6 +464,7 @@ describe("PTYManager — turn end follows OSC 9;4, not the always-painted ❯", 
 
     proc._emit("data", `✻ Baked for 3s${PROGRESS_IDLE}`);
     await vi.waitFor(() => expect(statusChanges.at(-1)?.status).toBe("waiting_input"));
+    expect(statusChanges.at(-1)?.statusSource).toBe("turn-signal");
     mgr.dispose();
   });
 
@@ -491,12 +494,15 @@ describe("PTYManager — turn end follows OSC 9;4, not the always-painted ❯", 
     mgr.dispose();
   }, 10_000);
 
-  it("keeps marker-only readiness for a CLI that never emits 9;4", async () => {
+  it("keeps marker-only readiness for a CLI that emits no turn signal", async () => {
     const statusChanges: ManagedSession[] = [];
     const mgr = new PTYManager({ onStatusChange: (s) => statusChanges.push(s) });
     const session = await spawnFresh(mgr);
     const proc = getMockProc(mgr, session.id);
-    proc._emit("data", MCP_SPLASH_BOOT);
+    // The captured boot carries the `✳` title, which is itself a turn signal.
+    const untitledBoot = MCP_SPLASH_BOOT.replace("\x1b]0;✳ Claude Code\x07", "");
+    expect(untitledBoot).not.toBe(MCP_SPLASH_BOOT);
+    proc._emit("data", untitledBoot);
     statusChanges.length = 0;
 
     mgr.sendInput(session.id, "what's next?");

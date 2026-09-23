@@ -35,6 +35,15 @@ import type { PushEvent } from "./notificationPrefs";
  * embeds project paths. Codex usage-limit screens are not this: they already
  * arrive as a permission prompt.
  *
+ * "Finished" is only sent for an end the provider itself signalled
+ * (`statusSource: "turn-signal"`), and only once it has held for
+ * TURN_DONE_SETTLE_MS. Every runner also settles a turn by guessing — a
+ * prompt marker that stays painted all turn, a submit-stale or boot timer —
+ * and each of those guesses fired "finished" one to two seconds after the user
+ * sent a message, while the agent was still working (#962). A guessed end now
+ * sends nothing: a missing "finished" costs a glance at the app, a false one
+ * teaches the user to ignore the notification that matters.
+ *
  * Every push is gated by the receiving device's own preferences, per token, in
  * ExpoPushSender: "waitingInput" for the three kinds that mean the agent needs
  * the user, "sessionFailed" for the failure push.
@@ -47,6 +56,13 @@ import type { PushEvent } from "./notificationPrefs";
  */
 
 const log = getLogger("expo-push");
+
+/**
+ * How long a turn end must hold before "finished" is sent. Anything that takes
+ * the session back to `running` or opens a gate inside this window cancels it,
+ * so a turn that briefly settles and resumes never reports itself done.
+ */
+export const TURN_DONE_SETTLE_MS = 2_000;
 
 /**
  * The payload, and why it is this thin.
@@ -87,7 +103,7 @@ export function waitingInputMessage(
 
 export class WaitingInputNotifier {
   /** Sessions with a turn the user started that has not yet been answered. */
-  private openTurn = new Set<string>();
+  private openTurn = new Map<string, number>();
   /** Sessions with a prompt (gate or question) already pushed and still open. */
   private openPrompt = new Set<string>();
   /** Sessions that have reached a prompt at least once, so they did start. */
@@ -97,6 +113,8 @@ export class WaitingInputNotifier {
    * not read as a second death. Cleared when the session is alive again.
    */
   private idleHandled = new Set<string>();
+  /** A "finished" push waiting out TURN_DONE_SETTLE_MS, per session. */
+  private pendingDone = new Map<string, NodeJS.Timeout>();
 
   constructor(private readonly sender: ExpoPushSender) {}
 
@@ -109,9 +127,17 @@ export class WaitingInputNotifier {
    */
   async onStatusChange(session: ManagedSession, previousStatus?: string): Promise<void> {
     try {
+      // Leaving waiting_input supersedes a "finished" that has not gone out yet.
+      // A repeat waiting_input emit does not: it is the same turn end.
+      if (session.status !== "waiting_input") this.cancelDone(session, previousStatus);
       if (session.status === "running") {
         this.idleHandled.delete(session.id);
-        if (previousStatus === "waiting_input") this.openTurn.add(session.id);
+        if (previousStatus === "waiting_input") this.openTurn.set(session.id, Date.now());
+        this.logDecision(
+          session,
+          previousStatus,
+          previousStatus === "waiting_input" ? "turn_open" : "running_no_turn",
+        );
         return;
       }
       this.openPrompt.delete(session.id);
@@ -136,9 +162,32 @@ export class WaitingInputNotifier {
       // Delete-as-test: no open turn means boot/resume ready, or a repeat
       // emit of a status we have already notified for. Either way the user is
       // not owed a second notification for one turn.
-      if (!this.openTurn.delete(session.id)) return;
+      const openedAt = this.openTurn.get(session.id);
+      if (!this.openTurn.delete(session.id)) {
+        this.logDecision(session, previousStatus, "skip_no_open_turn");
+        return;
+      }
 
-      await this.push(session, "turn_done");
+      if (session.statusSource !== "turn-signal") {
+        this.logDecision(session, previousStatus, "skip_unconfirmed_end", openedAt);
+        return;
+      }
+
+      this.logDecision(session, previousStatus, "done_scheduled", openedAt);
+      const timer = setTimeout(() => {
+        this.pendingDone.delete(session.id);
+        this.logDecision(session, previousStatus, "push_turn_done", openedAt);
+        void this.push(session, "turn_done").catch((err) => {
+          log.error("expo_push.notify_failed", {
+            event: "expo_push.notify_failed",
+            sessionId: session.id,
+            status: session.status,
+            err: String(err),
+          });
+        });
+      }, TURN_DONE_SETTLE_MS);
+      timer.unref?.();
+      this.pendingDone.set(session.id, timer);
     } catch (err) {
       log.error("expo_push.notify_failed", {
         event: "expo_push.notify_failed",
@@ -165,6 +214,12 @@ export class WaitingInputNotifier {
       }
       if (this.openPrompt.has(session.id)) return;
       this.openPrompt.add(session.id);
+      // The agent stopped for the user mid-turn: "needs you" replaces "finished".
+      const pending = this.pendingDone.get(session.id);
+      if (pending) {
+        clearTimeout(pending);
+        this.pendingDone.delete(session.id);
+      }
       await this.push(session, kind);
     } catch (err) {
       log.error("expo_push.notify_failed", {
@@ -174,6 +229,34 @@ export class WaitingInputNotifier {
         err: String(err),
       });
     }
+  }
+
+  private cancelDone(session: ManagedSession, previousStatus: string | undefined): void {
+    const pending = this.pendingDone.get(session.id);
+    if (!pending) return;
+    clearTimeout(pending);
+    this.pendingDone.delete(session.id);
+    this.logDecision(session, previousStatus, "done_cancelled");
+  }
+
+  // Why a status change did or did not become a "finished" push (#962).
+  // turnAgeMs is submit -> turn end, so a false "finished" shows up as a tiny one.
+  private logDecision(
+    session: ManagedSession,
+    previousStatus: string | undefined,
+    decision: string,
+    openedAt?: number,
+  ): void {
+    log.info(`[push.turn_decision] ${session.id.slice(0, 8)} ${decision}`, {
+      event: "push.turn_decision",
+      sessionId: session.id,
+      provider: session.provider,
+      previousStatus,
+      status: session.status,
+      statusSource: session.statusSource,
+      decision,
+      turnAgeMs: openedAt == null ? undefined : Date.now() - openedAt,
+    });
   }
 
   private async push(
