@@ -23,10 +23,8 @@ function getMockProc(
   mgr: PTYManager,
   sessionId: string,
 ): { _emit: (e: string, d: string) => void } {
-  // biome-ignore lint/suspicious/noExplicitAny: reaching the private session map
   return (mgr as any).sessions.get(sessionId).process;
 }
-// biome-ignore lint/suspicious/noExplicitAny: reading private status for the precondition
 const statusOf = (mgr: PTYManager, id: string) => (mgr as any).sessions.get(id).status;
 
 // Claude Code's workspace-trust gate, captured verbatim. The `❯` on the
@@ -75,7 +73,6 @@ describe("PTYManager — blocking startup gate on an idle session", () => {
     // before the quiet tick runs. This is the state the rescan exists for: the
     // screen is static, the per-chunk claim has been throttled away, and the
     // `running`-only quiet path would return without ever looking.
-    // biome-ignore lint/suspicious/noExplicitAny: forcing the private status
     (mgr as any).sessions.get(session.id).status = "waiting_input";
 
     await settleQuiet();

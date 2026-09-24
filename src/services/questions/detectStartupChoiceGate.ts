@@ -44,7 +44,7 @@ const UP = "\x1b[A";
 export function startupChoiceAnswerKeys(cursor: number, target: number): string {
   const delta = target - cursor;
   const step = delta > 0 ? DOWN : UP;
-  return step.repeat(Math.abs(delta)) + "\r";
+  return `${step.repeat(Math.abs(delta))}\r`;
 }
 
 /**
