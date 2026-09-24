@@ -229,8 +229,10 @@ describe("StreamerServer.close() is idempotent", () => {
     let finishScan!: () => void;
     internals.trackCacheWrite(new Promise<void>((resolve) => (finishScan = resolve)));
 
-    const first = server.close({ exiting: true });
-    const second = server.close({ exiting: true });
+    // The default path, because only it still waits on the held-open scan, so
+    // the second call arrives mid-teardown; `exiting` no longer waits at all.
+    const first = server.close();
+    const second = server.close();
 
     finishScan();
     await Promise.race([Promise.all([first, second]), hangGuard("server.close() x2")]);
