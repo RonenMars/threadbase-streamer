@@ -1,3 +1,9 @@
+## [1.101.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.4...v1.101.5) (2026-09-24)
+
+### Bug Fixes
+
+* **push:** send "finished" only when the agent signals its turn ended ([#963](https://github.com/RonenMars/threadbase-streamer/issues/963)) ([f4cb5e5](https://github.com/RonenMars/threadbase-streamer/commit/f4cb5e506ed0a83a59e6358d8916362e90a328e7))
+
 ## [1.101.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.3...v1.101.4) (2026-09-22)
 
 ### Bug Fixes
