@@ -212,6 +212,33 @@ describe("StreamerServer.close() kills PTYs first", () => {
   });
 });
 
+describe("StreamerServer.close() is idempotent", () => {
+  // launchd re-sends its stop signal ~5 s into a shutdown, and each signal ran
+  // the CLI's shutdown handler, starting a second teardown while the first was
+  // still awaiting in-flight scans.
+  it("a second close() during shutdown joins the first instead of tearing down again", async () => {
+    const server = makeServer(0);
+    await server.listen(0);
+    const internals = server as unknown as {
+      ptyManager: { dispose(): void };
+      scannerManager: { close(): Promise<void> };
+      trackCacheWrite(task: Promise<unknown>): void;
+    };
+    const dispose = vi.spyOn(internals.ptyManager, "dispose");
+    const scannerClose = vi.spyOn(internals.scannerManager, "close");
+    let finishScan!: () => void;
+    internals.trackCacheWrite(new Promise<void>((resolve) => (finishScan = resolve)));
+
+    const first = server.close({ exiting: true });
+    const second = server.close({ exiting: true });
+
+    finishScan();
+    await Promise.race([Promise.all([first, second]), hangGuard("server.close() x2")]);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(scannerClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("StreamerServer.close({ exiting })", () => {
   // Closing ~3700 fs.watch handles blocked the event loop for 39 s on macOS,
   // holding :PORT through every restart. A process about to exit detaches them.
