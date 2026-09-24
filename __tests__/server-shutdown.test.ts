@@ -186,3 +186,28 @@ describe("StreamerServer.close() port release", () => {
     }
   });
 });
+
+describe("StreamerServer.close() kills PTYs first", () => {
+  // close() awaits in-flight scan→cache writes before closing cache.db. Killing
+  // the agents used to wait behind them, so a supervisor that SIGKILLed the
+  // server mid-scan skipped the kill entirely.
+  it("disposes the PTYs before waiting on an in-flight cache write", async () => {
+    const server = makeServer(0);
+    await server.listen(0);
+    const internals = server as unknown as {
+      ptyManager: { dispose(): void };
+      trackCacheWrite(task: Promise<unknown>): void;
+    };
+    const dispose = vi.spyOn(internals.ptyManager, "dispose");
+    let finishScan!: () => void;
+    internals.trackCacheWrite(new Promise<void>((resolve) => (finishScan = resolve)));
+
+    const closing = server.close();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    finishScan();
+    await Promise.race([closing, hangGuard("server.close()")]);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+});
