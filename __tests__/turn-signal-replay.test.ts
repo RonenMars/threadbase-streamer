@@ -214,3 +214,89 @@ describe("turn end follows the provider's own signal", () => {
     expect(r.end?.statusSource).toBe("turn-signal");
   }, 15_000);
 });
+
+// Under load the busy signal can arrive after the runner has already settled
+// the turn on a guess — Claude's start grace lapsing onto the `❯` marker,
+// Codex's submit-stale. Replay the same turn with its busy signal held back past
+// that point: the session must go back to `running` and still end on the
+// provider's own signal, or the turn is never reported finished.
+async function replayLateTurn(
+  make: (onStatusChange: (s: ManagedSession) => void) => Runner,
+  cap: Capture,
+  startIdx: number,
+  endIdx: number,
+  bootSettleMs: number,
+  holdMs: number,
+) {
+  const changes: ManagedSession[] = [];
+  const runner = make((s) => changes.push({ ...s }));
+  const session = await runner.startFresh({ projectPath: "/tmp", projectName: "proj" });
+  const proc = (runner as any).sessions.get(session.id).process;
+  const emit = (from: number, to: number) => {
+    for (const [, d] of cap.chunks.slice(from, to)) proc._emit("data", d);
+  };
+  const submitIdx = cap.chunks.findIndex(([ms]) => ms >= cap.submitAt);
+
+  emit(0, submitIdx);
+  await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), {
+    timeout: bootSettleMs,
+  });
+  changes.length = 0;
+
+  runner.sendInput(session.id, "prompt");
+  await sleep(50);
+  emit(submitIdx, startIdx);
+  await sleep(holdMs);
+  const guessed = changes.map((c) => [c.status, c.statusSource]);
+
+  emit(startIdx, endIdx);
+  await sleep(600);
+  const resumed = changes.at(-1)?.status;
+
+  emit(endIdx, cap.chunks.length);
+  await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), {
+    timeout: 3_000,
+  });
+  runner.dispose();
+  return { guessed, resumed, end: changes.at(-1) };
+}
+
+describe("a turn that starts after it was settled on a guess", () => {
+  it("Claude: a busy title after the start grace lapsed reopens the turn", async () => {
+    const start = firstTitleChunk(CLAUDE_TURN, CLAUDE_TITLE, claudeBusy, true);
+    const end = firstTitleChunk(CLAUDE_TURN, CLAUDE_TITLE, claudeBusy, false);
+    const r = await replayLateTurn(
+      (onStatusChange) => new PTYManager({ onStatusChange }),
+      CLAUDE_TURN,
+      start,
+      end,
+      2_000,
+      3_600,
+    );
+    expect(r.guessed).toEqual([
+      ["running", "user-input"],
+      ["waiting_input", "screen-marker"],
+    ]);
+    expect(r.resumed).toBe("running");
+    expect(r.end?.statusSource).toBe("turn-signal");
+  }, 20_000);
+
+  it("Codex: a title spinner after submit-stale reopens the turn", async () => {
+    const start = firstTitleChunk(CODEX_TURN, CODEX_TITLE, codexBusy, true);
+    const end = firstTitleChunk(CODEX_TURN, CODEX_TITLE, codexBusy, false);
+    const r = await replayLateTurn(
+      (onStatusChange) => new CodexPtyRunner({ onStatusChange }),
+      CODEX_TURN,
+      start,
+      end,
+      10_000,
+      2_600,
+    );
+    expect(r.guessed).toEqual([
+      ["running", "user-input"],
+      ["waiting_input", "quiet-fallback"],
+    ]);
+    expect(r.resumed).toBe("running");
+    expect(r.end?.statusSource).toBe("turn-signal");
+  }, 25_000);
+});

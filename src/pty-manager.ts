@@ -75,6 +75,13 @@ const CLAUDE_TURN_SIGNAL_RE = /\x1b\](?:9;4;(\d)|[02];([◐◓◑◒✳]))/g;
 // long and readiness is re-checked from the screen.
 const TURN_START_GRACE_MS = 3_000;
 
+// Under load Claude's busy signal can land after the grace has lapsed and the
+// screen marker has already settled the turn (seen at +5.2s). A busy signal
+// this soon after a submit is that turn starting late, so the session goes back
+// to `running` and its real end is still signalled. Later than this it is not
+// tied to the submit, and a busy period Claude starts on its own opens no turn.
+const LATE_TURN_START_MS = 30_000;
+
 // Re-run ready/prompt detection this long after the PTY goes quiet, instead of
 // waiting for another chunk (which may never come if Claude is blocked on a
 // prompt) or the full CLAUDE_READY_FALLBACK_MS. 500ms was picked from real
@@ -221,6 +228,8 @@ export class PTYManager implements SessionRunner {
   // signal arrived and the screen has yet to settle, "held" while that idle is
   // a permission gate waiting on the user. Absent = no turn open.
   private turnOpen = new Map<string, "submitted" | "working" | "ending" | "held">();
+  // Submit time of a turn whose busy signal has not arrived yet.
+  private awaitingStart = new Map<string, number>();
   // Sessions whose Claude has emitted a turn signal at all — a CLI that never
   // does keeps the marker-only behaviour instead of waiting on a signal.
   private progressSeen = new Set<string>();
@@ -746,6 +755,7 @@ export class PTYManager implements SessionRunner {
     this.permissionOpen.delete(sessionId);
     this.oscTail.delete(sessionId);
     this.turnOpen.delete(sessionId);
+    this.awaitingStart.delete(sessionId);
     this.progressSeen.delete(sessionId);
     this.progressTail.delete(sessionId);
     this.lastDetectAt.delete(sessionId);
@@ -867,6 +877,7 @@ export class PTYManager implements SessionRunner {
     this.permissionOpen.clear();
     this.oscTail.clear();
     this.turnOpen.clear();
+    this.awaitingStart.clear();
     this.progressSeen.clear();
     this.progressTail.clear();
     this.lastDetectAt.clear();
@@ -1297,6 +1308,7 @@ export class PTYManager implements SessionRunner {
     if (busy === undefined) return;
     this.progressSeen.add(sessionId);
     const before = this.turnOpen.get(sessionId);
+    if (busy) this.resumeLateTurn(sessionId, before);
     // Busy re-opens a held turn too: the user answered the gate and Claude went on.
     // Idle closes only a turn Claude confirmed it started — one still
     // "submitted" is left to the start grace, so a title repaint cannot pass for
@@ -1307,7 +1319,24 @@ export class PTYManager implements SessionRunner {
     this.logTurn(sessionId, after, before);
   }
 
+  /** A busy signal after a guessed end of a just-submitted turn: it started late. */
+  private resumeLateTurn(sessionId: string, before: string | undefined): void {
+    const submittedAt = this.awaitingStart.get(sessionId);
+    if (submittedAt === undefined) return;
+    this.awaitingStart.delete(sessionId);
+    const session = this.sessions.get(sessionId);
+    if (session?.status !== "waiting_input" || Date.now() - submittedAt > LATE_TURN_START_MS) {
+      return;
+    }
+    session.status = "running";
+    session.statusSource = "turn-signal";
+    session.statusUpdatedAt = new Date();
+    this.logTurn(sessionId, "late-start", before);
+    this.onStatusChange?.(toPublicSession(session));
+  }
+
   private openTurnOnSubmit(sessionId: string): void {
+    this.awaitingStart.set(sessionId, Date.now());
     if (!this.progressSeen.has(sessionId)) return;
     const before = this.turnOpen.get(sessionId);
     this.turnOpen.set(sessionId, "submitted");
@@ -1510,6 +1539,7 @@ export class PTYManager implements SessionRunner {
     this.permissionOpen.delete(sessionId);
     this.oscTail.delete(sessionId);
     this.turnOpen.delete(sessionId);
+    this.awaitingStart.delete(sessionId);
     this.progressSeen.delete(sessionId);
     this.progressTail.delete(sessionId);
     this.lastDetectAt.delete(sessionId);
