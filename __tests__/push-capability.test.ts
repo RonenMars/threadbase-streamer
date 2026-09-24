@@ -170,7 +170,6 @@ describe("push capability over HTTP", () => {
         headers: { ...AUTH, "Content-Type": "application/json", ...headers },
         body: JSON.stringify({ platform: "ios", ...body }),
       });
-    // biome-ignore lint/suspicious/noExplicitAny: reaching the private store
     const stored = (token: string) => (server as any).pushRepo.get(token)?.locale;
 
     it("stores the locale the app sends, over the header", async () => {
