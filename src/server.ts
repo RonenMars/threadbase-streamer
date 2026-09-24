@@ -2020,7 +2020,9 @@ export class StreamerServer {
     });
   }
 
-  async close(): Promise<void> {
+  // `exiting`: the caller exits the process right after, so the file watchers
+  // are detached rather than closed. See ConversationWatcher.detach().
+  async close({ exiting = false }: { exiting?: boolean } = {}): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
     this.holdWhenIdle.clear();
@@ -2063,7 +2065,8 @@ export class StreamerServer {
     await this.scannerManager.close();
     this.cache?.close();
     this.runtimeStore?.close();
-    this.fileWatcher.dispose();
+    if (exiting) this.fileWatcher.detach();
+    else this.fileWatcher.dispose();
     this.externalTails.clear();
     this.promptRegistry.dispose();
     this.wsHub.dispose();

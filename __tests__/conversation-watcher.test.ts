@@ -89,6 +89,30 @@ describe("ConversationWatcher — directory watching", () => {
     w.watchDirectory("/dir-2");
     expect(() => w.dispose()).not.toThrow();
   });
+
+  it("detach silences every watcher without closing any of them", () => {
+    const onChanged = vi.fn();
+    const onFileDeleted = vi.fn();
+    const w = new ConversationWatcher({ onConversationChanged: onChanged, onFileDeleted });
+    w.watch("/proj/d.jsonl");
+    w.watchDirectory("/dir-3");
+    const [file, dir] = emitters;
+
+    // Positive control: both watchers deliver before detach.
+    dir.emit("change", "/dir-3/x.jsonl");
+    file.emit("unlink");
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(onFileDeleted).toHaveBeenCalledTimes(1);
+
+    w.detach();
+    dir.emit("add", "/dir-3/y.jsonl");
+    file.emit("unlink");
+    expect(() => dir.emit("error", new Error("late"))).not.toThrow();
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(onFileDeleted).toHaveBeenCalledTimes(1);
+    expect(file.close).not.toHaveBeenCalled();
+    expect(dir.close).not.toHaveBeenCalled();
+  });
 });
 
 describe("ConversationWatcher — file tailing", () => {
