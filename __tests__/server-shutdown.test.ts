@@ -211,3 +211,35 @@ describe("StreamerServer.close() kills PTYs first", () => {
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("StreamerServer.close({ exiting })", () => {
+  // Closing ~3700 fs.watch handles blocked the event loop for 39 s on macOS,
+  // holding :PORT through every restart. A process about to exit detaches them.
+  it("detaches the file watchers instead of closing them when exiting", async () => {
+    const server = makeServer(0);
+    await server.listen(0);
+    const watcher = (server as unknown as { fileWatcher: { dispose(): void; detach(): void } })
+      .fileWatcher;
+    const dispose = vi.spyOn(watcher, "dispose");
+    const detach = vi.spyOn(watcher, "detach");
+
+    await Promise.race([server.close({ exiting: true }), hangGuard("server.close()")]);
+
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(dispose).not.toHaveBeenCalled();
+  });
+
+  it("still closes the file watchers by default", async () => {
+    const server = makeServer(0);
+    await server.listen(0);
+    const watcher = (server as unknown as { fileWatcher: { dispose(): void; detach(): void } })
+      .fileWatcher;
+    const dispose = vi.spyOn(watcher, "dispose");
+    const detach = vi.spyOn(watcher, "detach");
+
+    await Promise.race([server.close(), hangGuard("server.close()")]);
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(detach).not.toHaveBeenCalled();
+  });
+});

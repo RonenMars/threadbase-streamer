@@ -215,6 +215,27 @@ export class ConversationWatcher {
     for (const [dir] of this.directories) this.unwatchDirectory(dir);
   }
 
+  /**
+   * Stop delivering events without closing the OS handles, for a process about
+   * to exit, which releases them for free. Closing them is not free on macOS:
+   * each fs.watch close blocks the event loop for ~10 ms, so dispose() over the
+   * ~3700 entries of a real ~/.claude/projects took 39 s, holding the port and
+   * stalling every restart. The no-op error listener keeps a late chokidar
+   * error from throwing as an unhandled 'error' event.
+   */
+  detach(): void {
+    const watchers = [
+      ...[...this.files.values()].map((e) => e.watcher),
+      ...this.directories.values(),
+    ];
+    for (const watcher of watchers) {
+      watcher.removeAllListeners();
+      watcher.on("error", () => {});
+    }
+    this.files.clear();
+    this.directories.clear();
+  }
+
   private async readNewLines(key: string): Promise<void> {
     const entry = this.files.get(key);
     if (!entry) return;

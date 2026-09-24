@@ -404,7 +404,7 @@ program
 
     const shutdown = async () => {
       log.info("Shutting down...");
-      await server.close();
+      await server.close({ exiting: true });
       process.exit(0);
     };
 
