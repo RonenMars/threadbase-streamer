@@ -1,3 +1,9 @@
+## [1.101.8](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.7...v1.101.8) (2026-09-24)
+
+### Bug Fixes
+
+* **lifecycle:** forward launchd's stop signal to the server ([#969](https://github.com/RonenMars/threadbase-streamer/issues/969)) ([ea2d8b3](https://github.com/RonenMars/threadbase-streamer/commit/ea2d8b3e2022056641afa375927a697900af367e))
+
 ## [1.101.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.6...v1.101.7) (2026-09-24)
 
 ### Bug Fixes
