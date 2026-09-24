@@ -1,3 +1,10 @@
+## [1.101.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.6...v1.101.7) (2026-09-24)
+
+### Bug Fixes
+
+* **server:** kill live sessions before waiting on in-flight scans at shutdown ([#967](https://github.com/RonenMars/threadbase-streamer/issues/967)) ([c8625db](https://github.com/RonenMars/threadbase-streamer/commit/c8625dbac4c01537cfe72348db7271a0fb5538dd))
+* **server:** stop shutdown blocking for up to a minute on closing file watchers ([#968](https://github.com/RonenMars/threadbase-streamer/issues/968)) ([83de3bf](https://github.com/RonenMars/threadbase-streamer/commit/83de3bfaae95e4bf5c3897470d33ae1731a13117))
+
 ## [1.101.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.5...v1.101.6) (2026-09-24)
 
 ### Bug Fixes
