@@ -1,3 +1,9 @@
+## [1.101.12](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.11...v1.101.12) (2026-09-24)
+
+### Bug Fixes
+
+* **server:** stop exiting shutdown from waiting on the startup scan ([#971](https://github.com/RonenMars/threadbase-streamer/issues/971)) ([0ac0300](https://github.com/RonenMars/threadbase-streamer/commit/0ac030073c99b70fa2da2b46fb4af247b81fae7d))
+
 ## [1.101.11](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.10...v1.101.11) (2026-09-24)
 
 ### Bug Fixes
