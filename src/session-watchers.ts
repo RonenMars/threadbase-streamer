@@ -28,6 +28,10 @@ import type { WSHub } from "./ws-hub";
  * it before the first one. See the notes in watchForJsonl/watchForCodexRollout.
  */
 export const TRANSCRIPT_WATCH_DEADLINE_MS = 120_000;
+// watchForJsonl's backstop poll. fs.watch is the fast path, but macOS delivers
+// its events late under load (past 15 s in a loaded test run) and can drop
+// them, and with no second chance a missed event lost the binding for good.
+export const CLAUDE_JSONL_POLL_MS = 1_000;
 
 /**
  * Everything SessionWatchers reads from the server. Collaborators constructed
@@ -169,7 +173,10 @@ export class SessionWatchers {
     let seenPrompts = 0;
 
     let watcher: ReturnType<typeof fsWatch> | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
     const cleanup = () => {
+      if (poll) clearInterval(poll);
+      poll = null;
       try {
         watcher?.close();
       } catch {
@@ -296,12 +303,20 @@ export class SessionWatchers {
     tryWire();
     if (this.deps.sessionFileMap.has(sessionId)) return; // already found
 
+    poll = setInterval(tryWire, CLAUDE_JSONL_POLL_MS);
     try {
       require("fs").mkdirSync(projectsDir, { recursive: true });
       watcher = fsWatch(projectsDir, tryWire);
-      watcher.on("error", cleanup);
+      // A broken watch leaves the poll running rather than ending the wait.
+      watcher.on("error", () => {
+        try {
+          watcher?.close();
+        } catch {
+          /* ignore */
+        }
+      });
     } catch {
-      // fs.watch not available (e.g. in tests), ignore
+      // fs.watch not available (e.g. in tests); the poll still covers it
     }
   }
 
