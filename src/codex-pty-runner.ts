@@ -91,6 +91,12 @@ const CODEX_SUBMIT_MAX_WAIT_MS = 500;
 // are not stuck on `running`. Same 2s used by the Ready-stale path.
 const CODEX_SUBMIT_STALE_MS = 2_000;
 
+// Under load the turn can start after submit-stale has already settled it (seen
+// at 2.1s, with Codex then running the whole turn). A busy signal this soon
+// after a submit is that turn, so the session goes back to `running` and its
+// real end is still signalled. Mirrors pty-manager.ts LATE_TURN_START_MS.
+const LATE_TURN_START_MS = 30_000;
+
 // Codex's turn signal (verified on Codex CLI 0.156.1): the terminal title
 // (OSC 0) leads with a braille spinner from ~200ms after a submit until the
 // turn ends, then drops it. The status bar no longer says Working/Ready, so
@@ -152,6 +158,8 @@ export class CodexPtyRunner implements SessionRunner {
   // Whether Codex's last title carried the busy spinner. Absent = no title seen
   // yet, so readiness falls back to the Working → Ready status bar.
   private titleBusy = new Map<string, boolean>();
+  // Submit time of a turn whose busy signal has not arrived yet.
+  private awaitingStart = new Map<string, number>();
   // A title escape cut off at the end of the previous chunk, if any.
   private titleTail = new Map<string, string>();
   // Usage-limit / rate-limit menus — content key for deduped permission cards.
@@ -486,6 +494,7 @@ export class CodexPtyRunner implements SessionRunner {
       this.onStatusChange?.(toPublicSession(session));
     }
     this.turnBusy.delete(sessionId);
+    this.awaitingStart.set(sessionId, Date.now());
     this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
     session.lastActivityAt = new Date();
     session.promptCount++;
@@ -718,6 +727,7 @@ export class CodexPtyRunner implements SessionRunner {
     this.gateActioned.delete(`${sessionId}:trust`);
     this.turnBusy.delete(sessionId);
     this.titleBusy.delete(sessionId);
+    this.awaitingStart.delete(sessionId);
     this.titleTail.delete(sessionId);
     if (this.openBlockingPrompt.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
@@ -815,6 +825,7 @@ export class CodexPtyRunner implements SessionRunner {
     this.lastChunkAt.clear();
     this.turnBusy.clear();
     this.titleBusy.clear();
+    this.awaitingStart.clear();
     this.titleTail.clear();
     this.openBlockingPrompt.clear();
     this.openCommandApproval.clear();
@@ -1040,9 +1051,25 @@ export class CodexPtyRunner implements SessionRunner {
     // spinner when Codex paints one, else Working then Ready on the status bar.
     // A stale Ready still on screen right after submit must not undo the
     // running status — grace/hold would then kill a live turn.
+    const titleBusy = this.titleBusy.get(sessionId);
+    const turnBusyNow = /\bWorking\b/.test(bar) || titleBusy === true;
+    const submittedAt = this.awaitingStart.get(sessionId);
+    if (turnBusyNow && submittedAt !== undefined) {
+      this.awaitingStart.delete(sessionId);
+      if (session.status === "waiting_input" && Date.now() - submittedAt <= LATE_TURN_START_MS) {
+        session.status = "running";
+        session.statusSource = "turn-signal";
+        session.statusUpdatedAt = new Date();
+        this.log.info(`[codex.turn] ${sessionId.slice(0, 8)} late-start`, {
+          event: "codex.turn_late_start",
+          sessionId,
+          lateMs: Date.now() - submittedAt,
+        });
+        this.onStatusChange?.(toPublicSession(session));
+      }
+    }
     if (session.status === "running") {
-      const titleBusy = this.titleBusy.get(sessionId);
-      if (/\bWorking\b/.test(bar) || titleBusy === true) {
+      if (turnBusyNow) {
         this.turnBusy.add(sessionId);
         const watch = this.submitWatchTimers.get(sessionId);
         if (watch) clearTimeout(watch);
@@ -1098,6 +1125,7 @@ export class CodexPtyRunner implements SessionRunner {
     }
     if (session.status === "running") {
       this.turnBusy.delete(sessionId);
+      this.awaitingStart.delete(sessionId);
       this.markReady(sessionId, session, "quiet-fallback", "usage-limit");
     }
   }
