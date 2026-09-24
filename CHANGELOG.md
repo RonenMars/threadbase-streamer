@@ -1,3 +1,9 @@
+## [1.101.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.5...v1.101.6) (2026-09-24)
+
+### Bug Fixes
+
+* **push:** reopen a turn whose busy signal lands after a guessed end ([#964](https://github.com/RonenMars/threadbase-streamer/issues/964)) ([4812fa9](https://github.com/RonenMars/threadbase-streamer/commit/4812fa9d50aab793145b38db48eb5b2e23ee83d1)), closes [#962](https://github.com/RonenMars/threadbase-streamer/issues/962) [#963](https://github.com/RonenMars/threadbase-streamer/issues/963)
+
 ## [1.101.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.4...v1.101.5) (2026-09-24)
 
 ### Bug Fixes
