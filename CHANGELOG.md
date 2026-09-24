@@ -1,3 +1,9 @@
+## [1.101.11](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.10...v1.101.11) (2026-09-24)
+
+### Bug Fixes
+
+* **server:** make close() idempotent so a repeated stop signal joins the in-flight shutdown ([#970](https://github.com/RonenMars/threadbase-streamer/issues/970)) ([6b2bbcd](https://github.com/RonenMars/threadbase-streamer/commit/6b2bbcde75e3348725036c60f149a1116e0794b0)), closes [#969](https://github.com/RonenMars/threadbase-streamer/issues/969)
+
 ## [1.101.10](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.9...v1.101.10) (2026-09-24)
 
 ### Bug Fixes
