@@ -2058,21 +2058,31 @@ export class StreamerServer {
     // session and write nothing, so the shutdown rows stand.
     if (!this.ptyManager.isRemote()) this.registryBoot.recordShutdownState();
     this.ptyManager.dispose();
-    // Wait for every fire-and-forget scan→cache-write task to finish before
-    // tearing anything down. Their post-scan steps write to this.cache
-    // (upsert / populateTail / pruneGhostFiles); closing cache.db under them
-    // throws "database connection is not open" and leaves the cache empty
-    // (deterministic once Stage 4's dir-mtime gate widened the scan window).
-    // Snapshot the set — entries remove themselves as they settle.
-    await Promise.all([...this.inFlightCacheWrites]);
-    // Close all scanner SQLite connections before the cache so file handles are
-    // released on Windows (open handles block temp-dir deletion in tests).
-    // scanner.close() is async (scanner >=0.9.2): it awaits any in-flight scan
-    // before releasing the DB handle, so a fire-and-forget refresh scan can't be
-    // shut mid-indexAll(). Await all so handles are torn down only after scans
-    // settle.
-    await this.scannerManager.close();
-    this.cache?.close();
+    // A process about to exit skips the waits below and leaves cache.db and
+    // the scanner's index open: a startup scan can run for a minute, holding
+    // the port the whole time (EADDRINUSE on every respawn). That is safe
+    // because every SQLite write here is a synchronous statement or
+    // db.transaction(), so process.exit lands between transactions, and WAL
+    // recovers an unclosed file on the next open; the multi-step writers
+    // commit last (backfill's file_state, warm-up's last-indexed stamp), so an
+    // early exit leaves work to redo, never a wrong answer.
+    if (!exiting) {
+      // Wait for every fire-and-forget scan→cache-write task to finish before
+      // tearing anything down. Their post-scan steps write to this.cache
+      // (upsert / populateTail / pruneGhostFiles); closing cache.db under them
+      // throws "database connection is not open" and leaves the cache empty
+      // (deterministic once Stage 4's dir-mtime gate widened the scan window).
+      // Snapshot the set — entries remove themselves as they settle.
+      await Promise.all([...this.inFlightCacheWrites]);
+      // Close all scanner SQLite connections before the cache so file handles are
+      // released on Windows (open handles block temp-dir deletion in tests).
+      // scanner.close() is async (scanner >=0.9.2): it awaits any in-flight scan
+      // before releasing the DB handle, so a fire-and-forget refresh scan can't be
+      // shut mid-indexAll(). Await all so handles are torn down only after scans
+      // settle.
+      await this.scannerManager.close();
+      this.cache?.close();
+    }
     this.runtimeStore?.close();
     if (exiting) this.fileWatcher.detach();
     else this.fileWatcher.dispose();
