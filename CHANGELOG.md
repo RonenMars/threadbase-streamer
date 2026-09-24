@@ -1,3 +1,9 @@
+## [1.101.10](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.9...v1.101.10) (2026-09-24)
+
+### Bug Fixes
+
+* **session:** poll for the Claude transcript as a backstop to fs.watch ([#973](https://github.com/RonenMars/threadbase-streamer/issues/973)) ([1e64455](https://github.com/RonenMars/threadbase-streamer/commit/1e64455e51d1b87f72eb011021f196aeae1c871c))
+
 ## [1.101.9](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.8...v1.101.9) (2026-09-24)
 
 ### Bug Fixes
