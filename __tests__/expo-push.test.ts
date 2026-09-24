@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
 import { EXPO_PUSH_ENDPOINT, ExpoPushSender } from "../src/services/push/expoPushSender";
-import { WaitingInputNotifier } from "../src/services/push/waitingInputNotifier";
+import {
+  TURN_DONE_SETTLE_MS,
+  WaitingInputNotifier,
+} from "../src/services/push/waitingInputNotifier";
 import type { ManagedSession } from "../src/types";
 
 /**
@@ -70,10 +73,23 @@ function bodyOf(call: { init: RequestInit }): Array<Record<string, unknown>> {
   return JSON.parse(String(call.init.body));
 }
 
-/** Drive a full turn: the user prompts (→ running), the agent answers (→ waiting_input). */
+/** Let a scheduled "finished" push go out (WaitingInputNotifier tests fake setTimeout). */
+async function settle() {
+  await vi.advanceTimersByTimeAsync(TURN_DONE_SETTLE_MS);
+  await new Promise((r) => setImmediate(r));
+}
+
+/**
+ * Drive a full turn: the user prompts (→ running), the agent signals its turn
+ * ended (→ waiting_input), and the end holds for the settle window.
+ */
 async function runTurn(notifier: WaitingInputNotifier, s: ManagedSession = session()) {
   await notifier.onStatusChange({ ...s, status: "running" }, "waiting_input");
-  await notifier.onStatusChange({ ...s, status: "waiting_input" }, "running");
+  await notifier.onStatusChange(
+    { ...s, status: "waiting_input", statusSource: "turn-signal" },
+    "running",
+  );
+  await settle();
 }
 
 describe("ExpoPushSender", () => {
@@ -191,6 +207,13 @@ describe("ExpoPushSender", () => {
 });
 
 describe("WaitingInputNotifier", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   function notifier() {
     repo.register({ token: "ExponentPushToken[a]", platform: "ios" });
     const { fn, calls } = stubFetch([{ body: { data: [{ status: "ok" }] } }]);
@@ -290,7 +313,11 @@ describe("WaitingInputNotifier", () => {
     await n.onPrompt(session(), "permission", true);
     await n.onPrompt(session(), "permission", false); // answered
     await n.onPrompt(session(), "question", true);
-    await n.onStatusChange(session({ status: "waiting_input" }), "running");
+    await n.onStatusChange(
+      session({ status: "waiting_input", statusSource: "turn-signal" }),
+      "running",
+    );
+    await settle();
 
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(calls.map((c) => (bodyOf(c)[0].data as { kind: string }).kind)).toEqual([
@@ -311,6 +338,56 @@ describe("WaitingInputNotifier", () => {
     const raw = String(calls[0].init.body);
     expect(raw).not.toContain("sk-secret-token");
     expect(raw).not.toContain("fix the login bug");
+  });
+
+  // #962: each of these settled a turn one to two seconds after the submit,
+  // while the agent was still working, and each sent "finished".
+  it.each(["prompt-marker", "screen-marker", "quiet-fallback", "timeout-fallback"] as const)(
+    "does not push a turn end the runner only guessed (%s)",
+    async (statusSource) => {
+      const { notifier: n, fetch } = notifier();
+
+      await n.onStatusChange(session({ status: "running" }), "waiting_input");
+      await n.onStatusChange(session({ status: "waiting_input", statusSource }), "running");
+      await settle();
+
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("holds 'finished' for the settle window, and drops it if the turn resumes", async () => {
+    const { notifier: n, fetch } = notifier();
+    const ended = session({ status: "waiting_input", statusSource: "turn-signal" });
+
+    await n.onStatusChange(session({ status: "running" }), "waiting_input");
+    await n.onStatusChange(ended, "running");
+    await vi.advanceTimersByTimeAsync(TURN_DONE_SETTLE_MS - 1);
+    expect(fetch).not.toHaveBeenCalled();
+
+    // Back to work inside the window (the user sent more, or the runner re-read).
+    await n.onStatusChange(session({ status: "running" }), "waiting_input");
+    await settle();
+    expect(fetch).not.toHaveBeenCalled();
+
+    // That second turn's own end is still reported.
+    await n.onStatusChange(ended, "running");
+    await settle();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces a pending 'finished' with the gate that opened inside the window", async () => {
+    const { notifier: n, fetch, calls } = notifier();
+
+    await n.onStatusChange(session({ status: "running" }), "waiting_input");
+    await n.onStatusChange(
+      session({ status: "waiting_input", statusSource: "turn-signal" }),
+      "running",
+    );
+    await n.onPrompt(session(), "permission", true);
+    await settle();
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect((bodyOf(calls[0])[0].data as { kind: string }).kind).toBe("permission");
   });
 
   it("does not notify on boot ready, before the user has prompted", async () => {

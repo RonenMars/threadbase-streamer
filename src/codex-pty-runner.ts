@@ -91,6 +91,15 @@ const CODEX_SUBMIT_MAX_WAIT_MS = 500;
 // are not stuck on `running`. Same 2s used by the Ready-stale path.
 const CODEX_SUBMIT_STALE_MS = 2_000;
 
+// Codex's turn signal (verified on Codex CLI 0.156.1): the terminal title
+// (OSC 0) leads with a braille spinner from ~200ms after a submit until the
+// turn ends, then drops it. The status bar no longer says Working/Ready, so
+// without this every turn settled through submit-stale 2s after the submit and
+// the "finished" push fired as Codex started (#962).
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching literal OSC escapes
+const CODEX_TITLE_RE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+const CODEX_TITLE_BUSY_RE = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/;
+
 export class CodexPtyRunner implements SessionRunner {
   private sessions = new Map<string, InternalSession>();
   private onOutput: PTYManagerOptions["onOutput"];
@@ -140,6 +149,11 @@ export class CodexPtyRunner implements SessionRunner {
   // Ready bar immediately after sendInput cannot flip status back before the
   // turn starts (which would let grace/hold kill a live turn).
   private turnBusy = new Set<string>();
+  // Whether Codex's last title carried the busy spinner. Absent = no title seen
+  // yet, so readiness falls back to the Working → Ready status bar.
+  private titleBusy = new Map<string, boolean>();
+  // A title escape cut off at the end of the previous chunk, if any.
+  private titleTail = new Map<string, string>();
   // Usage-limit / rate-limit menus — content key for deduped permission cards.
   private openBlockingPrompt = new Map<string, string>();
   // Command-approval cards are independent of quota cards: both use the
@@ -703,6 +717,8 @@ export class CodexPtyRunner implements SessionRunner {
     this.gateActioned.delete(`${sessionId}:hooks`);
     this.gateActioned.delete(`${sessionId}:trust`);
     this.turnBusy.delete(sessionId);
+    this.titleBusy.delete(sessionId);
+    this.titleTail.delete(sessionId);
     if (this.openBlockingPrompt.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
     }
@@ -798,6 +814,8 @@ export class CodexPtyRunner implements SessionRunner {
     this.submitWatchTimers.clear();
     this.lastChunkAt.clear();
     this.turnBusy.clear();
+    this.titleBusy.clear();
+    this.titleTail.clear();
     this.openBlockingPrompt.clear();
     this.openCommandApproval.clear();
     this.lastScreenLog.clear();
@@ -823,6 +841,7 @@ export class CodexPtyRunner implements SessionRunner {
     // so raw substring matching on `data` would miss things.
     session.screen.write(data);
     session.lastOutput = stripAnsi(data);
+    this.trackTitle(sessionId, data);
 
     this.onOutput?.(sessionId, data);
 
@@ -852,6 +871,22 @@ export class CodexPtyRunner implements SessionRunner {
       this.quietCheckers.set(sessionId, quiet);
     }
     quiet();
+  }
+
+  private trackTitle(sessionId: string, data: string): void {
+    // Prepend a title the previous chunk cut off, so a split one still counts.
+    const window = (this.titleTail.get(sessionId) ?? "") + data;
+    let title: string | undefined;
+    let end = 0;
+    for (const m of window.matchAll(CODEX_TITLE_RE)) {
+      title = m[1];
+      end = m.index + m[0].length;
+    }
+    const open = window.lastIndexOf("\x1b]");
+    if (open >= end && window.length - open < 512)
+      this.titleTail.set(sessionId, window.slice(open));
+    else this.titleTail.delete(sessionId);
+    if (title !== undefined) this.titleBusy.set(sessionId, CODEX_TITLE_BUSY_RE.test(title));
   }
 
   // Renders the session's headless screen and drives both detections:
@@ -1001,20 +1036,31 @@ export class CodexPtyRunner implements SessionRunner {
     }
 
     // Mid-session: after sendInput flipped waiting_input → running, flip back
-    // only once we've observed Working (turn actually started) and Ready has
-    // returned. A stale Ready still on screen right after submit must not
-    // undo the running status — grace/hold would then kill a live turn.
+    // only once we've observed the turn start and then end — from the title
+    // spinner when Codex paints one, else Working then Ready on the status bar.
+    // A stale Ready still on screen right after submit must not undo the
+    // running status — grace/hold would then kill a live turn.
     if (session.status === "running") {
-      if (/\bWorking\b/.test(bar)) {
+      const titleBusy = this.titleBusy.get(sessionId);
+      if (/\bWorking\b/.test(bar) || titleBusy === true) {
         this.turnBusy.add(sessionId);
         const watch = this.submitWatchTimers.get(sessionId);
         if (watch) clearTimeout(watch);
         this.submitWatchTimers.delete(sessionId);
       }
+      const turnEnded = titleBusy === undefined ? hasReady : !titleBusy;
+      // A card on screen is Codex waiting on the user mid-turn, not a turn end.
+      // (A usage-limit card already settled the turn in handleBlockingPrompt.)
+      const cardOpen = Boolean(gate || commandApproval || picker);
 
-      if (hasReady && this.turnBusy.has(sessionId)) {
+      if (turnEnded && !cardOpen && this.turnBusy.has(sessionId)) {
         this.turnBusy.delete(sessionId);
-        this.markReady(sessionId, session, "prompt-marker", `marker:${CODEX_PROMPT_READY_TEXT}`);
+        this.markReady(
+          sessionId,
+          session,
+          "turn-signal",
+          titleBusy === undefined ? `marker:${CODEX_PROMPT_READY_TEXT}` : "turn-signal:title",
+        );
       } else if (
         !this.turnBusy.has(sessionId) &&
         !busy &&

@@ -11,7 +11,10 @@ import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
 import type { NotificationPrefs } from "../src/schemas/notification-prefs.schema";
 import { EXPO_PUSH_ENDPOINT, ExpoPushSender } from "../src/services/push/expoPushSender";
-import { WaitingInputNotifier } from "../src/services/push/waitingInputNotifier";
+import {
+  TURN_DONE_SETTLE_MS,
+  WaitingInputNotifier,
+} from "../src/services/push/waitingInputNotifier";
 import type { ManagedSession } from "../src/types";
 
 /**
@@ -204,7 +207,10 @@ describe("WaitingInputNotifier gates on preferences and reports failures", () =>
 
   async function turn(n: WaitingInputNotifier) {
     await n.onStatusChange(session({ status: "running" }), "waiting_input");
-    await n.onStatusChange(session({ status: "waiting_input" }), "running");
+    await n.onStatusChange(
+      session({ status: "waiting_input", statusSource: "turn-signal" }),
+      "running",
+    );
   }
 
   it("does not push a finished turn to a device that turned Waiting for Input off", async () => {
@@ -218,7 +224,9 @@ describe("WaitingInputNotifier gates on preferences and reports failures", () =>
 
     await turn(new WaitingInputNotifier(new ExpoPushSender(repo)));
 
-    expect(sentTo(calls)).toEqual([EXPO_B]);
+    await vi.waitFor(() => expect(sentTo(calls)).toEqual([EXPO_B]), {
+      timeout: TURN_DONE_SETTLE_MS + 1_000,
+    });
   });
 
   it("gates permission and question prompts on the same toggle", async () => {

@@ -1,0 +1,792 @@
+{
+  "provider": "cursor",
+  "submitAt": 25618,
+  "chunks": [
+    [8775, "\u001b[>1u"],
+    [8775, "\u001b]11;?\u0007"],
+    [
+      8923,
+      "\u001b[2K\u001b[G\r\n\r\n  Cursor Agent\r\n  \u001b[2mv2026.09.23-86fc751\u001b[22m\r\n  \u001b[2mTip: Use subagents to parallelize work and preserve context.\u001b[22m\r\n\r\n\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mP\u001b[27m\u001b[2mlan, search, build anything\u001b[22m                                                                                       \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      8923,
+      "▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [8923, "\u001b[?25l"],
+    [8923, "\u001b[?2004h"],
+    [8928, "\u001b]0;Cursor Agent\u0007"],
+    [8928, "\u001b[?2031h\u001b[?1004h"],
+    [
+      25218,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[48;5;233m → Without using any tools, write a 150-word paragraph about the history of tea.\u001b[7m \u001b[27m                                     \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      25665,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[48;5;234m                                                                                                                      \u001b[49m\r\n \u001b[48;5;234m Without using any tools, write a 150-word paragraph about the history of tea.                                        \u001b[49m\r\n \u001b[48;5;234m                                                                                                                      \u001b[49m\r\n\r\n \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22mWithout using any tools, write a 150-word paragraph about the history of tea.\u001b[7m \u001b[27m                                  "
+    ],
+    [
+      25665,
+      "   \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [25666, "\u001b]0;Cursor Agent\u0007"],
+    [
+      25669,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      25669,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      25918,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      25919,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      26169,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      26169,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      26420,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      26420,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [26620, "\u001b]0;Tea History Summary\u0007"],
+    [26627, "\u001b]0;Tea History Summary\u0007"],
+    [
+      26674,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      26674,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      26922,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      26922,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      27172,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      27172,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      27430,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      27432,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      27680,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      27681,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      28324,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      28340,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      28396,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      28401,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      28651,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      28654,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      28891,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      28894,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      29172,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      29172,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      29403,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      29404,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      29687,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      29688,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      29928,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      29928,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      30186,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      30189,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      30432,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      30433,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      30681,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      30681,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      30932,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      30932,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      31184,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      31184,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      31435,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      31435,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      31685,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      31685,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      31936,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      31936,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      32188,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      32188,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      32447,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      32447,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      32695,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      32695,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      33180,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      33180,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      33266,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      33266,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      33472,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      33473,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      33741,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      33749,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      33979,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      33980,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      34231,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      34231,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      34475,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      34475,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      34725,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      34725,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      34978,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      34978,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      35228,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      35229,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      35486,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      35486,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      35731,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      35731,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      35980,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      35980,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      36231,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      36231,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      36484,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      36484,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      36732,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      36732,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      36983,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      36983,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37272,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37272,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37449,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 5 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37449,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37458,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  Tea’s story begins in southwestern China, where leaves of \u001b[3mCamellia sinensis\u001b[23m were first used as medicine and food\r\n  long before they became a daily drink. Legend credits\r\n\r\n \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 5 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37458,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37488,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 5 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37488,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37601,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 72 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37601,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37662,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  long before they became a daily drink. Legend credits Emperor Shen Nong with discovering tea around 273\r\n\r\n \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 72 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37662,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37735,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 72 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37735,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37764,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 77 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37764,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37877,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  long before they became a daily drink. Legend credits Emperor Shen Nong with discovering tea around 2737 BCE when\r\n  leaves drifted into his boiling water; archaeology\r\n\r\n \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 77 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37877,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37898,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 93 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37898,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      37985,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 93 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      37985,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38049,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 102 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38051,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38069,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  leaves drifted into his boiling water; archaeology and early texts place cultivated and consumed\r\n\r\n \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 102 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38069,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38202,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 113 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38202,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38236,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 113 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38236,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38264,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  leaves drifted into his boiling water; archaeology and early texts place cultivated and consumed tea firmly in\r\n  China by the Han dynasty. Tang-era writers elevated\r\n\r\n \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 113 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38264,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38362,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 123 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38362,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38462,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  China by the Han dynasty. Tang-era writers elevated brewing into ritual and commerce, and tea traveled along Silk\r\n\r\n \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 123 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38462,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38491,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 123 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38491,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38503,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 138 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38503,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38655,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 151 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38655,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38721,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  Road and maritime routes into Korea, Japan, and Central Asia. In Japan\r\n\r\n \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 151 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38722,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38758,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 151 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38759,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38812,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 159 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38821,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38870,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  Road and maritime routes into Korea, Japan, and Central Asia. In Japan, Chanoyu refined preparation\r\n\r\n \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 159 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38870,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      38973,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠤\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 170 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      38973,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39022,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 170 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39022,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39073,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  Road and maritime routes into Korea, Japan, and Central Asia. In Japan, Chanoyu refined preparation into a\r\n  philosophy of mindfulness. Europeans encountered tea in the sixteenth and seventeenth centuries through\r\n\r\n \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 170 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m"
+    ],
+    [
+      39073,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39111,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠆\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 188 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39111,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39256,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 188 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39256,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39291,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  philosophy of mindfulness. Europeans encountered tea in the sixteenth and seventeenth centuries through Dutch and\r\n  Portuguese traders; Britain made it a national habit, taxed it\r\n\r\n \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 205 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39291,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39420,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 213 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39420,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39480,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  Portuguese traders; Britain made it a national habit, taxed it heavily, and fought wars over its trade,\r\n\r\n \u001b[32m⠘⠣\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 213 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39481,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39527,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 213 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39527,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39583,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 222 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39583,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39670,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  Portuguese traders; Britain made it a national habit, taxed it heavily, and fought wars over its trade, including\r\n  the Opium Wars that forced Chinese ports open. Plant\r\n\r\n \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 222 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39670,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39708,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠳\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 234 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39708,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39758,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 234 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39758,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      39876,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  the Opium Wars that forced Chinese ports open. Plantations later spread across India, Sri Lanka, and Africa, resh\r\n\r\n \u001b[32m⠠⠛\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 246 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      39876,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40035,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 256 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40035,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40070,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  the Opium Wars that forced Chinese ports open. Plantations later spread across India, Sri Lanka, and Africa,\r\n  reshaping global agriculture. From imperial courts\r\n\r\n \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 256 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40070,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40158,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠀⠞\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 263 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40158,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40305,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  reshaping global agriculture. From imperial courts to factory floors and modern cafés, tea remains\r\n\r\n \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 263 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40305,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40310,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 269 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40310,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40464,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 270 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40464,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40506,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  reshaping global agriculture. From imperial courts to factory floors and modern cafés, tea remains one of\r\n  history’s most enduring shared beverages.\r\n\r\n \u001b[32m⠠⠜\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 270 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40506,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40510,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 270 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40510,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40615,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G \u001b[32m⠰⠰\u001b[39m \u001b[1mWorking\u001b[22m \u001b[2m 282 tokens\u001b[22m\r\n  \u001b[38;5;245m  Tip: Try Cursor Grok 4.6 via /model, frontier intelligence at a fraction of the cost.\u001b[39m\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                     \u001b[2mctrl+c to stop\u001b[22m \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀"
+    ],
+    [
+      40615,
+      "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [
+      40706,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G\r\n \u001b[38;5;233m▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\u001b[39m\r\n \u001b[48;5;233m \u001b[2m→ \u001b[22m\u001b[7mA\u001b[27m\u001b[2mdd a follow-up\u001b[22m                                                                                                    \u001b[49m\r\n \u001b[38;5;233m▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\u001b[39m\r\n  \u001b[2mAuto\u001b[22m                                "
+    ],
+    [
+      40706,
+      "                                                                  \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ],
+    [40706, "\u001b]0;Tea History Summary\u0007"],
+    [
+      40712,
+      "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G  \u001b[2mAuto\u001b[22m \u001b[2m·\u001b[22m \u001b[2m19%\u001b[22m                                                                                            \u001b[35mRun Everything\u001b[39m\r\n  \u001b[2m~/dev/ai-tools/tb-streamer · main\u001b[22m\r\n"
+    ]
+  ]
+}

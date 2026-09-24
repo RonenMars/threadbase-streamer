@@ -54,19 +54,25 @@ const INPUT_HISTORY_MAX = 50;
 // the worst case is flushing queued input slightly early, which Claude buffers.
 const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
 
-// Claude's turn signal: OSC 9;4 (terminal progress) — `9;4;3` when a turn
-// starts, `9;4;0` exactly when it ends, including across a permission gate
-// (verified on Claude Code v2.1.278). Mid-conversation the `❯` input box stays
-// painted for the whole turn, so the marker alone flipped the session to
-// waiting_input ~50ms after every submit and the "waiting for your input" push
-// fired as the agent started. While a turn is open the markers are ignored.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching the literal OSC 9;4 escape
-const CLAUDE_PROGRESS_RE = /\x1b\]9;4;(\d)/g;
+// Claude's turn signal. Mid-conversation the `❯` input box stays painted for
+// the whole turn, so the marker alone flipped the session to waiting_input
+// ~50ms after every submit and the "finished" push fired as the agent started.
+// While a turn is open the markers are ignored.
+//
+// Two encodings of the same signal. The terminal title (OSC 0) carries a
+// spinner glyph (◐ ◓ ◑ ◒) from ~40ms after a submit until the turn ends, then
+// `✳` — this is what Claude Code 2.1.280 actually writes into the streamer's
+// PTY. OSC 9;4 terminal progress (`9;4;3` busy, `9;4;0` idle) is never emitted
+// there, whatever TERM_PROGRAM says or the PTY answers to Claude's terminal
+// probes (#962); it is kept for a terminal that does get it. Unlike 9;4, the
+// title also goes to `✳` while a permission gate waits — see recheckReadyFromScreen.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching literal OSC escapes
+const CLAUDE_TURN_SIGNAL_RE = /\x1b\](?:9;4;(\d)|[02];([◐◓◑◒✳]))/g;
 
-// A submit opens the turn before Claude's `9;4;3` arrives (~300ms later),
-// because the echo of the pasted prompt already carries `❯`. A submit that
-// starts no turn at all (a slash command) never sends one, so the optimistic
-// open lapses after this long and readiness is re-checked from the screen.
+// A submit opens the turn before Claude's busy signal arrives, because the echo
+// of the pasted prompt already carries `❯`. A submit that starts no turn at all
+// (a slash command) never sends one, so the optimistic open lapses after this
+// long and readiness is re-checked from the screen.
 const TURN_START_GRACE_MS = 3_000;
 
 // Re-run ready/prompt detection this long after the PTY goes quiet, instead of
@@ -210,13 +216,15 @@ export class PTYManager implements SessionRunner {
   // Last chunk's raw tail per session — prepended to the next chunk before
   // the OSC regex test so a split escape still matches. Consumed on match.
   private oscTail = new Map<string, string>();
-  // Open turn per session, from OSC 9;4: "submitted" between our submit and
-  // Claude's 9;4;3, "working" after it. Absent = no turn open.
-  private turnOpen = new Map<string, "submitted" | "working">();
-  // Sessions whose Claude has emitted OSC 9;4 at all — an older CLI that never
+  // Open turn per session, from Claude's turn signal: "submitted" between our
+  // submit and the busy signal, "working" after it, "ending" once the idle
+  // signal arrived and the screen has yet to settle, "held" while that idle is
+  // a permission gate waiting on the user. Absent = no turn open.
+  private turnOpen = new Map<string, "submitted" | "working" | "ending" | "held">();
+  // Sessions whose Claude has emitted a turn signal at all — a CLI that never
   // does keeps the marker-only behaviour instead of waiting on a signal.
   private progressSeen = new Set<string>();
-  // An OSC 9;4 escape cut off at the end of the previous chunk, if any.
+  // A turn-signal escape cut off at the end of the previous chunk, if any.
   private progressTail = new Map<string, string>();
   // When the last full detection pass ran per session (any trigger) — the
   // clock the SCRAPE_THROTTLE_MS ceiling is measured against.
@@ -913,13 +921,13 @@ export class PTYManager implements SessionRunner {
     const stripped = stripAnsi(data);
     session.lastOutput = stripped;
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => stripped.includes(m));
-    const turnEnded = this.trackProgress(sessionId, data);
+    // An idle signal is settled by the quiet checker below, not here: the gate
+    // it may stand for is painted in a later chunk.
+    this.trackProgress(sessionId, data);
 
     if (session.status === "running" && matchedMarker && !this.turnOpen.has(sessionId)) {
       this.markReady(sessionId, session, "prompt-marker", `marker:${matchedMarker}`);
     }
-    // The turn-end chunk rarely repaints the box, so ask the screen.
-    if (turnEnded && session.status === "running") this.recheckReadyLogged(sessionId);
     // The no-marker backstop lives in armReadyFallback() rather than here: this
     // branch only ran when a chunk happened to arrive, so a boot that fell
     // silent before showing a marker was never rescued by it.
@@ -1268,36 +1276,60 @@ export class PTYManager implements SessionRunner {
     });
   }
 
-  /** Update the open turn from OSC 9;4 in this chunk; true when it just closed. */
-  private trackProgress(sessionId: string, data: string): boolean {
+  /** Update the open turn from the turn signal in this chunk. */
+  private trackProgress(sessionId: string, data: string): void {
     // Prepend an escape the previous chunk cut off, so a split one still counts.
     const window = (this.progressTail.get(sessionId) ?? "") + data;
-    let state: string | undefined;
-    for (const m of window.matchAll(CLAUDE_PROGRESS_RE)) state = m[1];
-    // Carry only a trailing escape too short to be a whole `ESC]9;4;N` (7
-    // chars), so a complete one is never counted twice.
+    let busy: boolean | undefined;
+    for (const m of window.matchAll(CLAUDE_TURN_SIGNAL_RE)) {
+      busy = m[1] !== undefined ? m[1] !== "0" : m[2] !== "✳";
+    }
+    // Carry only a trailing escape that could still grow into a signal (the
+    // longest, `ESC]9;4;N`, is 7 chars), so a complete one is never counted twice.
     const esc = window.lastIndexOf("\x1b");
     const rest = esc >= 0 ? window.slice(esc) : "";
-    if (rest.length < 7) this.progressTail.set(sessionId, rest);
-    else this.progressTail.delete(sessionId);
-    if (state === undefined) return false;
-    this.progressSeen.add(sessionId);
-    if (state !== "0") {
-      this.turnOpen.set(sessionId, "working");
-      return false;
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: matching a literal OSC escape
+    if (rest.length < 7 && !/^\x1b\](?:9;4;\d|[02];.)/.test(rest)) {
+      this.progressTail.set(sessionId, rest);
+    } else {
+      this.progressTail.delete(sessionId);
     }
-    return this.turnOpen.delete(sessionId);
+    if (busy === undefined) return;
+    this.progressSeen.add(sessionId);
+    const before = this.turnOpen.get(sessionId);
+    // Busy re-opens a held turn too: the user answered the gate and Claude went on.
+    // Idle closes only a turn Claude confirmed it started — one still
+    // "submitted" is left to the start grace, so a title repaint cannot pass for
+    // a finished turn that never began.
+    const after = busy ? "working" : before === "working" ? "ending" : before;
+    if (after === before || after === undefined) return;
+    this.turnOpen.set(sessionId, after);
+    this.logTurn(sessionId, after, before);
   }
 
   private openTurnOnSubmit(sessionId: string): void {
     if (!this.progressSeen.has(sessionId)) return;
+    const before = this.turnOpen.get(sessionId);
     this.turnOpen.set(sessionId, "submitted");
+    this.logTurn(sessionId, "submitted", before);
     const timer = setTimeout(() => {
       if (this.turnOpen.get(sessionId) !== "submitted") return;
       this.turnOpen.delete(sessionId);
+      this.logTurn(sessionId, "lapsed", "submitted");
       this.recheckReadyLogged(sessionId);
     }, TURN_START_GRACE_MS);
     timer.unref?.();
+  }
+
+  // One line per turn-state change (a handful per turn, never per spinner
+  // frame) — the trail that shows whether a turn end was signalled or guessed.
+  private logTurn(sessionId: string, state: string, before: string | undefined): void {
+    this.log.info(`[pty.turn] ${sessionId.slice(0, 8)} ${before ?? "none"} -> ${state}`, {
+      event: "pty.turn",
+      sessionId,
+      state,
+      before: before ?? null,
+    });
   }
 
   private recheckReadyLogged(sessionId: string): void {
@@ -1319,6 +1351,35 @@ export class PTYManager implements SessionRunner {
     const session = this.sessions.get(sessionId);
     if (session?.status !== "running") return;
     const lines = await this.getOutputLines(sessionId, PTY_ROWS);
+    const turn = this.turnOpen.get(sessionId);
+    if (turn === "ending" || turn === "held") {
+      // Claude's title goes idle when a permission gate paints, not only when
+      // the turn ends. A gate keeps the turn open (the permission push covers
+      // it); once it leaves the screen the turn is back to waiting on Claude,
+      // and the start grace decides whether Claude went on or the answer ended it.
+      const gate =
+        this.permissionOpen.has(sessionId) ||
+        lines.some((l) => /Enter to select/i.test(l)) ||
+        (detectGateScreen(lines) ?? detectPickerScreen(lines) ?? detectStartupChoiceGate(lines)) !==
+          null;
+      if (gate) {
+        if (turn === "ending") {
+          this.turnOpen.set(sessionId, "held");
+          this.logTurn(sessionId, "held", turn);
+        }
+        return;
+      }
+      if (turn === "held") {
+        this.openTurnOnSubmit(sessionId);
+        return;
+      }
+      this.turnOpen.delete(sessionId);
+      this.logTurn(sessionId, "ended", turn);
+      if (session.status === "running") {
+        this.markReady(sessionId, session, "turn-signal", "turn-signal:idle");
+      }
+      return;
+    }
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => lines.some((l) => l.includes(m)));
     if (matchedMarker && session.status === "running" && !this.turnOpen.has(sessionId)) {
       this.markReady(sessionId, session, "screen-marker", `quiet:screen-marker:${matchedMarker}`);

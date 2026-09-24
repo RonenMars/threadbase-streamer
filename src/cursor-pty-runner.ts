@@ -33,15 +33,21 @@ const CLEAR_COMPOSE_BYTES = "\x15";
 const CURSOR_SUBMIT_DELAY_MS = 16;
 const CURSOR_SUBMIT_MAX_WAIT_MS = 500;
 const CURSOR_SUBMIT_STALE_MS = 2_000;
+// Cursor's turn signal (verified on Cursor Agent 2026.09.23): while a turn runs
+// the compose box carries this hint beside a repainting `Working` spinner, and
+// it is gone the moment the turn ends. Without it every turn settled through
+// submit-stale 2s after the submit, as Cursor started (#962).
+const CURSOR_TURN_BUSY_TEXT = "ctrl+c to stop";
 
 /**
  * Cursor CLI (`agent`) PTY runner.
  *
  * Spawn/resume flags come from the published CLI: `--workspace`, `--trust`
  * (headless, skip the workspace-trust prompt), `--resume=<id>`, positional
- * opening prompt. TUI detection is deliberately generic: we have no verified
- * Ready/gate scrape, so boot settles on quiet or the 8s fallback, and a turn
- * returns to waiting_input after submit-stale silence.
+ * opening prompt. Boot settles on quiet or the 8s fallback (no verified Ready
+ * scrape). A turn returns to waiting_input once its busy hint
+ * (CURSOR_TURN_BUSY_TEXT) has come and gone; submit-stale recovers only a
+ * submit that never showed it.
  *
  * Input clears the compose line (`Ctrl+U`) before writing text — Cursor leaves
  * the previous prompt editable, and a bare write would concatenate turns.
@@ -58,6 +64,8 @@ export class CursorPtyRunner implements SessionRunner {
   private quietCheckers = new Map<string, ReturnType<typeof debounce<[]>>>();
   private readyFallbackTimers = new Map<string, NodeJS.Timeout>();
   private submitWatchTimers = new Map<string, NodeJS.Timeout>();
+  // Sessions whose current turn has shown CURSOR_TURN_BUSY_TEXT.
+  private turnBusy = new Set<string>();
   private lastChunkAt = new Map<string, number>();
   private startPromises = new Map<string, Promise<ManagedSession>>();
 
@@ -220,6 +228,7 @@ export class CursorPtyRunner implements SessionRunner {
       session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
     }
+    this.turnBusy.delete(sessionId);
     this.writeSubmit(sessionId, session, input);
     session.lastActivityAt = new Date();
     session.promptCount++;
@@ -261,6 +270,8 @@ export class CursorPtyRunner implements SessionRunner {
       const session = this.sessions.get(sessionId);
       if (session?.status !== "running") return;
       if (session.statusSource !== "user-input") return;
+      // The turn started; its end is read off the screen in detectQuiet.
+      if (this.turnBusy.has(sessionId)) return;
       this.markReady(sessionId, session, "quiet-fallback", "submit-stale");
     }, CURSOR_SUBMIT_STALE_MS);
     timer.unref?.();
@@ -408,6 +419,7 @@ export class CursorPtyRunner implements SessionRunner {
     this.quietCheckers.clear();
     this.readyFallbackTimers.clear();
     this.submitWatchTimers.clear();
+    this.turnBusy.clear();
     this.lastChunkAt.clear();
   }
 
@@ -427,6 +439,9 @@ export class CursorPtyRunner implements SessionRunner {
 
     session.screen.write(data);
     session.lastOutput = stripAnsi(data);
+    if (session.status === "running" && session.lastOutput.includes(CURSOR_TURN_BUSY_TEXT)) {
+      this.turnBusy.add(sessionId);
+    }
     this.onOutput?.(sessionId, data);
 
     let quiet = this.quietCheckers.get(sessionId);
@@ -444,7 +459,25 @@ export class CursorPtyRunner implements SessionRunner {
     if (!session || session.status === "idle") return;
     if (this.pendingReady.has(sessionId)) {
       this.markReady(sessionId, session, "quiet-fallback", "quiet:boot");
+      return;
     }
+    // The spinner repaints every ~250ms while a turn runs, so quiet usually
+    // means it ended — but only the hint leaving the screen proves it.
+    if (session.status !== "running" || !this.turnBusy.has(sessionId)) return;
+    this.getOutputLines(sessionId, PTY_ROWS)
+      .then((lines) => {
+        if (session.status !== "running" || !this.turnBusy.has(sessionId)) return;
+        if (lines.some((l) => l.includes(CURSOR_TURN_BUSY_TEXT))) return;
+        this.turnBusy.delete(sessionId);
+        this.markReady(sessionId, session, "turn-signal", "turn-signal:busy-hint-cleared");
+      })
+      .catch((err) => {
+        this.log.warn("[cursor.turn_check] failed", {
+          event: "cursor.turn_check_failed",
+          sessionId,
+          err,
+        });
+      });
   }
 
   private markReady(
@@ -510,6 +543,7 @@ export class CursorPtyRunner implements SessionRunner {
     const watch = this.submitWatchTimers.get(sessionId);
     if (watch) clearTimeout(watch);
     this.submitWatchTimers.delete(sessionId);
+    this.turnBusy.delete(sessionId);
     this.lastChunkAt.delete(sessionId);
   }
 }

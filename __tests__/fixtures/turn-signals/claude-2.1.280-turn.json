@@ -1,0 +1,483 @@
+{
+  "provider": "claude",
+  "submitAt": 6553,
+  "chunks": [
+    [629, "\u001b7\u001b[r\u001b8\u001b[?25h"],
+    [667, "\u001b[?25l\u001b[?2004h\u001b[?2031h\u001b[?1004h"],
+    [683, "\u001b[>0q\u001b[?u\u001b[c"],
+    [985, "\u001b[>4m\u001b[<u\u001b[?1004l\u001b[?2031l\u001b[?2004l"],
+    [1348, "\u001b[?2004h\u001b[?2031h\u001b[?1004h"],
+    [
+      1358,
+      "\u001b[?1049h\u001b[2J\u001b[H\u001b[?1000h\u001b[?1002h\u001b[?1003h\u001b[?1006h\u001b[?25l"
+    ],
+    [1371, "\u001b]0;✳ Claude Code\u0007"],
+    [
+      1414,
+      "\u001b[H\r\u001b[1B\u001b[38;5;174m ▐\u001b[48;5;16m▛███▛█\u001b[12G\u001b[39m\u001b[49m\u001b[1mClaude Code\u001b[24G\u001b[22m\u001b[38;5;246mv2.1.280\r\u001b[1B\u001b[38;5;174m▝▜\u001b[48;5;16m█████\u001b[49m█▀\u001b[12G\u001b[38;5;246mOpus 5.5 with high effort · Claude Max\r\u001b[1B\u001b[38;5;174m  ▝▝ ▝▝  \u001b[12G\u001b[38;5;246m~/dev/ai-tools/tb-streamer\r\u001b[102C\u001b[31B● high · /effort\r\u001b[1B\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\u001b[1B\u001b[39m❯ \u001b[2mTry \"edit api-deps.ts to...\"\r\u001b[1B\u001b[22m\u001b[38;5;244m───────────────────────────────────────────────────────────────────────────────────"
+    ],
+    [
+      1591,
+      "─────────────────────────────────────\r\u001b[2C\u001b[2B\u001b[38;5;220m⏵⏵ auto mode on\u001b[38;5;246m (shift+tab to cycle) · ← for agents\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h\u001b[?25l\u001b[H\r\u001b[43C\u001b[39B\u001b[38;5;246m3 agents\u001b[39m\u001b[K\u001b[40;1H\u001b[37;3H\u001b[?25h\u001b[>0q\u001b[?u\u001b[c"
+    ],
+    [1645, "\u001b[?25l\u001b[H\r\u001b[2C\u001b[36B\u001b[K\u001b[40;1H\u001b[37;3H\u001b[?25h"],
+    [
+      2634,
+      "\u001b[?25l\u001b[H\r\u001b[2C\u001b[38B\u001b[36mOpus 5.5\u001b[38;5;246m │ \u001b[38;5;75m~/dev/ai-tools/tb-streamer\u001b[38;5;246m  \u001b[32mmain\u001b[38;5;246m │ \u001b[2m 24.15.0\u001b[22m 00:22 │ \u001b[32m⚓11\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [6054, "\u001b(B\u000f\u001b[?1000h\u001b[?1002h\u001b[?1003h\u001b[?1006h"],
+    [
+      6068,
+      "\u001b[?25l\u001b[H\r\u001b[2C\u001b[36BWithout\u001b[11Gusing\u001b[17Gany\u001b[21Gtools,\u001b[28Gwrite\u001b[34Ga\u001b[36G150-word\u001b[45Gparagraph\u001b[55Gabout\u001b[61Gthe\u001b[65Ghistory\u001b[73Gof\u001b[76Gtea.\r\u001b[38C\u001b[3B\u001b[K\u001b[40;1H\u001b[37;80H\u001b[?25h"
+    ],
+    [6597, "\u001b]0;◐ Claude Code\u0007"],
+    [
+      6615,
+      "\u001b[?25l\u001b[H\r\u001b[6B\u001b[48;5;237m\u001b[38;5;239m❯ \u001b[38;5;246mWithout using any tools, write a 150-word paragraph about the history of tea.\u001b[39m                                         \r\u001b[27B\u001b[49m\u001b[38;5;174m·\u001b[3GSublimating… \u001b[38;5;246m(running UserPromptSubmit hooks… 0/5 · 0s)\r\u001b[3B❯ \u001b[39m\u001b[K\r\u001b[38C\u001b[3B\u001b[38;5;246m · ← 3 agents\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      6649,
+      "\u001b[?25l\u001b[H\r\u001b[48C\u001b[33B\u001b[38;5;246m1\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      6672,
+      "\u001b[?25l\u001b[H\r\u001b[48C\u001b[33B\u001b[38;5;246m2\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      6689,
+      "\u001b[?25l\u001b[H\r\u001b[48C\u001b[33B\u001b[38;5;246m3\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      6866,
+      "\u001b[?25l\u001b[H\r\u001b[48C\u001b[33B\u001b[38;5;246m4\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      7004,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[16G\u001b[39m\u001b[K\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      7058,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      7273,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      7396,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      7529,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✽\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [7559, "\u001b]0;◑ Claude Code\u0007"],
+    [7789, "\u001b]0;◑ History of tea paragraph\u0007"],
+    [
+      7952,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      8069,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      8169,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      8405,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      8537,
+      "\u001b[?25l\u001b[H\r\u001b[2C\u001b[6B\u001b[48;5;237m\u001b[38;5;231mWithout using any tools, write a 150-word paragraph about the history of tea.\r\u001b[2C\u001b[27B\u001b[49m\u001b[38;5;174mFlow\u001b[8Gng\u001b[38;5;216m…\u001b[38;5;174m \u001b[39m\u001b[K\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [8539, "\u001b]0;◐ History of tea paragraph\u0007"],
+    [
+      8559,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m·\u001b[9G\u001b[38;5;216mg\u001b[12G\u001b[38;5;246m(1s · \u001b[38;5;248mthinking with high effort\u001b[38;5;246m)\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      8627,
+      "\u001b[?25l\u001b[H\r\u001b[12C\u001b[33B\u001b[38;5;246m2\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      8745,
+      "\u001b[?25l\u001b[H\r\u001b[7C\u001b[33B\u001b[38;5;216mn\u001b[18G\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      8964,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[7G\u001b[38;5;216mi\u001b[10G\u001b[38;5;174m…\u001b[18G\u001b[38;5;246mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      9081,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[6G\u001b[38;5;216mw\u001b[9G\u001b[38;5;174mg\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      9182,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      9299,
+      "\u001b[?25l\u001b[H\r\u001b[4C\u001b[33B\u001b[38;5;216mo\u001b[8G\u001b[38;5;174mn\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      9416,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [9498, "\u001b]0;◑ History of tea paragraph\u0007"],
+    [
+      9516,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✽\u001b[4G\u001b[38;5;216ml\u001b[7G\u001b[38;5;174mi\u001b[18G\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      9640,
+      "\u001b[?25l\u001b[H\r\u001b[12C\u001b[33B\u001b[38;5;246m3\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      9739,
+      "\u001b[?25l\u001b[H\r\u001b[2C\u001b[33B\u001b[38;5;216mF\u001b[6G\u001b[38;5;174mw\u001b[18G\u001b[38;5;248mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      9975,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[5Go\u001b[18G\u001b[38;5;249mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      10083,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[4Gl\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      10201,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      10304,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[3GF\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [10459, "\u001b]0;◐ History of tea paragraph\u0007"],
+    [
+      10522,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m·\u001b[18G\u001b[38;5;248mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      10642,
+      "\u001b[?25l\u001b[H\r\u001b[12C\u001b[33B\u001b[38;5;246m4\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      10761,
+      "\u001b[?25l\u001b[H\r\u001b[17C\u001b[33B\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      10977,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[18G\u001b[38;5;246mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      11094,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      11195,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      11312,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      11376,
+      "\u001b[?25l\u001b[H\r\u001b[102C\u001b[34B\u001b[K\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [11420, "\u001b]0;◑ History of tea paragraph\u0007"],
+    [
+      11541,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✽\u001b[18G\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      11980,
+      "\u001b[?25l\u001b[H\r\u001b[12C\u001b[33B\u001b[38;5;246m5\u001b[18G\u001b[38;5;248mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      12034,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[18G\u001b[38;5;249mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      12314,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      12336,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      12370,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [12470, "\u001b]0;◐ History of tea paragraph\u0007"],
+    [
+      12806,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m·\u001b[18G\u001b[38;5;248mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      12865,
+      "\u001b[?25l\u001b[H\r\u001b[12C\u001b[33B\u001b[38;5;246m6\u001b[18G\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      13321,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      13328,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[18G\u001b[38;5;246mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      13343,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [13366, "\u001b]0;◑ History of tea paragraph\u0007"],
+    [
+      13563,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✽\u001b[18G\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      13663,
+      "\u001b[?25l\u001b[H\r\u001b[12C\u001b[33B\u001b[38;5;246m7\u001b[18G\u001b[38;5;248mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      14009,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[10G\u001b[38;5;216m…\u001b[18G\u001b[38;5;249mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      14110,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[9G\u001b[38;5;216mg\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      14236,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [14327, "\u001b]0;◐ History of tea paragraph\u0007"],
+    [
+      14337,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[8G\u001b[38;5;216mn\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      14558,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m·\u001b[7G\u001b[38;5;216mi\u001b[10G\u001b[38;5;174m…\u001b[18G\u001b[38;5;248mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      14676,
+      "\u001b[?25l\u001b[H\r\u001b[5C\u001b[33B\u001b[38;5;216mw\u001b[9G\u001b[38;5;174mg\u001b[13G\u001b[38;5;246m8\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      14779,
+      "\u001b[?25l\u001b[H\r\u001b[17C\u001b[33B\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      14893,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[5G\u001b[38;5;216mo\u001b[8G\u001b[38;5;174mn\u001b[18G\u001b[38;5;246mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      15127,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[4G\u001b[38;5;216ml\u001b[7G\u001b[38;5;174mi\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      15227,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [15288, "\u001b]0;◑ History of tea paragraph\u0007"],
+    [
+      15347,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[3G\u001b[38;5;216mF\u001b[6G\u001b[38;5;174mw\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      15565,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✽\u001b[5Go\u001b[13G\u001b[38;5;246m9\u001b[18G\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      15685,
+      "\u001b[?25l\u001b[H\r\u001b[3C\u001b[33B\u001b[38;5;174ml\u001b[18G\u001b[38;5;248mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      15900,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[3GF\u001b[18G\u001b[38;5;249mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      16123,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      16242,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [16249, "\u001b]0;◐ History of tea paragraph\u0007"],
+    [
+      16359,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      16461,
+      "\u001b[?25l\u001b[H\r\u001b[17C\u001b[33B\u001b[38;5;248mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      16578,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m·\u001b[13G\u001b[38;5;246m10s · \u001b[38;5;248mthinking with high e\u001b[40Gfort\u001b[38;5;246m)\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      16799,
+      "\u001b[?25l\u001b[H\r\u001b[18C\u001b[33B\u001b[38;5;247mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      16921,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[19G\u001b[38;5;246mthinking with high effort\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17138,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [17211, "\u001b]0;◑ History of tea paragraph\u0007"],
+    [
+      17257,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17285,
+      "\u001b[?25l\u001b[H\r\u001b[18C\u001b[33B\u001b[38;5;246m↓\u001b[39m \u001b[38;5;246m1.2k tokens\u001b[33G· t\u001b[37Ginking with high effort)\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17299,
+      "\u001b[?25l\u001b[H\r\u001b[36C\u001b[33B\u001b[38;5;246mought for 9s)\u001b[39m\u001b[K\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17369,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17386,
+      "\u001b[?25l\u001b[H\r\u001b[8B\u001b[38;5;231m⏺\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17474,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✽\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17591,
+      "\u001b[?25l\u001b[H\r\u001b[13C\u001b[33B\u001b[38;5;246m1\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17710,
+      "\u001b[?25l\u001b[H\r\u001b[11C\u001b[38B\u001b[38;5;246m\u001b[2m[History of tea paragraph]\u001b[22m │\u001b[41G│ \u001b[38;5;75m~/dev/ai-tools/tb-streamer\u001b[38;5;246m  \u001b[32mmain\u001b[38;5;246m │ \u001b[2m 24.15.0\u001b[22m 00:23 │ \u001b[32m⚓11\u001b[38;5;246m \u001b[32m█░░░░░░░░░ 11%\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17987,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      17995,
+      "\u001b[?25l\u001b[H\r\u001b[2C\u001b[8BTea's\u001b[9Gstory\u001b[15Gbegins\u001b[22Gin\u001b[25GChina,\u001b[32Gwhere\u001b[38Glegend\u001b[45Gcredits\u001b[53GEmperor\u001b[61GShennong\u001b[70Gwith\u001b[75Gdiscovering\u001b[87Git\u001b[90Garound\u001b[97G2737\u001b[102GBCE,\u001b[107Gwhen\u001b[112Gleaves\r\u001b[2C\u001b[1Bdrifted\u001b[11Ginto\u001b[16Ghis\u001b[20Gboiling\u001b[28Gwater.\u001b[35GWhatever\u001b[44Gits\u001b[48Gtrue\u001b[53Gorigin,\u001b[61Gpeople\u001b[68Gin\u001b[71GYunnan\u001b[78Gand\u001b[82GSichuan\u001b[90Gwere\u001b[95Ggrowing\u001b[103Gtea\u001b[107Gby\u001b[110Gthe\u001b[114GHan\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      18146,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [18170, "\u001b]0;◐ History of tea paragraph\u0007"],
+    [
+      18251,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      18372,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      18575,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m·\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      18589,
+      "\u001b[?25l\u001b[H\r\u001b[2C\u001b[10Bdynasty,\u001b[12Gfirst\u001b[18Gas\u001b[21Gmedicine\u001b[30Gand\u001b[34Glater\u001b[40Gas\u001b[43Gan\u001b[46Geveryday\u001b[55Gdrink.\u001b[62GDuring\u001b[69Gthe\u001b[73GTang\u001b[78Gdynasty,\u001b[87GLu\u001b[90GYu\u001b[93Gwrote\u001b[99G\u001b[3mThe Classic of Tea\u001b[23m,\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      18606,
+      "\u001b[?25l\u001b[H\r\u001b[13C\u001b[33B\u001b[38;5;246m2\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      18944,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✢\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [19133, "\u001b]0;◑ History of tea paragraph\u0007"],
+    [
+      19153,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19169,
+      "\u001b[?25l\u001b[H\r\u001b[2C\u001b[11Bwhich\u001b[9Gset\u001b[13Gout\u001b[17Ghow\u001b[21Gto\u001b[24Gprepare\u001b[32Git\u001b[35Gand\u001b[39Graised\u001b[46Git\u001b[49Gto\u001b[52Gan\u001b[55Gart.\u001b[60GBuddhist\u001b[69Gmonks\u001b[75Gcarried\u001b[83Gtea\u001b[87Gto\u001b[90GJapan,\u001b[97Gwhere\u001b[103Git\u001b[106Ggrew\u001b[111Ginto\u001b[116Gthe\r\u001b[2C\u001b[1Britual\u001b[10Gof\u001b[13Gthe\u001b[17Gtea\u001b[21Gceremony.\u001b[31GCaravans\u001b[40Gand\u001b[44Gsea\u001b[48Gtrade\u001b[54Gspread\u001b[61Git\u001b[64Gacross\u001b[71GCentral\u001b[79GAsia,\u001b[85GRussia\u001b[92Gand\u001b[96Gthe\u001b[100GIslamic\u001b[108Gworld.\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19272,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19288,
+      "\u001b[?25l\u001b[H\r\u001b[31C\u001b[33B\u001b[38;5;246m)\u001b[39m\u001b[K\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19375,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19495,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✽\u001b[10G\u001b[38;5;216m…\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19617,
+      "\u001b[?25l\u001b[H\r\u001b[13C\u001b[33B\u001b[38;5;246m3\u001b[23G3\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19714,
+      "\u001b[?25l\u001b[H\r\u001b[8C\u001b[33B\u001b[38;5;216mg\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19864,
+      "\u001b[?25l\u001b[H\r\u001b[2C\u001b[13BPortuguese\u001b[14Gand\u001b[18GDutch\u001b[24Gmerchants\u001b[34Gbrought\u001b[42Gtea\u001b[46Gto\u001b[49GEurope\u001b[56Gin\u001b[59Gthe\u001b[63Gseventeenth\u001b[75Gcentury,\u001b[84Gand\u001b[88GBritain\u001b[96Gsoon\u001b[101Gbecame\u001b[108Gthoroughly\r\u001b[2C\u001b[1Bobsessed.\u001b[13GTo\u001b[16Gbreak\u001b[22GChina's\u001b[30Gmonopoly,\u001b[40Gthe\u001b[44GBritish\u001b[52GEast\u001b[57GIndia\u001b[63GCompany\u001b[71Gset\u001b[75Gup\u001b[78Gplantations\u001b[90Gin\u001b[93GIndia\u001b[99Gand\u001b[103GCeylon.\u001b[111GToday,\u001b[118Gtea\r\u001b[2C\u001b[1Bis\u001b[6Gthe\u001b[10Gworld's\u001b[18Gmost\u001b[23Gwidely\u001b[30Gconsumed\u001b[39Gdrink\u001b[45Gafter\u001b[51Gwater,\u001b[58Genjoyed\u001b[66Gin\u001b[69Gcountless\u001b[79Gforms,\u001b[86Gfrom\u001b[91Gdelicate\u001b[100Gmatcha\u001b[107Gto\u001b[110Gmasala\r\u001b[2C\u001b[1Bchai.\r\u001b[2C\u001b[17B\u001b[38;5;180mFlowing…\u001b[13G\u001b[38;5;246mrunning Stop\u001b[26Gh\u001b[28Goks… 1/8 · 13s · ↓\u001b[47G1.3k tokens)\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19879,
+      "\u001b[?25l\u001b[H\r\u001b[32C\u001b[33B\u001b[38;5;246m2\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19926,
+      "\u001b[?25l\u001b[H\r\u001b[32C\u001b[33B\u001b[38;5;246m3\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19943,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✻\u001b[3GFlowing…\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19980,
+      "\u001b[?25l\u001b[H\r\u001b[32C\u001b[33B\u001b[38;5;246m4\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      19996,
+      "\u001b[?25l\u001b[H\r\u001b[32C\u001b[33B\u001b[38;5;246m7\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      20059,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✶\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [20092, "\u001b]0;◐ History of tea paragraph\u0007"],
+    [
+      20155,
+      "\u001b[?25l\u001b[H\r\u001b[48C\u001b[33B\u001b[38;5;246m4\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [
+      20271,
+      "\u001b[?25l\u001b[H\r\u001b[33B\u001b[38;5;174m✳\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ],
+    [20294, "\u001b]0;✳ History of tea paragraph\u0007"],
+    [
+      20296,
+      "\u001b[?25l\u001b[H\r\u001b[18B\u001b[38;5;246m✻\u001b[3GCooked for 13s · done 0:23\r\u001b[15B\u001b[39m\u001b[K\r\u001b[3B❯ \u001b[40;1H\u001b[37;3H\u001b[?25h"
+    ]
+  ]
+}
