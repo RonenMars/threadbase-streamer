@@ -584,6 +584,18 @@ Restart the streamer to pick it up.
 
 ---
 
+### A Cursor session ignores every prompt, though `/input` answers `{"ok":true}` {#cursor-prompt-dropped}
+
+**When:** A Cursor session settles `waiting_input`, but each prompt is followed 2 s later by `cursor.ready submit-stale`. `/output` holds only the boot screen, and the prompt is never echoed. Claude and Codex sessions on the same streamer work.
+**Cause:** Three input-timing faults in `cursor-pty-runner.ts`, all reproduced against Cursor Agent 2026.09.23 with standalone node-pty scripts:
+- The runner wrote Ctrl+U and the prompt as one write (`"\x15" + text`). Cursor discards a whole read that starts with Ctrl+U, so nothing reached the compose box, with or without a 500 ms wait before `\r`. This is the fault behind the symptom above.
+- A `\r` sent before Cursor echoes the text (about 90 ms) still runs the turn, but it leaves the prompt in the compose box. The `ctrl+c to stop` busy hint then never shows, so the turn cannot end on its turn signal, and the next prompt would be appended to the leftover text.
+- Cursor paints nothing for 8–11 s after spawn, and the 8 s boot fallback used to fire before that. Queued input then went into a tty still in cooked mode, which echoed it and swallowed the `\r`, so the prompt sat in the compose box unsent.
+
+**Fix:** Ctrl+U now goes in its own write, followed 16 ms later by the text. The `\r` waits for Cursor's echo repaint and then quiet, capped at 500 ms. Queued prompts go out one at a time. Boot waits for Cursor to enable bracketed paste (`\x1b[?2004h`, painted with the compose box on fresh and `--resume` starts), with a 60 s backstop. `__tests__/fixtures/turn-signals/cursor-2026.09.23-fast-submit.json` is the raw capture of an early `\r`, pinned in `__tests__/cursor-pty-runner.test.ts`.
+
+---
+
 ### "Failed to start session — File not found:" via public URL
 
 **When:** Session start works fine from `localhost` but the mobile app shows "Failed to start session — File not found:" (or similar) when connecting through `https://tb.example.com`.

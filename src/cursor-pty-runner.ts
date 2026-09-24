@@ -27,6 +27,14 @@ const OUTPUT_BUFFER_MAX = 65536;
 const INPUT_HISTORY_MAX = 50;
 const QUIET_DETECT_MS = 500;
 const CURSOR_READY_FALLBACK_MS = 8_000;
+// Cursor paints nothing for ~8-11s after spawn, then enables bracketed paste
+// as the compose box comes up (Cursor Agent 2026.09.23, fresh and --resume).
+// Until then the PTY is still in cooked mode: input is echoed by the tty and
+// the \r is eaten as a line ending, so the text lands in the compose box and is
+// never submitted. Boot settles only once this has been painted.
+const CURSOR_BOOT_MARKER = "\x1b[?2004h";
+// Backstop for a Cursor that stops emitting the marker: settle anyway.
+const CURSOR_READY_MAX_WAIT_MS = 60_000;
 const SUBMIT_BYTES = "\r";
 /** Ctrl+U — kill the compose line before pasting the next turn. */
 const CLEAR_COMPOSE_BYTES = "\x15";
@@ -44,10 +52,10 @@ const CURSOR_TURN_BUSY_TEXT = "ctrl+c to stop";
  *
  * Spawn/resume flags come from the published CLI: `--workspace`, `--trust`
  * (headless, skip the workspace-trust prompt), `--resume=<id>`, positional
- * opening prompt. Boot settles on quiet or the 8s fallback (no verified Ready
- * scrape). A turn returns to waiting_input once its busy hint
- * (CURSOR_TURN_BUSY_TEXT) has come and gone; submit-stale recovers only a
- * submit that never showed it.
+ * opening prompt. Boot settles on quiet or the 8s fallback, but only after the
+ * compose box has painted (CURSOR_BOOT_MARKER). A turn returns to waiting_input
+ * once its busy hint (CURSOR_TURN_BUSY_TEXT) has come and gone; submit-stale
+ * recovers only a submit that never showed it.
  *
  * Input clears the compose line (`Ctrl+U`) before writing text — Cursor leaves
  * the previous prompt editable, and a bare write would concatenate turns.
@@ -181,6 +189,13 @@ export class CursorPtyRunner implements SessionRunner {
   private tryReadyFallback(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session?.status !== "running" || !this.pendingReady.has(sessionId)) return;
+    if (
+      !session.outputBuffer.includes(CURSOR_BOOT_MARKER) &&
+      Date.now() - session.startedAt.getTime() < CURSOR_READY_MAX_WAIT_MS
+    ) {
+      this.armReadyFallback(sessionId);
+      return;
+    }
     this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
   }
 
@@ -235,22 +250,40 @@ export class CursorPtyRunner implements SessionRunner {
     return session.promptCount;
   }
 
-  private writeSubmit(sessionId: string, session: InternalSession, input: string): void {
+  private writeSubmit(
+    sessionId: string,
+    session: InternalSession,
+    input: string,
+    onSubmitted?: () => void,
+  ): void {
     this.recordUserMessage(session, input);
-    const writeAt = Date.now();
-    // Cursor's TUI leaves the previous prompt in the compose box after a turn.
-    // Writing the next input on top concatenates ("Commit it" + "Yes, commit it"
-    // → "Commit itYes, commit it") and that smashed string is what lands in
-    // agent-transcripts. Clear the line first (same kill-line byte readline
-    // uses), then write the new text, then \r once the PTY is quiet.
-    session.process.write(CLEAR_COMPOSE_BYTES + input);
+    let writeAt = Date.now();
+    // Cursor's TUI leaves the previous prompt in the compose box after a turn
+    // whose \r beat the echo (see trySubmit). Writing the next input on top
+    // concatenates ("Commit it" + "Yes, commit it" → "Commit itYes, commit it")
+    // and that smashed string is what lands in agent-transcripts. Clear the line
+    // first (same kill-line byte readline uses), then write the new text, then
+    // \r once Cursor has echoed it and gone quiet.
+    // Ctrl+U needs a read of its own: Cursor discards a whole read that starts
+    // with it, so "\x15" + text in one write never reached the compose box and
+    // every prompt was silently dropped.
+    session.process.write(CLEAR_COMPOSE_BYTES);
 
+    const writeText = () => {
+      if (this.sessions.get(sessionId) !== session) return;
+      session.process.write(input);
+      writeAt = Date.now();
+      setTimeout(trySubmit, CURSOR_SUBMIT_DELAY_MS);
+    };
     const trySubmit = () => {
       const current = this.sessions.get(sessionId);
       if (!current || current !== session) return;
       const now = Date.now();
-      const lastChunk = this.lastChunkAt.get(sessionId) ?? writeAt;
-      const quiet = now - lastChunk >= CURSOR_SUBMIT_DELAY_MS;
+      const lastChunk = this.lastChunkAt.get(sessionId) ?? 0;
+      // Quiet only counts once Cursor has repainted the text (~90ms). A \r that
+      // beats the echo still runs the turn but leaves the prompt in the compose
+      // box, which hides CURSOR_TURN_BUSY_TEXT and prefixes the next turn.
+      const quiet = lastChunk > writeAt && now - lastChunk >= CURSOR_SUBMIT_DELAY_MS;
       const timedOut = now - writeAt >= CURSOR_SUBMIT_MAX_WAIT_MS;
       if (!quiet && !timedOut) {
         setTimeout(trySubmit, CURSOR_SUBMIT_DELAY_MS);
@@ -258,8 +291,9 @@ export class CursorPtyRunner implements SessionRunner {
       }
       current.process.write(SUBMIT_BYTES);
       this.armSubmitWatch(sessionId);
+      onSubmitted?.();
     };
-    setTimeout(trySubmit, CURSOR_SUBMIT_DELAY_MS);
+    setTimeout(writeText, CURSOR_SUBMIT_DELAY_MS);
   }
 
   private armSubmitWatch(sessionId: string): void {
@@ -285,16 +319,14 @@ export class CursorPtyRunner implements SessionRunner {
     this.queuedInputs.delete(sessionId);
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    queue.forEach((input, i) => {
-      const writeAt = i * CURSOR_SUBMIT_DELAY_MS * 2;
-      const fire = () => {
-        const current = this.sessions.get(sessionId);
-        if (!current || current !== session) return;
-        this.writeSubmit(sessionId, session, input);
-      };
-      if (writeAt === 0) fire();
-      else setTimeout(fire, writeAt);
-    });
+    // One at a time: a submit waits on Cursor's echo, so the next clear must
+    // not start before the previous \r.
+    const fire = () => {
+      const input = queue.shift();
+      if (input === undefined || this.sessions.get(sessionId) !== session) return;
+      this.writeSubmit(sessionId, session, input, () => setTimeout(fire, CURSOR_SUBMIT_DELAY_MS));
+    };
+    fire();
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
@@ -458,7 +490,9 @@ export class CursorPtyRunner implements SessionRunner {
     const session = this.sessions.get(sessionId);
     if (!session || session.status === "idle") return;
     if (this.pendingReady.has(sessionId)) {
-      this.markReady(sessionId, session, "quiet-fallback", "quiet:boot");
+      if (session.outputBuffer.includes(CURSOR_BOOT_MARKER)) {
+        this.markReady(sessionId, session, "quiet-fallback", "quiet:boot");
+      }
       return;
     }
     // The spinner repaints every ~250ms while a turn runs, so quiet usually
