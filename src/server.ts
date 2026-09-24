@@ -371,6 +371,7 @@ export class StreamerServer {
   // ("database connection is not open"), which would otherwise leave the cache
   // empty. Register via trackCacheWrite(); each entry removes itself on settle.
   private inFlightCacheWrites = new Set<Promise<unknown>>();
+  private closing: Promise<void> | null = null;
   private apiKey: string;
   private apiKeySource: "config" | "cli";
   private localNoAuth: boolean;
@@ -2020,9 +2021,17 @@ export class StreamerServer {
     });
   }
 
+  // Idempotent: a repeated stop signal (launchd re-sends it ~5 s into a
+  // shutdown) gets the in-flight close rather than a second teardown racing it.
+  // The first caller's `exiting` wins.
+  close(opts: { exiting?: boolean } = {}): Promise<void> {
+    this.closing ??= this.closeOnce(opts);
+    return this.closing;
+  }
+
   // `exiting`: the caller exits the process right after, so the file watchers
   // are detached rather than closed. See ConversationWatcher.detach().
-  async close({ exiting = false }: { exiting?: boolean } = {}): Promise<void> {
+  private async closeOnce({ exiting = false }: { exiting?: boolean }): Promise<void> {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
     this.holdWhenIdle.clear();
