@@ -1,3 +1,9 @@
+## [1.101.9](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.8...v1.101.9) (2026-09-24)
+
+### Bug Fixes
+
+* **cursor:** stop dropping every prompt sent to a Cursor session ([#965](https://github.com/RonenMars/threadbase-streamer/issues/965)) ([663c9e3](https://github.com/RonenMars/threadbase-streamer/commit/663c9e3a5903c1b719394e0d6ce2edf525149130)), closes [#963](https://github.com/RonenMars/threadbase-streamer/issues/963)
+
 ## [1.101.8](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.7...v1.101.8) (2026-09-24)
 
 ### Bug Fixes
