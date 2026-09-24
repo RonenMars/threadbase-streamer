@@ -256,6 +256,42 @@ describe("StreamerServer.close({ exiting })", () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 
+  // A kickstart 13 s after boot held :8766 for 51 s: close() awaited the
+  // startup scan and its cache writes before it reached httpServer.close().
+  it("does not wait on an in-flight scan or cache write when exiting", async () => {
+    const server = makeServer(0);
+    await server.listen(0);
+    const port = server.port;
+    const internals = server as unknown as {
+      scannerManager: { close(): Promise<void> };
+      trackCacheWrite(task: Promise<unknown>): void;
+    };
+    internals.trackCacheWrite(new Promise<void>(() => {}));
+    vi.spyOn(internals.scannerManager, "close").mockReturnValue(new Promise<void>(() => {}));
+
+    await Promise.race([server.close({ exiting: true }), hangGuard("server.close()")]);
+    await expectPortRebindable(port);
+  });
+
+  it("still waits on an in-flight cache write by default", async () => {
+    const server = makeServer(0);
+    await server.listen(0);
+    const internals = server as unknown as { trackCacheWrite(task: Promise<unknown>): void };
+    let finishScan!: () => void;
+    internals.trackCacheWrite(new Promise<void>((resolve) => (finishScan = resolve)));
+
+    let closed = false;
+    const closing = server.close().then(() => {
+      closed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(closed).toBe(false);
+
+    finishScan();
+    await Promise.race([closing, hangGuard("server.close()")]);
+    expect(closed).toBe(true);
+  });
+
   it("still closes the file watchers by default", async () => {
     const server = makeServer(0);
     await server.listen(0);
