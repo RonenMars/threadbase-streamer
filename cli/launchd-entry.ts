@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { activeLink, installDir } from "../src/lifecycle/constants";
@@ -236,15 +236,31 @@ function main(): void {
   const env = { ...process.env };
   loadInstallDirEnv(env);
   loadApnsKeyIntoEnv(env);
-  const result = spawnSync(process.execPath, [target, ...args], {
+  const child = spawn(process.execPath, [target, ...args], {
     stdio: "inherit",
     env,
   });
-  if (result.error) {
-    log.error(`failed to spawn ${target}: ${result.error.message}`);
+  forwardStopSignals(child);
+  child.on("error", (err) => {
+    log.error(`failed to spawn ${target}: ${err.message}`);
     process.exit(1);
+  });
+  child.on("exit", (code) => process.exit(code ?? 1));
+}
+
+/**
+ * Pass launchd's stop signal on to the server. launchd signals only this
+ * process, so under the old spawnSync the shim died and the server kept :8766
+ * until something else killed it: a kickstart logged `EADDRINUSE` from the new
+ * instance and took ~10 s to hand over. Exported for tests.
+ */
+export function forwardStopSignals(
+  child: Pick<ChildProcess, "kill">,
+  from: NodeJS.EventEmitter = process,
+): void {
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    from.on(signal, () => child.kill(signal));
   }
-  process.exit(result.status ?? 1);
 }
 
 // Run main() only when invoked as a script, not when imported by tests.

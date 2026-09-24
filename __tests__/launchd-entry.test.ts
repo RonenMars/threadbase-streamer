@@ -9,6 +9,7 @@ vi.mock("../src/lifecycle/process-liveness");
 import {
   decideShimAction,
   findApnsKeyFile,
+  forwardStopSignals,
   loadApnsKeyIntoEnv,
   loadInstallDirEnv,
 } from "../cli/launchd-entry";
@@ -285,5 +286,34 @@ describe("loadInstallDirEnv", () => {
 
     expect(() => loadInstallDirEnv(env, dir)).not.toThrow();
     expect(Object.keys(env)).toEqual([]);
+  });
+});
+
+describe("forwardStopSignals", () => {
+  it("delivers the shim's SIGTERM to a real child, which then exits cleanly", async () => {
+    const { spawn } = await import("child_process");
+    const { EventEmitter } = await import("events");
+    // The child exits 0 only if it receives SIGTERM; otherwise it lingers.
+    const child = spawn(process.execPath, [
+      "-e",
+      "process.on('SIGTERM', () => process.exit(0)); process.stdout.write('ready'); setInterval(() => {}, 1000);",
+    ]);
+    await new Promise((resolve) => child.stdout.once("data", resolve));
+    const shim = new EventEmitter();
+    forwardStopSignals(child, shim);
+
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    shim.emit("SIGTERM");
+
+    expect(await exited).toBe(0);
+  });
+
+  it("forwards SIGINT as SIGINT", async () => {
+    const kill = vi.fn();
+    const { EventEmitter } = await import("events");
+    const shim = new EventEmitter();
+    forwardStopSignals({ kill }, shim);
+    shim.emit("SIGINT");
+    expect(kill).toHaveBeenCalledWith("SIGINT");
   });
 });
