@@ -2038,10 +2038,15 @@ export class StreamerServer {
     this.terminalSeq.clear();
     // An in-process runner is about to kill its children, so record that before
     // dispose() and before runtimeStore.close() takes the registry handle away.
-    // A remote runner does the opposite: disconnect first so no late host event
-    // can write through a closed handle, and leave its live registry rows alone.
-    if (this.ptyManager.isRemote()) this.ptyManager.dispose();
-    else this.registryBoot.recordShutdownState();
+    // A remote runner leaves its live registry rows alone and only disconnects,
+    // so no late host event can write through a closed handle.
+    //
+    // dispose() runs here, before the awaits below, not at the end: those wait
+    // as long as an in-flight scan runs, and a supervisor that SIGKILLs in that
+    // window skipped the kill entirely. Exits that land after dispose() find no
+    // session and write nothing, so the shutdown rows stand.
+    if (!this.ptyManager.isRemote()) this.registryBoot.recordShutdownState();
+    this.ptyManager.dispose();
     // Wait for every fire-and-forget scan→cache-write task to finish before
     // tearing anything down. Their post-scan steps write to this.cache
     // (upsert / populateTail / pruneGhostFiles); closing cache.db under them
@@ -2058,7 +2063,6 @@ export class StreamerServer {
     await this.scannerManager.close();
     this.cache?.close();
     this.runtimeStore?.close();
-    if (!this.ptyManager.isRemote()) this.ptyManager.dispose();
     this.fileWatcher.dispose();
     this.externalTails.clear();
     this.promptRegistry.dispose();
