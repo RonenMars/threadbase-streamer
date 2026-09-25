@@ -108,7 +108,8 @@ Whether naming the tool category is inside the current policy is a judgment call
 Urgency: `time-sensitive`, distinct sound. The agent is blocked.
 
 Actions: **Allow** and **Deny** (Deny destructive), both `authenticationRequired`.
-They answer through the existing `POST /:id/permission/answer` with the gate's `contentKey`, so the push `data` must carry `contentKey` and the option indices for Allow and Deny.
+They answer through the existing `POST /:id/permission/answer` with the gate's `gateId` and the option positions for Allow and Deny, which the push `data` carries.
+Not `contentKey`: it embeds the gate's detail, which is the command, so the route accepts `gateId` alone (a content change mints a new one).
 "Always allow" is not offered from the lock screen.
 
 ### Question (`question`)
@@ -205,7 +206,7 @@ Tier 1 contradicts the privacy policy as written. Two routes:
 Streamer:
 
 - `waitingInputMessage` gains `subtitle`, `interruptionLevel`, `channelId`, `categoryId`; `ExpoPushMessage` gains the same optional fields.
-- `onPrompt` receives the gate (or question) rather than just its kind, so it can pick the tool phrase and carry `contentKey`.
+- `onPrompt` receives the gate (or question) rather than just its kind, so it can pick the tool phrase and carry `gateId`.
 - New `AttentionKind` `limited`; the Codex limit path calls it instead of `permission`.
 - `failureCode` set at every `failureReason` site, not only Codex's `failStartup`.
 - The title needs `branch`; `waitingInputMessage`'s `Pick<>` widens accordingly.
