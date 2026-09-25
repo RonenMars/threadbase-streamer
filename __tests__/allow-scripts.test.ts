@@ -30,8 +30,9 @@ import { describe, expect, it } from "vitest";
  *
  * So the invariant is not "allow-list every native dependency". It is:
  * allow-list a native dependency **iff** it lacks a prebuild for a platform we
- * ship on. Both directions are asserted, because re-adding `better-sqlite3`
- * would look like tidying up an oversight and would break installs instead.
+ * ship on, and deny it (`false`) otherwise. Both directions are asserted,
+ * because re-adding `better-sqlite3` would look like tidying up an oversight
+ * and would break installs instead.
  */
 
 /** Native deps with no prebuild for some platform we ship on — must be allowed. */
@@ -57,7 +58,9 @@ describe("allowScripts is scoped to native deps that actually need to build", ()
     expect(pkg.allowScripts?.[name]).toBe(true);
   });
 
-  it.each(MUST_NOT_ALLOW)("%s is NOT allow-listed — it ships prebuilds", (name) => {
-    expect(pkg.allowScripts?.[name]).toBeUndefined();
+  it.each(MUST_NOT_ALLOW)("%s is explicitly denied — it ships prebuilds", (name) => {
+    // `false`, not absent: an unlisted package makes every npm 12 install warn
+    // that its script was blocked, burying the warning that would matter.
+    expect(pkg.allowScripts?.[name]).toBe(false);
   });
 });
