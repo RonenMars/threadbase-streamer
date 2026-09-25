@@ -1,3 +1,9 @@
+## [1.101.14](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.13...v1.101.14) (2026-09-25)
+
+### Bug Fixes
+
+* **server:** stop boot recovery from spawning or writing after shutdown ([#978](https://github.com/RonenMars/threadbase-streamer/issues/978)) ([fd3e7da](https://github.com/RonenMars/threadbase-streamer/commit/fd3e7daebf571abbf0e92077412dcc9d8e14624e)), closes [#971](https://github.com/RonenMars/threadbase-streamer/issues/971)
+
 ## [1.101.13](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.12...v1.101.13) (2026-09-25)
 
 ### Bug Fixes
