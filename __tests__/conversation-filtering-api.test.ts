@@ -166,6 +166,56 @@ it("filters search before pagination and returns the corrected child ID only whe
   expect(included.body.conversations.map((c: any) => c.id)).toEqual(["ordinary", CHILD]);
 });
 
+it("filters agent-authored conversations out of search results", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "conversation-filtering-api-agent-"));
+  try {
+    const agentCache = ConversationCache.open(join(agentDir, "cache.db"), 10, undefined, {
+      filterAgentConversations: true,
+    });
+    const agentFilePath = join(agentDir, "agent.jsonl");
+    writeFileSync(
+      agentFilePath,
+      `${JSON.stringify({ type: "user", message: { content: "needle" }, entrypoint: "sdk-cli" })}\n`,
+    );
+    const agentMeta = {
+      id: agentFilePath,
+      sessionId: "agent-convo",
+      filePath: agentFilePath,
+      projectPath: agentDir,
+      projectName: "project",
+      preview: "needle",
+      timestamp: new Date().toISOString(),
+      messageCount: 1,
+    } as ScannerMeta;
+    // upsertFromScannerMeta already skips this file (it's the agent filter's
+    // other half); the point under test is that search — which builds its
+    // response straight from the scanner meta, not the cache row — hides it
+    // too instead of returning it because no cache row exists to check.
+    agentCache.upsertFromScannerMeta([agentMeta]);
+    const agentHandlers = new ConversationHandlers({
+      cache: () => agentCache,
+      sessionStore: new SessionStore(() => true),
+      includeSubagentSessions: () => false,
+      scannerManager: {
+        get: async () => ({}),
+        codexScanOpts: () => ({}),
+        reconcileMode: () => null,
+      },
+      resolveConversationLookupId: (id: string) => id,
+      rejectIfWarmingUp: () => false,
+      findLiveSessionFilePath: () => null,
+      log: () => ({ warn: vi.fn() }),
+    } as unknown as ConversationHandlersDeps);
+    vi.mocked(search).mockResolvedValue([{ meta: agentMeta, score: 1, matches: [] }] as any);
+    const res = response();
+    await agentHandlers.handleSearch(new URL("http://localhost/api/search?q=needle"), res);
+    expect(res.body).toMatchObject({ total: 0, conversations: [] });
+    agentCache.close();
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
 it("keeps list totals, hasMore, recents, and count consistent", async () => {
   const list = response();
   await handlers.handleListConversations(

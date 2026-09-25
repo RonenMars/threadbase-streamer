@@ -1130,6 +1130,18 @@ export class ConversationCache {
     return this.classifyAgentFile(filePath, s.mtimeMs, s.size);
   }
 
+  /**
+   * Whether `filePath` should be hidden under the current agent-conversation
+   * filter (THREADBASE_INCLUDE_AGENTS). `upsertFromScannerMeta` already skips
+   * inserting these files, so a listing built from the cache never sees them —
+   * but a raw-scanner-meta path (search, and the no-cache list fallback) never
+   * consults the cache row at all, so it must ask this directly instead of
+   * relying on `isVisible`, which treats "no row" as visible.
+   */
+  isAgentFileFiltered(filePath: string): boolean {
+    return this.filterAgentConversations && this.isAgentFileCached(filePath);
+  }
+
   static open(
     dbPath: string,
     tailSize = 10,
