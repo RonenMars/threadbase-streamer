@@ -122,6 +122,37 @@ describe("detectQuestionFromScreen", () => {
     expect(detectQuestionFromScreen(gate)).toBeNull();
   });
 
+  // Live Claude Code AskUserQuestion: header painted between the "?" line and
+  // the options, and the recommended choice starts with "Yes," — both used to
+  // make detectQuestionFromScreen return null (no card; permission path skipped
+  // because of the Ask footer).
+  it("detects a commit-approval menu with a header line and Yes,-prefixed options", () => {
+    const commitApproval = [
+      "OK to commit with this message and diff?",
+      "☐ Commit approval",
+      "❯ 1. Yes, commit (Recommended)",
+      "     Commit exactly as shown: fix(tags): unwrap pasted_content",
+      "  2. Let me edit the message first",
+      "     I want to change the commit message before committing",
+      "  3. Don't commit yet",
+      "     Hold off — I want to review something else first",
+      "  4. Type something.",
+      "  5. Chat about this",
+      "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    ];
+    const r = detectQuestionFromScreen(commitApproval);
+    expect(r).not.toBeNull();
+    expect(r?.questions[0].question).toBe("OK to commit with this message and diff?");
+    expect(r?.questions[0].options.map((o) => o.label)).toEqual([
+      "Yes, commit (Recommended)",
+      "Let me edit the message first",
+      "Don't commit yet",
+      "Type something.",
+      "Chat about this",
+    ]);
+    expect(r?.questions[0].multiSelect).toBe(false);
+  });
+
   it("returns null when the header doesn't end with '?'", () => {
     const statusy = [
       "Sonnet 4.6 | ~/Desktop/dev/apps",
