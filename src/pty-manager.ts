@@ -471,7 +471,7 @@ export class PTYManager implements SessionRunner {
       provider: CLAUDE_CODE_PROVIDER,
       projectPath: options.projectPath,
       projectName,
-      branch: "",
+      branch: options.branch ?? "",
       ...(options.effort != null && { effort: options.effort }),
       status: "running",
       statusSource: "spawn",
