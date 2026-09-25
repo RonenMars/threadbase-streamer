@@ -1,3 +1,9 @@
+## [1.101.15](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.14...v1.101.15) (2026-09-25)
+
+### Performance Improvements
+
+* **server:** batch the startup warm-up upsert ([#981](https://github.com/RonenMars/threadbase-streamer/issues/981)) ([7ccb178](https://github.com/RonenMars/threadbase-streamer/commit/7ccb17875726a5995a3fb7789676c60525f10af7))
+
 ## [1.101.14](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.13...v1.101.14) (2026-09-25)
 
 ### Bug Fixes
