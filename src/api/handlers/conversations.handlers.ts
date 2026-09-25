@@ -143,6 +143,12 @@ export class ConversationHandlers {
     meta: ConversationMeta,
     include?: "all" | "conversations" | "subagents",
   ): ConversationMeta | null {
+    // A cached row for an agent file is never created (upsertFromScannerMeta
+    // skips it), so the `row` branch below can't hide it — an uncached id
+    // reads as visible. Search and the no-cache list fallback build results
+    // straight from the scanner, bypassing that cache gate entirely, so the
+    // agent filter has to be checked here instead.
+    if (this.cache?.isAgentFileFiltered(meta.filePath)) return null;
     const id = this.cache?.getIdByFilePath(meta.filePath);
     const row = id ? this.cache?.getMetaById(id) : null;
     if (row) return this.cache?.isVisible(row.id) ? { ...meta, sessionId: row.id } : null;
