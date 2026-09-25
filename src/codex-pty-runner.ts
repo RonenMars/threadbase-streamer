@@ -10,6 +10,7 @@ import {
   loadPty,
   PTY_COLS,
   PTY_ROWS,
+  refuseIfDisposed,
   stripAnsi,
 } from "./pty-shared";
 import {
@@ -178,6 +179,7 @@ export class CodexPtyRunner implements SessionRunner {
   // concurrent resume for the same session (double-tap, client retry) awaits
   // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
   private startPromises = new Map<string, Promise<ManagedSession>>();
+  private disposed = false;
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
@@ -229,6 +231,7 @@ export class CodexPtyRunner implements SessionRunner {
     options: { projectPath: string; projectName?: string; branch?: string },
   ): Promise<ManagedSession> {
     const nodePty = await loadPty();
+    refuseIfDisposed(this.disposed);
     const projectName = options.projectName ?? basename(options.projectPath);
 
     let proc: ReturnType<typeof nodePty.spawn>;
@@ -797,6 +800,7 @@ export class CodexPtyRunner implements SessionRunner {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const session of this.sessions.values()) {
       try {
         session.process.kill();

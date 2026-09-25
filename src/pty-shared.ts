@@ -27,6 +27,13 @@ export const SCREEN_SCROLLBACK = 1000;
 // the other's number.
 export const REPLAY_MAX_LINES = SCREEN_SCROLLBACK + PTY_ROWS;
 
+// Called right after `await loadPty()`: a dispose() that lands inside that await
+// (the first load is a real import) has already swept the runner, so a spawn
+// past this point leaves a child nothing will ever kill.
+export function refuseIfDisposed(disposed: boolean): void {
+  if (disposed) throw new Error("Session runner is shut down; not starting a session");
+}
+
 // node-pty is a native addon — import dynamically to allow graceful failure
 let pty: typeof import("node-pty") | null = null;
 

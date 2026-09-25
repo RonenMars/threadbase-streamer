@@ -5,7 +5,14 @@ import { buildFlagArgs, buildSettingsJson } from "./claude-flags";
 import { getLogger, type Logger } from "./logger";
 import { clearClaudeExeCache, resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
-import { createScreen, type InternalSession, loadPty, PTY_ROWS, stripAnsi } from "./pty-shared";
+import {
+  createScreen,
+  type InternalSession,
+  loadPty,
+  PTY_ROWS,
+  refuseIfDisposed,
+  stripAnsi,
+} from "./pty-shared";
 import {
   detectGateScreen,
   detectPickerScreen,
@@ -281,6 +288,7 @@ export class PTYManager implements SessionRunner {
   // concurrent resume for the same session (double-tap, client retry) awaits
   // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
   private startPromises = new Map<string, Promise<ManagedSession>>();
+  private disposed = false;
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
@@ -333,6 +341,7 @@ export class PTYManager implements SessionRunner {
 
   private async doStart(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
+    refuseIfDisposed(this.disposed);
     const projectName = options.projectName ?? basename(options.projectPath);
 
     const permissionMode = options.permissionMode ?? "acceptEdits";
@@ -416,6 +425,7 @@ export class PTYManager implements SessionRunner {
   // onReady fires once Claude reaches its first prompt (waiting_input).
   async startFresh(options: StartFreshSessionOptions): Promise<ManagedSession> {
     const nodePty = await loadPty();
+    refuseIfDisposed(this.disposed);
     const sessionId = randomUUID();
     const projectName = options.projectName ?? basename(options.projectPath);
 
@@ -858,6 +868,7 @@ export class PTYManager implements SessionRunner {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const session of this.sessions.values()) {
       try {
         session.process.kill();
