@@ -1,3 +1,9 @@
+## [1.101.13](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.12...v1.101.13) (2026-09-25)
+
+### Bug Fixes
+
+* **deploy:** run nested npm calls with the npm that launched the script ([#976](https://github.com/RonenMars/threadbase-streamer/issues/976)) ([59d91cf](https://github.com/RonenMars/threadbase-streamer/commit/59d91cf494b02d1dfb01411debed7ef29de0ad86))
+
 ## [1.101.12](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.11...v1.101.12) (2026-09-24)
 
 ### Bug Fixes
