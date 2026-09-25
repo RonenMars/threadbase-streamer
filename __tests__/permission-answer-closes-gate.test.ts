@@ -56,8 +56,6 @@ const GATE_PAINT = [
   "╰────────────────────────────────────────────────────╯",
 ].join("\r\n");
 
-const settle = () => new Promise((r) => setTimeout(r, 10));
-
 function request(body: unknown): IncomingMessage {
   return Readable.from([Buffer.from(JSON.stringify(body))]) as unknown as IncomingMessage;
 }
@@ -108,13 +106,16 @@ async function liveGate() {
   const proc = (mgr as any).sessions.get(session.id).process;
 
   proc._emit("data", GATE_PAINT);
-  await settle();
 
   // Positive control. Every assertion below is void if the gate never opened,
   // and "no permission_cancelled" would read as a pass rather than as nothing
-  // having happened at all.
+  // having happened at all. Polled, not slept: the paint is scraped
+  // asynchronously, and a fixed 10 ms lost that race on a loaded host.
+  await vi.waitFor(
+    () => expect(broadcasts.filter((m) => m.type === "permission")).toHaveLength(1),
+    { timeout: 10_000 },
+  );
   const opened = broadcasts.filter((m) => m.type === "permission");
-  expect(opened).toHaveLength(1);
   const gate = pendingPermission.get(session.id);
   expect(gate?.options.map((o) => o.index)).toEqual([1, 2, 3]);
   expect((mgr as any).permissionOpen.get(session.id)).toBeDefined();
