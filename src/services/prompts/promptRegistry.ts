@@ -326,6 +326,18 @@ export class PromptRegistry {
     return transitioned;
   }
 
+  /**
+   * Whether the session has an actionable (`open` / `updated`) prompt. A pure
+   * read: unlike `snapshot` it does not sweep, so serialising a session can
+   * never publish an expiry as a side effect.
+   */
+  hasOpen(sessionId: string): boolean {
+    for (const entry of this.bySession.get(sessionId)?.values() ?? []) {
+      if (entry.prompt.state === "open" || entry.prompt.state === "updated") return true;
+    }
+    return false;
+  }
+
   get(promptId: string): Prompt | null {
     const entry = this.byId.get(promptId);
     if (!entry) return null;

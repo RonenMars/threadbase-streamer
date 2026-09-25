@@ -568,6 +568,15 @@ export interface SessionResponse {
    * `...(x != null && { x })` block.
    */
   promptSuggestion: string | null;
+  /**
+   * The session holds an `open` or `updated` prompt: it is waiting on the user
+   * even while `status` stays `running` (a gate held open mid-turn, #962).
+   * Prompt frames reach only the session's subscribers; this is how a list
+   * screen sees the block. A change is broadcast to every client as a
+   * `session_update`. Always `false` for external and historical sessions.
+   * Additive: older streamers omit it.
+   */
+  hasOpenPrompt: boolean;
   account?: string;
   messageCount?: number;
   preview?: string;

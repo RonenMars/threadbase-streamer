@@ -469,13 +469,21 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         // genuine process exit ("process-exit"), and reports both as
         // `lifecycle: "completed"`. See managedToResponse in session-store.ts.
         ...(session.statusSource != null && { statusSource: session.statusSource }),
+        // The runners stamp this on every transition; without the mirror the
+        // store copy, and so every REST read and frame, kept the spawn time.
+        ...(session.statusUpdatedAt != null && { statusUpdatedAt: session.statusUpdatedAt }),
         // Why a session died, not just that it did. Without this the store's
         // copy has no failureReason, so managedToResponse falls through to
         // `lifecycle: "completed"` (see session-store.ts) and a session that
         // never started — missing CLI, missing project dir — is reported to
         // every client as one that finished normally. Guarded like its
         // neighbours: a later transition must not blank a recorded failure.
-        ...(session.failureReason != null && { failureReason: session.failureReason }),
+        // A live session is the exception: there the reason says what blocks
+        // it now (a Codex usage-limit screen), and the runner clears it when
+        // that screen goes.
+        ...(session.failureReason != null
+          ? { failureReason: session.failureReason }
+          : session.status !== "idle" && { failureReason: undefined }),
         ...(session.failureCode != null && { failureCode: session.failureCode }),
       });
       // Mirror the transition into the durable registry. Both runners funnel
@@ -564,7 +572,11 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         // (see conversationBusy's selfPtyEndedAt).
         deps.rememberSelfPtyEnded(session.id);
       }
-      const resp = deps.sessionStore.get(session.id, deps.ptyAttachedIds());
+      // Every runner reports its exit before it forgets the session, so the
+      // attached set still holds it here; the frame announcing the exit must not.
+      const attached = new Set(deps.ptyAttachedIds());
+      if (session.status === "idle") attached.delete(session.id);
+      const resp = deps.sessionStore.get(session.id, attached);
       if (resp) {
         deps.wsHub.broadcast({ type: "session_update", session: resp });
       }
