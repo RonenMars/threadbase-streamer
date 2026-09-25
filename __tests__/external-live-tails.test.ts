@@ -11,7 +11,9 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "f
 import { tmpdir } from "os";
 import { join } from "path";
 import WebSocket from "ws";
-import type { StreamerServer } from "../src/server";
+// Static, not `await import()` in beforeEach: under load the cold load of the
+// server graph took 20-42 s, which by itself blew the 30 s hook timeout.
+import { StreamerServer } from "../src/server";
 
 const API_KEY = "tb_test_external_tails";
 
@@ -70,7 +72,6 @@ describe("external live tails", () => {
   let events: any[];
 
   beforeEach(async () => {
-    const { StreamerServer } = await import("../src/server");
     configDir = mkdtempSync(join(tmpdir(), "tb-ext-tail-cfg-"));
     cacheDir = mkdtempSync(join(tmpdir(), "tb-ext-tail-cache-"));
     projectPath = mkdtempSync(join(tmpdir(), "tb-ext-tail-proj-"));
@@ -104,9 +105,28 @@ describe("external live tails", () => {
       }
     });
     await new Promise<void>((r) => ws.on("open", () => r()));
-    // chokidar's directory watcher runs an initial scan with ignoreInitial:true;
-    // a file created before that scan settles never produces an "add" event.
-    await new Promise((r) => setTimeout(r, 1500));
+    // A file created before the directory watcher is live never produces an
+    // "add". Two things must be true, and neither implies the other:
+    // chokidar's initial walk has finished (with ignoreInitial:true, a file the
+    // walk sees is swallowed), and the OS watch is actually delivering. On
+    // macOS, fs.watch on a directory arms its FSEvents stream asynchronously,
+    // and a write before then is lost for good. So wait for chokidar's ready,
+    // then write a probe until the watcher reports it.
+    const watcher = (server as any).fileWatcher;
+    await watcher.whenReady();
+    const probe = join(projectDir, "watch-probe.txt");
+    let armed = false;
+    const onRaw = (_event: string, path: string) => {
+      if (String(path).endsWith("watch-probe.txt")) armed = true;
+    };
+    const dirWatcher = watcher.directories.get(join(configDir, "projects"));
+    dirWatcher.on("raw", onRaw);
+    for (let i = 0; !armed && i < 100; i++) {
+      writeFileSync(probe, String(i));
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    dirWatcher.off("raw", onRaw);
+    expect(armed).toBe(true);
   });
 
   afterEach(async () => {
