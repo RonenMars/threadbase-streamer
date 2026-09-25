@@ -1,3 +1,9 @@
+## [1.101.17](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.16...v1.101.17) (2026-09-25)
+
+### Bug Fixes
+
+* **search:** hide agent-authored conversations from search results ([#987](https://github.com/RonenMars/threadbase-streamer/issues/987)) ([ce9a715](https://github.com/RonenMars/threadbase-streamer/commit/ce9a7150f03b0b5501d3facac98a291930ea2009))
+
 ## [1.101.16](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.15...v1.101.16) (2026-09-25)
 
 ### Bug Fixes
