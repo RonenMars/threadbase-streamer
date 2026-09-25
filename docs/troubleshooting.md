@@ -254,7 +254,7 @@ browse_root: /path/to/your/projects
 
 **When:** `npm run deploy` (or `deploy:linux`) under npm 12, once for each of `npm run lint`, `npm test` and `npm run build`.
 **Cause:** Two npms. npm 12 exports `npm_config_global_ignore_file` to every script it runs, and `npm run` puts `node_modules/.bin` first on `PATH` — where `semantic-release` (via `@semantic-release/npm`) installs its own npm 11. A plain `npm` inside the deploy script therefore resolved to npm 11, which does not know the key and warns. Harmless: npm 11 ignores the setting; nothing on the machine defines it.
-**Fix:** `scripts/deploy.sh` and `scripts/deploy-linux.sh` wrap `npm` to run `node "$npm_execpath"` — the npm that launched the script — whenever `npm_execpath` is set. Run directly (not through `npm run`), they use `npm` from `PATH` as before. Other `package.json` scripts that call `npm run …` still reach the bundled npm 11 and print the same warning.
+**Fix:** `scripts/deploy.sh` and `scripts/deploy-linux.sh` wrap `npm` to run `node "$npm_execpath"` — the npm that launched the script — whenever `npm_execpath` is set. Run directly (not through `npm run`), they use `npm` from `PATH` as before. The `package.json` scripts that call `npm run build` from inside another `npm run` (`dev:verbose`, `prepublishOnly`, `test:smoke-isolated`) use the same `node "$npm_execpath" run build` form inline — all three already shell out to POSIX-only constructs (`mkdir -p`, `tee`, a `.sh` script) and the release workflow that runs `prepublishOnly` is `ubuntu-latest`, so none of them run on Windows.
 
 ---
 
