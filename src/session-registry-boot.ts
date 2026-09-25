@@ -59,6 +59,9 @@ export type SessionRegistryBootDeps = {
   }) => Promise<ResumeOutcome>;
   watchConversationFile: (sessionId: string, historyId?: string) => Promise<void>;
   broadcastSessionList: () => void;
+  // True once close() has begun: boot recovery stops rather than write to the
+  // registry or spawn into a server that is tearing down.
+  closing: () => boolean;
   // Boot auto-resume preflights each candidate for a provider history before
   // spending one of the AUTO_RESUME_MAX slots on it (#483). Typed loosely on the
   // success side for the same reason SessionHandlersDeps is: the full shape is
@@ -155,6 +158,7 @@ export class SessionRegistryBoot {
         this.streamerInstanceId,
         currentBootToken(),
       );
+      if (this.deps.closing()) return [];
 
       for (const v of verdicts) {
         this.sessionVerdicts.set(v.sessionId, v);
@@ -437,6 +441,7 @@ export class SessionRegistryBoot {
       if (started > 0) {
         await new Promise<void>((resolve) => setTimeout(resolve, AUTO_RESUME_STAGGER_MS));
       }
+      if (this.deps.closing()) break;
 
       const task = resume(row);
       inFlight.add(task);
