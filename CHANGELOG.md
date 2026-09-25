@@ -1,3 +1,9 @@
+## [1.102.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.17...v1.102.0) (2026-09-25)
+
+### Features
+
+* **sessions:** add hasOpenPrompt and fix stale session state on the wire ([d810d3d](https://github.com/RonenMars/threadbase-streamer/commit/d810d3df96da6096bb79b27efee7c4301eb283ae)), closes [#962](https://github.com/RonenMars/threadbase-streamer/issues/962)
+
 ## [1.101.17](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.16...v1.101.17) (2026-09-25)
 
 ### Bug Fixes

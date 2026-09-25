@@ -1,6 +1,6 @@
 {
   "name": "@threadbase-sh/streamer",
-  "version": "1.101.17",
+  "version": "1.102.0",
   "description": "PTY session management, WebSocket streaming, and REST API server for Claude Code conversations",
   "license": "MIT",
   "author": "Ronen Mars",
