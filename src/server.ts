@@ -1844,7 +1844,19 @@ export class StreamerServer {
             // Warming tails for filtered-out IDs would hit the
             // conversation_tail.conversation_id → conversation_meta(id) FK
             // and abort the whole warm-up before pruneGhostFiles can run.
-            const upsertedIds = new Set(this.cache.upsertFromScannerMeta(metas));
+            //
+            // Chunked with the same BATCH+setImmediate pattern as the
+            // tail-populate loop below, since upsertFromScannerMeta wraps
+            // the whole call in one synchronous db.transaction with a sync
+            // file read per item and otherwise blocks the event loop for
+            // the whole corpus in one shot.
+            const UPSERT_BATCH = 50;
+            const upsertedIds = new Set<string>();
+            for (let i = 0; i < metas.length; i += UPSERT_BATCH) {
+              const batch = metas.slice(i, i + UPSERT_BATCH);
+              for (const id of this.cache.upsertFromScannerMeta(batch)) upsertedIds.add(id);
+              await new Promise<void>((r) => setImmediate(r));
+            }
             const tailTargets: Array<{ id: string; filePath: string }> = [];
             for (const m of metas) {
               if (!m.filePath) continue;
