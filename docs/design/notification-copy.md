@@ -174,7 +174,7 @@ If the idle nudge in [idle-session-notifications.md](idle-session-notifications.
 
 Constraints:
 
-- Expo's `sound` field is iOS-only. Android plays the sound of the channel, so the distinct sound means two channels created by the app, and `channelId` on each push.
+- Expo's `sound` field is iOS-only. Android plays the sound of the channel, so the distinct sound means two channels created by the app, and `channelId` on each push — but only to apps known to have created them (see [Implementation notes](#implementation-notes)), because a push naming a missing channel is not displayed at all.
 - `time-sensitive` needs the `com.apple.developer.usernotifications.time-sensitive` entitlement in the app, and the user can still turn it off per app.
 - Never `critical`.
 
@@ -217,7 +217,9 @@ Mobile (separate PR):
 - The time-sensitive entitlement.
 - An action handler that posts the answer, and falls back to opening the session when it fails.
 
-Additive on the wire: an old app ignores `subtitle`, `categoryId` and unknown `data` keys, and an unknown `channelId` falls back to the default channel.
+Mostly additive on the wire: an old app ignores `subtitle`, an unknown `categoryId` only means no buttons, and unknown `data` keys are ignored.
+**`channelId` is the exception.** Expo: "If an ID is specified but the corresponding channel does not exist on the device … the notification will not be displayed to the user." Sending it to an app that has not created the channel silently drops the push.
+So the streamer sends `channelId` only to tokens that say they have the channels. `push_tokens` has no such field today (it carries `locale` and `notification_prefs`, migrations 025/026); add one the same way — a per-token list of notification features the app registered with — and omit `channelId` for every token without it.
 
 ## Not verified
 
