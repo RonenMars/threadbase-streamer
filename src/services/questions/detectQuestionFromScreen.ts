@@ -36,8 +36,10 @@ const QUESTION_RE = /\?\s*$/;
 const BOX_ONLY_RE = /^[\s│─┌┐└┘├┤┬┴┼╭╮╰╯╱╲=_-]+$/;
 
 // Reject permission-gate option labels so a gate (caught separately via OSC 777)
-// never doubles as a structured question.
-const PERMISSION_LABEL_RE = /^(Yes|No)\b/i;
+// never doubles as a structured question. Exact Yes/No only — AskUserQuestion
+// options like "Yes, commit (Recommended)" must stay on this path (`^(Yes|No)\b`
+// discarded every commit-approval menu).
+const PERMISSION_LABEL_RE = /^(Yes|No)$/i;
 
 // The checkbox a multi-select picker paints beside each selectable option
 // ("[ ] Python" before a toggle, "[✔] Python" after). Its presence is the ONLY
@@ -142,9 +144,12 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
 
   if (options.length < 2 || firstOptionIdx === -1) return null;
 
-  // Question = nearest non-empty, non-box line above the first option row that
-  // ends with "?".
+  // Question = nearest "?" line above the first option. AskUserQuestion paints
+  // its `header` (e.g. "☐ Commit approval") between the question and the
+  // options, so allow skipping a single non-"?" line before requiring "?".
+  // A status line with no "?" above it still fails (see tests).
   let question: string | undefined;
+  let skippedHeader = false;
   for (let i = firstOptionIdx - 1; i >= 0; i--) {
     const raw = stripBoxGutter(lines[i]);
     const trimmed = raw.trim();
@@ -152,6 +157,11 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
     if (BOX_ONLY_RE.test(lines[i].trim())) continue;
     if (QUESTION_RE.test(trimmed)) {
       question = trimmed;
+      break;
+    }
+    if (!skippedHeader) {
+      skippedHeader = true;
+      continue;
     }
     break;
   }
