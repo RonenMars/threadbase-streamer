@@ -2677,7 +2677,9 @@ describe("StreamerServer", () => {
         status: "running",
         statusSource: "spawn",
         statusUpdatedAt: SPAWNED_AT,
-        projectPath: "/tmp",
+        // GET /api/sessions/:id reports a missing project dir as a failureReason,
+        // and "/tmp" does not exist on Windows.
+        projectPath: tmpdir(),
         projectName: "test",
         branch: "",
         promptCount: 1,
