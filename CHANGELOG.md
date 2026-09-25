@@ -1,3 +1,9 @@
+## [1.102.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.102.0...v1.102.1) (2026-09-25)
+
+### Bug Fixes
+
+* **sessions:** record the git branch when a session starts ([#991](https://github.com/RonenMars/threadbase-streamer/issues/991)) ([c90b217](https://github.com/RonenMars/threadbase-streamer/commit/c90b217664fc05ed87a772a3fd2d862a5806150e))
+
 ## [1.102.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.17...v1.102.0) (2026-09-25)
 
 ### Features
