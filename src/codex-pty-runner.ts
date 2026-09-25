@@ -165,6 +165,8 @@ export class CodexPtyRunner implements SessionRunner {
   private titleTail = new Map<string, string>();
   // Usage-limit / rate-limit menus — content key for deduped permission cards.
   private openBlockingPrompt = new Map<string, string>();
+  // The failureReason each of those menus set, so its removal clears only that.
+  private blockingFailureReason = new Map<string, string>();
   // Command-approval cards are independent of quota cards: both use the
   // permission transport, but a repaint/removal of one must not suppress the
   // other detector's state.
@@ -735,6 +737,7 @@ export class CodexPtyRunner implements SessionRunner {
     if (this.openBlockingPrompt.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
     }
+    this.blockingFailureReason.delete(sessionId);
     if (this.openCommandApproval.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
     }
@@ -832,6 +835,7 @@ export class CodexPtyRunner implements SessionRunner {
     this.awaitingStart.clear();
     this.titleTail.clear();
     this.openBlockingPrompt.clear();
+    this.blockingFailureReason.clear();
     this.openCommandApproval.clear();
     this.lastScreenLog.clear();
   }
@@ -988,6 +992,16 @@ export class CodexPtyRunner implements SessionRunner {
       }
     } else if (this.openBlockingPrompt.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
+      // failureReason says what blocks the session now, so a limit that has
+      // left the screen is no longer a failure. Only the reason this menu set:
+      // a startup failure or an exit diagnosis is never cleared here. The emit
+      // carries the clear to SessionStore and runtime.db at once.
+      const reason = this.blockingFailureReason.get(sessionId);
+      this.blockingFailureReason.delete(sessionId);
+      if (reason != null && session.failureReason === reason) {
+        session.failureReason = undefined;
+        this.onStatusChange?.(toPublicSession(session));
+      }
     }
 
     // ── Numbered picker ───────────────────────────────────────────
@@ -1121,6 +1135,7 @@ export class CodexPtyRunner implements SessionRunner {
       session.failureReason = blocking.detail
         ? `${blocking.prompt} ${blocking.detail}`
         : blocking.prompt;
+      this.blockingFailureReason.set(sessionId, session.failureReason);
       this.log.info(`[codex.usage_limit] ${sessionId.slice(0, 8)}`, {
         event: "codex.usage_limit",
         sessionId,

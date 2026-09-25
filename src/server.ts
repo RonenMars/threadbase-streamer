@@ -347,6 +347,9 @@ export class StreamerServer {
   // alongside pendingPermission.
   private pendingPermissionKey = new Map<string, string>();
   private promptRegistry: PromptRegistry;
+  // Sessions last announced with `hasOpenPrompt: true`, so the all-clients
+  // session_update goes out once per change rather than on every prompt_event.
+  private openPromptSessions = new Set<string>();
   // Scanner lifecycle, freshness state and the cache↔disk reconcile.
   private scannerManager: ScannerManager;
   // Binds a live session to the JSONL/rollout its provider writes.
@@ -649,11 +652,26 @@ export class StreamerServer {
       (id, session) =>
         (this.featureFlags.subagentSessions || session?.isSubagent !== true) &&
         (this.cache?.isVisible(id) ?? true),
+      (id) => this.promptRegistry.hasOpen(id),
     );
     this.wsHub = new WSHub();
     this.promptRegistry = new PromptRegistry({
-      emit: (event) =>
-        this.wsHub.broadcastToClients(this.sessionSubscribers.get(event.sessionId) ?? [], event),
+      emit: (event) => {
+        this.wsHub.broadcastToClients(this.sessionSubscribers.get(event.sessionId) ?? [], event);
+        // Prompt frames reach only this session's subscribers, and a gate held
+        // open mid-turn keeps `status: running`, so a list screen learns the
+        // session is waiting on the user only from this session_update.
+        const open = this.promptRegistry.hasOpen(event.sessionId);
+        if (open === this.openPromptSessions.has(event.sessionId)) return;
+        if (open) this.openPromptSessions.add(event.sessionId);
+        else this.openPromptSessions.delete(event.sessionId);
+        const session = this.sessionStore.get(event.sessionId, this.ptyAttachedIds());
+        // An idle session's prompts are closed by the status-change handler,
+        // whose own session_update follows and already carries `false`.
+        if (session && session.status !== "idle") {
+          this.wsHub.broadcast({ type: "session_update", session });
+        }
+      },
       onExpire: (prompt) =>
         clearExpiredPendingPrompt(
           {

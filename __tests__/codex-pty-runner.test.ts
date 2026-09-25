@@ -822,6 +822,33 @@ describe("CodexPtyRunner — usage / rate limits", () => {
     expect(latest.failureReason).toContain("hit your usage limit");
   });
 
+  // failureReason says what blocks the session now; a limit that has cleared
+  // is not a failure (docs/streamer-state-model.md F-139).
+  it("clears failureReason and reports it once the limit screen leaves", async () => {
+    const statusChanges: ManagedSession[] = [];
+    const runner = new CodexPtyRunner({ onStatusChange: (s) => statusChanges.push(s) });
+    const session = await spawnResume(runner);
+    const proc = getMockProc(runner, session.id);
+
+    proc._emit("data", READY_STATUS_BAR);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    runner.sendInput(session.id, "hello");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    proc._emit("data", USAGE_LIMIT_SCREEN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runner.getSession(session.id)?.failureReason).toContain("hit your usage limit");
+    const before = statusChanges.length;
+
+    proc._emit("data", `\x1b[2J\x1b[H› \r\n${READY_STATUS_BAR}`);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(runner.getSession(session.id)?.failureReason).toBeUndefined();
+    expect(statusChanges.length).toBeGreaterThan(before);
+    const latest = statusChanges[statusChanges.length - 1];
+    expect(latest.status).toBe("waiting_input");
+    expect(latest.failureReason).toBeUndefined();
+  });
+
   it("does not card the soft tip during boot or healthy idle", async () => {
     const cards: GateBroadcast[] = [];
     const runner = new CodexPtyRunner({

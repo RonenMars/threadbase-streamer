@@ -15,6 +15,7 @@ import { confidenceForSource } from "./types";
 export class SessionStore {
   constructor(
     private readonly visibility: (id: string, session?: ManagedSession) => boolean = () => true,
+    private readonly hasOpenPrompt: (id: string) => boolean = () => false,
   ) {}
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();
@@ -98,7 +99,7 @@ export class SessionStore {
 
     for (const s of this.managed.values()) {
       if (!this.visibility(s.boundConversationId ?? s.id, s)) continue;
-      results.push(managedToResponse(s, ptyAttachedIds.has(s.id)));
+      results.push(managedToResponse(s, ptyAttachedIds.has(s.id), this.hasOpenPrompt(s.id)));
       seenIds.add(s.id);
     }
 
@@ -118,7 +119,13 @@ export class SessionStore {
   // when you want the live record.
   get(sessionId: string, ptyAttachedIds: Set<string>): Readonly<SessionResponse> | null {
     const managed = this.managed.get(sessionId);
-    if (managed) return managedToResponse(managed, ptyAttachedIds.has(sessionId));
+    if (managed) {
+      return managedToResponse(
+        managed,
+        ptyAttachedIds.has(sessionId),
+        this.hasOpenPrompt(sessionId),
+      );
+    }
 
     for (const d of this.discovered.values()) {
       if (d.conversationId === sessionId) return discoveredToResponse(d, sessionId);
@@ -260,7 +267,11 @@ function isLiveMultiAgent(s: ManagedSession): boolean {
   return s.currentTurnId !== undefined && (s.status === "running" || s.status === "waiting_input");
 }
 
-function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResponse {
+function managedToResponse(
+  s: ManagedSession,
+  ptyAttached: boolean,
+  hasOpenPrompt: boolean,
+): SessionResponse {
   return {
     isSubagent: s.isSubagent ?? false,
     parentConversationId: s.parentConversationId ?? null,
@@ -331,6 +342,7 @@ function managedToResponse(s: ManagedSession, ptyAttached: boolean): SessionResp
     // Unconditional for the same reason as subStatus: absence must never be a
     // third state on the wire.
     promptSuggestion: s.promptSuggestion ?? null,
+    hasOpenPrompt,
     ptyAttached,
     ...(s.projectId != null && { projectId: s.projectId }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
@@ -388,6 +400,8 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
     // managedToResponse: absence must never be a third state on the wire.
     subStatus: null,
     promptSuggestion: null,
+    // Its prompts are on a screen we cannot see.
+    hasOpenPrompt: false,
     projectPath: d.projectPath,
     projectName: d.projectName,
     branch: d.branch,

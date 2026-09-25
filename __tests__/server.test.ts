@@ -2660,6 +2660,191 @@ describe("StreamerServer", () => {
     });
   });
 
+  // What the onStatusChange mirror puts on the wire (docs/streamer-state-model.md
+  // F-136, F-135, F-139): the session_update frame and GET /api/sessions/:id must
+  // describe the transition the runner just reported, not an older store copy.
+  describe("onStatusChange mirror on the wire", () => {
+    const SID = "mirror-sess";
+    const SPAWNED_AT = new Date("2026-09-25T10:00:00.000Z");
+    const LATER = new Date("2026-09-25T10:05:00.000Z");
+    const LIMIT = "You've hit your usage limit. or try again at Aug 8th, 2026 10:18 AM.";
+    const PROVIDERS = [CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER] as const;
+
+    function spawned(provider: string, over: Record<string, unknown> = {}) {
+      return {
+        id: SID,
+        provider,
+        status: "running",
+        statusSource: "spawn",
+        statusUpdatedAt: SPAWNED_AT,
+        projectPath: "/tmp",
+        projectName: "test",
+        branch: "",
+        promptCount: 1,
+        startedAt: SPAWNED_AT,
+        completedAt: null,
+        lastOutput: "",
+        ...over,
+      } as any;
+    }
+
+    function report(provider: string, over: Record<string, unknown>): void {
+      const runners = (server as any).ptyManager.runners as Map<
+        string,
+        { onStatusChange?: (session: unknown) => void }
+      >;
+      runners.get(provider)?.onStatusChange?.(spawned(provider, over));
+    }
+
+    type Client = { ws: WebSocket; frames: any[] };
+    async function connect(): Promise<Client> {
+      const ws = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`);
+      const frames: any[] = [];
+      ws.on("message", (raw) => frames.push(JSON.parse(raw.toString())));
+      await new Promise<void>((r) => ws.on("open", () => r()));
+      return { ws, frames };
+    }
+
+    const updates = (c: Client) =>
+      c.frames.filter((f) => f.type === "session_update" && f.session?.id === SID);
+
+    async function nextUpdate(c: Client, count: number): Promise<any> {
+      const deadline = Date.now() + 2000;
+      while (updates(c).length < count && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      const all = updates(c);
+      expect(all).toHaveLength(count);
+      return all[count - 1].session;
+    }
+
+    async function getSession(): Promise<any> {
+      const res = await fetch(`${baseUrl}/api/sessions/${SID}`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(200);
+      return res.json();
+    }
+
+    afterEach(() => {
+      (server as any).sessionStore.removeManaged(SID);
+      vi.restoreAllMocks();
+    });
+
+    // G1: the runner stamps statusUpdatedAt on every transition; the store copy
+    // must follow it instead of staying at the spawn time.
+    for (const provider of PROVIDERS) {
+      it(`advances statusUpdatedAt on a ${provider} running → waiting_input`, async () => {
+        (server as any).sessionStore.addManaged(spawned(provider));
+        const client = await connect();
+
+        report(provider, {
+          status: "waiting_input",
+          statusSource: "turn-signal",
+          statusUpdatedAt: LATER,
+        });
+
+        const frame = await nextUpdate(client, 1);
+        expect(frame.status).toBe("waiting_input");
+        expect(frame.statusUpdatedAt).toBe(LATER.toISOString());
+        expect((await getSession()).statusUpdatedAt).toBe(LATER.toISOString());
+        client.ws.close();
+      });
+    }
+
+    // G2: every runner reports the exit before it forgets the session, so the
+    // attached set still holds it. The frame announcing the exit must not.
+    for (const provider of PROVIDERS) {
+      it.each([
+        ["a clean exit", { statusSource: "process-exit" }, "completed"],
+        [
+          "an exit with a failureReason",
+          { statusSource: "process-exit", failureReason: "exited immediately (code 1)." },
+          "failed",
+        ],
+        ["a hold", { statusSource: "shutdown" }, "resumable"],
+      ])(
+        `reports ${provider} %s as detached in the exit frame`,
+        async (_label, over, lifecycle) => {
+          (server as any).sessionStore.addManaged(spawned(provider, { status: "waiting_input" }));
+          // The runner still lists the session while it reports the exit.
+          vi.spyOn((server as any).ptyManager, "listSessions").mockReturnValue([{ id: SID }]);
+          const client = await connect();
+
+          report(provider, { status: "idle", completedAt: LATER, statusUpdatedAt: LATER, ...over });
+
+          const frame = await nextUpdate(client, 1);
+          expect(frame.status).toBe("idle");
+          expect(frame.ptyAttached).toBe(false);
+          expect(frame.lifecycle).toBe(lifecycle);
+          client.ws.close();
+        },
+      );
+    }
+
+    // G3: a usage-limit reason recorded on a live Codex session is what blocks
+    // it now, not its history. Once the runner clears it, the store follows.
+    it("drops a cleared usage-limit failureReason, so a later clean exit reads completed", async () => {
+      (server as any).sessionStore.addManaged(spawned(CODEX_CLI_PROVIDER));
+      const client = await connect();
+
+      report(CODEX_CLI_PROVIDER, { status: "waiting_input", failureReason: LIMIT });
+      expect((await nextUpdate(client, 1)).failureReason).toBe(LIMIT);
+
+      report(CODEX_CLI_PROVIDER, { status: "waiting_input" });
+      expect((await nextUpdate(client, 2)).failureReason).toBeUndefined();
+      expect((await getSession()).failureReason).toBeUndefined();
+
+      report(CODEX_CLI_PROVIDER, {
+        status: "idle",
+        statusSource: "process-exit",
+        completedAt: LATER,
+      });
+      const exit = await nextUpdate(client, 3);
+      expect(exit.lifecycle).toBe("completed");
+      expect(exit.failureReason).toBeUndefined();
+      client.ws.close();
+    });
+
+    it("stays failed when the session exits with the limit screen still up", async () => {
+      (server as any).sessionStore.addManaged(spawned(CODEX_CLI_PROVIDER));
+      const client = await connect();
+
+      report(CODEX_CLI_PROVIDER, { status: "waiting_input", failureReason: LIMIT });
+      report(CODEX_CLI_PROVIDER, {
+        status: "idle",
+        statusSource: "process-exit",
+        completedAt: LATER,
+        failureReason: LIMIT,
+      });
+      const exit = await nextUpdate(client, 2);
+      expect(exit.lifecycle).toBe("failed");
+      expect(exit.failureReason).toBe(LIMIT);
+      client.ws.close();
+    });
+
+    it("never blanks a failure recorded at exit on a later idle re-emit", async () => {
+      (server as any).sessionStore.addManaged(spawned(CODEX_CLI_PROVIDER));
+      const client = await connect();
+
+      report(CODEX_CLI_PROVIDER, {
+        status: "idle",
+        statusSource: "process-exit",
+        completedAt: LATER,
+        failureReason: "Codex process exited immediately (code 1).",
+      });
+      report(CODEX_CLI_PROVIDER, {
+        status: "idle",
+        statusSource: "process-exit",
+        completedAt: LATER,
+      });
+      const last = await nextUpdate(client, 2);
+      expect(last.lifecycle).toBe("failed");
+      expect(last.failureReason).toBe("Codex process exited immediately (code 1).");
+      client.ws.close();
+    });
+  });
+
   describe("GET /api/sessions/:id/output", () => {
     it("returns empty output for an untracked session id", async () => {
       const res = await fetch(`${baseUrl}/api/sessions/nonexistent/output`, {
