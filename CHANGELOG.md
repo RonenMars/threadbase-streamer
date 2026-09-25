@@ -1,3 +1,9 @@
+## [1.101.16](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.15...v1.101.16) (2026-09-25)
+
+### Bug Fixes
+
+* **pty:** refuse a start that resumes after the runner was disposed ([#986](https://github.com/RonenMars/threadbase-streamer/issues/986)) ([4e25175](https://github.com/RonenMars/threadbase-streamer/commit/4e25175145432c38a2078a4630cd99ffb1c20281))
+
 ## [1.101.15](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.14...v1.101.15) (2026-09-25)
 
 ### Performance Improvements
