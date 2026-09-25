@@ -18,6 +18,7 @@ import { vi } from "vitest";
 
 vi.mock("../src/process-discovery", () => ({
   discoverClaudeProcesses: vi.fn().mockReturnValue([]),
+  readGitBranch: vi.fn().mockResolvedValue(""),
 }));
 
 vi.mock("node-pty", () => {

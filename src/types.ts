@@ -836,6 +836,7 @@ export interface StartForkSessionOptions {
 export interface StartFreshSessionOptions {
   projectPath: string;
   projectName?: string;
+  branch?: string;
   systemPrompt?: string;
   permissionMode?: PermissionMode;
   model?: string;
