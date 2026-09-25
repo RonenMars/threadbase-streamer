@@ -363,11 +363,11 @@ describe("agent phase — server wiring", () => {
       const proc = procOf(runner, session.id);
 
       proc._emit("data", READY_BAR);
-      await settle();
+      await waitUntil(() => runner.getSession(session.id)?.status === "waiting_input");
       internals.ptyManager.sendInput(session.id, "hello");
       await settle(80);
       proc._emit("data", WORKING_BAR);
-      await settle();
+      await waitUntil(() => frames.some((f) => f.type === "session_phase"));
 
       const res = await fetch(`http://localhost:${port}/api/sessions/${session.id}`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
