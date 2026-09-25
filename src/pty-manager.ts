@@ -1535,7 +1535,9 @@ export class PTYManager implements SessionRunner {
     if (exitCode !== 0 && elapsedMs < 2000 && session.lastOutput === "") {
       if (!existsSync(session.projectPath)) {
         session.failureReason = `Project directory not found: ${session.projectPath}`;
+        session.failureCode = "project_dir_missing";
       } else {
+        session.failureCode = "instant_exit";
         session.failureReason =
           `Process exited immediately (code ${exitCode}). ` +
           `Check that the Claude binary is installed and accessible.`;
@@ -1576,6 +1578,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     promptCount: s.promptCount,
     lastOutput: s.lastOutput,
     ...(s.failureReason != null && { failureReason: s.failureReason }),
+    ...(s.failureCode != null && { failureCode: s.failureCode }),
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt }),
     ...(s.statusSource != null && { statusSource: s.statusSource }),
     ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),

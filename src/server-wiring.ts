@@ -32,6 +32,7 @@ import type {
 import type { HostPressureMonitor } from "./services/host-pressure/hostPressure";
 import type { PromptRegistry } from "./services/prompts/promptRegistry";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
+import { type AttentionFacts, describeGate } from "./services/push/notificationCopy";
 import type { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
 import { permissionGateKey } from "./services/questions/detectPermissionGate";
 import { type Capability, hasCapability, type Principal } from "./services/security/capabilities";
@@ -362,10 +363,15 @@ export type LiveSessionWiringDeps = {
 export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManagerOptions {
   // The agent stopped mid-turn for the user. Fire-and-forget, like the status
   // notifiers below; the notifier dedupes repaints of one prompt itself.
-  const notifyPrompt = (sessionId: string, kind: "permission" | "question", open: boolean) => {
+  const notifyPrompt = (
+    sessionId: string,
+    kind: "permission" | "question" | "limited",
+    open: boolean,
+    facts?: AttentionFacts,
+  ) => {
     const notifier = deps.waitingInputNotifier();
     const session = notifier && deps.sessionStore.get(sessionId, deps.ptyAttachedIds());
-    if (session) void notifier.onPrompt(session, kind, open);
+    if (session) void notifier.onPrompt(session, kind, open, facts);
   };
   return {
     logger: getLogger("pty"),
@@ -423,11 +429,19 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
     },
     onPermissionChange: (sessionId, gate, occurrenceId) => {
       deps.sessionHandlers().handlePermissionChange(sessionId, gate, occurrenceId);
-      notifyPrompt(sessionId, "permission", gate !== null);
+      if (gate === null) {
+        notifyPrompt(sessionId, "permission", false);
+      } else {
+        const { kind, facts } = describeGate(gate);
+        notifyPrompt(sessionId, kind, true, facts);
+      }
     },
     onLiveQuestion: (sessionId, questions, occurrenceId) => {
       deps.sessionHandlers().handleLiveQuestion(sessionId, questions, occurrenceId);
-      notifyPrompt(sessionId, "question", true);
+      // One question: say how many options it offers. Several: say nothing
+      // about options, since there is no one count that describes them.
+      const optionCount = questions.length === 1 ? questions[0].options.length : undefined;
+      notifyPrompt(sessionId, "question", true, { optionCount });
     },
     onLiveQuestionGone: (sessionId) => {
       notifyPrompt(sessionId, "question", false);

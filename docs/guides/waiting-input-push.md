@@ -63,7 +63,8 @@ Before that, the push fired about 50 ms after every submit.
 A permission gate or an AskUserQuestion menu keeps the turn open, since Claude holds its turn signal across both, so the turn-end push cannot cover them.
 `WaitingInputNotifier.onPrompt` pushes once when one opens, wired from `onPermissionChange` / `onLiveQuestion` in `server-wiring.ts`.
 Repaints and cursor moves of the same prompt are not new prompts; the next push waits until that prompt closes (`gate === null`, `onLiveQuestionGone`) or the turn ends.
-Codex usage-limit cards travel the same permission path, which is why that copy says "go-ahead" rather than "approval".
+Codex usage-limit cards travel the same permission path, but `describeGate` (`notificationCopy.ts`) recognises them and they go out as their own `limited` kind: "Codex hit its usage limit", with the reset time when the screen shows one.
+It also reads what an ordinary gate asks for from the gate's own chrome — Claude's `Bash command` title, Codex's command-approval heading, Claude's "Do you want to make this edit?" prompt — and anything it does not recognise stays "needs your approval".
 
 ## Always notify for a closed turn
 
@@ -79,8 +80,9 @@ This is a privacy decision, not a formatting one.
 ```json
 {
   "to": "ExponentPushToken[...]",
-  "title": "✅ <projectName>",                        // ✋ permission, 💬 question
-  "body": "Claude finished — tap to read the reply and continue.",
+  "title": "✅ <projectName> · <branch>",             // ✋ permission, 💬 question, ❌ failed, ⏳ limited; default branches omitted
+  "subtitle": "Claude finished",                       // iOS only; Android gets it at the head of the body
+  "body": "Worked for 12 min.",
   "data": { "sessionId": "...", "kind": "turn_done", "serverId": "..." },   // serverId omitted for tokens registered without one
   "sound": "default",
   "priority": "high",
@@ -94,7 +96,11 @@ That is the whole payload.
 `sound` is what makes the push audible on iOS at all; Expo plays nothing when it is omitted, which it was until this change.
 `priority: "high"` delivers immediately on Android rather than in a batch.
 `threadId` stacks one session's pushes together on iOS, and `collapseId`/`tag` let the newer push replace the older banner, so a "needs your go-ahead" that has been answered gives way to "finished".
-`data.kind` (`turn_done`, `permission`, `question`, `failed`) is additive; mobile routes on `sessionId` and ignores it today.
+`data.kind` (`turn_done`, `permission`, `question`, `failed`, `limited`) is additive; mobile routes on `sessionId` and ignores it today.
+
+Beyond which session and which agent, the copy carries only metadata the streamer measured or classified itself (`AttentionFacts`): the turn's length in minutes, what kind of action a gate asks for ("run a command", "edit a file" — our words, never the command), how many options a single question offers, the session's `failureCode`, and a usage limit's reset time.
+Naming the kind of action was a deliberate call: it is not a prompt, output or conversation content, though it does say what sort of thing the agent wants to do.
+What each kind says, and the research behind it: [docs/design/notification-copy.md](../design/notification-copy.md).
 
 The body is written per recipient token in the language its app registered (`locale` in `POST /api/push/register`, else the first `Accept-Language` tag, which iOS sends on every request; migration 025).
 The copy lives in `src/services/push/notificationCopy.ts` for the languages tb-mobile ships (en, he, ar, ru); anything else gets English.
@@ -127,7 +133,7 @@ Before this the toggles lived only in the app, so none of them changed what was 
   `NULL` means the client never sent any, and that is read as everything on, so a released app keeps receiving exactly what it did.
   A stored blob that no longer parses is read the same way: failing open is deliberate, because a corrupt row must not silently mute the one push the user is waiting for.
 - **Shape.** `{ waitingInput, sessionFailed, quietHours?: { enabled, tz, default: {from, to}, days?: { mon..sun: {from, to} | null } } }`.
-  `waitingInput` gates the three "agent needs you" kinds (`turn_done`, `permission`, `question`).
+  `waitingInput` gates the "agent needs you" kinds (`turn_done`, `permission`, `question`, `limited`).
   `sessionFailed` gates the failure push.
 - **Quiet hours** drop the push; nothing is sent, and the token's delivery health is untouched.
   They are evaluated in `tz`, the phone's IANA zone, so "22:00" means the user's 22:00 and not the server's.
@@ -146,10 +152,10 @@ Before this the toggles lived only in the app, so none of them changed what was 
 
 ### The failure push
 
-A session that dies before it ever reached a prompt — the process exits at once, or Codex refuses to start — gets one `failed` push: "*Claude* could not start.".
-The text never carries `failureReason`, which embeds project paths.
+A session that dies before it ever reached a prompt — the process exits at once, or Codex refuses to start — gets one `failed` push: "*Claude* could not start", with a next step picked by `failureCode` (`project_dir_missing`, `instant_exit`, `codex_active_writer`; anything else reads "Open the session for details.").
+The text never carries `failureReason`, which embeds project paths; that is why every runner's instant-exit diagnosis sets a code beside it.
 It fires only on a session's first idle after it was never ready: a Codex session that hit a usage limit keeps its `failureReason` and goes idle when closed much later, and that is not a failed start.
-Codex usage-limit screens already arrive as a `permission` push.
+Codex usage-limit screens arrive as a `limited` push instead.
 
 ## Failure handling
 
