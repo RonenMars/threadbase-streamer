@@ -24,6 +24,13 @@
 #   ~/.config/systemd/user/threadbase.service
 set -euo pipefail
 
+# Under `npm run`, node_modules/.bin comes first on PATH, and semantic-release
+# installs its own npm 11 there. Run the npm that launched this script instead,
+# or every nested npm call warns `Unknown env config "global-ignore-file"`.
+if [[ -n "${npm_execpath:-}" ]]; then
+  npm() { node "$npm_execpath" "$@"; }
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="${THREADBASE_INSTALL_DIR:-$HOME/.threadbase}"
 RELEASES_DIR="$INSTALL_DIR/releases"
