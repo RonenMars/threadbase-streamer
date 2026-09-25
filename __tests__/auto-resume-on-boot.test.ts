@@ -701,6 +701,13 @@ describe("boot auto-resume integration", () => {
   // Long enough for the ungated chain to reach its spawn and prune: one row, no
   // stagger, and a resume discovery probe bounded at 750 ms.
   const letChainRun = () => new Promise((resolve) => setTimeout(resolve, 1500));
+  // close({ exiting: true }) leaves cache.db open on purpose (#971): the process
+  // exits next and WAL recovers the file. A test process does not exit, and
+  // Windows refuses to delete an open file, so afterEach's rmSync fails with
+  // EBUSY. Release the handle after the assertions, as process exit would.
+  const releaseExitingCache = (server: StreamerServer, exiting: boolean) => {
+    if (exiting) (server as any).cache?.close();
+  };
 
   for (const exiting of [false, true]) {
     it(`close({ exiting: ${exiting} }) during reconcile: the chain neither spawns nor writes after teardown`, async () => {
@@ -722,6 +729,7 @@ describe("boot auto-resume integration", () => {
 
       expect(mockSpawn).not.toHaveBeenCalled();
       expect(lateWrites(log)).toEqual([]);
+      releaseExitingCache(server, exiting);
     }, 30_000);
 
     it(`close({ exiting: ${exiting} }) during auto-resume: the chain neither spawns nor writes after teardown`, async () => {
@@ -752,6 +760,7 @@ describe("boot auto-resume integration", () => {
 
       expect(mockSpawn).not.toHaveBeenCalled();
       expect(lateWrites(log)).toEqual([]);
+      releaseExitingCache(server, exiting);
     }, 30_000);
 
     it(`close({ exiting: ${exiting} }) mid-resume: the in-flight resume does not spawn after dispose()`, async () => {
@@ -784,6 +793,7 @@ describe("boot auto-resume integration", () => {
           err: expect.objectContaining({ message: expect.stringContaining("shut down") }),
         }),
       );
+      releaseExitingCache(server, exiting);
     }, 30_000);
   }
 
