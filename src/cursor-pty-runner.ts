@@ -10,6 +10,7 @@ import {
   loadPty,
   PTY_COLS,
   PTY_ROWS,
+  refuseIfDisposed,
   stripAnsi,
 } from "./pty-shared";
 import type {
@@ -76,6 +77,7 @@ export class CursorPtyRunner implements SessionRunner {
   private turnBusy = new Set<string>();
   private lastChunkAt = new Map<string, number>();
   private startPromises = new Map<string, Promise<ManagedSession>>();
+  private disposed = false;
 
   constructor(options: PTYManagerOptions = {}) {
     this.onOutput = options.onOutput;
@@ -127,6 +129,7 @@ export class CursorPtyRunner implements SessionRunner {
     options: { projectPath: string; projectName?: string; branch?: string },
   ): Promise<ManagedSession> {
     const nodePty = await loadPty();
+    refuseIfDisposed(this.disposed);
     const projectName = options.projectName ?? basename(options.projectPath);
 
     let proc: ReturnType<typeof nodePty.spawn>;
@@ -432,6 +435,7 @@ export class CursorPtyRunner implements SessionRunner {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const session of this.sessions.values()) {
       try {
         session.process.kill();
