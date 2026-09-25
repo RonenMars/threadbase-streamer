@@ -688,6 +688,115 @@ describe("boot auto-resume integration", () => {
     }
   }, 30_000);
 
+  // A stop can land while boot is still reconciling or auto-resuming (the `ps`
+  // probes and resume preflights make that window real). Nothing the chain does
+  // after teardown may spawn a PTY or write through the closed registry handle.
+  function spyLog(instance: StreamerServer) {
+    const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    (instance as any).log = log;
+    return log;
+  }
+  const lateWrites = (log: ReturnType<typeof spyLog>) =>
+    log.warn.mock.calls.filter(([, meta]) => String(meta?.err).includes("not open"));
+  // Long enough for the ungated chain to reach its spawn and prune: one row, no
+  // stagger, and a resume discovery probe bounded at 750 ms.
+  const letChainRun = () => new Promise((resolve) => setTimeout(resolve, 1500));
+  // close({ exiting: true }) leaves cache.db open on purpose (#971): the process
+  // exits next and WAL recovers the file. A test process does not exit, and
+  // Windows refuses to delete an open file, so afterEach's rmSync fails with
+  // EBUSY. Release the handle after the assertions, as process exit would.
+  const releaseExitingCache = (server: StreamerServer, exiting: boolean) => {
+    if (exiting) (server as any).cache?.close();
+  };
+
+  for (const exiting of [false, true]) {
+    it(`close({ exiting: ${exiting} }) during reconcile: the chain neither spawns nor writes after teardown`, async () => {
+      let release!: (value: []) => void;
+      const gate = new Promise<[]>((resolve) => {
+        release = resolve;
+      });
+      let log!: ReturnType<typeof spyLog>;
+      const server = await startServer(true, (instance) => {
+        log = spyLog(instance);
+        (instance as any).registryBoot.reconcilePreviousSessions = vi.fn().mockReturnValue(gate);
+      });
+
+      // Released while close() runs: a non-exiting close waits for the chain,
+      // and the real reconcile always settles once its probes return.
+      setTimeout(() => release([]), 200);
+      await server.close({ exiting });
+      await letChainRun();
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(lateWrites(log)).toEqual([]);
+      releaseExitingCache(server, exiting);
+    }, 30_000);
+
+    it(`close({ exiting: ${exiting} }) during auto-resume: the chain neither spawns nor writes after teardown`, async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let log!: ReturnType<typeof spyLog>;
+      let reachedPreflight!: () => void;
+      const preflight = new Promise<void>((resolve) => {
+        reachedPreflight = resolve;
+      });
+      const server = await startServer(true, (instance) => {
+        log = spyLog(instance);
+        const real = (instance as any).resolveConversationTarget.bind(instance);
+        (instance as any).resolveConversationTarget = async (id: string) => {
+          reachedPreflight();
+          await gate;
+          return real(id);
+        };
+      });
+
+      await preflight;
+      const closed = server.close({ exiting });
+      release();
+      await closed;
+      await letChainRun();
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(lateWrites(log)).toEqual([]);
+      releaseExitingCache(server, exiting);
+    }, 30_000);
+
+    it(`close({ exiting: ${exiting} }) mid-resume: the in-flight resume does not spawn after dispose()`, async () => {
+      let log!: ReturnType<typeof spyLog>;
+      let reachedDiscovery!: () => void;
+      const discovery = new Promise<void>((resolve) => {
+        reachedDiscovery = resolve;
+      });
+      const server = await startServer(true, (instance) => {
+        log = spyLog(instance);
+        // The resume's process-discovery probe is bounded at 750 ms; stopping
+        // inside it puts dispose() between the resume's start and its spawn.
+        (instance as any).sessionHandlers.refreshDiscovery = () => {
+          reachedDiscovery();
+          return new Promise(() => {});
+        };
+      });
+
+      await discovery;
+      await server.close({ exiting });
+      await letChainRun();
+
+      expect(mockSpawn).not.toHaveBeenCalled();
+      expect(lateWrites(log)).toEqual([]);
+      // Positive control: the resume did reach the spawn and was refused there,
+      // rather than never getting that far.
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.stringContaining("[auto-resume] failed"),
+        expect.objectContaining({
+          err: expect.objectContaining({ message: expect.stringContaining("shut down") }),
+        }),
+      );
+      releaseExitingCache(server, exiting);
+    }, 30_000);
+  }
+
   it("broadcasts the complete session list to a client connected before auto-resume", async () => {
     let releaseReconcile!: (value: []) => void;
     const reconcileGate = new Promise<[]>((resolve) => {

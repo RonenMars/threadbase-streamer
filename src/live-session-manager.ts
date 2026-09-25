@@ -26,6 +26,7 @@ export class LiveSessionManager {
   private runners: Map<ProviderName, SessionRunner>;
   private remoteRunner: RemoteSessionRunner | null = null;
   private options: PTYManagerOptions;
+  private disposed = false;
 
   constructor(options: PTYManagerOptions = {}) {
     this.options = options;
@@ -58,6 +59,7 @@ export class LiveSessionManager {
     sessionId: string,
     options: StartSessionOptions & { provider?: ProviderName },
   ): Promise<ManagedSession> {
+    this.assertNotDisposed();
     const provider = options.provider ?? CLAUDE_CODE_PROVIDER;
     const runner = this.assertSupportedProvider(provider, options.projectPath);
     this.assertProviderInstalled(provider);
@@ -67,6 +69,7 @@ export class LiveSessionManager {
   async startFresh(
     options: StartFreshSessionOptions & { provider?: ProviderName },
   ): Promise<ManagedSession> {
+    this.assertNotDisposed();
     const provider = options.provider ?? CLAUDE_CODE_PROVIDER;
     const runner = this.assertSupportedProvider(provider, options.projectPath);
     this.assertProviderInstalled(provider);
@@ -82,6 +85,7 @@ export class LiveSessionManager {
   async startFork(
     options: StartForkSessionOptions & { provider?: ProviderName },
   ): Promise<ManagedSession> {
+    this.assertNotDisposed();
     const provider = options.provider ?? CODEX_CLI_PROVIDER;
     const runner = this.remoteRunner ?? this.runners.get(provider);
     if (!(runner instanceof CodexPtyRunner)) {
@@ -182,7 +186,15 @@ export class LiveSessionManager {
     return this.activeRunners().flatMap((runner) => runner.listSessions());
   }
 
+  // A start that was already awaiting (a boot auto-resume, a request racing
+  // shutdown) would otherwise spawn after dispose() and leave a child nothing
+  // will ever kill, whose exit then writes through a closed registry handle.
+  private assertNotDisposed(): void {
+    if (this.disposed) throw new Error("Session manager is shut down; not starting a session");
+  }
+
   dispose(): void {
+    this.disposed = true;
     for (const runner of this.activeRunners()) {
       runner.dispose();
     }

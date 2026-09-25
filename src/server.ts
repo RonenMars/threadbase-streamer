@@ -372,6 +372,9 @@ export class StreamerServer {
   // empty. Register via trackCacheWrite(); each entry removes itself on settle.
   private inFlightCacheWrites = new Set<Promise<unknown>>();
   private closing: Promise<void> | null = null;
+  // The boot reconcile → rehydrate → auto-resume → prune chain, so a
+  // non-exiting close() can let it finish before closing the registry.
+  private bootRecovery: Promise<void> = Promise.resolve();
   private apiKey: string;
   private apiKeySource: "config" | "cli";
   private localNoAuth: boolean;
@@ -596,6 +599,7 @@ export class StreamerServer {
         this.sessionWatchers.watchConversationFile(sessionId, historyId),
       broadcastSessionList: () => this.wsHub.broadcast(this.sessionListPayload()),
       resolveConversationTarget: (sessionId) => this.resolveConversationTarget(sessionId),
+      closing: () => this.closing !== null,
     });
     this.includeAgents = parseIncludeAgentsEnv(process.env.THREADBASE_INCLUDE_AGENTS);
     this.agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
@@ -1773,12 +1777,17 @@ export class StreamerServer {
         // delay the listener for no correctness gain. Runs after the cache block
         // so it sees any rows the legacy copy just brought across, and outside
         // it so a cache failure no longer skips reconciliation.
-        void this.registryBoot.reconcilePreviousSessions().then(async (v) => {
+        //
+        // Each step bails once close() has begun: a stop can land mid-chain,
+        // and anything after teardown would read or write a closed registry.
+        this.bootRecovery = this.registryBoot.reconcilePreviousSessions().then(async (v) => {
+          if (this.closing) return;
           const recoverableRows = this.registryBoot.rehydratePreviousSessions(v);
           await this.registryBoot.autoResumePreviousSessions(recoverableRows);
           // Last, so retention can never delete a row this boot still wanted:
           // reconciliation has finished probing, rehydration has finished
           // seeding, and auto-resume has made its attempts before removal.
+          if (this.closing) return;
           this.registryBoot.pruneTerminalSessions();
         });
         // Opt out of the warm-up scan entirely (test hook). The cache and
@@ -2074,6 +2083,10 @@ export class StreamerServer {
       // (deterministic once Stage 4's dir-mtime gate widened the scan window).
       // Snapshot the set — entries remove themselves as they settle.
       await Promise.all([...this.inFlightCacheWrites]);
+      // Boot recovery reads the cache and writes the registry; it bails at its
+      // next step now that `closing` is set. An exiting close skips this wait
+      // too: the chain stops on `closing`, and dispose() refuses any spawn.
+      await this.bootRecovery.catch(() => undefined);
       // Close all scanner SQLite connections before the cache so file handles are
       // released on Windows (open handles block temp-dir deletion in tests).
       // scanner.close() is async (scanner >=0.9.2): it awaits any in-flight scan
