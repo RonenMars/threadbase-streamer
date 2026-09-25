@@ -72,6 +72,7 @@ interface WatchedFile {
 export class ConversationWatcher {
   private files = new Map<string, WatchedFile>();
   private directories = new Map<string, FSWatcher>();
+  private directoriesReady = new Map<string, Promise<void>>();
   private onNewLine: ConversationWatcherEvents["onNewLine"];
   private onNewLines: ConversationWatcherEvents["onNewLines"];
   private onNewLineSpans: ConversationWatcherEvents["onNewLineSpans"];
@@ -201,6 +202,19 @@ export class ConversationWatcher {
       this.onError?.(directory, error);
     });
     this.directories.set(directory, watcher);
+    this.directoriesReady.set(
+      directory,
+      new Promise((resolve) => watcher.once("ready", () => resolve())),
+    );
+  }
+
+  /**
+   * Resolves once every watchDirectory() walk has finished (chokidar `ready`).
+   * A file created before then can be seen by the walk as initial, where
+   * `ignoreInitial` suppresses its `add`, so it is never announced.
+   */
+  async whenReady(): Promise<void> {
+    await Promise.all(this.directoriesReady.values());
   }
 
   unwatchDirectory(directory: string): void {
@@ -208,6 +222,7 @@ export class ConversationWatcher {
     if (!watcher) return;
     void watcher.close();
     this.directories.delete(directory);
+    this.directoriesReady.delete(directory);
   }
 
   dispose(): void {
@@ -234,6 +249,7 @@ export class ConversationWatcher {
     }
     this.files.clear();
     this.directories.clear();
+    this.directoriesReady.clear();
   }
 
   private async readNewLines(key: string): Promise<void> {
