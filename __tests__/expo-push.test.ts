@@ -356,6 +356,65 @@ describe("WaitingInputNotifier", () => {
     });
   });
 
+  // A push naming an Android channel the app never created is not displayed at
+  // all, so channel, category and interruption level go only to a token whose
+  // app said it set them up — and the ids the buttons answer with ride along.
+  it("adds channel, level and buttons only for an app registered with attention-v1", async () => {
+    repo.register({
+      token: "ExponentPushToken[new]",
+      platform: "android",
+      notificationFeatures: ["attention-v1"],
+    });
+    repo.register({ token: "ExponentPushToken[old]", platform: "android" });
+    const { calls } = stubFetch([{ body: { data: Array(2).fill({ status: "ok" }) } }]);
+    const n = new WaitingInputNotifier(new ExpoPushSender(repo));
+
+    await n.onPrompt(
+      session(),
+      "permission",
+      true,
+      { action: "command" },
+      {
+        gateId: "gate-1",
+        allowOption: 0,
+        denyOption: 2,
+      },
+    );
+    await n.onPrompt(session(), "permission", false);
+    await n.onPrompt(session(), "question", true, { optionCount: 3 });
+    await runTurn(n);
+
+    const [gateNew, gateOld] = bodyOf(calls[0]);
+    expect(gateNew).toMatchObject({
+      channelId: "needs-you",
+      interruptionLevel: "time-sensitive",
+      categoryId: "permission",
+      data: {
+        sessionId: "sess-1",
+        kind: "permission",
+        gateId: "gate-1",
+        allowOption: "0",
+        denyOption: "2",
+      },
+    });
+    // The positive control above proves the fields exist; an older app gets
+    // exactly the pre-feature push.
+    for (const key of ["channelId", "interruptionLevel", "categoryId"]) {
+      expect(gateOld).not.toHaveProperty(key);
+    }
+    expect(gateOld.data).toEqual({ sessionId: "sess-1", kind: "permission" });
+
+    // A question needs the user too, but has no fixed buttons.
+    const [question] = bodyOf(calls[1]);
+    expect(question).toMatchObject({ channelId: "needs-you", interruptionLevel: "time-sensitive" });
+    expect(question).not.toHaveProperty("categoryId");
+
+    // "Finished" is an update: default channel, ordinary level.
+    const [done] = bodyOf(calls[2]);
+    expect(done.channelId).toBe("updates");
+    expect(done).not.toHaveProperty("interruptionLevel");
+  });
+
   it("pushes again for the next gate, and still for the turn's end", async () => {
     repo.register({ token: "ExponentPushToken[a]", platform: "ios" });
     const { fn: fetch, calls } = stubFetch([{ body: { data: [{ status: "ok" }] } }]);

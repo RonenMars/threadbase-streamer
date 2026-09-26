@@ -40,12 +40,25 @@ export interface ExpoPushMessage {
   collapseId?: string;
   /** Android: the same replacement, for an already-displayed notification. */
   tag?: string;
+  /**
+   * Android: the channel to post in. A channel the app never created means the
+   * push is not displayed at all, so only set for a token that lists the
+   * feature that created it.
+   */
+  channelId?: string;
+  /** iOS + Android: the action buttons the app registered under this id. */
+  categoryId?: string;
+  /** iOS: `time-sensitive` breaks through Focus when the app is entitled to it. */
+  interruptionLevel?: "active" | "passive" | "time-sensitive";
 }
 
-/** A message fixed for every device, or one built per device's language and platform. */
+/**
+ * A message fixed for every device, or one built per device's language,
+ * platform and the notification features its app build registered with.
+ */
 export type ExpoPushContent =
   | ExpoPushMessage
-  | ((locale: string | null, platform: string) => ExpoPushMessage);
+  | ((locale: string | null, platform: string, features: ReadonlySet<string>) => ExpoPushMessage);
 
 export interface ExpoPushOutcome {
   /** Tokens the send was actually attempted for, after preferences were applied. */
@@ -71,6 +84,17 @@ interface ExpoPushTicket {
  * repository's failure streak.
  */
 const DEAD_TOKEN_ERROR = "DeviceNotRegistered";
+
+/** A stored feature list; anything unreadable is no features, the safe default. */
+function storedFeatures(json: string | null): ReadonlySet<string> {
+  if (!json) return new Set();
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return new Set(Array.isArray(parsed) ? parsed.filter((f) => typeof f === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
 
 export class ExpoPushSender {
   /**
@@ -164,7 +188,9 @@ export class ExpoPushSender {
         body: JSON.stringify(
           rows.map((row) => {
             const message =
-              typeof content === "function" ? content(row.locale, row.platform) : content;
+              typeof content === "function"
+                ? content(row.locale, row.platform, storedFeatures(row.notification_features))
+                : content;
             return {
               to: row.token,
               ...message,

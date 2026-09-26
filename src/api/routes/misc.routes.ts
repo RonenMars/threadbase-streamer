@@ -504,6 +504,7 @@ export const createMiscRoutes = (
       serverId?: unknown;
       locale?: unknown;
       notificationPrefs?: unknown;
+      notificationFeatures?: unknown;
     } | null;
     const token = body?.token;
     const platform = body?.platform;
@@ -537,6 +538,22 @@ export const createMiscRoutes = (
     if (parsedPrefs && !parsedPrefs.success) {
       return c.json(
         { error: `Invalid notificationPrefs: ${parsedPrefs.error.issues[0]?.message}` },
+        400,
+      );
+    }
+    // What this app build supports (e.g. `attention-v1`: it created the
+    // Android channels a push may name). Stored and sent on as fields to Expo,
+    // hence the bound. Unknown names are kept: a newer app may list features
+    // this server has not heard of.
+    const features = body?.notificationFeatures;
+    if (
+      features !== undefined &&
+      (!Array.isArray(features) ||
+        features.length > 16 ||
+        !features.every((f) => typeof f === "string" && /^[a-z0-9.-]{1,32}$/.test(f)))
+    ) {
+      return c.json(
+        { error: "notificationFeatures must be up to 16 names of [a-z0-9.-]{1,32}" },
         400,
       );
     }
@@ -612,6 +629,7 @@ export const createMiscRoutes = (
       clientServerId,
       locale,
       notificationPrefs: parsedPrefs?.data,
+      notificationFeatures: features as string[] | undefined,
     });
     return c.json({ ok: true });
   });

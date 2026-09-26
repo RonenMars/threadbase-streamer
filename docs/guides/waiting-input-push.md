@@ -92,7 +92,7 @@ This is a privacy decision, not a formatting one.
 }
 ```
 
-That is the whole payload.
+That is the whole payload for an app registered without notification features; see below for what `attention-v1` adds.
 `sound` is what makes the push audible on iOS at all; Expo plays nothing when it is omitted, which it was until this change.
 `priority: "high"` delivers immediately on Android rather than in a batch.
 `threadId` stacks one session's pushes together on iOS, and `collapseId`/`tag` let the newer push replace the older banner, so a "needs your go-ahead" that has been answered gives way to "finished".
@@ -101,6 +101,22 @@ That is the whole payload.
 Beyond which session and which agent, the copy carries only metadata the streamer measured or classified itself (`AttentionFacts`): the turn's length in minutes, what kind of action a gate asks for ("run a command", "edit a file" — our words, never the command), how many options a single question offers, the session's `failureCode`, and a usage limit's reset time.
 Naming the kind of action was a deliberate call: it is not a prompt, output or conversation content, though it does say what sort of thing the agent wants to do.
 What each kind says, and the research behind it: [docs/design/notification-copy.md](../design/notification-copy.md).
+
+### Channels, urgency and lock-screen answers (`attention-v1`)
+
+An app that registers with `notificationFeatures: ["attention-v1"]` (`POST /api/push/register`, stored in `push_tokens.notification_features`, migration 027) also gets:
+
+- `channelId`: `needs-you` for `permission` and `question`, `updates` for everything else. The app creates the channels: `needs-you` at high importance with a distinct vibration, `updates` at default importance.
+- `interruptionLevel: "time-sensitive"` for `permission` and `question`, so they break through Focus. The app needs the time-sensitive entitlement; the user can still turn it off.
+- On a permission push with an option labelled exactly `Yes` and one starting `No` (`gateAnswers` in `waitingInputNotifier.ts`): `categoryId: "permission"` and `data.gateId`, `data.allowOption`, `data.denyOption` (option positions, as strings). The buttons answer through `POST /api/sessions/:id/permission/answer` with `{ gateId, optionIndex }`. A persistent grant ("Yes, and don't ask again…") and Codex's directory-trust gate ("Yes, continue") get no buttons, so the tap opens the app.
+
+Every other token gets none of these fields.
+Expo drops a push whose `channelId` names a channel the app has not created, so this is gated per token, not per server version.
+Unlike `locale` and `notificationPrefs`, a registration that leaves out the list clears it: a downgraded build must stop receiving a channel it no longer creates.
+
+The buttons carry `gateId`, never `contentKey`.
+`contentKey` embeds the gate's detail, which is the command, and a push goes through Expo, Apple and Google.
+`gateId` is enough on its own, because `handlePermissionChange` mints a new one whenever the gate's content changes, and the answer route still checks the screen before writing.
 
 The body is written per recipient token in the language its app registered (`locale` in `POST /api/push/register`, else the first `Accept-Language` tag, which iOS sends on every request; migration 025).
 The copy lives in `src/services/push/notificationCopy.ts` for the languages tb-mobile ships (en, he, ar, ru); anything else gets English.

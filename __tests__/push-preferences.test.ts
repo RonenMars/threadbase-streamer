@@ -402,6 +402,33 @@ describe("push preference routes", () => {
     });
   });
 
+  describe("POST /api/push/register with notificationFeatures", () => {
+    it("stores a valid list", async () => {
+      const res = await send("POST", "/api/push/register", {
+        token: EXPO_A,
+        platform: "android",
+        notificationFeatures: ["attention-v1"],
+      });
+      expect(res.status).toBe(200);
+      expect(repo.get(EXPO_A)?.notification_features).toBe('["attention-v1"]');
+    });
+
+    it.each([
+      ["a string", "attention-v1"],
+      ["a non-string entry", [1]],
+      ["a name outside the charset", ["Attention V1"]],
+      ["too many names", Array(17).fill("x")],
+    ])("rejects %s and stores nothing", async (_, notificationFeatures) => {
+      const res = await send("POST", "/api/push/register", {
+        token: EXPO_A,
+        platform: "android",
+        notificationFeatures,
+      });
+      expect(res.status).toBe(400);
+      expect(repo.get(EXPO_A)).toBeNull();
+    });
+  });
+
   describe("PATCH /api/push/preferences", () => {
     it("updates a registered token", async () => {
       repo.register({ token: EXPO_A, platform: "ios" });

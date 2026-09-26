@@ -1,0 +1,13 @@
+-- Which notification features this device's app build supports.
+--
+-- JSON array of short feature names (`attention-v1`: the app created the
+-- `needs-you` / `updates` Android channels and the `permission` action
+-- category). NULL means the client never said, which is every build that
+-- predates this column, and the send path then leaves out every field that
+-- depends on a feature.
+--
+-- Unlike `locale` and `notification_prefs`, a registration that omits it
+-- clears it. A push naming an Android channel the app never created is not
+-- displayed at all, so a downgraded build that stops sending the list must
+-- stop receiving `channelId` too.
+ALTER TABLE push_tokens ADD COLUMN notification_features TEXT;
