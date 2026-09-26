@@ -257,7 +257,8 @@ const GATE_FOOTER_RE = /esc to cancel/i;
 // AskUserQuestion footer — that path has priority (its footer also contains
 // "Esc to cancel", so this must be tested first).
 const ASK_MENU_FOOTER_RE = /Enter to select/i;
-// Same family test detectQuestionFromScreen uses in reverse to REJECT gates.
+// Yes/No-family option label (prefix). detectQuestionFromScreen rejects only
+// exact Yes/No so Ask menus like "Yes, commit …" stay on the question path.
 const YES_NO_LABEL_RE = /^(yes|no)\b/i;
 
 /**
