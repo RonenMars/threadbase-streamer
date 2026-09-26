@@ -1,7 +1,12 @@
 import { getLogger } from "../../logger";
 import type { ManagedSession } from "../../types";
 import type { ExpoPushContent, ExpoPushSender } from "./expoPushSender";
-import { type AttentionKind, attentionBody, attentionTitle } from "./notificationCopy";
+import {
+  type AttentionFacts,
+  type AttentionKind,
+  attentionText,
+  attentionTitle,
+} from "./notificationCopy";
 import type { PushEvent } from "./notificationPrefs";
 
 /**
@@ -64,6 +69,9 @@ const log = getLogger("expo-push");
  */
 export const TURN_DONE_SETTLE_MS = 2_000;
 
+/** What a push needs to know about its session. */
+type PushSession = Pick<ManagedSession, "id" | "projectName" | "branch" | "provider">;
+
 /**
  * The payload, and why it is this thin.
  *
@@ -76,7 +84,9 @@ export const TURN_DONE_SETTLE_MS = 2_000;
  *
  * `projectName` and `sessionId` stay: mobile needs the session id to route the
  * tap, and a notification that cannot say which project it is about is not
- * actionable.
+ * actionable. `branch` joins the title for the same reason — it is what tells
+ * two sessions of one project apart. `facts` is metadata the streamer measured
+ * or classified (see AttentionFacts), never the agent's words.
  *
  * There is no `serverId` here on purpose. Which server the app files this one
  * under is per registered token, so `ExpoPushSender` adds it per recipient.
@@ -84,12 +94,13 @@ export const TURN_DONE_SETTLE_MS = 2_000;
  * hash of their URL and cannot resolve a hostname.
  */
 export function waitingInputMessage(
-  session: Pick<ManagedSession, "id" | "projectName" | "provider">,
+  session: PushSession,
   kind: AttentionKind = "turn_done",
+  facts: AttentionFacts = {},
 ): ExpoPushContent {
-  return (locale) => ({
-    title: attentionTitle(kind, session.projectName),
-    body: attentionBody(kind, session.provider, locale),
+  return (locale, platform) => ({
+    title: attentionTitle(kind, session.projectName, session.branch),
+    ...attentionText(kind, session.provider, locale, platform, facts),
     data: { sessionId: session.id, kind },
     sound: "default",
     priority: "high",
@@ -151,7 +162,7 @@ export class WaitingInputNotifier {
         const firstIdle = !this.idleHandled.has(session.id);
         this.idleHandled.add(session.id);
         if (firstIdle && neverReady && session.failureReason != null) {
-          await this.push(session, "failed");
+          await this.push(session, "failed", { failureCode: session.failureCode });
         }
         return;
       }
@@ -177,7 +188,9 @@ export class WaitingInputNotifier {
       const timer = setTimeout(() => {
         this.pendingDone.delete(session.id);
         this.logDecision(session, previousStatus, "push_turn_done", openedAt);
-        void this.push(session, "turn_done").catch((err) => {
+        const turnMinutes =
+          openedAt == null ? undefined : Math.floor((Date.now() - openedAt) / 60_000);
+        void this.push(session, "turn_done", { turnMinutes }).catch((err) => {
           log.error("expo_push.notify_failed", {
             event: "expo_push.notify_failed",
             sessionId: session.id,
@@ -200,12 +213,15 @@ export class WaitingInputNotifier {
 
   /**
    * A permission gate or question opened (`open`) or closed on this session.
-   * Fire-and-forget like onStatusChange.
+   * Fire-and-forget like onStatusChange. `kind` may be `limited` for a gate
+   * that is really a usage-limit screen (describeGate); `facts` is what the
+   * gate or question lets the copy say about it.
    */
   async onPrompt(
-    session: Pick<ManagedSession, "id" | "projectName" | "provider">,
-    kind: "permission" | "question",
+    session: PushSession,
+    kind: "permission" | "question" | "limited",
     open: boolean,
+    facts: AttentionFacts = {},
   ): Promise<void> {
     try {
       if (!open) {
@@ -220,7 +236,7 @@ export class WaitingInputNotifier {
         clearTimeout(pending);
         this.pendingDone.delete(session.id);
       }
-      await this.push(session, kind);
+      await this.push(session, kind, facts);
     } catch (err) {
       log.error("expo_push.notify_failed", {
         event: "expo_push.notify_failed",
@@ -260,11 +276,12 @@ export class WaitingInputNotifier {
   }
 
   private async push(
-    session: Pick<ManagedSession, "id" | "projectName" | "provider">,
+    session: PushSession,
     kind: AttentionKind,
+    facts: AttentionFacts = {},
   ): Promise<void> {
     const event: PushEvent = kind === "failed" ? "sessionFailed" : "waitingInput";
-    const outcome = await this.sender.send(waitingInputMessage(session, kind), { event });
+    const outcome = await this.sender.send(waitingInputMessage(session, kind, facts), { event });
     if (outcome.attempted > 0 || outcome.suppressed > 0) {
       log.info("expo_push.waiting_input", {
         event: "expo_push.waiting_input",

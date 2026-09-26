@@ -25,6 +25,8 @@ export const EXPO_PUSH_BATCH_SIZE = 100;
 
 export interface ExpoPushMessage {
   title: string;
+  /** iOS only: a line between title and body. Android ignores it. */
+  subtitle?: string;
   body: string;
   /** Delivered to the app as `notification.request.content.data`. */
   data: Record<string, string>;
@@ -40,8 +42,10 @@ export interface ExpoPushMessage {
   tag?: string;
 }
 
-/** A message fixed for every device, or one built per device's language. */
-export type ExpoPushContent = ExpoPushMessage | ((locale: string | null) => ExpoPushMessage);
+/** A message fixed for every device, or one built per device's language and platform. */
+export type ExpoPushContent =
+  | ExpoPushMessage
+  | ((locale: string | null, platform: string) => ExpoPushMessage);
 
 export interface ExpoPushOutcome {
   /** Tokens the send was actually attempted for, after preferences were applied. */
@@ -159,7 +163,8 @@ export class ExpoPushSender {
         },
         body: JSON.stringify(
           rows.map((row) => {
-            const message = typeof content === "function" ? content(row.locale) : content;
+            const message =
+              typeof content === "function" ? content(row.locale, row.platform) : content;
             return {
               to: row.token,
               ...message,

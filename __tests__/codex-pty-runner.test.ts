@@ -937,6 +937,8 @@ describe("CodexPtyRunner — exit handling", () => {
     const finalUpdate = statusChanges[statusChanges.length - 1];
     expect(finalUpdate.status).toBe("idle");
     expect(finalUpdate.failureReason).toBeTruthy();
+    // The push picks its copy from this code; the reason carries a path.
+    expect(finalUpdate.failureCode).toMatch(/^(project_dir_missing|instant_exit)$/);
     expect(runner.hasSession(session.id)).toBe(false);
   });
 });
