@@ -1,3 +1,9 @@
+## [1.104.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.0...v1.104.1) (2026-09-26)
+
+### Bug Fixes
+
+* **questions:** detect claude commit-approval ask menus ([#993](https://github.com/RonenMars/threadbase-streamer/issues/993)) ([3109012](https://github.com/RonenMars/threadbase-streamer/commit/31090122c11500532bd89398070a156f763ceed9))
+
 ## [1.104.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.103.0...v1.104.0) (2026-09-26)
 
 ### Features
