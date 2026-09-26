@@ -1,3 +1,9 @@
+## [1.103.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.102.1...v1.103.0) (2026-09-26)
+
+### Features
+
+* **push:** name the branch, the action and the failure in notifications ([c70d2c6](https://github.com/RonenMars/threadbase-streamer/commit/c70d2c6e4cc6bcc16f8a1afc9f96d07ca12a320b)), closes [#989](https://github.com/RonenMars/threadbase-streamer/issues/989) [#989](https://github.com/RonenMars/threadbase-streamer/issues/989)
+
 ## [1.102.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.102.0...v1.102.1) (2026-09-25)
 
 ### Bug Fixes
