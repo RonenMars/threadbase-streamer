@@ -1,3 +1,9 @@
+## [1.104.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.103.0...v1.104.0) (2026-09-26)
+
+### Features
+
+* **push:** send channel, urgency and Allow/Deny answers to apps that support them ([ecaa90a](https://github.com/RonenMars/threadbase-streamer/commit/ecaa90afafecb1586c08bc535b75a9e033f8d729)), closes [#989](https://github.com/RonenMars/threadbase-streamer/issues/989)
+
 ## [1.103.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.102.1...v1.103.0) (2026-09-26)
 
 ### Features
