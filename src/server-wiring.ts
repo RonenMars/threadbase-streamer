@@ -33,7 +33,11 @@ import type { HostPressureMonitor } from "./services/host-pressure/hostPressure"
 import type { PromptRegistry } from "./services/prompts/promptRegistry";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import { type AttentionFacts, describeGate } from "./services/push/notificationCopy";
-import type { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
+import {
+  type GateAnswers,
+  gateAnswers,
+  type WaitingInputNotifier,
+} from "./services/push/waitingInputNotifier";
 import { permissionGateKey } from "./services/questions/detectPermissionGate";
 import { type Capability, hasCapability, type Principal } from "./services/security/capabilities";
 import type { ReconcileVerdict } from "./services/sessions/reconcileSessions";
@@ -368,10 +372,11 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
     kind: "permission" | "question" | "limited",
     open: boolean,
     facts?: AttentionFacts,
+    answers?: GateAnswers,
   ) => {
     const notifier = deps.waitingInputNotifier();
     const session = notifier && deps.sessionStore.get(sessionId, deps.ptyAttachedIds());
-    if (session) void notifier.onPrompt(session, kind, open, facts);
+    if (session) void notifier.onPrompt(session, kind, open, facts, answers);
   };
   return {
     logger: getLogger("pty"),
@@ -433,7 +438,11 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         notifyPrompt(sessionId, "permission", false);
       } else {
         const { kind, facts } = describeGate(gate);
-        notifyPrompt(sessionId, kind, true, facts);
+        // Read back what handlePermissionChange just stored: the gateId it
+        // minted is what the push's buttons answer with.
+        const pending = deps.pendingPermission.get(sessionId);
+        const answers = kind === "permission" && pending ? gateAnswers(pending) : undefined;
+        notifyPrompt(sessionId, kind, true, facts, answers);
       }
     },
     onLiveQuestion: (sessionId, questions, occurrenceId) => {

@@ -1,6 +1,6 @@
 import { getLogger } from "../../logger";
 import type { ManagedSession } from "../../types";
-import type { ExpoPushContent, ExpoPushSender } from "./expoPushSender";
+import type { ExpoPushContent, ExpoPushMessage, ExpoPushSender } from "./expoPushSender";
 import {
   type AttentionFacts,
   type AttentionKind,
@@ -73,6 +73,45 @@ export const TURN_DONE_SETTLE_MS = 2_000;
 type PushSession = Pick<ManagedSession, "id" | "projectName" | "branch" | "provider">;
 
 /**
+ * The notification feature an app registers once it has created the
+ * `needs-you` / `updates` Android channels and the `permission` action
+ * category. See migration 027 for why the streamer must be told.
+ */
+export const ATTENTION_V1 = "attention-v1";
+
+/**
+ * What the Allow / Deny buttons of a permission push answer with, through
+ * `POST /api/sessions/:id/permission/answer`. Ids and positions only: the
+ * gate's `contentKey` embeds its detail, which is the command, so it never
+ * goes in a push. `gateId` pins the instance and, since a content change mints
+ * a new one, the content too.
+ */
+export interface GateAnswers {
+  gateId: string;
+  /** Position in the gate's `options` of the one-time "Yes". */
+  allowOption: number;
+  /** Position of the first "No". */
+  denyOption: number;
+}
+
+/**
+ * Buttons only for a gate whose one-time grant and refusal are unmistakable: an
+ * option labelled exactly "Yes" (Claude's and Codex's allow-once) and one
+ * starting "No". A persistent grant ("Yes, and don't ask again…") or a startup
+ * gate ("Yes, continue") is never a lock-screen answer, so those gates get no
+ * buttons and the tap opens the app.
+ */
+export function gateAnswers(gate: {
+  gateId: string;
+  options: { label: string }[];
+}): GateAnswers | undefined {
+  const allowOption = gate.options.findIndex((o) => o.label.trim() === "Yes");
+  const denyOption = gate.options.findIndex((o) => /^No\b/.test(o.label.trim()));
+  if (allowOption < 0 || denyOption < 0) return undefined;
+  return { gateId: gate.gateId, allowOption, denyOption };
+}
+
+/**
  * The payload, and why it is this thin.
  *
  * It says *which* session wants attention, never *what* the agent said. The
@@ -97,19 +136,40 @@ export function waitingInputMessage(
   session: PushSession,
   kind: AttentionKind = "turn_done",
   facts: AttentionFacts = {},
+  answers?: GateAnswers,
 ): ExpoPushContent {
-  return (locale, platform) => ({
-    title: attentionTitle(kind, session.projectName, session.branch),
-    ...attentionText(kind, session.provider, locale, platform, facts),
-    data: { sessionId: session.id, kind },
-    sound: "default",
-    priority: "high",
-    // One stack per session, and the newest state replaces the older banner:
-    // "needs your go-ahead" is stale the moment the turn finishes.
-    threadId: session.id,
-    collapseId: session.id,
-    tag: session.id,
-  });
+  return (locale, platform, features) => {
+    const base: ExpoPushMessage = {
+      title: attentionTitle(kind, session.projectName, session.branch),
+      ...attentionText(kind, session.provider, locale, platform, facts),
+      data: { sessionId: session.id, kind },
+      sound: "default",
+      priority: "high",
+      // One stack per session, and the newest state replaces the older banner:
+      // "needs your go-ahead" is stale the moment the turn finishes.
+      threadId: session.id,
+      collapseId: session.id,
+      tag: session.id,
+    };
+    // Everything below names something the app must have set up (a channel,
+    // an action category), so an app that has not said it did gets none of it.
+    if (!features.has(ATTENTION_V1)) return base;
+    const needsYou = kind === "permission" || kind === "question";
+    return {
+      ...base,
+      channelId: needsYou ? "needs-you" : "updates",
+      ...(needsYou && { interruptionLevel: "time-sensitive" as const }),
+      ...(answers && {
+        categoryId: "permission",
+        data: {
+          ...base.data,
+          gateId: answers.gateId,
+          allowOption: String(answers.allowOption),
+          denyOption: String(answers.denyOption),
+        },
+      }),
+    };
+  };
 }
 
 export class WaitingInputNotifier {
@@ -215,13 +275,15 @@ export class WaitingInputNotifier {
    * A permission gate or question opened (`open`) or closed on this session.
    * Fire-and-forget like onStatusChange. `kind` may be `limited` for a gate
    * that is really a usage-limit screen (describeGate); `facts` is what the
-   * gate or question lets the copy say about it.
+   * gate or question lets the copy say about it, `answers` what its buttons
+   * send (a permission gate with a clear Yes and No only).
    */
   async onPrompt(
     session: PushSession,
     kind: "permission" | "question" | "limited",
     open: boolean,
     facts: AttentionFacts = {},
+    answers?: GateAnswers,
   ): Promise<void> {
     try {
       if (!open) {
@@ -236,7 +298,7 @@ export class WaitingInputNotifier {
         clearTimeout(pending);
         this.pendingDone.delete(session.id);
       }
-      await this.push(session, kind, facts);
+      await this.push(session, kind, facts, answers);
     } catch (err) {
       log.error("expo_push.notify_failed", {
         event: "expo_push.notify_failed",
@@ -279,9 +341,12 @@ export class WaitingInputNotifier {
     session: PushSession,
     kind: AttentionKind,
     facts: AttentionFacts = {},
+    answers?: GateAnswers,
   ): Promise<void> {
     const event: PushEvent = kind === "failed" ? "sessionFailed" : "waitingInput";
-    const outcome = await this.sender.send(waitingInputMessage(session, kind, facts), { event });
+    const outcome = await this.sender.send(waitingInputMessage(session, kind, facts, answers), {
+      event,
+    });
     if (outcome.attempted > 0 || outcome.suppressed > 0) {
       log.info("expo_push.waiting_input", {
         event: "expo_push.waiting_input",

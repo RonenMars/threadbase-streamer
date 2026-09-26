@@ -74,6 +74,8 @@ export interface PushTokenRow {
   locale: string | null;
   /** JSON `NotificationPrefs`; null = the client never sent any, i.e. everything on. */
   notification_prefs: string | null;
+  /** JSON array of feature names the app supports; null = an older client with none. */
+  notification_features: string | null;
 }
 
 /**
@@ -163,12 +165,12 @@ export class PushRepository {
       INSERT INTO push_tokens (
         token, platform, device_id, registered_at,
         kind, activity_id, session_id, expires_at, stale_date, started_at,
-        client_server_id, locale, notification_prefs
+        client_server_id, locale, notification_prefs, notification_features
       )
       VALUES (
         @token, @platform, @device_id, @registered_at,
         @kind, @activity_id, @session_id, @expires_at, @stale_date, @started_at,
-        @client_server_id, @locale, @notification_prefs
+        @client_server_id, @locale, @notification_prefs, @notification_features
       )
       ON CONFLICT(token) DO UPDATE SET
         platform = excluded.platform,
@@ -180,6 +182,9 @@ export class PushRepository {
         -- A registration that carries no preferences (an older build, or a
         -- re-register after a token refresh) must not wipe the ones the user set.
         notification_prefs = COALESCE(excluded.notification_prefs, push_tokens.notification_prefs),
+        -- Replaced, never kept: a build that no longer lists a feature (a
+        -- downgrade) must stop getting pushes that depend on it. See 027.
+        notification_features = excluded.notification_features,
         registered_at = excluded.registered_at,
         kind = excluded.kind,
         activity_id = COALESCE(excluded.activity_id, push_tokens.activity_id),
@@ -322,6 +327,7 @@ export class PushRepository {
     clientServerId?: string | null;
     locale?: string | null;
     notificationPrefs?: NotificationPrefs | null;
+    notificationFeatures?: string[] | null;
     now?: number;
   }): void {
     this.upsertStmt.run({
@@ -338,6 +344,9 @@ export class PushRepository {
       client_server_id: args.clientServerId ?? null,
       locale: args.locale ?? null,
       notification_prefs: args.notificationPrefs ? JSON.stringify(args.notificationPrefs) : null,
+      notification_features: args.notificationFeatures
+        ? JSON.stringify(args.notificationFeatures)
+        : null,
     });
   }
 
