@@ -320,8 +320,14 @@ describe("pty-host reconnect on boot", () => {
       );
       expect(replay).toBeDefined();
       if (replay?.type !== "terminal_replay") return;
-      expect(replay.lines.join("\n")).toContain("host-screen");
-      expect(replay.lines.join("\n")).not.toContain("old");
+      // "old" was drawn before the 2J: it comes back as archived history, and
+      // only as that. What follows the archive is the host's rendered screen,
+      // which the 2J erased it from — the raw ring buffer would still hold it.
+      const archived = replay.archivedLineCount ?? 0;
+      expect(replay.lines.slice(0, archived)).toEqual(["old"]);
+      const screen = replay.lines.slice(archived).join("\n");
+      expect(screen).toContain("host-screen");
+      expect(screen).not.toContain("old");
       expect(replay.userMessages?.map((message) => message.text)).toContain("remember this input");
     });
     client.close();

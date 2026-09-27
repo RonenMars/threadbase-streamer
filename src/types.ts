@@ -3,6 +3,7 @@ import type { ProgressDedupeLRU } from "./agent/dedupe";
 import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "./claude-flags";
 import type { FeatureFlagValues } from "./feature-flags";
 import type { ProviderName } from "./providers";
+import type { ReplayLines } from "./pty-shared";
 import type { PromptEvent, PromptSnapshot } from "./services/prompts/promptRegistry";
 
 // ─── Session Lifecycle ─────────────────────────────────────────────
@@ -406,6 +407,13 @@ export type WSMessage =
       // means the spawn defaults, which is what an older client assumed anyway.
       cols?: number;
       rows?: number;
+      // How many leading entries of `lines` were drawn before the render
+      // terminal's last full clear (ESC[2J / ESC[3J); the rest is what has been
+      // drawn since. Claude Code clears its scrollback mid-turn, so without the
+      // kept rows a replay could hold one screen of history. Additive: absent
+      // means 0 — every line is on the current screen, as an older client
+      // already assumed.
+      archivedLineCount?: number;
     }
   // A live session's PTY was resized. Broadcast so every subscriber re-bases
   // its decoder; only something attached asks for this, so it is rare.
@@ -872,6 +880,13 @@ export interface SessionRunner {
   putOnHold(sessionId: string, signal?: NodeJS.Signals): void;
   getOutput(sessionId: string): string;
   getOutputLines(sessionId: string, maxLines: number): Promise<string[]>;
+  /**
+   * What `terminal_replay` sends: rows kept from before the screen's last full
+   * clear, then `maxLines` of the rows since. Optional so a runner that has no
+   * archive (and every test double) still satisfies the interface; callers fall
+   * back to getOutputLines with nothing archived.
+   */
+  getReplayLines?(sessionId: string, maxLines: number): Promise<ReplayLines>;
   // Recorded user messages submitted to the PTY, oldest-first. Empty for an
   // unknown session. Sourced by terminal_replay so a re-subscribing client can
   // reconcile ground-truth ownership without the live user_message stream.

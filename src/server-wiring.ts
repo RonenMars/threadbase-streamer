@@ -889,7 +889,16 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             // larger, retention cap. The old fixed 200 was under a fifth of
             // that, so most of a live session's scrollback was unreachable on
             // the client however far back it could scroll.
-            const lines = await deps.ptyManager.getOutputLines(msg.sessionId, REPLAY_MAX_LINES);
+            // Plus the rows kept from before the render terminal's last full
+            // clear, which Claude Code issues mid-turn. The typeof check keeps
+            // test doubles that only implement getOutputLines working.
+            const { lines, archivedLineCount } =
+              typeof deps.ptyManager.getReplayLines === "function"
+                ? await deps.ptyManager.getReplayLines(msg.sessionId, REPLAY_MAX_LINES)
+                : {
+                    lines: await deps.ptyManager.getOutputLines(msg.sessionId, REPLAY_MAX_LINES),
+                    archivedLineCount: 0,
+                  };
             const userMessages = deps.ptyManager.getInputHistory(msg.sessionId);
             // Carried on the replay rather than a separate frame: a client
             // subscribing to an already-resized session would otherwise decode
@@ -907,6 +916,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
               seq: deps.terminalSeq.get(msg.sessionId),
               cols: geometry.cols,
               rows: geometry.rows,
+              ...(archivedLineCount > 0 ? { archivedLineCount } : {}),
             });
           }
           // A gate/question can open before the client finishes subscribing

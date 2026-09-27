@@ -288,10 +288,18 @@ export class SessionHost {
         return {};
 
       case "replay": {
+        const output = this.runner.getOutput(request.sessionId);
+        if (request.archive) {
+          const { lines, archivedLineCount } = await this.runner.getReplayLines(
+            request.sessionId,
+            request.maxLines,
+          );
+          return { lines, output, archivedLineCount } satisfies ReplayResult;
+        }
         const lines = await this.runner.getOutputLines(request.sessionId, request.maxLines);
         // The raw buffer travels too, so a reconnecting streamer's getOutput is
         // not empty just because it missed the events that filled it.
-        return { lines, output: this.runner.getOutput(request.sessionId) } satisfies ReplayResult;
+        return { lines, output } satisfies ReplayResult;
       }
 
       case "input-history":
