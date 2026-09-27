@@ -92,7 +92,7 @@ ENTRYPOINT ["/entrypoint.sh"]
 FROM runtime-base AS production
 
 # Pin the Claude CLI so rebuilds are reproducible. Bump deliberately.
-ARG CLAUDE_CODE_VERSION=2.1.221
+ARG CLAUDE_CODE_VERSION=2.1.283
 USER root
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 # Stay root for ENTRYPOINT so the first boot can chown the Fly volume; the
