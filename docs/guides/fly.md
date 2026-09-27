@@ -61,6 +61,19 @@ npm run fly:secrets -- --prod --unset OLD_KEY
 | prod | `CLAUDE_API_KEY` | Anthropic API key for spawned Claude sessions |
 | demo | `CLAUDE_CODE_MODEL` | Model override for demo sessions |
 
+## Connect the mobile app to prod
+
+The mobile app can connect manually with server URL `https://threadbase.fly.dev` and the value of `PROD_API_KEY`. Prefer pairing so the app receives a device-specific credential and enables E2EE instead of storing the shared production key.
+
+Print a pairing QR from the running production Machine, then scan it in the mobile app:
+
+```bash
+fly ssh console --app threadbase \
+  -C 'setpriv --reuid=streamer --regid=streamer --init-groups -- env HOME=/data node /opt/tb-streamer/dist/cli.cjs pair --port 8080'
+```
+
+Fly SSH defaults to `root` with `HOME=/root`, but the service runs as `streamer` with `HOME=/data`. Running the CLI as root without overriding its identity and home makes it load or create `/root/.threadbase/server.yaml`; that key does not match the running server, so `/api/info` and `/api/pair/start` return `401`.
+
 ## Runtime differences between demo and prod
 
 | | demo | prod |
