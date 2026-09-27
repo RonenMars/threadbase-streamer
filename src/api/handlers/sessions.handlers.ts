@@ -1638,8 +1638,21 @@ export class SessionHandlers {
     const optionIndex = body?.optionIndex;
     const gateId = body?.gateId;
     const optionLabel = body?.optionLabel;
-    if (typeof contentKey !== "string" || !Number.isInteger(optionIndex) || optionIndex < 0) {
-      json(res, 400, { ok: false, reason: "Expected { contentKey: string, optionIndex: number }" });
+    // contentKey may be left out when gateId is sent: a notification's Allow /
+    // Deny buttons answer with gateId alone, because contentKey embeds the
+    // gate's detail (the command) and must not travel through a push relay.
+    // gateId is enough on its own — a gate whose content changes gets a new
+    // one (handlePermissionChange) — so the checks below lose nothing.
+    if (
+      (contentKey !== undefined && typeof contentKey !== "string") ||
+      (contentKey === undefined && typeof gateId !== "string") ||
+      !Number.isInteger(optionIndex) ||
+      optionIndex < 0
+    ) {
+      json(res, 400, {
+        ok: false,
+        reason: "Expected { contentKey?: string, gateId?: string, optionIndex: number }",
+      });
       return;
     }
     if (gateId !== undefined && typeof gateId !== "string") {
@@ -1695,7 +1708,7 @@ export class SessionHandlers {
     // means the repaint that would restore it may never come — a gate is a
     // waiting screen. The requesting client clears from the reason instead.
     // (Same shape as resolveAnswer's tool_use_mismatch, which also stays quiet.)
-    if (permissionGateKey(gate) !== contentKey) {
+    if (contentKey !== undefined && permissionGateKey(gate) !== contentKey) {
       json(res, 409, { ok: false, reason: "gate_mismatch" });
       return;
     }
@@ -1721,7 +1734,7 @@ export class SessionHandlers {
     const provider = this.sessionStore.getManaged(sessionId)?.provider;
     if (
       provider !== CODEX_CLI_PROVIDER &&
-      !(await this.permissionGateStillOpen(sessionId, contentKey))
+      !(await this.permissionGateStillOpen(sessionId, contentKey ?? permissionGateKey(gate)))
     ) {
       gateClosed();
       return;

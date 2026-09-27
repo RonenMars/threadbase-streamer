@@ -547,7 +547,7 @@ export function extractResumeId(args: string): string | null {
   return candidate;
 }
 
-async function readGitBranch(dir: string): Promise<string> {
+export async function readGitBranch(dir: string): Promise<string> {
   // An empty cwd would make execFile inherit OUR working directory, so an
   // unreadable process reported the streamer's own branch as if it were its own
   // (observed live). No directory, no answer.

@@ -249,6 +249,7 @@ describe("WaitingInputNotifier gates on preferences and reports failures", () =>
       session({
         status: "idle",
         failureReason: "Project directory not found: /Users/someone/secret-project",
+        failureCode: "project_dir_missing",
         ...over,
       });
 
@@ -261,7 +262,19 @@ describe("WaitingInputNotifier gates on preferences and reports failures", () =>
       await n.onStatusChange(failed(), "idle"); // a repeat emit
 
       expect(calls).toHaveLength(1);
-      expect(waitingBody(calls)[0]).toBe("Claude could not start.");
+      expect(waitingBody(calls)[0]).toBe("The project folder no longer exists on this computer.");
+    });
+
+    it("falls back to a generic next step for a failure it has no copy for", async () => {
+      repo.register({ token: EXPO_A, platform: "ios" });
+      const calls = stubExpo();
+
+      await new WaitingInputNotifier(new ExpoPushSender(repo)).onStatusChange(
+        failed({ failureCode: "something_new" }),
+        "running",
+      );
+
+      expect(waitingBody(calls)[0]).toBe("Open the session for details.");
     });
 
     it("never puts the failure reason, or a path from it, in the push", async () => {
@@ -386,6 +399,33 @@ describe("push preference routes", () => {
       const res = await send("POST", "/api/push/register", { token: EXPO_A, platform: "ios" });
       expect(res.status).toBe(200);
       expect(repo.get(EXPO_A)?.notification_prefs).toBeNull();
+    });
+  });
+
+  describe("POST /api/push/register with notificationFeatures", () => {
+    it("stores a valid list", async () => {
+      const res = await send("POST", "/api/push/register", {
+        token: EXPO_A,
+        platform: "android",
+        notificationFeatures: ["attention-v1"],
+      });
+      expect(res.status).toBe(200);
+      expect(repo.get(EXPO_A)?.notification_features).toBe('["attention-v1"]');
+    });
+
+    it.each([
+      ["a string", "attention-v1"],
+      ["a non-string entry", [1]],
+      ["a name outside the charset", ["Attention V1"]],
+      ["too many names", Array(17).fill("x")],
+    ])("rejects %s and stores nothing", async (_, notificationFeatures) => {
+      const res = await send("POST", "/api/push/register", {
+        token: EXPO_A,
+        platform: "android",
+        notificationFeatures,
+      });
+      expect(res.status).toBe(400);
+      expect(repo.get(EXPO_A)).toBeNull();
     });
   });
 

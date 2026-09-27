@@ -1,3 +1,27 @@
+## [1.104.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.0...v1.104.1) (2026-09-26)
+
+### Bug Fixes
+
+* **questions:** detect claude commit-approval ask menus ([#993](https://github.com/RonenMars/threadbase-streamer/issues/993)) ([3109012](https://github.com/RonenMars/threadbase-streamer/commit/31090122c11500532bd89398070a156f763ceed9))
+
+## [1.104.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.103.0...v1.104.0) (2026-09-26)
+
+### Features
+
+* **push:** send channel, urgency and Allow/Deny answers to apps that support them ([ecaa90a](https://github.com/RonenMars/threadbase-streamer/commit/ecaa90afafecb1586c08bc535b75a9e033f8d729)), closes [#989](https://github.com/RonenMars/threadbase-streamer/issues/989)
+
+## [1.103.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.102.1...v1.103.0) (2026-09-26)
+
+### Features
+
+* **push:** name the branch, the action and the failure in notifications ([c70d2c6](https://github.com/RonenMars/threadbase-streamer/commit/c70d2c6e4cc6bcc16f8a1afc9f96d07ca12a320b)), closes [#989](https://github.com/RonenMars/threadbase-streamer/issues/989) [#989](https://github.com/RonenMars/threadbase-streamer/issues/989)
+
+## [1.102.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.102.0...v1.102.1) (2026-09-25)
+
+### Bug Fixes
+
+* **sessions:** record the git branch when a session starts ([#991](https://github.com/RonenMars/threadbase-streamer/issues/991)) ([c90b217](https://github.com/RonenMars/threadbase-streamer/commit/c90b217664fc05ed87a772a3fd2d862a5806150e))
+
 ## [1.102.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.101.17...v1.102.0) (2026-09-25)
 
 ### Features

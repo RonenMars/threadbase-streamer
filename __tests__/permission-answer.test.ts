@@ -403,7 +403,7 @@ describe("POST /permission/answer — unknown_option", () => {
 
 describe("POST /permission/answer — malformed body", () => {
   it.each([
-    ["missing contentKey", { optionIndex: 0 }],
+    ["neither contentKey nor gateId", { optionIndex: 0 }],
     ["missing optionIndex", { contentKey: "k" }],
     ["non-string contentKey", { contentKey: 7, optionIndex: 0 }],
     ["non-integer optionIndex", { contentKey: "k", optionIndex: 1.5 }],
@@ -415,6 +415,61 @@ describe("POST /permission/answer — malformed body", () => {
 
     expect(h.written).toEqual([]);
     expect(status()).toBe(400);
+  });
+});
+
+// A notification's Allow / Deny buttons answer without contentKey, which embeds
+// the command and so never goes in a push. gateId alone must still pin the gate
+// and keep the screen check.
+describe("POST /permission/answer — gateId without contentKey", () => {
+  const gateIdOf = (h: Harness) => {
+    const id = h.pendingPermission.get(SESSION)?.gateId;
+    if (!id) throw new Error("no pending gate");
+    return id;
+  };
+
+  it("answers the open gate", async () => {
+    const h = harness(GATE_A_SCREEN, GATE_A_SCREEN);
+    const { res, status } = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ gateId: gateIdOf(h), optionIndex: 0 }),
+      res,
+    );
+
+    expect(h.written).toEqual(["2\r"]);
+    expect(status()).toBe(200);
+  });
+
+  it("refuses a gateId from a gate that has since been replaced, writing nothing", async () => {
+    const h = harness(GATE_A_SCREEN, GATE_B_SCREEN);
+    const stale = gateIdOf(h);
+    h.handlers.handlePermissionChange(SESSION, null);
+    h.handlers.handlePermissionChange(SESSION, detectGateScreen(GATE_B_SCREEN));
+    const { res, status, body } = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ gateId: stale, optionIndex: 0 }),
+      res,
+    );
+
+    expect(h.written).toEqual([]);
+    expect(status()).toBe(409);
+    expect(body()).toEqual({ ok: false, reason: "gate_mismatch" });
+  });
+
+  it("still checks the screen: the map says A, the PTY shows B", async () => {
+    const h = harness(GATE_A_SCREEN, GATE_B_SCREEN);
+    const { res, status, body } = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ gateId: gateIdOf(h), optionIndex: 0 }),
+      res,
+    );
+
+    expect(h.written).toEqual([]);
+    expect(status()).toBe(409);
+    expect(body()).toEqual({ ok: false, reason: "gate_closed" });
   });
 });
 

@@ -32,7 +32,12 @@ import type {
 import type { HostPressureMonitor } from "./services/host-pressure/hostPressure";
 import type { PromptRegistry } from "./services/prompts/promptRegistry";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
-import type { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
+import { type AttentionFacts, describeGate } from "./services/push/notificationCopy";
+import {
+  type GateAnswers,
+  gateAnswers,
+  type WaitingInputNotifier,
+} from "./services/push/waitingInputNotifier";
 import { permissionGateKey } from "./services/questions/detectPermissionGate";
 import { type Capability, hasCapability, type Principal } from "./services/security/capabilities";
 import type { ReconcileVerdict } from "./services/sessions/reconcileSessions";
@@ -362,10 +367,16 @@ export type LiveSessionWiringDeps = {
 export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManagerOptions {
   // The agent stopped mid-turn for the user. Fire-and-forget, like the status
   // notifiers below; the notifier dedupes repaints of one prompt itself.
-  const notifyPrompt = (sessionId: string, kind: "permission" | "question", open: boolean) => {
+  const notifyPrompt = (
+    sessionId: string,
+    kind: "permission" | "question" | "limited",
+    open: boolean,
+    facts?: AttentionFacts,
+    answers?: GateAnswers,
+  ) => {
     const notifier = deps.waitingInputNotifier();
     const session = notifier && deps.sessionStore.get(sessionId, deps.ptyAttachedIds());
-    if (session) void notifier.onPrompt(session, kind, open);
+    if (session) void notifier.onPrompt(session, kind, open, facts, answers);
   };
   return {
     logger: getLogger("pty"),
@@ -423,11 +434,23 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
     },
     onPermissionChange: (sessionId, gate, occurrenceId) => {
       deps.sessionHandlers().handlePermissionChange(sessionId, gate, occurrenceId);
-      notifyPrompt(sessionId, "permission", gate !== null);
+      if (gate === null) {
+        notifyPrompt(sessionId, "permission", false);
+      } else {
+        const { kind, facts } = describeGate(gate);
+        // Read back what handlePermissionChange just stored: the gateId it
+        // minted is what the push's buttons answer with.
+        const pending = deps.pendingPermission.get(sessionId);
+        const answers = kind === "permission" && pending ? gateAnswers(pending) : undefined;
+        notifyPrompt(sessionId, kind, true, facts, answers);
+      }
     },
     onLiveQuestion: (sessionId, questions, occurrenceId) => {
       deps.sessionHandlers().handleLiveQuestion(sessionId, questions, occurrenceId);
-      notifyPrompt(sessionId, "question", true);
+      // One question: say how many options it offers. Several: say nothing
+      // about options, since there is no one count that describes them.
+      const optionCount = questions.length === 1 ? questions[0].options.length : undefined;
+      notifyPrompt(sessionId, "question", true, { optionCount });
     },
     onLiveQuestionGone: (sessionId) => {
       notifyPrompt(sessionId, "question", false);

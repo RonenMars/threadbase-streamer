@@ -1333,7 +1333,9 @@ export class CodexPtyRunner implements SessionRunner {
     if (exitCode !== 0 && elapsedMs < 2000 && session.lastOutput === "") {
       if (!existsSync(session.projectPath)) {
         session.failureReason = `Project directory not found: ${session.projectPath}`;
+        session.failureCode = "project_dir_missing";
       } else {
+        session.failureCode = "instant_exit";
         session.failureReason = `Codex process exited immediately (code ${exitCode}).`;
       }
     }

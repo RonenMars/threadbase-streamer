@@ -2,6 +2,7 @@ import { basename } from "path";
 import { CodexPtyRunner } from "./codex-pty-runner";
 import { CursorPtyRunner } from "./cursor-pty-runner";
 import { locateProviderExe } from "./platform";
+import { readGitBranch } from "./process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
@@ -21,6 +22,14 @@ import type {
   StartSessionOptions,
   UserMessage,
 } from "./types";
+
+// No client sends `branch`, so every managed session used to persist ''. Read it
+// from the checkout the agent runs in; a caller-supplied value still wins.
+async function withGitBranch<T extends { projectPath: string; branch?: string }>(
+  options: T,
+): Promise<T> {
+  return { ...options, branch: options.branch || (await readGitBranch(options.projectPath)) };
+}
 
 export class LiveSessionManager {
   private runners: Map<ProviderName, SessionRunner>;
@@ -63,7 +72,7 @@ export class LiveSessionManager {
     const provider = options.provider ?? CLAUDE_CODE_PROVIDER;
     const runner = this.assertSupportedProvider(provider, options.projectPath);
     this.assertProviderInstalled(provider);
-    return runner.start(sessionId, options);
+    return runner.start(sessionId, await withGitBranch(options));
   }
 
   async startFresh(
@@ -73,7 +82,7 @@ export class LiveSessionManager {
     const provider = options.provider ?? CLAUDE_CODE_PROVIDER;
     const runner = this.assertSupportedProvider(provider, options.projectPath);
     this.assertProviderInstalled(provider);
-    return runner.startFresh(options);
+    return runner.startFresh(await withGitBranch(options));
   }
 
   /**
@@ -98,7 +107,7 @@ export class LiveSessionManager {
       throw err;
     }
     this.assertProviderInstalled(provider);
-    return runner.startFork(options);
+    return runner.startFork(await withGitBranch(options));
   }
 
   sendInput(sessionId: string, input: string): number {

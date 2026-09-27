@@ -233,7 +233,9 @@ describe("WaitingInputNotifier", () => {
     expect(bodyOf(calls[0])[0]).toEqual({
       to: "ExponentPushToken[a]",
       title: "✅ my-project",
-      body: "Claude finished — tap to read the reply and continue.",
+      subtitle: "Claude finished",
+      // A turn under a minute: no duration worth reading.
+      body: "Tap to read the reply.",
       // No serverId: this token registered without one, and the streamer's own
       // hostname is not a name the app can resolve.
       data: { sessionId: "sess-1", kind: "turn_done" },
@@ -280,12 +282,13 @@ describe("WaitingInputNotifier", () => {
       session({ provider: "codex-cli" }),
     );
 
-    expect(bodyOf(calls[0]).map((m) => m.body)).toEqual([
-      "התשובה של Codex מוכנה — הקישו כדי לקרוא ולהמשיך.",
-      "Ответ Codex готов — нажмите, чтобы прочитать и продолжить.",
+    expect(bodyOf(calls[0]).map((m) => [m.subtitle, m.body])).toEqual([
+      ["Codex סיים", "הקישו כדי לקרוא את התשובה."],
+      // Android has no subtitle: the event leads the body instead.
+      [undefined, "Codex закончил. Нажмите, чтобы прочитать ответ."],
       // A language the app does not ship, and a client that sent none: English.
-      "Codex finished — tap to read the reply and continue.",
-      "Codex finished — tap to read the reply and continue.",
+      ["Codex finished", "Tap to read the reply."],
+      ["Codex finished", "Tap to read the reply."],
     ]);
   });
 
@@ -299,9 +302,117 @@ describe("WaitingInputNotifier", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(bodyOf(calls[0])[0]).toMatchObject({
       title: "✋ my-project",
-      body: "Claude needs your go-ahead to continue.",
+      subtitle: "Claude needs your approval",
+      body: "Paused until you answer.",
       data: { sessionId: "sess-1", kind: "permission" },
     });
+  });
+
+  it("says how long the turn ran", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const { notifier: n, calls } = notifier();
+    await n.onStatusChange(session({ status: "running" }), "waiting_input");
+    vi.setSystemTime(Date.now() + 12 * 60_000 + 30_000);
+    await n.onStatusChange(
+      session({ status: "waiting_input", statusSource: "turn-signal" }),
+      "running",
+    );
+    await settle();
+
+    expect(bodyOf(calls[0])[0].body).toBe("Worked for 12 min.");
+  });
+
+  it("names the branch, so two sessions of one project differ", async () => {
+    const { notifier: n, calls } = notifier();
+
+    await runTurn(n, session({ branch: "fix/login" }));
+
+    expect(bodyOf(calls[0])[0].title).toBe("✅ my-project · fix/login");
+  });
+
+  it("says what a gate asks for, and which option count a question has", async () => {
+    const { notifier: n, calls } = notifier();
+
+    await n.onPrompt(session(), "permission", true, { action: "command" });
+    await n.onPrompt(session(), "permission", false);
+    await n.onPrompt(session(), "question", true, { optionCount: 3 });
+
+    expect(calls.map((c) => [bodyOf(c)[0].subtitle, bodyOf(c)[0].body])).toEqual([
+      ["Claude wants to run a command", "Paused until you answer."],
+      ["Claude asked a question", "3 options — paused until you pick one."],
+    ]);
+  });
+
+  it("sends a usage limit as its own kind, with the reset time", async () => {
+    const { notifier: n, calls } = notifier();
+
+    await n.onPrompt(session({ provider: "codex-cli" }), "limited", true, { resetsAt: "3:45 PM" });
+
+    expect(bodyOf(calls[0])[0]).toMatchObject({
+      title: "⏳ my-project",
+      subtitle: "Codex hit its usage limit",
+      body: "Resets at 3:45 PM. Paused until then.",
+      data: { sessionId: "sess-1", kind: "limited" },
+    });
+  });
+
+  // A push naming an Android channel the app never created is not displayed at
+  // all, so channel, category and interruption level go only to a token whose
+  // app said it set them up — and the ids the buttons answer with ride along.
+  it("adds channel, level and buttons only for an app registered with attention-v1", async () => {
+    repo.register({
+      token: "ExponentPushToken[new]",
+      platform: "android",
+      notificationFeatures: ["attention-v1"],
+    });
+    repo.register({ token: "ExponentPushToken[old]", platform: "android" });
+    const { calls } = stubFetch([{ body: { data: Array(2).fill({ status: "ok" }) } }]);
+    const n = new WaitingInputNotifier(new ExpoPushSender(repo));
+
+    await n.onPrompt(
+      session(),
+      "permission",
+      true,
+      { action: "command" },
+      {
+        gateId: "gate-1",
+        allowOption: 0,
+        denyOption: 2,
+      },
+    );
+    await n.onPrompt(session(), "permission", false);
+    await n.onPrompt(session(), "question", true, { optionCount: 3 });
+    await runTurn(n);
+
+    const [gateNew, gateOld] = bodyOf(calls[0]);
+    expect(gateNew).toMatchObject({
+      channelId: "needs-you",
+      interruptionLevel: "time-sensitive",
+      categoryId: "permission",
+      data: {
+        sessionId: "sess-1",
+        kind: "permission",
+        gateId: "gate-1",
+        allowOption: "0",
+        denyOption: "2",
+      },
+    });
+    // The positive control above proves the fields exist; an older app gets
+    // exactly the pre-feature push.
+    for (const key of ["channelId", "interruptionLevel", "categoryId"]) {
+      expect(gateOld).not.toHaveProperty(key);
+    }
+    expect(gateOld.data).toEqual({ sessionId: "sess-1", kind: "permission" });
+
+    // A question needs the user too, but has no fixed buttons.
+    const [question] = bodyOf(calls[1]);
+    expect(question).toMatchObject({ channelId: "needs-you", interruptionLevel: "time-sensitive" });
+    expect(question).not.toHaveProperty("categoryId");
+
+    // "Finished" is an update: default channel, ordinary level.
+    const [done] = bodyOf(calls[2]);
+    expect(done.channelId).toBe("updates");
+    expect(done).not.toHaveProperty("interruptionLevel");
   });
 
   it("pushes again for the next gate, and still for the turn's end", async () => {

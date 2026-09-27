@@ -101,6 +101,23 @@ describe("client server id", () => {
   });
 });
 
+describe("notification features", () => {
+  it("stores the features the app registered with", () => {
+    repo.register({ token: "t", platform: "ios", notificationFeatures: ["attention-v1"] });
+
+    expect(repo.get("t")?.notification_features).toBe('["attention-v1"]');
+  });
+
+  // Unlike the server id above: a downgraded build that stops listing a
+  // feature must stop getting the channel it no longer creates.
+  it("clears them when a re-registration carries none", () => {
+    repo.register({ token: "t", platform: "ios", notificationFeatures: ["attention-v1"] });
+    repo.register({ token: "t", platform: "ios" });
+
+    expect(repo.get("t")?.notification_features).toBeNull();
+  });
+});
+
 describe("delivery health", () => {
   // "Not yet delivered" and "your notifications are broken" look identical
   // without this distinction, and they need very different UI.
