@@ -1,3 +1,9 @@
+## [1.104.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.1...v1.104.2) (2026-09-27)
+
+### Bug Fixes
+
+* **docker:** copy the preinstall guards the builder ([#996](https://github.com/RonenMars/threadbase-streamer/issues/996)) ([fdacf1d](https://github.com/RonenMars/threadbase-streamer/commit/fdacf1d68d169c123cd67b2534bf124eb1ebd50b))
+
 ## [1.104.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.0...v1.104.1) (2026-09-26)
 
 ### Bug Fixes
