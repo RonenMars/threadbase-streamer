@@ -30,6 +30,8 @@ WORKDIR /build
 # scanner/agent-types are published npm packages (no vendor/ COPY needed).
 COPY package.json package-lock.json ./
 COPY patches ./patches
+# preinstall runs these two guards; both are stdlib-only.
+COPY scripts/check-node-version.mjs scripts/check-native-abi.mjs ./scripts/
 RUN git init -q \
     && npm ci --no-audit --no-fund
 
@@ -43,7 +45,7 @@ RUN cd /build/node_modules/node-pty && npm install --no-save --no-audit --no-fun
 
 COPY src ./src
 COPY cli ./cli
-COPY tsup.config.ts tsconfig.json biome.json ./
+COPY tsup.config.ts tsconfig.json tsconfig.build.json biome.json ./
 
 RUN npm run build \
     && npm prune --omit=dev
