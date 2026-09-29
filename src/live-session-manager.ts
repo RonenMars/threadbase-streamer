@@ -1,11 +1,13 @@
 import { basename } from "path";
 import { CodexPtyRunner } from "./codex-pty-runner";
+import { CopilotPtyRunner } from "./copilot-pty-runner";
 import { CursorPtyRunner } from "./cursor-pty-runner";
 import { locateProviderExe } from "./platform";
 import { readGitBranch } from "./process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   commandNameForProvider,
   type ProviderName,
@@ -44,6 +46,7 @@ export class LiveSessionManager {
       [CLAUDE_CODE_PROVIDER, new PTYManager(options)],
       [CODEX_CLI_PROVIDER, new CodexPtyRunner(options)],
       [CURSOR_PROVIDER, new CursorPtyRunner(options)],
+      [COPILOT_PROVIDER, new CopilotPtyRunner(options)],
     ]);
   }
 

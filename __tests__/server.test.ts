@@ -13,6 +13,7 @@ import { join } from "path";
 import WebSocket from "ws";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { ConversationCache } from "../src/conversation-cache";
+import { CopilotPtyRunner } from "../src/copilot-pty-runner";
 import { FEATURE_FLAG_LIST } from "../src/feature-flags";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "../src/providers";
 import { PTYManager } from "../src/pty-manager";
@@ -301,6 +302,77 @@ describe("StreamerServer", () => {
         process.env.THREADBASE_BROWSE_ROOT = previousBrowseRootEnv;
       }
       rmSync(browseRoot, { recursive: true, force: true });
+    });
+
+    it("starts Copilot without waiting for a semantic readiness signal", async () => {
+      const spy = vi.spyOn(CopilotPtyRunner.prototype, "startFresh").mockResolvedValueOnce({
+        id: "copilot-test",
+        provider: "copilot",
+        projectPath: join(browseRoot, "project"),
+        projectName: "project",
+        branch: "",
+        status: "running",
+        startedAt: new Date(),
+        completedAt: null,
+        promptCount: 0,
+        lastOutput: "",
+      });
+      try {
+        const res = await fetch(`${baseUrl}/api/sessions/start`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            path: "project",
+            provider: "copilot",
+            systemPrompt: "must not inject",
+          }),
+        });
+        expect(res.status).toBe(200);
+        expect((await res.json()).session).toMatchObject({
+          id: "copilot-test",
+          provider: "copilot",
+          status: "running",
+        });
+        expect(spy).toHaveBeenCalledWith(expect.objectContaining({ provider: "copilot" }));
+        expect(spy.mock.calls[0][0].systemPrompt).toBeUndefined();
+        expect(spy.mock.calls[0][0].model).toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("resumes a held managed Copilot without scanner history", async () => {
+      const held = {
+        id: "copilot-held",
+        provider: "copilot" as const,
+        projectPath: join(browseRoot, "project"),
+        projectName: "project",
+        branch: "",
+        status: "idle" as const,
+        startedAt: new Date(),
+        completedAt: new Date(),
+        promptCount: 1,
+        lastOutput: "hello",
+      };
+      (server as any).sessionStore.addManaged(held);
+      const spy = vi
+        .spyOn(CopilotPtyRunner.prototype, "start")
+        .mockResolvedValueOnce({ ...held, status: "running", completedAt: null });
+      try {
+        const res = await fetch(`${baseUrl}/api/sessions/resume`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: held.id, force: true }),
+        });
+        expect(res.status).toBe(201);
+        expect(spy).toHaveBeenCalledWith(
+          held.id,
+          expect.objectContaining({ provider: "copilot", projectPath: held.projectPath }),
+        );
+        expect(spy.mock.calls[0][1].model).toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it("defaults missing provider to claude-code", async () => {
@@ -1469,8 +1541,13 @@ describe("StreamerServer", () => {
         (server as any).contendedSessions.add(session.id);
       }
 
-      function mockRunner(session: { id: string }, runner: "claude" | "codex") {
-        const proto = runner === "codex" ? CodexPtyRunner.prototype : PTYManager.prototype;
+      function mockRunner(session: { id: string }, runner: "claude" | "codex" | "copilot") {
+        const proto =
+          runner === "copilot"
+            ? CopilotPtyRunner.prototype
+            : runner === "codex"
+              ? CodexPtyRunner.prototype
+              : PTYManager.prototype;
         vi.spyOn(proto, "hasSession").mockReturnValue(true);
         vi.spyOn(proto, "getSession").mockReturnValue(session as any);
         return vi.spyOn(proto, "putOnHold").mockImplementation(() => {
@@ -1505,6 +1582,20 @@ describe("StreamerServer", () => {
           },
         ] as any);
       }
+
+      it("retains Copilot on stop even when only raw input was used", async () => {
+        const session = liveSession({ provider: "copilot", status: "running" });
+        seedManaged(session);
+        mockRunner(session, "copilot");
+        const res = await postStop(session.id);
+        await res.text();
+        expect(res.status).toBe(200);
+        expect((server as any).sessionStore.getManaged(session.id)).toMatchObject({
+          provider: "copilot",
+          status: "idle",
+        });
+        expect((server as any).managedSessionsRepo.get(session.id)).not.toBeNull();
+      });
 
       async function postStop(sessionId: string): Promise<Response> {
         return fetch(`${baseUrl}/api/sessions/${sessionId}/stop`, {
@@ -2378,8 +2469,16 @@ describe("StreamerServer", () => {
       (server as any).registryBoot.recordSessionSpawn(session);
     }
 
-    function mockRunner(session: { id: string; status?: string }, runner: "claude" | "codex") {
-      const proto = runner === "codex" ? CodexPtyRunner.prototype : PTYManager.prototype;
+    function mockRunner(
+      session: { id: string; status?: string },
+      runner: "claude" | "codex" | "copilot",
+    ) {
+      const proto =
+        runner === "copilot"
+          ? CopilotPtyRunner.prototype
+          : runner === "codex"
+            ? CodexPtyRunner.prototype
+            : PTYManager.prototype;
       vi.spyOn(proto, "hasSession").mockReturnValue(true);
       vi.spyOn(proto, "getSession").mockImplementation(() => session as any);
       vi.spyOn(proto, "getOutputLines").mockResolvedValue([]);
@@ -2978,6 +3077,7 @@ describe("StreamerServer", () => {
       expect(body.providers.map((p: { name: string }) => p.name).sort()).toEqual([
         "claude-code",
         "codex-cli",
+        "copilot",
         "cursor",
       ]);
 

@@ -1,4 +1,5 @@
 import type { ManagedSessionRow } from "../../db/repositories/managed-sessions.repository";
+import { COPILOT_PROVIDER } from "../../providers";
 import type { ManagedSession, StatusSource } from "../../types";
 import { resumeIdForRow } from "./resumeIdentity";
 
@@ -89,6 +90,7 @@ export function rehydrateSkipReason(
 ): RehydrateSkipReason | null {
   const { hasConversation } = opts;
   if (
+    row.provider !== COPILOT_PROVIDER &&
     row.prompt_count === 0 &&
     hasConversation &&
     ![row.session_id, row.bound_conversation_id, row.resumed_from_conversation_id].some(

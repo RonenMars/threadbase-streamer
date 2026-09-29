@@ -101,6 +101,7 @@ import { locateProviderExe } from "./platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   coerceProviderForRunner,
   PROVIDER_NAMES,
   type ProviderName,
@@ -2944,7 +2945,12 @@ export class StreamerServer {
     const projectPath: string =
       jsonlCwd ??
       (conv as any)?.projectPath ??
-      (cachedCodexPath ? cachedConvMeta?.projectPath : null);
+      (cachedCodexPath ? cachedConvMeta?.projectPath : null) ??
+      // Copilot owns an explicit native ID. Live-v1 has no scanner index, but
+      // the managed registry is authoritative for the workspace we spawned.
+      (managedProvider === COPILOT_PROVIDER
+        ? (row?.project_path ?? liveSession?.projectPath)
+        : null);
     if (!projectPath) {
       // Nothing at all resolved — the history file is gone, not merely
       // unreadable. Distinguished from "path unknown" because it is permanent:
