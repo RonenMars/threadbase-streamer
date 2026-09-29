@@ -499,6 +499,33 @@ describe("RemoteSessionRunner — async reads", () => {
     expect(runner.getOutput("sess-1")).toBe("raw bytes");
   });
 
+  it("asks the host for the archive and reads its boundary back", async () => {
+    const { runner, host } = await connect({
+      status: () => statusOf({ session: mkSession(), pid: 1 }),
+      replay: () => ({ lines: ["before clear", "frame"], output: "raw", archivedLineCount: 1 }),
+    });
+
+    expect(await runner.getReplayLines("sess-1", 1040)).toEqual({
+      lines: ["before clear", "frame"],
+      archivedLineCount: 1,
+    });
+    expect(host.sent.find((r) => r.type === "replay")).toMatchObject({ archive: true });
+  });
+
+  // A host that predates the archive ignores `archive` and answers with the
+  // screen alone; that must read as nothing archived, not as an error.
+  it("reads an older host's replay as nothing archived", async () => {
+    const { runner } = await connect({
+      status: () => statusOf({ session: mkSession(), pid: 1 }),
+      replay: () => ({ lines: ["frame"], output: "raw" }),
+    });
+
+    expect(await runner.getReplayLines("sess-1", 1040)).toEqual({
+      lines: ["frame"],
+      archivedLineCount: 0,
+    });
+  });
+
   it("hydrates input history for a session it did not start", async () => {
     const { runner } = await connect({
       status: () => statusOf({ session: mkSession(), pid: 1 }),

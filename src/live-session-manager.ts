@@ -13,6 +13,7 @@ import {
 import type { HostHeartbeatState, HostTransport } from "./pty-host/protocol";
 import { RemoteSessionRunner } from "./pty-host/remote-session-runner";
 import { PTYManager } from "./pty-manager";
+import type { ReplayLines } from "./pty-shared";
 import type {
   ManagedSession,
   PTYManagerOptions,
@@ -159,6 +160,15 @@ export class LiveSessionManager {
 
   getOutputLines(sessionId: string, maxLines: number): Promise<string[]> {
     return this.runnerFor(sessionId).getOutputLines(sessionId, maxLines);
+  }
+
+  async getReplayLines(sessionId: string, maxLines: number): Promise<ReplayLines> {
+    const runner = this.activeRunners().find((r) => r.hasSession(sessionId));
+    if (runner?.getReplayLines) return runner.getReplayLines(sessionId, maxLines);
+    // Through this.getOutputLines, not the runner's: a runner without an
+    // archive, or a session no runner holds a PTY for, answers exactly what
+    // the replay sent before the archive existed.
+    return { lines: await this.getOutputLines(sessionId, maxLines), archivedLineCount: 0 };
   }
 
   getInputHistory(sessionId: string): UserMessage[] {

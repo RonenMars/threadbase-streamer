@@ -84,8 +84,14 @@ export type HostRequest =
   | { id: number; type: "resize"; sessionId: string; cols: number; rows: number }
   /** Begin receiving events. Sent once per connection after status passes the version check. */
   | { id: number; type: "subscribe" }
-  /** The rendered screen, newest `maxLines` rows, in true on-screen order. */
-  | { id: number; type: "replay"; sessionId: string; maxLines: number }
+  /**
+   * The rendered screen, newest `maxLines` rows, in true on-screen order.
+   * `archive` asks for the rows kept from before the screen's last full clear
+   * too (ReplayResult.archivedLineCount). Optional and additive: an older host
+   * ignores it and answers with the screen alone, which a caller reads as
+   * nothing archived — so this needs no version bump.
+   */
+  | { id: number; type: "replay"; sessionId: string; maxLines: number; archive?: boolean }
   | { id: number; type: "input-history"; sessionId: string }
   | { id: number; type: "cancel"; sessionId: string }
   /**
@@ -223,6 +229,8 @@ export interface ReplayResult {
   lines: string[];
   /** The raw ring buffer, so a reconnecting streamer can restore `getOutput`. */
   output: string;
+  /** Leading entries of `lines` kept from before the last full clear. Absent from an older host. */
+  archivedLineCount?: number;
 }
 
 /**

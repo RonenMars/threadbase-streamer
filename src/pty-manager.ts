@@ -10,6 +10,8 @@ import {
   type InternalSession,
   loadPty,
   PTY_ROWS,
+  type ReplayLines,
+  readReplayLines,
   refuseIfDisposed,
   stripAnsi,
 } from "./pty-shared";
@@ -821,6 +823,14 @@ export class PTYManager implements SessionRunner {
       lines.pop();
     }
     return lines.slice(-maxLines);
+  }
+
+  // terminal_replay's rows: kept history from before the last full clear, then
+  // the screen since. See ClearArchive in pty-shared.
+  async getReplayLines(sessionId: string, maxLines: number): Promise<ReplayLines> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error(`Session not found: ${sessionId}`);
+    return readReplayLines(session.screen, maxLines);
   }
 
   getInputHistory(sessionId: string): UserMessage[] {

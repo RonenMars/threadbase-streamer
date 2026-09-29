@@ -1,4 +1,5 @@
 import type { ProviderName } from "../providers";
+import type { ReplayLines } from "../pty-shared";
 import type {
   ManagedSession,
   PTYManagerOptions,
@@ -432,6 +433,17 @@ export class RemoteSessionRunner implements SessionRunner {
     // from the same answer so a reconnecting streamer's getOutput is not empty.
     if (typeof result.output === "string") this.output.set(sessionId, result.output);
     return result.lines;
+  }
+
+  async getReplayLines(sessionId: string, maxLines: number): Promise<ReplayLines> {
+    const result = (await this.request({
+      type: "replay",
+      sessionId,
+      maxLines,
+      archive: true,
+    })) as ReplayResult;
+    if (typeof result.output === "string") this.output.set(sessionId, result.output);
+    return { lines: result.lines, archivedLineCount: result.archivedLineCount ?? 0 };
   }
 
   /**

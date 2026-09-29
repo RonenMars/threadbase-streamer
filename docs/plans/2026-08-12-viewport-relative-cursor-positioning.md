@@ -201,6 +201,8 @@ The two rules do not conflict anywhere here: `A`/`B` are cursor-moving *and* mea
 
 **Result: 152/152 green across all eleven terminal-related suites, `tsc` clean, zero test rewrites.**
 
+> **Update 2026-09-27 — `2J`/`3J` frequency verified.** Claude Code 2.1.42's renderer writes `ESC[2J ESC[3J ESC[H` on every full reset (reasons `resize` and `offscreen`), and a long turn triggers `offscreen` repeatedly. So the scrollback loss is live, not theoretical. The render terminal now keeps what a clear erases (`ClearArchive` in `src/pty-shared.ts`) and `terminal_replay` carries it with an `archivedLineCount` boundary. The client half is in tb-mobile.
+
 ### `CSI S` is out, and the reason it was nearly in was a false claim
 
 An earlier draft of this plan asserted that `:285-288` "never adjusts `this.row`, so the cursor silently points at a different logical line afterwards." **That is wrong.** Measured with identical viewport-relative CUP in both variants — 60 rows, `CSI 30;1H`, `CSI nS`, then a write:
