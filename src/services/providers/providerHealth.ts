@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { ProviderExecutableError } from "../../config/provider-executables";
 import { isWindows, locateProviderExe } from "../../platform";
 import {
   CLAUDE_CODE_PROVIDER,
@@ -33,6 +34,8 @@ export const VERIFIED_AGAINST: Record<ProviderName, VerifiedAgainst> = {
 export type ProviderWarningCode =
   /** The CLI is not installed, or not on PATH. */
   | "provider_not_found"
+  /** An explicit executable override cannot be used. */
+  | "provider_executable_invalid"
   /** Installed, but we could not read a version from it. */
   | "version_undetectable"
   /** Installed and readable, but outside the range our fixtures cover. */
@@ -197,15 +200,19 @@ export async function providerHealth(
   const capabilities = capabilitiesFor(name);
 
   let exe: string | null = null;
+  let configError: ProviderExecutableError | undefined;
   try {
-    // Located, not merely resolved: neither resolver can fail — each falls back
-    // to the bare command name — so this used to be gated on a throw that never
-    // happens, and `available` was true for a CLI not on the machine at all.
+    // Located, not merely resolved. With no override each resolver falls back
+    // to the bare command name and cannot throw, so this used to be gated on a
+    // throw that never happens, and `available` was true for a CLI not on the
+    // machine at all. An invalid `*_executable` override does throw; that is a
+    // config error, not "not installed".
     // Mobile greys a provider out on `available === false`, so the button
     // stayed enabled and the failure only surfaced as a session that died
     // milliseconds after starting.
     exe = locateExe();
-  } catch {
+  } catch (err) {
+    if (err instanceof ProviderExecutableError) configError = err;
     exe = null;
   }
   if (exe === null) {
@@ -217,8 +224,10 @@ export async function providerHealth(
       capabilities,
       warnings: [
         {
-          code: "provider_not_found",
-          message: `${name} could not be located. Sessions for this provider cannot start.`,
+          code: configError ? "provider_executable_invalid" : "provider_not_found",
+          message:
+            configError?.message ??
+            `${name} could not be located. Sessions for this provider cannot start.`,
         },
       ],
     };

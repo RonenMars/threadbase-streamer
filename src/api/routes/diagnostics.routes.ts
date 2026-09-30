@@ -1,5 +1,6 @@
 import { existsSync } from "fs";
 import { Hono } from "hono";
+import { ProviderExecutableError } from "../../config/provider-executables";
 import { locateProviderExe } from "../../platform";
 import { PROVIDER_NAMES, type ProviderName } from "../../providers";
 import {
@@ -33,11 +34,11 @@ import type { ApiDeps } from "../types/api-deps";
 function providerCheck(name: ProviderName): DiagnosticCheck {
   try {
     // Located, not merely resolved, and through the same entry point the
-    // session-start pre-flight uses so the two cannot disagree: neither
-    // resolver can fail — each falls back to the bare command name — so the
-    // failed branch below was unreachable, and this endpoint, whose entire job
-    // is explaining why a session will not start, reported a missing CLI as
-    // installed.
+    // session-start pre-flight uses so the two cannot disagree. With no
+    // override each resolver falls back to the bare command name, so the
+    // failed branch below was unreachable and this endpoint reported a missing
+    // CLI as installed. An invalid override throws and is reported as its own
+    // remediation, not as a missing CLI.
     const exe = locateProviderExe(name);
     if (exe !== null) {
       // Report only that it resolved and roughly where — never the full path,
@@ -50,8 +51,15 @@ function providerCheck(name: ProviderName): DiagnosticCheck {
         detail: { location: redactPath(exe) },
       };
     }
-  } catch {
-    // Fall through to the not-installed answer below.
+  } catch (err) {
+    if (err instanceof ProviderExecutableError) {
+      return {
+        id: `provider:${name}`,
+        status: "failed",
+        summary: err.message,
+        remediation: "PROVIDER_EXECUTABLE_INVALID",
+      };
+    }
   }
   return {
     id: `provider:${name}`,

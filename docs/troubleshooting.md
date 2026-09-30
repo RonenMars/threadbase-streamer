@@ -598,7 +598,7 @@ Restart the streamer to pick it up.
 In the observed incident, mobile displayed `E2EE: the server answered a sealed request without a sealed response`.
 The executable collision below explains the startup failure; where the response lost its encryption marker was not verified.
 
-**Cause:** `resolveCursorExe()` in `src/platform.ts` looks for `agent` before `cursor-agent`.
+**Cause:** `resolveCursorExe()` used to look for `agent` before `cursor-agent`.
 The installed Homebrew `grok-build` 1.0.41 cask declared both `grok` and `agent` as links to the Grok executable.
 Cursor also installs `agent` and `cursor-agent` under `~/.local/bin`.
 When the streamer's service PATH finds `/opt/homebrew/bin/agent` first, the Cursor runner launches Grok with Cursor's `--workspace` and `--trust` arguments.
@@ -617,13 +617,23 @@ Check the production service's PATH, not only the interactive shell's PATH.
 A shell that finds Cursor can coexist with a launchd service that finds Grok.
 The local reproduction was Grok rejecting `--workspace`, while launching the actual Cursor executable with the same arguments reached its prompt.
 
-**Workaround:** Configure the service PATH so Cursor's `~/.local/bin` directory precedes Homebrew's `bin` directory, preserving the service's existing Node and Homebrew paths, then restart the streamer and verify a new Cursor session becomes ready.
-Use the expanded absolute home path in a launchd plist; `~` and `$HOME` are not shell-expanded there.
-The resolver caches its selection, so changing PATH without restarting the process is insufficient.
+**Fix:** Discovery now tries `cursor-agent` before `agent`.
+To pin one binary, set an absolute path in `server.yaml` and restart the streamer:
+
+```yaml
+cursor_executable: /absolute/path/to/cursor-agent
+```
+
+`claude_executable` and `codex_executable` are the same knob for the other providers.
+A missing key keeps automatic discovery.
+A relative path, a missing file, a non-executable file, or a path with arguments fails that provider with 503 `PROVIDER_EXECUTABLE_INVALID` and does not fall back to another binary.
+The value is the executable only.
+Resolution is cached for the process lifetime.
+With the pty host enabled, a streamer restart refreshes that cache when the streamer subscribes; sessions already running keep their process.
 See [production service lifecycle](guides/prod-dev-lifecycle.md) for restart commands.
 
-**Code fix to consider:** Prefer the provider-specific `cursor-agent` executable and validate any fallback to the ambiguous `agent` command.
-This entry documents the diagnosis; it does not change executable resolution or verify the service workaround end to end.
+**Workaround on a build that still resolves `agent` first:** Configure the service PATH so Cursor's `~/.local/bin` directory precedes Homebrew's `bin` directory, preserving the service's existing Node and Homebrew paths, then restart the streamer.
+Use the expanded absolute home path in a launchd plist; `~` and `$HOME` are not shell-expanded there.
 
 ---
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { LiveSessionManager } from "../live-session-manager";
 import type { Logger } from "../logger";
 import { getLogger } from "../logger";
+import { clearClaudeExeCache, clearCodexExeCache, clearCursorExeCache } from "../platform";
 import { permissionGateKey } from "../services/questions/detectPermissionGate";
 import { questionContentKey } from "../services/questions/detectQuestionFromScreen";
 import type { ManagedSession, StartFreshSessionOptions, StartSessionOptions } from "../types";
@@ -221,6 +222,13 @@ export class SessionHost {
   private async handle(transport: HostTransport, request: HostRequest): Promise<unknown> {
     switch (request.type) {
       case "subscribe":
+        // This process outlives the streamer, and executable resolution is
+        // memoized here. A subscribe is a streamer (re)connect, which is when
+        // a restarted streamer can bring a new server.yaml. Live PTYs keep
+        // the processes they already spawned.
+        clearClaudeExeCache();
+        clearCodexExeCache();
+        clearCursorExeCache();
         this.subscribers.add(transport);
         this.log.info("[pty-host] streamer subscribed", {
           event: "pty_host.streamer_subscribed",
