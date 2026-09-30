@@ -29,6 +29,7 @@ export type CheckStatus = "ok" | "degraded" | "failed" | "unknown";
  */
 export type RemediationCode =
   | "PROVIDER_NOT_INSTALLED"
+  | "PROVIDER_EXECUTABLE_INVALID"
   | "PROVIDER_VERSION_UNVERIFIED"
   | "DB_UNAVAILABLE"
   | "DB_MIGRATION_PENDING"

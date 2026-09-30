@@ -2,7 +2,13 @@ import { execFileSync } from "child_process";
 import { accessSync, constants, existsSync, statSync } from "fs";
 import { homedir, platform } from "os";
 import { delimiter, join } from "path";
-import { CODEX_CLI_PROVIDER, CURSOR_PROVIDER, type ProviderName } from "./providers";
+import { loadProviderExecutable, ProviderExecutableError } from "./config/provider-executables";
+import {
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_PROVIDER,
+  type ProviderName,
+} from "./providers";
 
 export const isWindows = platform() === "win32";
 
@@ -44,6 +50,11 @@ export function clearClaudeExeCache(): void {
 
 export function resolveClaudeExe(): string {
   if (_claudeExe !== undefined) return _claudeExe;
+  const override = resolveProviderExecutableOverride(CLAUDE_CODE_PROVIDER);
+  if (override !== undefined) {
+    _claudeExe = override;
+    return _claudeExe;
+  }
 
   if (isWindows) {
     try {
@@ -124,6 +135,11 @@ export function clearCodexExeCache(): void {
 
 export function resolveCodexExe(): string {
   if (_codexExe !== undefined) return _codexExe;
+  const override = resolveProviderExecutableOverride(CODEX_CLI_PROVIDER);
+  if (override !== undefined) {
+    _codexExe = override;
+    return _codexExe;
+  }
 
   if (isWindows) {
     try {
@@ -190,9 +206,10 @@ export function resolveCodexExe(): string {
 }
 
 // ─── Cursor executable resolution ─────────────────────────────────────────────
-// Cursor CLI's published command is `agent` (cursor.com/install). Some
-// installs also ship `cursor-agent`. Same launchd/Task Scheduler PATH
-// problem as the other two resolvers.
+// Cursor installs `cursor-agent` and, on some installs, `agent`. Grok's
+// Homebrew cask also links `agent` at the Grok binary, so the provider-specific
+// name is tried first. Same launchd/Task Scheduler PATH problem as the other
+// two resolvers.
 
 let _cursorExe: string | undefined;
 
@@ -254,14 +271,20 @@ function resolveNamedAgentCommand(command: string): string | null {
 
 export function resolveCursorExe(): string {
   if (_cursorExe !== undefined) return _cursorExe;
+  const override = resolveProviderExecutableOverride(CURSOR_PROVIDER);
+  if (override !== undefined) {
+    _cursorExe = override;
+    return _cursorExe;
+  }
 
-  const found = resolveNamedAgentCommand("agent") ?? resolveNamedAgentCommand("cursor-agent");
+  // Prefer the provider-specific name: Grok also installs an `agent` alias.
+  const found = resolveNamedAgentCommand("cursor-agent") ?? resolveNamedAgentCommand("agent");
   _cursorExe = found ?? "agent";
   return _cursorExe;
 }
 
 // ─── Is the provider actually installed? ──────────────────────────────────────
-// Neither resolver above can fail. Each exhausts its lookups and then returns
+// Without an override, each resolver exhausts its lookups and then returns
 // the bare command name, which is handed to execvp/CreateProcess to try its own
 // luck against PATH. That fallback is load-bearing — a box whose /usr/bin/which
 // is absent (slim containers) resolves nothing here yet spawns perfectly well —
@@ -283,6 +306,18 @@ function isExecutableFile(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveProviderExecutableOverride(provider: ProviderName): string | undefined {
+  const exe = loadProviderExecutable(provider);
+  if (exe === undefined) return undefined;
+  if ((isWindows && !isWindowsExecutablePath(exe)) || !isExecutableFile(exe)) {
+    throw new ProviderExecutableError(
+      provider,
+      "the configured file is missing or not executable.",
+    );
+  }
+  return exe;
 }
 
 /**

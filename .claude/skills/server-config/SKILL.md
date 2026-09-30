@@ -34,9 +34,19 @@ Moved out of the repo root `CLAUDE.md` so it loads on demand rather than in ever
 
 ## CLI flags vs. `server.yaml`
 
-`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`, `claude_flags`, `claude_extra_args`, `feature_flags`) from it, but most runtime knobs come exclusively from CLI flags.
+`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`, `claude_flags`, `claude_extra_args`, `feature_flags`) from it, but most runtime knobs come exclusively from CLI flags. Optional provider executable overrides (`claude_executable`, `codex_executable`, `cursor_executable`) are read by the resolvers in `src/platform.ts`, not by the CLI flag parser.
 
 `--prod` does not change which directory is read. Leave `THREADBASE_CONFIG_DIR` unset so both the launchd / Task Scheduler instance and an ad-hoc `serve` share `~/.threadbase/`. See [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
+
+Optional absolute executable paths, one per provider, override discovery. Only set the providers that need a pin:
+
+```yaml
+claude_executable: /absolute/path/to/claude
+codex_executable: /absolute/path/to/codex
+cursor_executable: /absolute/path/to/cursor-agent
+```
+
+A missing key keeps automatic discovery. Cursor discovery tries `cursor-agent` before `agent`, because another tool can install an `agent` binary that is not Cursor. The value is a single absolute path to an executable file: a relative path, a directory, a missing file, or a path plus arguments fails that provider with 503 `PROVIDER_EXECUTABLE_INVALID` and does not fall back. Quote a path that contains spaces. Resolution is cached until process restart; with `ptyHost`, the host drops that cache when a streamer subscribes, so a streamer restart picks up the new path without killing sessions that are already running.
 
 The file is parsed by **single-line regex, not a YAML library** — every value must stay on one line. `claude_flags:` and `feature_flags:` therefore store one line of JSON (`{"permissionMode":"bypassPermissions"}`, `{"ptyHost":true}`), which keeps colons/quotes/spaces escaped for free; a corrupt line is logged and ignored rather than failing the boot. `feature_flags:` keys are the `FEATURE_FLAGS` object keys, not env names. Setting `port:` in `server.yaml` does nothing — the listening port comes only from `--port` (CLI default `8766`). Any service definition (launchd plist, systemd unit, Task Scheduler action) **must** pass `--port <n>` explicitly — the deploy scripts already do.
 

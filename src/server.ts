@@ -53,6 +53,7 @@ import {
   type PermissionMode,
   validateFlagValues,
 } from "./claude-flags";
+import { ProviderExecutableError } from "./config/provider-executables";
 import { ConversationCache } from "./conversation-cache";
 import { listCursorTranscriptWatchDirs } from "./cursor-transcript-watch";
 import { createPool, getDbConfig, maskConnectionString, runMigrations } from "./db";
@@ -1478,13 +1479,20 @@ export class StreamerServer {
    */
   private logProviderAvailability(): void {
     for (const provider of PROVIDER_NAMES) {
-      if (locateProviderExe(provider)) {
-        this.log.info(`Provider ${provider}: found`, { event: "config.provider", provider });
-      } else {
-        this.log.warn(`Provider ${provider}: not found on PATH — sessions cannot start`, {
-          event: "config.provider_missing",
-          provider,
-        });
+      try {
+        if (locateProviderExe(provider)) {
+          this.log.info(`Provider ${provider}: found`, { event: "config.provider", provider });
+        } else {
+          this.log.warn(`Provider ${provider}: not found on PATH — sessions cannot start`, {
+            event: "config.provider_missing",
+            provider,
+          });
+        }
+      } catch (err) {
+        // An invalid override must not take the process down at boot. The
+        // same error is what session start and /api/providers report.
+        if (!(err instanceof ProviderExecutableError)) throw err;
+        this.log.warn(err.message, { event: "config.provider_executable_invalid", provider });
       }
     }
   }
