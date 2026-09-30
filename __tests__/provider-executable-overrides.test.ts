@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { spawn } from "node-pty";
 import { tmpdir } from "os";
 import { delimiter, join } from "path";
@@ -215,6 +215,8 @@ it("prefers cursor-agent even when another provider owns agent earlier on PATH",
   writeFileSync(cursor, "", { mode: 0o755 });
   vi.stubEnv("PATH", [grokDir, cursorDir, process.env.PATH].join(delimiter));
   await start("cursor");
-  // where.exe expands an 8.3 temp path; both forms name the same file.
-  expect(realpathSync(vi.mocked(spawn).mock.calls[0][0])).toBe(realpathSync(cursor));
+  // where.exe expands an 8.3 temp directory, so compare the executable identity
+  // by its last two segments rather than the temp prefix.
+  const spawned = String(vi.mocked(spawn).mock.calls[0][0]).replaceAll("\\", "/");
+  expect(spawned.toLowerCase().endsWith(`/cursor/cursor-agent${suffix}`)).toBe(true);
 });
