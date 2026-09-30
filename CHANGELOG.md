@@ -1,3 +1,9 @@
+## [1.104.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.2...v1.104.3) (2026-09-30)
+
+### Bug Fixes
+
+* **replay:** keep terminal history across full screen clears ([#999](https://github.com/RonenMars/threadbase-streamer/issues/999)) ([a0d8428](https://github.com/RonenMars/threadbase-streamer/commit/a0d8428411583ee02f4dfe834bc87034acdf8677))
+
 ## [1.104.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.1...v1.104.2) (2026-09-27)
 
 ### Bug Fixes
