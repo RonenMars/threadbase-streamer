@@ -1,3 +1,9 @@
+## [1.105.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.3...v1.105.0) (2026-09-30)
+
+### Features
+
+* **providers:** pin provider CLIs and prefer cursor-agent ([77822a7](https://github.com/RonenMars/threadbase-streamer/commit/77822a75a3c42d742754c853b4057ef1d0901062))
+
 ## [1.104.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.2...v1.104.3) (2026-09-30)
 
 ### Bug Fixes
