@@ -592,6 +592,41 @@ Restart the streamer to pick it up.
 
 ---
 
+### Cursor session startup launches Grok instead of Cursor {#cursor-agent-command-collision}
+
+**When:** Starting a Cursor session repeatedly returns HTTP 502 from `/api/sessions/start`, and the process exits before becoming ready.
+In the observed incident, mobile displayed `E2EE: the server answered a sealed request without a sealed response`.
+The executable collision below explains the startup failure; where the response lost its encryption marker was not verified.
+
+**Cause:** `resolveCursorExe()` in `src/platform.ts` looks for `agent` before `cursor-agent`.
+The installed Homebrew `grok-build` 1.0.41 cask declared both `grok` and `agent` as links to the Grok executable.
+Cursor also installs `agent` and `cursor-agent` under `~/.local/bin`.
+When the streamer's service PATH finds `/opt/homebrew/bin/agent` first, the Cursor runner launches Grok with Cursor's `--workspace` and `--trust` arguments.
+Grok rejects `--workspace` and exits with code 2.
+Homebrew follows the command names declared by the cask; it does not automatically invent the `agent` alias or overwrite Cursor's separate link.
+
+**Diagnosis:** Inspect the links and executable versions:
+
+```sh
+ls -l /opt/homebrew/bin/agent /opt/homebrew/bin/grok "$HOME/.local/bin/agent" "$HOME/.local/bin/cursor-agent"
+/opt/homebrew/bin/agent --version
+"$HOME/.local/bin/cursor-agent" --version
+```
+
+Check the production service's PATH, not only the interactive shell's PATH.
+A shell that finds Cursor can coexist with a launchd service that finds Grok.
+The local reproduction was Grok rejecting `--workspace`, while launching the actual Cursor executable with the same arguments reached its prompt.
+
+**Workaround:** Configure the service PATH so Cursor's `~/.local/bin` directory precedes Homebrew's `bin` directory, preserving the service's existing Node and Homebrew paths, then restart the streamer and verify a new Cursor session becomes ready.
+Use the expanded absolute home path in a launchd plist; `~` and `$HOME` are not shell-expanded there.
+The resolver caches its selection, so changing PATH without restarting the process is insufficient.
+See [production service lifecycle](guides/prod-dev-lifecycle.md) for restart commands.
+
+**Code fix to consider:** Prefer the provider-specific `cursor-agent` executable and validate any fallback to the ambiguous `agent` command.
+This entry documents the diagnosis; it does not change executable resolution or verify the service workaround end to end.
+
+---
+
 ### A Cursor session ignores every prompt, though `/input` answers `{"ok":true}` {#cursor-prompt-dropped}
 
 **When:** A Cursor session settles `waiting_input`, but each prompt is followed 2 s later by `cursor.ready submit-stale`. `/output` holds only the boot screen, and the prompt is never echoed. Claude and Codex sessions on the same streamer work.
