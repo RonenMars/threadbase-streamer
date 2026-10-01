@@ -153,6 +153,40 @@ describe("detectQuestionFromScreen", () => {
     expect(r?.questions[0].multiSelect).toBe(false);
   });
 
+  // A question wider than the terminal wraps; only the last row ends in "?".
+  // Taking that row alone put "smallest fix with a test and all three suites?"
+  // on the phone instead of the whole question.
+  it("joins a question that wraps across terminal rows", () => {
+    const wrapped = [
+      "Some earlier output",
+      "",
+      "☐ Plan",
+      "Approve this plan: worktree, simulator repro with a tall-message fixture, bisect",
+      "selectable/font/FlashList, then the smallest fix with a test and all three suites?",
+      "❯ 1. Approve plan",
+      "  2. Repro only first",
+      "  3. Stop here",
+      "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ];
+    const r = detectQuestionFromScreen(wrapped);
+    expect(r?.questions[0].question).toBe(
+      "Approve this plan: worktree, simulator repro with a tall-message fixture, bisect selectable/font/FlashList, then the smallest fix with a test and all three suites?",
+    );
+  });
+
+  it("does not pull the header chip or earlier output into a wrapped question", () => {
+    const r = detectQuestionFromScreen([
+      "unrelated prose above",
+      "☐ Area",
+      "Which area are you",
+      "focused on?",
+      "❯ 1. macOS",
+      "  2. iOS",
+      "Enter to select · Esc to cancel",
+    ]);
+    expect(r?.questions[0].question).toBe("Which area are you focused on?");
+  });
+
   it("returns null when the header doesn't end with '?'", () => {
     const statusy = [
       "Sonnet 4.6 | ~/Desktop/dev/apps",

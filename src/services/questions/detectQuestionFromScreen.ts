@@ -92,6 +92,28 @@ function stripBoxGutter(line: string): string {
   return line.replace(/^\s*[│|]\s?/, "").replace(/\s*[│|]\s*$/, "");
 }
 
+// The "☐ Header" chip AskUserQuestion paints beside a question. It is not part
+// of the question text, so it ends the upward walk in joinWrappedQuestion.
+const HEADER_CHIP_RE = /^[☐☑☒]/;
+
+// A long question wraps across terminal rows and only the LAST one ends in "?",
+// so taking that row alone drops the beginning of the question (a phone card
+// read "smallest fix with a test and all three suites?"). Join the rows above
+// it, stopping at a blank line, a box border or the header chip. Capped so a
+// screen with prose directly above the question cannot be swallowed whole.
+const MAX_WRAPPED_QUESTION_ROWS = 6;
+
+function joinWrappedQuestion(lines: string[], questionIdx: number, last: string): string {
+  const rows = [last];
+  for (let i = questionIdx - 1; i >= 0 && rows.length < MAX_WRAPPED_QUESTION_ROWS; i--) {
+    const trimmed = stripBoxGutter(lines[i]).trim();
+    if (trimmed.length === 0 || BOX_ONLY_RE.test(lines[i].trim())) break;
+    if (HEADER_CHIP_RE.test(trimmed)) break;
+    rows.unshift(trimmed);
+  }
+  return rows.join(" ");
+}
+
 /**
  * Detect an AskUserQuestion menu in rendered screen lines. Returns the question
  * set (single-question; the TUI shows one picker at a time) or null.
@@ -156,7 +178,7 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
     if (trimmed.length === 0) continue;
     if (BOX_ONLY_RE.test(lines[i].trim())) continue;
     if (QUESTION_RE.test(trimmed)) {
-      question = trimmed;
+      question = joinWrappedQuestion(lines, i, trimmed);
       break;
     }
     if (!skippedHeader) {
