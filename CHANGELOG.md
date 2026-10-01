@@ -1,3 +1,9 @@
+## [1.105.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.105.0...v1.105.1) (2026-10-01)
+
+### Bug Fixes
+
+* **questions:** join wrapped question rows from the screen scrape ([d988c75](https://github.com/RonenMars/threadbase-streamer/commit/d988c75726174898117b5ea902303e05e8d30927))
+
 ## [1.105.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.104.3...v1.105.0) (2026-09-30)
 
 ### Features
