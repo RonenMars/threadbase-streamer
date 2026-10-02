@@ -35,7 +35,7 @@ Idle sessions are resumed via `POST /api/sessions/resume` with the same `convers
 
 ## Mobile pairing
 
-On startup (or via `tb-streamer pair`), the server prints a QR code encoding a `threadbase://pair?url=…&token=…&exp=…` deep-link URL. The token is minted by `pair-store.ts` (single-use, 180 s TTL). The mobile client trades it at `POST /api/pair/exchange` along with its X25519 public key; `seal.ts` encrypts the API key into a NaCl sealed box so the key never appears in the QR or in transit unencrypted.
+On startup (or via `tb-streamer pair`), the server prints a QR code encoding a `threadbase://pair?url=…&token=…&exp=…` deep-link URL (`threadbase-dev://` under `tb-streamer pair --dev`, for the TbDev QA app). The token is minted by `pair-store.ts` (single-use, 180 s TTL). The mobile client trades it at `POST /api/pair/exchange` along with its X25519 public key; `seal.ts` encrypts the API key into a NaCl sealed box so the key never appears in the QR or in transit unencrypted.
 
 ## Module reference
 

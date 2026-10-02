@@ -184,7 +184,7 @@ Full endpoint reference: [docs/api-reference.md](docs/api-reference.md).
 
 ## Mobile Pairing (QR)
 
-A pairing QR is printed on server start (skip with `--no-pair-qr`), or reprint one anytime with `tb-streamer pair`. Scanning it trades a single-use token for a sealed API key — the key itself never appears in the QR.
+A pairing QR is printed on server start (skip with `--no-pair-qr`), or reprint one anytime with `tb-streamer pair` (`tb-streamer pair --dev` prints one for the TbDev QA app, which registers `threadbase-dev://` so it can sit beside Threadbase). Scanning it trades a single-use token for a sealed API key — the key itself never appears in the QR.
 
 If the phone can't reach `localhost`, give it a reachable address via (in order of precedence) `--public-url`, `THREADBASE_PUBLIC_URL`, or `public_url:` in `server.yaml`. HTTPS is required except for `localhost`.
 

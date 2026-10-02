@@ -62,7 +62,11 @@ function makeFetch(info: unknown, opts: { infoStatus?: number; infoThrows?: stri
   }) as unknown as typeof globalThis.fetch;
 }
 
-async function printWith(info: unknown, fetchOpts?: { infoStatus?: number; infoThrows?: string }) {
+async function printWith(
+  info: unknown,
+  fetchOpts?: { infoStatus?: number; infoThrows?: string },
+  scheme?: "threadbase" | "threadbase-dev",
+) {
   const log = { info: vi.fn(), warn: vi.fn() };
   const identityKey = vi.fn(() => IDENTITY_KEY);
   await printServerBanner(
@@ -71,6 +75,7 @@ async function printWith(info: unknown, fetchOpts?: { infoStatus?: number; infoT
       apiKey: "tb_0123456789abcdef0123456789abcdef",
       publicUrl: PUBLIC_URL,
       includeQr: true,
+      scheme,
     },
     { log, fetch: makeFetch(info, fetchOpts), identityKey },
   );
@@ -109,6 +114,25 @@ describe("pairing QR payload", () => {
     expect(banner).toContain("Identity code");
     expect(banner).toContain(serverIdentityFingerprint(IDENTITY_KEY));
     expect(banner).toContain("This should match the code your phone shows after you scan.");
+  });
+
+  it("prints the TbDev scheme under --dev and keeps everything else byte-identical", async () => {
+    const info = { e2ee: { supported: false, enabled: false, version: 1, required: false } };
+    const { payload } = await printWith(info, undefined, "threadbase-dev");
+
+    expect(payload).toBe(LEGACY_PAYLOAD.replace("threadbase://", "threadbase-dev://"));
+  });
+
+  it("carries spk and v under the TbDev scheme too", async () => {
+    const { payload } = await printWith(
+      { e2ee: { supported: true, enabled: true, version: 1, required: false } },
+      undefined,
+      "threadbase-dev",
+    );
+
+    expect(payload).toBe(
+      `${LEGACY_PAYLOAD.replace("threadbase://", "threadbase-dev://")}&spk=${IDENTITY_KEY}&v=1`,
+    );
   });
 
   it("omits spk and v against a server too old to report the capability", async () => {
