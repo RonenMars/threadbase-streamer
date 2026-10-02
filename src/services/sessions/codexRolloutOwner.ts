@@ -49,26 +49,26 @@ export interface FindRolloutOwnerOptions {
   run?: (rolloutPath: string, timeoutMs: number) => Promise<string>;
 }
 
-function runLsof(rolloutPath: string, timeoutMs: number): Promise<string> {
+function lsofForRollout(rolloutPath: string, timeoutMs: number): Promise<string> {
+  // -F pc → machine-readable field output, one `p<pid>` / `c<command>` per
+  // line. -w silences warnings that would otherwise land on stdout.
+  // `--` guards a path that starts with a dash.
+  return runLsof(["-F", "pc", "-w", "--", rolloutPath], timeoutMs);
+}
+
+/** Run `lsof` with a hard deadline. Exported for the pid → rollout lookup. */
+export function runLsof(args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    // -F pc → machine-readable field output, one `p<pid>` / `c<command>` per
-    // line. -w silences warnings that would otherwise land on stdout.
-    // `--` guards a path that starts with a dash.
-    const child = execFile(
-      "lsof",
-      ["-F", "pc", "-w", "--", rolloutPath],
-      { windowsHide: true },
-      (err, stdout) => {
-        clearTimeout(timer);
-        // lsof exits 1 when nothing matches — that is a normal empty result,
-        // and stdout is what we parse either way.
-        if (err && !stdout) {
-          reject(err);
-          return;
-        }
-        resolve(stdout);
-      },
-    );
+    const child = execFile("lsof", args, { windowsHide: true }, (err, stdout) => {
+      clearTimeout(timer);
+      // lsof exits 1 when nothing matches — that is a normal empty result,
+      // and stdout is what we parse either way.
+      if (err && !stdout) {
+        reject(err);
+        return;
+      }
+      resolve(stdout);
+    });
 
     // The deadline is enforced here rather than via execFile's `timeout`
     // option, which only SIGTERMs. lsof walks every process on the box, and on
@@ -120,7 +120,7 @@ export async function findRolloutOwner(
   if (platform === "win32") return null;
 
   const selfPid = options.selfPid ?? process.pid;
-  const run = options.run ?? runLsof;
+  const run = options.run ?? lsofForRollout;
 
   let stdout: string;
   try {

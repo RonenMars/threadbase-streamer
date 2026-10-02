@@ -8,11 +8,78 @@ import {
   CURSOR_PROVIDER,
   type ProviderName,
 } from "./providers";
+import {
+  type ClaudeRegistryEntry,
+  codexRolloutIdForPid,
+  readClaudeSessionRegistry,
+} from "./services/sessions/processSessionIds";
 import type { DiscoveredProcess } from "./types";
 
 export async function discoverClaudeProcesses(): Promise<DiscoveredProcess[]> {
-  if (platform() === "win32") return discoverWindows();
-  return discoverUnix();
+  // OS start times we actually read, as opposed to the `new Date()` stand-in a
+  // DiscoveredProcess carries when the read failed. The Claude registry check
+  // must only compare against a real one.
+  const knownStarts = new Map<number, Date>();
+  const found =
+    platform() === "win32" ? await discoverWindows(knownStarts) : await discoverUnix(knownStarts);
+  return resolveSessionIds(found, knownStarts);
+}
+
+/** Exact per-provider PID → session-id lookups; see processSessionIds.ts. */
+export interface SessionIdResolvers {
+  claude: (pid: number, processStartedAt?: Date) => Promise<ClaudeRegistryEntry | null>;
+  codex: (pid: number) => Promise<string | null>;
+}
+
+const defaultResolvers: SessionIdResolvers = {
+  claude: (pid, processStartedAt) => readClaudeSessionRegistry(pid, { processStartedAt }),
+  codex: (pid) => codexRolloutIdForPid(pid),
+};
+
+/**
+ * Fill in each process's conversation id from an exact source when argv did not
+ * state one — the plain `claude` / `codex` typed in a terminal, which discovery
+ * otherwise has to drop. Never guesses: a lookup that finds nothing leaves the
+ * process as it was.
+ *
+ * Claude's registry wins over argv when both are present. argv is fixed at
+ * launch; the registry is what the running process says now, so it is the one
+ * that can follow the session if it changes inside the TUI.
+ */
+export async function resolveSessionIds(
+  processes: DiscoveredProcess[],
+  knownStarts: ReadonlyMap<number, Date> = new Map(),
+  resolvers: SessionIdResolvers = defaultResolvers,
+): Promise<DiscoveredProcess[]> {
+  return Promise.all(
+    processes.map(async (proc) => {
+      try {
+        if (proc.provider === CLAUDE_CODE_PROVIDER) {
+          const entry = await resolvers.claude(proc.pid, knownStarts.get(proc.pid));
+          if (!entry) return proc;
+          // Windows exposes no process cwd; the registry carries Claude's own.
+          const cwd = proc.projectPath || entry.cwd || "";
+          return {
+            ...proc,
+            conversationId: entry.sessionId,
+            ...(!proc.projectPath &&
+              cwd && {
+                projectPath: cwd,
+                projectName: basename(cwd),
+                branch: await readGitBranch(cwd),
+              }),
+          };
+        }
+        if (proc.provider === CODEX_CLI_PROVIDER && !proc.conversationId) {
+          const rolloutId = await resolvers.codex(proc.pid);
+          return rolloutId ? { ...proc, conversationId: rolloutId } : proc;
+        }
+      } catch {
+        // A lookup is an enrichment; it can never cost the process its row.
+      }
+      return proc;
+    }),
+  );
 }
 
 // ─── Command-line identification ───────────────────────────────────
@@ -217,17 +284,19 @@ export function extractConversationId(args: string, provider: ProviderName): str
   return provider === CODEX_CLI_PROVIDER ? extractCodexResumeId(args) : extractResumeId(args);
 }
 
-async function discoverUnix(): Promise<DiscoveredProcess[]> {
+async function discoverUnix(knownStarts: Map<number, Date>): Promise<DiscoveredProcess[]> {
   const pids = await getPidsUnix();
 
   const results = await Promise.all(
     pids.map(async (pid) => {
       try {
-        const [cwd, args, startedAt] = await Promise.all([
+        const [cwd, args, knownStart] = await Promise.all([
           getProcessCwdUnix(pid),
           getProcessArgsUnix(pid),
           getProcessStartTimeUnix(pid),
         ]);
+        if (knownStart) knownStarts.set(pid, knownStart);
+        const startedAt = knownStart ?? new Date();
         // Re-derived here rather than carried from the sweep: the pgrep
         // fallback matches on name alone, so this is the only point at which
         // `codex app-server` can be told apart from a session.
@@ -252,12 +321,12 @@ async function discoverUnix(): Promise<DiscoveredProcess[]> {
   return results.filter((r): r is DiscoveredProcess => r !== null);
 }
 
-async function discoverWindows(): Promise<DiscoveredProcess[]> {
+async function discoverWindows(knownStarts: Map<number, Date>): Promise<DiscoveredProcess[]> {
   // Preferred: one CIM query for every candidate process. This finds npm-shim
   // installs (which run as node.exe) and drops the wmic dependency — wmic is
   // removed on current Windows 11 builds, where the legacy path below silently
   // yields nothing. Falls back to tasklist+wmic if PowerShell/CIM is unavailable.
-  const viaCim = await discoverWindowsViaCim();
+  const viaCim = await discoverWindowsViaCim(knownStarts);
   if (viaCim) return viaCim;
 
   const pids = await getPidsWindows();
@@ -267,6 +336,7 @@ async function discoverWindows(): Promise<DiscoveredProcess[]> {
       try {
         const info = await getProcessInfoWindows(pid);
         if (!info) return null;
+        knownStarts.set(pid, info.startedAt);
 
         const provider = providerForCommandLine(info.args);
         if (provider === null) return null;
@@ -389,10 +459,10 @@ export async function getProcessArgs(pid: number): Promise<string> {
   }
 }
 
-async function getProcessStartTimeUnix(pid: number): Promise<Date> {
+async function getProcessStartTimeUnix(pid: number): Promise<Date | null> {
   const raw = (await run("ps", ["-p", String(pid), "-o", "lstart="])).trim();
   const d = new Date(raw);
-  return Number.isNaN(d.getTime()) ? new Date() : d;
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 // ─── Windows Helpers ───────────────────────────────────────────────
@@ -414,16 +484,22 @@ export function parseCimProcesses(stdout: string): CimProcess[] {
 }
 
 export function parseCimDate(value: string | null): Date {
+  return parseCimDateOrNull(value) ?? new Date();
+}
+
+function parseCimDateOrNull(value: string | null): Date | null {
   if (value) {
     const epoch = value.match(/\/Date\((\d+)\)\//);
     if (epoch) return new Date(Number(epoch[1]));
     const d = new Date(value);
     if (!Number.isNaN(d.getTime())) return d;
   }
-  return new Date();
+  return null;
 }
 
-async function discoverWindowsViaCim(): Promise<DiscoveredProcess[] | null> {
+async function discoverWindowsViaCim(
+  knownStarts: Map<number, Date>,
+): Promise<DiscoveredProcess[] | null> {
   let stdout: string;
   try {
     // WQL filter at the provider — dumping every Win32_Process as JSON is what
@@ -459,6 +535,8 @@ async function discoverWindowsViaCim(): Promise<DiscoveredProcess[] | null> {
     // project path is genuinely unknown here rather than guessed. The previous
     // code substituted the executable's own directory, which reported an
     // unrelated install path as the user's project.
+    const created = parseCimDateOrNull(row.CreationDate);
+    if (created) knownStarts.set(row.ProcessId, created);
     results.push({
       pid: row.ProcessId,
       provider,
