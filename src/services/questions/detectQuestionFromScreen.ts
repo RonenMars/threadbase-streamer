@@ -16,10 +16,11 @@ import type { AskOption, AskQuestion } from "../../types";
 //       6. Chat about this
 //     Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 //
-// Differences from the JSONL form: no header/description/preview (the screen
-// only shows labels), and the leading number is the on-screen index. We map it
-// to the AskQuestion shape (header/description default to "") so the existing
-// `question` WS event and QuestionCard render path are reused unchanged.
+// Differences from the JSONL form: no header or preview, and the leading number
+// is the on-screen index. An option's description is the indented row(s) the TUI
+// paints under it; header defaults to "" and an option with no rows gets "". We
+// map it to the AskQuestion shape so the existing `question` WS event and
+// QuestionCard render path are reused unchanged.
 
 // The footer that terminates an AskUserQuestion menu — its presence is the
 // positive signal that this block IS a structured picker (vs a permission gate,
@@ -92,9 +93,11 @@ function stripBoxGutter(line: string): string {
   return line.replace(/^\s*[│|]\s?/, "").replace(/\s*[│|]\s*$/, "");
 }
 
-// The "☐ Header" chip AskUserQuestion paints beside a question. It is not part
-// of the question text, so it ends the upward walk in joinWrappedQuestion.
-const HEADER_CHIP_RE = /^[☐☑☒]/;
+// The "☐ Header" chip AskUserQuestion paints beside a question, and the
+// "← ☒ Scope ☐ Transcript ✔ Submit →" tab bar a multi-question form paints
+// directly above it with no blank line between. Neither is question text, so
+// either ends the upward walk in joinWrappedQuestion.
+const HEADER_CHIP_RE = /^[☐☑☒←→]/;
 
 // A long question wraps across terminal rows and only the LAST one ends in "?",
 // so taking that row alone drops the beginning of the question (a phone card
@@ -138,6 +141,7 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
   const options: AskOption[] = [];
   let firstOptionIdx = -1;
   let sawStateMarker = false;
+  let pendingDescription: string[] = [];
   for (let i = footerIdx - 1; i >= 0; i--) {
     const line = lines[i];
     const inner = stripBoxGutter(line);
@@ -157,11 +161,15 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
       if (PERMISSION_LABEL_RE.test(rendered)) return null; // it's a permission gate
       const { label, marked } = stripStateMarker(rendered);
       if (marked) sawStateMarker = true;
-      options.unshift({ label, description: "" });
+      options.unshift({ label, description: pendingDescription.join(" ") });
+      pendingDescription = [];
       firstOptionIdx = i;
+    } else {
+      // A description row (wrapped ones span several) belongs to the option ABOVE
+      // it, which this upward scan has not reached yet. Rows left over once the
+      // first option is found are the question/header and are dropped.
+      pendingDescription.unshift(trimmed);
     }
-    // else: a wrapped description / continuation line for the option below it —
-    // skip it and keep scanning upward for more options.
   }
 
   if (options.length < 2 || firstOptionIdx === -1) return null;
