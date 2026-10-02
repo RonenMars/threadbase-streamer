@@ -77,6 +77,11 @@ export class SessionStore {
     }
   }
 
+  /** Forget one discovered process, e.g. after the streamer terminated it. */
+  dropDiscovered(pid: number): void {
+    this.discovered.delete(pid);
+  }
+
   /**
    * The **live** stored records — mutating an element mutates the store. Paired
    * with `list()`, which hands back throwaway response copies.
