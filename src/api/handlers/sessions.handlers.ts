@@ -2419,12 +2419,17 @@ export class SessionHandlers {
     this.discoveryCache = null;
 
     const discSession = this.sessionStore.get(sessionId, this.deps.ptyAttachedIds());
-    if (!discSession || discSession.ptyAttached) {
+    // Owned here under any id — including a Codex session's bound rollout id,
+    // whose process the rollout probe below would otherwise find and kill.
+    const ownedHere =
+      discSession?.ptyAttached === true ||
+      (discSession == null && this.sessionStore.ownsConversation(sessionId));
+    if (!discSession || ownedHere) {
       // A Codex collision usually has no discovered row: discovery matches on
       // argv, and a Codex process need not carry its rollout uuid there. The
       // open file handle on the rollout is the signal that does see it, so
       // fall back to that before refusing.
-      return this.resolveCodexRolloutOwner(sessionId, action, discSession?.ptyAttached === true);
+      return this.resolveCodexRolloutOwner(sessionId, action, ownedHere);
     }
 
     const { branch } = discSession;
