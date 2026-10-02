@@ -10,6 +10,8 @@
 | POST | `/api/sessions/resume` | Resume a conversation |
 | POST | `/api/sessions/:id/input` | Send input |
 | POST | `/api/sessions/:id/cancel` | Cancel a session |
+| POST | `/api/sessions/:id/terminate` | Stop an agent started outside the streamer (a terminal `claude` / `codex` / `cursor-agent`) without taking it over: SIGTERM, then wait up to 5 s for exit → 200 `{status: "terminated", sessionId, pid}`. 404 unknown session, 409 `TERMINATE_MANAGED_SESSION` (use `/stop` or `/kill`), `TERMINATE_NO_OWNER`, `TERMINATE_OWNER_NOT_TERMINAL` (a Codex app-server hosting other threads), `TERMINATE_KILL_TIMEOUT`; 400 `TERMINATE_NO_PID` |
+| POST | `/api/sessions/:id/adopt` | Take over an external session: the same terminate step, then resume the conversation under the streamer → 201 `{sessionId}`. 400 `ADOPT_NO_PROJECT_PATH` / `ADOPT_PROJECT_PATH_MISSING` (checked before anything is killed), 409 `ADOPT_NO_OWNER`, `ADOPT_OWNER_NOT_TERMINAL`, `ADOPT_KILL_TIMEOUT` |
 | POST | `/api/sessions/:id/fork` | Fork a Codex conversation into an independent session (`codex fork`). 201/202, 409 `CONVERSATION_BUSY`, 501 `UNSUPPORTED_PROVIDER` |
 | PATCH | `/api/sessions/:id/model` | Switch a LIVE session's model: `{model}` → 202. 409 `SESSION_BUSY` mid-turn, 409 `SESSION_IDLE` with no PTY, 501 `UNSUPPORTED_PROVIDER` for Codex |
 | PATCH | `/api/sessions/:id/effort` | Switch a LIVE session's effort: `{effort}` (`low`…`max`) → 202. Same error codes |

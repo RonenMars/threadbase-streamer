@@ -170,6 +170,31 @@ export async function waitForProcessExit(
   }
 }
 
+/** Which caller is acting on an external session's owner. */
+type ExternalAction = "adopt" | "terminate";
+
+/** The process outside this streamer that owns a conversation. */
+interface ExternalOwner {
+  pid: number;
+  /** The id a respawned session is keyed by. */
+  spawnId: string;
+  provider?: ProviderName;
+  /** Resolved (and checked to exist) only for adopt; may be empty for terminate. */
+  projectPath: string;
+  projectName?: string;
+  branch?: string;
+  /** Provider-side id for the resume, when it differs from `spawnId`. */
+  resumeId?: string;
+}
+
+type OwnerResolution =
+  | { ok: true; owner: ExternalOwner }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
+function refuse(status: number, body: Record<string, unknown>): OwnerResolution {
+  return { ok: false, status, body };
+}
+
 /**
  * The 409 body for a Codex conversation another client already owns.
  *
@@ -2373,104 +2398,33 @@ export class SessionHandlers {
   }
 
   /**
-   * Take over a Codex conversation from the standalone TUI that holds it.
+   * Find the process outside this streamer that owns a conversation. Shared by
+   * terminate and adopt, so both act on the same pid by the same rules.
    *
-   * The owner is re-probed HERE rather than trusted from the 409 that offered
-   * the action: that pid was observed when resume was refused, possibly minutes
-   * earlier, and pids are reused. Killing a stale pid would stop an unrelated
-   * process, which is the one mistake this path must never make.
+   * Discovery is refreshed HERE rather than trusted from an earlier listing:
+   * pids are reused, and killing a stale one would stop an unrelated process,
+   * which is the one mistake these paths must never make.
    *
-   * Only a standalone `codex` TUI is eligible. A desktop / VS Code
-   * `codex app-server` hosts unrelated conversations in the same process, and
-   * an unidentified owner offers nothing to prove it does not — both refuse,
-   * and forking stays the recovery path for them.
+   * Adopt has one extra requirement — it must respawn the conversation once
+   * the owner is gone — so for adopt this also resolves the working directory
+   * and refuses, before anything is killed, when the conversation could not be
+   * put back. Terminate restores nothing and skips those checks.
    */
-  private async adoptCodexRolloutOwner(
+  private async resolveExternalOwner(
     sessionId: string,
-    res: ServerResponse,
-    ownedHere: boolean,
-  ): Promise<void> {
-    if (ownedHere) {
-      json(res, 404, { error: "Discovered session not found" });
-      return;
-    }
-
-    const target = await this.deps.resolveConversationTarget(sessionId);
-    if (!target.ok || target.provider !== CODEX_CLI_PROVIDER || !target.historyPath) {
-      json(res, 404, { error: "Discovered session not found" });
-      return;
-    }
-
-    const availability = classifyResumability(target.projectPath);
-    if (!availability.resumable) {
-      json(res, 400, {
-        error: "Cannot take over this session: its project directory no longer exists",
-        code: "ADOPT_PROJECT_PATH_MISSING",
-        reason: availability.unavailable_reason,
-      });
-      return;
-    }
-
-    const owner = await findRolloutOwner(target.historyPath);
-    if (!owner) {
-      // Nobody holds it now — the collision that prompted this has cleared, so
-      // there is nothing to take over and a plain resume will succeed.
-      json(res, 409, {
-        error: "Nothing is holding this conversation now; resume it instead",
-        code: "ADOPT_NO_OWNER",
-      });
-      return;
-    }
-    if (owner.source !== "terminal") {
-      this.log.warn(`[adopt] refusing takeover of ${owner.command} (pid ${owner.pid})`, {
-        event: "adopt.owner_not_terminal",
-        sessionId,
-        ownerPid: owner.pid,
-        ownerCommand: owner.command,
-      });
-      json(res, 409, {
-        error:
-          "This conversation is held by a process that may host other conversations; forking is the safe option",
-        code: "ADOPT_OWNER_NOT_TERMINAL",
-        ownerCommand: owner.command,
-      });
-      return;
-    }
-
-    this.log.info(`[adopt] taking over codex rollout from pid ${owner.pid}`, {
-      event: "session.codex_takeover",
-      sessionId,
-      historyId: target.historyId,
-      ownerPid: owner.pid,
-    });
-
-    await this.killAndRespawn(res, {
-      sessionId,
-      spawnId: sessionId,
-      pid: owner.pid,
-      provider: CODEX_CLI_PROVIDER,
-      projectPath: target.projectPath,
-      projectName: target.conv?.projectName,
-      // `codex resume` takes the rollout id, which is not necessarily the id
-      // the client navigated to (that may be a local placeholder).
-      resumeId: target.historyId,
-    });
-  }
-
-  async handleAdopt(sessionId: string, res: ServerResponse): Promise<void> {
-    // Refresh discovery so we have the latest metadata
+    action: ExternalAction,
+  ): Promise<OwnerResolution> {
     const discovered = await discoverClaudeProcesses();
     this.sessionStore.setDiscovered(discovered);
     this.discoveryCache = null;
 
     const discSession = this.sessionStore.get(sessionId, this.deps.ptyAttachedIds());
     if (!discSession || discSession.ptyAttached) {
-      // A Codex collision usually has no discovered row to adopt: discovery
-      // matches on argv, and a Codex process need not carry its rollout uuid
-      // there. The open file handle on the rollout is the signal that does see
-      // it, so fall back to that before refusing.
-      await this.adoptCodexRolloutOwner(sessionId, res, discSession?.ptyAttached === true);
-      return;
+      // A Codex collision usually has no discovered row: discovery matches on
+      // argv, and a Codex process need not carry its rollout uuid there. The
+      // open file handle on the rollout is the signal that does see it, so
+      // fall back to that before refusing.
+      return this.resolveCodexRolloutOwner(sessionId, action, discSession?.ptyAttached === true);
     }
 
     const { branch } = discSession;
@@ -2478,9 +2432,25 @@ export class SessionHandlers {
     const convId = discSession.id;
 
     if (discSession.pid == null) {
-      json(res, 400, { error: "Session has no known PID" });
-      return;
+      return refuse(400, {
+        error: "Session has no known PID",
+        // Adopt's body predates error codes and is left exactly as it was.
+        ...(action === "terminate" && { code: "TERMINATE_NO_PID" }),
+      });
     }
+
+    const owner: ExternalOwner = {
+      spawnId: convId,
+      pid: discSession.pid,
+      provider: discSession.provider,
+      projectPath,
+      projectName,
+      branch,
+      // No `resumeId` — a discovered Codex process states its rollout id in
+      // argv (`codex resume <uuid>`), so the conversation id already IS the
+      // provider-side id, which is the case that field exists to cover.
+    };
+    if (action === "terminate") return { ok: true, owner };
 
     // Windows exposes no process CWD (neither CIM nor wmic carries it), so
     // discovery reports an empty projectPath rather than fabricating one. Fall
@@ -2509,12 +2479,11 @@ export class SessionHandlers {
         sessionId,
         pid: discSession.pid,
       });
-      json(res, 400, {
+      return refuse(400, {
         error:
           "Cannot take over this session: its working directory could not be determined on this platform",
         code: "ADOPT_NO_PROJECT_PATH",
       });
-      return;
     }
 
     // Same reasoning one step further: a conversation whose project directory
@@ -2530,68 +2499,201 @@ export class SessionHandlers {
         projectPath,
         reason: availability.unavailable_reason,
       });
-      json(res, 400, {
+      return refuse(400, {
         error: "Cannot take over this session: its project directory no longer exists",
         code: "ADOPT_PROJECT_PATH_MISSING",
         reason: availability.unavailable_reason,
       });
-      return;
     }
 
-    await this.killAndRespawn(res, {
-      sessionId,
-      spawnId: convId,
-      pid: discSession.pid,
-      provider: discSession.provider,
-      projectPath,
-      projectName,
-      branch,
-      // No `resumeId` — a discovered Codex process states its rollout id in
-      // argv (`codex resume <uuid>`), so the conversation id already IS the
-      // provider-side id, which is the case that field exists to cover.
-    });
+    return { ok: true, owner: { ...owner, projectPath, projectName } };
   }
 
   /**
-   * The destructive half of a takeover, shared by every path that reaches it:
-   * stop the process that owns the conversation, prove it is gone, then respawn
-   * the conversation under this streamer.
+   * Find the standalone Codex TUI that holds a conversation's rollout open.
    *
-   * Both halves matter. SIGTERM is asynchronous, and spawning a resume before
-   * the old process has actually exited leaves two agents appending to one
-   * transcript — the interleaved state this codebase has no way to repair. A
-   * process that outlives the grace period aborts the takeover rather than
-   * knowingly creating that.
+   * The owner is re-probed HERE rather than trusted from the 409 that offered
+   * the action: that pid was observed when resume was refused, possibly minutes
+   * earlier, and pids are reused.
+   *
+   * Only a standalone `codex` TUI is eligible. A desktop / VS Code
+   * `codex app-server` hosts unrelated conversations in the same process, and
+   * an unidentified owner offers nothing to prove it does not — both refuse,
+   * and forking stays the recovery path for them. That holds for terminate as
+   * much as for adopt: either one would stop every conversation in the server.
    */
-  private async killAndRespawn(
-    res: ServerResponse,
-    opts: {
-      /** The conversation the client asked about — for logs. */
-      sessionId: string;
-      /** The id the new session is keyed by. */
-      spawnId: string;
-      pid: number;
-      provider?: ProviderName;
-      projectPath: string;
-      projectName?: string;
-      branch?: string;
-      /** Provider-side id for the resume, when it differs from `spawnId`. */
-      resumeId?: string;
-    },
-  ): Promise<void> {
-    this.ptyManager.killPid(opts.pid);
-    const exited = await waitForProcessExit(opts.pid, ADOPT_KILL_TIMEOUT_MS);
-    if (!exited) {
-      this.log.warn("adopt: external process did not exit; refusing to double-write", {
-        event: "adopt.kill_timeout",
-        sessionId: opts.sessionId,
-        pid: opts.pid,
+  private async resolveCodexRolloutOwner(
+    sessionId: string,
+    action: ExternalAction,
+    ownedHere: boolean,
+  ): Promise<OwnerResolution> {
+    if (ownedHere) {
+      // Terminate is the one caller with somewhere better to send the client:
+      // a session this streamer runs is stopped through its own PTY.
+      if (action === "terminate") {
+        return refuse(409, {
+          error: "This session is managed by the streamer; stop it with /stop or /kill",
+          code: "TERMINATE_MANAGED_SESSION",
+        });
+      }
+      return refuse(404, { error: "Discovered session not found" });
+    }
+
+    const target = await this.deps.resolveConversationTarget(sessionId);
+    if (!target.ok || target.provider !== CODEX_CLI_PROVIDER || !target.historyPath) {
+      return refuse(404, { error: "Discovered session not found" });
+    }
+
+    if (action === "adopt") {
+      const availability = classifyResumability(target.projectPath);
+      if (!availability.resumable) {
+        return refuse(400, {
+          error: "Cannot take over this session: its project directory no longer exists",
+          code: "ADOPT_PROJECT_PATH_MISSING",
+          reason: availability.unavailable_reason,
+        });
+      }
+    }
+
+    const owner = await findRolloutOwner(target.historyPath);
+    if (!owner) {
+      // Nobody holds it now — the collision that prompted this has cleared, so
+      // there is nothing to take over and a plain resume will succeed.
+      return refuse(409, {
+        error:
+          action === "adopt"
+            ? "Nothing is holding this conversation now; resume it instead"
+            : "Nothing is holding this conversation now; there is nothing to terminate",
+        code: action === "adopt" ? "ADOPT_NO_OWNER" : "TERMINATE_NO_OWNER",
       });
+    }
+    if (owner.source !== "terminal") {
+      this.log.warn(`[${action}] refusing to stop ${owner.command} (pid ${owner.pid})`, {
+        event: `${action}.owner_not_terminal`,
+        sessionId,
+        ownerPid: owner.pid,
+        ownerCommand: owner.command,
+      });
+      return refuse(409, {
+        error:
+          "This conversation is held by a process that may host other conversations; forking is the safe option",
+        code: action === "adopt" ? "ADOPT_OWNER_NOT_TERMINAL" : "TERMINATE_OWNER_NOT_TERMINAL",
+        ownerCommand: owner.command,
+      });
+    }
+
+    return {
+      ok: true,
+      owner: {
+        spawnId: sessionId,
+        pid: owner.pid,
+        provider: CODEX_CLI_PROVIDER,
+        projectPath: target.projectPath,
+        projectName: target.conv?.projectName,
+        // `codex resume` takes the rollout id, which is not necessarily the id
+        // the client navigated to (that may be a local placeholder).
+        resumeId: target.historyId,
+      },
+    };
+  }
+
+  /**
+   * Stop an external owner and prove it is gone: SIGTERM, then poll until the
+   * pid disappears or `ADOPT_KILL_TIMEOUT_MS` elapses.
+   *
+   * The proof is what adopt depends on. SIGTERM is asynchronous, and spawning
+   * a resume before the old process has actually exited leaves two agents
+   * appending to one transcript — the interleaved state this codebase has no
+   * way to repair. Returns false when the process outlived the wait.
+   */
+  private async terminateExternalOwner(
+    sessionId: string,
+    pid: number,
+    action: ExternalAction,
+  ): Promise<boolean> {
+    this.ptyManager.killPid(pid);
+    const exited = await waitForProcessExit(pid, ADOPT_KILL_TIMEOUT_MS);
+    if (!exited) {
+      this.log.warn(
+        action === "adopt"
+          ? "adopt: external process did not exit; refusing to double-write"
+          : "terminate: external process did not exit",
+        { event: `${action}.kill_timeout`, sessionId, pid },
+      );
+    }
+    return exited;
+  }
+
+  /**
+   * Stop an agent running outside this streamer — one started in a terminal —
+   * without taking its conversation over. The transcript is left as it is, so
+   * the conversation can still be resumed later from here or anywhere else.
+   */
+  async handleTerminate(sessionId: string, res: ServerResponse): Promise<void> {
+    const resolved = await this.resolveExternalOwner(sessionId, "terminate");
+    if (!resolved.ok) {
+      json(res, resolved.status, resolved.body);
+      return;
+    }
+    const { pid } = resolved.owner;
+
+    this.log.info(`[terminate] stopping external session pid ${pid}`, {
+      event: "session.external_terminate",
+      sessionId,
+      pid,
+    });
+
+    if (!(await this.terminateExternalOwner(sessionId, pid, "terminate"))) {
+      json(res, 409, {
+        error: "The process did not exit after SIGTERM",
+        code: "TERMINATE_KILL_TIMEOUT",
+        pid,
+      });
+      return;
+    }
+
+    // Drop the row now rather than waiting for the next discovery pass, so
+    // every client's list loses the session as soon as it is gone.
+    this.sessionStore.dropDiscovered(pid);
+    this.discoveryCache = null;
+    this.wsHub.broadcast({
+      type: "session_list",
+      sessions: this.sessionStore.list(this.deps.ptyAttachedIds()),
+    });
+
+    json(res, 200, { status: "terminated", sessionId, pid });
+  }
+
+  /**
+   * Take over a conversation from the process that owns it: terminate that
+   * process exactly as `handleTerminate` does, then respawn the conversation
+   * under this streamer.
+   */
+  async handleAdopt(sessionId: string, res: ServerResponse): Promise<void> {
+    const resolved = await this.resolveExternalOwner(sessionId, "adopt");
+    if (!resolved.ok) {
+      json(res, resolved.status, resolved.body);
+      return;
+    }
+    const { owner } = resolved;
+
+    if (owner.resumeId != null) {
+      this.log.info(`[adopt] taking over codex rollout from pid ${owner.pid}`, {
+        event: "session.codex_takeover",
+        sessionId,
+        historyId: owner.resumeId,
+        ownerPid: owner.pid,
+      });
+    }
+
+    // A process that outlives the grace period aborts the takeover rather than
+    // knowingly starting a second agent on the same transcript.
+    if (!(await this.terminateExternalOwner(sessionId, owner.pid, "adopt"))) {
       json(res, 409, {
         error:
           "The existing process did not exit; not starting a second agent on this conversation",
         code: "ADOPT_KILL_TIMEOUT",
-        pid: opts.pid,
+        pid: owner.pid,
       });
       return;
     }
@@ -2599,12 +2701,12 @@ export class SessionHandlers {
     // The provider has to be carried: `LiveSessionManager.start` defaults to
     // Claude when it is absent, so adopting a Codex session used to respawn it
     // as Claude against a Codex rollout id.
-    const session = await this.ptyManager.start(opts.spawnId, {
-      provider: opts.provider,
-      projectPath: opts.projectPath,
-      projectName: opts.projectName,
-      branch: opts.branch,
-      ...(opts.resumeId != null && { resumeId: opts.resumeId }),
+    const session = await this.ptyManager.start(owner.spawnId, {
+      provider: owner.provider,
+      projectPath: owner.projectPath,
+      projectName: owner.projectName,
+      branch: owner.branch,
+      ...(owner.resumeId != null && { resumeId: owner.resumeId }),
       claudeFlags: this.claudeFlags,
       claudeExtraArgs: this.claudeExtraArgs,
       ...this.deps.spawnFlagOverrides(),
