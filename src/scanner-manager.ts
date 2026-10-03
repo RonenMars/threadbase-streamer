@@ -695,14 +695,16 @@ export class ScannerManager {
   // whose mtime/size moved since the row was written. Upserting every meta put
   // the whole corpus through one synchronous SQLite transaction each time a
   // single new JSONL appeared — 44 s for 2368 rows on a loaded host, with the
-  // event loop held for all of it. An explicit ?refresh=1 still writes
-  // everything; that is the escape hatch for a row that is stale behind an
-  // unchanged stat.
+  // event loop held for all of it. An agent transcript the filter hides never
+  // gets a row, so it would read as new on every pass; its verdict is already
+  // memoized against its stat, and asking for it is what keeps those files out.
+  // An explicit ?refresh=1 still writes everything; that is the escape hatch
+  // for a row that is stale behind an unchanged stat.
   private changedSinceCached(cache: ConversationCache, metas: ConversationMeta[]) {
     const cached = cache.getFileStats();
     return metas.filter((m) => {
       const known = cached.get(canonicalizeFilePath(m.filePath));
-      if (!known) return true;
+      if (!known) return !cache.isAgentFileFiltered(m.filePath);
       try {
         const s = statSync(m.filePath);
         return s.mtimeMs !== known.mtimeMs || s.size !== known.size;

@@ -25,20 +25,25 @@ describe("background reconcile writes only new or changed transcripts", () => {
   let unchanged: string;
   let grown: string;
   let created: string;
+  let agent: string;
   let upserted: string[][];
   let tasks: Promise<unknown>[];
   let manager: ScannerManager;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "reconcile-changed-"));
-    [unchanged, grown, created] = ["a", "b", "c"].map((n) => {
+    [unchanged, grown, created, agent] = ["a", "b", "c", "d"].map((n) => {
       const p = join(dir, `${n}.jsonl`);
       writeFileSync(p, "{}\n");
       return p;
     });
-    hoisted.metas = [unchanged, grown, created].map((filePath) => ({ id: filePath, filePath }));
+    hoisted.metas = [unchanged, grown, created, agent].map((filePath) => ({
+      id: filePath,
+      filePath,
+    }));
 
-    // Cache rows exist for two of the three files; one of them is out of date.
+    // Cache rows exist for two of the files, one of them out of date. The agent
+    // file has no row and never will: the filter hides it.
     const stats = new Map<string, { mtimeMs: number; size: number }>();
     for (const p of [unchanged, grown]) {
       const s = statSync(p);
@@ -51,6 +56,7 @@ describe("background reconcile writes only new or changed transcripts", () => {
     const cache = {
       getScannerStatCache: () => new Map(),
       getFileStats: () => stats,
+      isAgentFileFiltered: (filePath: string) => filePath === agent,
       upsertFromScannerMeta: (metas: Array<{ filePath: string }>) => {
         upserted.push(metas.map((m) => m.filePath));
         return [];
@@ -77,7 +83,7 @@ describe("background reconcile writes only new or changed transcripts", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("skips a transcript whose stat matches its cached row", async () => {
+  it("skips a transcript whose stat matches its cached row, and a filtered agent file", async () => {
     manager.startBackgroundReconcile("full");
     await Promise.all(tasks);
 
@@ -87,6 +93,6 @@ describe("background reconcile writes only new or changed transcripts", () => {
   it("still writes every transcript on an explicit refresh", async () => {
     await manager.reconcileFromDisk();
 
-    expect(upserted).toEqual([[unchanged, grown, created]]);
+    expect(upserted).toEqual([[unchanged, grown, created, agent]]);
   });
 });
