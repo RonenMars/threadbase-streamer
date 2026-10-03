@@ -1,3 +1,9 @@
+## [1.106.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.106.0...v1.106.1) (2026-10-03)
+
+### Performance Improvements
+
+* **cache:** write only changed transcripts on background reconcile ([#1015](https://github.com/RonenMars/threadbase-streamer/issues/1015)) ([e41aa9e](https://github.com/RonenMars/threadbase-streamer/commit/e41aa9ebbc486acaebd828326d613036eb358c8f))
+
 ## [1.106.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.105.1...v1.106.0) (2026-10-03)
 
 ### Features
