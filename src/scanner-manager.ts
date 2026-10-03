@@ -642,7 +642,10 @@ export class ScannerManager {
    * the automatic freshness path when the directory watcher marked the scanner
    * stale or shouldRefreshProjectsFromHdd detected disk drift.
    */
-  async reconcileFromDisk(onProgress?: (scanned: number, total: number) => void): Promise<void> {
+  async reconcileFromDisk(
+    onProgress?: (scanned: number, total: number) => void,
+    opts: { changedOnly?: boolean } = {},
+  ): Promise<void> {
     const cache = this.deps.cache();
     if (!cache) return;
     // No warm-up gate here: the caller decides. The cold-start path wraps this
@@ -652,7 +655,9 @@ export class ScannerManager {
     const scanner = await this.rescanForRefresh(onProgress);
     const metas = [...scanner.getMetadataCache().values()];
     try {
-      cache.upsertFromScannerMeta(metas as any[]);
+      cache.upsertFromScannerMeta(
+        (opts.changedOnly ? this.changedSinceCached(cache, metas) : metas) as any[],
+      );
       // Additions/updates are always safe. But while a cache-integrity alert
       // is pending, freeze the removal half — reconcileDeletions must not
       // drop rows until a human resolves the alert.
@@ -686,6 +691,29 @@ export class ScannerManager {
     }
   }
 
+  // The background reconcile's write set: transcripts with no cached row, or
+  // whose mtime/size moved since the row was written. Upserting every meta put
+  // the whole corpus through one synchronous SQLite transaction each time a
+  // single new JSONL appeared — 44 s for 2368 rows on a loaded host, with the
+  // event loop held for all of it. An agent transcript the filter hides never
+  // gets a row, so it would read as new on every pass; its verdict is already
+  // memoized against its stat, and asking for it is what keeps those files out.
+  // An explicit ?refresh=1 still writes everything; that is the escape hatch
+  // for a row that is stale behind an unchanged stat.
+  private changedSinceCached(cache: ConversationCache, metas: ConversationMeta[]) {
+    const cached = cache.getFileStats();
+    return metas.filter((m) => {
+      const known = cached.get(canonicalizeFilePath(m.filePath));
+      if (!known) return !cache.isAgentFileFiltered(m.filePath);
+      try {
+        const s = statSync(m.filePath);
+        return s.mtimeMs !== known.mtimeMs || s.size !== known.size;
+      } catch {
+        return true;
+      }
+    });
+  }
+
   // Reconcile the cache from disk without blocking the caller. Single-flighted
   // so a burst of list polls during active session writes shares one rescan
   // rather than queueing a full rescan each; tracked so close() awaits the
@@ -701,7 +729,9 @@ export class ScannerManager {
     }
     const paths = mode === "files" ? this.takeStaleFiles() : [];
     const task = (
-      paths.length > 0 ? this.reconcileStaleFilesFromDisk(paths) : this.reconcileFromDisk()
+      paths.length > 0
+        ? this.reconcileStaleFilesFromDisk(paths)
+        : this.reconcileFromDisk(undefined, { changedOnly: true })
     ).finally(() => {
       this.reconcileInFlight = null;
     });
