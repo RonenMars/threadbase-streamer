@@ -32,7 +32,8 @@ describe("POSIX deploy script", () => {
     const menubarUpdate = (() => {
       const start = deployScript.indexOf("ensure_menubar_current() {");
       expect(start).toBeGreaterThan(-1);
-      const end = deployScript.indexOf("\n}\n", start);
+      // "\n}" rather than "\n}\n": a Windows checkout has CRLF line endings.
+      const end = deployScript.indexOf("\n}", start);
       expect(end).toBeGreaterThan(start);
       return deployScript.slice(start, end);
     })();
@@ -54,11 +55,15 @@ describe("POSIX deploy script", () => {
     it("verifies the download before quitting the app, and quits before replacing it", () => {
       const verify = menubarUpdate.indexOf("codesign --verify --deep --strict");
       const gatekeeper = menubarUpdate.indexOf("spctl -a");
+      const team = menubarUpdate.indexOf('[[ "$(menubar_team_id "$src")" != "$team" ]]');
       const quit = menubarUpdate.indexOf("to quit");
       const replace = menubarUpdate.indexOf('mv "$target" "$previous"');
       expect(verify).toBeGreaterThan(-1);
       expect(gatekeeper).toBeGreaterThan(verify);
-      expect(quit).toBeGreaterThan(gatekeeper);
+      // Gatekeeper alone accepts any notarized developer; the team must match
+      // the app already installed.
+      expect(team).toBeGreaterThan(gatekeeper);
+      expect(quit).toBeGreaterThan(team);
       expect(replace).toBeGreaterThan(quit);
     });
 

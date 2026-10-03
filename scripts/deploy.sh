@@ -849,12 +849,14 @@ activate_release() {
 # Does nothing when the app is not installed (deploy never puts it on a machine
 # that did not have it), when the versions match, or when the installed app is
 # newer (never downgrades). Nothing is touched until the download has passed
-# the version, codesign and Gatekeeper checks. Returns non-zero on a failed
+# the version, codesign, Gatekeeper and signing-team checks. Returns non-zero on a failed
 # update; callers treat that as a warning, the old app stays in place.
 MENUBAR_REPO="RonenMars/threadbase-menubar"
 MENUBAR_APP_NAME="Threadbase Menubar.app"
 MENUBAR_RELEASES_DIR="$RELEASES_DIR/menubar"
 MENUBAR_KEEP_DMGS=2
+
+menubar_team_id() { codesign -dv "$1" 2>&1 | awk -F= '/^TeamIdentifier=/{print $2}'; }
 
 ensure_menubar_current() {
   local sub="$REPO_ROOT/vendor/menubar"
@@ -908,6 +910,17 @@ ensure_menubar_current() {
     return 1
   fi
 
+  # Gatekeeper accepts any notarized Developer ID app, so on its own it would
+  # let a swapped release asset signed by someone else through. Require the
+  # same signing team as the app already installed — an identity the user
+  # chose once, with no team id written into this public script.
+  local team
+  team="$(menubar_team_id "$target")"
+  if [[ -z "$team" || "$team" == "not set" ]]; then
+    warn "menubar: the installed app has no signing team (local build?) — not replacing it; install v$pinned from the release .dmg to update"
+    return 1
+  fi
+
   local asset="Threadbase.Menubar-$pinned-universal.dmg"
   local dmg="$MENUBAR_RELEASES_DIR/$asset"
   local url="https://github.com/$MENUBAR_REPO/releases/download/v$pinned/$asset"
@@ -930,10 +943,11 @@ ensure_menubar_current() {
   [[ -n "$mount_point" ]] && dmg_ver="$(defaults read "$src/Contents/Info" CFBundleShortVersionString 2>/dev/null)" || true
   if [[ "$dmg_ver" != "$pinned" ]] \
     || ! codesign --verify --deep --strict "$src" 2>/dev/null \
-    || ! spctl -a "$src" 2>/dev/null; then
+    || ! spctl -a "$src" 2>/dev/null \
+    || [[ "$(menubar_team_id "$src")" != "$team" ]]; then
     [[ -n "$mount_point" ]] && hdiutil detach "$mount_point" -quiet 2>/dev/null || true
     rm -f "$dmg"
-    warn "menubar: the v$pinned download failed its version/signature check — keeping $installed"
+    warn "menubar: the v$pinned download failed its version/signature/signing-team check — keeping $installed"
     return 1
   fi
 

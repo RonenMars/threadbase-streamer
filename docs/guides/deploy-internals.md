@@ -43,10 +43,11 @@ The same step runs on its own as `scripts/deploy.sh menubar`, with no streamer r
 2. **Installed version** — `CFBundleShortVersionString` of `Threadbase Menubar.app` in `/Applications`, then `~/Applications`.
 3. **Compare** — the update runs only when pinned is strictly newer (`semver.gt`). Equal is "up to date"; a newer installed app is left alone.
 4. **Download** — the release asset `Threadbase.Menubar-<version>-universal.dmg` from the menubar repo's `v<version>` release, cached in `~/.threadbase/releases/menubar/` (the two newest are kept).
-5. **Verify** — the mounted bundle must report the pinned version, pass `codesign --verify --deep --strict`, and be accepted by Gatekeeper (`spctl -a`). Nothing has been touched up to here.
+5. **Verify** — the mounted bundle must report the pinned version, pass `codesign --verify --deep --strict`, be accepted by Gatekeeper (`spctl -a`), and carry the same signing team as the app already installed — Gatekeeper alone would accept any notarized developer's app. Nothing has been touched up to here.
 6. **Swap and relaunch** — the running app is asked to quit, the old bundle moves to `~/.threadbase/releases/menubar/previous.app`, the new one is copied in and opened by path.
 
 The step is non-fatal: a missing release, a failed check or a failed copy logs a warning, leaves (or restores) the old app, and the deploy still reports success.
+An installed app with no signing team (a local ad-hoc build) is never replaced.
 It skips when the app is not installed — a first install is manual, from the release `.dmg` — and when `vendor/menubar` is not initialised, as in a fresh worktree.
 To roll back, quit the app and move `previous.app` back over it.
 
