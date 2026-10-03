@@ -6,6 +6,7 @@ import { loadProviderExecutable, ProviderExecutableError } from "./config/provid
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   type ProviderName,
 } from "./providers";
@@ -283,6 +284,23 @@ export function resolveCursorExe(): string {
   return _cursorExe;
 }
 
+let _copilotExe: string | undefined;
+
+export function clearCopilotExeCache(): void {
+  _copilotExe = undefined;
+}
+
+export function resolveCopilotExe(): string {
+  if (_copilotExe !== undefined) return _copilotExe;
+  const override = resolveProviderExecutableOverride(COPILOT_PROVIDER);
+  if (override !== undefined) {
+    _copilotExe = override;
+    return _copilotExe;
+  }
+  _copilotExe = resolveNamedAgentCommand("copilot") ?? "copilot";
+  return _copilotExe;
+}
+
 // ─── Is the provider actually installed? ──────────────────────────────────────
 // Without an override, each resolver exhausts its lookups and then returns
 // the bare command name, which is handed to execvp/CreateProcess to try its own
@@ -361,7 +379,9 @@ export function locateProviderExe(provider: ProviderName): string | null {
       ? resolveCodexExe()
       : provider === CURSOR_PROVIDER
         ? resolveCursorExe()
-        : resolveClaudeExe();
+        : provider === COPILOT_PROVIDER
+          ? resolveCopilotExe()
+          : resolveClaudeExe();
   const found = locateExecutable(resolved);
   if (found === null) {
     // Resolution is memoized for the process lifetime, so a path that has since
@@ -369,6 +389,7 @@ export function locateProviderExe(provider: ProviderName): string | null {
     // restart — including after the user reinstalls to fix exactly this.
     if (provider === CODEX_CLI_PROVIDER) clearCodexExeCache();
     else if (provider === CURSOR_PROVIDER) clearCursorExeCache();
+    else if (provider === COPILOT_PROVIDER) clearCopilotExeCache();
     else clearClaudeExeCache();
   }
   return found;

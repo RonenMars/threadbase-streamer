@@ -21,6 +21,7 @@ import { discoverClaudeProcesses } from "../../process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   canonicalizeProviderName,
   isProviderName,
@@ -982,7 +983,7 @@ export class SessionHandlers {
       ...(historyId !== sessionId && { resumeId: historyId }),
       claudeFlags: this.claudeFlags,
       claudeExtraArgs: this.claudeExtraArgs,
-      ...this.deps.spawnFlagOverrides(),
+      ...(provider !== COPILOT_PROVIDER && this.deps.spawnFlagOverrides()),
     });
     // Carry the binding onto the live session before it is recorded:
     // recordSpawn writes `bound_conversation_id` from this field, so leaving it
@@ -2272,6 +2273,9 @@ export class SessionHandlers {
    * is. promptCount > 0 or a cache hit keeps today's hold path.
    */
   private shouldForgetEmptySession(session: ManagedSession): boolean {
+    // Copilot has raw terminal input but no scanner evidence. Zero counted
+    // composer submissions cannot establish that its native session is empty.
+    if (session.provider === COPILOT_PROVIDER) return false;
     const stored = this.sessionStore.getManaged(session.id);
     const promptCount = Math.max(session.promptCount, stored?.promptCount ?? 0);
     if (promptCount > 0) return false;
@@ -2607,7 +2611,7 @@ export class SessionHandlers {
       ...(opts.resumeId != null && { resumeId: opts.resumeId }),
       claudeFlags: this.claudeFlags,
       claudeExtraArgs: this.claudeExtraArgs,
-      ...this.deps.spawnFlagOverrides(),
+      ...(opts.provider !== COPILOT_PROVIDER && this.deps.spawnFlagOverrides()),
     });
 
     this.sessionStore.addManaged(session);
@@ -2688,7 +2692,8 @@ export class SessionHandlers {
     // system-level instruction. Gate it so a fresh session never gets an
     // uninvited first message unless opted in.
     const includeSystemPrompt =
-      capabilitiesFor(provider).systemPrompt !== "positional" || this.codexSystemPromptEnabled;
+      capabilitiesFor(provider).systemPrompt === "flag" ||
+      (capabilitiesFor(provider).systemPrompt === "positional" && this.codexSystemPromptEnabled);
 
     try {
       const session = await this.ptyManager.startFresh({
@@ -2698,11 +2703,22 @@ export class SessionHandlers {
         ...(includeSystemPrompt && { systemPrompt: systemPromptParts.join("\n") }),
         claudeFlags: this.claudeFlags,
         claudeExtraArgs: this.claudeExtraArgs,
-        ...this.deps.spawnFlagOverrides(),
+        ...(provider !== COPILOT_PROVIDER && this.deps.spawnFlagOverrides()),
       });
 
       this.sessionStore.addManaged(session);
       this.registryBoot.recordSessionSpawn(session);
+
+      // Live-v1 Copilot has no verified TUI readiness detector. The PTY is
+      // attachable now (including its trust prompt); do not strand mobile on
+      // a pending screen waiting for a session_ready event we cannot emit.
+      if (provider === COPILOT_PROVIDER) {
+        json(res, 200, {
+          session: this.sessionStore.get(session.id, this.deps.ptyAttachedIds()) ?? session,
+        });
+        this.deps.broadcastOrUnicastSessionList(req);
+        return;
+      }
 
       // Block for the PTY to actually reach waiting_input (or fail) so the
       // caller gets a trustworthy status instead of navigating on a guess.

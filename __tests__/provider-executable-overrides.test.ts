@@ -23,6 +23,7 @@ vi.mock("node-pty", () => ({
 const providers = [
   ["claude-code", "claude_executable", "resolveClaudeExe"],
   ["codex-cli", "codex_executable", "resolveCodexExe"],
+  ["copilot", "copilot_executable", "resolveCopilotExe"],
   ["cursor", "cursor_executable", "resolveCursorExe"],
 ] as const;
 

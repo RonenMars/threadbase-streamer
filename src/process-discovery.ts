@@ -5,6 +5,7 @@ import { isWindows } from "./platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   type ProviderName,
 } from "./providers";
@@ -192,10 +193,40 @@ export function looksLikeCursorProcess(commandLine: string): boolean {
   return true;
 }
 
+/** Copilot interactive CLI only; exclude print/SDK and management modes. */
+export function looksLikeCopilotProcess(commandLine: string): boolean {
+  const tokens = tokenizeCommandLine(commandLine);
+  if (!tokens.length || !/^copilot(?:\.exe)?$/i.test(exeBaseName(tokens[0]))) return false;
+  const nonInteractive = new Set([
+    "login",
+    "logout",
+    "help",
+    "version",
+    "update",
+    "mcp",
+    "serve",
+    "init",
+  ]);
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (["-C", "--model", "--resume", "--session-id", "--add-dir", "--log-dir"].includes(token)) {
+      i++;
+      continue;
+    }
+    if (
+      nonInteractive.has(token.toLowerCase()) ||
+      /^(?:-p|--prompt|--headless|--acp|--stdio|--help|--version)(?:=|$)/.test(token)
+    )
+      return false;
+  }
+  return true;
+}
+
 /** Which agent a command line is, or null when it is neither. */
 export function providerForCommandLine(commandLine: string): ProviderName | null {
   if (looksLikeClaudeProcess(commandLine)) return CLAUDE_CODE_PROVIDER;
   if (looksLikeCodexProcess(commandLine)) return CODEX_CLI_PROVIDER;
+  if (looksLikeCopilotProcess(commandLine)) return COPILOT_PROVIDER;
   if (looksLikeCursorProcess(commandLine)) return CURSOR_PROVIDER;
   return null;
 }
@@ -214,6 +245,20 @@ export function extractCodexResumeId(args: string): string | null {
 
 /** The conversation id a discovered process is working on, if it states one. */
 export function extractConversationId(args: string, provider: ProviderName): string | null {
+  if (provider === COPILOT_PROVIDER) {
+    const tokens = tokenizeCommandLine(args);
+    for (let i = 1; i < tokens.length; i++) {
+      const match = /^--(?:resume|session-id)=(.+)$/.exec(tokens[i]);
+      if (match) return match[1];
+      if (
+        ["--resume", "--session-id"].includes(tokens[i]) &&
+        tokens[i + 1] &&
+        !tokens[i + 1].startsWith("-")
+      )
+        return tokens[i + 1];
+    }
+    return null;
+  }
   return provider === CODEX_CLI_PROVIDER ? extractCodexResumeId(args) : extractResumeId(args);
 }
 
@@ -340,7 +385,7 @@ async function getPidsUnix(): Promise<number[]> {
   // app's `codex app-server`, so the per-pid args re-read in discoverUnix is
   // what actually filters this path — it drops anything that is neither agent.
   const pids: number[] = [];
-  for (const name of ["claude", "codex"]) {
+  for (const name of ["claude", "codex", "copilot"]) {
     try {
       const output = await run("pgrep", ["-x", name]);
       for (const line of output.trim().split("\n")) {

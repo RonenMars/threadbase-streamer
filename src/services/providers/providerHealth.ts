@@ -4,6 +4,7 @@ import { isWindows, locateProviderExe } from "../../platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   type ProviderName,
 } from "../../providers";
@@ -24,6 +25,8 @@ import { capabilitiesFor, type ProviderCapabilities, type VerifiedAgainst } from
 
 /** Versions each adapter's fixtures were captured against. */
 export const VERIFIED_AGAINST: Record<ProviderName, VerifiedAgainst> = {
+  // Intake is not a captured transcript/TUI: every installed build warns.
+  [COPILOT_PROVIDER]: { captured: [] },
   [CLAUDE_CODE_PROVIDER]: { captured: ["2.1.214"], min: "2.1.0" },
   [CODEX_CLI_PROVIDER]: { captured: ["0.140.0-alpha.19"], min: "0.140.0" },
   // Transcript *shape* era (agent-transcripts JSONL), not a live `agent --version`

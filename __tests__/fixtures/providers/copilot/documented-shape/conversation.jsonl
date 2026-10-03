@@ -1,0 +1,4 @@
+{"type":"session.start","id":"start-example","timestamp":"2026-09-01T00:00:00Z","data":{"sessionId":"session-example"}}
+{"type":"user.message","id":"user-example","timestamp":"2026-09-01T00:00:01Z","data":{"content":"Explain this example."}}
+{"type":"assistant.message_delta","id":"delta-example","data":{"deltaContent":"An example"}}
+{"type":"assistant.message","id":"assistant-example","timestamp":"2026-09-01T00:00:02Z","data":{"content":"An example response."}}

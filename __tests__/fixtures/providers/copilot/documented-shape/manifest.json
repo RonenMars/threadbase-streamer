@@ -1,0 +1,15 @@
+{
+  "provider": "copilot",
+  "providerVersion": null,
+  "capturedAt": null,
+  "sanitized": true,
+  "synthetic": true,
+  "source": "https://github.com/github/copilot-sdk/blob/main/docs/features/streaming-events.md",
+  "envelopeTypes": [
+    "session.start",
+    "user.message",
+    "assistant.message_delta",
+    "assistant.message"
+  ],
+  "note": "Documentation-derived shape fixture, not a live CLI capture or version compatibility claim. Vendor intake reports 1.0.88; VERIFIED_AGAINST remains empty."
+}
