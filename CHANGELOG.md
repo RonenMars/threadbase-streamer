@@ -1,3 +1,9 @@
+## [1.107.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.107.0...v1.107.1) (2026-10-03)
+
+### Bug Fixes
+
+* **deploy:** sync a stale vendor/menubar checkout before the dirty-tree check ([#1020](https://github.com/RonenMars/threadbase-streamer/issues/1020)) ([6270324](https://github.com/RonenMars/threadbase-streamer/commit/6270324ed0a7e465e72532bfc47d61473687445d))
+
 ## [1.107.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.106.1...v1.107.0) (2026-10-03)
 
 ### Features
