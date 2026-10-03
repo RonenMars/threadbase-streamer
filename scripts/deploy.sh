@@ -16,6 +16,8 @@
 #   scripts/deploy.sh healthcheck           # probe /healthz on the running server
 #   scripts/deploy.sh restart               # kickstart + healthcheck (auto-clears EADDRINUSE once)
 #   scripts/deploy.sh free-port             # kill stale threadbase listener on $PORT
+#   scripts/deploy.sh menubar               # update the installed menubar app if vendor/menubar pins a newer
+#                                           #   version (also runs at the end of every deploy)
 #
 # Layout:
 #   ~/.threadbase/cli.js                     -> symlink into releases/
@@ -835,6 +837,149 @@ activate_release() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rel_path" >> "$HISTORY_FILE"
 }
 
+# Update the installed menubar app when the version this checkout pins is
+# newer than the one in /Applications. Installs the published, notarized
+# universal .dmg — never a local build — and relaunches the app.
+#
+# The pinned version is read from the recorded submodule pointer
+# (HEAD:vendor/menubar), not from the submodule checkout: a `git pull` that
+# bumps the pointer leaves the checkout at the old commit, so the checkout
+# would report the version we already have.
+#
+# Does nothing when the app is not installed (deploy never puts it on a machine
+# that did not have it), when the versions match, or when the installed app is
+# newer (never downgrades). Nothing is touched until the download has passed
+# the version, codesign and Gatekeeper checks. Returns non-zero on a failed
+# update; callers treat that as a warning, the old app stays in place.
+MENUBAR_REPO="RonenMars/threadbase-menubar"
+MENUBAR_APP_NAME="Threadbase Menubar.app"
+MENUBAR_RELEASES_DIR="$RELEASES_DIR/menubar"
+MENUBAR_KEEP_DMGS=2
+
+ensure_menubar_current() {
+  local sub="$REPO_ROOT/vendor/menubar"
+  local sha pinned installed target="" dir
+  sha="$(git -C "$REPO_ROOT" rev-parse -q --verify HEAD:vendor/menubar 2>/dev/null)" || true
+  # An uninitialised submodule is an empty directory, where `git -C` would
+  # silently answer for the parent repository instead.
+  if [[ -z "$sha" || ! -e "$sub/.git" ]]; then
+    log "menubar: vendor/menubar is not initialised — skipping"
+    return 0
+  fi
+  git -C "$sub" cat-file -e "$sha^{commit}" 2>/dev/null || git -C "$sub" fetch -q origin 2>/dev/null || true
+  pinned="$(git -C "$sub" show "$sha:package.json" 2>/dev/null \
+    | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).version' 2>/dev/null)" || true
+  if [[ -z "$pinned" ]]; then
+    warn "menubar: cannot read the pinned version at $sha"
+    return 1
+  fi
+
+  for dir in /Applications "$HOME/Applications"; do
+    if [[ -d "$dir/$MENUBAR_APP_NAME" ]]; then target="$dir/$MENUBAR_APP_NAME"; break; fi
+  done
+  if [[ -z "$target" ]]; then
+    log "menubar: not installed — skipping (install it once from https://github.com/$MENUBAR_REPO/releases)"
+    return 0
+  fi
+  installed="$(defaults read "$target/Contents/Info" CFBundleShortVersionString 2>/dev/null)" || true
+  if [[ -z "$installed" ]]; then
+    warn "menubar: cannot read the installed version of $target"
+    return 1
+  fi
+
+  log "menubar: installed $installed, pinned $pinned"
+  local newer
+  newer="$(node -e '
+    try {
+      const semver = require("'"$REPO_ROOT"'/node_modules/semver");
+      process.stdout.write(semver.gt(process.argv[1], process.argv[2]) ? "1" : "0");
+    } catch { process.stdout.write("?"); }
+  ' "$pinned" "$installed" 2>/dev/null)" || true
+  if [[ "$newer" == "0" ]]; then
+    if [[ "$installed" == "$pinned" ]]; then
+      ok "menubar is up to date ($installed)"
+    else
+      log "menubar: keeping installed $installed (pinned $pinned is not newer)"
+    fi
+    return 0
+  fi
+  if [[ "$newer" != "1" ]]; then
+    warn "menubar: cannot compare versions $installed and $pinned"
+    return 1
+  fi
+
+  local asset="Threadbase.Menubar-$pinned-universal.dmg"
+  local dmg="$MENUBAR_RELEASES_DIR/$asset"
+  local url="https://github.com/$MENUBAR_REPO/releases/download/v$pinned/$asset"
+  mkdir -p "$MENUBAR_RELEASES_DIR"
+  if [[ ! -f "$dmg" ]]; then
+    log "menubar: downloading v$pinned"
+    if ! curl -fsSL --connect-timeout 10 --max-time 300 -o "$dmg.part" "$url"; then
+      rm -f "$dmg.part"
+      warn "menubar: could not download $url — keeping $installed"
+      return 1
+    fi
+    mv "$dmg.part" "$dmg"
+  fi
+
+  local mount_point src dmg_ver
+  mount_point="$(hdiutil attach -nobrowse -readonly "$dmg" 2>/dev/null \
+    | awk -F'\t' '/\/Volumes\//{print $NF; exit}')" || true
+  src="$mount_point/$MENUBAR_APP_NAME"
+  dmg_ver=""
+  [[ -n "$mount_point" ]] && dmg_ver="$(defaults read "$src/Contents/Info" CFBundleShortVersionString 2>/dev/null)" || true
+  if [[ "$dmg_ver" != "$pinned" ]] \
+    || ! codesign --verify --deep --strict "$src" 2>/dev/null \
+    || ! spctl -a "$src" 2>/dev/null; then
+    [[ -n "$mount_point" ]] && hdiutil detach "$mount_point" -quiet 2>/dev/null || true
+    rm -f "$dmg"
+    warn "menubar: the v$pinned download failed its version/signature check — keeping $installed"
+    return 1
+  fi
+
+  # Match on the bundle's own executable path, so a dev copy run from
+  # vendor/menubar (or anything else with "Threadbase Menubar" in its argv) is
+  # left alone.
+  local bin="$target/Contents/MacOS/" i
+  if pgrep -f "$bin" >/dev/null 2>&1; then
+    log "menubar: quitting $installed"
+    osascript -e 'tell application "Threadbase Menubar" to quit' >/dev/null 2>&1 || true
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      pgrep -f "$bin" >/dev/null 2>&1 || break
+      sleep 0.5
+    done
+    pkill -f "$bin" 2>/dev/null || true
+  fi
+
+  local previous="$MENUBAR_RELEASES_DIR/previous.app"
+  rm -rf "$previous"
+  if ! mv "$target" "$previous" || ! ditto "$src" "$target"; then
+    if [[ -d "$previous" ]]; then rm -rf "$target"; mv "$previous" "$target"; fi
+    hdiutil detach "$mount_point" -quiet 2>/dev/null || true
+    open "$target" 2>/dev/null || true
+    warn "menubar: install failed — restored $installed"
+    return 1
+  fi
+  hdiutil detach "$mount_point" -quiet 2>/dev/null || true
+
+  # Refresh LaunchServices and launch by path, not `open -a`, which can pick a
+  # stale registration of another copy (docs/troubleshooting.md).
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+    -f "$target" >/dev/null 2>&1 || true
+  open "$target" 2>/dev/null || true
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -f "$bin" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  if ! pgrep -f "$bin" >/dev/null 2>&1; then
+    warn "menubar: installed v$pinned but it did not start — open \"$target\""
+    return 1
+  fi
+
+  ls -t "$MENUBAR_RELEASES_DIR"/*.dmg 2>/dev/null | tail -n +$((MENUBAR_KEEP_DMGS + 1)) | xargs -r rm -f || true
+  ok "menubar updated: $installed → $pinned (previous kept at $previous)"
+}
+
 cmd_deploy() {
   local force="" clear_logs_flag=0 skip_tests=0
   for arg in "$@"; do
@@ -971,6 +1116,8 @@ cmd_deploy() {
   # deploy is already healthy at this point; only the convenience shim is at stake.
   install_global_shim "$ACTIVE_LINK" || warn "global shim install failed (deploy itself is OK)"
 
+  ensure_menubar_current || warn "menubar was not updated (deploy itself is OK)"
+
   ok "deploy complete: $rel_filename"
 }
 
@@ -991,11 +1138,12 @@ case "${1:-deploy}" in
   healthcheck)  cmd_healthcheck ;;
   free-port)    cmd_free_stale_port ;;
   restart)      cmd_kickstart_and_healthcheck ;;
+  menubar)      ensure_menubar_current || exit 1 ;;
   nightly-install)   install_nightly_restart_job ;;
   nightly-uninstall) uninstall_nightly_restart_job ;;
   *)
     err "unknown command: $1"
-    echo "usage: $0 [deploy [--force|--skip-tests] | rollback | status | healthcheck | restart | free-port | nightly-install | nightly-uninstall]" >&2
+    echo "usage: $0 [deploy [--force|--skip-tests] | rollback | status | healthcheck | restart | free-port | menubar | nightly-install | nightly-uninstall]" >&2
     exit 2
     ;;
 esac

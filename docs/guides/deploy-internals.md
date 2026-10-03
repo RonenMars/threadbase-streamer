@@ -36,8 +36,22 @@ A machine can have the Homebrew install **or** the `scripts/deploy.sh` install, 
 
 ## Menubar install
 
-Deploy no longer touches the menubar — `npm run deploy` / `scripts/deploy.sh` install and restart only the streamer.
-Install or update the menubar separately via the `deploy-menubar` skill (`.claude/skills/deploy-menubar`), which checks out the submodule, installs deps, compiles, and launches the Electron app.
+On macOS, `scripts/deploy.sh` ends every deploy by bringing the installed menubar up to the version the repo pins (`ensure_menubar_current`).
+The same step runs on its own as `scripts/deploy.sh menubar`, with no streamer restart.
+
+1. **Pinned version** — the `version` in `package.json` at the commit the `vendor/menubar` pointer records (`git rev-parse HEAD:vendor/menubar`), not the submodule checkout, which a `git pull` leaves behind.
+2. **Installed version** — `CFBundleShortVersionString` of `Threadbase Menubar.app` in `/Applications`, then `~/Applications`.
+3. **Compare** — the update runs only when pinned is strictly newer (`semver.gt`). Equal is "up to date"; a newer installed app is left alone.
+4. **Download** — the release asset `Threadbase.Menubar-<version>-universal.dmg` from the menubar repo's `v<version>` release, cached in `~/.threadbase/releases/menubar/` (the two newest are kept).
+5. **Verify** — the mounted bundle must report the pinned version, pass `codesign --verify --deep --strict`, and be accepted by Gatekeeper (`spctl -a`). Nothing has been touched up to here.
+6. **Swap and relaunch** — the running app is asked to quit, the old bundle moves to `~/.threadbase/releases/menubar/previous.app`, the new one is copied in and opened by path.
+
+The step is non-fatal: a missing release, a failed check or a failed copy logs a warning, leaves (or restores) the old app, and the deploy still reports success.
+It skips when the app is not installed — a first install is manual, from the release `.dmg` — and when `vendor/menubar` is not initialised, as in a fresh worktree.
+To roll back, quit the app and move `previous.app` back over it.
+
+Linux and Windows deploys do not touch the menubar.
+To run it from source instead, use the `deploy-menubar` skill (`.claude/skills/deploy-menubar`).
 
 During install/update the streamer is briefly down (a few seconds); the menubar shows "disconnected" until its next 5s health poll. If that gap exceeds ~10s, something's wrong with the restart step — check `~/.threadbase/logs/updater.{log,err}`.
 
