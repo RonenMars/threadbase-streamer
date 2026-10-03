@@ -1107,7 +1107,7 @@ A plain `npm ci` then produced the binding. **On `main` today `allowScripts` lis
 
 ## Menubar packaging
 
-The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applications/Threadbase Menubar.app`. It is installed via the `deploy-menubar` skill (`.claude/skills/deploy-menubar`), which builds via electron-builder, mounts the produced `.dmg`, and copies the app into place — `scripts/deploy.sh` no longer touches the menubar. Several gotchas emerged during the initial rollout — collected here.
+The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applications/Threadbase Menubar.app`. On macOS `scripts/deploy.sh` keeps it current: when `vendor/menubar` pins a newer version than the installed one, the deploy downloads that release's notarized `.dmg`, verifies it and swaps the app ([deploy-internals](guides/deploy-internals.md#menubar-install)). A local electron-builder build is only for working on the menubar itself. Several gotchas emerged during the initial rollout — collected here.
 
 ### `npm run package:mac` aborts with `CSSMERR_TP_CERT_REVOKED`
 

@@ -7,6 +7,16 @@ description: Build and launch the Threadbase menubar Electron app from vendor/me
 
 Builds and launches the `vendor/menubar` Electron app. Always run this **after** the streamer server is healthy — the menubar polls `/healthz` and needs the server up to show a green icon.
 
+## macOS with the app installed — update it, don't run from source
+
+If `/Applications/Threadbase Menubar.app` (or `~/Applications/…`) exists, run this and stop:
+
+```bash
+scripts/deploy.sh menubar
+```
+
+It installs the release the `vendor/menubar` pointer pins when that is newer than the installed app, and relaunches it; every `npm run deploy` already does the same at the end. The steps below launch a *dev copy* from source, which leaves the installed app on its old version — use them only on Linux/Windows, on a Mac without the app installed, or to try unreleased menubar changes.
+
 ## Step 1 — Detect OS
 
 Use `$IsWindows` / `$IsMacOS` / `$IsLinux` in PowerShell, or check `uname -s` in bash:
