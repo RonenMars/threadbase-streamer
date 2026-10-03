@@ -51,6 +51,10 @@ An installed app with no signing team (a local ad-hoc build) is never replaced.
 It skips when the app is not installed — a first install is manual, from the release `.dmg` — and when `vendor/menubar` is not initialised, as in a fresh worktree.
 To roll back, quit the app and move `previous.app` back over it.
 
+Before its dirty-tree check, the deploy also brings the `vendor/menubar` checkout to the pinned commit (`sync_menubar_submodule`).
+A `git pull` that bumps the pointer leaves the checkout at the old commit, which git reports as a modified tree: a plain deploy refused it as dirty, and `--force` stamped the release `<sha>-dirty-<timestamp>`.
+Only a clean checkout that is strictly behind the pin is moved; local edits or commits in the submodule are left alone and still fail the dirty check.
+
 Linux and Windows deploys do not touch the menubar.
 To run it from source instead, use the `deploy-menubar` skill (`.claude/skills/deploy-menubar`).
 

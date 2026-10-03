@@ -289,9 +289,34 @@ ensure_native_modules_match_node() {
   fi
 }
 
+# Bring the vendor/menubar checkout to the commit HEAD pins when it is merely
+# behind it. A `git pull` that bumps the pointer leaves the checkout at the old
+# commit, which git reports as a modified tree: a plain deploy refused it as
+# dirty and a forced one stamped the release `<sha>-dirty-<ts>`, with nothing
+# actually changed.
+#
+# Only a clean checkout whose HEAD is an ancestor of the pinned commit is
+# moved. Local edits, or a HEAD ahead of or diverged from the pin, mean someone
+# is working in the submodule; that is left alone and the dirty check below
+# reports it as before.
+sync_menubar_submodule() {
+  local sub="$REPO_ROOT/vendor/menubar" pinned head
+  [[ -e "$sub/.git" ]] || return 0
+  pinned="$(git -C "$REPO_ROOT" rev-parse -q --verify HEAD:vendor/menubar 2>/dev/null)" || return 0
+  head="$(git -C "$sub" rev-parse HEAD 2>/dev/null)" || return 0
+  [[ "$head" != "$pinned" ]] || return 0
+  [[ -z "$(git -C "$sub" status --porcelain 2>/dev/null)" ]] || return 0
+  git -C "$sub" cat-file -e "$pinned^{commit}" 2>/dev/null || git -C "$sub" fetch -q origin 2>/dev/null || true
+  git -C "$sub" merge-base --is-ancestor "$head" "$pinned" 2>/dev/null || return 0
+  log "syncing vendor/menubar checkout to the pinned commit ${pinned:0:8}"
+  git -C "$REPO_ROOT" submodule update --init vendor/menubar >/dev/null 2>&1 \
+    || warn "could not sync vendor/menubar to ${pinned:0:8}"
+}
+
 cmd_predeploy_check() {
   local force="${1:-}"
   cd "$REPO_ROOT"
+  sync_menubar_submodule || true
   local branch dirty
   branch="$(git rev-parse --abbrev-ref HEAD)"
   dirty=""
