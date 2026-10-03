@@ -639,11 +639,18 @@ program
   .command("pair")
   .description("Print a pairing QR code (server must already be running)")
   .option("-p, --port <number>", "Port the server is listening on", "8766")
+  .option("--dev", "Pair the TbDev QA app (threadbase-dev://) instead of Threadbase", false)
   .action(async (opts) => {
     const port = Number.parseInt(opts.port, 10);
     const apiKey = loadOrCreateApiKey();
     const publicUrl = loadPublicUrl() ?? null;
-    await printServerBanner({ port, apiKey, publicUrl, includeQr: true });
+    await printServerBanner({
+      port,
+      apiKey,
+      publicUrl,
+      includeQr: true,
+      scheme: opts.dev ? "threadbase-dev" : "threadbase",
+    });
   });
 
 program

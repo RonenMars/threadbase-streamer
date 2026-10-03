@@ -134,11 +134,14 @@ export async function printServerBanner(
     apiKey,
     publicUrl,
     includeQr,
+    scheme = "threadbase",
   }: {
     port: number;
     apiKey: string;
     publicUrl: string | null;
     includeQr: boolean;
+    /** URL scheme of the app the QR opens: `threadbase-dev` targets the TbDev QA build. */
+    scheme?: "threadbase" | "threadbase-dev";
   },
   deps: PairBannerDeps = {},
 ): Promise<void> {
@@ -190,7 +193,7 @@ export async function printServerBanner(
   // that would not. The same read feeds the fingerprint printed under the QR,
   // so the phone and the computer show the same grouped hex.
   let fingerprint: string | undefined;
-  let payload = `threadbase://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}`;
+  let payload = `${scheme}://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}`;
   if (e2eeOffered) {
     const spk = identityKey();
     payload += `&spk=${spk}&v=1`;
