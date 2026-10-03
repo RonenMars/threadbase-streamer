@@ -1,3 +1,9 @@
+## [1.107.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.106.1...v1.107.0) (2026-10-03)
+
+### Features
+
+* **deploy:** update the installed menubar when the pinned version is newer ([#1018](https://github.com/RonenMars/threadbase-streamer/issues/1018)) ([819e21d](https://github.com/RonenMars/threadbase-streamer/commit/819e21dd56cbaefc73eb0c73bf4c185be230aa29))
+
 ## [1.106.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.106.0...v1.106.1) (2026-10-03)
 
 ### Performance Improvements
