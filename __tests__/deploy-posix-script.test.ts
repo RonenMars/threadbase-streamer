@@ -76,6 +76,32 @@ describe("POSIX deploy script", () => {
     });
   });
 
+  describe("menubar submodule sync", () => {
+    // A `git pull` that bumps the pointer leaves the checkout behind it, which
+    // git reports as a modified tree: the deploy refused it as dirty, or under
+    // --force stamped the release `-dirty`.
+    it("syncs the checkout before the dirty-tree check reads it", () => {
+      const check = deployScript.slice(deployScript.indexOf("cmd_predeploy_check() {"));
+      const sync = check.indexOf("sync_menubar_submodule || true");
+      const dirty = check.indexOf("git diff --name-only HEAD");
+      expect(sync).toBeGreaterThan(-1);
+      expect(dirty).toBeGreaterThan(sync);
+    });
+
+    // `git submodule update` on a checkout someone is working in moves their
+    // HEAD off their commits, so only a clean, strictly-behind checkout moves.
+    it("moves only a clean checkout that is behind the pinned commit", () => {
+      const start = deployScript.indexOf("sync_menubar_submodule() {");
+      const sync = deployScript.slice(start, deployScript.indexOf("\n}", start));
+      const clean = sync.indexOf('[[ -z "$(git -C "$sub" status --porcelain');
+      const behind = sync.indexOf('merge-base --is-ancestor "$head" "$pinned"');
+      const update = sync.indexOf("submodule update --init vendor/menubar");
+      expect(clean).toBeGreaterThan(-1);
+      expect(behind).toBeGreaterThan(clean);
+      expect(update).toBeGreaterThan(behind);
+    });
+  });
+
   it("sets launchd NumberOfFiles to 65536 and heals the previous 16384 cap", () => {
     expect(deployScript).toMatch(/<key>NumberOfFiles<\/key>\s*<integer>65536<\/integer>/);
     expect(deployScript).toContain("plist SoftResourceLimits is still 16384 — rewriting to 65536");
