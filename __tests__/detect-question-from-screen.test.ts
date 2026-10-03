@@ -187,6 +187,69 @@ describe("detectQuestionFromScreen", () => {
     expect(r?.questions[0].question).toBe("Which area are you focused on?");
   });
 
+  // Real screen from a phone report: each option has an indented description,
+  // some wrapped onto a second row, and the built-in escape options have none.
+  it("attaches each option's description, joining wrapped rows", () => {
+    const r = detectQuestionFromScreen([
+      "☐ Plan",
+      "Approve this plan?",
+      "❯ 1. Approve plan",
+      "     Create the worktree, boot a simulator, reproduce and bisect,",
+      "  then fix and test.",
+      "  2. Repro only first",
+      "     Do steps 1-3 and report which cause is confirmed before I",
+      "  touch any source.",
+      "  3. Stop here",
+      "     Do nothing further.",
+      "  4. Type something.",
+      "  5. Chat about this",
+      "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ]);
+    expect(r?.questions[0].options).toEqual([
+      {
+        label: "Approve plan",
+        description:
+          "Create the worktree, boot a simulator, reproduce and bisect, then fix and test.",
+      },
+      {
+        label: "Repro only first",
+        description: "Do steps 1-3 and report which cause is confirmed before I touch any source.",
+      },
+      { label: "Stop here", description: "Do nothing further." },
+      { label: "Type something.", description: "" },
+      { label: "Chat about this", description: "" },
+    ]);
+  });
+
+  // Multi-question form: a tab bar sits directly above the (boxed, wrapped)
+  // question with no blank line, and the question text must not swallow it.
+  it("keeps the tab bar and earlier prose out of a wrapped question", () => {
+    const r = detectQuestionFromScreen([
+      "Planning: /Users/example/.claude/plans/some-plan.md",
+      "← ☒ Scope ☐ Transcript ✔ Submit →",
+      "│ The transcript for session f3aba461 lives under ~/.claude,",
+      "│ outside my boundary, so I haven't read",
+      "│ it. How do you want to ground the design in it?",
+      "❯ 1. Design from code only",
+      "     Use the screenshot and the parser code.",
+      "  2. I'll copy excerpts in",
+      "     You drop a trimmed JSONL excerpt into a path and I use that as",
+      "     the fixture shape.",
+      "  3. Type something.",
+      "  4. Chat about this",
+      "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    ]);
+    expect(r?.questions[0].question).toBe(
+      "The transcript for session f3aba461 lives under ~/.claude, outside my boundary, so I haven't read it. How do you want to ground the design in it?",
+    );
+    expect(r?.questions[0].options.map((o) => o.description)).toEqual([
+      "Use the screenshot and the parser code.",
+      "You drop a trimmed JSONL excerpt into a path and I use that as the fixture shape.",
+      "",
+      "",
+    ]);
+  });
+
   it("returns null when the header doesn't end with '?'", () => {
     const statusy = [
       "Sonnet 4.6 | ~/Desktop/dev/apps",
