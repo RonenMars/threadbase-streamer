@@ -1,3 +1,9 @@
+## [1.106.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.105.1...v1.106.0) (2026-10-03)
+
+### Features
+
+* **pair:** add --dev to print a pairing QR for the TbDev app ([#1014](https://github.com/RonenMars/threadbase-streamer/issues/1014)) ([bc8c726](https://github.com/RonenMars/threadbase-streamer/commit/bc8c7267a4a6e11186f60beb48fa77f26c33efcc))
+
 ## [1.105.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.105.0...v1.105.1) (2026-10-01)
 
 ### Bug Fixes
