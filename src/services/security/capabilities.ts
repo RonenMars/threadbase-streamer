@@ -111,6 +111,8 @@ const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]
   ["/api/search", "history:read"],
   ["/api/providers", "history:read"],
   ["/api/browse", "fs:browse"],
+  // Feeds the browse screen's "Recent directories"; read-only.
+  ["/api/recent-dirs", "fs:browse"],
   ["/api/upload", "fs:upload"],
   ["/api/push", "notifications"],
   ["/api/devices", "admin"],

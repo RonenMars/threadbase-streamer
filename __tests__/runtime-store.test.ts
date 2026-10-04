@@ -66,6 +66,7 @@ describe("RuntimeStore", () => {
       "003_create_devices.sql",
       "004_add_device_e2ee.sql",
       "005_classify_subagents.sql",
+      "007_create_recent_dirs.sql",
     ]);
     store.close();
 
