@@ -47,9 +47,9 @@ function numberOrNull(value: unknown): number | null {
  */
 export const MAX_JSON_BODY_BYTES = 1024 * 1024; // 1 MiB
 
-class BodyTooLargeError extends Error {}
+export class BodyTooLargeError extends Error {}
 
-function readJsonBody(
+export function readJsonBody(
   req: IncomingMessage,
   maxBytes: number = MAX_JSON_BODY_BYTES,
 ): Promise<unknown> {
@@ -423,6 +423,9 @@ export const createMiscRoutes = (
       // cache.db, where a documented troubleshooting step deletes it and every
       // device token with it. Absent means "old server, assume not durable".
       devicesDurable: true,
+      // This server serves /api/saved-items, the favorites list shared by every
+      // paired device. Absent on older servers, where mobile keeps favorites local.
+      savedItems: true,
       // Delivery capability, not endpoint support: whether this server can
       // actually send a push, so mobile can hide an affordance instead of
       // registering tokens nothing will ever send to. Absent on older servers,

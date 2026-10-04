@@ -266,5 +266,6 @@ describe("server identity key over HTTP", () => {
     expect(body.version).toBeTruthy();
     expect(body.push).toBeTruthy();
     expect(body.devicesDurable).toBe(true);
+    expect(body.savedItems).toBe(true);
   });
 });
