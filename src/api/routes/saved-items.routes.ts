@@ -99,11 +99,14 @@ export const createSavedItemsRoutes = (deps: Pick<ApiDeps, "runtimeStore" | "wsH
   });
 
   // Idempotent: a retry after a lost response must not look like a failure.
+  // 200 with a body rather than 204: mobile's request helper parses every
+  // success as JSON.
   app.delete("/:key", (c) => {
     const repo = repoFor(deps);
     if (!repo) return c.json(UNAVAILABLE, 503);
-    if (repo.remove(c.req.param("key"))) announce(repo.revision());
-    return c.body(null, 204);
+    const removed = repo.remove(c.req.param("key"));
+    if (removed) announce(repo.revision());
+    return c.json({ ok: true, removed });
   });
 
   return app;

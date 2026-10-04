@@ -125,7 +125,8 @@ describe("saved items API", () => {
     const first = await fetch(`${baseUrl}/api/saved-items/session%3A%3Aa`, { method: "DELETE" });
     const second = await fetch(`${baseUrl}/api/saved-items/session%3A%3Aa`, { method: "DELETE" });
 
-    expect([first.status, second.status]).toEqual([204, 204]);
+    expect([first.status, second.status]).toEqual([200, 200]);
+    expect([(await first.json()).removed, (await second.json()).removed]).toEqual([true, false]);
     expect((await list()).items).toEqual([]);
     expect(broadcasts).toHaveLength(2);
   });
