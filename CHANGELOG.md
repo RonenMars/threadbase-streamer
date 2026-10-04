@@ -1,3 +1,9 @@
+## [1.107.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.107.1...v1.107.2) (2026-10-04)
+
+### Bug Fixes
+
+* **e2ee:** raise the upload body cap so photos over 3 MB are accepted ([#1021](https://github.com/RonenMars/threadbase-streamer/issues/1021)) ([bf43237](https://github.com/RonenMars/threadbase-streamer/commit/bf432371b8a39428cb51ae05f2e140f39d9ba9cb))
+
 ## [1.107.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.107.0...v1.107.1) (2026-10-03)
 
 ### Bug Fixes
