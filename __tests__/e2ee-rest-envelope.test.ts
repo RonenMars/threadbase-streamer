@@ -33,6 +33,7 @@ import {
   DIRECTION_C2S,
   DIRECTION_S2C,
   MAX_RECORD_BYTES,
+  MAX_UPLOAD_RECORD_BYTES,
   RecordError,
   restTargetHash,
   restTargetHashFromUrl,
@@ -728,6 +729,64 @@ describe("REST envelope: the rejection ladder (§9, §10, D-9)", () => {
       body: Buffer.alloc(5 * 1024 * 1024, 0x41),
     });
     expect([res.status, codeOf(res)]).toEqual([413, "E2EE_SEAL_FAILED"]);
+  });
+
+  describe("the upload route's larger body cap", () => {
+    const UPLOAD = "/api/sessions/abc/files";
+    const FIVE_MIB = "x".repeat(5 * 1024 * 1024);
+
+    it("a 5 MiB sealed body clears the bound on POST /:id/files", async () => {
+      const ctx = await openRestContext();
+      const res = await sealedCall(ctx, {
+        method: "POST",
+        target: UPLOAD,
+        counter: 0n,
+        body: FIVE_MIB,
+      });
+      // Whatever the handler makes of it, the middleware unsealed it and sealed
+      // the answer — a 413 here is the bug this cap exists to fix.
+      expect(res.status).not.toBe(413);
+      expect(res.headers["x-tb-e2ee"]).toBe("1");
+    });
+
+    it("CONTROL — the same 5 MiB sealed body is still refused on any other route", async () => {
+      const ctx = await openRestContext();
+      const res = await sealedCall(ctx, {
+        method: "POST",
+        target: PROBE_PATH,
+        counter: 0n,
+        body: FIVE_MIB,
+      });
+      expect([res.status, codeOf(res)]).toEqual([413, "E2EE_SEAL_FAILED"]);
+    });
+
+    it("a path that only looks like the upload route keeps the default cap", async () => {
+      const ctx = await openRestContext();
+      const res = await sealedCall(ctx, {
+        method: "POST",
+        target: `${UPLOAD}/extra`,
+        counter: 0n,
+        body: FIVE_MIB,
+      });
+      expect([res.status, codeOf(res)]).toEqual([413, "E2EE_SEAL_FAILED"]);
+    });
+
+    it("the route is still bounded: a declared length over the upload cap is refused unread", async () => {
+      const ctx = await openRestContext();
+      const res = await raw({
+        method: "POST",
+        target: UPLOAD,
+        headers: {
+          "X-TB-E2EE": "1",
+          "X-TB-Ctx": ctx.ctxId,
+          "X-TB-Seq": "0",
+          "content-length": String(MAX_UPLOAD_RECORD_BYTES + 1),
+        },
+        withholdBody: true,
+        timeoutMs: 250,
+      });
+      expect([res.status, codeOf(res)]).toEqual([413, "E2EE_SEAL_FAILED"]);
+    });
   });
 
   it("rung 8 — a frame the AEAD refuses", async () => {

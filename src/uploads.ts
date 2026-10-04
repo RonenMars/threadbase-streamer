@@ -2,9 +2,20 @@ import { randomBytes } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import heicConvert from "heic-convert";
 import { join } from "path";
+import { HEADER_BYTES, MAX_UPLOAD_RECORD_BYTES, TAG_BYTES } from "./e2ee/record";
 
 const UPLOAD_DIR_NAME = ".threadbase-uploads";
-const MAX_BYTES = 25 * 1024 * 1024; // 25MB
+/** Keys, filename and mime type around the base64 in the upload JSON. */
+const JSON_WRAPPER_HEADROOM_BYTES = 8 * 1024;
+
+/**
+ * The largest file the sealed upload route can carry. Derived from the sealed-request
+ * cap rather than repeated, so the two cannot drift: the body is the file as base64
+ * (4 bytes per 3) inside a small JSON wrapper, and `ENVELOPE_HEADROOM_BYTES` is
+ * what is left for the record header and tag and the JSON wrapper.
+ */
+const ENVELOPE_HEADROOM_BYTES = HEADER_BYTES + TAG_BYTES + JSON_WRAPPER_HEADROOM_BYTES;
+export const MAX_BYTES = Math.floor(((MAX_UPLOAD_RECORD_BYTES - ENVELOPE_HEADROOM_BYTES) * 3) / 4);
 
 const HEIC_MIMES = new Set(["image/heic", "image/heif"]);
 

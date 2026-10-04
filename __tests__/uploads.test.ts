@@ -2,7 +2,8 @@ import { existsSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { saveUploadFile } from "../src/uploads";
+import { HEADER_BYTES, MAX_UPLOAD_RECORD_BYTES, TAG_BYTES } from "../src/e2ee/record";
+import { MAX_BYTES, saveUploadFile } from "../src/uploads";
 
 describe("saveUploadFile", () => {
   const dirs: string[] = [];
@@ -30,6 +31,33 @@ describe("saveUploadFile", () => {
     expect(saved.originalName).toBe("file.pdf");
     expect(saved.filePath).toContain("file.pdf");
     expect(existsSync(saved.filePath)).toBe(true);
+  });
+
+  it("accepts a file over the old 25 MiB cap and rejects one over the current cap", async () => {
+    const projectPath = mkdtempSync(join(tmpdir(), "tb-upload-"));
+    dirs.push(projectPath);
+    const upload = (bytes: number) =>
+      saveUploadFile({
+        sessionId: "session-1",
+        projectPath,
+        originalName: "big.bin",
+        mimeType: "application/octet-stream",
+        dataBase64: Buffer.alloc(bytes, 1).toString("base64"),
+      });
+
+    expect((await upload(30 * 1024 * 1024)).sizeBytes).toBe(30 * 1024 * 1024);
+    await expect(upload(MAX_BYTES + 1)).rejects.toThrow(/exceeds/);
+  });
+
+  it("the largest accepted file still fits the sealed-request cap as a JSON body", () => {
+    const body = JSON.stringify({
+      filename: "a".repeat(255),
+      mimeType: "application/octet-stream",
+      dataBase64: "A".repeat(Math.ceil(MAX_BYTES / 3) * 4),
+    });
+    expect(Buffer.byteLength(body) + HEADER_BYTES + TAG_BYTES).toBeLessThanOrEqual(
+      MAX_UPLOAD_RECORD_BYTES,
+    );
   });
 
   it("rejects empty files", async () => {

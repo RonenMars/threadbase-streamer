@@ -92,6 +92,19 @@ export const MAX_COUNTER = 2n ** 64n - 1n;
  */
 export const MAX_RECORD_BYTES = 4 * 1024 * 1024;
 
+/**
+ * The ceiling for a sealed REST request on the one route that legitimately
+ * carries a large body: `POST /api/sessions/:id/files`, a photo as base64 in
+ * JSON. The 4 MiB default above predates it and refused any image over ~3 MB.
+ *
+ * It is a bound on memory, not on the file: the file's own cap lives in
+ * `uploads.ts`. It is passed per request by the envelope middleware, which
+ * picks it from the raw wire URL — the same URL the AEAD binds into the frame —
+ * so a frame sealed for another route cannot borrow it. Everything else,
+ * including every WebSocket frame, keeps `MAX_RECORD_BYTES`.
+ */
+export const MAX_UPLOAD_RECORD_BYTES = 16 * MAX_RECORD_BYTES; // 64 MiB
+
 export class RecordError extends Error {
   readonly code: E2eeRejectionCode;
 
@@ -443,14 +456,18 @@ export class RecordState {
    * The caller must therefore still refuse a counter its window rejects, and
    * must never seal a response for one (§13(a)).
    */
-  unsealUnchecked(frame: Buffer, target: Buffer): { plaintext: Buffer; counter: bigint } {
+  unsealUnchecked(
+    frame: Buffer,
+    target: Buffer,
+    maxFrameBytes: number = MAX_RECORD_BYTES,
+  ): { plaintext: Buffer; counter: bigint } {
     if (this.channel !== CHANNEL_REST_REQUEST) {
       throw new RecordError(
         E2EE_SEAL_FAILED,
         "unsealUnchecked is the REST request channel's seam; the socket's counter is strict",
       );
     }
-    return this.openFrame(frame, target);
+    return this.openFrame(frame, target, maxFrameBytes);
   }
 
   /**
@@ -461,7 +478,11 @@ export class RecordState {
    * a second copy of the header checks is how the two channels would drift into
    * disagreeing about what a frame even is.
    */
-  private openFrame(frame: Buffer, target?: Buffer): { plaintext: Buffer; counter: bigint } {
+  private openFrame(
+    frame: Buffer,
+    target?: Buffer,
+    maxFrameBytes: number = MAX_RECORD_BYTES,
+  ): { plaintext: Buffer; counter: bigint } {
     assertTarget(this.channel, target);
     // Bounds first, on the length of the buffer we were handed — nothing is
     // parsed until the frame could plausibly be one (D-9).
@@ -471,7 +492,7 @@ export class RecordState {
     if (frame.byteLength < HEADER_BYTES + TAG_BYTES) {
       throw new RecordError(E2EE_SEAL_FAILED, "record shorter than its header and tag");
     }
-    if (frame.byteLength > MAX_RECORD_BYTES) {
+    if (frame.byteLength > maxFrameBytes) {
       throw new RecordError(E2EE_SEAL_FAILED, "record too large");
     }
 

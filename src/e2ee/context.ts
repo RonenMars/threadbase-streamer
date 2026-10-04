@@ -188,7 +188,7 @@ export interface E2eeContext {
   /** The receiving half for a channel. Throws for a channel this kind does not carry. */
   receiveState(channel: Channel): RecordState;
   /** REST only: unseal a request and record its counter as answerable (§13(a)). */
-  unsealRequest(frame: Buffer, target: Buffer): Buffer;
+  unsealRequest(frame: Buffer, target: Buffer, maxFrameBytes?: number): Buffer;
   /** REST only: seal the one response that request is owed (§13(a)). */
   sealResponse(requestCounter: bigint, plaintext: Buffer, target: Buffer): Buffer;
   /** First authenticated use. Promotes out of provisional. */
@@ -308,7 +308,7 @@ class Context implements E2eeContext {
     return s;
   }
 
-  unsealRequest(frame: Buffer, target: Buffer): Buffer {
+  unsealRequest(frame: Buffer, target: Buffer, maxFrameBytes?: number): Buffer {
     const sealer = this.requireRest();
     // A REST context is built with a window and a sealer together, so
     // `requireRest()` above has already refused every context that has neither.
@@ -329,7 +329,7 @@ class Context implements E2eeContext {
     // frame's counter are equal by definition there; on the window path they
     // are not, and the difference is silent — every test still passes for the
     // first request in a context.
-    const { plaintext, counter } = state.unsealUnchecked(frame, target);
+    const { plaintext, counter } = state.unsealUnchecked(frame, target, maxFrameBytes);
     // The window owns acceptance: `unsealUnchecked` advances nothing, so a
     // repeat, an already-received counter or one that has fallen out of the
     // window is refused HERE, before anything is armed to answer it.
