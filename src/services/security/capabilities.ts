@@ -115,6 +115,8 @@ const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]
   ["/api/recent-dirs", "fs:browse"],
   ["/api/upload", "fs:upload"],
   ["/api/push", "notifications"],
+  // Writes are split off to session:control in requiredCapability().
+  ["/api/saved-items", "history:read"],
   ["/api/devices", "admin"],
   ["/api/config", "admin"],
   ["/api/auth/rotate", "admin"],
@@ -160,6 +162,11 @@ export function requiredCapability(path: string, method: string): Capability | n
   // all, which would make the mode useless.
   if (path.startsWith("/api/sessions") && (method === "GET" || method === "HEAD")) {
     return "history:read";
+  }
+  // The saved list is shared by every paired device, so a read-only device may
+  // see it but not rewrite every other phone's shelf.
+  if (path.startsWith("/api/saved-items") && method !== "GET" && method !== "HEAD") {
+    return "session:control";
   }
 
   let best: { len: number; cap: Capability } | null = null;
