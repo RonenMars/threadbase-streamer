@@ -63,6 +63,7 @@ import { DevicesRepository } from "./db/repositories/devices.repository";
 import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.repository";
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { PushRepository } from "./db/repositories/push.repository";
+import { recentDirsFor } from "./db/repositories/recent-dirs.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { RuntimeStore, resolveRuntimeDbPath } from "./db/runtime-store";
 import {
@@ -594,6 +595,7 @@ export class StreamerServer {
       featureFlags: () => this.featureFlags,
       autoResumeOnBoot: () => this.autoResumeOnBoot,
       managedSessionsRepo: () => this.managedSessionsRepo,
+      recentDirsRepo: () => recentDirsFor(this.runtimeStore),
       cache: () => this.cache,
       streamerInstanceId: this.streamerInstanceId,
       sessionVerdicts: this.sessionVerdicts,

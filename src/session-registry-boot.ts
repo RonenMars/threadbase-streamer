@@ -5,6 +5,7 @@ import {
   type ManagedSessionsRepository,
   PROBE_SET_MAX,
 } from "./db/repositories/managed-sessions.repository";
+import type { RecentDirsRepository } from "./db/repositories/recent-dirs.repository";
 import type { FeatureFlagValues } from "./feature-flags";
 import { isPidAlive } from "./lifecycle/process-liveness";
 import type { LiveSessionManager } from "./live-session-manager";
@@ -48,6 +49,7 @@ export type SessionRegistryBootDeps = {
   featureFlags: () => FeatureFlagValues;
   autoResumeOnBoot: () => boolean;
   managedSessionsRepo: () => ManagedSessionsRepository | null;
+  recentDirsRepo: () => RecentDirsRepository | null;
   cache: () => ConversationCache | null;
   streamerInstanceId: string;
   sessionVerdicts: Map<string, ReconcileVerdict>;
@@ -511,6 +513,7 @@ export class SessionRegistryBoot {
    * is strictly better than refusing to run the agent at all.
    */
   recordSessionSpawn(session: ManagedSession): void {
+    this.recordRecentDir(session);
     if (!this.managedSessionsRepo) return;
     try {
       const pid = this.ptyManager.getPid(session.id);
@@ -543,6 +546,19 @@ export class SessionRegistryBoot {
     } catch (err) {
       this.log.warn("[registry] failed to record session spawn", {
         event: "registry.spawn_write_failed",
+        sessionId: session.id,
+        err,
+      });
+    }
+  }
+
+  /** Same best-effort contract as the registry write: never fail a spawn over it. */
+  private recordRecentDir(session: ManagedSession): void {
+    try {
+      this.deps.recentDirsRepo()?.touch(session.projectPath, session.provider);
+    } catch (err) {
+      this.log.warn("[registry] failed to record recent directory", {
+        event: "registry.recent_dir_write_failed",
         sessionId: session.id,
         err,
       });
