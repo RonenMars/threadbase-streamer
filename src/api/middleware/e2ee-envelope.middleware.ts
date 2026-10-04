@@ -39,6 +39,7 @@ import {
 import {
   CTX_ID_BYTES,
   MAX_RECORD_BYTES,
+  MAX_UPLOAD_RECORD_BYTES,
   RecordError,
   restTargetHashFromUrl,
 } from "../../e2ee/record";
@@ -104,6 +105,21 @@ export const MAX_ENVELOPE_HEADER_CHARS = 1024;
  * and a second literal is how the two drift into disagreement.
  */
 export const MAX_ENVELOPE_BODY_BYTES = MAX_RECORD_BYTES;
+
+/**
+ * The one route allowed a larger sealed body: `POST /api/sessions/:id/files`.
+ * Matched on the raw wire URL (path only, query stripped) and the method, both
+ * of which the AEAD target hash binds into the frame, so a body sealed for any
+ * other route is still held to `MAX_ENVELOPE_BODY_BYTES`. A miss here fails
+ * safe — it is the smaller cap.
+ */
+const UPLOAD_ROUTE = /^\/api\/sessions\/[^/?#]+\/files(?:\?|$)/;
+
+function envelopeBodyCap(method: string | undefined, rawUrl: string | undefined): number {
+  return method === "POST" && UPLOAD_ROUTE.test(rawUrl ?? "")
+    ? MAX_UPLOAD_RECORD_BYTES
+    : MAX_ENVELOPE_BODY_BYTES;
+}
 
 /** Where the counter sits in a record header (§4): version, ctxId, direction. */
 const COUNTER_OFFSET = 1 + CTX_ID_BYTES + 4;
@@ -515,6 +531,7 @@ export const e2eeEnvelopeMiddleware = (
     }
 
     // ── Rungs 6 and 7: the bounds, then the read ────────────────────
+    const bodyCap = envelopeBodyCap(incoming.method ?? c.req.method, incoming.url);
     let frame: Buffer;
     if (envelopeHeader !== undefined) {
       // Rung 6, header form: the ENCODED length, before any base64url decode.
@@ -530,12 +547,12 @@ export const e2eeEnvelopeMiddleware = (
     } else {
       // Rung 6, body form: the declared length, before a byte is read.
       const declared = Number(declaredLength);
-      if (Number.isFinite(declared) && declared > MAX_ENVELOPE_BODY_BYTES) {
+      if (Number.isFinite(declared) && declared > bodyCap) {
         return refuse(E2EE_SEAL_FAILED, "sealed request body is too large", 413);
       }
       try {
         // Rung 7: and the running total, for a sender that lied.
-        frame = await readBoundedBody(incoming, MAX_ENVELOPE_BODY_BYTES);
+        frame = await readBoundedBody(incoming, bodyCap);
       } catch (err) {
         if (err instanceof BodyTooLarge) {
           return refuse(E2EE_SEAL_FAILED, err.message, 413);
@@ -560,7 +577,7 @@ export const e2eeEnvelopeMiddleware = (
       // middleware never reaches for the sealer itself: the window's high-water
       // mark and the sealer's acceptance set stay in lockstep only because one
       // call site advances both.
-      plaintext = context.unsealRequest(frame, target);
+      plaintext = context.unsealRequest(frame, target, bodyCap);
     } catch (err) {
       if (err instanceof RecordError) return refuse(err.code, "could not unseal the request");
       throw err;
