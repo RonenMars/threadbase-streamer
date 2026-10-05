@@ -53,7 +53,7 @@ Add `multiDirectory: boolean` to `ProviderCapabilities` (`src/services/providers
 | Provider | Flag | `multiDirectory` |
 |---|---|---|
 | Claude Code | `--add-dir A B …` (variadic), after `buildFlagArgs`, merged and deduped with server-wide `claudeFlags.addDir` | `true` |
-| Codex CLI | `--add-dir <dir>` repeated, before the positional prompt | `true` **only after verifying** the flag against the pinned Codex CLI version in a fixture |
+| Codex CLI | `--add-dir <dir>` repeated, before the positional prompt | `true` (verified on 0.140.0 and 0.160.1, top-level, `resume` and `fork`) |
 | Cursor CLI | none known | `false` |
 | Generic terminal | n/a | `false` |
 
@@ -159,6 +159,6 @@ Add `multiDirectory: boolean` to `ProviderCapabilities` (`src/services/providers
 ## Open questions
 
 1. **Are extra directories limited to `browseRoot`?** The plan says yes.
-2. **Codex `--add-dir`:** confirm the flag and its semantics (writable roots under the sandbox) against the Codex CLI version in use before setting `multiDirectory: true` for Codex.
+2. ~~**Codex `--add-dir`**~~ — resolved: `codex --help`, `codex resume --help` and `codex fork --help` on 0.140.0 and 0.160.1 all list `--add-dir <DIR>`, "Additional directories that should be writable alongside the primary workspace".
 3. **Picker interaction:** "browse to each, tap Add" (simplest, and reuses the screen) or checkbox multi-select on rows? Recommendation: "Add", because it keeps one-tap navigation into folders intact.
 4. **Cap of 8:** is that the right number?
