@@ -111,7 +111,7 @@ import {
 import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
 import { RelayConnector, type RelayState } from "./relay/connector";
-import { isViaRelay, listenRelayIngress } from "./relay/ingress";
+import { isViaRelay, listenRelayIngress, rateLimitKey } from "./relay/ingress";
 import { ScannerManager } from "./scanner-manager";
 import { seal } from "./seal";
 import { loadOrCreateServerIdentity } from "./server-identity";
@@ -2234,7 +2234,7 @@ export class StreamerServer {
       return;
     }
 
-    const ip = req.socket.remoteAddress ?? "unknown";
+    const ip = rateLimitKey(req);
     if (!this.checkExchangeRateLimit(ip)) {
       json(res, 429, { error: "Too many pair exchange attempts; try again in a minute" });
       return;

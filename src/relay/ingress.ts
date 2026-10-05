@@ -1,5 +1,5 @@
 import { rmSync } from "fs";
-import type { Server as HttpServer } from "http";
+import type { Server as HttpServer, IncomingMessage } from "http";
 import { createServer, type Server } from "net";
 
 // Sockets the relay ingress listener accepted. Membership is decided by WHICH
@@ -11,6 +11,27 @@ const relaySockets = new WeakSet<object>();
 /** True when the request's socket was accepted by the relay ingress listener. */
 export function isViaRelay(socket: object | null | undefined): boolean {
   return socket != null && relaySockets.has(socket);
+}
+
+/** Set by the connector from the relay's opaque per-client tag. Meaningless on any other listener. */
+export const RELAY_CLIENT_HEADER = "x-tb-relay-client";
+
+/**
+ * The key a pre-authentication rate limit buckets a request on.
+ *
+ * A relayed request has no address of its own, so every relay client would
+ * otherwise share one bucket and a single stranger could spend the pairing
+ * budget for all of them. The relay's tag separates them.
+ *
+ * ponytail: the tag is whatever the relay says, so a hostile relay can mint a
+ * fresh bucket per request. The limits then stop being a bound on it; what
+ * still holds is the pairing token and the Noise handshake behind them. Add a
+ * per-tunnel ceiling if that ever has to be a bound too.
+ */
+export function rateLimitKey(req: IncomingMessage | undefined): string {
+  if (!isViaRelay(req?.socket)) return req?.socket?.remoteAddress ?? "unknown";
+  const tag = req?.headers[RELAY_CLIENT_HEADER];
+  return `relay:${typeof tag === "string" ? tag : "unknown"}`;
 }
 
 /**

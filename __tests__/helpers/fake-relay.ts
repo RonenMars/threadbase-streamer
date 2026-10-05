@@ -94,6 +94,7 @@ export class FakeRelay {
         if (frame.streamId !== streamId) return;
         if (frame.type === FRAME_TYPES.HEAD) head = JSON.parse(frame.payload.toString("utf-8"));
         else if (frame.type === FRAME_TYPES.DATA) chunks.push(frame.payload);
+        else if (frame.type === FRAME_TYPES.WINDOW) return;
         else {
           ws.off("message", onMessage);
           resolve(

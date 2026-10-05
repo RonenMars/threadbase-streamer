@@ -27,6 +27,7 @@ import {
   type ProviderName,
 } from "../../providers";
 import { PTY_ROWS } from "../../pty-shared";
+import { rateLimitKey } from "../../relay/ingress";
 import type { ScannerManager } from "../../scanner-manager";
 import { type Prompt, PromptAnswerSchema } from "../../schemas/prompt.schema";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
@@ -2623,7 +2624,7 @@ export class SessionHandlers {
   }
 
   async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const ip = req.socket?.remoteAddress ?? "unknown";
+    const ip = rateLimitKey(req);
     if (!this.deps.checkSessionStartRateLimit(ip)) {
       json(res, 429, {
         error: "Too many session start requests. Please wait before trying again.",
