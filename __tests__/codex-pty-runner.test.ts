@@ -215,6 +215,58 @@ describe("CodexPtyRunner — spawn args", () => {
     // The mobile invariant: only argv changes, never the session's identity.
     expect(session.id).toBe("placeholder-uuid");
   });
+
+  // Codex's --add-dir takes one directory per flag, and the positional prompt
+  // must stay last.
+  it("startFresh passes each additional path as its own --add-dir before the prompt", async () => {
+    const runner = new CodexPtyRunner();
+    const session = await runner.startFresh({
+      projectPath: "/tmp/proj",
+      additionalPaths: ["/tmp/a", "/tmp/b"],
+      systemPrompt: "stay in the sandbox",
+    });
+
+    expect(spawnArgs()).toEqual([
+      "--cd",
+      "/tmp/proj",
+      "--add-dir",
+      "/tmp/a",
+      "--add-dir",
+      "/tmp/b",
+      "--no-alt-screen",
+      "stay in the sandbox",
+    ]);
+    expect(session.additionalPaths).toEqual(["/tmp/a", "/tmp/b"]);
+  });
+
+  it("start (resume) and fork carry additionalPaths", async () => {
+    const runner = new CodexPtyRunner();
+    await runner.start("abc-123", { projectPath: "/tmp/proj", additionalPaths: ["/tmp/a"] });
+    expect(spawnArgs()).toEqual([
+      "resume",
+      "abc-123",
+      "--cd",
+      "/tmp/proj",
+      "--add-dir",
+      "/tmp/a",
+      "--no-alt-screen",
+    ]);
+
+    await runner.startFork({
+      forkFromId: "rollout-id",
+      projectPath: "/tmp/proj",
+      additionalPaths: ["/tmp/a"],
+    });
+    expect(spawnArgs()).toEqual([
+      "fork",
+      "rollout-id",
+      "--cd",
+      "/tmp/proj",
+      "--add-dir",
+      "/tmp/a",
+      "--no-alt-screen",
+    ]);
+  });
 });
 
 type GateBroadcast = { prompt?: string; detail?: string; options: PermissionOption[] } | null;

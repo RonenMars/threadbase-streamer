@@ -587,6 +587,59 @@ describe("PTYManager — resume input queueing", () => {
   });
 });
 
+describe("PTYManager — additional directories", () => {
+  function spawnArgs(): string[] {
+    const calls = (mockSpawn as any).mock.calls;
+    return calls[calls.length - 1][1] as string[];
+  }
+
+  beforeEach(() => {
+    (mockSpawn as any).mockClear();
+  });
+
+  it("startFresh passes additionalPaths as one variadic --add-dir group", async () => {
+    const mgr = new PTYManager();
+    const session = await mgr.startFresh({
+      projectPath: "/tmp/test",
+      additionalPaths: ["/tmp/a", "/tmp/b"],
+    });
+    const args = spawnArgs();
+
+    expect(args.filter((a) => a === "--add-dir")).toHaveLength(1);
+    expect(args.slice(args.indexOf("--add-dir"), args.indexOf("--add-dir") + 3)).toEqual([
+      "--add-dir",
+      "/tmp/a",
+      "/tmp/b",
+    ]);
+    expect(session.additionalPaths).toEqual(["/tmp/a", "/tmp/b"]);
+    mgr.dispose();
+  });
+
+  it("resume merges additionalPaths into the server-wide addDir without repeats", async () => {
+    const mgr = new PTYManager();
+    await mgr.start("uuid-resume", {
+      projectPath: "/tmp/test",
+      additionalPaths: ["/tmp/b", "/tmp/c"],
+      claudeFlags: { addDir: ["/srv/a", "/tmp/b"] },
+    });
+    const args = spawnArgs();
+    const at = args.indexOf("--add-dir");
+
+    expect(args.filter((a) => a === "--add-dir")).toHaveLength(1);
+    expect(args.slice(at, at + 4)).toEqual(["--add-dir", "/srv/a", "/tmp/b", "/tmp/c"]);
+    mgr.dispose();
+  });
+
+  it("emits no --add-dir and no additionalPaths field when there are none", async () => {
+    const mgr = new PTYManager();
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", additionalPaths: [] });
+
+    expect(spawnArgs()).not.toContain("--add-dir");
+    expect(session).not.toHaveProperty("additionalPaths");
+    mgr.dispose();
+  });
+});
+
 describe("PTYManager — spawn permission flags", () => {
   // acceptEdits stays the DEFAULT (auto-approves file edits, still prompts for
   // shell commands), and we never pass --dangerously-skip-permissions: bypass is

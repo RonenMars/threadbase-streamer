@@ -1,5 +1,6 @@
 import { mkdir, readdir, realpath, stat } from "fs/promises";
 import { join, resolve, sep } from "path";
+import { canonicalizeProjectPath } from "./utils/canonicalizeProjectPath";
 
 /**
  * Thrown when a browse target is inside the root but does not exist on disk
@@ -79,4 +80,49 @@ export async function createDirectory(parentAbsolutePath: string, name: string):
   }
   await mkdir(target);
   return target;
+}
+
+/**
+ * Resolve a session's extra directories against the browse root.
+ *
+ * Every entry must sit inside `browseRoot` and be an existing directory, so
+ * the browse-root boundary the system prompt states stays true. An entry that
+ * repeats the primary, repeats another entry, or sits inside either is dropped
+ * rather than rejected: the agent already has it.
+ */
+export async function resolveAdditionalPaths(
+  browseRoot: string,
+  primaryPath: string,
+  relativePaths: readonly string[],
+): Promise<string[]> {
+  const resolved: string[] = [];
+  for (const p of relativePaths) {
+    const target = canonicalizeProjectPath(await resolveBrowsePath(browseRoot, p));
+    const s = await stat(target);
+    if (!s.isDirectory()) throw new Error(`Not a directory: ${target}`);
+    resolved.push(target);
+  }
+  return dropCoveredPaths(canonicalizeProjectPath(primaryPath), resolved);
+}
+
+function isSameOrInside(child: string, parent: string): boolean {
+  if (child === parent) return true;
+  const prefix = parent.endsWith(sep) ? parent : `${parent}${sep}`;
+  return child.startsWith(prefix);
+}
+
+/**
+ * Drop entries already covered by the primary or by another entry, keeping
+ * the caller's order. Shorter paths are considered first so a parent listed
+ * after its child still wins.
+ */
+export function dropCoveredPaths(primaryPath: string, paths: readonly string[]): string[] {
+  const kept = new Set<string>();
+  const byLength = [...new Set(paths)].sort((a, b) => a.length - b.length);
+  for (const p of byLength) {
+    if (isSameOrInside(p, primaryPath)) continue;
+    if ([...kept].some((k) => isSameOrInside(p, k))) continue;
+    kept.add(p);
+  }
+  return paths.filter((p, i) => kept.has(p) && paths.indexOf(p) === i);
 }

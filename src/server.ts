@@ -278,7 +278,9 @@ export type ResumeFailure =
       ownerSource?: CodexOwnerSource;
     }
   /** Codex exited or errored during startup for some other reason. */
-  | { ok: false; reason: "codex_start_failed"; failureReason: string };
+  | { ok: false; reason: "codex_start_failed"; failureReason: string }
+  /** The request's `additionalPaths` failed validation; nothing was spawned. */
+  | { ok: false; reason: "invalid_additional_paths"; error: string; code: string };
 
 export type ResumeOutcome =
   | ResumeFailure

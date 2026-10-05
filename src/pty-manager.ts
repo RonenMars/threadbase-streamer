@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
-import { buildFlagArgs, buildSettingsJson } from "./claude-flags";
+import { buildFlagArgs, buildSettingsJson, withAdditionalDirs } from "./claude-flags";
 import { getLogger, type Logger } from "./logger";
 import { clearClaudeExeCache, resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
@@ -361,7 +361,12 @@ export class PTYManager implements SessionRunner {
     ];
     // Allowlisted per-server flags, then the free-text escape hatch — last so it
     // can override anything above it.
-    args.push(...buildFlagArgs(options.claudeFlags, options.claudeExtraArgs));
+    args.push(
+      ...buildFlagArgs(
+        withAdditionalDirs(options.claudeFlags, options.additionalPaths),
+        options.claudeExtraArgs,
+      ),
+    );
 
     let proc: ReturnType<typeof nodePty.spawn>;
     try {
@@ -385,6 +390,7 @@ export class PTYManager implements SessionRunner {
       id: sessionId,
       provider: CLAUDE_CODE_PROVIDER,
       projectPath: options.projectPath,
+      ...(options.additionalPaths?.length && { additionalPaths: options.additionalPaths }),
       projectName,
       branch: options.branch ?? "",
       ...(options.effort != null && { effort: options.effort }),
@@ -451,7 +457,12 @@ export class PTYManager implements SessionRunner {
     }
     // Allowlisted per-server flags, then the free-text escape hatch — last so it
     // can override anything above it.
-    args.push(...buildFlagArgs(options.claudeFlags, options.claudeExtraArgs));
+    args.push(
+      ...buildFlagArgs(
+        withAdditionalDirs(options.claudeFlags, options.additionalPaths),
+        options.claudeExtraArgs,
+      ),
+    );
 
     let proc: ReturnType<typeof nodePty.spawn>;
     try {
@@ -472,6 +483,7 @@ export class PTYManager implements SessionRunner {
       id: sessionId,
       provider: CLAUDE_CODE_PROVIDER,
       projectPath: options.projectPath,
+      ...(options.additionalPaths?.length && { additionalPaths: options.additionalPaths }),
       projectName,
       branch: options.branch ?? "",
       ...(options.effort != null && { effort: options.effort }),
@@ -1580,6 +1592,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     id: s.id,
     provider: s.provider ?? CLAUDE_CODE_PROVIDER,
     projectPath: s.projectPath,
+    ...(s.additionalPaths?.length && { additionalPaths: s.additionalPaths }),
     projectName: s.projectName,
     branch: s.branch,
     status: s.status,

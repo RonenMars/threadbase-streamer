@@ -1,4 +1,7 @@
-import type { ManagedSessionRow } from "../../db/repositories/managed-sessions.repository";
+import {
+  type ManagedSessionRow,
+  parseAdditionalPaths,
+} from "../../db/repositories/managed-sessions.repository";
 import type { ManagedSession, StatusSource } from "../../types";
 import { resumeIdForRow } from "./resumeIdentity";
 
@@ -117,12 +120,14 @@ export function rehydrateSkipReason(
  * `ownership: "historical"` / `lifecycle: "resumable"` pair.
  */
 export function rowToStubSession(row: ManagedSessionRow): ManagedSession {
+  const additionalPaths = parseAdditionalPaths(row.additional_paths);
   return {
     id: row.session_id,
     isSubagent: row.is_subagent === 1,
     parentConversationId: row.parent_conversation_id ?? null,
     provider: row.provider as ManagedSession["provider"],
     projectPath: row.project_path,
+    ...(additionalPaths.length > 0 && { additionalPaths }),
     projectName: row.project_name,
     branch: row.branch,
     // No PTY exists for a stub, so this is the only truthful status.

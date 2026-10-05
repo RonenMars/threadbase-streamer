@@ -228,6 +228,21 @@ export function tokenizeExtraArgs(input: string | undefined): string[] {
 }
 
 /**
+ * Fold a session's own extra directories into the server-wide `addDir` flag,
+ * so `buildFlagArgs` emits one `--add-dir` group instead of two (Claude's
+ * variadic option would otherwise take the second group as a repeat).
+ * Server-wide entries come first; duplicates are dropped.
+ */
+export function withAdditionalDirs(
+  values: ClaudeFlagValues | undefined,
+  additionalPaths: readonly string[] | undefined,
+): ClaudeFlagValues | undefined {
+  if (!additionalPaths?.length) return values;
+  const serverWide = Array.isArray(values?.addDir) ? (values.addDir as string[]) : [];
+  return { ...values, addDir: [...new Set([...serverWide, ...additionalPaths])] };
+}
+
+/**
  * Turn validated flag values + extra args into argv tokens.
  *
  * The SPAWN_POSITIONAL_FLAG_IDS are intentionally NOT emitted here: both PTY
