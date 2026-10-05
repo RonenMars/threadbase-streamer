@@ -307,6 +307,7 @@ it("refuses resume before the already-running fast path and preserves metadata o
     registryBoot: {
       recordSessionSpawn: (session: ManagedSession) =>
         repo.recordSpawn({ session, pid: null, cmdline: null, streamerInstanceId: "test" }),
+      storedAdditionalPaths: (id: string) => repo.findAdditionalPaths(id),
     },
     sessionWatchers: { watchConversationFile: vi.fn() },
     enrichResumedSessionAsync: vi.fn(),
