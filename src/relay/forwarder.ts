@@ -1,5 +1,14 @@
 import http from "http";
-import { encodeFrame, FRAME_TYPES, type Frame, MAX_FRAME_PAYLOAD_BYTES } from "./frames";
+import {
+  createFlowReceiver,
+  createFlowSender,
+  encodeCredit,
+  type FlowReceiver,
+  type FlowSender,
+  parseCredit,
+} from "./flow";
+import { encodeFrame, FRAME_TYPES, type Frame } from "./frames";
+import { RELAY_CLIENT_HEADER } from "./ingress";
 
 // Replays each stream the relay opens as an HTTP request on the relay ingress
 // listener (relay design §4.3). The relay is untrusted: everything in an OPEN
@@ -20,6 +29,7 @@ const forwarded = (name: string) => name.startsWith("x-tb-") || FORWARDED_HEADER
 // The relay allows 64 streams per tunnel; holding it to that here means a
 // misbehaving relay cannot open unbounded requests against the server.
 const MAX_STREAMS = 64;
+const CLIENT_TAG = /^[A-Za-z0-9_-]{1,64}$/;
 const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
 
 export interface Forwarder {
@@ -29,24 +39,37 @@ export interface Forwarder {
 }
 
 export function createForwarder(ingressPath: string, send: (frame: Buffer) => void): Forwarder {
-  const streams = new Map<number, http.ClientRequest>();
+  interface Stream {
+    req: http.ClientRequest;
+    /** Request body arriving from the relay. */
+    inbound: FlowReceiver;
+    /** Response body going back; absent until the server answers. */
+    outbound?: FlowSender;
+  }
+  const streams = new Map<number, Stream>();
 
   const reset = (streamId: number) => {
-    const req = streams.get(streamId);
-    if (!req) return;
+    const stream = streams.get(streamId);
+    if (!stream) return;
     streams.delete(streamId);
-    req.destroy();
+    stream.req.destroy();
     send(encodeFrame(FRAME_TYPES.RESET, streamId));
   };
 
   function open(streamId: number, payload: Buffer): void {
-    let request: { kind?: unknown; method?: unknown; target?: unknown; headers?: unknown };
+    let request: {
+      kind?: unknown;
+      method?: unknown;
+      target?: unknown;
+      headers?: unknown;
+      clientTag?: unknown;
+    };
     try {
       request = JSON.parse(payload.toString("utf-8"));
     } catch {
       request = {};
     }
-    const { method, target } = request;
+    const { method, target, clientTag } = request;
     if (
       streams.has(streamId) ||
       streams.size >= MAX_STREAMS ||
@@ -66,6 +89,12 @@ export function createForwarder(ingressPath: string, send: (frame: Buffer) => vo
       if (forwarded(name.toLowerCase()) && typeof value === "string")
         headers[name.toLowerCase()] = value;
     }
+    // Set from the frame, never from a forwarded header, so a client cannot
+    // choose its own rate-limit bucket.
+    delete headers[RELAY_CLIENT_HEADER];
+    if (typeof clientTag === "string" && CLIENT_TAG.test(clientTag)) {
+      headers[RELAY_CLIENT_HEADER] = clientTag;
+    }
 
     let req: http.ClientRequest;
     try {
@@ -75,7 +104,14 @@ export function createForwarder(ingressPath: string, send: (frame: Buffer) => vo
       send(encodeFrame(FRAME_TYPES.RESET, streamId));
       return;
     }
-    streams.set(streamId, req);
+    const stream: Stream = {
+      req,
+      inbound: createFlowReceiver((credit) =>
+        send(encodeFrame(FRAME_TYPES.WINDOW, streamId, encodeCredit(credit))),
+      ),
+    };
+    streams.set(streamId, stream);
+    const live = () => streams.get(streamId) === stream;
     req.on("error", () => reset(streamId));
     req.on("response", (res) => {
       const responseHeaders: Record<string, string> = {};
@@ -89,23 +125,20 @@ export function createForwarder(ingressPath: string, send: (frame: Buffer) => vo
           Buffer.from(JSON.stringify({ status: res.statusCode, headers: responseHeaders })),
         ),
       );
-      res.on("data", (chunk: Buffer) => {
-        if (streams.get(streamId) !== req) return;
-        for (let at = 0; at < chunk.length; at += MAX_FRAME_PAYLOAD_BYTES) {
-          send(
-            encodeFrame(
-              FRAME_TYPES.DATA,
-              streamId,
-              chunk.subarray(at, at + MAX_FRAME_PAYLOAD_BYTES),
-            ),
-          );
-        }
-      });
-      res.on("end", () => {
-        if (streams.get(streamId) !== req) return;
-        streams.delete(streamId);
-        send(encodeFrame(FRAME_TYPES.END, streamId));
-      });
+      // Reading the response pauses while the relay holds no credit, so a slow
+      // client stalls this one request instead of buffering it here.
+      const outbound = createFlowSender((data) => {
+        if (live()) send(encodeFrame(FRAME_TYPES.DATA, streamId, data));
+      }, res);
+      stream.outbound = outbound;
+      res.on("data", (chunk: Buffer) => outbound.write(chunk));
+      res.on("end", () =>
+        outbound.end(() => {
+          if (!live()) return;
+          streams.delete(streamId);
+          send(encodeFrame(FRAME_TYPES.END, streamId));
+        }),
+      );
       res.on("error", () => reset(streamId));
     });
   }
@@ -113,18 +146,30 @@ export function createForwarder(ingressPath: string, send: (frame: Buffer) => vo
   return {
     onFrame(frame) {
       if (frame.type === FRAME_TYPES.OPEN) return open(frame.streamId, frame.payload);
-      const req = streams.get(frame.streamId);
+      const stream = streams.get(frame.streamId);
       // A frame for a stream that already ended is late, not hostile.
-      if (!req) return;
-      if (frame.type === FRAME_TYPES.DATA) req.write(frame.payload);
-      else if (frame.type === FRAME_TYPES.END) req.end();
+      if (!stream) return;
+      const { req } = stream;
+      if (frame.type === FRAME_TYPES.DATA) {
+        const bytes = frame.payload.length;
+        if (!stream.inbound.accept(bytes)) return reset(frame.streamId);
+        req.write(frame.payload, (err) => {
+          if (!err && streams.get(frame.streamId) === stream) stream.inbound.drained(bytes);
+        });
+      } else if (frame.type === FRAME_TYPES.WINDOW) {
+        try {
+          stream.outbound?.grant(parseCredit(frame.payload));
+        } catch {
+          reset(frame.streamId);
+        }
+      } else if (frame.type === FRAME_TYPES.END) req.end();
       else if (frame.type === FRAME_TYPES.RESET) {
         streams.delete(frame.streamId);
         req.destroy();
       }
     },
     closeAll() {
-      for (const req of streams.values()) req.destroy();
+      for (const { req } of streams.values()) req.destroy();
       streams.clear();
     },
   };

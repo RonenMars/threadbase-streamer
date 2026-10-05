@@ -45,6 +45,7 @@ import { E2eeRequestError, parseE2eeRequest } from "../../e2ee/pair-request";
 import { E2EE_DEVICE_REVOKED, E2EE_PROTOCOL_VERSION, own } from "../../e2ee/protocol";
 import { Msg1ReplayCache } from "../../e2ee/replay-cache";
 import { getLogger } from "../../logger";
+import { rateLimitKey } from "../../relay/ingress";
 import { loadOrCreateServerIdentity } from "../../server-identity";
 import type { AppEnv } from "../app";
 import {
@@ -212,7 +213,7 @@ export const createE2eeRoutes = (
       return c.json({ error: "E2EE is not enabled on this server", code: "E2EE_DISABLED" }, 404);
     }
 
-    const ip = c.env.incoming?.socket?.remoteAddress ?? "unknown";
+    const ip = rateLimitKey(c.env.incoming);
     let body: unknown;
     try {
       body = await readBoundedJsonBody(c.env.incoming, MAX_OPEN_BODY_BYTES);
