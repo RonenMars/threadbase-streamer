@@ -1,3 +1,9 @@
+## [1.108.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.107.2...v1.108.0) (2026-10-05)
+
+### Features
+
+* **relay:** add an ingress listener that accepts end-to-end-encrypted traffic only ([#1027](https://github.com/RonenMars/threadbase-streamer/issues/1027)) ([f9c17b8](https://github.com/RonenMars/threadbase-streamer/commit/f9c17b89d6a144805be33b5769709d77043a646b))
+
 ## [1.107.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.107.1...v1.107.2) (2026-10-04)
 
 ### Bug Fixes
