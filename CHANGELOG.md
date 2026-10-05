@@ -1,3 +1,9 @@
+## [1.109.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.108.0...v1.109.0) (2026-10-05)
+
+### Features
+
+* **relay:** connect to a relay over an authenticated outbound tunnel ([#1028](https://github.com/RonenMars/threadbase-streamer/issues/1028)) ([b07657c](https://github.com/RonenMars/threadbase-streamer/commit/b07657c665df0a2f6509cbf9088288dcca5e57f8))
+
 ## [1.108.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.107.2...v1.108.0) (2026-10-05)
 
 ### Features
