@@ -478,6 +478,24 @@ export class SessionRegistryBoot {
     return session.boundConversationId ?? session.projectPath;
   }
 
+  /**
+   * Extra directories last recorded for a conversation, for a resume or fork
+   * that did not name any. Best-effort like every registry read here: a
+   * failure costs the extras, never the resume.
+   */
+  storedAdditionalPaths(conversationId: string): string[] {
+    try {
+      return this.managedSessionsRepo?.findAdditionalPaths(conversationId) ?? [];
+    } catch (err) {
+      this.log.warn("[registry] failed to read additional paths", {
+        event: "registry.additional_paths_read_failed",
+        sessionId: conversationId,
+        err,
+      });
+      return [];
+    }
+  }
+
   /** Restore registry-only metadata after the host mirror has been adopted. */
   refreshHostedSessionsFromRegistry(): void {
     for (const session of this.ptyManager.listSessions()) {

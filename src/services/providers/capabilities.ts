@@ -42,6 +42,13 @@ export interface ProviderCapabilities {
    * the honest state for a provider whose input path we do not understand.
    */
   liveControl: boolean;
+  /**
+   * A session can be given directories beyond its working directory at spawn
+   * (`additionalPaths` on start/resume). Claude and Codex both take
+   * `--add-dir`; Codex verified on 0.140.0 and 0.160.1, including its
+   * `resume` and `fork` subcommands.
+   */
+  multiDirectory: boolean;
 }
 
 /**
@@ -108,6 +115,7 @@ export const CLAUDE_CODE_CAPABILITIES: ProviderCapabilities = {
   structuredQuestions: true,
   permissionGates: true,
   liveControl: true,
+  multiDirectory: true,
 };
 
 export const CODEX_CLI_CAPABILITIES: ProviderCapabilities = {
@@ -117,6 +125,7 @@ export const CODEX_CLI_CAPABILITIES: ProviderCapabilities = {
   structuredQuestions: false,
   permissionGates: true,
   liveControl: true,
+  multiDirectory: true,
 };
 
 // Cursor CLI (`agent`): `--resume=<chatId>` and a positional opening prompt are
@@ -129,6 +138,7 @@ export const CURSOR_CLI_CAPABILITIES: ProviderCapabilities = {
   structuredQuestions: false,
   permissionGates: false,
   liveControl: true,
+  multiDirectory: false,
 };
 
 /**
@@ -148,6 +158,7 @@ export const GENERIC_TERMINAL_CAPABILITIES: ProviderCapabilities = {
   structuredQuestions: false,
   permissionGates: false,
   liveControl: true,
+  multiDirectory: false,
 };
 
 // Vendor intake confirms explicit IDs and native resume. No captured TUI yet.

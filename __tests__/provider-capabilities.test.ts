@@ -122,6 +122,23 @@ describe("declared capabilities match runner behaviour", () => {
     });
   });
 
+  // multiDirectory is the gate the start handler and mobile both read, so it
+  // must match the runner that actually emits --add-dir.
+  describe("multiDirectory", () => {
+    it("is declared for Claude and Codex, whose runners pass --add-dir", () => {
+      expect(CLAUDE_CODE_CAPABILITIES.multiDirectory).toBe(true);
+      expect(read("pty-manager.ts")).toContain("withAdditionalDirs");
+      expect(CODEX_CLI_CAPABILITIES.multiDirectory).toBe(true);
+      expect(codexSpawnArgs()).toContain('"--add-dir"');
+    });
+
+    it("is not declared for Cursor or the generic fallback", () => {
+      expect(CURSOR_CLI_CAPABILITIES.multiDirectory).toBe(false);
+      expect(spawnArgsFrom("cursor-pty-runner.ts")).not.toContain("--add-dir");
+      expect(GENERIC_TERMINAL_CAPABILITIES.multiDirectory).toBe(false);
+    });
+  });
+
   describe("generic terminal fallback", () => {
     // The honest state for a provider we do not recognize. Today
     // coerceProviderForRunner silently drives an unknown provider with the

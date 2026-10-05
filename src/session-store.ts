@@ -325,6 +325,7 @@ function managedToResponse(
     // `activity` is attached for managed sessions.
     ownership: s.rehydrated ? "historical" : "managed",
     projectPath: s.projectPath,
+    ...(s.additionalPaths?.length && { additionalPaths: s.additionalPaths }),
     projectName: s.projectName,
     branch: s.branch,
     lastOutput: s.lastOutput,
