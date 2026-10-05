@@ -676,6 +676,11 @@ export interface ServerConfig {
   /** 'cli' when --api-key was passed; rotation persists in-memory only and reverts on restart */
   apiKeySource?: "config" | "cli";
   localNoAuth?: boolean;
+  /**
+   * Unix socket path (named pipe on Windows) for the relay ingress listener.
+   * Unset = no listener. Requests accepted on it are end-to-end-encrypted only.
+   */
+  relayIngressPath?: string;
   verbose?: boolean;
   // Also log the menubar app's HEALTHY /healthz polls (default: false — they are
   // ~17 280 lines/day and carry nothing). A menubar request that is not a
