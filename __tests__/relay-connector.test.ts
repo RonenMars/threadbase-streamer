@@ -1,84 +1,18 @@
-import { createDecipheriv } from "crypto";
 import { existsSync, mkdtempSync, rmSync } from "fs";
-import type { AddressInfo } from "net";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { WebSocketServer } from "ws";
-import { generateKeyPair, type KeyPair, readMessage1, writeMessage2 } from "../src/e2ee/noise";
-import {
-  CLOSE_AUTH_FAILED,
-  CLOSE_UNSUPPORTED_PROTOCOL,
-  RelayConnector,
-  TUNNEL_PROLOGUE,
-} from "../src/relay/connector";
+import { generateKeyPair } from "../src/e2ee/noise";
+import { RelayConnector } from "../src/relay/connector";
 import { StreamerServer } from "../src/server";
 import { loadOrCreateServerIdentity } from "../src/server-identity";
+import { FakeRelay } from "./helpers/fake-relay";
 
 /**
  * The streamer's half of the relay tunnel handshake, against a stand-in relay
  * built from the same Noise responder the relay uses. The confirmation check
  * below is the relay's, so a connector that sends anything else fails here.
  */
-
-const CONFIRM = Buffer.from("threadbase-relay/1 confirm", "utf-8");
-
-type Mode = "accept" | "unsupported";
-
-class FakeRelay {
-  wss!: WebSocketServer;
-  port = 0;
-  confirmedKeys: string[] = [];
-  mode: Mode = "accept";
-  constructor(readonly keyPair: KeyPair = generateKeyPair()) {}
-
-  async start(port = 0): Promise<this> {
-    this.wss = new WebSocketServer({ port, host: "127.0.0.1" });
-    await new Promise((r) => this.wss.once("listening", r));
-    this.port = (this.wss.address() as AddressInfo).port;
-    this.wss.on("connection", (ws) => {
-      let confirm: ((frame: Buffer) => void) | null = null;
-      ws.on("message", (data: Buffer) => {
-        if (confirm) return confirm(data);
-        let state: ReturnType<typeof readMessage1>;
-        try {
-          state = readMessage1({
-            staticKeyPair: this.keyPair,
-            message1: data,
-            pattern: "IK",
-            prologue: TUNNEL_PROLOGUE,
-          });
-        } catch {
-          return ws.close(CLOSE_AUTH_FAILED);
-        }
-        if (this.mode === "unsupported") return ws.close(CLOSE_UNSUPPORTED_PROTOCOL);
-        const { message2, keys } = writeMessage2(state, Buffer.from("{}"));
-        const { clientToServer, handshakeHash } = keys.consume();
-        ws.send(message2);
-        confirm = (frame) => {
-          const d = createDecipheriv("chacha20-poly1305", clientToServer, Buffer.alloc(12), {
-            authTagLength: 16,
-          });
-          d.setAAD(handshakeHash, { plaintextLength: CONFIRM.length });
-          d.setAuthTag(frame.subarray(CONFIRM.length));
-          const plain = Buffer.concat([d.update(frame.subarray(0, CONFIRM.length)), d.final()]);
-          if (!plain.equals(CONFIRM)) return ws.close(CLOSE_AUTH_FAILED);
-          this.confirmedKeys.push(state.initiatorStaticPub.toString("base64url"));
-        };
-      });
-    });
-    return this;
-  }
-
-  get url() {
-    return `ws://127.0.0.1:${this.port}/tunnel`;
-  }
-
-  async kill(): Promise<void> {
-    for (const ws of this.wss.clients) ws.terminate();
-    await new Promise((r) => this.wss.close(r));
-  }
-}
 
 async function waitFor(check: () => boolean, ms = 5000): Promise<void> {
   const deadline = Date.now() + ms;

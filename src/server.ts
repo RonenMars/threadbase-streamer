@@ -1600,6 +1600,7 @@ export class StreamerServer {
       this.relayConnector = new RelayConnector({
         url: this.relayUrl,
         relayPublicKey: Buffer.from(this.relayPublicKey, "base64url"),
+        ingressPath: this.relayIngressPath,
         keyPair: keyPairFrom(loadOrCreateServerIdentity().privateKey),
         log: this.log,
       });

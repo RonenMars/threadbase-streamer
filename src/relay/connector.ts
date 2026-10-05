@@ -2,6 +2,8 @@ import { createCipheriv, type KeyObject } from "crypto";
 import WebSocket from "ws";
 import { type KeyPair, readMessage2, writeMessage1 } from "../e2ee/noise";
 import type { Logger } from "../logger";
+import { createForwarder } from "./forwarder";
+import { decodeFrame } from "./frames";
 
 // The streamer half of the relay tunnel handshake (relay design §4.2). The relay
 // half lives in the relay repository; the constants below are the wire contract
@@ -51,6 +53,8 @@ export interface RelayConnectorOptions {
   relayPublicKey: Buffer;
   /** This streamer's identity key. Its public half decides the route id. */
   keyPair: KeyPair;
+  /** Where relayed requests are replayed. Without it the tunnel attaches but carries nothing. */
+  ingressPath?: string;
   log?: Pick<Logger, "info" | "warn">;
   /** Test seam. */
   backoff?: { minMs: number; maxMs: number };
@@ -60,8 +64,8 @@ export interface RelayConnectorOptions {
  * Keeps one authenticated tunnel open to the relay, reconnecting with
  * exponential backoff and jitter.
  *
- * Stream forwarding is not wired yet: frames that arrive on an attached tunnel
- * are dropped, so a relay can attach the route but cannot reach the server.
+ * Streams the relay opens are replayed onto the relay ingress listener, never
+ * the TCP one, so the server knows they came from an untrusted network.
  * Whatever happens here never touches the direct path — the connector holds no
  * listener and shares nothing with the TCP server but the process.
  */
@@ -108,13 +112,27 @@ export class RelayConnector {
     let handshakeDone = false;
     let authFailed = false;
     let alive = true;
+    const forwarder = this.opts.ingressPath
+      ? createForwarder(this.opts.ingressPath, (frame) => {
+          if (tunnel.readyState === WebSocket.OPEN) tunnel.send(frame);
+        })
+      : null;
 
     tunnel.on("open", () => tunnel.send(message1));
     tunnel.on("pong", () => {
       alive = true;
     });
     tunnel.on("message", (data: Buffer) => {
-      if (handshakeDone) return; // ponytail: forwarding lands in phase 3.
+      if (handshakeDone) {
+        try {
+          forwarder?.onFrame(decodeFrame(data));
+        } catch {
+          // A frame we cannot parse means the two ends disagree about the
+          // protocol; nothing after it can be trusted to line up.
+          tunnel.terminate();
+        }
+        return;
+      }
       handshakeDone = true;
       try {
         const { keys } = readMessage2(state, data);
@@ -142,6 +160,7 @@ export class RelayConnector {
       if (this.pingTimer) clearInterval(this.pingTimer);
       this.pingTimer = null;
       if (this.ws === tunnel) this.ws = null;
+      forwarder?.closeAll();
       if (authFailed || code === CLOSE_AUTH_FAILED) this.stateValue = "authentication_failed";
       else if (code === CLOSE_UNSUPPORTED_PROTOCOL) this.stateValue = "unsupported_protocol";
       else this.stateValue = "reconnecting";
