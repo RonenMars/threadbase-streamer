@@ -1,3 +1,9 @@
+## [1.110.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.109.0...v1.110.0) (2026-10-05)
+
+### Features
+
+* **relay:** serve relayed requests through the ingress listener ([#1029](https://github.com/RonenMars/threadbase-streamer/issues/1029)) ([ff37f9c](https://github.com/RonenMars/threadbase-streamer/commit/ff37f9cae00bf8e105753483648f1de239bfc802))
+
 ## [1.109.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.108.0...v1.109.0) (2026-10-05)
 
 ### Features
