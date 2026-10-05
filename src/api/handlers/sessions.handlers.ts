@@ -2682,7 +2682,7 @@ export class SessionHandlers {
     provider: ProviderName,
     projectPath: string,
   ): Promise<string[]> {
-    if (!capabilitiesFor(provider).multiDirectory || !this.browseRoot) return [];
+    if (!capabilitiesFor(provider).multiDirectory) return [];
     const recorded =
       this.sessionStore.getManaged(sessionId)?.additionalPaths ??
       this.registryBoot.storedAdditionalPaths(sessionId);
@@ -2690,10 +2690,13 @@ export class SessionHandlers {
       recorded.length > 0 || historyId === sessionId
         ? recorded
         : this.registryBoot.storedAdditionalPaths(historyId);
+    if (candidates.length === 0) return [];
+    const browseRoot = this.browseRoot;
+    if (!browseRoot) return [];
     const kept: string[] = [];
     for (const p of candidates) {
       try {
-        kept.push(...(await resolveAdditionalPaths(this.browseRoot, projectPath, [p])));
+        kept.push(...(await resolveAdditionalPaths(browseRoot, projectPath, [p])));
       } catch (err) {
         this.log.warn(`[resume] dropping additional path ${p}`, {
           event: "session.additional_path_missing",
