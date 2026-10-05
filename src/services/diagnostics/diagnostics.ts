@@ -37,6 +37,10 @@ export type RemediationCode =
   | "CACHE_DEGRADED"
   | "CLOCK_SKEWED"
   | "FS_SCOPE_MISSING"
+  | "RELAY_NOT_CONFIGURED"
+  | "RELAY_UNREACHABLE"
+  | "RELAY_AUTH_FAILED"
+  | "RELAY_UNSUPPORTED_PROTOCOL"
   | "NONE";
 
 export interface DiagnosticCheck {

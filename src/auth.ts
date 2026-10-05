@@ -79,6 +79,28 @@ export function loadPublicUrl(): string | undefined {
   return undefined;
 }
 
+export function loadRelayUrl(): string | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/relay_url:\s*(.+)/);
+    if (match?.[1]) return match[1].trim();
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
+export function loadRelayPublicKey(): string | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/relay_public_key:\s*(.+)/);
+    if (match?.[1]) return match[1].trim();
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
 export function loadBrowserCors(): string | undefined {
   try {
     const content = readFileSync(configFile(), "utf-8");

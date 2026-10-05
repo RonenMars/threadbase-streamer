@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { ProviderExecutableError } from "../../config/provider-executables";
 import { locateProviderExe } from "../../platform";
 import { PROVIDER_NAMES, type ProviderName } from "../../providers";
+import type { RelayState } from "../../relay/connector";
 import {
   buildReport,
   type DiagnosticCheck,
@@ -68,6 +69,36 @@ function providerCheck(name: ProviderName): DiagnosticCheck {
     remediation: "PROVIDER_NOT_INSTALLED",
   };
 }
+
+const RELAY_CHECKS: Record<RelayState, Omit<DiagnosticCheck, "id">> = {
+  disabled: { status: "ok", summary: "Relay is off.", remediation: "NONE" },
+  not_configured: {
+    status: "degraded",
+    summary: "Relay is on but relay_url or relay_public_key is not set.",
+    remediation: "RELAY_NOT_CONFIGURED",
+  },
+  connecting: {
+    status: "degraded",
+    summary: "Connecting to the relay.",
+    remediation: "RELAY_UNREACHABLE",
+  },
+  reconnecting: {
+    status: "degraded",
+    summary: "Relay tunnel is down; reconnecting. Direct connections are unaffected.",
+    remediation: "RELAY_UNREACHABLE",
+  },
+  connected: { status: "ok", summary: "Relay tunnel is attached.", remediation: "NONE" },
+  authentication_failed: {
+    status: "failed",
+    summary: "The relay and this server could not authenticate each other; check relay_public_key.",
+    remediation: "RELAY_AUTH_FAILED",
+  },
+  unsupported_protocol: {
+    status: "failed",
+    summary: "The relay speaks no tunnel protocol this server version offers.",
+    remediation: "RELAY_UNSUPPORTED_PROTOCOL",
+  },
+};
 
 export const createDiagnosticsRoutes = (deps: ApiDeps) => {
   const app = new Hono<AppEnv>();
@@ -143,6 +174,8 @@ export const createDiagnosticsRoutes = (deps: ApiDeps) => {
             remediation: "FS_SCOPE_MISSING",
           },
     );
+
+    checks.push({ id: "relay", ...RELAY_CHECKS[deps.relayState?.() ?? "disabled"] });
 
     // Final redaction pass. Individual checks are written not to include
     // secrets, but this payload is meant to be shared, so one careless field
