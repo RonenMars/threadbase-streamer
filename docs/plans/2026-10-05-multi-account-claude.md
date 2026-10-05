@@ -9,11 +9,27 @@ against a multi-account server.
 
 ## Goal
 
-One streamer, several Claude logins: for example a personal Max subscription and a work
-Team seat, or two subscriptions used as overflow when one hits its usage limit. The user
-picks an account when starting a session. Every session and conversation reports which
+One streamer, several Claude logins, each for a different context: for example a personal
+Claude subscription, a work subscription provided by an employer, and possibly others
+(a client, a side project). Today the streamer can only drive whichever account `~/.claude`
+is logged into, so using the work seat for a work repo and the personal one for a hobby
+repo means logging out and back in.
+
+The user picks an account when starting a session, or the streamer picks it from the project
+(work repos use the work account by default). Every session and conversation reports which
 account it belongs to, resume always goes back to the right account, and history from
 every account shows up in one list.
+
+**Keeping the accounts separate is the point.** A work conversation stays under the work
+account's directory and never gets copied into the personal one. The streamer never moves a
+session between accounts, and never switches accounts automatically, for example when one
+reaches its usage limit.
+
+### Non-goals
+
+- Pooling usage across accounts, or automatic failover when one account hits its limit.
+- Moving or copying a conversation from one account to another.
+- Codex and Cursor accounts (see Scope).
 
 ## How Claude Code separates accounts
 
@@ -82,6 +98,7 @@ type ClaudeAccount = {
   emoji?: string;        // matches ScanProfile, for the phone's badge
   configDir: string;     // absolute; the CLAUDE_CONFIG_DIR value
   isDefault: boolean;    // exactly one
+  projectPaths: string[]; // path prefixes that default to this account, e.g. ["~/work/"]
   enabled: boolean;      // disabled = not spawnable, history still listed (read-only)
   createdAt: number;
 };
@@ -122,11 +139,26 @@ type ClaudeAccount = {
 - **Resume picks the account from the conversation**, never from the request. A resume body
   that names a different `accountId` is answered **409 `ACCOUNT_MISMATCH`**. Claude's
   `--resume` only finds the transcript under its own `CLAUDE_CONFIG_DIR`, so silently
-  honouring the request would start an empty session. Moving a conversation to another
-  account is a separate, explicit operation (phase 4).
+  honouring the request would start an empty session. A conversation never changes
+  account (see Non-goals).
 - **Discovered (external) processes.** On Linux, read `CLAUDE_CONFIG_DIR` from
   `/proc/<pid>/environ`. On macOS, use `ps eww`, best effort. Otherwise attribute by the
   JSONL the process is writing, once bound, and fall back to `default`.
+
+### Choosing the account for a new session
+
+When `POST /api/sessions` names no account, the first match wins:
+
+1. `accountId` in the request.
+2. **A project rule.** Each account has an optional `projectPaths: string[]` list of
+   path prefixes, for example `~/work/` for the work account. Matching uses
+   `canonicalizeProjectPath`, and the longest prefix wins.
+3. The account used most recently for this project (`projects` + `managed_sessions`).
+4. The server's default account.
+
+The response's `accountId` says which one was used, and `accountSource`
+(`request` / `project_rule` / `last_used` / `default`) says why. That lets the phone show
+"Work (from project rule)" instead of a choice that looks unexplained.
 
 ### Spawn
 
@@ -202,9 +234,6 @@ Against the pinned Claude Code version, on macOS and Linux, record results in th
    version has one, or credential-file/Keychain presence) and find how the login screen
    renders in a PTY, so the runner can detect it.
 4. What the usage-limit screen looks like for Claude in the PTY, for phase 4.
-5. Whether `claude --resume <id> --fork-session` run under account B, against a transcript
-   copied into B's tree, produces a new UUID file. If it does, the copy can be deleted
-   afterwards, which matters for phase 4.
 
 **Exit:** each claim in "How Claude Code separates accounts" is confirmed or corrected.
 
@@ -243,6 +272,8 @@ Against the pinned Claude Code version, on macOS and Linux, record results in th
 - Attribute discovered processes.
 - `accountId` on every session and conversation shape, and the `?accountId=` filters.
 - Auto-resume on boot (`session-registry-boot.ts`) resumes into the recorded account.
+- Account selection for new sessions: request, then project rule, then last used, then
+  default, with `accountSource` in the response.
 - Login-screen detection in `pty-manager`: surface it as `failureReason` /
   `failureCode: "account_not_authenticated"` so the phone stops spinning. This mirrors
   Codex's usage-limit card.
@@ -252,19 +283,14 @@ Against the pinned Claude Code version, on macOS and Linux, record results in th
   mismatching resume returns 409; a disabled account returns 409; an unauthenticated
   account returns 503.
 
-### Phase 4: usage limits and moving a conversation between accounts
+### Phase 4: usage-limit visibility per account
 
-- Detect Claude's usage-limit screen (phase 0 item 4). Record
-  `usage.limitedUntil` on the account, set `failureReason` on the session, and emit a
-  permission-style card offering "Continue on <other account>".
-- `POST /api/conversations/:id/move-to-account { accountId }` copies the transcript into the
-  target account's `projects/<encoded-cwd>/`, then starts
-  `claude --resume <id> --fork-session` there, so the continuation has a **new UUID** and the
-  two accounts never hold the same session id. If phase 0 item 5 confirms the fork writes a
-  new file, the temporary copy is removed. If not, the scanner dedupes on `(accountId, id)`
-  and the copy is marked `forkedFrom`. Decide this once phase 0 is done.
-- Optional preference: an ordered failover list per server, used only when the user accepts
-  the card. The streamer never switches accounts on its own.
+- Detect Claude's usage-limit screen (phase 0 item 4). Set `failureReason` /
+  `failureCode: "usage_limit"` on the session so the phone stops spinning in `running`, and
+  record `usage.limitedUntil` on that account so `GET /api/accounts` and the new-session
+  picker can show it ("Work: limit resets 14:00").
+- Report only. The streamer does not offer to continue the conversation on another account
+  (see Non-goals).
 
 ### Phase 5: management over the API
 
@@ -286,9 +312,9 @@ File this as a separate tb-mobile issue that links back here, per the cross-repo
 1. **Capability gate.** Show any account UI only when `/api/info` carries `accounts`. On an
    older streamer the app behaves exactly as today.
 2. **New-session sheet.** An account picker, shown only when more than one account is
-   enabled. It defaults to the server's default account or the last one used per project.
-   Accounts that are unauthenticated or rate-limited are visible but disabled, with the
-   reason.
+   enabled. It preselects whatever the server would choose (project rule, last used, then
+   default) and shows why. Accounts that are unauthenticated or at their usage limit are
+   visible but disabled, with the reason.
 3. **Badges.** An account emoji or label on session rows, conversation rows and the session
    header. Hide it when only one account exists.
 4. **Filter.** An account chip on the history and sessions lists, which maps to
@@ -296,19 +322,24 @@ File this as a separate tb-mobile issue that links back here, per the cross-repo
 5. **Errors.** Map `UNKNOWN_ACCOUNT`, `ACCOUNT_DISABLED`, `ACCOUNT_NOT_AUTHENTICATED` and
    `ACCOUNT_MISMATCH` to readable copy, and parse them defensively, following the "degrade,
    don't break" contract.
-6. **Usage limit (phase 4).** Render the "Continue on <account>" card and call
-   move-to-account.
+6. **Usage limit (phase 4).** Show which account hit its limit and when it resets, on the
+   session and in the account list.
 7. **Account settings (phase 5).** List accounts with their auth status, add, rename and
-   disable them, and run "Log in" through the login session's terminal view.
+   disable them, edit their project rules, and run "Log in" through the login session's
+   terminal view.
 
 ## Risks and open questions
 
 - **CLI behaviour drift.** `CLAUDE_CONFIG_DIR` semantics are the CLI's, not ours. Pin the
   phase 0 findings to a version, and add a smoke test that spawns with a temp dir and
   asserts that the transcript lands there.
-- **Terms of use.** Running several personal subscriptions to sidestep usage limits may
-  conflict with the provider's terms. The failover card is opt-in and user-initiated, and
-  the docs should say plainly that the user is responsible for their accounts' terms.
+- **Data boundary between accounts.** A work account's transcripts may fall under the
+  employer's policies. The combined history list is display only: nothing copies, moves or
+  forks a transcript across account directories. If a later request wants a cross-account
+  copy, it needs its own design and an explicit user action. One open question: should an
+  account's history be hideable from some paired devices, for example keeping work history
+  off a personal tablet? That would be a per-device account filter on top of the device
+  registry. Decide before phase 6.
 - **Shared project settings.** `.claude/` *inside a repo* (project settings, `CLAUDE.md`)
   is unaffected and shared across accounts. That is intended.
 - **MCP servers and user settings live per account.** A new account starts with no MCP
