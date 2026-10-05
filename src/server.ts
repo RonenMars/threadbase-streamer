@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { realpath } from "fs/promises";
 import type { Hono } from "hono";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
+import type { Server as NetServer } from "net";
 import { homedir, hostname } from "os";
 import { dirname, join } from "path";
 import type { WebSocket } from "ws";
@@ -107,6 +108,7 @@ import {
 } from "./providers";
 import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
+import { isViaRelay, listenRelayIngress } from "./relay/ingress";
 import { ScannerManager } from "./scanner-manager";
 import { seal } from "./seal";
 import { loadOrCreateServerIdentity } from "./server-identity";
@@ -382,6 +384,8 @@ export class StreamerServer {
   private apiKey: string;
   private apiKeySource: "config" | "cli";
   private localNoAuth: boolean;
+  private relayIngressPath: string | undefined;
+  private relayIngress: NetServer | null = null;
   private logMenubarRequests: boolean;
   private verbose: boolean;
   private scanProfiles:
@@ -524,6 +528,7 @@ export class StreamerServer {
     this.apiKey = config.apiKey;
     this.apiKeySource = config.apiKeySource ?? "config";
     this.localNoAuth = config.localNoAuth ?? false;
+    this.relayIngressPath = config.relayIngressPath;
     this.logMenubarRequests = config.logMenubarRequests ?? false;
     if (this.localNoAuth) {
       console.warn(
@@ -1573,6 +1578,9 @@ export class StreamerServer {
     // healthcheck). On the final attempt we let the error propagate so a
     // genuinely occupied port still surfaces loudly.
     await this.bindWithRetry(port, this.host);
+    if (this.relayIngressPath) {
+      this.relayIngress = await listenRelayIngress(this.httpServer, this.relayIngressPath);
+    }
 
     // unref() so an idle server with no other work can still exit — this timer
     // must never be the reason the process stays alive.
@@ -2153,6 +2161,7 @@ export class StreamerServer {
     // which only fires once every connection drains — can't hang. Without
     // this the old process keeps :PORT bound until launchd's SIGKILL, and the
     // freshly-started instance hits EADDRINUSE. Guarded for Node < 18.2.
+    this.relayIngress?.close();
     this.httpServer.closeAllConnections?.();
     return new Promise((resolve) => {
       // Belt-and-suspenders: never let process exit block forever on the
@@ -2248,6 +2257,14 @@ export class StreamerServer {
         json(res, 400, { error: e.message, code: e.code });
         return;
       }
+    }
+
+    // Legacy pairing answers with the shared API key sealed to a key the caller
+    // chose; over a relay only the Noise pairing is offered, so nothing a relay
+    // forwards can end in a plaintext-capable credential.
+    if (!e2eeRequest && isViaRelay(req.socket)) {
+      json(res, 400, { error: "e2ee is required over a relay", code: "RELAY_E2EE_REQUIRED" });
+      return;
     }
 
     // Reject a bad token before doing any work, but do NOT spend it yet.

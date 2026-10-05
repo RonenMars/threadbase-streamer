@@ -12,6 +12,7 @@ import {
 } from "../../e2ee/context";
 import { E2EE_DEVICE_REVOKED } from "../../e2ee/protocol";
 import { getLogger } from "../../logger";
+import { isViaRelay } from "../../relay/ingress";
 import {
   hasCapability,
   legacyPrincipal,
@@ -57,26 +58,40 @@ const PUBLIC_POST_PATHS = new Set(["/api/pair/exchange", "/api/__update", "/api/
 // /internal/sessions/:sessionId/progress also uses HMAC (Progress webhook),
 // and the sessionId is dynamic so we match by prefix.
 const PUBLIC_POST_PREFIXES = ["/internal/sessions/"];
+// The only unauthenticated paths a relayed request may reach: the two Noise
+// handshakes. `/api/__update` and `/internal/…` are HMAC-gated, but nothing that
+// legitimately calls them comes through a relay, so they are not offered there.
+const RELAY_PUBLIC_POST_PATHS = new Set(["/api/pair/exchange", "/api/e2ee/open"]);
 
 export const authMiddleware =
   (deps: Pick<ApiDeps, "apiKey" | "localNoAuth" | "devicesRepo">): MiddlewareHandler<AppEnv> =>
   async (c, next) => {
     const path = new URL(c.req.url).pathname;
     const method = c.req.method;
+    // A request the relay ingress listener accepted. The relay is an untrusted
+    // transport, so such a request gets NO loopback carve-out (a unix socket has
+    // no `remoteAddress`, but that is an accident this must not rest on) and no
+    // plaintext credential: only a sealed REST request, a ticketed WebSocket
+    // upgrade, or one of the two handshakes passes.
+    const viaRelay = isViaRelay(c.env?.incoming?.socket);
     const isPublicPostPath =
       method === "POST" &&
-      (PUBLIC_POST_PATHS.has(path) || PUBLIC_POST_PREFIXES.some((p) => path.startsWith(p)));
+      (viaRelay
+        ? RELAY_PUBLIC_POST_PATHS.has(path)
+        : PUBLIC_POST_PATHS.has(path) || PUBLIC_POST_PREFIXES.some((p) => path.startsWith(p)));
     // A local `/healthz` (no cloudflared header) is open; a tunneled one falls
     // through to the gate below, where an e2ee context, a Bearer, or a `?key=`
     // authenticates it and a bare probe gets 401.
-    const isLocalHealthz = path === HEALTHZ_PATH && c.req.header(CF_TUNNEL_HEADER) === undefined;
+    const isLocalHealthz =
+      !viaRelay && path === HEALTHZ_PATH && c.req.header(CF_TUNNEL_HEADER) === undefined;
     if (isLocalHealthz || isPublicPostPath) {
       await next();
       return;
     }
 
     const remoteAddr = c.env.incoming?.socket?.remoteAddress;
-    if (LOCAL_ONLY_PATHS.has(path) && isLocalRequest(remoteAddr)) {
+    const isLocal = !viaRelay && isLocalRequest(remoteAddr);
+    if (LOCAL_ONLY_PATHS.has(path) && isLocal) {
       await next();
       return;
     }
@@ -88,12 +103,19 @@ export const authMiddleware =
     // instead of an authorization decision. Resolving the caller to the owner
     // principal leaves the access identical and puts it through the same checks
     // as every other caller.
-    const loopbackOwner = deps.localNoAuth && isLocalRequest(remoteAddr);
+    const loopbackOwner = deps.localNoAuth && isLocal;
 
     const authorization = c.req.header("authorization");
     const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
     const queryKey = c.req.query("key") ?? undefined;
     const presented = bearer ?? queryKey;
+
+    // A long-term credential must never cross the relay in the clear, sealed
+    // request or not: the relay would hold a key that works on the direct path.
+    // Refused outright rather than ignored, so a client that does it is told.
+    if (viaRelay && (authorization !== undefined || queryKey !== undefined)) {
+      return c.json({ error: "Unauthorized", code: "RELAY_PLAINTEXT_CREDENTIAL" }, 401);
+    }
 
     // ─── A ticketed WebSocket upgrade authenticates by its ticket ───────
     //
