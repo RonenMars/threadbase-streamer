@@ -22,6 +22,7 @@ import { handleListProjects } from "./handlers/handleListProjects";
 import type { LiveSessionManager } from "./live-session-manager";
 import { getLogger, type Logger } from "./logger";
 import { PTY_COLS, PTY_ROWS, REPLAY_MAX_LINES } from "./pty-shared";
+import type { RelayState } from "./relay/connector";
 import type { ScannerManager } from "./scanner-manager";
 import type { Prompt } from "./schemas/prompt.schema";
 import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
@@ -666,6 +667,7 @@ export type ApiDepsWiring = {
   runtimeStore: () => RuntimeStore | null;
   managedSessionsRepo: () => ManagedSessionsRepository | null;
   sessionVerdicts: () => Map<string, ReconcileVerdict>;
+  relayState: () => RelayState;
   log: () => Logger;
   ptyAttachedIds: () => Set<string>;
   withReconciledLifecycle: (sessions: readonly SessionResponse[]) => readonly SessionResponse[];
@@ -739,6 +741,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     runtimeStore: () => deps.runtimeStore(),
     managedSessionsRepo: () => deps.managedSessionsRepo(),
     sessionVerdicts: () => deps.sessionVerdicts(),
+    relayState: () => deps.relayState(),
     ptyAttachedIds: () => deps.ptyAttachedIds(),
     handleListSessions: (url, res) => deps.sessionHandlers.handleListSessions(url, res),
     handleSessionsCount: (res) => deps.handleSessionsCount(res),

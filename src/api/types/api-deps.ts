@@ -21,6 +21,7 @@ import type {
   ResolvedFeatureFlags,
 } from "../../feature-flags";
 import type { LiveSessionManager } from "../../live-session-manager";
+import type { RelayState } from "../../relay/connector";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
 import type { HostPressureMonitor } from "../../services/host-pressure/hostPressure";
 import type { ExpoPushSender } from "../../services/push/expoPushSender";
@@ -88,6 +89,8 @@ export type ApiDeps = {
   managedSessionsRepo: () => ManagedSessionsRepository | null;
   /** This boot's reconcile verdicts, by session id. Empty before it has run. */
   sessionVerdicts: () => Map<string, ReconcileVerdict>;
+  /** The relay connector's state. Optional so focused test harnesses need not supply it. */
+  relayState?: () => RelayState;
   ptyAttachedIds: () => Set<string>;
   // Session handler delegates — called by Hono handlers, implemented by StreamerServer
   handleListSessions: (url: URL, res: ServerResponse) => Promise<void>;

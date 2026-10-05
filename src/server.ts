@@ -31,6 +31,8 @@ import {
   loadDefaultPermissionMode,
   loadFeatureFlags,
   loadPublicUrl,
+  loadRelayPublicKey,
+  loadRelayUrl,
   loadTailSize,
   setApiKey,
   setClaudeExtraArgs,
@@ -108,6 +110,7 @@ import {
 } from "./providers";
 import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
+import { RelayConnector, type RelayState } from "./relay/connector";
 import { isViaRelay, listenRelayIngress } from "./relay/ingress";
 import { ScannerManager } from "./scanner-manager";
 import { seal } from "./seal";
@@ -386,6 +389,9 @@ export class StreamerServer {
   private localNoAuth: boolean;
   private relayIngressPath: string | undefined;
   private relayIngress: NetServer | null = null;
+  private relayUrl: string | undefined;
+  private relayPublicKey: string | undefined;
+  private relayConnector: RelayConnector | null = null;
   private logMenubarRequests: boolean;
   private verbose: boolean;
   private scanProfiles:
@@ -529,6 +535,8 @@ export class StreamerServer {
     this.apiKeySource = config.apiKeySource ?? "config";
     this.localNoAuth = config.localNoAuth ?? false;
     this.relayIngressPath = config.relayIngressPath;
+    this.relayUrl = config.relayUrl ?? loadRelayUrl();
+    this.relayPublicKey = config.relayPublicKey ?? loadRelayPublicKey();
     this.logMenubarRequests = config.logMenubarRequests ?? false;
     if (this.localNoAuth) {
       console.warn(
@@ -557,6 +565,12 @@ export class StreamerServer {
       yaml: loadFeatureFlags(),
     });
     this.featureFlags = flagResolution.values;
+    if (this.featureFlags.relay && !this.relayIngressPath) {
+      this.relayIngressPath =
+        process.platform === "win32"
+          ? "\\\\.\\pipe\\threadbase-relay"
+          : join(process.env.THREADBASE_CONFIG_DIR ?? join(homedir(), ".threadbase"), "relay.sock");
+    }
     this.featureFlagSources = flagResolution.sources;
     this.codexSystemPromptEnabled = this.featureFlags.codexSystemPrompt;
     this.defaultPermissionMode =
@@ -934,6 +948,7 @@ export class StreamerServer {
       runtimeStore: () => this.runtimeStore,
       managedSessionsRepo: () => this.managedSessionsRepo,
       sessionVerdicts: () => this.sessionVerdicts,
+      relayState: () => this.relayState(),
       log: () => this.log,
       ptyAttachedIds: () => this.ptyAttachedIds(),
       withReconciledLifecycle: (sessions) => this.withReconciledLifecycle(sessions),
@@ -1581,6 +1596,15 @@ export class StreamerServer {
     if (this.relayIngressPath) {
       this.relayIngress = await listenRelayIngress(this.httpServer, this.relayIngressPath);
     }
+    if (this.featureFlags.relay && this.relayUrl && this.relayPublicKey) {
+      this.relayConnector = new RelayConnector({
+        url: this.relayUrl,
+        relayPublicKey: Buffer.from(this.relayPublicKey, "base64url"),
+        keyPair: keyPairFrom(loadOrCreateServerIdentity().privateKey),
+        log: this.log,
+      });
+      this.relayConnector.start();
+    }
 
     // unref() so an idle server with no other work can still exit — this timer
     // must never be the reason the process stays alive.
@@ -2161,6 +2185,7 @@ export class StreamerServer {
     // which only fires once every connection drains — can't hang. Without
     // this the old process keeps :PORT bound until launchd's SIGKILL, and the
     // freshly-started instance hits EADDRINUSE. Guarded for Node < 18.2.
+    this.relayConnector?.stop();
     this.relayIngress?.close();
     this.httpServer.closeAllConnections?.();
     return new Promise((resolve) => {
@@ -2680,6 +2705,12 @@ export class StreamerServer {
       },
       "both",
     );
+  }
+
+  /** For the `relay` diagnostics check. */
+  relayState(): RelayState {
+    if (!this.featureFlags.relay) return "disabled";
+    return this.relayConnector?.state ?? "not_configured";
   }
 
   private getFeatureFlagsConfig(): {

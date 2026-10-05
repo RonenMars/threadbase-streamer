@@ -681,6 +681,10 @@ export interface ServerConfig {
    * Unset = no listener. Requests accepted on it are end-to-end-encrypted only.
    */
   relayIngressPath?: string;
+  /** Relay tunnel endpoint (`wss://…/tunnel`). Falls back to `relay_url` in server.yaml. */
+  relayUrl?: string;
+  /** The relay's X25519 public key, base64url. Falls back to `relay_public_key`. */
+  relayPublicKey?: string;
   verbose?: boolean;
   // Also log the menubar app's HEALTHY /healthz polls (default: false — they are
   // ~17 280 lines/day and carry nothing). A menubar request that is not a
