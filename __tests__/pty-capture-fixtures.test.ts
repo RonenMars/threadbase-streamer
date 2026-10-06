@@ -108,6 +108,7 @@ describe("Copilot CLI 1.0.92 captures (pins)", () => {
 describe("Cursor 2026.10.01 captures (pins)", () => {
   const TURN = load("cursor-2026.10.01-turn.json");
   const ASK = load("cursor-2026.10.01-ask.json");
+  const GATE = load("cursor-2026.10.01-gate.json");
   const TRUST = load("cursor-2026.10.01-trust.json");
   const BUSY = "ctrl+c to stop";
 
@@ -133,6 +134,25 @@ describe("Cursor 2026.10.01 captures (pins)", () => {
     // The answer resumes the same turn.
     expect(await screenAt(ASK, ASK.marks.askAnswered + 2_000)).toContain(BUSY);
     expect(await screenAt(ASK, ASK.marks.settled)).not.toContain(BUSY);
+  });
+
+  it("drops the busy hint and goes silent while a shell approval card is open", async () => {
+    // Only painted under `approvalMode: "allowlist"`; "unrestricted" runs the
+    // command with no card at all.
+    const card = await screenAt(GATE, GATE.marks.gateOpen);
+    expect(card).toContain("Waiting for approval...");
+    expect(card).toContain("Run this command?");
+    expect(card).toContain("Not in allowlist: touch");
+    expect(card).toContain("→ Run (once) (y)");
+    expect(card).toContain("Skip & tell the agent what to do instead (esc or n)");
+    expect(card).not.toContain(BUSY);
+    expect(chunksBetween(GATE, GATE.marks.gateOpen, GATE.marks.gateAnswered)).toEqual([]);
+
+    // Approving resumes the same turn.
+    expect(await screenAt(GATE, GATE.marks.gateAnswered + 500)).toContain(BUSY);
+    const end = await screenAt(GATE, GATE.marks.settled);
+    expect(end).not.toContain("Run this command?");
+    expect(end).not.toContain(BUSY);
   });
 
   it("asks for workspace trust with lettered options when --trust is absent", async () => {
