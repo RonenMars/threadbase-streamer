@@ -384,6 +384,7 @@ export const createMiscRoutes = (
   deps: Pick<
     ApiDeps,
     | "publicUrl"
+    | "relayUrl"
     | "sessionStore"
     | "ptyAttachedIds"
     | "rotateApiKey"
@@ -405,6 +406,9 @@ export const createMiscRoutes = (
       platform: process.platform,
       activeSessions: deps.sessionStore.list(ptyIds).filter((s) => s.status === "running").length,
       publicUrl: deps.publicUrl,
+      // Additive, and absent when the relay is off. A paired client adopts it
+      // only from a sealed response, which is what makes it authoritative.
+      ...(deps.relayUrl && { relayUrl: deps.relayUrl }),
       // Capability flag: this server serves /api/config/claude-flags. Additive —
       // older clients ignore it, and clients talking to an older server see it
       // absent and hide the UI rather than 404ing.
