@@ -1,3 +1,9 @@
+## [1.112.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.111.0...v1.112.0) (2026-10-06)
+
+### Features
+
+* **relay:** advertise the relay address to paired clients ([#1034](https://github.com/RonenMars/threadbase-streamer/issues/1034)) ([974cfdd](https://github.com/RonenMars/threadbase-streamer/commit/974cfdda2858e4a92a0551de0542e225ad4c0e53))
+
 ## [1.111.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.110.0...v1.111.0) (2026-10-06)
 
 ### Features
