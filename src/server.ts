@@ -110,6 +110,7 @@ import {
 } from "./providers";
 import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
+import { relayClientUrl } from "./relay/address";
 import { RelayConnector, type RelayState } from "./relay/connector";
 import { isViaRelay, listenRelayIngress, rateLimitKey } from "./relay/ingress";
 import { ScannerManager } from "./scanner-manager";
@@ -406,6 +407,8 @@ export class StreamerServer {
   private autoResumeOnBoot: boolean;
   private browseRoot: string | null = null;
   private publicUrl: string | null = null;
+  /** Where a client reaches this streamer through the relay; null when the relay is off. */
+  private relayClientUrl: string | null = null;
   private browserCors: string | undefined;
   private pairTokens = new PairTokenStore();
   private exchangeAttempts = new Map<string, number[]>();
@@ -570,6 +573,12 @@ export class StreamerServer {
         process.platform === "win32"
           ? "\\\\.\\pipe\\threadbase-relay"
           : join(process.env.THREADBASE_CONFIG_DIR ?? join(homedir(), ".threadbase"), "relay.sock");
+    }
+    if (this.featureFlags.relay && this.relayUrl && this.relayPublicKey) {
+      this.relayClientUrl = relayClientUrl(
+        this.relayUrl,
+        Buffer.from(loadOrCreateServerIdentity().publicKey, "base64url"),
+      );
     }
     this.featureFlagSources = flagResolution.sources;
     this.codexSystemPromptEnabled = this.featureFlags.codexSystemPrompt;
@@ -918,6 +927,7 @@ export class StreamerServer {
       localNoAuth: this.localNoAuth,
       logMenubarRequests: this.logMenubarRequests,
       publicUrl: this.publicUrl,
+      relayUrl: this.relayClientUrl,
       browseRoot: this.browseRoot,
       browserCors: this.browserCors,
       ptyGracePeriodMs: this.ptyGracePeriodMs,
@@ -2224,6 +2234,8 @@ export class StreamerServer {
       expiresAt: minted.expiresAt,
       expiresInSeconds: minted.expiresInSeconds,
       publicUrl: this.publicUrl,
+      // Read by the CLI's QR builder, which runs in another process.
+      ...(this.relayClientUrl && { relayUrl: this.relayClientUrl }),
     });
   }
 
@@ -2537,6 +2549,9 @@ export class StreamerServer {
             deviceToken: device.deviceToken,
             capabilities: device.capabilities,
             publicUrl: this.publicUrl,
+            // Only here, never in the outer response: an address a client will
+            // dial has to come from the authenticated copy.
+            ...(this.relayClientUrl && { relayUrl: this.relayClientUrl }),
             machineName: hostname(),
             serverVersion: getVersion(),
           }),

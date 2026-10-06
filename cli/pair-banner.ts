@@ -165,10 +165,11 @@ export async function printServerBanner(
   if (!res.ok) {
     throw new Error(`/api/pair/start returned ${res.status}`);
   }
-  const { token, expiresAt, expiresInSeconds } = (await res.json()) as {
+  const { token, expiresAt, expiresInSeconds, relayUrl } = (await res.json()) as {
     token: string;
     expiresAt: number;
     expiresInSeconds: number;
+    relayUrl?: string;
   };
 
   const expSeconds = Math.floor(expiresAt / 1000);
@@ -198,6 +199,10 @@ export async function printServerBanner(
     const spk = identityKey();
     payload += `&spk=${spk}&v=1`;
     fingerprint = serverIdentityFingerprint(spk);
+    // A hint, not an authority: the QR is unauthenticated, so a client may dial
+    // this only for the handshake that `spk` pins, and takes the address it
+    // keeps from the authenticated reply. Hence no `relay` without `spk`.
+    if (relayUrl) payload += `&relay=${encodeURIComponent(relayUrl)}`;
   }
   const qr = await generateQr(payload);
 

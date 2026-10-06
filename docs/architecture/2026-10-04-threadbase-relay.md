@@ -230,8 +230,8 @@ Legacy pairing has no server authentication and is refused on the relay path.
 
 ## 8. Pairing and server records
 
-- The QR gains an optional `relay=<base URL>` parameter when the relay is enabled. It is an unauthenticated hint, used only so a phone that cannot reach `url` can still run the pair exchange.
-- The authoritative `relayUrl` travels inside the authenticated pairing message 2, next to `publicUrl`, and in the sealed `/api/info` response, so **already-paired devices learn it without re-pairing**.
+- The QR gains an optional `relay=<base URL>` parameter when the relay is enabled. It is an unauthenticated hint, used only so a phone that cannot reach `url` can still run the pair exchange. It is printed only together with `spk`, since a hint is safe to dial only for a handshake that pins the streamer's key; the CLI reads the address from the authenticated `POST /api/pair/start` reply.
+- The authoritative `relayUrl` travels inside the authenticated pairing message 2, next to `publicUrl`, and in the sealed `/api/info` response, so **already-paired devices learn it without re-pairing**. The key is absent, not null, while the relay is off, and the outer, unauthenticated pairing response never carries it.
 - Mobile stores `relayUrl` as a new field on the same `ServerConfig`. It must not be written into `url`: the server id is derived from `url`, and editing it wipes the pairing.
 - Only pinned servers ever use the relay address.
 

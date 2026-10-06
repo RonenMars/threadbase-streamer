@@ -118,6 +118,11 @@ export interface E2eeMsg2Payload {
   deviceToken: string;
   capabilities: string[];
   publicUrl: string | null;
+  /**
+   * Where this streamer is reachable through the relay. Absent when the relay
+   * is off, so a client reads a missing key as "no relay", never as an error.
+   */
+  relayUrl?: string;
   machineName: string;
   serverVersion: string;
   /**

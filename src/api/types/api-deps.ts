@@ -51,6 +51,7 @@ export type ApiDeps = {
     sources: Record<FeatureFlagId, FeatureFlagSource>;
   };
   publicUrl: string | null;
+  relayUrl: string | null;
   browseRoot: string | null;
   browserCors: string | undefined;
   ptyManager: LiveSessionManager;

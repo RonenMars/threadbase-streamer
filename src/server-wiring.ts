@@ -640,6 +640,7 @@ export type ApiDepsWiring = {
   localNoAuth: boolean;
   logMenubarRequests: boolean;
   publicUrl: string | null;
+  relayUrl: string | null;
   browseRoot: string | null;
   browserCors: string | undefined;
   ptyGracePeriodMs: number;
@@ -719,6 +720,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     featureFlagsConfig: () => deps.featureFlagsConfig(),
     setClaudeFlagsConfig: (values, extraArgs) => deps.setClaudeFlagsConfig(values, extraArgs),
     publicUrl: deps.publicUrl,
+    relayUrl: deps.relayUrl,
     browseRoot: deps.browseRoot,
     browserCors: deps.browserCors,
     ptyManager: deps.ptyManager,
