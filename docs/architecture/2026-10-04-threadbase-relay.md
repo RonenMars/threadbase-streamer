@@ -141,13 +141,20 @@ frame = type(1) || streamId(4, BE) || payload(≤ 64 KiB)
 | Type | Direction | Payload |
 |---|---|---|
 | `OPEN` | relay → streamer | JSON `{kind: "http"\|"ws", method, target, headers, clientTag}` |
-| `HEAD` | streamer → relay | JSON `{status, headers}`; for `ws`, `{accepted, protocol}` |
-| `DATA` | both | body bytes, or one WS message (flag byte: text/binary/continuation) |
-| `END` | both | half-close: no more data from this side |
+| `HEAD` | streamer → relay | JSON `{status, headers}`; for `ws`, `{accepted: true, protocol?}` or `{accepted: false, status}` |
+| `DATA` | both | body bytes; for `ws`, a flag byte then a piece of one binary message (flag `1`: more of the same message follows) |
+| `END` | both | half-close: no more data from this side; for `ws`, JSON `{code, reason}`, the WebSocket close |
 | `RESET` | both | `{code}`: abort the stream |
 | `WINDOW` | both | `{credit}`: flow-control credit in bytes |
 
 Liveness uses WebSocket ping/pong; no frame type is spent on it.
+
+A WebSocket stream is opened only on a ticket (`x-tb-ticket`, or the `threadbase-e2ee-v1` subprotocol offer) and never with a credential.
+The relay completes the client's upgrade only after the streamer accepts it, and selects only the subprotocol the streamer selected, so an offered ticket is never echoed.
+A refused upgrade is answered with the status the streamer refused with.
+A message larger than a frame is split into pieces and sent on as WebSocket fragments, so neither side holds a whole message for the other; flow-control credit counts message bytes, not the flag byte.
+Sealed sockets are binary in both directions, and a text message ends the stream.
+The streamer's own ping reaches only the connector's local socket, so the relay pings each client every 30 s and drops one that does not answer.
 Headers are forwarded from an allowlist (`x-tb-*`, `content-type`, `content-length`, `accept`, `if-none-match`, `etag`, `cache-control`, `sec-websocket-protocol`), and the relay never caches, rewrites or compresses a response.
 
 ### 5.1 Limits and backpressure
@@ -160,7 +167,7 @@ Headers are forwarded from an allowlist (`x-tb-*`, `content-type`, `content-leng
 | Buffered bytes per tunnel, both directions | 8 MiB |
 | HTTP request body | 64 MiB + record overhead (matches `MAX_UPLOAD_RECORD_BYTES`) |
 | Tunnels per route | 1 |
-| Client connections per route | 16 |
+| Client WebSockets per route | 16 |
 | Stream idle timeout (HTTP) | 60 s without bytes |
 | Tunnel handshake deadline | 10 s |
 

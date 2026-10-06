@@ -7,7 +7,13 @@ import {
   CLOSE_UNSUPPORTED_PROTOCOL,
   TUNNEL_PROLOGUE,
 } from "../../src/relay/connector";
-import { decodeFrame, encodeFrame, FRAME_TYPES } from "../../src/relay/frames";
+import { encodeCredit } from "../../src/relay/flow";
+import {
+  decodeFrame,
+  encodeFrame,
+  FRAME_TYPES,
+  MAX_FRAME_PAYLOAD_BYTES,
+} from "../../src/relay/frames";
 
 /**
  * A stand-in relay built from the same Noise responder the relay uses. The
@@ -23,6 +29,18 @@ export interface RelayedResponse {
   status: number;
   headers: Record<string, string>;
   body: Buffer;
+}
+
+/** One client WebSocket, as the relay carries it. */
+export interface RelayedSocket {
+  /** The streamer's answer to the upgrade, or "reset". */
+  head: { accepted?: boolean; status?: number; protocol?: string } | "reset";
+  /** Whole messages from the streamer, reassembled. */
+  messages: Buffer[];
+  send(message: Buffer): void;
+  close(code: number, reason?: string): void;
+  /** Resolves when the streamer ends the stream: its close code, or "reset". */
+  closed: Promise<number | "reset">;
 }
 
 export class FakeRelay {
@@ -108,6 +126,67 @@ export class FakeRelay {
       out(FRAME_TYPES.OPEN, Buffer.from(JSON.stringify(open), "utf-8"));
       if (body) out(FRAME_TYPES.DATA, body);
       out(FRAME_TYPES.END);
+    });
+  }
+
+  /** Open a WebSocket stream the way the relay does, and wait for the streamer's answer. */
+  socket(headers: Record<string, string>, target = "/ws"): Promise<RelayedSocket> {
+    const ws = this.tunnel;
+    if (!ws) throw new Error("no tunnel attached");
+    const streamId = this.nextStreamId++;
+    const out = (type: Parameters<typeof encodeFrame>[0], payload?: Buffer) => {
+      const frame = encodeFrame(type, streamId, payload);
+      this.seen.push(frame);
+      ws.send(frame);
+    };
+    return new Promise((resolve) => {
+      const messages: Buffer[] = [];
+      let pieces: Buffer[] = [];
+      let settle: (v: number | "reset") => void = () => {};
+      const closed = new Promise<number | "reset">((r) => {
+        settle = r;
+      });
+      const socket = (head: RelayedSocket["head"]): RelayedSocket => ({
+        head,
+        messages,
+        closed,
+        send: (message) => {
+          const max = MAX_FRAME_PAYLOAD_BYTES - 1;
+          for (let at = 0; at === 0 || at < message.length; at += max) {
+            const more = at + max < message.length ? 1 : 0;
+            out(
+              FRAME_TYPES.DATA,
+              Buffer.concat([Buffer.from([more]), message.subarray(at, at + max)]),
+            );
+          }
+        },
+        close: (code, reason = "") =>
+          out(FRAME_TYPES.END, Buffer.from(JSON.stringify({ code, reason }))),
+      });
+      ws.on("message", (data: Buffer) => {
+        const frame = decodeFrame(data);
+        if (frame.streamId !== streamId) return;
+        if (frame.type === FRAME_TYPES.HEAD)
+          resolve(socket(JSON.parse(frame.payload.toString("utf-8"))));
+        else if (frame.type === FRAME_TYPES.DATA) {
+          pieces.push(frame.payload.subarray(1));
+          if ((frame.payload[0] & 1) === 0) {
+            messages.push(Buffer.concat(pieces));
+            pieces = [];
+          }
+          if (frame.payload.length > 1)
+            out(FRAME_TYPES.WINDOW, encodeCredit(frame.payload.length - 1));
+        } else if (frame.type === FRAME_TYPES.END) {
+          settle((JSON.parse(frame.payload.toString("utf-8")) as { code: number }).code);
+        } else if (frame.type === FRAME_TYPES.RESET) {
+          settle("reset");
+          resolve(socket("reset"));
+        }
+      });
+      out(
+        FRAME_TYPES.OPEN,
+        Buffer.from(JSON.stringify({ kind: "ws", method: "GET", target, headers }), "utf-8"),
+      );
     });
   }
 
