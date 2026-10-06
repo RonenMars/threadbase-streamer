@@ -109,6 +109,7 @@ describe("Cursor 2026.10.01 captures (pins)", () => {
   const TURN = load("cursor-2026.10.01-turn.json");
   const ASK = load("cursor-2026.10.01-ask.json");
   const GATE = load("cursor-2026.10.01-gate.json");
+  const DELETE = load("cursor-2026.10.01-delete.json");
   const TRUST = load("cursor-2026.10.01-trust.json");
   const BUSY = "ctrl+c to stop";
 
@@ -152,6 +153,22 @@ describe("Cursor 2026.10.01 captures (pins)", () => {
     expect(await screenAt(GATE, GATE.marks.gateAnswered + 500)).toContain(BUSY);
     const end = await screenAt(GATE, GATE.marks.settled);
     expect(end).not.toContain("Run this command?");
+    expect(end).not.toContain(BUSY);
+  });
+
+  it("drops the busy hint and goes silent while a file delete card is open", async () => {
+    // File deletes are gated under the same approval mode; file edits are not.
+    const card = await screenAt(DELETE, DELETE.marks.gateOpen);
+    expect(card).toContain("Delete this file?");
+    expect(card).toContain("→ Delete (y)");
+    expect(card).toContain("Keep (n)");
+    expect(card).not.toContain(BUSY);
+    expect(chunksBetween(DELETE, DELETE.marks.gateOpen, DELETE.marks.gateAnswered)).toEqual([]);
+
+    // Confirming resumes the same turn.
+    expect(await screenAt(DELETE, DELETE.marks.gateAnswered + 500)).toContain(BUSY);
+    const end = await screenAt(DELETE, DELETE.marks.settled);
+    expect(end).not.toContain("Delete this file?");
     expect(end).not.toContain(BUSY);
   });
 
