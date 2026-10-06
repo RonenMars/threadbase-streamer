@@ -13,6 +13,7 @@ import {
 import {
   CHANNEL_REST_REQUEST,
   CHANNEL_REST_RESPONSE,
+  CHANNEL_WS,
   createRecordState,
   DIRECTION_C2S,
   DIRECTION_S2C,
@@ -210,6 +211,138 @@ describe("a request relayed through the tunnel", () => {
       answered(await relay.request({ kind: "http", method: "GET", target: TARGET, headers: {} }))
         .status,
     ).toBe(401);
+  });
+});
+
+describe("a WebSocket relayed through the tunnel", () => {
+  /** Pair a device, then open a socket context over the tunnel: a ticket and the client's record states. */
+  async function openSocketContext() {
+    const device = generateKeyPair();
+    const repo = (server as unknown as { devicesRepo: DevicesRepository }).devicesRepo;
+    repo.register({
+      publicKey: `legacy-${device.publicKeyRaw.toString("base64")}`,
+      e2eeStaticPub: device.publicKeyRaw.toString("base64"),
+      e2eeVersion: 1,
+      preset: "full",
+    });
+    const { message, state } = writeMessage1({
+      staticKeyPair: device,
+      responderStaticPub: Buffer.from(loadOrCreateServerIdentity().publicKey, "base64url"),
+      pattern: "IK",
+      payload: Buffer.from(JSON.stringify({ v: 1, kind: "ws" }), "utf-8"),
+      prologue: OPEN_PROLOGUE,
+    });
+    const res = answered(
+      await relay.request(
+        {
+          kind: "http",
+          method: "POST",
+          target: "/api/e2ee/open",
+          headers: { "content-type": "application/json" },
+        },
+        Buffer.from(JSON.stringify({ e2ee: { v: 1, noise: message.toString("base64") } })),
+      ),
+    );
+    const outer = JSON.parse(res.body.toString("utf-8")) as { e2ee: { noise: string } };
+    const read = readMessage2(state, Buffer.from(outer.e2ee.noise, "base64"));
+    const { ctxId, ticket } = JSON.parse(read.payload.toString("utf-8")) as {
+      ctxId: string;
+      ticket: string;
+    };
+    const keys = read.keys.consume();
+    const ctxIdRaw = Buffer.from(ctxId, "base64url");
+    return {
+      ticket,
+      send: createRecordState({
+        key: keys.clientToServer,
+        ctxId: ctxIdRaw,
+        direction: DIRECTION_C2S,
+        channel: CHANNEL_WS,
+      }),
+      receive: createRecordState({
+        key: keys.serverToClient,
+        ctxId: ctxIdRaw,
+        direction: DIRECTION_S2C,
+        channel: CHANNEL_WS,
+      }),
+    };
+  }
+  const hub = () =>
+    (
+      server as unknown as {
+        wsHub: { broadcast(message: unknown): void; clients: Set<unknown> };
+      }
+    ).wsHub;
+  const until = async (check: () => boolean) => {
+    for (let i = 0; i < 400 && !check(); i++) await new Promise((r) => setTimeout(r, 5));
+  };
+
+  it("carries a ticketed socket sealed end to end, large messages whole", async () => {
+    const ctx = await openSocketContext();
+    const from = relay.seen.length;
+    const socket = await relay.socket({ "x-tb-ticket": ctx.ticket });
+    expect(socket.head).toEqual({ accepted: true });
+
+    // What the server says on connect, then a terminal burst larger than one
+    // frame and than the stream's 256 KiB window.
+    await until(() => socket.messages.length >= 2);
+    const burst = "drwxr-xr-x fixtures\n".repeat(30_000);
+    hub().broadcast({ type: "terminal_output", sessionId: "s1", data: burst });
+    await until(() => socket.messages.length >= 3);
+    socket.send(ctx.send.seal(Buffer.from(JSON.stringify({ type: "register", clientId: "c1" }))));
+
+    const opened = socket.messages.map(
+      (m) => JSON.parse(ctx.receive.unseal(m).toString("utf-8")) as { type: string; data?: string },
+    );
+    expect(opened.map((m) => m.type)).toEqual(["session_list", "cache_ready", "terminal_output"]);
+    expect(opened[2].data).toBe(burst);
+
+    // The relay carried all of it and could read none of it.
+    const wire = Buffer.concat(relay.seen.slice(from)).toString("latin1");
+    expect(wire).not.toContain("drwxr-xr-x");
+    expect(wire).not.toContain("session_list");
+    expect(wire).not.toContain("register");
+
+    // The client closing its socket closes the server's.
+    expect(hub().clients.size).toBe(1);
+    socket.close(1000);
+    await until(() => hub().clients.size === 0);
+    expect(hub().clients.size).toBe(0);
+  });
+
+  it("answers a refused upgrade with the server's status, and opens no socket", async () => {
+    // No ticket: on the relay listener nothing else authenticates a socket.
+    expect((await relay.socket({})).head).toMatchObject({ accepted: false, status: 401 });
+    // A spent ticket.
+    const ctx = await openSocketContext();
+    expect((await relay.socket({ "x-tb-ticket": ctx.ticket })).head).toEqual({ accepted: true });
+    expect((await relay.socket({ "x-tb-ticket": ctx.ticket })).head).toMatchObject({
+      accepted: false,
+      status: 401,
+    });
+    // The shared key in the query, as a legacy client would send it.
+    expect((await relay.socket({}, `/ws?key=${API_KEY}`)).head).toMatchObject({
+      accepted: false,
+      status: 401,
+    });
+    expect(hub().clients.size).toBe(1);
+  });
+
+  it("tells the relay when the server closes the socket, with its code", async () => {
+    const ctx = await openSocketContext();
+    const socket = await relay.socket({ "x-tb-ticket": ctx.ticket });
+    // A record that does not unseal: the server ends a sealed socket on it.
+    socket.send(Buffer.from("not a sealed record"));
+    expect(await socket.closed).not.toBe("reset");
+  });
+
+  it("drops the local socket when the tunnel dies", async () => {
+    const ctx = await openSocketContext();
+    await relay.socket({ "x-tb-ticket": ctx.ticket });
+    expect(hub().clients.size).toBe(1);
+    relay.tunnel?.terminate();
+    await until(() => hub().clients.size === 0);
+    expect(hub().clients.size).toBe(0);
   });
 });
 
