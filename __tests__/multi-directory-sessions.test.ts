@@ -1,7 +1,13 @@
 // Sessions with more than one directory: `additionalPaths` on start and
 // resume, validated against the browse root and spawned as `--add-dir`.
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync as nodeRealpathSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { spawn as mockSpawn } from "node-pty";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -24,6 +30,11 @@ vi.mock("node-pty", () => {
   }
   return { spawn: vi.fn(() => makeMockProcess()) };
 });
+
+// The server canonicalizes its browse root with libuv's realpath, which expands
+// Windows 8.3 short names; the JS `realpathSync` keeps them (`RUNNER~1`), so
+// paths built from it would never match the argv. Same fix as server.test.ts.
+const realpathSync = nodeRealpathSync.native;
 
 const API_KEY = "tb_test_multi_directory";
 const UUID = "cccccccc-1111-2222-3333-444444444444";

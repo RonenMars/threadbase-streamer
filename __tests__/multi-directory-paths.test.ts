@@ -1,6 +1,12 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync as nodeRealpathSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 import { dropCoveredPaths, resolveAdditionalPaths } from "../src/browse";
 import { withAdditionalDirs } from "../src/claude-flags";
 import {
@@ -12,37 +18,45 @@ import { AdditionalPathsSchema, MAX_ADDITIONAL_PATHS } from "../src/schemas/sess
 import { rowToStubSession } from "../src/services/sessions/rehydrateSessions";
 import type { ManagedSession } from "../src/types";
 
+// libuv's realpath, the one the server uses: the JS one keeps Windows 8.3 short
+// names (`RUNNER~1`), so the two disagree on a CI runner's temp dir.
+const realpathSync = nodeRealpathSync.native;
+
+// Native paths, like everything `resolveBrowsePath` hands this function: nesting
+// is judged on the platform separator, so POSIX literals would not nest on Windows.
+const w = (...parts: string[]) => join(sep, "w", ...parts);
+
 describe("dropCoveredPaths", () => {
   it("drops the primary, duplicates, and anything nested inside a kept path", () => {
     expect(
-      dropCoveredPaths("/w/app", [
-        "/w/lib",
-        "/w/app",
-        "/w/app/src",
-        "/w/lib",
-        "/w/lib/sub",
-        "/w/docs",
+      dropCoveredPaths(w("app"), [
+        w("lib"),
+        w("app"),
+        w("app", "src"),
+        w("lib"),
+        w("lib", "sub"),
+        w("docs"),
       ]),
-    ).toEqual(["/w/lib", "/w/docs"]);
+    ).toEqual([w("lib"), w("docs")]);
   });
 
   it("keeps a parent listed after its child, in the caller's position", () => {
-    expect(dropCoveredPaths("/w/app", ["/w/lib/sub", "/w/other", "/w/lib"])).toEqual([
-      "/w/other",
-      "/w/lib",
+    expect(dropCoveredPaths(w("app"), [w("lib", "sub"), w("other"), w("lib")])).toEqual([
+      w("other"),
+      w("lib"),
     ]);
   });
 
   it("does not treat a shared name prefix as nesting", () => {
-    expect(dropCoveredPaths("/w/app", ["/w/app-old", "/w/lib", "/w/library"])).toEqual([
-      "/w/app-old",
-      "/w/lib",
-      "/w/library",
+    expect(dropCoveredPaths(w("app"), [w("app-old"), w("lib"), w("library")])).toEqual([
+      w("app-old"),
+      w("lib"),
+      w("library"),
     ]);
   });
 
   it("keeps a directory that contains the primary", () => {
-    expect(dropCoveredPaths("/w/app/pkg", ["/w/app"])).toEqual(["/w/app"]);
+    expect(dropCoveredPaths(w("app", "pkg"), [w("app")])).toEqual([w("app")]);
   });
 });
 
