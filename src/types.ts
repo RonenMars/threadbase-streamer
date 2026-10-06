@@ -86,6 +86,11 @@ export interface ManagedSession {
   provider?: ProviderName;
   projectId?: string; // Stable identity into the projects table (added during migration).
   projectPath: string;
+  /**
+   * Directories beyond `projectPath` the agent may work in, already resolved
+   * under the browse root. Spawned as `--add-dir`. Absent or empty means none.
+   */
+  additionalPaths?: string[];
   projectName: string;
   branch: string;
   status: SessionStatus;
@@ -496,6 +501,8 @@ export interface SessionResponse {
   projectId?: string; // Stable identity into the projects table (added during migration).
   status: SessionStatus;
   projectPath: string;
+  /** Extra directories the session was spawned with. Omitted when there are none. */
+  additionalPaths?: string[];
   projectName: string;
   branch: string;
   lastOutput: string;
@@ -820,6 +827,11 @@ export interface PTYManagerOptions {
 
 export interface StartSessionOptions {
   projectPath: string;
+  /**
+   * Directories beyond `projectPath` the agent may work in, already resolved
+   * under the browse root. Spawned as `--add-dir`. Absent or empty means none.
+   */
+  additionalPaths?: string[];
   projectName?: string;
   branch?: string;
   /**
@@ -846,12 +858,22 @@ export interface StartForkSessionOptions {
    */
   forkFromId: string;
   projectPath: string;
+  /**
+   * Directories beyond `projectPath` the agent may work in, already resolved
+   * under the browse root. Spawned as `--add-dir`. Absent or empty means none.
+   */
+  additionalPaths?: string[];
   projectName?: string;
   branch?: string;
 }
 
 export interface StartFreshSessionOptions {
   projectPath: string;
+  /**
+   * Directories beyond `projectPath` the agent may work in, already resolved
+   * under the browse root. Spawned as `--add-dir`. Absent or empty means none.
+   */
+  additionalPaths?: string[];
   projectName?: string;
   branch?: string;
   systemPrompt?: string;

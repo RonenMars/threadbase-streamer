@@ -9,7 +9,7 @@ import type { AgentClient } from "../../agent/agent-client";
 import type { AgentConfig } from "../../agent/agent-config";
 import { handleSendAgentInput } from "../../agent/handle-send-agent-input";
 import { handleStartAgentSession } from "../../agent/handle-start-agent-session";
-import { resolveBrowsePath } from "../../browse";
+import { dropCoveredPaths, resolveAdditionalPaths, resolveBrowsePath } from "../../browse";
 import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "../../claude-flags";
 import type { ConversationCache } from "../../conversation-cache";
 import type { createPool } from "../../db";
@@ -30,6 +30,7 @@ import { PTY_ROWS } from "../../pty-shared";
 import { rateLimitKey } from "../../relay/ingress";
 import type { ScannerManager } from "../../scanner-manager";
 import { type Prompt, PromptAnswerSchema } from "../../schemas/prompt.schema";
+import { AdditionalPathsSchema, MAX_ADDITIONAL_PATHS } from "../../schemas/sessionStart.schema";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
 import type { PendingPermission, PendingQuestion } from "../../server-wiring";
 import { classifyConversationFile } from "../../services/conversations/classification";
@@ -636,6 +637,7 @@ export class SessionHandlers {
       force: body.force === true,
       projectName: body.projectName,
       branch: body.branch,
+      additionalPaths: body.additionalPaths,
     });
 
     if (!outcome.ok) {
@@ -678,6 +680,9 @@ export class SessionHandlers {
             code: "SESSION_START_FAILED",
             provider: CODEX_CLI_PROVIDER,
           });
+          return;
+        case "invalid_additional_paths":
+          json(res, 400, { error: outcome.error, code: outcome.code });
           return;
       }
     }
@@ -746,6 +751,14 @@ export class SessionHandlers {
       return;
     }
 
+    // A fork continues the source's work, so it keeps the source's directories.
+    const additionalPaths = await this.recallAdditionalPaths(
+      sessionId,
+      target.historyId,
+      target.provider,
+      target.projectPath,
+    );
+
     this.discoveryCache = null;
 
     let session: ManagedSession;
@@ -756,6 +769,7 @@ export class SessionHandlers {
         // the only id `codex fork` accepts.
         forkFromId: target.historyId,
         projectPath: target.projectPath,
+        ...(additionalPaths.length > 0 && { additionalPaths }),
         projectName: body.projectName,
         branch: body.branch,
       });
@@ -843,6 +857,11 @@ export class SessionHandlers {
     force?: boolean;
     projectName?: string;
     branch?: string;
+    /**
+     * Raw `additionalPaths` from the request. Absent means "the ones this
+     * conversation last ran with"; an explicit list (even empty) replaces them.
+     */
+    additionalPaths?: unknown;
   }): Promise<ResumeOutcome> {
     const { sessionId } = opts;
     const managed = this.sessionStore.getManaged(sessionId);
@@ -866,6 +885,30 @@ export class SessionHandlers {
     const target = await this.deps.resolveConversationTarget(sessionId);
     if (!target.ok) return target;
     const { historyId, jsonlPath, historyPath, conv, projectPath, provider } = target;
+    let additionalPaths: string[];
+    if (opts.additionalPaths === undefined) {
+      additionalPaths = await this.recallAdditionalPaths(
+        sessionId,
+        historyId,
+        provider,
+        projectPath,
+      );
+    } else {
+      const resolved = await this.resolveStartAdditionalPaths(
+        provider,
+        projectPath,
+        opts.additionalPaths,
+      );
+      if (!resolved.ok) {
+        return {
+          ok: false,
+          reason: "invalid_additional_paths",
+          error: resolved.error,
+          code: resolved.code,
+        };
+      }
+      additionalPaths = resolved.paths;
+    }
     let classification:
       | { isSubagent?: boolean | null; parentConversationId?: string | null }
       | null
@@ -977,6 +1020,7 @@ export class SessionHandlers {
     const session = await this.ptyManager.start(sessionId, {
       provider,
       projectPath,
+      ...(additionalPaths.length > 0 && { additionalPaths }),
       projectName: opts.projectName,
       branch: opts.branch,
       // Omitted on every ordinary resume, so argv is unchanged there.
@@ -2623,6 +2667,96 @@ export class SessionHandlers {
     json(res, 201, { sessionId: session.id });
   }
 
+  /**
+   * The extra directories a conversation last ran with: the live session's,
+   * else the registry row's. Neither Claude's JSONL nor Codex's rollout
+   * records them, so a conversation with no row comes back with none.
+   *
+   * Recorded paths are re-checked rather than trusted: a directory deleted or
+   * moved since is dropped and logged, and the resume goes ahead without it —
+   * losing an extra directory is better than refusing the conversation.
+   */
+  private async recallAdditionalPaths(
+    sessionId: string,
+    historyId: string,
+    provider: ProviderName,
+    projectPath: string,
+  ): Promise<string[]> {
+    if (!capabilitiesFor(provider).multiDirectory) return [];
+    const recorded =
+      this.sessionStore.getManaged(sessionId)?.additionalPaths ??
+      this.registryBoot.storedAdditionalPaths(sessionId);
+    const candidates =
+      recorded.length > 0 || historyId === sessionId
+        ? recorded
+        : this.registryBoot.storedAdditionalPaths(historyId);
+    if (candidates.length === 0) return [];
+    const browseRoot = this.browseRoot;
+    if (!browseRoot) return [];
+    const kept: string[] = [];
+    for (const p of candidates) {
+      try {
+        kept.push(...(await resolveAdditionalPaths(browseRoot, projectPath, [p])));
+      } catch (err) {
+        this.log.warn(`[resume] dropping additional path ${p}`, {
+          event: "session.additional_path_missing",
+          sessionId,
+          path: p,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return dropCoveredPaths(projectPath, kept);
+  }
+
+  /**
+   * Validate `additionalPaths` from a start or resume body. Absent means none.
+   * Entries resolve under the browse root and must be directories; ones the
+   * primary or another entry already covers are dropped. A provider without
+   * the `multiDirectory` capability is refused rather than silently given a
+   * session that lacks the directories the client asked for.
+   */
+  private async resolveStartAdditionalPaths(
+    provider: ProviderName,
+    primaryPath: string,
+    raw: unknown,
+  ): Promise<{ ok: true; paths: string[] } | { ok: false; error: string; code: string }> {
+    if (raw === undefined || raw === null) return { ok: true, paths: [] };
+    const parsed = AdditionalPathsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: `additionalPaths must be an array of at most ${MAX_ADDITIONAL_PATHS} non-empty strings`,
+        code: "INVALID_ADDITIONAL_PATHS",
+      };
+    }
+    if (parsed.data.length === 0) return { ok: true, paths: [] };
+    if (!capabilitiesFor(provider).multiDirectory) {
+      return {
+        ok: false,
+        error: `${provider} does not support additional directories`,
+        code: "MULTI_DIRECTORY_UNSUPPORTED",
+      };
+    }
+    if (!this.browseRoot) {
+      return {
+        ok: false,
+        error: "File browsing not configured. Set browseRoot on the server.",
+        code: "BROWSE_ROOT_NOT_SET",
+      };
+    }
+    try {
+      const paths = await resolveAdditionalPaths(this.browseRoot, primaryPath, parsed.data);
+      return { ok: true, paths };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Invalid additional path",
+        code: "INVALID_ADDITIONAL_PATHS",
+      };
+    }
+  }
+
   async handleStartSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const ip = rateLimitKey(req);
     if (!this.deps.checkSessionStartRateLimit(ip)) {
@@ -2677,6 +2811,17 @@ export class SessionHandlers {
       return;
     }
 
+    const additional = await this.resolveStartAdditionalPaths(
+      provider,
+      resolvedPath,
+      body.additionalPaths,
+    );
+    if (!additional.ok) {
+      json(res, 400, { error: additional.error, code: additional.code });
+      return;
+    }
+    const additionalPaths = additional.paths;
+
     this.discoveryCache = null;
 
     const systemPromptParts = [
@@ -2695,6 +2840,7 @@ export class SessionHandlers {
       const session = await this.ptyManager.startFresh({
         provider,
         projectPath: resolvedPath,
+        ...(additionalPaths.length > 0 && { additionalPaths }),
         projectName: body.projectName,
         ...(includeSystemPrompt && { systemPrompt: systemPromptParts.join("\n") }),
         claudeFlags: this.claudeFlags,

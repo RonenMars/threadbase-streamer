@@ -67,6 +67,7 @@ Short binaries (`agent`, `code`) collide. Discovery must require distinctive arg
 | `systemPrompt` | Flag, positional, or unsupported? |
 | `structuredQuestions` / `permissionGates` | Have we parsed those TUIs? If not: `false`. |
 | `liveControl` | Can we write to the PTY? |
+| `multiDirectory` | Does the CLI take extra directories at spawn (an `--add-dir`-style flag) on fresh, resume *and* fork? Check `--help` for each subcommand, then emit them from the runner from `options.additionalPaths`. If not: `false`, and the start handler refuses `additionalPaths` for this provider. |
 
 ## 3. Binary resolution
 

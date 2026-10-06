@@ -603,6 +603,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     id: s.id,
     provider: s.provider ?? CURSOR_PROVIDER,
     projectPath: s.projectPath,
+    ...(s.additionalPaths?.length && { additionalPaths: s.additionalPaths }),
     projectName: s.projectName,
     branch: s.branch,
     status: s.status,

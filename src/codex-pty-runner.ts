@@ -221,7 +221,14 @@ export class CodexPtyRunner implements SessionRunner {
     // its client already navigated to.
     return this.launch(
       sessionId,
-      ["resume", options.resumeId ?? sessionId, "--cd", options.projectPath, "--no-alt-screen"],
+      [
+        "resume",
+        options.resumeId ?? sessionId,
+        "--cd",
+        options.projectPath,
+        ...addDirArgs(options.additionalPaths),
+        "--no-alt-screen",
+      ],
       options,
     );
   }
@@ -232,7 +239,12 @@ export class CodexPtyRunner implements SessionRunner {
   private async launch(
     sessionId: string,
     args: string[],
-    options: { projectPath: string; projectName?: string; branch?: string },
+    options: {
+      projectPath: string;
+      additionalPaths?: string[];
+      projectName?: string;
+      branch?: string;
+    },
   ): Promise<ManagedSession> {
     const nodePty = await loadPty();
     refuseIfDisposed(this.disposed);
@@ -258,6 +270,7 @@ export class CodexPtyRunner implements SessionRunner {
       id: sessionId,
       provider: CODEX_CLI_PROVIDER,
       projectPath: options.projectPath,
+      ...(options.additionalPaths?.length && { additionalPaths: options.additionalPaths }),
       projectName,
       branch: options.branch ?? "",
       status: "running",
@@ -302,7 +315,12 @@ export class CodexPtyRunner implements SessionRunner {
     // (default + browse-root boundary + client prompt) there so the safety
     // boundary and client instructions aren't silently dropped for Codex
     // sessions. Positional arg goes last, after all `[OPTIONS]`.
-    const args = ["--cd", options.projectPath, "--no-alt-screen"];
+    const args = [
+      "--cd",
+      options.projectPath,
+      ...addDirArgs(options.additionalPaths),
+      "--no-alt-screen",
+    ];
     if (options.systemPrompt) {
       args.push(options.systemPrompt);
     }
@@ -325,7 +343,14 @@ export class CodexPtyRunner implements SessionRunner {
     const sessionId = randomUUID();
     return this.launch(
       sessionId,
-      ["fork", options.forkFromId, "--cd", options.projectPath, "--no-alt-screen"],
+      [
+        "fork",
+        options.forkFromId,
+        "--cd",
+        options.projectPath,
+        ...addDirArgs(options.additionalPaths),
+        "--no-alt-screen",
+      ],
       options,
     );
   }
@@ -1358,11 +1383,18 @@ export class CodexPtyRunner implements SessionRunner {
   }
 }
 
+// Codex's `--add-dir` takes one directory per flag (verified on 0.140.0 and
+// 0.160.1, for the top-level command and for `resume` / `fork`).
+function addDirArgs(paths: readonly string[] | undefined): string[] {
+  return (paths ?? []).flatMap((p) => ["--add-dir", p]);
+}
+
 function toPublicSession(s: InternalSession): ManagedSession {
   return {
     id: s.id,
     provider: s.provider ?? CODEX_CLI_PROVIDER,
     projectPath: s.projectPath,
+    ...(s.additionalPaths?.length && { additionalPaths: s.additionalPaths }),
     projectName: s.projectName,
     branch: s.branch,
     status: s.status,
