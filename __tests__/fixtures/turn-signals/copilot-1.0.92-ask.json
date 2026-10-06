@@ -1,0 +1,332 @@
+{
+  "provider": "copilot",
+  "scenario": {
+    "provider": "copilot",
+    "command": "copilot",
+    "args": [
+      "-C",
+      "/tmp/tb-capture-copilot-ask",
+      "--session-id=46fc6de8-703c-44d6-ac50-5d6277ea23c3"
+    ],
+    "cwd": "/tmp/tb-capture-copilot-ask",
+    "steps": [
+      { "wait": "Do you trust the files in this folder?", "timeout": 40000 },
+      { "quiet": 500 },
+      { "mark": "trustOpen" },
+      { "write": "\r" },
+      { "gone": "Do you trust the files in this folder?" },
+      { "wait": "open sidebar", "timeout": 40000 },
+      { "quiet": 1000 },
+      { "mark": "ready" },
+      {
+        "submit": "Use the ask_user tool to ask me to pick one color out of red, green and blue, then reply with only the color I picked."
+      },
+      { "wait": "Copilot needs information.", "timeout": 90000 },
+      { "quiet": 800 },
+      { "mark": "askOpen" },
+      { "sleep": 2000 },
+      { "mark": "askAnswered" },
+      { "write": "\r" },
+      { "gone": "Copilot needs information." },
+      { "wait": "open sidebar", "timeout": 120000 },
+      { "quiet": 1500 },
+      { "mark": "settled" }
+    ]
+  },
+  "cliVersion": "GitHub Copilot CLI 1.0.92.",
+  "cols": 120,
+  "rows": 40,
+  "submitAt": 4946,
+  "marks": {
+    "trustOpen": 2031,
+    "ready": 4387,
+    "askOpen": 9821,
+    "askAnswered": 11823,
+    "settled": 14661
+  },
+  "chunks": [
+    [1122, "\u001b[>4;2m\u001b[?u"],
+    [1122, "\u001b[?2026$p"],
+    [
+      1122,
+      "\u001b[?1049h\u001b[?2004h\u001b[?1004h\u001b[?1003h\u001b[?1006h\u001b[?25l\u001b[?12$p"
+    ],
+    [1124, "\u001b[?1007$p"],
+    [1126, "\u001b[H\u001b[2J"],
+    [1126, "\u001b[>q"],
+    [1127, "\u001b]10;?\u001b\\"],
+    [
+      1128,
+      "\u001b]11;?\u001b\\\u001b]4;0;?\u001b\\\u001b]4;1;?\u001b\\\u001b]4;2;?\u001b\\\u001b]4;3;?\u001b\\\u001b]4;4;?\u001b\\\u001b]4;5;?\u001b\\\u001b]4;6;?\u001b\\\u001b]4;7;?\u001b\\\u001b]4;8;?\u001b\\\u001b]4;9;?\u001b\\\u001b]4;10;?\u001b\\\u001b]4;11;?\u001b\\\u001b]4;12;?\u001b\\\u001b]4;13;?\u001b\\\u001b]4;14;?\u001b\\\u001b]4;15;?\u001b\\"
+    ],
+    [1182, "\u001b[?25l"],
+    [1185, "\u001b[22;0t\u001b]0;GitHub Copilot\u0007"],
+    [
+      1211,
+      "\u001b[H\u001b[2J \u001b[1;97;44m[Current]\u001b[m  Sessions  \u001b[2m Issues \u001b[m \u001b[2m Pull requests \u001b[m  Gists"
+    ],
+    [1214, "\u001b[?996n"],
+    [
+      1290,
+      "\r\n\r\n\u001b[34m  ╭─╮╭─╮\r\n  ╰─╯╰─╯\u001b[m  Copilot v1.0.92 uses AI.\r\n\u001b[35m  █ \u001b[96m▘▝\u001b[35m █\u001b[m  Check for mistakes.\r\n\u001b[35m   ▔▔▔▔ \u001b[m"
+    ],
+    [
+      1397,
+      "\r\n\r\n \u001b[34m●\u001b[m Tip: /tasks\r\n   └ View and manage tasks (subagents and shell commands)"
+    ],
+    [
+      1520,
+      "\r\u001b[14B\u001b[90m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\r\r\n│\u001b[m \u001b[1mConfirm folder trust\u001b[97C\u001b[0;90m│\r\r\n│\u001b[m \u001b[90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m╭──────────────────────────────────────────────────────────────────────"
+    ],
+    [
+      1521,
+      "────────────────────────────────────────────╮\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m│\u001b[m /private/tmp/tb-capture-copilot-ask\u001b[78C\u001b[90m│\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯\u001b[m \u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m Copilot can read files in this folder and, with your permission, edit them or run code and shell commands. It will   \u001b[90m│\r\r\n│\u001b[m remember your permissions for the rest of this session.\u001b[62C\u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m Do you trust the files in this folder?\u001b[79C\u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m \u001b[97;44m❯ 1. Yes\u001b[39m                                                                     "
+    ],
+    [
+      1522,
+      "                                       \u001b[m \u001b[90m│\r\r\n│\u001b[m   2. Yes, and remember this folder for future sessions\u001b[63C\u001b[90m│\r\r\n│\u001b[m   3. No (Esc)\u001b[104C\u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m \u001b[1m↑/↓\u001b[m to navigate · \u001b[1menter\u001b[m to select · \u001b[1mesc\u001b[m to cancel\u001b[68C\u001b[90m│\r\r\n╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[?7l╯\u001b[?7h\u001b[m"
+    ],
+    [
+      2044,
+      "\u001b[5;5H\u001b[96m╴╶\u001b[35m \r\u001b[18B\u001b[m\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n /private/tmp/tb-capture-copilot-ask                    \u001b[36;101HSession: 0 AIC used \r\r\n\u001b[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n\u001b[m❯\u001b[K\r\n\u001b[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n\u001b[m \u001b[94m●\u001b[m \u001b[94mL\u001b[34moading: 87 skills, 1 MCP server\u001b[m\u001b[K\u001b[38;3H\u001b[?25h"
+    ],
+    [2118, "\u001b[?25l\u001b[5;5H\u001b[96m  \u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [2149, "\u001b[?25l\r\n\r\n\u001b[115CAuto\u001b[38;3H\u001b[?25h"],
+    [
+      2183,
+      "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[40;2H\u001b[94m◉\u001b[m \u001b[34mLo\u001b[94mad\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [2217, "\u001b[?25l\u001b[5;5H\u001b[96m▘▝\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [
+      2251,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mL\u001b[34moadi\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      2306,
+      "\u001b[?25l\r\n\r\n \u001b[1m←\u001b[m open sidebar · Interactive · Manual Approval · \u001b[1m/\u001b[m commands · \u001b[1m?\u001b[m help · \u001b[1mtab\u001b[m next tab\u001b[38;3H\u001b[?25h"
+    ],
+    [2848, "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [2917, "\u001b[?25l\u001b[5;5H\u001b[96m  \u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [2948, "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [3057, "\u001b[?25l\u001b[5;5H\u001b[96m▘▝\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [3168, "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [
+      3202,
+      "\u001b[?25l\u001b[27A\b\u001b[34m●\u001b[m MCP Servers reloaded: 1 server connected\u001b[38;3H\u001b[?25h"
+    ],
+    [3236, "\u001b[?25l\u001b[5;5H\u001b[96m  \u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [3271, "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [3371, "\u001b[?25l\u001b[5;5H\u001b[96m▘▝\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [
+      4598,
+      "\u001b[?25l\u001b[12;38r\u001b[38;1H\r\n\u001b[1;40r\u001b[37;3HUse the ask_user tool to ask me to pick one color out of red, green and blue, then reply with only the color I\r\n  picked.\r\n\r\n Interactive · Manual Approval · \u001b[1m@\u001b[m files · \u001b[1m#\u001b[m issues                                 \u001b[38;10H\u001b[?25h"
+    ],
+    [
+      4958,
+      "\u001b[?25l\u001b[12;37r\u001b[12;1H\u001bM\u001b[1;40r\u001b[38;1H❯\u001b[K\r\n\r\n \u001b[94m●\u001b[m \u001b[94mW\u001b[34morking\u001b[m \u001b[1mesc\u001b[m edit prompt                         \u001b[38;3H\u001b[?25h"
+    ],
+    [
+      4970,
+      "\u001b]0;Use the ask_user tool to ask me to pick one color out of red, green and blue, then reply with only the color I picked. - GitHub Copilot\u0007"
+    ],
+    [
+      4992,
+      "\u001b[?25l\u001b[25A\b❯ Use the ask_user tool to ask me to pick one color out of red, green and blue, then reply with only the color  21:53\r\n   I picked.\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5059,
+      "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5137,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5229,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [5262, "\u001b[?25l\u001b[40;95HAuto → mai-code-1.1-flash\u001b[38;3H\u001b[?25h"],
+    [
+      5331,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [5409, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[6Cng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [5499, "\u001b[?25l\r\n\r\n \u001b[94m●\u001b[m \u001b[2A\b\u001b[?25h"],
+    [5590, "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      5684,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5774,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5865,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5954,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6046,
+      "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [6137, "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[6C\u001b[34mng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [6227, "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[2A\b\u001b[?25h"],
+    [6323, "\u001b]0;Implement Color Selection Tool - GitHub Copilot\u0007"],
+    [6346, "\u001b[?25l\r\n\r\n \u001b[94m○\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      6415,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6500,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6591,
+      "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6682,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6773,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [6866, "\u001b[?25l\r\n\r\n \u001b[94m○\u001b[6C\u001b[34mng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [6956, "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[2A\b\u001b[?25h"],
+    [7046, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      7137,
+      "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7227,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7318,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7408,
+      "\u001b[?25l\r\n\r\n \u001b[94m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7499,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [7591, "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[6C\u001b[34mng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [7682, "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[2A\b\u001b[?25h"],
+    [7773, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      7863,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7955,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      8045,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      8137,
+      "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      8228,
+      "\u001b[?25l\r\n\r\n \u001b[94m●\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [8319, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[6Cng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [8410, "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[2A\b\u001b[?25h"],
+    [8499, "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      8590,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [8624, "\u001b[?25l\u001b[40;12H· 34 B \u001b[1mesc\u001b[m interrupt\u001b[38;3H\u001b[?25h"],
+    [8657, "\u001b[?25l\u001b[40;14H66 \u001b[38;3H\u001b[?25h"],
+    [
+      8690,
+      "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[6C\u001b[m132 B \u001b[1mesc\u001b[m interrupt\u001b[38;3H\u001b[?25h"
+    ],
+    [8725, "\u001b[?25l\u001b[40;15H68 \u001b[38;3H\u001b[?25h"],
+    [8757, "\u001b[?25l\u001b[40;14H212 \u001b[38;3H\u001b[?25h"],
+    [
+      8791,
+      "\u001b[?25l\r\n\r\n \u001b[94m●\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m · 226\u001b[38;3H\u001b[?25h"
+    ],
+    [8825, "\u001b[?25l\u001b[40;15H31 \u001b[38;3H\u001b[?25h"],
+    [
+      8863,
+      "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [8908, "\u001b[?25l\u001b[36;98HSession: 0.05\r\n\r\n❯ \u001b[?25h"],
+    [
+      8941,
+      "\u001b[?25l\r\u001b[10A────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n \u001b[1mCopilot needs information.\r\n\u001b[C\u001b[mPick one color out of red, green, and blue.\r\n\r\n \u001b[1mColor:\r\n\u001b[C\u001b[mChoose exactly one color.\r\n \u001b[1;36m❯ red\r\n\u001b[3C\u001b[mgreen\r\n   blue\u001b[K\r\n   Other (type your answer)\u001b[K\r\n\u001b[K\r\n \u001b[1m↑/↓\u001b[m select · \u001b[1menter\u001b[m accept · \u001b[1mctrl+d\u001b[m decline · \u001b[1mesc\u001b[m cancel\u001b[K\r\n─────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+    ],
+    [8941, "──────\u001b[?7l─\u001b[?7h"],
+    [9008, "\u001b[16;2H○ \u001b[1mAsking user \u001b[mWaiting for response"],
+    [
+      11833,
+      "\r\u001b[12B\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n /private/tmp/tb-capture-copilot-ask\u001b[36;98HSession: 0.05 AIC used\r\n\u001b[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n\u001b[m❯\r\n\u001b[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n\u001b[m \u001b[94m●\u001b[m \u001b[94mW\u001b[34morking\u001b[m · 231 B \u001b[1mesc\u001b[m interrupt                                                              Auto → mai-code-1.1-flash\u001b[?7l \u001b[?7h\u001b[38;"
+    ],
+    [11833, "3H\u001b[?25h"],
+    [
+      11961,
+      "\u001b[?25l\u001b[22A\b\u001b[32m●\u001b[m \u001b[1mAsked user \u001b[mPick one color out of red, green, and blue.\r\n   └ red\u001b[40;2H\u001b[94m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12012,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12103,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12193,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [12285, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[6Cng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [12375, "\u001b[?25l\r\n\r\n \u001b[94m●\u001b[m \u001b[2A\b\u001b[?25h"],
+    [12466, "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      12558,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12650,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12740,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12831,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12921,
+      "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [13003, "\u001b[?25l\u001b[40;16H4 \u001b[38;3H\u001b[?25h"],
+    [
+      13036,
+      "\u001b[?25l\u001b[19A\b\u001b[34m●\u001b[m r\u001b[40;2H\u001b[94m◉\u001b[6C\u001b[34mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [13071, "\u001b[?25l\u001b[19;5He\u001b[38;3H\u001b[?25h"],
+    [
+      13133,
+      "\u001b[?25l\u001b[19;6Hd\u001b[36;110H9 \r\u001b[4B \u001b[1m←\u001b[m open sidebar · Interactive · Manual Approval · \u001b[1m/\u001b[m commands · \u001b[1m?\u001b[m help · \u001b[1mtab\u001b[m next tab\u001b[38;3H\u001b[?25h"
+    ]
+  ]
+}
