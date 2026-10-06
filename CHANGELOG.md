@@ -1,3 +1,10 @@
+## [1.111.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.110.0...v1.111.0) (2026-10-06)
+
+### Features
+
+* **relay:** add stream flow control and per-client rate-limit keys ([#1030](https://github.com/RonenMars/threadbase-streamer/issues/1030)) ([5ec6be6](https://github.com/RonenMars/threadbase-streamer/commit/5ec6be68c9a4125955c4d66796b0c65e9105a34c))
+* **relay:** serve relayed WebSockets through the ingress listener ([#1033](https://github.com/RonenMars/threadbase-streamer/issues/1033)) ([ff307b4](https://github.com/RonenMars/threadbase-streamer/commit/ff307b45076c34ad48af06965ebe9aaa7b2feff5))
+
 ## [1.110.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.109.0...v1.110.0) (2026-10-05)
 
 ### Features
