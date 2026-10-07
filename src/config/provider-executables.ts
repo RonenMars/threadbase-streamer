@@ -6,6 +6,7 @@ import type { ProviderName } from "../providers";
 const CONFIG_KEYS: Record<ProviderName, string> = {
   "claude-code": "claude_executable",
   "codex-cli": "codex_executable",
+  copilot: "copilot_executable",
   cursor: "cursor_executable",
 };
 

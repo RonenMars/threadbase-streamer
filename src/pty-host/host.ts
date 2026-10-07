@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { LiveSessionManager } from "../live-session-manager";
 import type { Logger } from "../logger";
 import { getLogger } from "../logger";
-import { clearClaudeExeCache, clearCodexExeCache, clearCursorExeCache } from "../platform";
+import {
+  clearClaudeExeCache,
+  clearCodexExeCache,
+  clearCopilotExeCache,
+  clearCursorExeCache,
+} from "../platform";
 import { permissionGateKey } from "../services/questions/detectPermissionGate";
 import { questionContentKey } from "../services/questions/detectQuestionFromScreen";
 import type { ManagedSession, StartFreshSessionOptions, StartSessionOptions } from "../types";
@@ -228,6 +233,7 @@ export class SessionHost {
         // the processes they already spawned.
         clearClaudeExeCache();
         clearCodexExeCache();
+        clearCopilotExeCache();
         clearCursorExeCache();
         this.subscribers.add(transport);
         this.log.info("[pty-host] streamer subscribed", {

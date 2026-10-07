@@ -1,6 +1,7 @@
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   canonicalizeProviderName,
   type ProviderName,
@@ -149,12 +150,24 @@ export const GENERIC_TERMINAL_CAPABILITIES: ProviderCapabilities = {
   liveControl: true,
 };
 
+// Vendor intake confirms explicit IDs and native resume. No captured TUI yet.
+export const COPILOT_CAPABILITIES: ProviderCapabilities = {
+  freshSessionId: "explicit",
+  resume: "native",
+  systemPrompt: "unsupported",
+  structuredQuestions: false,
+  permissionGates: false,
+  liveControl: true,
+};
+
 export function capabilitiesFor(provider: ProviderName): ProviderCapabilities {
   switch (canonicalizeProviderName(provider) ?? provider) {
     case CLAUDE_CODE_PROVIDER:
       return CLAUDE_CODE_CAPABILITIES;
     case CODEX_CLI_PROVIDER:
       return CODEX_CLI_CAPABILITIES;
+    case COPILOT_PROVIDER:
+      return COPILOT_CAPABILITIES;
     case CURSOR_PROVIDER:
       return CURSOR_CLI_CAPABILITIES;
     default:

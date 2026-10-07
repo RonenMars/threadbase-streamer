@@ -191,3 +191,11 @@ If the phone can't reach `localhost`, give it a reachable address via (in order 
 ## Global CLI Commands
 
 Deploying installs two equivalent global commands wrapping `~/.threadbase/cli.js`: `tb-streamer` and `threadbase-streamer`. Details: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
+
+### GitHub Copilot CLI (live v1)
+
+The `copilot` provider starts the installed GitHub Copilot CLI with `-C <directory>` and `--session-id=<id>`, and resumes with `--resume=<id>`. An optional model is passed with `--model`. `/api/providers` reports availability; install and authenticate the CLI on the streamer host first.
+
+This integration supports raw terminal input/output, resize, hold, and native resume. Trust/authentication prompts remain in the terminal; no trust bypass, system prompt injection, permission cards, or structured questions are claimed. Until a live TUI capture establishes turn signals, sessions remain `running` while the process is alive; automatic waiting notifications and idle-based holds are unavailable. Startup returns the attachable session immediately.
+
+The event normalizer has documentation-derived fixtures, not captured CLI verification, so installed versions report `version_unverified`. Bulk history discovery under `COPILOT_HOME` / `~/.copilot/session-state` requires a separate scanner release; this change neither indexes nor watches those files. Land streamer support before the companion mobile change.

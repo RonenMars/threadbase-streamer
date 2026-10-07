@@ -1,10 +1,16 @@
 export const CLAUDE_CODE_PROVIDER = "claude-code" as const;
 export const CODEX_CLI_PROVIDER = "codex-cli" as const;
+export const COPILOT_PROVIDER = "copilot" as const;
 export const CURSOR_PROVIDER = "cursor" as const;
 /** Live PTY on main shipped this wire name; accept it and emit `cursor`. */
 export const LEGACY_CURSOR_PROVIDER = "cursor-cli" as const;
 
-export const PROVIDER_NAMES = [CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, CURSOR_PROVIDER] as const;
+export const PROVIDER_NAMES = [
+  CLAUDE_CODE_PROVIDER,
+  CODEX_CLI_PROVIDER,
+  CURSOR_PROVIDER,
+  COPILOT_PROVIDER,
+] as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[number];
 
@@ -27,6 +33,8 @@ export function commandNameForProvider(provider: ProviderName): string {
       return "claude";
     case CODEX_CLI_PROVIDER:
       return "codex";
+    case COPILOT_PROVIDER:
+      return "copilot";
     case CURSOR_PROVIDER:
       return "agent";
     default:

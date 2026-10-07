@@ -119,6 +119,17 @@ describe("rehydrateSkipReason", () => {
     expect(rehydrateSkipReason(row, { now: NOW, projectExists: exists })).toBeNull();
   });
 
+  it("retains raw-terminal Copilot without scanner history or composer counts", () => {
+    const row = mkRow({ provider: "copilot", prompt_count: 0 });
+    expect(
+      rehydrateSkipReason(row, { now: NOW, projectExists: exists, hasConversation: () => false }),
+    ).toBeNull();
+    expect(rowToStubSession(row)).toMatchObject({
+      provider: "copilot",
+      projectPath: row.project_path,
+    });
+  });
+
   it("skips a session that was never prompted and has no conversation", () => {
     // Claude writes the JSONL on the first turn, so an opened-and-abandoned
     // start has nothing to resume. Stop already forgets these; a restart used
