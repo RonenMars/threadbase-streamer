@@ -1,3 +1,9 @@
+## [1.113.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.112.1...v1.113.0) (2026-10-07)
+
+### Features
+
+* **providers:** add Copilot live terminal support ([#1002](https://github.com/RonenMars/threadbase-streamer/issues/1002)) ([b5bfc03](https://github.com/RonenMars/threadbase-streamer/commit/b5bfc03f7a41c881e8ca62a4b0371810c25e5021)), closes [#1001](https://github.com/RonenMars/threadbase-streamer/issues/1001)
+
 ## [1.112.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.112.0...v1.112.1) (2026-10-07)
 
 ### Bug Fixes
