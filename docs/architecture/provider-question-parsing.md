@@ -18,6 +18,7 @@ Each claim is tagged with how it is known:
 
 - **[code]** — verified by reading the code at the commit above.
 - **[transcript YYYY-MM-DD]** — observed in a working session on that date and not re-proven against current code; treat it as a lead.
+- **[capture]** — read from a raw PTY capture under `__tests__/fixtures/turn-signals/`; the Copilot 1.0.92 and Cursor 2026.10.01 captures arrive with #1036.
 - **[unknown]** — not established; nothing here should be read as a guess.
 
 Screen examples are copied from fixtures in the repository, and each one names its fixture and says whether that fixture is a raw capture.
@@ -475,13 +476,26 @@ Copilot persists trusted folders and "don't ask again" choices in its own config
 
 ### 5.1 Kinds of question the CLI asks
 
-**[unknown]**.
-No Cursor question, approval or limit screen has been captured; the only Cursor fixtures are turn-signal captures (`__tests__/fixtures/turn-signals/cursor-2026.09.23-*.json`).
-The workspace-trust prompt is known to exist only because the runner passes a flag to skip it.
+Four, on Cursor 2026.10.01. **[capture]**
+
+- **Workspace trust**, when `--trust` is absent (`cursor-2026.10.01-trust.json`).
+- **Question card**, when the model asks a clarifying question (`-ask.json`).
+- **Shell approval**, for a command outside the allowlist (`-gate.json`).
+- **File delete confirmation** (`-delete.json`).
+
+The two approval cards appear unless `approvalMode` in `~/.cursor/cli-config.json` is `"unrestricted"`; a config with no `approvalMode` behaves as `"allowlist"`. File edits raise no card.
+Limit and login screens are **[unknown]**.
 
 ### 5.2 What it looks like on screen
 
-**[unknown]** — no fixture, so no example is given.
+Stable text on the rendered screen, from the raw captures above. **[capture]**
+
+| Card | Stable text |
+|---|---|
+| Workspace trust | `Workspace Trust Required`, `▶ [a] Trust this workspace`, `[q] Quit` |
+| Question | `Question 1 of 1`, `› [ ] <option>` rows, `Other: (type to answer)`, footer `Space select · Enter next/submit · Esc to skip`. The box title is the model's own wording and cannot identify the card. |
+| Shell approval | `Waiting for approval...`, `Run this command?`, `Not in allowlist: <command>`, `→ Run (once) (y)`, `Skip & tell the agent what to do instead (esc or n)` |
+| File delete | `Delete this file?`, `→ Delete (y)`, `Keep (n)` |
 
 ### 5.3 Detection trigger
 
@@ -502,7 +516,7 @@ None. **[code]**
 ### 5.6 How an answer is written back
 
 `sendKeys` and `sendRawKeys` write the given bytes to the PTY with no gate logic (`src/cursor-pty-runner.ts:207`, `:223`). **[code]**
-Which keys Cursor's prompts accept is **[unknown]**.
+Keys observed to work: Space then Enter on the question card, `y` on the shell approval card, `y` on the file delete card. **[capture]** The other options were not exercised.
 
 ### 5.7 Persistence or auto-answer
 
@@ -512,14 +526,14 @@ Nothing is persisted by the streamer.
 ### 5.8 Known bugs and gaps
 
 - Any approval Cursor asks for mid-turn is invisible to the streamer: no card, no state change, no push. **[code]**
-- Whether such an approval leaves the `ctrl+c to stop` hint on screen (and so leaves the session `running`) is **[unknown]**.
+- Every card removes the `ctrl+c to stop` hint, so the session does not stay `running`: the runner reports a signalled end while Cursor waits. **[capture]** Tracked in #1037.
 
 ## 6. Comparison matrix
 
 | | Claude Code | Codex | Copilot CLI (unmerged) | Cursor |
 |---|---|---|---|---|
-| **Kinds of question** | Tool gate, `AskUserQuestion` (single, multi-select, multi-question, free text), submit confirm, startup choice, picker, shell prompt | Trust gate, hooks gate, command approval, usage and rate limit, numbered picker | Boxed numbered cards, `ask_user` forms, slash pickers | Unknown |
-| **Screen example available** | Raw: gate, `AskUserQuestion` | Captured: sign-in picker, hooks gate; unprovenanced: approval, usage limit | Printed views in `docs/compatibility/copilot-cli-questions.md`; no raw capture in the repository | None |
+| **Kinds of question** | Tool gate, `AskUserQuestion` (single, multi-select, multi-question, free text), submit confirm, startup choice, picker, shell prompt | Trust gate, hooks gate, command approval, usage and rate limit, numbered picker | Boxed numbered cards, `ask_user` forms, slash pickers | Trust, question card, shell approval, file delete |
+| **Screen example available** | Raw: gate, `AskUserQuestion` | Captured: sign-in picker, hooks gate; unprovenanced: approval, usage limit | Printed views in `docs/compatibility/copilot-cli-questions.md`; raw: trust, shell card, `ask_user` (#1036) | Raw: trust, question, shell approval, file delete (#1036) |
 | **Detection trigger** | OSC 777, paint-time scrape (300 ms throttle), `Enter to select` footer, transcript `tool_use` | Rendered-screen regexes only | None | None |
 | **Options** | Last numbered block, bottom-up | Numbered rows; contiguous `1..N` for pickers | — | — |
 | **Descriptions** | Transcript only; dropped from the screen path (PR #1012 open) | Skipped; transport has no field | — | — |
@@ -590,7 +604,7 @@ Each item names the provider and the evidence.
 13. **Copilot CLI — its numbered cards collide with the `AskUserQuestion` footer marker.** `ASK_MENU_FOOTER_RE`, `detectPermissionGate.ts:259`; a Copilot detector cannot reuse `detectGateScreen` unchanged. **[draft 2026-10-05]**
 14. **Copilot CLI — a structured source exists and is unused.** Permission and `ask_user` events in the CLI's session event log. **[draft 2026-10-05]**
 15. **Copilot CLI — login, update, quota and Escape behaviours uncaptured.** **[unknown]**
-16. **Cursor — nothing known about its prompts.** No fixture; `capabilities.ts:128`. **[unknown]**
+16. **Cursor — four cards are captured and none is detected.** Trust, question, shell approval and file delete (5.1); `capabilities.ts:128` still declares no question or gate support. **[capture]**, **[code]**
 17. **All providers — a card on the phone can be a device-side scrape.** `tb-mobile:utils/parseQuestionBlock.ts:211`. **[code]**
 18. **Mobile — a status flip may replace the server card with a scraped one and re-enable sending, so text is typed into an open menu.** Filed in the mobile repository as issue #1248 (P3, unconfirmed). **[transcript 2026-10-04]**
 19. **Mobile — whether Copilot or Cursor screens scrape into a card at all.** **[unknown]**

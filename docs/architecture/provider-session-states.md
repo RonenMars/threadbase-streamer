@@ -23,6 +23,7 @@ Each claim carries an evidence tag:
 - **[code, derived]** — follows from the cited code by reasoning, but no test or capture reproduces it.
 - **[doc]** — stated in an existing repository document, not re-read in code here.
 - **[transcript, date]** — reported in an earlier investigation and not re-checked here against a live CLI.
+- **[capture]** — read from a raw PTY capture under `__tests__/fixtures/turn-signals/`; the Copilot 1.0.92 and Cursor 2026.10.01 captures arrive with #1036.
 - **[unknown]** — nobody has established it.
 
 ## 1. Overview
@@ -284,7 +285,7 @@ Runner: `CursorPtyRunner` in `src/cursor-pty-runner.ts`.
 
 - The runner has no gate or question detection, and holds no `onPermissionChange` callback at all (`:68`–`:72`). **[code]**
 - Capabilities declare `permissionGates: false` and `structuredQuestions: false` (`src/services/providers/capabilities.ts:124`, `CURSOR_CLI_CAPABILITIES`). **[code]**
-- What Cursor paints during a tool approval, and whether the busy hint leaves the screen while it waits, is **[unknown]**.
+- Cursor 2026.10.01 removes the busy hint and paints nothing while a question card, a shell approval card or a file delete card is open, and shows the hint again once the card is answered (`cursor-2026.10.01-ask.json`, `-gate.json`, `-delete.json`). **[capture]**
 
 ### Submit mechanics that affect state
 
@@ -311,7 +312,7 @@ Runner: `CursorPtyRunner` in `src/cursor-pty-runner.ts`.
 - **`sendKeys` can strand `running`.** A key sent while `waiting_input` flips to `running` and arms no watch; the quiet check returns early without `turnBusy` (`:213`, `:514`). A key that starts no turn leaves the session `running` with no recovery path. **[code, derived]** A fix is pending (section 7).
 - **Boot confidence is mislabelled.** The observed compose box is reported as `quiet-fallback` / `inferred` (`:508`). **[code]** A relabel is pending (section 7).
 - **Hint split across chunks.** A hint cut by a chunk boundary is never seen, so that turn ends by `submit-stale` (`:488`). **[code, derived]**
-- **Possible false end during an approval.** If an approval repaint removes the hint, the quiet check fires a `turn-signal` end mid-turn. **[unknown]**
+- **False end while a card is open.** A question, shell approval or file delete card removes the hint, so the quiet check fires a `turn-signal` end mid-turn; replaying the three captures through the runner settles `waiting_input` / `turn-signal` at the card, and again at the real end once the card is answered through `sendKeys`. **[capture]** Tracked in #1037.
 - **Boot-queued prompt runs as `waiting_input`.** Same shape as Claude and Codex (`:555`, `:320`). **[code, derived]**
 - **No agent phase.** The runner never sets `subStatus` (`:619`). **[code]**
 - **A hung turn is unbounded.** On Cursor 2026.10.01 a one-word prompt sat on `Working` for 137 s with no answer; the runner would hold `running` indefinitely. **[transcript, 2026-10-04]**
@@ -369,8 +370,9 @@ The runner's header states the design: without a captured readiness or turn sign
 - **The idle reaper can never release it.** The reaper skips every `running` session, so a Copilot PTY lives until its process exits or a hold lands (`src/server.ts:1272`). **[code, derived]**
 - **A hold is always deferred to the cap.** `hold_session` on a session that reads `running` defers `GRACE_MAX_DEFERS` times before holding (`src/server.ts:1321`). **[code, derived]**
 - **A hold latched on `waiting_input` can never trigger** (`src/server.ts:450`, `holdWhenIdle`). **[code, derived]**
-- **Candidate turn signal, unverified.** Mid-turn Copilot painted a `◎ ○ ◉ ●` spinner with `Working` and an `esc interrupt` hint, absent at the idle `❯` prompt; the one dump this came from mixed repaint frames. **[transcript, 2026-10-06]**
-- **Whether Copilot sets a terminal title or any OSC turn signal** is **[unknown]**; no PTY capture of a Copilot turn exists in the repository.
+- **The turn signal is the bottom status row.** Copilot 1.0.92 paints `Working` there for the length of a turn and removes it at the end; it is drawn with cursor moves, so it shows on the rendered screen and not as a string in a raw chunk (`copilot-1.0.92-turn.json`). **[capture]**
+- **There is no title or OSC turn signal.** Every title ends in `GitHub Copilot` and only names the session. **[capture]**
+- **A card hides the signal.** The permission card and the `ask_user` form replace the status row, so neither `Working` nor the idle footer is on screen while one is open (`copilot-1.0.92-gate.json`, `-ask.json`). **[capture]** The detector is tracked in #1038.
 - **Tests cover I/O, hold and exit only**, not status transitions (`__tests__/copilot-pty-runner.test.ts` on the branch). **[code]**
 
 ## 6. Comparison matrix
@@ -416,7 +418,7 @@ Its merge base is older than `main` at `58352e8d`, so it needs a rebase before i
 |---|---|---|---|
 | 1 | Copilot | No readiness, turn-start or turn-end detection; status is `running` from spawn to exit. | `src/copilot-pty-runner.ts:28`–`:34`, `:189` (branch) **[code]**; live session **[transcript, 2026-10-06]** |
 | 2 | Copilot | No "finished" push, no `session_ready`, never reaped, hold always deferred to the cap. | `waitingInputNotifier.ts:242`; `src/server.ts:1272`, `:1321` **[code, derived]** |
-| 3 | Copilot | Does Copilot emit a title or OSC turn signal, and is `esc interrupt` a clean busy marker? | No capture exists **[unknown]**; one mixed-frame dump **[transcript, 2026-10-06]** |
+| 3 | Copilot | Answered: no title or OSC turn signal; busy is `Working` on the bottom status row, which a permission card or `ask_user` form replaces. The detector is #1038. | `copilot-1.0.92-turn.json`, `-gate.json`, `-ask.json` **[capture]** |
 | 4 | Copilot | No boot queue and a single-write submit: is early input lost or mis-submitted? | `src/copilot-pty-runner.ts:134` (branch) **[unknown]** |
 | 5 | Claude, Codex, Cursor | A prompt queued during boot is flushed after `waiting_input` is set, so its turn runs as `waiting_input` and sends no "finished". | `src/pty-manager.ts:686`, `:1527`; `src/codex-pty-runner.ts:617`, `:1281`; `src/cursor-pty-runner.ts:320`, `:555` **[code, derived]** — not reproduced; no test asserts the status after a flush |
 | 6 | Codex, Cursor | `sendKeys` from `waiting_input` flips to `running` with no recovery. | `src/codex-pty-runner.ts:398`; `src/cursor-pty-runner.ts:213` **[code, derived]**; fix pending (section 7) |
@@ -424,7 +426,7 @@ Its merge base is older than `main` at `58352e8d`, so it needs a rebase before i
 | 8 | Cursor | No late-start recovery; a slow turn start is reported `waiting_input` with no push. | `src/cursor-pty-runner.ts:488`, `:314` **[code, derived]**; fix pending |
 | 9 | Cursor | Normal boot is reported as `inferred`. | `src/cursor-pty-runner.ts:508` **[code]**; relabel pending |
 | 10 | Cursor | Busy hint tested per chunk, no boundary carry-over. | `src/cursor-pty-runner.ts:488` **[code, derived]** |
-| 11 | Cursor | Does an approval repaint remove `ctrl+c to stop`, producing a false signalled end? | No capture of Cursor 2026.10.01's approval screen **[unknown]**; noted **[transcript, 2026-10-04]** |
+| 11 | Cursor | Answered: yes. A question, shell approval or file delete card removes `ctrl+c to stop`, and the runner reports a signalled end while Cursor waits. Tracked in #1037. | `cursor-2026.10.01-ask.json`, `-gate.json`, `-delete.json` **[capture]** |
 | 12 | Codex | Does Codex drop its title spinner while an approval card waits, and does the card paint in a later chunk? | No capture of Codex 0.160.0's approval screen **[unknown]**; noted **[transcript, 2026-10-04]** |
 | 13 | Codex | No deferred settle and no re-open after a card; both matter only if item 12 is true. | `src/codex-pty-runner.ts:1106`–`:1118`, `:1086` **[code, derived]** |
 | 14 | Codex | Boot fallback re-arms with no cap. | `src/codex-pty-runner.ts:370`, `:376` **[code]** |
