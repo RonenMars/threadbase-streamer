@@ -195,7 +195,7 @@ export class CopilotPtyRunner implements SessionRunner {
     session.screen.write("", () => this.settleIfIdle(session));
   }
 
-  private settleIfIdle(session: InternalSession): void {
+  private settleIfIdle(session: InternalSession, submitStale = false): void {
     const id = session.id;
     if (this.sessions.get(id) !== session || session.status !== "running") return;
     const rows = bottomRows(session);
@@ -206,7 +206,10 @@ export class CopilotPtyRunner implements SessionRunner {
       this.markReady(session, "turn-signal", "turn-signal:busy-row-cleared");
     } else if (this.booting.has(id) && rows[0]?.includes(COPILOT_IDLE_FOOTER)) {
       this.markReady(session, "prompt-marker", "boot:idle-footer");
-    } else if (Date.now() - (this.submittedAt.get(id) ?? Infinity) >= COPILOT_SUBMIT_STALE_MS) {
+    } else if (
+      submitStale ||
+      Date.now() - (this.submittedAt.get(id) ?? Infinity) >= COPILOT_SUBMIT_STALE_MS
+    ) {
       // A submit that started no turn (a slash command, an empty line).
       this.markReady(session, "quiet-fallback", "submit-stale");
     }
@@ -251,7 +254,9 @@ export class CopilotPtyRunner implements SessionRunner {
     const watch = setTimeout(() => {
       this.submitWatchTimers.delete(id);
       // The turn started; its end is read off the screen once it goes quiet.
-      if (!this.turnBusy.has(id)) this.settleIfIdle(session);
+      // Told it is stale rather than left to re-measure: a timer can fire a
+      // millisecond short of its delay by the wall clock, and nothing rechecks.
+      if (!this.turnBusy.has(id)) this.settleIfIdle(session, true);
     }, COPILOT_SUBMIT_STALE_MS);
     watch.unref?.();
     this.submitWatchTimers.set(id, watch);
