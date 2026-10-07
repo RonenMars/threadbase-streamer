@@ -54,6 +54,24 @@ const CURSOR_TURN_BUSY_TEXT = "ctrl+c to stop";
 // session goes back to `running` and its real end still sends "finished". Same
 // window as Claude's and Codex's.
 const LATE_TURN_START_MS = 30_000;
+// Cards that block a turn on the user (Cursor 2026.10.01): the question card,
+// the shell approval card and the file delete card. Cursor takes the busy hint
+// down for as long as one is open and paints nothing until it is answered, so
+// the hint leaving the screen is not a turn end while a card is on it (#1037).
+// Each is two texts from the card's own chrome, both required, so a line of
+// agent prose that quotes one of them cannot hold a finished turn open. The
+// question card's title is the model's wording and is never matched.
+const CURSOR_CARD_TEXTS: readonly (readonly [string | RegExp, string])[] = [
+  [/Question \d+ of \d+/, "Enter next/submit · Esc to skip"],
+  ["Run this command?", "Run (once) (y)"],
+  ["Delete this file?", "Keep (n)"],
+];
+
+function cursorCardOnScreen(lines: string[]): boolean {
+  const has = (text: string | RegExp) =>
+    lines.some((l) => (typeof text === "string" ? l.includes(text) : text.test(l)));
+  return CURSOR_CARD_TEXTS.some(([prompt, option]) => has(prompt) && has(option));
+}
 
 /**
  * Cursor CLI (`agent`) PTY runner.
@@ -62,8 +80,9 @@ const LATE_TURN_START_MS = 30_000;
  * (headless, skip the workspace-trust prompt), `--resume=<id>`, positional
  * opening prompt. Boot settles on quiet or the 8s fallback, but only after the
  * compose box has painted (CURSOR_BOOT_MARKER). A turn returns to waiting_input
- * once its busy hint (CURSOR_TURN_BUSY_TEXT) has come and gone; submit-stale
- * recovers only a submit that never showed it.
+ * once its busy hint (CURSOR_TURN_BUSY_TEXT) has come and gone, unless a card
+ * (CURSOR_CARD_TEXTS) is what took it down; submit-stale recovers only a submit
+ * that never showed it.
  *
  * Input clears the compose line (`Ctrl+U`) before writing text — Cursor leaves
  * the previous prompt editable, and a bare write would concatenate turns.
@@ -558,6 +577,9 @@ export class CursorPtyRunner implements SessionRunner {
       .then((lines) => {
         if (session.status !== "running" || !this.turnBusy.has(sessionId)) return;
         if (lines.some((l) => l.includes(CURSOR_TURN_BUSY_TEXT))) return;
+        // A card is Cursor waiting on the user mid-turn, not a turn end. The
+        // answer brings the hint back, and the turn then ends as any other.
+        if (cursorCardOnScreen(lines)) return;
         this.turnBusy.delete(sessionId);
         this.markReady(sessionId, session, "turn-signal", "turn-signal:busy-hint-cleared");
       })
