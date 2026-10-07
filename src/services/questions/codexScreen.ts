@@ -1,5 +1,6 @@
 import type { PermissionOption } from "../../types";
 import type { CodexGateType } from "./codexGateAnswers";
+import { joinWrappedQuestion } from "./detectQuestionFromScreen";
 
 /**
  * Codex's rendered-screen regexes and predicates: readiness, busy/boot state,
@@ -157,8 +158,9 @@ export function detectCodexCommandApproval(lines: string[]): CodexBlockingPrompt
 }
 
 // A Codex picker row: an optional selection cursor (Codex paints ">", the
-// compose prefix is "›"), the number, and the label.
-const CODEX_PICKER_ROW_RE = /^\s*([>›❯])?\s*(\d+)\.\s+(.+?)\s*$/;
+// compose prefix is "›"), the number, and the label. The gutter before the
+// number is captured so a description row can be told from a footer by indent.
+const CODEX_PICKER_ROW_RE = /^(\s*([>›❯])?\s*)(\d+)\.\s+(.+?)\s*$/;
 // Codex's compose prefix. A picker owns the screen instead of the composer, so
 // a compose line below a numbered block means the block is transcript output.
 const CODEX_COMPOSE_LINE_RE = /^\s*›/;
@@ -188,10 +190,19 @@ export function detectCodexPicker(lines: string[]): CodexBlockingPrompt | null {
   }
   if (codexScreenShowsReady(lines)) return null;
 
-  const rows: { line: number; index: number; label: string; cursor: boolean }[] = [];
+  const rows: { line: number; index: number; label: string; cursor: boolean; indent: number }[] =
+    [];
   for (let i = 0; i < lines.length; i++) {
     const m = CODEX_PICKER_ROW_RE.exec(lines[i]);
-    if (m) rows.push({ line: i, index: Number(m[2]), label: m[3], cursor: Boolean(m[1]) });
+    if (m) {
+      rows.push({
+        line: i,
+        index: Number(m[3]),
+        label: m[4],
+        cursor: Boolean(m[2]),
+        indent: m[1].length,
+      });
+    }
   }
   if (rows.length < 2) return null;
 
@@ -215,21 +226,35 @@ export function detectCodexPicker(lines: string[]): CodexBlockingPrompt | null {
 
   // The intro sits above the block, separated from it by the same blank rows
   // Codex puts between the options — skip those before collecting it, or the
-  // card carries a placeholder instead of Codex's own words.
+  // card carries a placeholder instead of Codex's own words. The sentence wraps
+  // across rows, so the row nearest the options is only its tail (#1042).
   let above = block[0].line - 1;
   while (above >= 0 && lines[above].trim() === "") above--;
-  const intro: string[] = [];
-  for (let i = above; i >= 0 && intro.length < 3; i--) {
-    const t = lines[i].trim();
-    if (t === "") break;
-    intro.unshift(t);
-  }
-  const prompt = intro.length > 0 ? intro[intro.length - 1] : "Codex is asking you to choose";
-  const detail = intro.slice(0, -1).join("\n");
+  const prompt =
+    above >= 0
+      ? joinWrappedQuestion(lines, above, lines[above].trim())
+      : "Codex is asking you to choose";
   return {
     prompt,
-    ...(detail ? { detail } : {}),
-    options: block.map((r) => ({ index: r.index, label: r.label, answerKeys: `${r.index}` })),
+    options: block.map((r) => {
+      // The description is what Codex prints under the row, indented past the
+      // row's number to sit under its label. A footer painted straight below
+      // the last row starts at the number's own column and is not one.
+      const description: string[] = [];
+      for (let i = r.line + 1; i < lines.length; i++) {
+        const indent = lines[i].length - lines[i].trimStart().length;
+        if (lines[i].trim() === "" || indent <= r.indent || CODEX_PICKER_ROW_RE.test(lines[i])) {
+          break;
+        }
+        description.push(lines[i].trim());
+      }
+      return {
+        index: r.index,
+        label: r.label,
+        answerKeys: `${r.index}`,
+        ...(description.length > 0 ? { description: description.join(" ") } : {}),
+      };
+    }),
   };
 }
 

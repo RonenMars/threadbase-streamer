@@ -267,6 +267,9 @@ export interface PermissionOption {
   // over `index` when present; absent for OSC-777 gates. Additive — old clients
   // ignore it and fall back to `${index}\r`.
   answerKeys?: string;
+  // The line(s) the provider prints under the option, e.g. Codex's picker rows
+  // (#1042). Display only. Additive — old clients ignore it and show the label.
+  description?: string;
 }
 
 // A user message the streamer submitted to the PTY. `ts` is epoch ms recorded

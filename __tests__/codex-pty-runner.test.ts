@@ -985,17 +985,24 @@ describe("CodexPtyRunner — exit handling", () => {
 
 // #868: Codex's sign-in picker, captured from codex-cli 0.154.0 spawned as the
 // runner spawns it. Rows carry an indented description line, and the trailing
-// footer is not an option: Enter there picks the highlighted row.
+// footer is not an option: Enter there picks the highlighted row. The blank
+// rows are the capture's own (the same rows as detect-codex-picker.test.ts);
+// they are what ends the intro sentence and each description.
 const SIGN_IN_PICKER_SCREEN =
   "  Welcome to Codex, OpenAI's command-line coding agent\r\n" +
+  "\r\n" +
   "  Sign in with ChatGPT to use Codex as part of your paid plan\r\n" +
   "  or connect an API key for usage-based billing\r\n" +
+  "\r\n" +
   "> 1. Sign in with ChatGPT\r\n" +
   "     Usage included with Plus, Pro, Business, and Enterprise plans\r\n" +
+  "\r\n" +
   "  2. Sign in with Device Code\r\n" +
   "     Sign in from another device with a one-time code\r\n" +
+  "\r\n" +
   "  3. Provide your own API key\r\n" +
   "     Pay for what you use\r\n" +
+  "\r\n" +
   "  Press enter to continue\r\n";
 
 // What choosing option 3 paints — no numbered rows, so the picker is gone.
@@ -1016,11 +1023,14 @@ describe("CodexPtyRunner — numbered picker (#868)", () => {
 
     expect(proc.write).not.toHaveBeenCalled();
     expect(cards).toHaveLength(1);
-    expect(cards[0]?.options).toEqual([
+    expect(
+      cards[0]?.options.map(({ index, label, answerKeys }) => ({ index, label, answerKeys })),
+    ).toEqual([
       { index: 1, label: "Sign in with ChatGPT", answerKeys: "1" },
       { index: 2, label: "Sign in with Device Code", answerKeys: "2" },
       { index: 3, label: "Provide your own API key", answerKeys: "3" },
     ]);
+    expect(cards[0]?.options[2]?.description).toBe("Pay for what you use");
 
     // The banner animates; a repaint of the same picker must not re-broadcast.
     proc._emit("data", SIGN_IN_PICKER_SCREEN);

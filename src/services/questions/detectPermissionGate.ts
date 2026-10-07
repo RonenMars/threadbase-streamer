@@ -33,6 +33,12 @@ export interface PermissionOption {
    * unstructured shell-prompt path (detectShellPrompt) populates it.
    */
   answerKeys?: string;
+  /**
+   * The line(s) the provider prints under the option, when it prints any
+   * (Codex's picker rows). Display only, and additive: a client that does not
+   * know it shows the bare label.
+   */
+  description?: string;
 }
 
 export interface PermissionGate {

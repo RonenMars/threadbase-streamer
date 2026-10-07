@@ -61,7 +61,23 @@ describe("PTY prompt normalization", () => {
     expect(JSON.stringify(draft)).not.toContain('"index"');
   });
 
-  // A PTY prompt carries NO deadline, and that is a contract rule rather than an
+  // A Codex picker prints a description under each option (#1042). It is
+  // display text, so unlike the answer keys it does cross into the contract.
+  it("carries a permission option's description into the prompt", () => {
+    const draft = permissionPromptDraft(SESSION, {
+      prompt: "Pick one",
+      options: [
+        { index: 1, label: "One", answerKeys: "1", description: "The first" },
+        { index: 2, label: "Two", answerKeys: "2" },
+      ],
+    });
+
+    expect(draft.questions[0].options).toEqual([
+      { label: "One", description: "The first" },
+      { label: "Two" },
+    ]);
+  });
+
   // oversight: expiresAt is "a nullable absolute timestamp from authoritative
   // provider behavior", and a scraped prompt has no such authority — Claude
   // Code never tells us the gate has a lifetime.

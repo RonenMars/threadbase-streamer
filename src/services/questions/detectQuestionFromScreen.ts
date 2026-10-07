@@ -103,7 +103,7 @@ const HEADER_CHIP_RE = /^[☐☑☒]/;
 // screen with prose directly above the question cannot be swallowed whole.
 const MAX_WRAPPED_QUESTION_ROWS = 6;
 
-function joinWrappedQuestion(lines: string[], questionIdx: number, last: string): string {
+export function joinWrappedQuestion(lines: string[], questionIdx: number, last: string): string {
   const rows = [last];
   for (let i = questionIdx - 1; i >= 0 && rows.length < MAX_WRAPPED_QUESTION_ROWS; i--) {
     const trimmed = stripBoxGutter(lines[i]).trim();
