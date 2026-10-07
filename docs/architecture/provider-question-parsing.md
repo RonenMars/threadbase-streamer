@@ -6,7 +6,7 @@ Scope: permission gates, startup and trust gates, multi-choice questions, multi-
 Session state is covered in `docs/architecture/provider-session-states.md`; it is mentioned here only where a question holds a turn open.
 
 Read against `origin/main` at `58352e8d` (release 1.111.0) on 2026-10-06.
-Copilot CLI is **not on `main`**: everything in section 4 describes the unmerged branch `feat/copilot-provider` (PR #1002, open, read at `abe0f7d4`) and a separate uncommitted investigation draft.
+Copilot CLI is **not on `main`**: everything in section 4 describes the unmerged branch `feat/copilot-provider` (PR #1002, open, read at `abe0f7d4`) and the investigation report in `docs/compatibility/copilot-cli-questions.md`.
 
 ## Reading this document
 
@@ -390,8 +390,8 @@ Codex is the only provider with a streamer-side answer store. **[code]**
 ## 4. Copilot CLI
 
 **Unmerged.**
-Everything in this section describes the branch `feat/copilot-provider` (PR #1002, open, read at `abe0f7d4`), tagged **[branch]**, or an uncommitted investigation draft dated 2026-10-05 against Copilot CLI 1.0.91, tagged **[draft 2026-10-05]**.
-The draft's raw captures are not in the repository, and the draft is a printed view, so blank-row fidelity of its examples is unverified.
+Everything in this section describes the branch `feat/copilot-provider` (PR #1002, open, read at `abe0f7d4`), tagged **[branch]**, or the investigation report `docs/compatibility/copilot-cli-questions.md`, dated 2026-10-05 against Copilot CLI 1.0.91, tagged **[draft 2026-10-05]**.
+The report's raw captures are not in the repository, and the report is a printed view, so blank-row fidelity of its examples is unverified.
 None of it is on `main`.
 
 ### 4.1 Kinds of question the CLI asks
@@ -519,7 +519,7 @@ Nothing is persisted by the streamer.
 | | Claude Code | Codex | Copilot CLI (unmerged) | Cursor |
 |---|---|---|---|---|
 | **Kinds of question** | Tool gate, `AskUserQuestion` (single, multi-select, multi-question, free text), submit confirm, startup choice, picker, shell prompt | Trust gate, hooks gate, command approval, usage and rate limit, numbered picker | Boxed numbered cards, `ask_user` forms, slash pickers | Unknown |
-| **Screen example available** | Raw: gate, `AskUserQuestion` | Captured: sign-in picker, hooks gate; unprovenanced: approval, usage limit | Draft only, not in the repository | None |
+| **Screen example available** | Raw: gate, `AskUserQuestion` | Captured: sign-in picker, hooks gate; unprovenanced: approval, usage limit | Printed views in `docs/compatibility/copilot-cli-questions.md`; no raw capture in the repository | None |
 | **Detection trigger** | OSC 777, paint-time scrape (300 ms throttle), `Enter to select` footer, transcript `tool_use` | Rendered-screen regexes only | None | None |
 | **Options** | Last numbered block, bottom-up | Numbered rows; contiguous `1..N` for pickers | — | — |
 | **Descriptions** | Transcript only; dropped from the screen path (PR #1012 open) | Skipped; transport has no field | — | — |
