@@ -5,6 +5,7 @@ import {
   type FileStatEntry,
   type JsonlParseState,
   parseCodexJsonlLine,
+  parseCopilotJsonlLine,
   parseCursorJsonlLine,
   parseJsonlLine,
 } from "@threadbase-sh/scanner";
@@ -19,6 +20,7 @@ import { getLogger } from "./logger";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   canonicalizeProviderName,
   LEGACY_CURSOR_PROVIDER,
@@ -753,6 +755,10 @@ export class ConversationCache {
         parse: (text, index) => parseCursorJsonlLine(text, index),
         state: null,
       };
+    }
+    // Copilot has no injected preamble, so like Claude it ignores `index`.
+    if (provider === COPILOT_PROVIDER) {
+      return { parse: (text) => parseCopilotJsonlLine(text), state: null };
     }
     if (provider !== CLAUDE_CODE_PROVIDER) return null;
     // `state` is returned so the incremental writer can persist it per file:
