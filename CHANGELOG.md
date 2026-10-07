@@ -1,3 +1,9 @@
+## [1.113.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.3...v1.113.4) (2026-10-07)
+
+### Bug Fixes
+
+* **cursor:** hold the turn open while a card waits on the user ([#1053](https://github.com/RonenMars/threadbase-streamer/issues/1053)) ([449c5b2](https://github.com/RonenMars/threadbase-streamer/commit/449c5b230410a316ff57941d512b8f0421452e30)), closes [#1037](https://github.com/RonenMars/threadbase-streamer/issues/1037)
+
 ## [1.113.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.2...v1.113.3) (2026-10-07)
 
 ### Bug Fixes
