@@ -244,15 +244,42 @@ describe("requests accepted on the relay ingress listener", () => {
           "utf-8",
         ),
       });
-      const paired = await call(relay, {
-        ...legacy(token),
-        body: {
-          ...legacy(token).body,
-          e2ee: { v: 1, noise: initiator.message.toString("base64") },
-        },
-      });
+      const { token: _token, ...withoutToken } = legacy(token).body;
+      const e2ee = { v: 1, noise: initiator.message.toString("base64") };
+      const paired = await call(relay, { ...legacy(token), body: { ...withoutToken, e2ee } });
       expect(paired.status).toBe(200);
       expect(typeof paired.body.e2ee?.noise).toBe("string");
+      // Nothing but the authenticated reply: no device token in the clear, and
+      // no API key sealed to a key the relay could have swapped.
+      expect(Object.keys(paired.body)).toEqual(["e2ee"]);
+    });
+
+    it("refuses a pairing that carries the token, and revokes that token", async () => {
+      const token = await mintToken();
+      const handshake = (psk: string) => ({
+        v: 1,
+        noise: writeMessage1({
+          prologue: PAIR_PROLOGUE,
+          staticKeyPair: generateKeyPair(),
+          responderStaticPub: Buffer.from(loadOrCreateServerIdentity().publicKey, "base64url"),
+          psk: pskFromPairToken(psk),
+          payload: Buffer.from(JSON.stringify({ v: 1, readOnly: false }), "utf-8"),
+        }).message.toString("base64"),
+      });
+      const body = { ...legacy(token).body, e2ee: handshake(token) };
+
+      // A wrong token is refused and leaves the live one alone.
+      const stranger = await call(relay, {
+        ...legacy(token),
+        body: { ...body, token: "pt_not_the_token" },
+      });
+      expect(stranger.body.code).toBe("RELAY_PAIR_TOKEN_FORBIDDEN");
+
+      const refused = await call(relay, { ...legacy(token), body });
+      expect(refused.status).toBe(400);
+      expect(refused.body.code).toBe("RELAY_PAIR_TOKEN_FORBIDDEN");
+      // The relay has seen it, so it pairs nothing any more, even directly.
+      expect((await call(tcp, { ...legacy(token), body })).status).toBe(401);
     });
   });
 });
