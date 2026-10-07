@@ -13,6 +13,7 @@ import { EventEmitter } from "events";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
+import { CopilotPtyRunner } from "../src/copilot-pty-runner";
 import { CursorPtyRunner } from "../src/cursor-pty-runner";
 import { PTYManager } from "../src/pty-manager";
 import type { ManagedSession } from "../src/types";
@@ -35,6 +36,7 @@ vi.mock("node-pty", () => {
 
 interface Capture {
   submitAt: number;
+  marks: Record<string, number>;
   chunks: [number, string][];
 }
 
@@ -45,6 +47,9 @@ const CLAUDE_TURN = load("claude-2.1.280-turn.json");
 const CLAUDE_GATE = load("claude-2.1.280-gate.json");
 const CODEX_TURN = load("codex-0.156.1-turn.json");
 const CURSOR_TURN = load("cursor-2026.09.23-turn.json");
+const COPILOT_TURN = load("copilot-1.0.92-turn.json");
+const COPILOT_GATE = load("copilot-1.0.92-gate.json");
+const COPILOT_ASK = load("copilot-1.0.92-ask.json");
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching literal OSC escapes
 const CLAUDE_TITLE = /\x1b\]0;([◐◓◑◒✳])/g;
@@ -390,4 +395,92 @@ describe("Cursor: a card on screen keeps the turn open", () => {
     },
     15_000,
   );
+});
+
+// Copilot has no title signal: its turn is the `Working` status row, which is
+// painted with cursor moves and so only exists on the rendered screen (#1038).
+// What the captures show is pinned in pty-capture-fixtures.test.ts. A permission
+// card or an ask_user form replaces that row while the turn is still open.
+//
+// Boot is replayed to `marks.ready` rather than to the submit: the capture types
+// its prompt before submitting, and typed text hides the idle footer that
+// settles boot.
+async function replayCopilot(cap: Capture, holdAtMs: number) {
+  const changes: ManagedSession[] = [];
+  const runner = new CopilotPtyRunner({ onStatusChange: (s) => changes.push({ ...s }) });
+  const session = await runner.startFresh({ projectPath: "/tmp", projectName: "proj" });
+  const proc = (runner as any).sessions.get(session.id).process;
+  const emit = (after: number, upTo: number) => {
+    for (const [ms, d] of cap.chunks) if (ms > after && ms <= upTo) proc._emit("data", d);
+  };
+
+  emit(-1, cap.marks.ready);
+  await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), { timeout: 2_000 });
+  const boot = changes.at(-1)?.statusSource;
+  changes.length = 0;
+
+  runner.sendInput(session.id, "prompt");
+  emit(cap.marks.ready, holdAtMs);
+  // Past the 500ms quiet check and the 2s submit-stale.
+  await sleep(2_600);
+  const held = changes.map((c) => [c.status, c.statusSource]);
+
+  emit(holdAtMs, Number.POSITIVE_INFINITY);
+  await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), { timeout: 3_000 });
+  const all = changes.map((c) => [c.status, c.statusSource]);
+  runner.dispose();
+  return { boot, held, all };
+}
+
+describe("Copilot: the turn is read off the rendered status row", () => {
+  const TURN = [
+    ["running", "user-input"],
+    ["waiting_input", "turn-signal"],
+  ];
+
+  it("settles boot on the idle footer, stays running through the turn, ends once", async () => {
+    const r = await replayCopilot(COPILOT_TURN, COPILOT_TURN.submitAt + 1_000);
+    expect(r.boot).toBe("prompt-marker");
+    expect(r.held).toEqual([["running", "user-input"]]);
+    expect(r.all).toEqual(TURN);
+  }, 15_000);
+
+  it("a permission card keeps the turn open", async () => {
+    const r = await replayCopilot(COPILOT_GATE, COPILOT_GATE.marks.gateOpen);
+    expect(r.held).toEqual([["running", "user-input"]]);
+    expect(r.all).toEqual(TURN);
+  }, 15_000);
+
+  it("an ask_user form keeps the turn open", async () => {
+    const r = await replayCopilot(COPILOT_ASK, COPILOT_ASK.marks.askOpen);
+    expect(r.held).toEqual([["running", "user-input"]]);
+    expect(r.all).toEqual(TURN);
+  }, 15_000);
+
+  it("ignores Working in a reply, and reopens on a busy row nobody announced", async () => {
+    const changes: ManagedSession[] = [];
+    const runner = new CopilotPtyRunner({ onStatusChange: (s) => changes.push({ ...s }) });
+    const session = await runner.startFresh({ projectPath: "/tmp", projectName: "proj" });
+    const proc = (runner as any).sessions.get(session.id).process;
+    const footer = (text: string) => proc._emit("data", `\x1b[40;1H\x1b[2K${text}`);
+    const last = () => [changes.at(-1)?.status, changes.at(-1)?.statusSource];
+
+    footer(" ← open sidebar · Interactive");
+    await vi.waitFor(() => expect(last()).toEqual(["waiting_input", "prompt-marker"]));
+
+    // A submit that starts no turn, with the word in the reply area only.
+    runner.sendInput(session.id, "prompt");
+    proc._emit("data", "\x1b[14;1H● Working on the fix");
+    footer(" Interactive · Manual Approval · @ files");
+    await vi.waitFor(() => expect(last()).toEqual(["waiting_input", "quiet-fallback"]), {
+      timeout: 4_000,
+    });
+
+    // The busy row after that guess (a late start, or a turn typed in the terminal).
+    footer(" ● Working esc edit prompt");
+    await vi.waitFor(() => expect(last()).toEqual(["running", "turn-signal"]));
+    footer(" ← open sidebar · Interactive");
+    await vi.waitFor(() => expect(last()).toEqual(["waiting_input", "turn-signal"]));
+    runner.dispose();
+  }, 15_000);
 });

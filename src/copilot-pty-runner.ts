@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { basename } from "path";
+import { getLogger, type Logger } from "./logger";
 import { clearCopilotExeCache, resolveCopilotExe } from "./platform";
 import { COPILOT_PROVIDER } from "./providers";
 import {
@@ -19,25 +20,69 @@ import type {
   SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
+  StatusSource,
   UserMessage,
 } from "./types";
+import { debounce } from "./utils/debounce";
 
 const OUTPUT_BUFFER_MAX = 65536;
 const INPUT_HISTORY_MAX = 50;
+const QUIET_DETECT_MS = 500;
+const COPILOT_SUBMIT_STALE_MS = 2_000;
+// Copilot's turn signal (verified on Copilot CLI 1.0.92): while a turn runs the
+// bottom row reads `<spinner> Working ...`, repainted about every 90ms. The
+// terminal title only names the session. The row is painted with cursor moves,
+// so the word never arrives whole in a chunk and is read off the rendered
+// screen; and only off that row, because a reply can say "Working" too.
+const COPILOT_BUSY_ROW = /^\s*\S\s+Working\b/;
+// The bottom row while idle with an empty compose box. Typing swaps it for
+// compose hints, so it marks the end of boot and nothing else: mid-session,
+// idle is the busy row being absent.
+const COPILOT_IDLE_FOOTER = "open sidebar";
+// A permission card or an ask_user form replaces the status row, so the busy
+// row is gone while Copilot waits on the user. Their footers sit just above the
+// bottom border, and the turn stays open while either shows.
+const COPILOT_CARD_FOOTERS = [/enter to select\b.*\besc to cancel/, /enter accept\b.*\besc cancel/];
+const COPILOT_FOOTER_ROWS = 3;
+
+/** The last rows Copilot painted, bottom row first. */
+function bottomRows(session: InternalSession): string[] {
+  const buf = session.screen.buffer.active;
+  const rows: string[] = [];
+  for (let y = session.screen.rows - 1; y >= 0 && rows.length < COPILOT_FOOTER_ROWS; y--) {
+    const row = buf.getLine(buf.baseY + y)?.translateToString(true) ?? "";
+    if (rows.length > 0 || row.trim() !== "") rows.push(row);
+  }
+  return rows;
+}
 
 /**
  * Copilot's live-v1 adapter: native explicit IDs/resume, raw terminal I/O.
- * No trust bypass, Claude flags, TUI scraping, or borrowed transcript watcher.
- * Without a captured readiness/turn signal we retain `running` until exit or
- * hold. The start route returns the attachable session without waiting for a
- * semantic readiness event; users handle trust/auth prompts in the terminal.
+ * No trust bypass, Claude flags, or borrowed transcript watcher. The start
+ * route returns the attachable session without waiting for readiness; users
+ * handle trust/auth prompts and permission cards in the terminal.
+ *
+ * Status is read off the rendered screen: boot settles on the first idle
+ * footer, a turn is `running` while the status row shows `Working`, and it ends
+ * once the output is quiet with neither that row nor a card footer on screen.
  */
 export class CopilotPtyRunner implements SessionRunner {
   private sessions = new Map<string, InternalSession>();
   private startPromises = new Map<string, Promise<ManagedSession>>();
   private disposed = false;
+  private log: Logger;
+  // Sessions that have not settled once yet.
+  private booting = new Set<string>();
+  // Sessions whose current turn has shown the busy row.
+  private turnBusy = new Set<string>();
+  // When the last prompt was written, until that turn settles.
+  private submittedAt = new Map<string, number>();
+  private quietCheckers = new Map<string, ReturnType<typeof debounce<[]>>>();
+  private submitWatchTimers = new Map<string, NodeJS.Timeout>();
 
-  constructor(private options: PTYManagerOptions = {}) {}
+  constructor(private options: PTYManagerOptions = {}) {
+    this.log = options.logger ?? getLogger();
+  }
 
   async start(sessionId: string, options: StartSessionOptions): Promise<ManagedSession> {
     refuseIfDisposed(this.disposed);
@@ -101,16 +146,22 @@ export class CopilotPtyRunner implements SessionRunner {
       inputHistory: [],
     };
     this.sessions.set(sessionId, session);
+    this.booting.add(sessionId);
+    const quiet = debounce(() => this.detectQuiet(session), QUIET_DETECT_MS);
+    this.quietCheckers.set(sessionId, quiet);
     proc.onData((data: string) => {
       if (this.sessions.get(sessionId) !== session) return;
       session.outputBuffer = Buffer.concat([session.outputBuffer, Buffer.from(data)]);
       if (session.outputBuffer.length > OUTPUT_BUFFER_MAX) {
         session.outputBuffer = session.outputBuffer.subarray(-OUTPUT_BUFFER_MAX);
       }
-      session.screen.write(data);
+      // The spinner repaints faster than the quiet check, so the busy row is
+      // only ever seen by looking as each chunk lands.
+      session.screen.write(data, () => this.detectBusy(session));
       session.lastOutput = stripAnsi(data);
       session.lastActivityAt = new Date();
       this.options.onOutput?.(sessionId, data);
+      quiet();
     });
     proc.onExit(({ exitCode }: { exitCode: number }) => {
       if (this.sessions.get(sessionId) !== session) return;
@@ -129,9 +180,81 @@ export class CopilotPtyRunner implements SessionRunner {
     return session;
   }
 
+  private detectBusy(session: InternalSession): void {
+    if (this.sessions.get(session.id) !== session) return;
+    if (!COPILOT_BUSY_ROW.test(bottomRows(session)[0] ?? "")) return;
+    this.turnBusy.add(session.id);
+    // A turn nobody announced: started from the terminal, or one whose busy row
+    // landed after submit-stale had already settled it on a guess.
+    if (session.status === "waiting_input") this.setRunning(session, "turn-signal");
+  }
+
+  private detectQuiet(session: InternalSession): void {
+    if (this.sessions.get(session.id) !== session) return;
+    // Flush pending writes first: xterm parses on a later tick.
+    session.screen.write("", () => this.settleIfIdle(session));
+  }
+
+  private settleIfIdle(session: InternalSession): void {
+    const id = session.id;
+    if (this.sessions.get(id) !== session || session.status !== "running") return;
+    const rows = bottomRows(session);
+    if (COPILOT_BUSY_ROW.test(rows[0] ?? "")) return;
+    // Copilot is waiting on the user, not finished.
+    if (rows.some((row) => COPILOT_CARD_FOOTERS.some((footer) => footer.test(row)))) return;
+    if (this.turnBusy.has(id)) {
+      this.markReady(session, "turn-signal", "turn-signal:busy-row-cleared");
+    } else if (this.booting.has(id) && rows[0]?.includes(COPILOT_IDLE_FOOTER)) {
+      this.markReady(session, "prompt-marker", "boot:idle-footer");
+    } else if (Date.now() - (this.submittedAt.get(id) ?? Infinity) >= COPILOT_SUBMIT_STALE_MS) {
+      // A submit that started no turn (a slash command, an empty line).
+      this.markReady(session, "quiet-fallback", "submit-stale");
+    }
+  }
+
+  private setRunning(session: InternalSession, source: StatusSource): void {
+    session.status = "running";
+    session.statusSource = source;
+    session.statusUpdatedAt = new Date();
+    this.options.onStatusChange?.(toPublicSession(session));
+  }
+
+  private markReady(session: InternalSession, source: StatusSource, reason: string): void {
+    const id = session.id;
+    this.turnBusy.delete(id);
+    this.submittedAt.delete(id);
+    this.clearSubmitWatch(id);
+    session.status = "waiting_input";
+    session.statusSource = source;
+    session.statusUpdatedAt = new Date();
+    this.log.info(`[copilot.ready] ${id.slice(0, 8)} ${reason}`, {
+      event: "copilot.ready",
+      sessionId: id,
+      reason,
+    });
+    this.options.onStatusChange?.(toPublicSession(session));
+    if (this.booting.delete(id)) this.options.onReady?.(toPublicSession(session));
+  }
+
+  private clearSubmitWatch(id: string): void {
+    const timer = this.submitWatchTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.submitWatchTimers.delete(id);
+  }
+
   sendInput(id: string, input: string): number {
     const session = this.requireSession(id);
     session.process.write(`${input}\r`);
+    if (session.status === "waiting_input") this.setRunning(session, "user-input");
+    this.submittedAt.set(id, Date.now());
+    this.clearSubmitWatch(id);
+    const watch = setTimeout(() => {
+      this.submitWatchTimers.delete(id);
+      // The turn started; its end is read off the screen once it goes quiet.
+      if (!this.turnBusy.has(id)) this.settleIfIdle(session);
+    }, COPILOT_SUBMIT_STALE_MS);
+    watch.unref?.();
+    this.submitWatchTimers.set(id, watch);
     const ts = Date.now();
     session.inputHistory.push({ text: input, ts });
     if (session.inputHistory.length > INPUT_HISTORY_MAX) session.inputHistory.shift();
@@ -188,6 +311,12 @@ export class CopilotPtyRunner implements SessionRunner {
 
   private finish(session: InternalSession, source: "shutdown" | "process-exit"): void {
     this.sessions.delete(session.id);
+    this.quietCheckers.get(session.id)?.cancel();
+    this.quietCheckers.delete(session.id);
+    this.clearSubmitWatch(session.id);
+    this.booting.delete(session.id);
+    this.turnBusy.delete(session.id);
+    this.submittedAt.delete(session.id);
     session.status = "idle";
     session.statusSource = source;
     session.statusUpdatedAt = new Date();
