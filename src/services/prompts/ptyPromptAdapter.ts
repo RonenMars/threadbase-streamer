@@ -16,7 +16,10 @@ export function permissionPromptDraft(sessionId: string, gate: PermissionGate | 
         text: message,
         header: "Approval",
         inputMode: "single",
-        options: gate.options.map((option) => ({ label: option.label })),
+        options: gate.options.map((option) => ({
+          label: option.label,
+          ...(option.description ? { description: option.description } : {}),
+        })),
         allowOther: false,
         secret: "unknown",
       },

@@ -45,17 +45,52 @@ describe("detectCodexPicker", () => {
   it("claims the sign-in picker, with the trailing footer as neither prompt nor option", () => {
     const card = detectCodexPicker(SIGN_IN_PICKER);
     expect(card?.options).toEqual([
-      { index: 1, label: "Sign in with ChatGPT", answerKeys: "1" },
-      { index: 2, label: "Sign in with Device Code", answerKeys: "2" },
-      { index: 3, label: "Provide your own API key", answerKeys: "3" },
+      {
+        index: 1,
+        label: "Sign in with ChatGPT",
+        answerKeys: "1",
+        description: "Usage included with Plus, Pro, Business, and Enterprise plans",
+      },
+      {
+        index: 2,
+        label: "Sign in with Device Code",
+        answerKeys: "2",
+        description: "Sign in from another device with a one-time code",
+      },
+      {
+        index: 3,
+        label: "Provide your own API key",
+        answerKeys: "3",
+        description: "Pay for what you use",
+      },
     ]);
-    expect(card?.prompt).toBe("or connect an API key for usage-based billing");
-    expect(card?.detail).toContain("Sign in with ChatGPT to use Codex as part of your paid plan");
+    // The intro wraps onto a second row; the card carries the whole sentence
+    // and not just the row nearest the options (#1042).
+    expect(card?.prompt).toBe(
+      "Sign in with ChatGPT to use Codex as part of your paid plan or connect an API key for usage-based billing",
+    );
+    expect(card?.detail).toBeUndefined();
   });
 
   it("claims a plain numbered menu with no description rows", () => {
     const card = detectCodexPicker(["  Choose a model", "› 1. Fast", "  2. Thorough"]);
-    expect(card?.options.map((o) => o.index)).toEqual([1, 2]);
+    expect(card?.prompt).toBe("Choose a model");
+    expect(card?.options).toEqual([
+      { index: 1, label: "Fast", answerKeys: "1" },
+      { index: 2, label: "Thorough", answerKeys: "2" },
+    ]);
+  });
+
+  // A footer painted straight under the last row sits at the row's own indent,
+  // not under its label, so it is not that option's description.
+  it("does not take a footer directly under the last row as its description", () => {
+    const screen = SIGN_IN_PICKER.filter((l) => l.trim() !== "");
+    const card = detectCodexPicker(screen);
+    expect(card?.options.map((o) => o.description)).toEqual([
+      "Usage included with Plus, Pro, Business, and Enterprise plans",
+      "Sign in from another device with a one-time code",
+      "Pay for what you use",
+    ]);
   });
 
   it("does not claim the API key entry screen", () => {
