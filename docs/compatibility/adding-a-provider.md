@@ -70,6 +70,8 @@ The manifest records `provider`, `providerVersion`, `capturedAt`, `sanitized`, a
 
 Then add the version to `VERIFIED_AGAINST` in `src/services/providers/providerHealth.ts`.
 
+**Capture the terminal too.** The transcript fixture pins what the CLI writes to disk; turn signals, gates and question cards exist only on screen. `scripts/capture-pty.ts` records a real CLI under the runners' PTY size and a launchd-like environment into `__tests__/fixtures/turn-signals/<provider>-<version>-<what>.json`: raw chunks with their timing, named marks, and the scenario that produced it, so the fixture can be re-recorded on the next build. Run the CLI in a neutral scratch directory (`/tmp/tb-capture-…`), because most CLIs paint their working directory; the script refuses a capture that contains the local user name or home path. Format a new fixture with `npx biome format --write __tests__/fixtures/turn-signals/`, or `Lint` fails on it. Pin what a detector will rely on in `__tests__/pty-capture-fixtures.test.ts`, from the rendered screen at a mark, never from a printed view.
+
 ### 5. Register the runner
 
 Add the `SessionRunner` implementation to the `LiveSessionManager` map. Unknown providers throw a 501 from `assertSupportedProvider`.

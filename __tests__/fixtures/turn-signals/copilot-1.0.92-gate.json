@@ -1,0 +1,316 @@
+{
+  "provider": "copilot",
+  "scenario": {
+    "provider": "copilot",
+    "command": "copilot",
+    "args": [
+      "-C",
+      "/tmp/tb-capture-copilot-gate",
+      "--session-id=7fc72239-ecf3-4100-81e0-294a7646d9c8"
+    ],
+    "cwd": "/tmp/tb-capture-copilot-gate",
+    "steps": [
+      { "wait": "Do you trust the files in this folder?", "timeout": 40000 },
+      { "quiet": 500 },
+      { "mark": "trustOpen" },
+      { "write": "\r" },
+      { "gone": "Do you trust the files in this folder?" },
+      { "wait": "open sidebar", "timeout": 40000 },
+      { "quiet": 1000 },
+      { "mark": "ready" },
+      { "submit": "Run the shell command `touch a.txt`. Do not ask me any questions." },
+      { "wait": "Do you want to run this command?", "timeout": 90000 },
+      { "quiet": 800 },
+      { "mark": "gateOpen" },
+      { "sleep": 2000 },
+      { "mark": "gateAnswered" },
+      { "write": "\r" },
+      { "gone": "Do you want to run this command?" },
+      { "wait": "open sidebar", "timeout": 120000 },
+      { "quiet": 1500 },
+      { "mark": "settled" }
+    ]
+  },
+  "cliVersion": "GitHub Copilot CLI 1.0.92.",
+  "cols": 120,
+  "rows": 40,
+  "submitAt": 4996,
+  "marks": {
+    "trustOpen": 2033,
+    "ready": 4434,
+    "gateOpen": 8989,
+    "gateAnswered": 10990,
+    "settled": 13825
+  },
+  "chunks": [
+    [1160, "\u001b[>4;2m\u001b[?u"],
+    [1160, "\u001b[?2026$p"],
+    [
+      1161,
+      "\u001b[?1049h\u001b[?2004h\u001b[?1004h\u001b[?1003h\u001b[?1006h\u001b[?25l\u001b[?12$p"
+    ],
+    [1162, "\u001b[?1007$p"],
+    [1162, "\u001b[H\u001b[2J"],
+    [
+      1163,
+      "\u001b[>q\u001b]10;?\u001b\\\u001b]11;?\u001b\\\u001b]4;0;?\u001b\\\u001b]4;1;?\u001b\\"
+    ],
+    [
+      1163,
+      "\u001b]4;2;?\u001b\\\u001b]4;3;?\u001b\\\u001b]4;4;?\u001b\\\u001b]4;5;?\u001b\\\u001b]4;6;?\u001b\\\u001b]4;7;?\u001b\\\u001b]4;8;?\u001b\\\u001b]4;9;?\u001b\\\u001b]4;10;?\u001b\\"
+    ],
+    [
+      1163,
+      "\u001b]4;11;?\u001b\\\u001b]4;12;?\u001b\\\u001b]4;13;?\u001b\\\u001b]4;14;?\u001b\\\u001b]4;15;?\u001b\\"
+    ],
+    [1219, "\u001b[?25l"],
+    [1222, "\u001b[22;0t\u001b]0;GitHub Copilot\u0007"],
+    [
+      1245,
+      "\u001b[H\u001b[2J \u001b[1;97;44m[Current]\u001b[m  Sessions  \u001b[2m Issues \u001b[m \u001b[2m Pull requests \u001b[m  Gists"
+    ],
+    [1250, "\u001b[?996n"],
+    [
+      1276,
+      "\r\n\r\n\u001b[34m  ╭─╮╭─╮\r\n  ╰─╯╰─╯\u001b[m  Copilot v1.0.92 uses AI.\r\n\u001b[35m  █ \u001b[96m▘▝\u001b[35m █\u001b[m  Check for mistakes.\r\n\u001b[35m   ▔▔▔▔ \u001b[m"
+    ],
+    [
+      1413,
+      "\r\n\r\n \u001b[34m●\u001b[m Tip: /allow-all\r\n   └ Enable all permissions (tools, paths, and URLs)"
+    ],
+    [
+      1520,
+      "\r\u001b[14B\u001b[90m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\r\r\n│\u001b[m \u001b[1mConfirm folder trust\u001b[97C\u001b[0;90m│\r\r\n│\u001b[m \u001b[90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m╭──────────────────────────────────────────────────────────────────────"
+    ],
+    [
+      1520,
+      "────────────────────────────────────────────╮\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m│\u001b[m /private/tmp/tb-capture-copilot-gate\u001b[77C\u001b[90m│\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯\u001b[m \u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m Copilot can read files in this folder and, with your permission, edit them or run code and shell commands. It will   \u001b[90m│\r\r\n│\u001b[m remember your permissions for the rest of this session.\u001b[62C\u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m Do you trust the files in this folder?\u001b[79C\u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m \u001b[97;44m❯ 1. Yes\u001b[39m                                                                    "
+    ],
+    [
+      1520,
+      "                                        \u001b[m \u001b[90m│\r\r\n│\u001b[m   2. Yes, and remember this folder for future sessions\u001b[63C\u001b[90m│\r\r\n│\u001b[m   3. No (Esc)\u001b[104C\u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m \u001b[1m↑/↓\u001b[m to navigate · \u001b[1menter\u001b[m to select · \u001b[1mesc\u001b[m to cancel\u001b[68C\u001b[90m│\r\r\n╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[?7l╯\u001b[?7h\u001b[m"
+    ],
+    [
+      2073,
+      "\u001b[5;5H\u001b[96m╴╶\u001b[35m \r\u001b[18B\u001b[m\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n /private/tmp/tb-capture-copilot-gate                   \u001b[36;101HSession: 0 AIC used \r\r\n\u001b[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n\u001b[m❯\u001b[K\r\n\u001b[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n\u001b[m \u001b[94m●\u001b[m \u001b[94mL\u001b[34moading: 87 skills, 1 MCP server\u001b[m\u001b[K\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      2140,
+      "\u001b[?25l\u001b[5;5H\u001b[96m  \u001b[35m \u001b[40;2H\u001b[94m◉\u001b[m \u001b[34mLo\u001b[94mad\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      2217,
+      "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[40;116H\u001b[mAuto\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      2251,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mL\u001b[34moadi\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [2283, "\u001b[?25l\u001b[5;5H\u001b[96m▘▝\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [
+      2318,
+      "\u001b[?25l\r\n\r\n \u001b[1m←\u001b[m open sidebar · Interactive · Manual Approval · \u001b[1m/\u001b[m commands · \u001b[1m?\u001b[m help · \u001b[1mtab\u001b[m next tab\u001b[38;3H\u001b[?25h"
+    ],
+    [2889, "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [2960, "\u001b[?25l\u001b[5;5H\u001b[96m  \u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [2993, "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [3090, "\u001b[?25l\u001b[5;5H\u001b[96m▘▝\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [
+      3195,
+      "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[11;2H\u001b[34m●\u001b[m MCP Servers reloaded: 1 server connected\u001b[38;3H\u001b[?25h"
+    ],
+    [3289, "\u001b[?25l\u001b[5;5H\u001b[96m  \u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [3322, "\u001b[?25l\u001b[5;5H\u001b[96m╴╶\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [3420, "\u001b[?25l\u001b[5;5H\u001b[96m▘▝\u001b[35m \u001b[m\u001b[38;3H\u001b[?25h"],
+    [
+      4647,
+      "\u001b[?25lRun the shell command `touch a.txt`. Do not ask me any questions.\r\n\r\n Interactive · Manual Approval · \u001b[1m@\u001b[m files · \u001b[1m#\u001b[m issues                                 \u001b[38;68H\u001b[?25h"
+    ],
+    [
+      5008,
+      "\u001b[?25l\r❯ \u001b[K\r\n\r\n \u001b[94m●\u001b[m \u001b[94mW\u001b[34morking\u001b[m \u001b[1mesc\u001b[m edit prompt                         \u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5022,
+      "\u001b]0;Run the shell command `touch a.txt`. Do not ask me any questions. - GitHub Copilot\u0007"
+    ],
+    [
+      5041,
+      "\u001b[?25l\u001b[25A\b❯ Run the shell command `touch a.txt`. Do not ask me any questions.\u001b[45C21:53\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5108,
+      "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5188,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [5279, "\u001b[?25l\u001b[40;95HAuto → mai-code-1.1-flash\u001b[38;3H\u001b[?25h"],
+    [
+      5314,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5381,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [5462, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[6Cng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [5552, "\u001b[?25l\r\n\r\n \u001b[94m●\u001b[m \u001b[2A\b\u001b[?25h"],
+    [5645, "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      5734,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5825,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      5917,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [6002, "\u001b]0;Run Shell Command Touch - GitHub Copilot\u0007"],
+    [
+      6025,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6097,
+      "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [6188, "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[6C\u001b[34mng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [6279, "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[2A\b\u001b[?25h"],
+    [6371, "\u001b[?25l\r\n\r\n \u001b[94m○\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      6465,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6553,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6644,
+      "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6733,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      6823,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [6914, "\u001b[?25l\r\n\r\n \u001b[94m○\u001b[6C\u001b[34mng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [7004, "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[2A\b\u001b[?25h"],
+    [7096, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      7186,
+      "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7277,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7369,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7459,
+      "\u001b[?25l\r\n\r\n \u001b[94m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      7550,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [7641, "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[6C\u001b[34mng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [7732, "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[2A\b\u001b[?25h"],
+    [7823, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[2A\b\u001b[?25h"],
+    [7898, "\u001b[?25l\u001b[40;12H· 6 B \u001b[1mesc\u001b[m interrupt\u001b[38;3H\u001b[?25h"],
+    [
+      7932,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[40;14H\u001b[m134 B \u001b[1mesc\u001b[m interrupt\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      8005,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [8046, "\u001b[?25l\u001b[36;98HSession: 0.05\r\n\r\n❯ \u001b[?25h"],
+    [
+      8128,
+      "\u001b[?25l\r\u001b[12A\u001b[90m╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\r\r\n│\u001b[m \u001b[1mCreate the requested empty file in the current workspace\u001b[61C\u001b[0;90m│\r\r\n│\u001b[m \u001b[90m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m╭────────────────────────────────────────────────────────"
+    ],
+    [
+      8128,
+      "──────────────────────────────────────────────────────────╮\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m│\u001b[m touch a.txt\u001b[102C\u001b[90m│\u001b[m \u001b[90m│\r\r\n│\u001b[m \u001b[90m╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯\u001b[m \u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m Do you want to run this command?\u001b[85C\u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m \u001b[97;44m❯\u001b[39m \u001b[97m1. Yes\u001b[39m                                                                                                            \u001b[m \u001b[90m│\r\r\n│\u001b[m   2. Yes, and don't ask again for `touch` in this directory (/private/tmp/tb-capture-copilot-gate)                   \u001b[90m│\r\r\n│\u001b[m   3. No, "
+    ],
+    [
+      8128,
+      "and tell Copilot what to do differently (Esc to stop)                                                       \u001b[90m│\r\r\n│\u001b[118C│\r\r\n│\u001b[m \u001b[1m↑/↓\u001b[m to navigate · \u001b[1menter\u001b[m to select · \u001b[1mesc\u001b[m to cancel                                                                    \u001b[90m│\r\r\n╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[?7l╯\u001b[?7h\u001b[m"
+    ],
+    [
+      8161,
+      "\u001b[15;2H\u001b[33m$\u001b[m \u001b[1mShell \u001b[mCreate the requested empty file in the current workspace\r\n   touch a.txt"
+    ],
+    [
+      11011,
+      "\r\u001b[10B\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n /private/tmp/tb-capture-copilot-gate                                                            Session: 0.05 AIC used \r\r\n\u001b[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n\u001b[m❯\u001b[K\r\n\u001b[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\r\n\u001b[m \u001b[94m●\u001b[m \u001b[94mW\u001b[34morking\u001b[m · 134 B \u001b[1mesc\u001b[m interrupt                                  "
+    ],
+    [
+      11011,
+      "                            Auto → mai-code-1.1-flash\u001b[?7l \u001b[?7h\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      11131,
+      "\u001b[?25l\u001b[15;67HNo Content\u001b[40;2H\u001b[94m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      11193,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      11281,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      11372,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [11464, "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[6Cng\u001b[m\u001b[38;3H\u001b[?25h"],
+    [11556, "\u001b[?25l\r\n\r\n \u001b[94m●\u001b[m \u001b[2A\b\u001b[?25h"],
+    [11646, "\u001b[?25l\r\n\r\n \u001b[94m◉\u001b[m \u001b[2A\b\u001b[?25h"],
+    [
+      11736,
+      "\u001b[?25l\r\n\r\n \u001b[94m◎\u001b[m \u001b[94mW\u001b[34mo\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      11828,
+      "\u001b[?25l\r\n\r\n \u001b[34m○\u001b[m \u001b[34mWo\u001b[94mrk\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      11919,
+      "\u001b[?25l\r\n\r\n \u001b[34m◎\u001b[m \u001b[94mW\u001b[34morki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12010,
+      "\u001b[?25l\r\n\r\n \u001b[34m◉\u001b[m \u001b[34mWo\u001b[94mrk\u001b[34ming\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [
+      12101,
+      "\u001b[?25l\r\n\r\n \u001b[34m●\u001b[m \u001b[34mWorki\u001b[94mng\u001b[m\u001b[38;3H\u001b[?25h"
+    ],
+    [12167, "\u001b[?25l\u001b[40;16H8 \u001b[38;3H\u001b[?25h"],
+    [
+      12201,
+      "\u001b[?25l\u001b[20A\b\u001b[34m●\u001b[m Do\u001b[40;2H\u001b[94m◉\u001b[6C\u001b[34mng\u001b[5C\u001b[m9\u001b[38;3H\u001b[?25h"
+    ],
+    [12234, "\u001b[?25l\u001b[18;6Hn\u001b[38;3H\u001b[?25h"],
+    [12268, "\u001b[?25l\u001b[18;7He\u001b[36;110H8 \r\n\r\n❯ \u001b[?25h"],
+    [
+      12300,
+      "\u001b[?25l\u001b[18;8H.\u001b[40;2H\u001b[1m←\u001b[m open sidebar · Interactive · Manual Approval · \u001b[1m/\u001b[m commands · \u001b[1m?\u001b[m help · \u001b[1mtab\u001b[m next tab\u001b[38;3H\u001b[?25h"
+    ]
+  ]
+}
