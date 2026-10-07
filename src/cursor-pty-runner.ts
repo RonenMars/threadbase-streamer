@@ -254,6 +254,19 @@ export class CursorPtyRunner implements SessionRunner {
       session.promptCount++;
       return session.promptCount;
     }
+    this.beginSubmit(sessionId, session);
+    this.writeSubmit(sessionId, session, input);
+    session.lastActivityAt = new Date();
+    session.promptCount++;
+    return session.promptCount;
+  }
+
+  // A prompt is about to be written: the session is running and its turn has
+  // not shown the busy hint yet. Shared by a direct send and the post-boot
+  // flush — the flush runs after markReady settled `waiting_input`, and without
+  // this its whole turn was reported as waiting and ended without a turn
+  // signal (#1041).
+  private beginSubmit(sessionId: string, session: InternalSession): void {
     if (session.status === "waiting_input") {
       session.status = "running";
       session.statusSource = "user-input";
@@ -261,10 +274,6 @@ export class CursorPtyRunner implements SessionRunner {
       this.onStatusChange?.(toPublicSession(session));
     }
     this.turnBusy.delete(sessionId);
-    this.writeSubmit(sessionId, session, input);
-    session.lastActivityAt = new Date();
-    session.promptCount++;
-    return session.promptCount;
   }
 
   private writeSubmit(
@@ -342,6 +351,7 @@ export class CursorPtyRunner implements SessionRunner {
     const fire = () => {
       const input = queue.shift();
       if (input === undefined || this.sessions.get(sessionId) !== session) return;
+      this.beginSubmit(sessionId, session);
       this.writeSubmit(sessionId, session, input, () => setTimeout(fire, CURSOR_SUBMIT_DELAY_MS));
     };
     fire();
