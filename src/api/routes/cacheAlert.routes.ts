@@ -1,17 +1,8 @@
 import { Hono } from "hono";
-import type { IncomingMessage } from "http";
 import { ResolveCacheAlertSchema } from "../../schemas/cacheAlert.schema";
 import type { AppEnv } from "../app";
+import { readRawBody } from "../handlers/http-helpers";
 import type { ApiDeps } from "../types/api-deps";
-
-function readRawBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-    req.on("error", reject);
-  });
-}
 
 export const createCacheAlertRoutes = (deps: ApiDeps) => {
   const app = new Hono<AppEnv>();
@@ -30,7 +21,7 @@ export const createCacheAlertRoutes = (deps: ApiDeps) => {
     try {
       const incoming = c.env?.incoming;
       const raw = incoming
-        ? await readRawBody(incoming)
+        ? (await readRawBody(incoming)).toString("utf-8")
         : Buffer.from(await c.req.arrayBuffer()).toString("utf-8");
       body = raw ? JSON.parse(raw) : {};
     } catch {

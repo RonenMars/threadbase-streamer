@@ -10,6 +10,7 @@ import {
 } from "../../services/backup/backup";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
+import { readBody } from "../handlers/http-helpers";
 import type { ApiDeps } from "../types/api-deps";
 
 /**
@@ -24,22 +25,6 @@ import type { ApiDeps } from "../types/api-deps";
  * see what would change, and applying requires an explicit flag. A restore that
  * silently rewrites project identity is one nobody can review.
  */
-
-function readBody(c: { env: { incoming: NodeJS.ReadableStream } }): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    c.env.incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
-    c.env.incoming.on("end", () => {
-      try {
-        const raw = Buffer.concat(chunks).toString("utf-8");
-        resolve(raw ? JSON.parse(raw) : {});
-      } catch {
-        reject(new Error("Invalid JSON body"));
-      }
-    });
-    c.env.incoming.on("error", reject);
-  });
-}
 
 export const createBackupRoutes = (deps: Pick<ApiDeps, "projectsRepo">) => {
   const app = new Hono<AppEnv>();
@@ -82,7 +67,7 @@ export const createBackupRoutes = (deps: Pick<ApiDeps, "projectsRepo">) => {
 
     let body: { archive?: unknown; pathMap?: unknown; apply?: unknown };
     try {
-      body = (await readBody(c)) as typeof body;
+      body = (await readBody(c.env.incoming)) as typeof body;
     } catch {
       return c.json({ error: "Invalid JSON body", code: "INVALID_BODY" }, 400);
     }

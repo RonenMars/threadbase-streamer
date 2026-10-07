@@ -19,6 +19,7 @@ import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
 import { testNotificationBody } from "../../services/push/notificationCopy";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
+import { readRawBody } from "../handlers/http-helpers";
 import { createRateLimiter } from "../rate-limit";
 import type { ApiDeps } from "../types/api-deps";
 
@@ -80,15 +81,6 @@ function readJsonBody(
         reject(new Error("Invalid JSON body"));
       }
     });
-    req.on("error", reject);
-  });
-}
-
-function readRawBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
     req.on("error", reject);
   });
 }
@@ -813,7 +805,7 @@ export const createMiscRoutes = (
 
     let body: string;
     try {
-      body = await readRawBody(c.env.incoming);
+      body = (await readRawBody(c.env.incoming)).toString("utf-8");
     } catch {
       return c.json({ error: "could not read body" }, 400);
     }
