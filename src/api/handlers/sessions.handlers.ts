@@ -14,6 +14,7 @@ import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "../../claude
 import type { ConversationCache } from "../../conversation-cache";
 import type { createPool } from "../../db";
 import { recordUpload } from "../../db/upload-records";
+import { MAX_UPLOAD_RECORD_BYTES } from "../../e2ee/record";
 import type { ExternalTailManager } from "../../external-tails";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { Logger } from "../../logger";
@@ -83,6 +84,7 @@ import type {
 import { saveUploadFile } from "../../uploads";
 import type { WSHub } from "../../ws-hub";
 import {
+  BodyTooLargeError,
   classifyResumability,
   conversationToResumableSession,
   json,
@@ -2100,7 +2102,14 @@ export class SessionHandlers {
       return;
     }
 
-    const body = await readBody(req);
+    let body: any;
+    try {
+      body = await readBody(req, MAX_UPLOAD_RECORD_BYTES);
+    } catch (err) {
+      const tooLarge = err instanceof BodyTooLargeError;
+      json(res, tooLarge ? 413 : 400, { error: tooLarge ? "File is too large" : "Invalid JSON" });
+      return;
+    }
     const { filename, mimeType, dataBase64 } = body ?? {};
     if (
       typeof filename !== "string" ||

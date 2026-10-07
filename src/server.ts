@@ -15,7 +15,7 @@ import { type AgentConfig, readAgentConfig } from "./agent/agent-config";
 import { type ConversationWriter, createConversationWriter } from "./agent/conversation-writer";
 import { type AppEnv, createHonoApp } from "./api/app";
 import { ConversationHandlers } from "./api/handlers/conversations.handlers";
-import { json, readBody, writeHonoResponse } from "./api/handlers/http-helpers";
+import { BodyTooLargeError, json, readBody, writeHonoResponse } from "./api/handlers/http-helpers";
 import { SessionHandlers } from "./api/handlers/sessions.handlers";
 import { describeE2eeCapability, E2EE_OFF_SWITCH } from "./api/routes/misc.routes";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
@@ -179,6 +179,8 @@ import { WSHub } from "./ws-hub";
 const DEFAULT_SYSTEM_PROMPT =
   "When presenting options or choices to the user, limit the options to at most 3.";
 
+/** Ceiling on the unauthenticated `POST /api/pair/exchange` body, enforced as bytes arrive. */
+const MAX_PAIR_EXCHANGE_BODY_BYTES = 64 * 1024;
 const DEFAULT_PTY_GRACE_PERIOD_MS = 270_000; // 4.5 minutes
 
 // A `running` session is deferred (not held) so a mid-response turn is never
@@ -2255,10 +2257,11 @@ export class StreamerServer {
 
     let body: any;
     try {
-      body = await readBody(req);
+      // Unauthenticated, so the bound is snug: a token, two keys and a Noise message.
+      body = await readBody(req, MAX_PAIR_EXCHANGE_BODY_BYTES);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid body";
-      json(res, 400, { error: message });
+      json(res, err instanceof BodyTooLargeError ? 413 : 400, { error: message });
       return;
     }
 
