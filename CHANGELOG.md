@@ -1,3 +1,9 @@
+## [1.113.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.4...v1.113.5) (2026-10-07)
+
+### Bug Fixes
+
+* **copilot:** detect the end of a turn from the rendered status row ([#1054](https://github.com/RonenMars/threadbase-streamer/issues/1054)) ([018ea91](https://github.com/RonenMars/threadbase-streamer/commit/018ea913038374f50181500a83eb03e8395cc708)), closes [#1038](https://github.com/RonenMars/threadbase-streamer/issues/1038) [#1038](https://github.com/RonenMars/threadbase-streamer/issues/1038)
+
 ## [1.113.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.3...v1.113.4) (2026-10-07)
 
 ### Bug Fixes
