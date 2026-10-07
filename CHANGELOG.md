@@ -1,3 +1,9 @@
+## [1.113.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.1...v1.113.2) (2026-10-07)
+
+### Bug Fixes
+
+* **runners:** open a turn for a prompt flushed after boot ([#1051](https://github.com/RonenMars/threadbase-streamer/issues/1051)) ([b1953b2](https://github.com/RonenMars/threadbase-streamer/commit/b1953b2195975f80de668845af7ca55540c36fcb)), closes [#1041](https://github.com/RonenMars/threadbase-streamer/issues/1041)
+
 ## [1.113.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.0...v1.113.1) (2026-10-07)
 
 ### Bug Fixes
