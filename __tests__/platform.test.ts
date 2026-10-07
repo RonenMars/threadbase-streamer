@@ -19,7 +19,8 @@ vi.mock("fs", async () => {
     existsSync: (p: string) =>
       p === "/opt/homebrew/bin/claude" ||
       p === "/opt/homebrew/bin/codex" ||
-      p === "/opt/homebrew/bin/agent",
+      p === "/opt/homebrew/bin/agent" ||
+      p === "/opt/homebrew/bin/copilot",
   };
 });
 
@@ -42,6 +43,16 @@ describe("resolveCursorExe (macOS fallback)", () => {
     vi.resetModules();
     const { resolveCursorExe } = await import("../src/platform");
     expect(resolveCursorExe()).toBe("/opt/homebrew/bin/agent");
+  });
+});
+
+describe("resolveCopilotExe (macOS fallback)", () => {
+  it("finds the Homebrew binary independently of Claude", async () => {
+    vi.resetModules();
+    const { resolveCopilotExe, clearCopilotExeCache } = await import("../src/platform");
+    expect(resolveCopilotExe()).toBe("/opt/homebrew/bin/copilot");
+    clearCopilotExeCache();
+    expect(resolveCopilotExe()).toBe("/opt/homebrew/bin/copilot");
   });
 });
 

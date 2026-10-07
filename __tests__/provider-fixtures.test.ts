@@ -23,7 +23,8 @@ const ROOT = join(__dirname, "fixtures", "providers");
 
 interface Manifest {
   provider: string;
-  providerVersion: string;
+  providerVersion: string | null;
+  synthetic?: boolean;
   capturedAt: string;
   sanitized: boolean;
   envelopeTypes: string[];
@@ -49,7 +50,7 @@ describe("versioned provider fixtures", () => {
   const providers = readdirSync(ROOT).filter((d) => statSync(join(ROOT, d)).isDirectory());
 
   it("has at least one versioned fixture per supported provider", () => {
-    expect(providers.sort()).toEqual(["claude-code", "codex-cli", "cursor"]);
+    expect(providers.sort()).toEqual(["claude-code", "codex-cli", "copilot", "cursor"]);
     for (const p of providers) expect(versionDirs(p).length).toBeGreaterThan(0);
   });
 
@@ -60,7 +61,13 @@ describe("versioned provider fixtures", () => {
 
         it("manifest agrees with its directory name", () => {
           expect(manifest.provider).toBe(provider);
-          expect(manifest.providerVersion).toBe(version);
+          if (manifest.synthetic) {
+            expect(version).toBe("documented-shape");
+            expect(manifest.providerVersion).toBeNull();
+            expect(manifest.capturedAt).toBeNull();
+          } else {
+            expect(manifest.providerVersion).toBe(version);
+          }
         });
 
         it("declares whether it was sanitized", () => {

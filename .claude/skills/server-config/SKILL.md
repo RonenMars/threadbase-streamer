@@ -34,7 +34,7 @@ Moved out of the repo root `CLAUDE.md` so it loads on demand rather than in ever
 
 ## CLI flags vs. `server.yaml`
 
-`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`, `claude_flags`, `claude_extra_args`, `feature_flags`) from it, but most runtime knobs come exclusively from CLI flags. Optional provider executable overrides (`claude_executable`, `codex_executable`, `cursor_executable`) are read by the resolvers in `src/platform.ts`, not by the CLI flag parser.
+`server.yaml` is **not** a complete config file. The CLI reads the API key (and optionally `browse_root`, `public_url`, `allowed_paths`, `default_permission_mode`, `browser_cors`, `pty_grace_period_ms`, `claude_flags`, `claude_extra_args`, `feature_flags`) from it, but most runtime knobs come exclusively from CLI flags. Optional provider executable overrides (`claude_executable`, `codex_executable`, `copilot_executable`, `cursor_executable`) are read by the resolvers in `src/platform.ts`, not by the CLI flag parser.
 
 `--prod` does not change which directory is read. Leave `THREADBASE_CONFIG_DIR` unset so both the launchd / Task Scheduler instance and an ad-hoc `serve` share `~/.threadbase/`. See [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
 
@@ -43,6 +43,7 @@ Optional absolute executable paths, one per provider, override discovery. Only s
 ```yaml
 claude_executable: /absolute/path/to/claude
 codex_executable: /absolute/path/to/codex
+copilot_executable: /absolute/path/to/copilot
 cursor_executable: /absolute/path/to/cursor-agent
 ```
 

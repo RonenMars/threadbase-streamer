@@ -230,6 +230,7 @@ export function testNotificationBody(locale: string | null | undefined): string 
 
 export function agentLabel(provider: ProviderName | undefined): string {
   if (provider === "codex-cli") return "Codex";
+  if (provider === "copilot") return "Copilot";
   if (provider === "cursor") return "Cursor";
   return "Claude";
 }
