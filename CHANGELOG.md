@@ -1,3 +1,9 @@
+## [1.113.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.2...v1.113.3) (2026-10-07)
+
+### Bug Fixes
+
+* **questions:** keep Codex picker descriptions and rejoin a wrapped prompt ([#1050](https://github.com/RonenMars/threadbase-streamer/issues/1050)) ([0bbe214](https://github.com/RonenMars/threadbase-streamer/commit/0bbe21430154b25e0645304923f7ddff2059b1d0)), closes [#1042](https://github.com/RonenMars/threadbase-streamer/issues/1042)
+
 ## [1.113.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.1...v1.113.2) (2026-10-07)
 
 ### Bug Fixes
