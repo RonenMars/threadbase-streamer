@@ -321,3 +321,73 @@ describe("a turn that starts after it was settled on a guess", () => {
     expect(r.end?.statusSource).toBe("turn-signal");
   }, 20_000);
 });
+
+// Cursor drops its busy hint and paints nothing while a card waits on the user
+// (#1037), which is exactly what the runner reads as the end of a turn. Replay
+// each card capture: the session must stay `running` while the card is open and
+// the turn must end once, on the provider's signal, after the answer.
+describe("Cursor: a card on screen keeps the turn open", () => {
+  type MarkedCapture = Capture & { marks: Record<string, number> };
+  const loadMarked = (name: string) => load(name) as MarkedCapture;
+
+  async function replayCursor(cap: MarkedCapture, openAt: number | undefined, answer?: string) {
+    const changes: ManagedSession[] = [];
+    const runner = new CursorPtyRunner({ onStatusChange: (s) => changes.push({ ...s }) });
+    const session = await runner.startFresh({ projectPath: "/tmp", projectName: "proj" });
+    const proc = (runner as any).sessions.get(session.id).process;
+    const emit = (from: number, to: number) => {
+      for (const [, d] of cap.chunks.slice(from, to)) proc._emit("data", d);
+    };
+    const submitIdx = cap.chunks.findIndex(([ms]) => ms >= cap.submitAt);
+    // First chunk painted after the card went up; none arrive while it is open.
+    const openIdx =
+      openAt === undefined ? cap.chunks.length : cap.chunks.findIndex(([ms]) => ms > openAt);
+
+    emit(0, submitIdx);
+    await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), {
+      timeout: 3_000,
+    });
+    changes.length = 0;
+
+    runner.sendInput(session.id, "prompt");
+    await sleep(50);
+    emit(submitIdx, openIdx);
+    await sleep(2_600);
+    const whileOpen = changes.map((c) => [c.status, c.statusSource]);
+
+    if (answer) runner.sendKeys(session.id, answer);
+    emit(openIdx, cap.chunks.length);
+    await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), {
+      timeout: 3_000,
+    });
+    // Long enough for a second settle, were one coming.
+    await sleep(1_200);
+    runner.dispose();
+    return { whileOpen, all: changes.map((c) => [c.status, c.statusSource]) };
+  }
+
+  const ONE_TURN = [
+    ["running", "user-input"],
+    ["waiting_input", "turn-signal"],
+  ];
+
+  it("control: a plain turn with no card ends on the busy hint leaving", async () => {
+    const r = await replayCursor(loadMarked("cursor-2026.10.01-turn.json"), undefined);
+    expect(r.all).toEqual(ONE_TURN);
+  }, 15_000);
+
+  it.each([
+    ["question card", "cursor-2026.10.01-ask.json", "askOpen", " \r"],
+    ["shell approval card", "cursor-2026.10.01-gate.json", "gateOpen", "y"],
+    ["file delete card", "cursor-2026.10.01-delete.json", "gateOpen", "y"],
+  ])(
+    "%s: running while open, one signalled end after the answer",
+    async (_n, file, mark, keys) => {
+      const cap = loadMarked(file);
+      const r = await replayCursor(cap, cap.marks[mark], keys);
+      expect(r.whileOpen).toEqual([["running", "user-input"]]);
+      expect(r.all).toEqual(ONE_TURN);
+    },
+    15_000,
+  );
+});
