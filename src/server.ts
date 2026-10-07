@@ -2265,8 +2265,12 @@ export class StreamerServer {
       return;
     }
 
-    const { token, clientPublicKey } = body ?? {};
-    if (typeof token !== "string" || typeof clientPublicKey !== "string") {
+    const viaRelay = isViaRelay(req.socket);
+    let { token } = body ?? {};
+    const { clientPublicKey } = body ?? {};
+    // Over a relay the token is never sent (see below), so only its absence on
+    // a direct request is an error here.
+    if ((!viaRelay && typeof token !== "string") || typeof clientPublicKey !== "string") {
       json(res, 400, { error: "Missing token or clientPublicKey" });
       return;
     }
@@ -2304,9 +2308,35 @@ export class StreamerServer {
     // Legacy pairing answers with the shared API key sealed to a key the caller
     // chose; over a relay only the Noise pairing is offered, so nothing a relay
     // forwards can end in a plaintext-capable credential.
-    if (!e2eeRequest && isViaRelay(req.socket)) {
+    if (!e2eeRequest && viaRelay) {
       json(res, 400, { error: "e2ee is required over a relay", code: "RELAY_E2EE_REQUIRED" });
       return;
+    }
+
+    // The relay reads this body, and the pair token is the handshake's PSK and
+    // the only thing that authenticates the phone: a relay holding it could
+    // pair a device of its own. So over a relay the token never travels. There
+    // is one live token at a time, and a handshake keyed with it is the proof
+    // the caller scanned it.
+    if (viaRelay) {
+      if (token !== undefined) {
+        // Already disclosed to the relay, so it is dead — but only when it is
+        // the real one, or any stranger could cancel a pairing in progress.
+        if (this.pairTokens.peek()?.token === token) {
+          this.pairTokens.clear();
+          this.log.warn("[pair] a pair token was sent through the relay and has been revoked", {
+            event: "pair.token_sent_via_relay",
+            ip,
+          });
+        }
+        json(res, 400, {
+          error: "The pair token must not be sent over a relay",
+          code: "RELAY_PAIR_TOKEN_FORBIDDEN",
+        });
+        return;
+      }
+      // Empty when none is live, which the check below answers as unknown.
+      token = this.pairTokens.peek()?.token ?? "";
     }
 
     // Reject a bad token before doing any work, but do NOT spend it yet.
@@ -2567,6 +2597,19 @@ export class StreamerServer {
           err,
         });
       }
+    }
+
+    // Over a relay only the authenticated message 2 goes back. The outer fields
+    // exist for released apps, none of which pair through a relay, and they
+    // would hand the relay the device token in the clear and the shared API key
+    // sealed to a `clientPublicKey` the relay could have replaced with its own.
+    if (viaRelay) {
+      if (!e2eeResponse) {
+        json(res, 500, { error: "Pairing failed; scan a fresh pairing code and try again." });
+        return;
+      }
+      json(res, 200, { e2ee: e2eeResponse });
+      return;
     }
 
     json(res, 200, {
