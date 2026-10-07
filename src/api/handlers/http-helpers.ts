@@ -183,14 +183,17 @@ export function parseSessionListQuery(url: URL): ParsedSessionListQuery {
 export class BodyTooLargeError extends Error {}
 
 /**
- * Read a JSON body, refusing one that grows past `maxBytes` as the bytes arrive.
+ * Read a request body, refusing one that grows past `maxBytes` as the bytes arrive.
  *
  * The default is the sealed-request ceiling, so a plaintext caller is held to
  * what an encrypted one already is. Without a bound a single POST is buffered
  * whole before any handler sees it, and through the relay or a tunnel that
  * request can come from anyone.
  */
-export function readBody(req: IncomingMessage, maxBytes: number = MAX_RECORD_BYTES): Promise<any> {
+export function readRawBody(
+  req: IncomingMessage,
+  maxBytes: number = MAX_RECORD_BYTES,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let chunks: Buffer[] = [];
     let size = 0;
@@ -209,14 +212,17 @@ export function readBody(req: IncomingMessage, maxBytes: number = MAX_RECORD_BYT
       chunks.push(chunk);
     });
     req.on("end", () => {
-      if (refused) return;
-      try {
-        const raw = Buffer.concat(chunks).toString("utf-8");
-        resolve(raw ? JSON.parse(raw) : {});
-      } catch {
-        reject(new Error("Invalid JSON body"));
-      }
+      if (!refused) resolve(Buffer.concat(chunks));
     });
     req.on("error", reject);
   });
+}
+
+export async function readBody(req: IncomingMessage, maxBytes?: number): Promise<any> {
+  const raw = (await readRawBody(req, maxBytes)).toString("utf-8");
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new Error("Invalid JSON body");
+  }
 }
