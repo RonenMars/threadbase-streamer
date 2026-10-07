@@ -49,6 +49,11 @@ const CURSOR_SUBMIT_STALE_MS = 2_000;
 // it is gone the moment the turn ends. Without it every turn settled through
 // submit-stale 2s after the submit, as Cursor started (#962).
 const CURSOR_TURN_BUSY_TEXT = "ctrl+c to stop";
+// Under load the hint can land after submit-stale has already settled the turn on
+// a guess. A hint this soon after a submit is that turn starting late, so the
+// session goes back to `running` and its real end still sends "finished". Same
+// window as Claude's and Codex's.
+const LATE_TURN_START_MS = 30_000;
 
 /**
  * Cursor CLI (`agent`) PTY runner.
@@ -77,6 +82,8 @@ export class CursorPtyRunner implements SessionRunner {
   private submitWatchTimers = new Map<string, NodeJS.Timeout>();
   // Sessions whose current turn has shown CURSOR_TURN_BUSY_TEXT.
   private turnBusy = new Set<string>();
+  // When the last submit's \r was written, until the turn's busy hint is seen.
+  private awaitingStart = new Map<string, number>();
   private lastChunkAt = new Map<string, number>();
   private startPromises = new Map<string, Promise<ManagedSession>>();
   private disposed = false;
@@ -215,6 +222,11 @@ export class CursorPtyRunner implements SessionRunner {
       session.statusSource = "user-input";
       session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
+      // Not every key starts a turn (an arrow, Esc): without a watch the session
+      // would stay `running` for good. A key that does submit shows the busy hint
+      // in time, or late enough for resumeLateTurn.
+      this.awaitingStart.set(sessionId, Date.now());
+      this.armSubmitWatch(sessionId);
     }
     session.process.write(keys);
     session.lastActivityAt = new Date();
@@ -295,6 +307,7 @@ export class CursorPtyRunner implements SessionRunner {
         return;
       }
       current.process.write(SUBMIT_BYTES);
+      this.awaitingStart.set(sessionId, Date.now());
       this.armSubmitWatch(sessionId);
       onSubmitted?.();
     };
@@ -466,6 +479,7 @@ export class CursorPtyRunner implements SessionRunner {
     this.readyFallbackTimers.clear();
     this.submitWatchTimers.clear();
     this.turnBusy.clear();
+    this.awaitingStart.clear();
     this.lastChunkAt.clear();
   }
 
@@ -485,8 +499,13 @@ export class CursorPtyRunner implements SessionRunner {
 
     session.screen.write(data);
     session.lastOutput = stripAnsi(data);
-    if (session.status === "running" && session.lastOutput.includes(CURSOR_TURN_BUSY_TEXT)) {
-      this.turnBusy.add(sessionId);
+    if (session.lastOutput.includes(CURSOR_TURN_BUSY_TEXT)) {
+      if (session.status === "running") {
+        this.turnBusy.add(sessionId);
+        this.awaitingStart.delete(sessionId);
+      } else {
+        this.resumeLateTurn(sessionId, session);
+      }
     }
     this.onOutput?.(sessionId, data);
 
@@ -500,12 +519,25 @@ export class CursorPtyRunner implements SessionRunner {
     quiet();
   }
 
+  /** The busy hint after a guessed end of a just-submitted turn: it started late. */
+  private resumeLateTurn(sessionId: string, session: InternalSession): void {
+    const submittedAt = this.awaitingStart.get(sessionId);
+    if (submittedAt === undefined) return;
+    this.awaitingStart.delete(sessionId);
+    if (session.status !== "waiting_input" || Date.now() - submittedAt > LATE_TURN_START_MS) return;
+    session.status = "running";
+    session.statusSource = "turn-signal";
+    session.statusUpdatedAt = new Date();
+    this.turnBusy.add(sessionId);
+    this.onStatusChange?.(toPublicSession(session));
+  }
+
   private detectQuiet(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session || session.status === "idle") return;
     if (this.pendingReady.has(sessionId)) {
       if (session.outputBuffer.includes(CURSOR_BOOT_MARKER)) {
-        this.markReady(sessionId, session, "quiet-fallback", "quiet:boot");
+        this.markReady(sessionId, session, "prompt-marker", "quiet:boot");
       }
       return;
     }
@@ -594,6 +626,7 @@ export class CursorPtyRunner implements SessionRunner {
     if (watch) clearTimeout(watch);
     this.submitWatchTimers.delete(sessionId);
     this.turnBusy.delete(sessionId);
+    this.awaitingStart.delete(sessionId);
     this.lastChunkAt.delete(sessionId);
   }
 }

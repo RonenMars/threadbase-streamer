@@ -650,6 +650,46 @@ describe("CodexPtyRunner — mid-session Ready", () => {
       vi.useRealTimers();
     }
   });
+
+  it("recovers a key press that starts no turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+
+      // An arrow key is not a submit: no title spinner, no Working, no chunks.
+      runner.sendKeys(session.id, "\x1b[A");
+      expect(runner.getSession(session.id)?.status).toBe("running");
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not settle a key press that did start a turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendKeys(session.id, "\r");
+      proc._emit("data", "\x1b]0;⠋ proj\x07");
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("CodexPtyRunner — ready detection", () => {

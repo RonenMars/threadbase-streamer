@@ -299,4 +299,25 @@ describe("a turn that starts after it was settled on a guess", () => {
     expect(r.resumed).toBe("running");
     expect(r.end?.statusSource).toBe("turn-signal");
   }, 25_000);
+
+  it("Cursor: a busy hint after submit-stale reopens the turn", async () => {
+    const start = CURSOR_TURN.chunks.findIndex(
+      ([ms, d]) => ms >= CURSOR_TURN.submitAt && d.includes(CURSOR_BUSY),
+    );
+    const end = CURSOR_TURN.chunks.findLastIndex(([, d]) => d.includes(CURSOR_BUSY)) + 1;
+    const r = await replayLateTurn(
+      (onStatusChange) => new CursorPtyRunner({ onStatusChange }),
+      CURSOR_TURN,
+      start,
+      end,
+      3_000,
+      2_600,
+    );
+    expect(r.guessed).toEqual([
+      ["running", "user-input"],
+      ["waiting_input", "quiet-fallback"],
+    ]);
+    expect(r.resumed).toBe("running");
+    expect(r.end?.statusSource).toBe("turn-signal");
+  }, 20_000);
 });
