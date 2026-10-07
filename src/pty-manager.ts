@@ -520,8 +520,13 @@ export class PTYManager implements SessionRunner {
       // Sending anything consumes the suggestion — don't wait for a scrape.
       this.setPromptSuggestion(sessionId, session, null);
       this.onStatusChange?.(toPublicSession(session));
+      // Not every key starts a turn (an arrow, Esc), and one that starts none
+      // may paint nothing: without the start grace the session stays `running`
+      // until some later chunk happens to arrive. A key that does submit needs
+      // it too, so a busy title that lands late can still reopen the turn.
+      this.openTurnOnSubmit(sessionId);
     }
-    this.log.info(`[pty.keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length}`, {
+    this.log.info(`[pty.keys.write]${sessionId.slice(0, 8)} bytes=${keys.length}`, {
       event: "pty.keys_write",
       sessionId,
       byteLen: keys.length,
