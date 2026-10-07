@@ -1,3 +1,9 @@
+## [1.113.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.0...v1.113.1) (2026-10-07)
+
+### Bug Fixes
+
+* **pty:** open a turn when a key is sent to a waiting Claude session ([#1049](https://github.com/RonenMars/threadbase-streamer/issues/1049)) ([5ea303f](https://github.com/RonenMars/threadbase-streamer/commit/5ea303f10904882e51b2901e626fae4aa5592833)), closes [#1040](https://github.com/RonenMars/threadbase-streamer/issues/1040)
+
 ## [1.113.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.112.1...v1.113.0) (2026-10-07)
 
 ### Features
