@@ -1,3 +1,9 @@
+## [1.112.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.112.0...v1.112.1) (2026-10-07)
+
+### Bug Fixes
+
+* **runners:** recover late cursor turn starts and key presses that start no turn ([#1023](https://github.com/RonenMars/threadbase-streamer/issues/1023)) ([b189cb1](https://github.com/RonenMars/threadbase-streamer/commit/b189cb17f16ba504ba4e4eddb7c7aa030225bd78))
+
 ## [1.112.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.111.0...v1.112.0) (2026-10-06)
 
 ### Features
