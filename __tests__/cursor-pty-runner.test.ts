@@ -225,3 +225,55 @@ describe("CursorPtyRunner — boot readiness waits for the compose box", () => {
     }
   });
 });
+
+describe("CursorPtyRunner — status sources", () => {
+  async function booted() {
+    const runner = new CursorPtyRunner();
+    const session = await runner.startFresh({ projectPath: "/tmp/proj", projectName: "test" });
+    const proc = getMockProc(runner, session.id);
+    emitBoot(proc);
+    await vi.advanceTimersByTimeAsync(1_200);
+    return { runner, session, proc };
+  }
+
+  it("reports a boot settled on the painted compose box as observed, not a guess", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, session } = await booted();
+      const s = runner.getSession(session.id);
+      expect(s?.status).toBe("waiting_input");
+      // The marker is what settled it; the quiet wait only debounces the repaint.
+      expect(s?.statusSource).toBe("prompt-marker");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers a key press that starts no turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, session } = await booted();
+      runner.sendKeys(session.id, "\x1b[A");
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      // No busy hint ever shows: an arrow key is not a submit.
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not settle a key press that did start a turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, session, proc } = await booted();
+      runner.sendKeys(session.id, "\r");
+      proc._emit("data", `Working\r\n${BUSY}\r\n`);
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

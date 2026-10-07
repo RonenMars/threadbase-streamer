@@ -115,7 +115,7 @@ describe("SessionResponse carries source and confidence", () => {
 describe("every status transition declares a source", () => {
   const SRC = join(__dirname, "..", "src");
 
-  it.each(["pty-manager.ts", "codex-pty-runner.ts"])(
+  it.each(["pty-manager.ts", "codex-pty-runner.ts", "cursor-pty-runner.ts"])(
     "%s sets statusSource wherever it assigns status",
     (file) => {
       const lines = readFileSync(join(SRC, file), "utf8").split("\n");
@@ -137,7 +137,7 @@ describe("every status transition declares a source", () => {
     },
   );
 
-  it.each(["pty-manager.ts", "codex-pty-runner.ts"])(
+  it.each(["pty-manager.ts", "codex-pty-runner.ts", "cursor-pty-runner.ts"])(
     "%s reports the fields through toPublicSession",
     (file) => {
       const src = readFileSync(join(SRC, file), "utf8");

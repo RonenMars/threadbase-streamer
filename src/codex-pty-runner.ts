@@ -400,6 +400,12 @@ export class CodexPtyRunner implements SessionRunner {
       session.statusSource = "user-input";
       session.statusUpdatedAt = new Date();
       this.onStatusChange?.(toPublicSession(session));
+      // Not every key starts a turn (an arrow, Esc): without a watch the session
+      // stays `running` until some later chunk happens to arrive. A key that does
+      // submit shows the title spinner in time, or late enough for the late start.
+      this.turnBusy.delete(sessionId);
+      this.awaitingStart.set(sessionId, Date.now());
+      this.armSubmitWatch(sessionId);
     }
     const gate = this.openGate.get(sessionId);
     const digit = gate ? /^([0-9])\r?$/.exec(keys)?.[1] : undefined;
