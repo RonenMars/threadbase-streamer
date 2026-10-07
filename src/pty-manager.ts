@@ -603,6 +603,18 @@ export class PTYManager implements SessionRunner {
       );
       return session.promptCount;
     }
+    this.beginSubmit(sessionId, session);
+    this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
+    session.lastActivityAt = new Date();
+    session.promptCount++;
+    return session.promptCount;
+  }
+
+  // A prompt is about to be written: the session is running and a turn opens.
+  // Shared by a direct send and the post-boot flush — the flush runs after
+  // markReady settled `waiting_input`, and without this its whole turn was
+  // reported as waiting and ended without a turn signal (#1041).
+  private beginSubmit(sessionId: string, session: InternalSession): void {
     if (session.status === "waiting_input") {
       session.status = "running";
       // Observed by construction: we are the ones writing the input.
@@ -613,10 +625,6 @@ export class PTYManager implements SessionRunner {
       this.onStatusChange?.(toPublicSession(session));
     }
     this.openTurnOnSubmit(sessionId);
-    this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
-    session.lastActivityAt = new Date();
-    session.promptCount++;
-    return session.promptCount;
   }
 
   // Two-step paste-then-submit. Writes the bracketed-paste body, then waits
@@ -707,11 +715,13 @@ export class PTYManager implements SessionRunner {
     queue.forEach((input, i) => {
       const writeAt = i * SUBMIT_DELAY_MS * 2;
       if (writeAt === 0) {
+        this.beginSubmit(sessionId, session);
         this.writeSubmit(sessionId, session, input, "flush", session.promptCount);
       } else {
         setTimeout(() => {
           const current = this.sessions.get(sessionId);
           if (!current || current !== session) return;
+          this.beginSubmit(sessionId, session);
           this.writeSubmit(sessionId, session, input, "flush", session.promptCount);
         }, writeAt);
       }

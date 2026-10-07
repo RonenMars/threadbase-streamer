@@ -500,6 +500,18 @@ export class CodexPtyRunner implements SessionRunner {
       );
       return session.promptCount;
     }
+    this.beginSubmit(sessionId, session);
+    this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
+    session.lastActivityAt = new Date();
+    session.promptCount++;
+    return session.promptCount;
+  }
+
+  // A prompt is about to be written: the session is running and waits for its
+  // turn to start. Shared by a direct send and the queued-input flush — the
+  // flush runs after markReady settled `waiting_input`, and without this its
+  // whole turn was reported as waiting and ended without a turn signal (#1041).
+  private beginSubmit(sessionId: string, session: InternalSession): void {
     if (session.status === "waiting_input") {
       session.status = "running";
       session.statusSource = "user-input";
@@ -508,10 +520,6 @@ export class CodexPtyRunner implements SessionRunner {
     }
     this.turnBusy.delete(sessionId);
     this.awaitingStart.set(sessionId, Date.now());
-    this.writeSubmit(sessionId, session, input, "direct", session.promptCount + 1);
-    session.lastActivityAt = new Date();
-    session.promptCount++;
-    return session.promptCount;
   }
 
   // Write the input as plain bytes (no bracketed-paste wrap — Phase 0
@@ -645,11 +653,13 @@ export class CodexPtyRunner implements SessionRunner {
     queue.forEach((input, i) => {
       const writeAt = i * CODEX_SUBMIT_DELAY_MS * 2;
       if (writeAt === 0) {
+        this.beginSubmit(sessionId, session);
         this.writeSubmit(sessionId, session, input, "flush", session.promptCount);
       } else {
         setTimeout(() => {
           const current = this.sessions.get(sessionId);
           if (!current || current !== session) return;
+          this.beginSubmit(sessionId, session);
           this.writeSubmit(sessionId, session, input, "flush", session.promptCount);
         }, writeAt);
       }
