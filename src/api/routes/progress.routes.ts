@@ -10,21 +10,12 @@
 // return 200 with deduped:true and do not broadcast.
 
 import crypto from "node:crypto";
-import type { IncomingMessage } from "node:http";
 import type { AgentOutputPayload, ProgressEvent, Stage } from "@threadbase-sh/agent-types";
 import { Hono } from "hono";
 import type { WSMessage } from "../../types";
 import type { AppEnv } from "../app";
+import { readRawBody } from "../handlers/http-helpers";
 import type { ApiDeps } from "../types/api-deps";
-
-function readRawBody(req: IncomingMessage): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-}
 
 interface AgentDeps {
   sessionStore: {
