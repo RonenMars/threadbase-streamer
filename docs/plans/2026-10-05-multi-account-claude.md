@@ -211,6 +211,10 @@ adding accounts multiplies the exposure. Phase 1 adds the per-root file count to
   `accountId`. `GET /api/conversations` and `/api/sessions` accept `?accountId=` as a
   filter.
 - `ROUTE_CAPABILITIES` gains `/api/accounts`. The route-coverage test fails until it does.
+- Device records (`/api/devices`, `admin`) gain an optional `allowedAccountIds` field
+  (Decision 1).
+- The push payload and the Live Activity content-state gain an optional `accountLabel`,
+  which is only set when more than one account is enabled (Decision 3).
 
 ### Feature flag
 
@@ -229,7 +233,8 @@ Against the pinned Claude Code version, on macOS and Linux, record results in th
    `.claude.json` moves to `X/.claude.json`, that credentials are isolated (on macOS, the
    Keychain service name per dir), and that two accounts can run concurrently.
 2. `--resume <uuid>` under a dir that does *not* hold the transcript: confirm whether it
-   fails loudly or silently starts fresh. This decides how strict `ACCOUNT_MISMATCH` must be.
+   fails loudly or silently starts fresh. This only changes how the 409 is worded in the
+   docs: `ACCOUNT_MISMATCH` is refused either way (Decision 4).
 3. Find a non-interactive "am I logged in" probe (for example `claude auth status`, if the
    version has one, or credential-file/Keychain presence) and find how the login screen
    renders in a PTY, so the runner can detect it.
@@ -257,6 +262,10 @@ Against the pinned Claude Code version, on macOS and Linux, record results in th
   0700. `login` runs `claude` with the account's `CLAUDE_CONFIG_DIR` in the user's own
   terminal, so they complete `/login` interactively. The streamer never handles the OAuth
   exchange or the credential itself.
+- `accounts add --copy-settings-from <id>` (opt-in, per Decision 2) copies `settings.json`,
+  the user-level `CLAUDE.md`, `commands/` and `agents/`, and prints each path it copied.
+  It never copies credentials, `.claude.json` or `projects/`. It warns when `settings.json`
+  has an `env` block or MCP servers that carry tokens or headers.
 - Auth probe from phase 0, cached per account and refreshed on boot, on `GET /api/accounts`
   when older than 60 s, and after a spawn lands on the login screen.
 - `GET /api/accounts` (read-only), `GET /api/profiles` populated, and the `/api/info`
@@ -283,6 +292,25 @@ Against the pinned Claude Code version, on macOS and Linux, record results in th
   mismatching resume returns 409; a disabled account returns 409; an unauthenticated
   account returns 503.
 
+### Phase 3b: per-device account visibility
+
+Per Decision 1. This lands after phase 3 and before mobile's account settings (phase 6
+item 7).
+
+- Runtime migration: `devices.allowed_account_ids` (JSON text, nullable). Null means the
+  device sees every account, so existing devices are unaffected.
+- Enforce it on the server in the places the `?accountId=` filter already applies:
+  conversation and session lists, search, `/api/accounts`, and session control.
+  Controlling a session whose account is hidden from the device returns **404**, not 403,
+  so the device cannot learn that the session exists.
+- WebSocket: filter `session_list`, `session_update` and `terminal_output` per subscriber,
+  and refuse to subscribe a device to a session of a hidden account. This per-subscriber
+  filtering is the costly part of this phase.
+- The shared API key is not a device, so it always sees every account. The guide must say
+  so. Only per-device tokens get this boundary.
+- Tests: a device limited to one account cannot list, search, subscribe to or control the
+  other account's sessions, and an unrestricted device sees both.
+
 ### Phase 4: usage-limit visibility per account
 
 - Detect Claude's usage-limit screen (phase 0 item 4). Set `failureReason` /
@@ -295,13 +323,12 @@ Against the pinned Claude Code version, on macOS and Linux, record results in th
 ### Phase 5: management over the API
 
 - `POST`, `PATCH` and `DELETE /api/accounts` (`admin`).
-- **Remote login.** Spawn a dedicated "login session" (`CLAUDE_CONFIG_DIR=<dir> claude`,
-  showing `/login`) as an ordinary PTY session flagged `kind: "account_login"`, so the phone
-  can drive the OAuth paste-code flow through the existing terminal stream. It ends when the
-  auth probe flips to `authenticated`. This is what lets a phone add an account to a headless
-  box. It is deliberately last, because it puts an OAuth flow over the tunnel; it needs a
-  security review (`docs/security/`) and must refuse when e2ee is off on a non-local
-  connection.
+- **Remote login is deferred** (Decision 5): it is not built until someone needs it. The
+  sketch, for when it is: spawn a dedicated "login session" (`CLAUDE_CONFIG_DIR=<dir>
+  claude`, showing `/login`) as an ordinary PTY session flagged `kind: "account_login"`, so
+  the phone drives the OAuth paste-code flow through the existing terminal stream, and end
+  it when the auth probe flips to `authenticated`. It needs a security review
+  (`docs/security/`) and must refuse when e2ee is off on a non-local connection.
 - Docs: `docs/guides/multiple-claude-accounts.md`, a `server-config` skill update, and
   `docs/api-reference.md`.
 
@@ -314,7 +341,8 @@ File this as a separate tb-mobile issue that links back here, per the cross-repo
 2. **New-session sheet.** An account picker, shown only when more than one account is
    enabled. It preselects whatever the server would choose (project rule, last used, then
    default) and shows why. Accounts that are unauthenticated or at their usage limit are
-   visible but disabled, with the reason.
+   visible but disabled, with the reason. Choosing an account that overrides a project rule
+   asks for confirmation first (Decision 6).
 3. **Badges.** An account emoji or label on session rows, conversation rows and the session
    header. Hide it when only one account exists.
 4. **Filter.** An account chip on the history and sessions lists, which maps to
@@ -325,8 +353,38 @@ File this as a separate tb-mobile issue that links back here, per the cross-repo
 6. **Usage limit (phase 4).** Show which account hit its limit and when it resets, on the
    session and in the account list.
 7. **Account settings (phase 5).** List accounts with their auth status, add, rename and
-   disable them, edit their project rules, and run "Log in" through the login session's
-   terminal view.
+   disable them, and edit their project rules. Device management also lets the user choose
+   which accounts each device sees (phase 3b). There is no in-app login while remote login
+   is deferred: an unauthenticated account shows "Log in on the computer with
+   `tb-streamer accounts login <id>`".
+8. **Notifications.** Render `accountLabel` as a short prefix in the subtitle
+   (`Work · my-repo`) when it is present.
+
+## Decisions (2026-10-08)
+
+1. **Per-device account visibility: yes, enforced on the server, built in phase 3b.** Each
+   device has an optional allowlist of account ids. Empty means every account. The list is
+   enforced in REST, search and WebSocket, because hiding accounts only in the phone UI is
+   not a boundary: the device token can still call the API. The shared API key is not a
+   device, so it is not covered.
+2. **Copying settings: opt-in, minimal, never secrets.** `--copy-settings-from` copies
+   `settings.json`, the user-level `CLAUDE.md`, `commands/` and `agents/`. It never copies
+   credentials, `.claude.json` or `projects/`, and it warns about `env` blocks and MCP
+   servers that carry tokens. It is not the default, because copying a work MCP config into
+   a personal account is exactly the cross-over this feature exists to prevent.
+3. **Account label in notifications: only when more than one account is enabled.** It is a
+   short subtitle prefix (`Work · my-repo`) and nothing more on the lock screen. The server
+   sends an optional `accountLabel`, and mobile decides how to render it.
+4. **Resuming under a different account: always 409 `ACCOUNT_MISMATCH`**, whatever phase 0
+   finds. Refusing up front gives the phone a clear error and keeps the rule that a
+   conversation never changes account.
+5. **Remote login from the phone: deferred.** Each account is logged in once at the
+   computer with `tb-streamer accounts login`, and logins last a long time. Sending an OAuth
+   flow through the tunnel is the riskiest piece for the least benefit. If it is ever
+   built, it requires e2ee and a security review.
+6. **A project rule beats the last-used account, and overriding it needs confirmation.**
+   This stops one mistaken tap from making a personal account the "last used" for a work
+   project.
 
 ## Risks and open questions
 
@@ -336,23 +394,20 @@ File this as a separate tb-mobile issue that links back here, per the cross-repo
 - **Data boundary between accounts.** A work account's transcripts may fall under the
   employer's policies. The combined history list is display only: nothing copies, moves or
   forks a transcript across account directories. If a later request wants a cross-account
-  copy, it needs its own design and an explicit user action. One open question: should an
-  account's history be hideable from some paired devices, for example keeping work history
-  off a personal tablet? That would be a per-device account filter on top of the device
-  registry. Decide before phase 6.
+  copy, it needs its own design and an explicit user action. Hiding an account from some
+  devices is phase 3b (Decision 1).
 - **Shared project settings.** `.claude/` *inside a repo* (project settings, `CLAUDE.md`)
   is unaffected and shared across accounts. That is intended.
 - **MCP servers and user settings live per account.** A new account starts with no MCP
-  config. `accounts add --copy-settings-from <id>` could copy `settings.json`, never
-  credentials. Decide in phase 2.
+  config unless the user opts in to copying settings (Decision 2).
 - **Inotify budget on Linux.** See "Watchers and resource cost" above.
-- **Push and Live Activity copy.** Should the account label appear in notifications? It is
-  probably worth showing only when more than one account exists. Coordinate through the
-  `push-notifications` skill's payload contract before changing it.
+- **Push and Live Activity payload.** Adding `accountLabel` (Decision 3) has to follow the
+  payload contract in the `push-notifications` skill, which is shared with tb-mobile.
 
 ## Done means
 
 - Streamer: phases 0–3 merged, with a two-account integration test green on all three CI
   OSes, and the guide published.
+- Streamer, before the mobile account-settings screen: phase 3b merged.
 - Mobile: phase 6 items 1–5 shipped against a phase 3 streamer, with an old-streamer
   regression check showing no account UI and no errors.
