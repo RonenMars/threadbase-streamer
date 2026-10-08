@@ -466,7 +466,10 @@ export type WSMessage =
       /** Additive: Node `process.platform` of the host. Old clients ignore it. */
       os?: HostPressureOs;
     }
-  | { type: "host_pressure_cleared"; updatedAt: string };
+  | { type: "host_pressure_cleared"; updatedAt: string }
+  // The shared saved-items list changed; clients refetch when `revision` is
+  // newer than theirs. Additive; old clients ignore it.
+  | { type: "saved_items_changed"; revision: number };
 
 /** Coarse host-starvation level pushed on `host_pressure`. Never `ok` on the wire. */
 export type HostPressureLevel = "elevated" | "critical";
