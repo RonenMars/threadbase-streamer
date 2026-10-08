@@ -328,7 +328,13 @@ function managedToResponse(
     projectName: s.projectName,
     branch: s.branch,
     lastOutput: s.lastOutput,
-    elapsedMs: (s.completedAt ?? new Date()).getTime() - s.startedAt.getTime(),
+    // A rehydrated stub has no process behind it, so "now" is not when it was
+    // last active. A hard kill (Task Scheduler, taskkill, a reboot) never runs
+    // recordShutdownState and leaves completed_at null; counting to now made
+    // clients read `startedAt + elapsedMs` as activity "now" on every fetch.
+    elapsedMs:
+      (s.completedAt ?? (s.rehydrated ? (s.lastActivityAt ?? s.startedAt) : new Date())).getTime() -
+      s.startedAt.getTime(),
     promptCount: s.promptCount,
     startedAt: s.startedAt.toISOString(),
     completedAt: s.completedAt?.toISOString() ?? null,
