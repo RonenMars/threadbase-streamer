@@ -553,6 +553,17 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
                 outcome,
                 messageCount: meta?.messageCount,
               });
+              // The store's messageCount is otherwise a one-shot copy taken at
+              // resume (enrichResumedSessionAsync), absent for a fresh start
+              // and frozen as the chat grows. This is the one place that sees
+              // a fresh total, once per turn. getManaged is a live read, so a
+              // session forgotten while the parse ran is skipped.
+              const stored = deps.sessionStore.getManaged(session.id);
+              if (meta && stored && stored.messageCount !== meta.messageCount) {
+                deps.sessionStore.updateManaged(session.id, { messageCount: meta.messageCount });
+                const updated = deps.sessionStore.get(session.id, deps.ptyAttachedIds());
+                if (updated) deps.wsHub.broadcast({ type: "session_update", session: updated });
+              }
             })
             .catch((err) => {
               deps.log().warn("scanner.refreshFile: failed", {
