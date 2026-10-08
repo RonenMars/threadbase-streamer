@@ -586,3 +586,35 @@ describe("effort on the session frame", () => {
     expect(resp && "effort" in resp).toBe(false);
   });
 });
+
+describe("SessionStore.ownsConversation", () => {
+  // Discovery enumerates the streamer's own PTY children too. A Codex session
+  // is keyed by a placeholder id while its process holds the real rollout, so
+  // without this its own child would be listed — and terminable — as external.
+  const PLACEHOLDER = "codex-placeholder-0001";
+
+  it("matches a managed session's id, bound id and resumed-from id", () => {
+    const store = new SessionStore();
+    store.addManaged(
+      makeManagedSession({
+        id: PLACEHOLDER,
+        boundConversationId: UUID_B,
+        resumedFromConversationId: UUID_A,
+      }),
+    );
+    expect(store.ownsConversation(PLACEHOLDER)).toBe(true);
+    expect(store.ownsConversation(UUID_B)).toBe(true);
+    expect(store.ownsConversation(UUID_A)).toBe(true);
+    expect(store.ownsConversation("unrelated")).toBe(false);
+  });
+
+  it("does not list or return a discovered process for a conversation it owns", () => {
+    const store = new SessionStore();
+    store.addManaged(makeManagedSession({ id: PLACEHOLDER, boundConversationId: UUID_B }));
+    store.setDiscovered([makeDiscoveredProcess({ conversationId: UUID_B, provider: "codex-cli" })]);
+
+    const ids = store.list(new Set([PLACEHOLDER])).map((s) => s.id);
+    expect(ids).toEqual([PLACEHOLDER]);
+    expect(store.get(UUID_B, new Set([PLACEHOLDER]))).toBeNull();
+  });
+});

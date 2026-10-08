@@ -77,6 +77,32 @@ export class SessionStore {
     }
   }
 
+  /** Forget one discovered process, e.g. after the streamer terminated it. */
+  dropDiscovered(pid: number): void {
+    this.discovered.delete(pid);
+  }
+
+  /**
+   * Whether a managed (streamer-spawned) session owns this conversation, under
+   * any of the ids it is known by. Discovery enumerates every agent process on
+   * the machine, the streamer's own PTY children included, and a Codex session
+   * is keyed by a placeholder id while its process holds the real rollout — so
+   * matching on `id` alone would report our own child as an external session,
+   * one that terminate or adopt would then kill.
+   */
+  ownsConversation(conversationId: string): boolean {
+    for (const s of this.managed.values()) {
+      if (
+        s.id === conversationId ||
+        s.boundConversationId === conversationId ||
+        s.resumedFromConversationId === conversationId
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /**
    * The **live** stored records — mutating an element mutates the store. Paired
    * with `list()`, which hands back throwaway response copies.
@@ -106,7 +132,7 @@ export class SessionStore {
     for (const d of this.discovered.values()) {
       if (!d.conversationId) continue;
       if (!this.visibility(d.conversationId)) continue;
-      if (seenIds.has(d.conversationId)) continue;
+      if (seenIds.has(d.conversationId) || this.ownsConversation(d.conversationId)) continue;
       results.push(discoveredToResponse(d, d.conversationId));
       seenIds.add(d.conversationId);
     }
@@ -127,6 +153,7 @@ export class SessionStore {
       );
     }
 
+    if (this.ownsConversation(sessionId)) return null;
     for (const d of this.discovered.values()) {
       if (d.conversationId === sessionId) return discoveredToResponse(d, sessionId);
     }
