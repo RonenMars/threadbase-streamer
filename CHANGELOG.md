@@ -1,3 +1,9 @@
+## [1.113.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.6...v1.113.7) (2026-10-10)
+
+### Bug Fixes
+
+* **auth:** require a loopback Host before treating a request as local ([#1068](https://github.com/RonenMars/threadbase-streamer/issues/1068)) ([eb2cbf8](https://github.com/RonenMars/threadbase-streamer/commit/eb2cbf8f317f7273d3ad9b2976cfb7c02bd5b369))
+
 ## [1.113.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.5...v1.113.6) (2026-10-10)
 
 ### Bug Fixes
