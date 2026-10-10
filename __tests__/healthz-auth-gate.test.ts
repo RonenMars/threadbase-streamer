@@ -30,6 +30,7 @@ function harness(opts: {
   authorization?: string;
   localNoAuth?: boolean;
   forwardedFor?: string;
+  host?: string;
 }): Harness {
   let nexts = 0;
   let status: number | undefined;
@@ -43,6 +44,7 @@ function harness(opts: {
         if (lower === "authorization") return opts.authorization;
         if (lower === "cf-connecting-ip") return opts.cfConnectingIp;
         if (lower === "x-forwarded-for") return opts.forwardedFor;
+        if (lower === "host") return opts.host ?? "127.0.0.1:8766";
         return undefined;
       },
       query: () => undefined,
@@ -151,6 +153,14 @@ describe("loopback carve-outs behind the tunnel", () => {
       expect(h.nexts()).toBe(0);
     });
   }
+
+  it("401s /api/logs addressed to a public hostname, forwarding headers or not", async () => {
+    const h = harness({ path: "/api/logs", host: "tb.example.com" });
+    await h.run();
+
+    expect(h.status()).toBe(401);
+    expect(h.nexts()).toBe(0);
+  });
 
   it("401s /api/logs forwarded by another proxy with no credential", async () => {
     const h = harness({ path: "/api/logs", forwardedFor: "203.0.113.7" });

@@ -39,7 +39,7 @@ function harness(opts: {
       url: `http://127.0.0.1:8766${opts.path ?? "/api/devices"}`,
       method: "GET",
       header: (name: string) =>
-        name.toLowerCase() === "authorization" ? opts.authorization : undefined,
+        ({ authorization: opts.authorization, host: "127.0.0.1:8766" })[name.toLowerCase()],
       query: () => undefined,
     },
     env: { incoming: { socket: { remoteAddress: opts.remoteAddress } } },
