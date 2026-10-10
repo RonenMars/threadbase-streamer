@@ -51,6 +51,11 @@ const CF_TUNNEL_HEADER = "cf-connecting-ip";
 // a genuine loopback caller sets none. A proxy configured to add none of them
 // is indistinguishable from a local caller.
 const FORWARDED_HEADERS = [CF_TUNNEL_HEADER, "x-forwarded-for", "forwarded"];
+// The positive half of the same test: a local caller dialled this machine by a
+// loopback name, while a tunnel forwards the public hostname it was reached on.
+// The header list above can only name the proxies it knows; this does not
+// depend on what the proxy chose to add.
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 // Localhost-only unauthenticated paths (menubar logs viewer).
 const LOCAL_ONLY_PATHS = new Set(["/api/logs", "/api/logs/meta"]);
 // /api/__update uses HMAC signature auth instead of Bearer; skip the
@@ -95,10 +100,12 @@ export const authMiddleware =
 
     const remoteAddr = c.env.incoming?.socket?.remoteAddress;
     // Loopback alone is not local: a request forwarded by a tunnel or proxy on
-    // this machine arrives from 127.0.0.1 too, so a forwarding header rules it out.
+    // this machine arrives from 127.0.0.1 too, so it must also have been
+    // addressed to loopback and carry no forwarding header.
     const isLocal =
       !viaRelay &&
       isLocalRequest(remoteAddr) &&
+      LOOPBACK_HOST.test(c.req.header("host") ?? "") &&
       !FORWARDED_HEADERS.some((name) => c.req.header(name) !== undefined);
     if (LOCAL_ONLY_PATHS.has(path) && isLocal) {
       await next();
