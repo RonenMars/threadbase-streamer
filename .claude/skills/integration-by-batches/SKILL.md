@@ -189,6 +189,24 @@ QA is the batch build running as the server a phone talks to. **Ask which target
 - **Mobile can scrape the screen itself.** A card on the phone does not prove the streamer sent one; grep the
   broadcast log before crediting a PR.
 
+### Cross-repo batch alignment
+
+When a feature was built on both sides, the streamer batch and the mobile batch are one unit of QA, not two.
+
+- **Plan them together.** Run Step 0 on both repos, then cut streamer and mobile batches so every pair
+  (matched by the endpoint or field actually called) sits in matching batches. List each pair in the plan:
+  streamer PR, mobile PR, the call that links them, which side lands first.
+- **Never split a pair across non-matching batches.** If a mobile batch needs a streamer PR from a later
+  batch, pull that PR forward into the earlier streamer batch, or defer the mobile PR; say which in the plan.
+- **One checkpoint per pair batch.** Deploy the streamer batch (Step 5), build the matching mobile batch
+  against it, and QA the pair both ways (above). The report names both builds: streamer target, tip SHA,
+  version, and the mobile tag/run id.
+- **One approval covers both halves.** Land them in the pair's order (Step 7) and record both squash SHAs in
+  one log row. Do not land one half while the other is still untested.
+- **Unpaired batches.** A streamer batch with no mobile counterpart needs no phone QA beyond what Step 1 says;
+  a mobile batch with no streamer counterpart QAs against current `main`. State "no counterpart" in the plan
+  rather than leaving it implied.
+
 ## Step 6 — Handling QA findings
 
 1. **Is the code path in the batch's file set?** `git diff --name-only <main>..<batch>` before accepting a
