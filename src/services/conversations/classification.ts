@@ -1,6 +1,7 @@
 import {
   createJsonlParseState,
   parseCodexJsonlLine,
+  parseCopilotJsonlLine,
   parseCursorJsonlLine,
   parseJsonlLine,
 } from "@threadbase-sh/scanner";
@@ -10,6 +11,7 @@ import { z } from "zod";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
+  COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   type ProviderName,
 } from "../../providers";
@@ -68,6 +70,16 @@ export class ConversationClassifier {
     if (this.provider === CLAUDE_CODE_PROVIDER && /[/\\]agent-transcripts[/\\]/.test(filePath)) {
       this.provider = CURSOR_PROVIDER;
     }
+    // Copilot's `<root>/<sessionId>/events.jsonl` names no provider on its lines
+    // until a message arrives, so a cache miss is recognised by path, like Cursor.
+    if (
+      this.provider === CLAUDE_CODE_PROVIDER &&
+      /[/\\]session-state[/\\][^/\\]+[/\\]events\.jsonl$/.test(filePath)
+    ) {
+      this.provider = COPILOT_PROVIDER;
+    }
+    // Its identity is the directory, never a line, so the first message settles it.
+    if (this.provider === COPILOT_PROVIDER) this.sawIdentity = true;
     this.isSubagent = /[/\\]subagents[/\\][^/\\]+\.jsonl$/.test(filePath);
     if (this.isSubagent) {
       const parts = filePath.split(/[/\\]/);
@@ -139,7 +151,9 @@ export class ConversationClassifier {
         ? parseCodexJsonlLine(raw)
         : this.provider === CURSOR_PROVIDER
           ? parseCursorJsonlLine(raw)
-          : parseJsonlLine(raw, this.state);
+          : this.provider === COPILOT_PROVIDER
+            ? parseCopilotJsonlLine(raw)
+            : parseJsonlLine(raw, this.state);
     if (message?.role === "user" && isCodexInjectedContext(message.text ?? "")) return null;
     if (message) this.hasMessages = true;
     return message;

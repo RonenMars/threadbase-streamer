@@ -89,6 +89,8 @@ Bulk history is `@threadbase-sh/scanner`, not this framework. After the scanner 
 
 Worked example: `cursor` live runner is PR #892 (shipped as `cursor-cli`; the wire name is now `cursor`, with `cursor-cli` accepted as an alias). History indexing is the scanner `cursorRoots` follow-up (`CursorProvider` + streamer `cursorRoots`).
 
+`copilot` follows the same path: scanner `CopilotProvider` + streamer `copilotRoots`, default `$COPILOT_HOME/session-state` (`~/.copilot/session-state`). Lines are `{ type, data, id, timestamp, parentId }` in `<root>/<sessionId>/events.jsonl`; `user.message` and `assistant.message` are the only chat events, and the classifier recognises the file by that path.
+
 ### 7. Verify
 
 ```bash

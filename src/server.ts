@@ -525,6 +525,7 @@ export class StreamerServer {
   private directoryDebounceMs: number;
   private codexRoots: string[];
   private cursorRoots: string[];
+  private copilotRoots: string[];
   private includeAgents: boolean;
   private agentEntrypoints: ReadonlySet<string>;
   private honoApp: Hono<AppEnv>;
@@ -556,6 +557,9 @@ export class StreamerServer {
     this.scanProfiles = config.scanProfiles;
     this.codexRoots = config.codexRoots ?? [join(homedir(), ".codex", "sessions")];
     this.cursorRoots = config.cursorRoots ?? [join(homedir(), ".cursor", "projects")];
+    this.copilotRoots = config.copilotRoots ?? [
+      join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), "session-state"),
+    ];
     this.ptyGracePeriodMs = config.ptyGracePeriodMs ?? DEFAULT_PTY_GRACE_PERIOD_MS;
     this.defaultSystemPrompt = config.defaultSystemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     // env > CLI > server.yaml > registry default, then the legacy explicit
@@ -602,6 +606,7 @@ export class StreamerServer {
       scanProfiles: this.scanProfiles,
       codexRoots: this.codexRoots,
       cursorRoots: this.cursorRoots,
+      copilotRoots: this.copilotRoots,
       directoryDebounceMs: this.directoryDebounceMs,
       persistenceDisabled: config.scannerPersistent === false,
       // Thunks, not values: these are opened during listen() and rebound by
@@ -1817,6 +1822,12 @@ export class StreamerServer {
           // node_modules and will EMFILE a machine with many Cursor worktrees.
           for (const transcripts of listCursorTranscriptWatchDirs(this.cursorRoots)) {
             this.fileWatcher.watchDirectory(transcripts);
+          }
+          // Copilot session-state (<root>/<sessionId>/events.jsonl): external
+          // sessions invalidate the scanner the same way Codex rollouts do.
+          for (const dir of this.copilotRoots) {
+            if (!existsSync(dir)) continue;
+            this.fileWatcher.watchDirectory(dir);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
