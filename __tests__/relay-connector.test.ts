@@ -73,8 +73,10 @@ describe("RelayConnector", () => {
     await relay.kill();
     await waitFor(() => connector.state === "reconnecting");
     relay = await new FakeRelay(relay.keyPair).start(port);
+    // The connector reports connected as it sends the confirmation; the relay
+    // records the key when that frame arrives, which is a separate event.
+    await waitFor(() => relay.confirmedKeys.length === 1);
     await waitFor(() => connector.state === "connected");
-    expect(relay.confirmedKeys).toHaveLength(1);
   });
 });
 
