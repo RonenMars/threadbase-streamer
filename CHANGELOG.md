@@ -1,3 +1,9 @@
+## [1.114.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.7...v1.114.0) (2026-10-10)
+
+### Features
+
+* **cli:** rename the prod command group to service ([#1069](https://github.com/RonenMars/threadbase-streamer/issues/1069)) ([4cf5ec2](https://github.com/RonenMars/threadbase-streamer/commit/4cf5ec26ecbc001d277fd02afe92b7b0a60183c5))
+
 ## [1.113.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.6...v1.113.7) (2026-10-10)
 
 ### Bug Fixes
