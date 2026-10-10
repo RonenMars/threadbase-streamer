@@ -22,7 +22,7 @@ Those keys are **not** the env var names. This does nothing (unknown key, droppe
 feature_flags: {"THREADBASE_FEATURE_PTY_HOST":true}
 ```
 
-Snake_case (`pty_host`) is also unknown. Current ids: `subagentSessions`, `codexSystemPrompt`, `sessionRehydration`, `liveActivityPush`, `e2ee`, `accessProbe`, `ptyHost`. `GET /api/config/feature-flags` `registry[].id` is the same list.
+Snake_case (`pty_host`) is also unknown. Current ids: `subagentSessions`, `codexSystemPrompt`, `sessionRehydration`, `liveActivityPush`, `e2ee`, `accessProbe`, `relay`, `ptyHost`. `GET /api/config/feature-flags` `registry[].id` is the same list.
 
 ## Provider-created child sessions
 
