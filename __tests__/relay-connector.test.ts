@@ -147,4 +147,25 @@ describe("a streamer with the relay flag", () => {
       remediation: "RELAY_UNREACHABLE",
     });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "boots without the relay when the ingress socket cannot be bound",
+    async () => {
+      server = new StreamerServer({
+        port: 0,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        featureFlags: { relay: true },
+        relayUrl: relay.url,
+        relayPublicKey: relay.keyPair.publicKeyRaw.toString("base64url"),
+        relayIngressPath: join(configDir, "missing", "relay.sock"),
+      });
+      await server.listen(0, { awaitReady: true });
+
+      expect((await get("/api/info")).status).toBe(200);
+      expect(await relayCheck()).toMatchObject({ remediation: "RELAY_NOT_CONFIGURED" });
+      expect(relay.confirmedKeys).toEqual([]);
+    },
+  );
 });

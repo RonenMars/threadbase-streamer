@@ -569,7 +569,8 @@ export class StreamerServer {
       yaml: loadFeatureFlags(),
     });
     this.featureFlags = flagResolution.values;
-    if (this.featureFlags.relay && !this.relayIngressPath) {
+    // Only with a relay to dial: an ingress nothing tunnels into serves nobody.
+    if (this.featureFlags.relay && this.relayUrl && this.relayPublicKey && !this.relayIngressPath) {
       this.relayIngressPath =
         process.platform === "win32"
           ? "\\\\.\\pipe\\threadbase-relay"
@@ -1605,9 +1606,17 @@ export class StreamerServer {
     // genuinely occupied port still surfaces loudly.
     await this.bindWithRetry(port, this.host);
     if (this.relayIngressPath) {
-      this.relayIngress = await listenRelayIngress(this.httpServer, this.relayIngressPath);
+      try {
+        this.relayIngress = await listenRelayIngress(this.httpServer, this.relayIngressPath);
+      } catch (err) {
+        // The relay is optional, and on by default: a socket that cannot be
+        // bound (a config directory too deep for a unix socket path, say) costs
+        // the relay and must never cost the server its boot.
+        const error = (err as Error).message;
+        this.log.warn(`Relay is off for this run: ${error}`, { error });
+      }
     }
-    if (this.featureFlags.relay && this.relayUrl && this.relayPublicKey) {
+    if (this.relayIngress && this.featureFlags.relay && this.relayUrl && this.relayPublicKey) {
       this.relayConnector = new RelayConnector({
         url: this.relayUrl,
         relayPublicKey: Buffer.from(this.relayPublicKey, "base64url"),
