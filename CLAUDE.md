@@ -105,7 +105,7 @@ See [docs/troubleshooting.md](docs/troubleshooting.md) → "A major test-runner 
 
 - Every deploy installs two global commands wrapping `~/.threadbase/cli.js`: `threadbase-streamer` (entrenched name) and `tb-streamer` (short alias). Shim install is interactive by default; non-interactive via `--install-shim=` / `--path-update=` flags or `TB_INSTALL_SHIM` / `TB_PATH_UPDATE` env vars. Failures are non-fatal.
 - **npm**: `npm install -g @threadbase-sh/streamer` installs the CLI from the public npm registry (published on stable releases via semantic-release). The published package ships the prebuilt `dist/` (scanner/agent-types/qrcode-terminal bundled inline); only `node-pty` compiles/prebuilds on install.
-- **Homebrew**: `brew install RonenMars/threadbase/tb-streamer` is an alternate end-user install (formula auto-published on stable releases). Mutually exclusive with the `scripts/deploy.sh` install — both bind port 8766. Homebrew services run `serve --prod` under the `homebrew.mxcl.tb-streamer` launchd label; the prod/dev lifecycle (`src/lifecycle/launchd.ts`) resolves the loaded label at runtime, so `tb-streamer prod …` controls a brew-supervised instance too.
+- **Homebrew**: `brew install RonenMars/threadbase/tb-streamer` is an alternate end-user install (formula auto-published on stable releases). Mutually exclusive with the `scripts/deploy.sh` install — both bind port 8766. Homebrew services run `serve --prod` under the `homebrew.mxcl.tb-streamer` launchd label; the prod/dev lifecycle (`src/lifecycle/launchd.ts`) resolves the loaded label at runtime, so `tb-streamer service …` controls a brew-supervised instance too.
 - Full shim/Homebrew/menubar install detail: [docs/guides/deploy-internals.md](docs/guides/deploy-internals.md).
 - **Fly.io** (demo + prod cloud): `npm run deploy:fly` (demo, default), `npm run deploy:fly -- --prod` (prod), `npm run deploy:fly -- --prod --demo` (both). Secrets managed via `npm run fly:secrets`. Full guide: [docs/guides/fly.md](docs/guides/fly.md).
 
@@ -148,9 +148,9 @@ Things that will bite if you forget:
 
 ## Prod/dev coordination
 
-Only one streamer can bind port 8766. The supervised "prod" instance (launchd on macOS, Task Scheduler on Windows) and an ad-hoc "dev" instance coordinate via a marker file at `~/.threadbase/prod-suspended.json` (dev writes it when taking over the port; `--replace-prod` / `--forget` flags on `serve`). Manage prod with `tb-streamer prod start|stop|status|restart|doctor [--fix]|logs`.
+Only one streamer can bind port 8766. The supervised "prod" instance (launchd on macOS, Task Scheduler on Windows) and an ad-hoc "dev" instance coordinate via a marker file at `~/.threadbase/prod-suspended.json` (dev writes it when taking over the port; `--replace-prod` / `--forget` flags on `serve`). Manage prod with `tb-streamer service start|stop|status|restart|doctor [--fix]|logs`.
 
-Both invocations read the same `~/.threadbase/` (`server.yaml`, cache, `runtime.db`). `--prod` skips prompts and takeover — it is not a config profile, and there is no second local env. `THREADBASE_CONFIG_DIR` is a test hook and stays unset. To run a checkout as prod against that dir: `tb-streamer prod stop`, then `node dist/cli.cjs serve --port 8766 --verbose --prod`.
+Both invocations read the same `~/.threadbase/` (`server.yaml`, cache, `runtime.db`). `--prod` skips prompts and takeover — it is not a config profile, and there is no second local env. `THREADBASE_CONFIG_DIR` is a test hook and stays unset. To run a checkout as prod against that dir: `tb-streamer service stop`, then `node dist/cli.cjs serve --port 8766 --verbose --prod`.
 
 Don't break without coordination: the marker shape is versioned (`shimVersion` — bump on change); the plist `ProgramArguments` must run `launchd-entry.cjs … --prod`; the Windows `TASK_NAME` constant in `src/lifecycle/constants.ts` must match `deploy.ps1`. Full component/flag/decision-table reference: [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
 

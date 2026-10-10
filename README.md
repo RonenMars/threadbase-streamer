@@ -36,11 +36,11 @@ node dist/cli.cjs serve --verbose --local-no-auth
 That is the interactive path: same `~/.threadbase/` as a supervised install (`server.yaml`, cache, `runtime.db`), but it will prompt if port 8766 is already taken. `--prod` skips those prompts and the prod-takeover flow; it is not a separate environment. To run the checkout as launchd would:
 
 ```bash
-tb-streamer prod stop
+tb-streamer service stop
 node dist/cli.cjs serve --port 8766 --verbose --prod
 ```
 
-Restore the supervised instance with `tb-streamer prod start`. Detail: [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
+Restore the supervised instance with `tb-streamer service start`. Detail: [docs/guides/prod-dev-lifecycle.md](docs/guides/prod-dev-lifecycle.md).
 
 #### Server address
 

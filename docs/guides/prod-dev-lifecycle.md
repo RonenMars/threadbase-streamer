@@ -4,7 +4,7 @@ Only one streamer can bind port 8766 at a time. The platform-supervised "prod" i
 
 ## One config, two invocation modes
 
-`--prod` is process behaviour, not a config profile. Supervised prod (`tb-streamer prod start`, launchd, Task Scheduler, Homebrew `brew services`, Docker) and an ad-hoc `tb-streamer serve` both read `~/.threadbase/` — `server.yaml`, `cache/`, `runtime.db`, paired devices. There is no `~/.threadbase-dev`. `THREADBASE_CONFIG_DIR` redirects that directory, but it is a test hook (rotate / `set-key` must not rewrite live config) and stays unset on a real machine.
+`--prod` is process behaviour, not a config profile. Supervised prod (`tb-streamer service start`, launchd, Task Scheduler, Homebrew `brew services`, Docker) and an ad-hoc `tb-streamer serve` both read `~/.threadbase/` — `server.yaml`, `cache/`, `runtime.db`, paired devices. There is no `~/.threadbase-dev`. `THREADBASE_CONFIG_DIR` redirects that directory, but it is a test hook (rotate / `set-key` must not rewrite live config) and stays unset on a real machine.
 
 What `--prod` changes:
 
@@ -18,14 +18,14 @@ What `--prod` changes:
 To run a checkout against the live config without those prompts, stop the supervised instance first so 8766 is free:
 
 ```bash
-tb-streamer prod stop
+tb-streamer service stop
 npm run build
 node dist/cli.cjs serve --port 8766 --verbose --prod
 ```
 
-Restore it with `tb-streamer prod start`. `npm run dev` only watches tsup; `npm run dev:verbose` is `serve` without `--prod`.
+Restore it with `tb-streamer service start`. `npm run dev` only watches tsup; `npm run dev:verbose` is `serve` without `--prod`.
 
-Linux has no unsupervised lifecycle (`tb-streamer prod …` is macOS / Windows), so a checkout there is `node dist/cli.cjs serve --prod` with the same `~/.threadbase/` as above.
+Linux has no unsupervised lifecycle (`tb-streamer service …` is macOS / Windows), so a checkout there is `node dist/cli.cjs serve --prod` with the same `~/.threadbase/` as above.
 
 Fly's `deploy:fly --prod` is a different flag: which Fly app, not this `serve` mode. Both Fly apps still run `serve --prod` in the container. See [fly.md](fly.md).
 
@@ -56,12 +56,12 @@ Fly's `deploy:fly --prod` is a different flag: which Fly app, not this `serve` m
 
 **Prod-side commands:**
 
-- `tb-streamer prod status` — agent loaded?, agent pid, marker state.
-- `tb-streamer prod start` — clear marker + `launchctl kickstart -k`. Use after a `userHeld` suspension to restore prod.
-- `tb-streamer prod stop` — `launchctl bootout`. Will not auto-restart until `prod start` or reboot.
-- `tb-streamer prod restart` — bootout + bootstrap (re-reads plist).
-- `tb-streamer prod doctor [--fix]` — detect stale marker (dead devPid, not userHeld) and missing agent; when `ptyHost` is enabled, also report host liveness, protocol version, and hosted-session count; `--fix` clears stale markers.
-- `tb-streamer prod logs [-n <N>] [--no-follow] [--errors-only]` — tail the supervised streamer's stdout + stderr. Default follows both files live, seeded with the last 50 lines. Resolves paths via `Supervisor.getLogPaths()`, which is `~/.threadbase/logs/{stdout,stderr}.log` on both platforms — filled by the plist's `StandardOutPath` on macOS and by the `>>` redirection `scripts/deploy.ps1` writes into `launch.cmd` on Windows, since Task Scheduler has no native redirection. Both backends and the deploy script take the paths from `logPaths()` in `src/lifecycle/constants.ts`.
+- `tb-streamer service status` — agent loaded?, agent pid, marker state.
+- `tb-streamer service start` — clear marker + `launchctl kickstart -k`. Use after a `userHeld` suspension to restore prod.
+- `tb-streamer service stop` — `launchctl bootout`. Will not auto-restart until `prod start` or reboot.
+- `tb-streamer service restart` — bootout + bootstrap (re-reads plist).
+- `tb-streamer service doctor [--fix]` — detect stale marker (dead devPid, not userHeld) and missing agent; when `ptyHost` is enabled, also report host liveness, protocol version, and hosted-session count; `--fix` clears stale markers.
+- `tb-streamer service logs [-n <N>] [--no-follow] [--errors-only]` — tail the supervised streamer's stdout + stderr. Default follows both files live, seeded with the last 50 lines. Resolves paths via `Supervisor.getLogPaths()`, which is `~/.threadbase/logs/{stdout,stderr}.log` on both platforms — filled by the plist's `StandardOutPath` on macOS and by the `>>` redirection `scripts/deploy.ps1` writes into `launch.cmd` on Windows, since Task Scheduler has no native redirection. Both backends and the deploy script take the paths from `logPaths()` in `src/lifecycle/constants.ts`.
 
 **Don't break without coordination:**
 
@@ -77,8 +77,8 @@ The same lifecycle module is implemented for Windows via `src/lifecycle/task-sch
 
 **Components on Windows:**
 
-- **No shim.** Task Scheduler does not auto-respawn on `KeepAlive`-style triggers — it runs the registered action once per trigger. The marker-suppression mechanism (the central reason for the shim on macOS) is unnecessary; a clean dev exit simply leaves the prod task stopped until the user runs `tb-streamer prod start` (or until the next at-logon trigger, if configured).
-- **Marker + prefs files** at `%USERPROFILE%\.threadbase\prod-suspended.json` and `dev-prefs.json` — same shape as macOS. Used by `tb-streamer prod doctor` for diagnostics and by `--replace-prod` to track which dev session took the port.
+- **No shim.** Task Scheduler does not auto-respawn on `KeepAlive`-style triggers — it runs the registered action once per trigger. The marker-suppression mechanism (the central reason for the shim on macOS) is unnecessary; a clean dev exit simply leaves the prod task stopped until the user runs `tb-streamer service start` (or until the next at-logon trigger, if configured).
+- **Marker + prefs files** at `%USERPROFILE%\.threadbase\prod-suspended.json` and `dev-prefs.json` — same shape as macOS. Used by `tb-streamer service doctor` for diagnostics and by `--replace-prod` to track which dev session took the port.
 - **Task** named `Threadbase` (overridable via `THREADBASE_TASK_NAME` env var). Registered by `scripts\deploy.ps1 setup`. Action: `wscript.exe launch.vbs` → `launch.cmd` → `node cli.js serve --port 8766 --verbose --prod`. The trailing `--prod` flag tells the action to skip dev-takeover logic.
 
 **Marker decision (Windows):**
@@ -86,11 +86,11 @@ The same lifecycle module is implemented for Windows via `src/lifecycle/task-sch
 | Marker state | Effect |
 |---|---|
 | absent / malformed | Task runs normally on next trigger |
-| `userHeld: true` | Task stays stopped until `tb-streamer prod start` |
+| `userHeld: true` | Task stays stopped until `tb-streamer service start` |
 | `userHeld: false`, devPid alive | Dev is using the port; user must stop dev or run `prod start` to force takeover back to prod |
-| `userHeld: false`, devPid dead | Stale; `tb-streamer prod doctor --fix` clears it |
+| `userHeld: false`, devPid dead | Stale; `tb-streamer service doctor --fix` clears it |
 
-**Prod-side commands behave identically.** `tb-streamer prod start|stop|status|restart|doctor` all work on Windows; under the hood they call `Get-ScheduledTask`, `Stop-ScheduledTask`, `Start-ScheduledTask`, `Enable-ScheduledTask`, `Disable-ScheduledTask` via `powershell.exe`.
+**Prod-side commands behave identically.** `tb-streamer service start|stop|status|restart|doctor` all work on Windows; under the hood they call `Get-ScheduledTask`, `Stop-ScheduledTask`, `Start-ScheduledTask`, `Enable-ScheduledTask`, `Disable-ScheduledTask` via `powershell.exe`.
 
 **Don't break without coordination:**
 

@@ -106,7 +106,7 @@ async function tryBind(start: number, offset: number): Promise<number> {
 /**
  * Acquire the prod port from launchd. Writes marker, unloads agent, installs
  * signal handlers that flip userHeld=true on clean exit (so launchd's shim
- * stays out until `tb-streamer prod start`).
+ * stays out until `tb-streamer service start`).
  */
 function isPidAlive(pid: number): boolean {
   try {
@@ -123,7 +123,7 @@ export function takeoverProd(opts: { port: number; repoToplevel: string | null }
     if (isPidAlive(existing.devPid)) {
       throw new Error(
         `prod is already suspended by dev pid ${existing.devPid} (since ${existing.suspendedAt}). ` +
-          `Stop that dev session first, or run 'tb-streamer prod doctor'.`,
+          `Stop that dev session first, or run 'tb-streamer service doctor'.`,
       );
     }
     log.info(`stale marker found (pid ${existing.devPid} is gone) — clearing and proceeding`);
@@ -144,7 +144,7 @@ export function takeoverProd(opts: { port: number; repoToplevel: string | null }
     if (m && m.devPid === process.pid) {
       writeMarker({ ...m, userHeld: true });
       log.info(
-        `prod is suspended (userHeld). Run 'tb-streamer prod start' to restore the supervised instance.`,
+        `prod is suspended (userHeld). Run 'tb-streamer service start' to restore the supervised instance.`,
       );
     }
   };

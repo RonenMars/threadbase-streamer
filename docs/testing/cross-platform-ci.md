@@ -41,7 +41,7 @@ Observed on `windows-latest` on 2026-08-01:
 
 This proves that moving ConPTY ownership into the detached host buys continuity across the streamer-process exit boundary on Windows.
 
-It does not prove a full `tb-streamer prod restart` through Task Scheduler, provider-specific Claude or Codex behaviour, or terminal replay from a real provider session on Windows; those claims remain assumed until an end-to-end Windows service test observes them.
+It does not prove a full `tb-streamer service restart` through Task Scheduler, provider-specific Claude or Codex behaviour, or terminal replay from a real provider session on Windows; those claims remain assumed until an end-to-end Windows service test observes them.
 
 ### Why the full suite, since 2026-08-11
 

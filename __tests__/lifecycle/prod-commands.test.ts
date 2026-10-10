@@ -42,6 +42,22 @@ vi.mock("node:child_process", async () => ({
   spawn: vi.fn(),
 }));
 
+describe("command group names", () => {
+  it("registers the group as `service` and keeps `prod` working, out of the help", async () => {
+    const { Command } = await import("commander");
+    const { registerProdCommands } = await import("../../cli/prod");
+    const program = new Command();
+    registerProdCommands(program);
+
+    const names = (group: string) =>
+      program.commands.find((c) => c.name() === group)?.commands.map((c) => c.name());
+    expect(names("service")).toContain("status");
+    expect(names("prod")).toEqual(names("service"));
+    expect(program.helpInformation()).toMatch(/^\s+service\b/m);
+    expect(program.helpInformation()).not.toMatch(/^\s+prod\b/m);
+  });
+});
+
 describe("prod commands", () => {
   let dir: string;
   let stdoutLog: string;

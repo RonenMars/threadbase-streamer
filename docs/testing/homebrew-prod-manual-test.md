@@ -3,7 +3,7 @@
 This is a **manual, real-machine runbook** for the Homebrew install scenarios that
 the automated suite cannot cover. The vitest tests mock `launchctl` / `execFile`
 and the filesystem, so they verify *we issue the right commands* — not that real
-`launchd` loads the service, binds the port, or that `tb-streamer prod` actually
+`launchd` loads the service, binds the port, or that `tb-streamer service` actually
 controls a brew-managed agent. Run this top-to-bottom on a Mac to close that gap.
 
 **PRs validated**
@@ -12,7 +12,7 @@ controls a brew-managed agent. Run this top-to-bottom on a Mac to close that gap
 |----|--------------------------|
 | #69 | `tb-streamer --version` resolves on the Cellar/libexec layout (not `0.0.0+unknown`); formula service PATH includes `HOMEBREW_PREFIX/bin` so `claude` resolves |
 | #70 | `tb-streamer update` on a brew install refuses with a "run `brew upgrade`" message + exit 2 (no download); corrected `brew info` caveats |
-| #71 | brew service runs `serve --prod` under `homebrew.mxcl.tb-streamer`; `tb-streamer prod …` and dev-takeover resolve and control the **brew** label, not the deploy.sh label |
+| #71 | brew service runs `serve --prod` under `homebrew.mxcl.tb-streamer`; `tb-streamer service …` and dev-takeover resolve and control the **brew** label, not the deploy.sh label |
 
 **Platform:** macOS only (Apple Silicon paths shown; Intel uses `/usr/local` instead
 of `/opt/homebrew`). **Time:** ~15–20 min. **Reversible:** yes — see scenario 11.
@@ -37,7 +37,7 @@ Throughout, `homebrew.mxcl.tb-streamer` is the brew launchd label and
 lsof -nP -iTCP:8766 -sTCP:LISTEN
 
 # If a deploy.sh prod streamer is running, stop it (frees the port + unloads its agent):
-tb-streamer prod stop            # if the CLI is already installed
+tb-streamer service stop            # if the CLI is already installed
 # …or directly:
 launchctl bootout gui/$UID/com.ronen.threadbase 2>/dev/null || true
 
@@ -218,7 +218,7 @@ download happens (no new dirs under `~/.threadbase/releases/`, no network fetch)
 
 ---
 
-## 7. `tb-streamer prod …` controls the brew service (PR #71)
+## 7. `tb-streamer service …` controls the brew service (PR #71)
 
 **Setup:** brew service running (scenario 4). These commands must resolve the
 **brew** label (`homebrew.mxcl.tb-streamer`), not `com.ronen.threadbase`.
@@ -226,19 +226,19 @@ download happens (no new dirs under `~/.threadbase/releases/`, no network fetch)
 **Commands**
 ```bash
 # STATUS — should report the brew agent loaded + its pid:
-tb-streamer prod status
+tb-streamer service status
 
 # RESTART — must re-bootstrap from the BREW plist path:
-tb-streamer prod restart
+tb-streamer service restart
 launchctl print "gui/$UID/homebrew.mxcl.tb-streamer" >/dev/null 2>&1 && echo "brew agent still loaded after restart"
 
 # STOP — must bootout the brew label (frees 8766):
-tb-streamer prod stop
+tb-streamer service stop
 lsof -nP -iTCP:8766 -sTCP:LISTEN || echo "8766 free after prod stop"
 launchctl print "gui/$UID/homebrew.mxcl.tb-streamer" >/dev/null 2>&1 || echo "brew agent unloaded"
 
 # START — re-loads/kickstarts the brew agent:
-tb-streamer prod start
+tb-streamer service start
 lsof -nP -iTCP:8766 -sTCP:LISTEN && echo "8766 bound again after prod start"
 ```
 
@@ -255,7 +255,7 @@ particular `prod restart`'s message must reference the **homebrew.mxcl** plist, 
 `prod stop` must actually free port 8766 (proving it unloaded the *real* service, not
 a nonexistent deploy.sh label).
 
-**Cleanup:** leave the brew service running (re-run `tb-streamer prod start` or
+**Cleanup:** leave the brew service running (re-run `tb-streamer service start` or
 `brew services start tb-streamer` if you stopped it) for scenario 8.
 
 ---
@@ -279,8 +279,8 @@ active on 8766, the CLI prompts with the dev-vs-prod choice (e.g. "prod is runni
 silently fail with `EADDRINUSE`, and it does **not** ignore the running brew prod.
 
 - If you choose **replace**, it boots out the brew agent, writes the suspend marker,
-  and binds 8766 for dev. `tb-streamer prod status` then shows `marker: dev-suspended`.
-- Restore afterward with `tb-streamer prod start`.
+  and binds 8766 for dev. `tb-streamer service status` then shows `marker: dev-suspended`.
+- Restore afterward with `tb-streamer service start`.
 
 **Pass criteria:** the prompt appears (prod detected). On replace, `prod status`
 reports a `dev-suspended` marker; `prod start` cleanly restores the brew prod.
@@ -288,9 +288,9 @@ reports a `dev-suspended` marker; `prod start` cleanly restores the brew prod.
 **Cleanup:**
 ```bash
 # If you chose replace, restore the brew prod:
-tb-streamer prod start
+tb-streamer service start
 # Ensure no stale marker:
-tb-streamer prod doctor --fix
+tb-streamer service doctor --fix
 ```
 
 ---
@@ -367,9 +367,9 @@ rm -f "$HOME/.threadbase/prod-suspended.json"
 ```bash
 # Re-load the launchd agent the deploy script installed:
 launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/com.ronen.threadbase.plist"
-# …or re-run the deploy script's setup / `tb-streamer prod start` once the
+# …or re-run the deploy script's setup / `tb-streamer service start` once the
 # deploy.sh CLI is the one on PATH again.
-tb-streamer prod status
+tb-streamer service status
 ```
 
 **Pass criteria:** 8766 free and brew agent gone after uninstall; if you restored

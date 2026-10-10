@@ -53,7 +53,7 @@ If the last line is missing any of `--port`, `--verbose`, or `--prod`, the self-
 ### 2.1 Prod is healthy
 
 ```powershell
-tb-streamer prod status
+tb-streamer service status
 # Expected:
 #   agent: loaded
 #   pid: <some integer>
@@ -110,7 +110,7 @@ tb-streamer serve --port 8766 --replace-prod
 Expected: no prompt, dev binds 8766 immediately. In another PowerShell window:
 
 ```powershell
-tb-streamer prod status
+tb-streamer service status
 # Expected:
 #   agent: NOT loaded
 #   marker: userHeld=false, devPid=<the dev pid>, port=8766
@@ -121,7 +121,7 @@ tb-streamer prod status
 Ctrl-C the dev from step 3.2.
 
 ```powershell
-tb-streamer prod status
+tb-streamer service status
 # Expected:
 #   marker: userHeld=true
 Get-ScheduledTask -TaskName Threadbase | Select-Object State
@@ -131,10 +131,10 @@ Get-ScheduledTask -TaskName Threadbase | Select-Object State
 ### 3.4 `prod start` restores the supervised instance
 
 ```powershell
-tb-streamer prod start
+tb-streamer service start
 # Expected message: "prod streamer restored — Task Scheduler is starting it now."
 Start-Sleep 2
-tb-streamer prod status
+tb-streamer service status
 # Expected: agent: loaded, marker: none
 
 Invoke-RestMethod http://localhost:8766/healthz
@@ -171,11 +171,11 @@ tb-streamer serve --port 8766 --forget
 $marker = '{"devPid":999999,"port":8766,"repoToplevel":"C:\\x","suspendedAt":"2026-05-30T19:55:00.000Z","userHeld":false,"shimVersion":1}'
 $marker | Set-Content $env:USERPROFILE\.threadbase\prod-suspended.json
 
-tb-streamer prod doctor
+tb-streamer service doctor
 # Expected: findings list "stale marker (dev pid 999999 dead)"
 #           + suggestion "(re-run with --fix to apply repairs)"
 
-tb-streamer prod doctor --fix
+tb-streamer service doctor --fix
 # Expected: repairs list "cleared stale marker (dev pid 999999 was dead)"
 
 Test-Path $env:USERPROFILE\.threadbase\prod-suspended.json
@@ -188,7 +188,7 @@ Test-Path $env:USERPROFILE\.threadbase\prod-suspended.json
 
 | Scenario | Expected | Watch for |
 |---|---|---|
-| `tb-streamer prod status` first run | `pid: <integer>` | If shows `pid: (none)` while task IS running → the WMI `getAgentPid` query isn't matching your `launch.cmd`. See §2.2 above. |
+| `tb-streamer service status` first run | `pid: <integer>` | If shows `pid: (none)` while task IS running → the WMI `getAgentPid` query isn't matching your `launch.cmd`. See §2.2 above. |
 | `tb-streamer serve --replace-prod` from a non-elevated shell | Dev binds 8766 | If port is held after `Stop-ScheduledTask` returns → race condition; the troubleshooting entry "--replace-prod succeeds but prod restarts immediately" applies. Try `Stop-Process -Id <pid> -Force` first. |
 | Prompt under VS Code's integrated terminal | Renders + accepts input | If it hangs → `readline.question` with redirected stdin. Use `cmd.exe` or `powershell.exe` directly. (Already documented in troubleshooting.) |
 | `dev-prefs.json` written | `repos: { "C:\\...": {...} }` with backslashes | If path uses forward slashes → `getGitToplevel` returned a Git-Bash-style path. Worth noting but not breaking. |
@@ -201,20 +201,20 @@ Test-Path $env:USERPROFILE\.threadbase\prod-suspended.json
 ### Where to look
 
 - `$env:USERPROFILE\.threadbase\logs\*.log` — main streamer log + stderr.
-- `~/.threadbase/logs/stderr.log` — written by `launch.cmd`'s `2>>` redirection, and what `tb-streamer prod logs --errors-only` reads. (Installs predating that redirection wrote nowhere at all; `Repair-LaunchCmd` rewrites them on the next deploy.)
+- `~/.threadbase/logs/stderr.log` — written by `launch.cmd`'s `2>>` redirection, and what `tb-streamer service logs --errors-only` reads. (Installs predating that redirection wrote nowhere at all; `Repair-LaunchCmd` rewrites them on the next deploy.)
 - Task Scheduler GUI: `Win+R` → `taskschd.msc` → find "Threadbase" task → **Last Run Result** + **History** tab.
 - `Get-ScheduledTaskInfo -TaskName Threadbase` — shows last run result code.
 
 ### Force a clean state
 
 ```powershell
-tb-streamer prod stop
+tb-streamer service stop
 Remove-Item $env:USERPROFILE\.threadbase\prod-suspended.json -ErrorAction SilentlyContinue
 Remove-Item $env:USERPROFILE\.threadbase\dev-prefs.json -ErrorAction SilentlyContinue
-tb-streamer prod start
+tb-streamer service start
 ```
 
-If `tb-streamer prod start` reports `task 'Threadbase' is not registered`, run `pwsh scripts\deploy.ps1 setup` to re-register the task.
+If `tb-streamer service start` reports `task 'Threadbase' is not registered`, run `pwsh scripts\deploy.ps1 setup` to re-register the task.
 
 ---
 

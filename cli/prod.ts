@@ -79,7 +79,7 @@ export async function runProdStop(): Promise<CommandResult> {
     process.platform === "darwin" ? "launchd agent unloaded" : "Task Scheduler task disabled";
   return {
     ok: true,
-    message: `prod streamer stopped (${what}). It will not auto-restart until 'tb-streamer prod start' or system reboot.`,
+    message: `prod streamer stopped (${what}). It will not auto-restart until 'tb-streamer service start' or system reboot.`,
   };
 }
 
@@ -352,9 +352,13 @@ export async function runProdLogs(
 }
 
 export function registerProdCommands(program: Command): void {
-  const prod = new CommanderCommand("prod").description(
-    "Manage the launchd-supervised prod streamer",
-  );
+  program.addCommand(supervisedCommands("service"));
+  // The group's first name. Kept working for scripts and habit, out of the help.
+  program.addCommand(supervisedCommands("prod"), { hidden: true });
+}
+
+function supervisedCommands(name: string): Command {
+  const prod = new CommanderCommand(name).description("Manage the supervised background streamer");
 
   prod
     .command("start")
@@ -460,5 +464,5 @@ export function registerProdCommands(program: Command): void {
       if (!r.ok) process.exitCode = 1;
     });
 
-  program.addCommand(prod);
+  return prod;
 }

@@ -51,7 +51,7 @@ const isHumanTurn = m.role === "user" && !m.is_tool_result;
 
 ### `Startup cache warm-up failed: FOREIGN KEY constraint failed`
 
-**When:** Recurring warning in `~/.threadbase/logs/{stdout,stderr}.log` (tail with `tb-streamer prod logs`) at every server start. Logged at level `40` (warn) with `event: cache.warmup_failed`. Streamer continues to serve `/healthz`, the conversation list, and PTY sessions normally — this is non-blocking.
+**When:** Recurring warning in `~/.threadbase/logs/{stdout,stderr}.log` (tail with `tb-streamer service logs`) at every server start. Logged at level `40` (warn) with `event: cache.warmup_failed`. Streamer continues to serve `/healthz`, the conversation list, and PTY sessions normally — this is non-blocking.
 
 **Symptom example:**
 ```
@@ -197,7 +197,7 @@ This is unrelated to the `MODULE_NOT_FOUND` entry under "Windows-specific issues
 ### A global npm install silently replaces a `deploy.sh` / `deploy.ps1` install's commands {#global-install-shim-collision}
 
 **When:** Running `npm install -g @threadbase-sh/streamer` on a machine that already has a deploy-script install.
-**Cause:** the published package's `bin` claims **both** `tb-streamer` and `threadbase-streamer` — the same two commands the deploy installs as shims onto `~/.threadbase/cli.js`. A global npm install wins, so those commands start resolving to the npm copy while the supervised service (launchd / systemd / Task Scheduler) keeps running the deployed release. Nothing errors; the two just drift, and `tb-streamer prod …` may then address a different install than the one actually serving port 8766.
+**Cause:** the published package's `bin` claims **both** `tb-streamer` and `threadbase-streamer` — the same two commands the deploy installs as shims onto `~/.threadbase/cli.js`. A global npm install wins, so those commands start resolving to the npm copy while the supervised service (launchd / systemd / Task Scheduler) keeps running the deployed release. Nothing errors; the two just drift, and `tb-streamer service …` may then address a different install than the one actually serving port 8766.
 
 This is the same class as the documented Homebrew-vs-deploy collision, and it is not covered by that entry.
 
@@ -302,7 +302,7 @@ Setting up a Windows machine for the first time? [docs/guides/windows-setup.md](
 ```powershell
 "`"$nodeBin`" `"$activeFile`" serve --port $port --verbose --prod >> `"$outLog`" 2>> `"$errLog`""
 ```
-Then read `~/.threadbase/logs/stderr.log` (or run `tb-streamer prod logs --errors-only`) to diagnose the actual failure.
+Then read `~/.threadbase/logs/stderr.log` (or run `tb-streamer service logs --errors-only`) to diagnose the actual failure.
 
 ---
 
@@ -321,7 +321,7 @@ $psArg  = "… `$env:THREADBASE_DATABASE_URL='$dbUrl'; `$env:THREADBASE_INSTANCE
 
 ### `EACCES` on port 5432 (not `ECONNREFUSED`)
 
-**When:** `~/.threadbase/logs/stderr.log` (via `tb-streamer prod logs --errors-only`) shows `EACCES` on port 5432.
+**When:** `~/.threadbase/logs/stderr.log` (via `tb-streamer service logs --errors-only`) shows `EACCES` on port 5432.
 **Cause:** The env var `THREADBASE_DATABASE_URL` is missing from the task action. The server starts on port 8766 but crashes when the DB client tries to parse an undefined connection string.
 **Diagnosis:** First confirm TCP reachability: `Test-NetConnection -ComputerName <host> -Port 5432`. If that succeeds, the problem is the missing env var, not a firewall rule.
 **Fix:** See "Newly set env vars not picked up by the scheduled task" above.
@@ -749,7 +749,7 @@ One way this happened historically: running the test suite from a checkout where
 **Fix:** Restart the supervised instance so it reloads the current key, then re-pair:
 
 ```bash
-tb-streamer prod restart
+tb-streamer service restart
 tb-streamer pair
 ```
 
@@ -761,14 +761,14 @@ Verify with `curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization:
 
 ### Multiple Threadbase agents detected / EADDRINUSE on port 8766 at startup
 
-**When:** Starting `tb-streamer serve` or running `tb-streamer prod doctor` shows a warning about conflicting Threadbase streamer agents, or the server crashes immediately with `EADDRINUSE` on port 8766.
+**When:** Starting `tb-streamer serve` or running `tb-streamer service doctor` shows a warning about conflicting Threadbase streamer agents, or the server crashes immediately with `EADDRINUSE` on port 8766.
 **Cause:** Two different install methods (Homebrew and `scripts/deploy.sh`) each register their own launchd agent. Homebrew uses `homebrew.mxcl.tb-streamer`; the deploy script uses `com.ronen.threadbase`. Running both binds port 8766 twice.
 **Fix:** Keep only one. The streamer detects conflicts and prints actionable commands:
 
 - **To remove Homebrew agent:** `brew services stop tb-streamer && brew uninstall tb-streamer`
 - **To remove deploy.sh agent:** `launchctl bootout gui/$(id -u)/com.ronen.threadbase`
 
-Legacy variants (`com.threadbase.streamer*`) are also detected. Run `tb-streamer prod doctor` to see all loaded Threadbase agents.
+Legacy variants (`com.threadbase.streamer*`) are also detected. Run `tb-streamer service doctor` to see all loaded Threadbase agents.
 
 ---
 
@@ -890,7 +890,7 @@ The streamer can be supervised by launchd ("prod") or run ad-hoc from a shell ("
 
 ### Prod is down but `launchctl list` shows the agent loaded and exiting cleanly *(macOS)*
 
-**When:** `tb-streamer prod status` prints `agent: loaded, pid: (none)`. `launchctl print "gui/$(id -u)/com.ronen.threadbase" | grep last\ exit` shows `0`. `~/.threadbase/prod-suspended.json` exists.
+**When:** `tb-streamer service status` prints `agent: loaded, pid: (none)`. `launchctl print "gui/$(id -u)/com.ronen.threadbase" | grep last\ exit` shows `0`. `~/.threadbase/prod-suspended.json` exists.
 **Cause:** The suspension marker is present, so the shim is exiting 0 on every launchd start attempt. Because the plist has `KeepAlive: SuccessfulExit=false`, launchd does not respawn. Two sub-cases:
 - `userHeld: true` → a dev session previously took the port and exited cleanly (SIGINT / SIGTERM). Prod is intentionally held down.
 - `userHeld: false` and `devPid` is still alive → a dev session is currently using the port; this is expected.
@@ -899,9 +899,9 @@ The streamer can be supervised by launchd ("prod") or run ad-hoc from a shell ("
 **Diagnosis:** `cat ~/.threadbase/prod-suspended.json | jq` and check `userHeld` + whether `devPid` is alive (`ps -p <devPid>`).
 
 **Fix:**
-- If `userHeld: true` and you want prod back: `tb-streamer prod start` (clears marker + kickstarts).
+- If `userHeld: true` and you want prod back: `tb-streamer service start` (clears marker + kickstarts).
 - If `devPid` is alive: nothing to do; the dev session is using the port. Confirm with `lsof -iTCP:8766 -sTCP:LISTEN`.
-- If marker looks stale: `tb-streamer prod doctor --fix` (clears markers whose `devPid` is dead and `userHeld` is false).
+- If marker looks stale: `tb-streamer service doctor --fix` (clears markers whose `devPid` is dead and `userHeld` is false).
 
 ---
 
@@ -917,7 +917,7 @@ The streamer can be supervised by launchd ("prod") or run ad-hoc from a shell ("
 
 **When:** Dev process was killed (`kill -9`, OOM, panic). Marker file at `~/.threadbase/prod-suspended.json` still exists with `userHeld: false` and the dead PID. Prod still appears down.
 **Cause:** Crash recovery happens inside the shim. The shim only runs when launchd attempts a start; with `KeepAlive: SuccessfulExit=false` launchd waits for a non-zero exit OR an explicit `kickstart`. The previous start exited 0 (from the live-dev branch), so launchd is idle.
-**Fix:** `tb-streamer prod start` (clears the marker and kickstarts). On the next start attempt the shim sees no marker and `exec`s `cli.js`. Or run `tb-streamer prod doctor --fix` if you want the marker cleared without restarting prod.
+**Fix:** `tb-streamer service start` (clears the marker and kickstarts). On the next start attempt the shim sees no marker and `exec`s `cli.js`. Or run `tb-streamer service doctor --fix` if you want the marker cleared without restarting prod.
 
 ---
 
@@ -931,17 +931,17 @@ The streamer can be supervised by launchd ("prod") or run ad-hoc from a shell ("
 
 ### Marker file is malformed (manual edit gone wrong) *(macOS)*
 
-**When:** `tb-streamer prod status` logs `marker at /Users/.../prod-suspended.json is malformed; treating as absent`.
+**When:** `tb-streamer service status` logs `marker at /Users/.../prod-suspended.json is malformed; treating as absent`.
 **Cause:** `readMarker` validates via the `MarkerSchema` (zod). Any missing field, wrong type, or invalid `shimVersion` returns null. JSON parse errors do the same.
-**Fix:** The shim already treats malformed markers as absent. Delete the file: `rm ~/.threadbase/prod-suspended.json` and then `tb-streamer prod start` to restore prod.
+**Fix:** The shim already treats malformed markers as absent. Delete the file: `rm ~/.threadbase/prod-suspended.json` and then `tb-streamer service start` to restore prod.
 
 ---
 
-### `tb-streamer prod status` reports `agent: NOT loaded` after a successful deploy *(Windows)*
+### `tb-streamer service status` reports `agent: NOT loaded` after a successful deploy *(Windows)*
 
-**When:** `scripts\deploy.ps1` finished without errors, but `tb-streamer prod status` says the task isn't loaded.
-**Cause:** Either the task name differs from `Threadbase` (e.g. `$env:THREADBASE_TASK_NAME` was set during install but isn't exported in the shell where you ran the status command), or the task was disabled by an earlier `tb-streamer prod stop`.
-**Diagnosis:** `Get-ScheduledTask -TaskName Threadbase` from a fresh PowerShell — if it returns the task with `State: Disabled`, run `tb-streamer prod start` to re-enable + start. If it reports "not found", confirm `$env:THREADBASE_TASK_NAME` matches at both deploy time and runtime.
+**When:** `scripts\deploy.ps1` finished without errors, but `tb-streamer service status` says the task isn't loaded.
+**Cause:** Either the task name differs from `Threadbase` (e.g. `$env:THREADBASE_TASK_NAME` was set during install but isn't exported in the shell where you ran the status command), or the task was disabled by an earlier `tb-streamer service stop`.
+**Diagnosis:** `Get-ScheduledTask -TaskName Threadbase` from a fresh PowerShell — if it returns the task with `State: Disabled`, run `tb-streamer service start` to re-enable + start. If it reports "not found", confirm `$env:THREADBASE_TASK_NAME` matches at both deploy time and runtime.
 
 ---
 
@@ -963,7 +963,7 @@ The streamer can be supervised by launchd ("prod") or run ad-hoc from a shell ("
 
 ### `task-scheduler.getAgentPid()` returns null even though the task is running *(Windows)*
 
-**When:** `tb-streamer prod status` shows `agent: loaded, pid: (none)`. `Get-Process node` shows a node process. `netstat -ano | findstr 8766` shows the port bound.
+**When:** `tb-streamer service status` shows `agent: loaded, pid: (none)`. `Get-Process node` shows a node process. `netstat -ano | findstr 8766` shows the port bound.
 **Cause:** The WMI query in `getAgentPid` filters by `CommandLine -like '*cli.js*serve*'`. If `launch.cmd` was hand-edited to use a different invocation pattern, the query returns nothing.
 **Fix:** Either revert `launch.cmd` to the deploy-script-generated form (run `npm run deploy:windows` to trigger `Repair-LaunchCmd`), or update the WMI filter in `src/lifecycle/task-scheduler.ts` to match your custom command line.
 
@@ -1305,7 +1305,7 @@ cd ~/.threadbase/releases
 
 3. Restart the prod service:
 ```sh
-tb-streamer prod restart
+tb-streamer service restart
 ```
 
 4. Verify the cache is working:
@@ -1424,7 +1424,7 @@ and install `pm2-logrotate` so no single log can grow unbounded.
 
 **Why the cap runs at boot and only under `--prod`.** `truncate(2)` resets the inode size but not any open writer's seek offset, so emptying a live daemon's log leaves its next write landing at the old offset with the kernel filling `0..N` with NULs — the sparse-log symptom in `docs/BACKLOG.md`. At boot the process has written nothing, so its own fd is still at 0 and no gap can form. An ad-hoc `serve` logs to its terminal, so truncating prod's file from one would both destroy history and race the live daemon's offset.
 
-**Manual escape hatch:** `tb-streamer prod logs --clear` truncates both files in place and kickstarts so the descriptors reopen at 0.
+**Manual escape hatch:** `tb-streamer service logs --clear` truncates both files in place and kickstarts so the descriptors reopen at 0.
 
 **Known ceiling:** the cap bounds growth *across restarts only*. An instance running for months without one still grows unbounded. If that becomes real, move the same truncate-in-place call onto an interval. A pino transport that owns its own file does not replace this on its own — real stdout (uncaught stack traces, node warnings, PTY noise) still lands in the supervisor-held file.
 

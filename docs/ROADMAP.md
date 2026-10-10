@@ -55,7 +55,7 @@ The streamer currently forwards a `hasImages` boolean per message, which is suff
 
 **Status (2026-08-10):** built, as [#472](https://github.com/RonenMars/threadbase-streamer/issues/472). Windows is in scope for the public release, and a Windows user who hit a problem had no diagnostic surface at all.
 
-`tb-streamer prod logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. Task Scheduler has no native redirection, so on Windows the `launch.cmd` that `scripts/deploy.ps1` generates carries it instead: cmd's `>>` appends to the same `~/.threadbase/logs/{stdout,stderr}.log` layout, and `getLogPaths()` on the Task Scheduler backend returns those paths. Both sides read them from `logPaths()` in `src/lifecycle/constants.ts` rather than repeating string literals, and `Repair-LaunchCmd` rewrites any pre-existing `launch.cmd` that has no `>>` in it.
+`tb-streamer service logs` works on macOS via launchd's `StandardOutPath` / `StandardErrorPath`. Task Scheduler has no native redirection, so on Windows the `launch.cmd` that `scripts/deploy.ps1` generates carries it instead: cmd's `>>` appends to the same `~/.threadbase/logs/{stdout,stderr}.log` layout, and `getLogPaths()` on the Task Scheduler backend returns those paths. Both sides read them from `logPaths()` in `src/lifecycle/constants.ts` rather than repeating string literals, and `Repair-LaunchCmd` rewrites any pre-existing `launch.cmd` that has no `>>` in it.
 
 The redirection is unverified on a real Windows box — it is covered only by content assertions in `__tests__/deploy-windows-script.test.ts` and `__tests__/lifecycle/prod-commands.test.ts`, which now do run on Windows.
 
