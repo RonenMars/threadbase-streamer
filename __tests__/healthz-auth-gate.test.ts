@@ -24,7 +24,13 @@ type Harness = {
   status: () => number | undefined;
 };
 
-function harness(opts: { path: string; cfConnectingIp?: string; authorization?: string }): Harness {
+function harness(opts: {
+  path: string;
+  cfConnectingIp?: string;
+  authorization?: string;
+  localNoAuth?: boolean;
+  forwardedFor?: string;
+}): Harness {
   let nexts = 0;
   let status: number | undefined;
 
@@ -36,6 +42,7 @@ function harness(opts: { path: string; cfConnectingIp?: string; authorization?: 
         const lower = name.toLowerCase();
         if (lower === "authorization") return opts.authorization;
         if (lower === "cf-connecting-ip") return opts.cfConnectingIp;
+        if (lower === "x-forwarded-for") return opts.forwardedFor;
         return undefined;
       },
       query: () => undefined,
@@ -55,7 +62,7 @@ function harness(opts: { path: string; cfConnectingIp?: string; authorization?: 
 
   const mw = authMiddleware({
     apiKey: API_KEY,
-    localNoAuth: false,
+    localNoAuth: opts.localNoAuth ?? false,
     devicesRepo: () => null,
   } as unknown as Parameters<typeof authMiddleware>[0]);
 
@@ -112,6 +119,69 @@ describe("/healthz auth gate", () => {
   // the middleware letting everyone in.
   it("401s a local non-healthz request with no credential", async () => {
     const h = harness({ path: "/api/devices" });
+    await h.run();
+
+    expect(h.status()).toBe(401);
+    expect(h.nexts()).toBe(0);
+  });
+});
+
+/**
+ * The same loopback-is-not-local problem, for everything else that trusts a
+ * loopback caller: the menubar's log viewer paths and `--local-no-auth`. A
+ * request through the Cloudflare tunnel arrives from 127.0.0.1 as well, so
+ * without the header check it would read the logs, or act as the owner, with no
+ * credential at all.
+ */
+describe("loopback carve-outs behind the tunnel", () => {
+  for (const path of ["/api/logs", "/api/logs/meta"]) {
+    it(`lets a local caller read ${path} with no credential`, async () => {
+      const h = harness({ path });
+      await h.run();
+
+      expect(h.nexts()).toBe(1);
+      expect(h.status()).toBeUndefined();
+    });
+
+    it(`401s a tunneled ${path} with no credential`, async () => {
+      const h = harness({ path, cfConnectingIp: "203.0.113.7" });
+      await h.run();
+
+      expect(h.status()).toBe(401);
+      expect(h.nexts()).toBe(0);
+    });
+  }
+
+  it("401s /api/logs forwarded by another proxy with no credential", async () => {
+    const h = harness({ path: "/api/logs", forwardedFor: "203.0.113.7" });
+    await h.run();
+
+    expect(h.status()).toBe(401);
+    expect(h.nexts()).toBe(0);
+  });
+
+  it("lets a tunneled /api/logs through with the api key", async () => {
+    const h = harness({
+      path: "/api/logs",
+      cfConnectingIp: "203.0.113.7",
+      authorization: `Bearer ${API_KEY}`,
+    });
+    await h.run();
+
+    expect(h.nexts()).toBe(1);
+    expect(h.status()).toBeUndefined();
+  });
+
+  it("gives a local caller the owner's access under --local-no-auth", async () => {
+    const h = harness({ path: "/api/devices", localNoAuth: true });
+    await h.run();
+
+    expect(h.nexts()).toBe(1);
+    expect(h.status()).toBeUndefined();
+  });
+
+  it("401s a tunneled caller with no credential under --local-no-auth", async () => {
+    const h = harness({ path: "/api/devices", localNoAuth: true, cfConnectingIp: "203.0.113.7" });
     await h.run();
 
     expect(h.status()).toBe(401);
