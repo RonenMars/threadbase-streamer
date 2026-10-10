@@ -47,6 +47,10 @@ function isLocalRequest(remoteAddr: string | undefined): boolean {
 // — never a bypass.
 const HEALTHZ_PATH = "/healthz";
 const CF_TUNNEL_HEADER = "cf-connecting-ip";
+// What a tunnel or reverse proxy on this machine adds to a request it forwards;
+// a genuine loopback caller sets none. A proxy configured to add none of them
+// is indistinguishable from a local caller.
+const FORWARDED_HEADERS = [CF_TUNNEL_HEADER, "x-forwarded-for", "forwarded"];
 // Localhost-only unauthenticated paths (menubar logs viewer).
 const LOCAL_ONLY_PATHS = new Set(["/api/logs", "/api/logs/meta"]);
 // /api/__update uses HMAC signature auth instead of Bearer; skip the
@@ -90,7 +94,12 @@ export const authMiddleware =
     }
 
     const remoteAddr = c.env.incoming?.socket?.remoteAddress;
-    const isLocal = !viaRelay && isLocalRequest(remoteAddr);
+    // Loopback alone is not local: a request forwarded by a tunnel or proxy on
+    // this machine arrives from 127.0.0.1 too, so a forwarding header rules it out.
+    const isLocal =
+      !viaRelay &&
+      isLocalRequest(remoteAddr) &&
+      !FORWARDED_HEADERS.some((name) => c.req.header(name) !== undefined);
     if (LOCAL_ONLY_PATHS.has(path) && isLocal) {
       await next();
       return;
