@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLAUDE_CODE_CAPABILITIES,
   CODEX_CLI_CAPABILITIES,
+  COPILOT_CAPABILITIES,
   CURSOR_CLI_CAPABILITIES,
   capabilitiesFor,
   GENERIC_TERMINAL_CAPABILITIES,
@@ -119,6 +120,19 @@ describe("declared capabilities match runner behaviour", () => {
       expect(CURSOR_CLI_CAPABILITIES.liveControl).toBe(true);
       expect(CURSOR_CLI_CAPABILITIES.permissionGates).toBe(false);
       expect(CURSOR_CLI_CAPABILITIES.structuredQuestions).toBe(false);
+    });
+  });
+
+  describe("copilot", () => {
+    it("declares permission gates, and the runner raises its cards", () => {
+      expect(COPILOT_CAPABILITIES.permissionGates).toBe(true);
+      expect(spawnArgsFrom("copilot-pty-runner.ts")).toContain("detectCopilotCard");
+      expect(spawnArgsFrom("copilot-pty-runner.ts")).toContain("onPermissionChange");
+    });
+
+    it("declares no structured questions: ask_user travels as a permission card", () => {
+      expect(COPILOT_CAPABILITIES.structuredQuestions).toBe(false);
+      expect(spawnArgsFrom("copilot-pty-runner.ts")).not.toContain("onLiveQuestion");
     });
   });
 

@@ -390,8 +390,8 @@ Codex is the only provider with a streamer-side answer store. **[code]**
 
 ## 4. Copilot CLI
 
-**Unmerged.**
-Everything in this section describes the branch `feat/copilot-provider` (PR #1002, open, read at `abe0f7d4`), tagged **[branch]**, or the investigation report `docs/compatibility/copilot-cli-questions.md`, dated 2026-10-05 against Copilot CLI 1.0.91, tagged **[draft 2026-10-05]**.
+**Sections 4.1 to 4.8 predate the merge; 4.9 is the current state of card detection.**
+Everything in 4.1 to 4.8 describes the branch `feat/copilot-provider` (PR #1002, open, read at `abe0f7d4`), tagged **[branch]**, or the investigation report `docs/compatibility/copilot-cli-questions.md`, dated 2026-10-05 against Copilot CLI 1.0.91, tagged **[draft 2026-10-05]**.
 The report's raw captures are not in the repository, and the report is a printed view, so blank-row fidelity of its examples is unverified.
 None of it is on `main`.
 
@@ -471,6 +471,45 @@ Copilot persists trusted folders and "don't ask again" choices in its own config
 - The session never leaves `running` (no readiness signal), so nothing marks a Copilot session as waiting on a question. **[branch]**
 - A Claude-style digit plus Enter would work only by coincidence of the two keys; an arrow-based encoding (as in `startupChoiceAnswerKeys`) matches the CLI's own model better. **[draft 2026-10-05]**, untested.
 - Uncaptured: login, updates, quota, Escape on an `ask_user` form and on the trust card, narrow terminals, and the CLI's agent-protocol mode. **[unknown]**
+
+### 4.9 Update 2026-10-11: cards are detected and answerable
+
+Sections 4.3 to 4.6 describe the runner before #1047 and are superseded by this one.
+The runner is on `main` (#1002, turn detection in #1054); verified against Copilot CLI 1.0.92, with the answer keys also probed live on 1.0.95.
+
+**Detection.** `detectCopilotCard` (`src/services/questions/copilotScreen.ts`) reads the rendered viewport as each chunk lands (`detectCard` in `src/copilot-pty-runner.ts`).
+A card is only looked for when one of its two footers is in the last three rows painted, the same rule that holds the turn open.
+
+- Boxed numbered card (folder trust, tool permission): footer `enter to select … esc to cancel` inside the box, rows numbered from 1, exactly one `❯`. **[capture]**
+- `ask_user` form: header `Copilot needs information.`, footer `enter accept … esc cancel`, exactly one `❯` row, and the rows whose text starts in its column. **[capture]**
+
+Anything that does not match in full returns null: the turn is still held open by the footer, and the user answers in the terminal as before.
+
+**The card.** Both shapes go out as a `permission` card through `onPermissionChange`, like a Codex gate.
+
+| | `prompt` | `detail` | `options` |
+|---|---|---|---|
+| Folder trust | `Do you trust the files in this folder?` | card title, folder, the explanatory paragraph | the three numbered rows |
+| Tool permission | `Do you want to run this command?` | card title, the command | the three numbered rows |
+| `ask_user` choice | the question | the field's label and description | the choice rows, without `Other (type your answer)` |
+
+`cursor` carries the highlighted option's `index`.
+The card is sent again when its content or highlight changes, and closed (`null`) when the footer leaves the screen or the PTY exits.
+
+**Answering.** Every option carries `answerKeys`: arrows from the highlighted row to the option's row, then `\r`, in one write.
+The keys count from the highlight, which is why a moved highlight re-sends the card.
+Verified live: Down, Down, Enter in one write on the trust card (1.0.92) and on an `ask_user` form (1.0.95); Up, Up, Enter on the trust card (1.0.95).
+A bare digit was not used because its meaning changed between builds: 4.6 records it as moving the highlight without confirming on 1.0.91, and on 1.0.92 it selected and confirmed, on both the trust and the permission card.
+
+The answer routes do not re-scrape the screen for a Copilot session (`runnerOwnsGates`, `src/api/handlers/sessions.handlers.ts`): no Claude scraper matches a Copilot screen, so the pending map is the authority, as it is for Codex (gap 11 applies to Copilot too).
+
+**Left out, and not established.**
+
+- Free text: the `Other (type your answer)` row is not offered, because a `permission` option cannot carry typed text. It is still reachable in the terminal.
+- `ask_user` forms other than one choice field (tabbed multi-field, boolean, checklist, integer, text) are **[unknown]** to the detector: none is captured, and one that happens to match would be answered as a single choice.
+- The other boxed cards (file write, URL fetch, path outside the project, MCP tool, plan approval) share the footer but are not captured; whether they parse is **[unknown]**.
+- What Copilot paints after option 3 of a permission card ("tell Copilot what to do differently") is not captured.
+- The event log (4.3) is still unused, and the item list in #1047 has the rest.
 
 ## 5. Cursor
 
@@ -571,7 +610,7 @@ Read from the mobile repository's `main` at `a82fbb2f` on 2026-10-06. **[code]**
 |---|---|---|---|
 | Claude Code | `permission` and `question` cards | Fallback for numbered `?` menus; rejects Yes / No gates | Normally the streamer's; a scrape only when no server card is active |
 | Codex | `permission` cards for every detected prompt | Has its own trust-gate parser and can card numbered pickers | Either; check the log |
-| Copilot CLI (unmerged) | Nothing | Whether any Copilot screen matches is **[unknown]**: the shell card has a `?` line and a matching footer, but its Yes / No labels hit the rejection rule | A mobile scrape, if anything |
+| Copilot CLI | `permission` cards for the trust card, a permission card and an `ask_user` choice (4.9) | Whether any Copilot screen matches is **[unknown]**: the shell card has a `?` line and a matching footer, but its Yes / No labels hit the rejection rule | The streamer's for those three; otherwise a mobile scrape, if anything |
 | Cursor | Nothing | **[unknown]**, no screen captured | A mobile scrape, if anything |
 
 ### 7.3 How to tell which one you are looking at
@@ -600,7 +639,7 @@ Each item names the provider and the evidence.
 9. **Codex — picker descriptions discarded and wrapped prompts truncated.** `detectCodexPicker`, `codexScreen.ts:184`; the sign-in test asserts the truncated prompt. **[code]**
 10. **Codex — command-approval and usage-limit fixtures have no stated capture.** `__tests__/codex-pty-runner.test.ts:61`, `:743`. **[code]**
 11. **Codex — server-side staleness check is skipped.** `sessions.handlers.ts:1732`; the runner is the only guard against answering a closed gate. **[code]**
-12. **Copilot CLI — no detection at all, on an unmerged branch.** `src/copilot-pty-runner.ts:30`, `capabilities.ts:154` on `feat/copilot-provider`. **[branch]**
+12. **Copilot CLI — only three cards are detected.** Folder trust, tool permission and a single-choice `ask_user` form (4.9); free text and every other form or card are not. **[capture]**
 13. **Copilot CLI — its numbered cards collide with the `AskUserQuestion` footer marker.** `ASK_MENU_FOOTER_RE`, `detectPermissionGate.ts:259`; a Copilot detector cannot reuse `detectGateScreen` unchanged. **[draft 2026-10-05]**
 14. **Copilot CLI — a structured source exists and is unused.** Permission and `ask_user` events in the CLI's session event log. **[draft 2026-10-05]**
 15. **Copilot CLI — login, update, quota and Escape behaviours uncaptured.** **[unknown]**

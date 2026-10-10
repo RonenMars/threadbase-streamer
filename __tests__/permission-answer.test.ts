@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { Readable } from "stream";
 import { describe, expect, it } from "vitest";
 import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/sessions.handlers";
-import { CODEX_CLI_PROVIDER } from "../src/providers";
+import { CODEX_CLI_PROVIDER, COPILOT_PROVIDER } from "../src/providers";
 import { gateCard } from "../src/services/questions/codexScreen";
 import { detectGateScreen } from "../src/services/questions/detectPermissionGate";
 import type { WSMessage } from "../src/types";
@@ -583,6 +583,29 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     expect(status()).toBe(409);
     expect(body()).toEqual({ ok: false, reason: "unknown_option" });
     expect(h.pendingPermission.has(SESSION)).toBe(true);
+  });
+
+  // Copilot's cards come from its runner, and no Claude scraper matches a
+  // Copilot screen, so the pending map is the authority, as it is for Codex.
+  it("answers a Copilot card with its own keys instead of refusing it as closed", async () => {
+    const h = harness(null, CLOSED_SCREEN, { provider: COPILOT_PROVIDER });
+    const frame = openGate(h, {
+      prompt: "Do you want to run this command?",
+      detail: "touch a.txt",
+      options: [
+        { index: 1, label: "Yes", answerKeys: "\r" },
+        { index: 2, label: "No", answerKeys: "\x1b[B\r" },
+      ],
+    });
+    const { res, status } = response();
+    await h.handlers.handlePermissionAnswer(
+      SESSION,
+      request({ contentKey: frame.contentKey, optionIndex: 1, optionLabel: "No" }),
+      res,
+    );
+
+    expect(status()).toBe(200);
+    expect(h.written).toEqual(["\x1b[B\r"]);
   });
 
   it("400s on a non-string optionLabel without writing", async () => {

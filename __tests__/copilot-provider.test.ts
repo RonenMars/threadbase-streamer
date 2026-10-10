@@ -7,13 +7,13 @@ describe("Copilot provider contract", () => {
     expect(canonicalizeProviderName("copilot")).toBe("copilot");
     expect(commandNameForProvider("copilot" as any)).toBe("copilot");
   });
-  it("supports explicit native sessions without claiming TUI semantics", () => {
+  it("supports explicit native sessions and permission cards, not structured questions", () => {
     expect(capabilitiesFor("copilot" as any)).toEqual({
       freshSessionId: "explicit",
       resume: "native",
       systemPrompt: "unsupported",
       structuredQuestions: false,
-      permissionGates: false,
+      permissionGates: true,
       liveControl: true,
     });
   });

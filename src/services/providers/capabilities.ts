@@ -150,13 +150,16 @@ export const GENERIC_TERMINAL_CAPABILITIES: ProviderCapabilities = {
   liveControl: true,
 };
 
-// Vendor intake confirms explicit IDs and native resume. No captured TUI yet.
+// Vendor intake confirms explicit IDs and native resume. Its folder trust and
+// tool permission cards are read off the screen (services/questions/
+// copilotScreen.ts). An `ask_user` choice travels the same way, as a permission
+// card rather than a structured question, hence structuredQuestions: false.
 export const COPILOT_CAPABILITIES: ProviderCapabilities = {
   freshSessionId: "explicit",
   resume: "native",
   systemPrompt: "unsupported",
   structuredQuestions: false,
-  permissionGates: false,
+  permissionGates: true,
   liveControl: true,
 };
 
