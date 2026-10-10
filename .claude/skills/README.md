@@ -22,6 +22,7 @@ The same four operational skills are mirrored under `.agents/skills/` for Codex 
 | [`setup-auto-updater`](setup-auto-updater/SKILL.md) | Walking a user through enabling the in-place auto-updater on a deployed streamer |
 | [`setup-cloudflare-tunnel`](setup-cloudflare-tunnel/SKILL.md) | Exposing a local streamer to tb-mobile through a Cloudflare quick-tunnel |
 | [`add-provider`](add-provider/SKILL.md) | Adding a new agent CLI as a live SessionRunner. Phone chips and history indexing live in mobile/scanner companion skills — edit all three together |
+| [`integration-by-batches`](integration-by-batches/SKILL.md) | Grouping open PRs into QA-gated batches: one local integration branch per batch, deploy it for QA (local or demo Fly), land one PR at a time after approval |
 
 ## Adding one
 
