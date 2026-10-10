@@ -4,7 +4,7 @@ Everything on this page is optional. None of it is needed to build, test, or con
 
 ## Claude Code
 
-This repository enables no Claude plugins or third-party marketplaces. Four project-specific operational skills under `.claude/skills/` load without installation: local deployment, menubar deployment, auto-updater setup, and Cloudflare tunnel setup. Generic Git, verification, package ownership, and registry workflows belong in user-level tooling or repository documentation instead of the project skill catalog.
+This repository enables no Claude plugins or third-party marketplaces. Project-specific skills under `.claude/skills/` load without installation: local deployment, menubar deployment, auto-updater setup, Cloudflare tunnel setup, adding a provider, and landing open PRs in QA-gated batches (`integration-by-batches`, Claude Code only). Generic Git, verification, package ownership, and registry workflows belong in user-level tooling or repository documentation instead of the project skill catalog.
 
 ## Codex
 
