@@ -82,7 +82,7 @@ Set `auto_resume_on_boot: false` to prevent unattended agent starts at boot.
 
 **`0` does not mean "never".** It means the explicit hold fires with zero delay — i.e. backgrounding the mobile app kills the session instantly. There is no sentinel for "never hold": to effectively disable the hold, set a delay longer than any session you care about (e.g. `604800000`, 7 days). Stay clear of `2147483647` — that is exactly Node's `TIMEOUT_MAX`, and one increment past it makes `setTimeout` overflow and fire at 1 ms, silently inverting the setting into "hold immediately". Note the 6 h idle reaper still applies regardless of this value.
 The value is resolved once at startup, so changing it requires a restart — there is no hot-reload.
-For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args are fixed and don't pass this flag), set `pty_grace_period_ms:` in `server.yaml` and run `tb-streamer prod restart`; the `--pty-grace-period-ms` flag is the path for ad-hoc `serve` runs (an ad-hoc `serve` with the flag would otherwise collide with prod on port 8766).
+For the launchd/Task-Scheduler-supervised prod instance (whose plist/task args are fixed and don't pass this flag), set `pty_grace_period_ms:` in `server.yaml` and run `tb-streamer service restart`; the `--pty-grace-period-ms` flag is the path for ad-hoc `serve` runs (an ad-hoc `serve` with the flag would otherwise collide with prod on port 8766).
 
 ## ServerConfig options (beyond CLI flags)
 

@@ -8,7 +8,7 @@ import { logPaths, TASK_NAME } from "./constants";
  * Task Scheduler has no equivalent of launchd's KeepAlive: SuccessfulExit=false,
  * so the marker-suppression mechanism (used by the shim on macOS) is not needed
  * here. When dev exits cleanly, the prod task simply remains stopped until
- * `tb-streamer prod start` (or system reboot, if the task is at-logon-triggered).
+ * `tb-streamer service start` (or system reboot, if the task is at-logon-triggered).
  */
 function ps(command: string): string {
   return execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {

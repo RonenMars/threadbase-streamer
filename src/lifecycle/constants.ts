@@ -27,7 +27,7 @@ export function activeLink(): string {
  *
  * macOS points the plist's StandardOutPath/StandardErrorPath here; Windows has
  * no native redirection, so `scripts/deploy.ps1` writes the same two paths into
- * launch.cmd as cmd `>>` targets. That agreement is what `tb-streamer prod logs`
+ * launch.cmd as cmd `>>` targets. That agreement is what `tb-streamer service logs`
  * depends on, and it is locked by `__tests__/deploy-windows-script.test.ts`.
  */
 export function logPaths(): { stdout: string; stderr: string } {

@@ -219,7 +219,7 @@ function Invoke-PredeployCheck {
 # Task Scheduler has no native stdout/stderr redirection and the action runs via
 # wscript -> launch.vbs (hidden window), so cmd's `>>` inside launch.cmd is the
 # only place output can be captured. The two targets must stay in step with
-# logPaths() in src/lifecycle/constants.ts — that is what `tb-streamer prod logs`
+# logPaths() in src/lifecycle/constants.ts — that is what `tb-streamer service logs`
 # tails (locked by __tests__/deploy-windows-script.test.ts). The mkdir guard is
 # load-bearing: cmd fails the whole line if the redirect directory is missing,
 # and the failure lands in the hidden console nobody reads.
