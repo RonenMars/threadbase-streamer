@@ -1,3 +1,9 @@
+## [1.113.6](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.5...v1.113.6) (2026-10-10)
+
+### Bug Fixes
+
+* **auth:** stop treating requests forwarded by a tunnel as local ([#1063](https://github.com/RonenMars/threadbase-streamer/issues/1063)) ([31c5651](https://github.com/RonenMars/threadbase-streamer/commit/31c565105f602cd27f5a69951222bda7c3e42c6f))
+
 ## [1.113.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.4...v1.113.5) (2026-10-07)
 
 ### Bug Fixes
