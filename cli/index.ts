@@ -9,6 +9,8 @@ import {
   loadOrCreateApiKey,
   loadPtyGracePeriodMs,
   loadPublicUrl,
+  loadRelayPublicKey,
+  loadRelayUrl,
   setAutoResumeOnBoot,
   setDefaultPermissionMode,
 } from "../src/auth";
@@ -33,6 +35,7 @@ import {
 } from "../src/feature-flags";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
+import { relaySettings } from "../src/relay/hosted";
 import { StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
@@ -370,6 +373,7 @@ program
       claudeFlags,
       featureFlags,
       claudeExtraArgs: opts.claudeExtraArgs,
+      ...relaySettings(loadRelayUrl(), loadRelayPublicKey()),
     });
 
     await server.listen(resolvedPort);
