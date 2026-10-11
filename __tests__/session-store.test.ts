@@ -324,6 +324,28 @@ describe("SessionStore", () => {
       expect(resp?.elapsedMs).toBeLessThan(10000);
     });
 
+    it("does not count a rehydrated stub's elapsedMs up to now", () => {
+      const startedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const lastActivityAt = new Date(startedAt.getTime() + 60_000);
+      store.addManaged(
+        makeManagedSession({ status: "idle", rehydrated: true, startedAt, lastActivityAt }),
+      );
+
+      expect(store.get(UUID_A, noPty)?.elapsedMs).toBe(60_000);
+    });
+
+    it("gives a rehydrated stub with no recorded activity zero elapsedMs", () => {
+      store.addManaged(
+        makeManagedSession({
+          status: "idle",
+          rehydrated: true,
+          startedAt: new Date(Date.now() - 60 * 60 * 1000),
+        }),
+      );
+
+      expect(store.get(UUID_A, noPty)?.elapsedMs).toBe(0);
+    });
+
     it("serializes dates as ISO strings", () => {
       store.addManaged(makeManagedSession());
       const resp = store.get(UUID_A, noPty);
