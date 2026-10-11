@@ -203,8 +203,10 @@ adding accounts multiplies the exposure. Phase 1 adds the per-root file count to
   (`admin`). Delete refuses while a live session uses the account. It never touches the
   directory on disk.
 - `GET /api/profiles`: stop returning `[]` and return the accounts in `ScanProfile` shape,
-  since the route exists and is already capability-mapped. Before changing it, grep
-  tb-mobile for `/api/profiles` and report what calls it.
+  since the route exists and is already capability-mapped. The one mobile caller,
+  `hooks/useTBPair.ts:118` (checked 2026-10-11), uses it only to validate a long-lived API
+  key during pairing: it reads `res.ok` and discards the JSON. So the route must keep
+  answering 200 with JSON to any valid key, including when no accounts are configured.
 - `POST /api/sessions` (start): optional `accountId`; absent means the default account.
   Resume and fork: optional `accountId`, which must match (see Attribution).
 - Session objects (REST, `session_update`, `session_list`) and conversation list items gain
@@ -334,7 +336,7 @@ item 7).
 
 ### Phase 6: tb-mobile (after the streamer ships phases 0–3; phases 4–5 enable more screens)
 
-File this as a separate tb-mobile issue that links back here, per the cross-repo rule.
+Tracked in RonenMars/threadbase-mobile#1287, per the cross-repo rule.
 
 1. **Capability gate.** Show any account UI only when `/api/info` carries `accounts`. On an
    older streamer the app behaves exactly as today.
