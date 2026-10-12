@@ -1,6 +1,7 @@
 # Multiple Claude accounts — streamer first, mobile second
 
 **Status:** proposal (2026-10-05). Nothing below is implemented.
+**Tracking:** #1074 (streamer) and RonenMars/threadbase-mobile#1287 (mobile).
 **Scope:** Claude Code only. Codex (`CODEX_HOME`) and Cursor are out of scope here; the
 account abstraction is shaped so they can join later without a schema change.
 **Order:** the streamer ships end to end (phases 0–5) before tb-mobile starts (phase 6).
