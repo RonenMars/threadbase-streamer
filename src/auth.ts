@@ -243,6 +243,34 @@ export function setAutoResumeOnBoot(value: boolean): void {
 }
 
 /**
+ * The relay endpoint the user approved, e.g. `relay_consent: wss://relay.example/tunnel`.
+ *
+ * A flag turning the relay on is not consent to it: the flag can arrive from an
+ * env var, a CLI argument or a hand-edited file. This records that the user was
+ * shown what the relay is and said yes to this endpoint. It is keyed by endpoint
+ * so a different relay, which is a different party, asks again.
+ */
+export function loadRelayConsent(): string | undefined {
+  try {
+    const content = readFileSync(configFile(), "utf-8");
+    const match = content.match(/^relay_consent:\s*(\S+)\s*$/m);
+    if (match?.[1]) return match[1];
+  } catch {
+    // File doesn't exist or not readable
+  }
+  return undefined;
+}
+
+export function setRelayConsent(endpoint: string | undefined): void {
+  setConfigValue("relay_consent", endpoint);
+}
+
+/** Writes `relay` into the `feature_flags:` line, leaving the other flags as they are. */
+export function setRelayEnabled(enabled: boolean): void {
+  setConfigValue("feature_flags", JSON.stringify({ ...loadFeatureFlags(), relay: enabled }));
+}
+
+/**
  * Allowlisted Claude CLI flags, stored as ONE line of JSON:
  *
  *     claude_flags: {"permissionMode":"bypassPermissions","addDir":["/srv/a b"]}

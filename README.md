@@ -52,9 +52,9 @@ npm and Homebrew installs can auto-update: [docs/guides/auto-update.md](docs/gui
 
 ## Remote Access
 
-A paired phone can reach the server from outside your LAN with no setup. The server keeps an outbound tunnel open to the hosted Threadbase relay (`relay.threadbase.sh`), and the app uses it when your own addresses do not answer. Traffic through the relay is end-to-end encrypted between the phone and this server: the relay sees connection metadata (your IP address, request paths, sizes and timing) and cannot read content. Pairing itself still needs the phone to reach the server directly.
+A paired phone can reach the server from outside your LAN through the hosted Threadbase relay (`relay.threadbase.sh`), once you opt in. The server keeps an outbound tunnel open to it, and the app uses it when your own addresses do not answer. Traffic through the relay is end-to-end encrypted between the phone and this server: the relay sees connection metadata (your IP address, request paths, sizes and timing) and cannot read content. Pairing itself still needs the phone to reach the server directly.
 
-To turn the relay off, start with `--feature relay=false`, set `THREADBASE_FEATURE_RELAY=0`, or put `feature_flags: {"relay":false}` in `~/.threadbase/server.yaml`, then restart. To use a relay of your own, set `relay_url` and `relay_public_key` in `server.yaml`.
+The relay is off until you say yes. `tb-streamer serve` asks on first run, or run `tb-streamer relay enable`; `tb-streamer relay disable` turns it off again, and either takes effect on the next restart. If something else switches it on (`THREADBASE_FEATURE_RELAY=1`, `--feature relay=true`, or `feature_flags: {"relay":true}` in `~/.threadbase/server.yaml`), the next interactive start shows a warning and asks whether to continue with or without it; "without" turns it off in `server.yaml`. A supervised start has no terminal to ask on, so it stays off and logs how to confirm. To use a relay of your own, set `relay_url` and `relay_public_key` in `server.yaml`.
 
 The server listens on port 8766 on all interfaces by default, so devices on the same LAN can already reach it. To restrict it to this machine, start it with `tb-streamer serve --host 127.0.0.1`. To let the mobile app reach it from *outside* your LAN, expose it via a tunnel — the fastest is a Cloudflare quick-tunnel (no account needed):
 
