@@ -1,3 +1,5 @@
+import { toolResultText } from "../../utils/claudeShapedLine";
+
 export interface SearchTargetMatch {
   messageIndex: number;
   uuid: string | null;
@@ -46,7 +48,7 @@ function extendedBody(m: SearchableMessage): string {
     if (b.input !== undefined) parts.push(JSON.stringify(b.input));
   }
   for (const r of m.metadata?.toolResults ?? []) {
-    if (r.content !== undefined) parts.push(JSON.stringify(r.content));
+    if (r.content !== undefined) parts.push(toolResultText(r.content));
   }
   return parts.join("\n");
 }
