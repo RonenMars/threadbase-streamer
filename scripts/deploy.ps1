@@ -348,11 +348,17 @@ function Invoke-Kickstart {
 # denied" on the Remove-Item wipe those copies do. A no-op if nothing is running.
 function Invoke-StopServiceForCopy {
   $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-  if (-not $task) { return }
-  Write-Log "stopping '$taskName' before copying native modules (avoids a locked better-sqlite3/node-pty binary)"
-  Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-  Start-Sleep -Milliseconds 500
+  if ($task) {
+    Write-Log "stopping '$taskName' before copying runtime files"
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+  }
   Invoke-KillStalePort -Port 8766
+  $remaining = & netstat.exe -ano -p tcp
+  if ($LASTEXITCODE -ne 0) { throw 'Cannot verify that the streamer stopped; refusing runtime replacement' }
+  if ($remaining | Select-String '^\s*TCP\s+\S+:8766\s+\S+\s+LISTENING\s+') {
+    throw 'Streamer is still listening on port 8766; refusing runtime replacement'
+  }
 }
 
 function Invoke-Healthcheck {
@@ -566,7 +572,7 @@ function Invoke-Deploy {
         $sha = "$sha-dirty-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
       }
     }
-    $relFilename = "cli.$sha.cjs"
+    $relFilename = "cli.$sha.$([Guid]::NewGuid().ToString('N')).cjs"
 
     if (-not (Test-Path $releasesDir)) {
       New-Item -ItemType Directory -Path $releasesDir -Force | Out-Null
@@ -579,6 +585,9 @@ function Invoke-Deploy {
     $pkgVersion = (& node -p 'require("./package.json").version').Trim()
     $versionLine = "$pkgVersion+$sha"
     Set-Content -Path (Join-Path $releasesDir "$relFilename.version") -Value $versionLine -NoNewline:$false -Encoding ASCII
+
+    # Stop before replacing any shared runtime file, including migrations.
+    Invoke-StopServiceForCopy
 
     # On Windows, cli.js is a real file at $installDir so __dirname = $installDir.
     # Copy both migration trees to the install root (not releases/) so the CJS bundle finds them.
@@ -597,10 +606,6 @@ function Invoke-Deploy {
         Copy-Item -Path $src -Destination $dst -Recurse -Force
       }
     }
-    # Stop any currently-running instance before touching native addons below —
-    # see Invoke-StopServiceForCopy for why.
-    Invoke-StopServiceForCopy
-
     # node-pty is external to the tsup bundle (native addon). Copy it from source
     # node_modules so the deployed cli.js can resolve it without a full node_modules tree.
     $nodePtySrc = Join-Path $repoRoot 'node_modules\node-pty'

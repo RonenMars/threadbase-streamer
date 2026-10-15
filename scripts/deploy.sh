@@ -806,7 +806,7 @@ cmd_status() {
 
   printf '\n\033[1mRecent releases:\033[0m\n'
   if [[ -d "$RELEASES_DIR" ]]; then
-    ls -lt "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | head -n "$KEEP_RELEASES" | awk '{print "  " $0}'
+    ls -lt "$RELEASES_DIR"/cli.*.cjs "$RELEASES_DIR"/cli.*/cli.cjs 2>/dev/null | head -n "$KEEP_RELEASES" | awk '{print "  " $0}' || true
   else
     printf '  (no releases dir yet)\n'
   fi
@@ -1061,10 +1061,12 @@ cmd_deploy() {
   local sha
   sha="$(git rev-parse --short HEAD)"
   [[ "$force" == "--force" ]] && [[ -n "$(git status --porcelain)" ]] && sha="${sha}-dirty-$(date -u +%Y%m%d%H%M%S)"
-  local rel_filename="cli.${sha}.cjs"
-  local rel_path="releases/${rel_filename}"
-
   mkdir -p "$RELEASES_DIR"
+  # Never overwrite a running build or its loaded native dependencies.
+  local release_dir
+  release_dir="$(mktemp -d "$RELEASES_DIR/cli.${sha}.XXXXXX")"
+  local rel_filename="${release_dir##*/}/cli.cjs"
+  local rel_path="releases/${rel_filename}"
   log "stamping release: $rel_filename"
   cp dist/cli.cjs "$RELEASES_DIR/$rel_filename"
   chmod +x "$RELEASES_DIR/$rel_filename"
@@ -1089,22 +1091,17 @@ cmd_deploy() {
   # - runtime-migrations/ — SQLite session registry (RuntimeStore.open(); always required)
   # - pg-migrations/      — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
   #                         migration runner reads the dir at startup and crashes if absent)
-  # Remove existing dirs first: `cp -r src dst` nests as `dst/src` when dst exists,
-  # which previously fed the SQLite loader a stale set of pg-flavored files.
-  rm -rf "$RELEASES_DIR/migrations" "$RELEASES_DIR/runtime-migrations" "$RELEASES_DIR/pg-migrations"
-  cp -r dist/migrations "$RELEASES_DIR/migrations"
-  cp -r dist/runtime-migrations "$RELEASES_DIR/runtime-migrations"
-  [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$RELEASES_DIR/pg-migrations"
+  # This release directory is new, so no shared files need replacing.
+  cp -r dist/migrations "$release_dir/migrations"
+  cp -r dist/runtime-migrations "$release_dir/runtime-migrations"
+  [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$release_dir/pg-migrations"
 
   # Native addons are external to the tsup bundle. Copy them and their transitive
   # deps so the deployed cli.js can resolve them without a full node_modules tree.
-  mkdir -p "$RELEASES_DIR/node_modules"
+  mkdir -p "$release_dir/node_modules"
   for mod in node-pty better-sqlite3 bindings file-uri-to-path; do
     if [[ -d "node_modules/$mod" ]]; then
-      # Remove first: `cp -r src dst` copies INTO dst when dst already exists,
-      # so every deploy after the first nested another copy at dst/$mod/$mod.
-      rm -rf "$RELEASES_DIR/node_modules/$mod"
-      cp -r "node_modules/$mod" "$RELEASES_DIR/node_modules/$mod"
+      cp -r "node_modules/$mod" "$release_dir/node_modules/$mod"
     fi
   done
 
@@ -1149,6 +1146,12 @@ cmd_deploy() {
   fi
 
   log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
+  local active_release="$INSTALL_DIR/$(readlink "$ACTIVE_LINK")"
+  ls -td "$RELEASES_DIR"/cli.*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) |
+    while IFS= read -r obsolete; do
+      [[ "${obsolete%/}" == "$(dirname "$active_release")" ]] && continue
+      rm -rf -- "$obsolete"
+    done || true
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
 
   # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal:

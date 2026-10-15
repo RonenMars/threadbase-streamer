@@ -82,6 +82,16 @@ describe("swap / prune (POSIX symlink path)", () => {
     expect(readlinkSync(link1)).toBe(join(tmpRoot, "releases", "1.1.0"));
   });
 
+  it("activates a unique installation directory while preserving the release version", () => {
+    const directory = "1.1.0-next.1+install.test";
+    makeStagedRelease(directory, { sidecar: "1.1.0-next.1+update\n" });
+    makeStagedRelease("1.2.0");
+    swapCurrent("1.1.0-next.1", directory);
+    expect(readFileSync(join(tmpRoot, "version.txt"), "utf8")).toBe("1.1.0-next.1+update\n");
+    pruneOldReleases(directory, 1);
+    expect(existsSync(join(tmpRoot, "releases", directory, "dist", "cli.cjs"))).toBe(true);
+  });
+
   it("publishes the staged sidecar to $INSTALL_DIR/version.txt", () => {
     makeStagedRelease("1.1.0");
     swapCurrent("1.1.0");

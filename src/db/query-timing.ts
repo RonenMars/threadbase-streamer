@@ -3,6 +3,14 @@ import { getLogger } from "../logger";
 
 const log = getLogger("db");
 
+// Only timestamps survive: SQL parameters and error messages may contain secrets.
+const failures: number[] = [];
+export function databaseHealthAlert(): { recentFailures: number } | null {
+  const cutoff = Date.now() - 60_000;
+  while (failures.length && failures[0] <= cutoff) failures.shift();
+  return failures.length >= 3 ? { recentFailures: failures.length } : null;
+}
+
 /**
  * Slow-query threshold, in milliseconds.
  *
@@ -121,7 +129,16 @@ export function instrumentDatabase(
         writable: true,
         value: (...args: unknown[]) => {
           const started = performance.now();
-          const result = original(...args);
+          let result: unknown;
+          try {
+            result = original(...args);
+          } catch (error) {
+            databaseHealthAlert();
+            // Bound storage even under a sustained failure storm.
+            if (failures.length >= 100) failures.shift();
+            failures.push(Date.now());
+            throw error;
+          }
           record(box.label, performance.now() - started, rowsOf(method, result), slowMs);
           return result;
         },

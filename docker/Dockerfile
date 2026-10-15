@@ -46,6 +46,7 @@ RUN cd /build/node_modules/node-pty && npm install --no-save --no-audit --no-fun
 COPY src ./src
 COPY cli ./cli
 COPY tsup.config.ts tsconfig.json tsconfig.build.json biome.json ./
+COPY scripts/build-provenance.ts ./scripts/
 
 RUN npm run build \
     && npm prune --omit=dev

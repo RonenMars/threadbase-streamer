@@ -124,3 +124,14 @@ describe("checkForUpdate", () => {
     expect(r.wouldInstall).toBe(false);
   });
 });
+
+it("preserves prerelease identity and allows advancing to the next prerelease", async () => {
+  mockLatest("v1.5.0-next.2", true);
+  const result = await checkForUpdate({
+    currentVersion: "1.5.0-next.1+update",
+    config: baseConfig,
+  });
+  expect(result.latest).toBe("1.5.0-next.2");
+  expect(result.current).toBe("1.5.0-next.1");
+  expect(result.wouldInstall).toBe(true);
+});
