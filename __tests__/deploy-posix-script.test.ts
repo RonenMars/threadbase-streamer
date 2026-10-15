@@ -16,16 +16,12 @@ describe("POSIX deploy script", () => {
     return deployScript.slice(start, end);
   })();
 
-  it("clears each native module's destination before copying into it", () => {
-    expect(nativeCopyLoop).toContain('rm -rf "$RELEASES_DIR/node_modules/$mod"');
-  });
-
-  it("removes before it copies, not after", () => {
-    const remove = nativeCopyLoop.indexOf('rm -rf "$RELEASES_DIR/node_modules/$mod"');
-    const copy = nativeCopyLoop.indexOf('cp -r "node_modules/$mod"');
-    expect(remove).toBeGreaterThan(-1);
-    expect(copy).toBeGreaterThan(-1);
-    expect(remove).toBeLessThan(copy);
+  it("stages native dependencies in a fresh release directory", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell parameter
+    expect(deployScript).toContain('mktemp -d "$RELEASES_DIR/cli.${sha}.XXXXXX"');
+    expect(nativeCopyLoop).toContain('"$release_dir/node_modules/$mod"');
+    expect(nativeCopyLoop).not.toContain("rm -rf");
+    expect(deployScript).not.toContain('rm -rf "$RELEASES_DIR/migrations"');
   });
 
   describe("menubar update", () => {
