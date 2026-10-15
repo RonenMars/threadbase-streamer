@@ -63,6 +63,10 @@ Full Cloudflare guide (quick-tunnel walkthrough + how to graduate to a persisten
 - **Tailscale Funnel** — [tailscale-funnel.md](./tailscale-funnel.md) (stub; scripted onboarding coming)
 - **VPS reverse proxy (nginx / Caddy)** — [vps-reverse-proxy.md](./vps-reverse-proxy.md) (stub; scripted onboarding coming)
 
+## Using the web app (app.threadbase.sh)
+
+The mobile app needs only the tunnel. A **browser** client such as https://app.threadbase.sh also needs its origin allowed on the streamer (`browser_cors:` in `server.yaml`), or pairing fails with "Could not reach that server". One script or one line of YAML fixes it: **[../web-app-access.md](../web-app-access.md)**.
+
 ## Security baseline (read this no matter which provider you pick)
 
 - **Always set a strong API key.** The streamer generates one on first run and writes it to `~/.threadbase/server.yaml`. Don't share it; don't check it in.
