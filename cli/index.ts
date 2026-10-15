@@ -36,7 +36,7 @@ import { StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
 import { appendUpdateLog } from "../src/updater/update-log";
-import { getVersion } from "../src/version";
+import { getBuildInfo, getVersion } from "../src/version";
 import { logApiKeyLine } from "./boot-log";
 import { applyNoE2ee } from "./no-e2ee";
 import { printServerBanner, printUrlBanner } from "./pair-banner";
@@ -375,7 +375,11 @@ program
 
     {
       const v = getVersion();
-      log.info(`Threadbase Streamer v${v}`, { version: v, port: resolvedPort });
+      log.info(`Threadbase Streamer v${v}`, {
+        version: v,
+        build: getBuildInfo(),
+        port: resolvedPort,
+      });
     }
     log.info(`Listening on http://localhost:${resolvedPort}`, {
       url: `http://localhost:${resolvedPort}`,

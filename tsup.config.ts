@@ -1,4 +1,5 @@
 import { defineConfig } from "tsup";
+import { readBuildInfo } from "./scripts/build-provenance";
 
 // src/db/migrations.ts and src/db/sqlite-migrate.ts use `import.meta.url` guarded
 // by a runtime `if (import.meta.url)` / `if (typeof import.meta !== "undefined")`
@@ -10,6 +11,8 @@ import { defineConfig } from "tsup";
 const silenceImportMetaWarning = (options: { logOverride?: Record<string, string> }) => {
   options.logOverride = { ...(options.logOverride ?? {}), "empty-import-meta": "silent" };
 };
+
+const buildInfo = readBuildInfo();
 
 export default defineConfig([
   {
@@ -23,6 +26,7 @@ export default defineConfig([
     clean: true,
     outDir: "dist",
     external: ["node-pty", "pg"],
+    define: { __TB_BUILD_INFO__: JSON.stringify(buildInfo) },
     esbuildOptions: silenceImportMetaWarning,
   },
   {
@@ -41,6 +45,7 @@ export default defineConfig([
     noExternal: [/^(?!node-pty|better-sqlite3).*/],
     splitting: false,
     outExtension: () => ({ js: ".cjs" }),
+    define: { __TB_BUILD_INFO__: JSON.stringify(buildInfo) },
     esbuildOptions: silenceImportMetaWarning,
   },
 ]);

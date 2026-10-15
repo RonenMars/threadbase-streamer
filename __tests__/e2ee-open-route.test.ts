@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { randomBytes } from "crypto";
-import { mkdtempSync, rmSync } from "fs";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { request } from "http";
 import type { AddressInfo } from "net";
 import { tmpdir } from "os";
@@ -823,4 +823,71 @@ describe("/open handshake vectors (§11, §16)", () => {
       }),
     ).not.toThrow();
   });
+});
+
+describe("pairing safeguards", () => {
+  it("returns a temporary failure when the device repository is unavailable", async () => {
+    const device = pairDevice();
+    const spy = vi.spyOn(repo, "getByE2eeStaticPub").mockImplementationOnce(() => {
+      throw new Error("secret database detail");
+    });
+    try {
+      const res = await post(message1(device.staticKeyPair, { v: 1, kind: "rest" }).body);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        code: "E2EE_UNAVAILABLE",
+        error: "Pairing storage is temporarily unavailable",
+      });
+      expect(res.headers.get("Retry-After")).toBe("5");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("logs fingerprints rather than raw keys when a device is unknown", async () => {
+    const key = generateKeyPair();
+    await post(message1(key, { v: 1, kind: "rest" }).body);
+    const line = refusals().at(-1);
+    expect(line).toBeDefined();
+    expect(line?.meta.deviceFingerprint).toMatch(/^[a-f0-9]{16}$/);
+    expect(line?.meta.serverFingerprint).toMatch(/^[a-f0-9]{16}$/);
+    expect(JSON.stringify(line)).not.toContain(key.publicKeyRaw.toString("base64"));
+  });
+
+  it("reopens with the same paired device after a restart applies a new database migration", async () => {
+    const device = pairDevice();
+    expect((await open("rest", device)).res.status).toBe(200);
+    registry.clear();
+    store.close();
+    const migrations = join(dir, "upgrade-migrations");
+    cpSync(join(import.meta.dirname, "../src/db/runtime-migrations"), migrations, {
+      recursive: true,
+    });
+    writeFileSync(
+      join(migrations, "999_upgrade_probe.sql"),
+      "CREATE TABLE upgrade_probe (id INTEGER);",
+    );
+    store = RuntimeStore.open(join(dir, "runtime.db"), migrations);
+    repo = new DevicesRepository(store.getDatabase());
+    expect((await open("rest", device)).res.status).toBe(200);
+  });
+});
+
+it("bounds storage-outage logging even when every attempt uses a new static key", async () => {
+  const spy = vi.spyOn(repo, "getByE2eeStaticPub").mockImplementation(() => {
+    throw new Error("storage failure");
+  });
+  try {
+    for (let i = 0; i < OPEN_SOURCE_FAILURE_LIMIT; i++) {
+      expect((await post(message1(generateKeyPair(), { v: 1, kind: "rest" }).body)).status).toBe(
+        503,
+      );
+    }
+    expect((await post(message1(generateKeyPair(), { v: 1, kind: "rest" }).body)).status).toBe(429);
+    expect(logLines.filter((line) => line.meta.event === "e2ee.open_unavailable")).toHaveLength(
+      OPEN_SOURCE_FAILURE_LIMIT,
+    );
+  } finally {
+    spy.mockRestore();
+  }
 });

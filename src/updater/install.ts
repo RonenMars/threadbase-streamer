@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import type { UpdateConfig } from "../schemas/updateConfig.schema";
 import { countActiveSessions } from "./active-sessions";
@@ -134,7 +135,9 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
   const tarballPath = downloadPath(targetVersion, artifact.filename);
   await downloadAndVerify({ manifest, assets: target.assets, targetPath: tarballPath });
 
-  const destDir = releaseDir(targetVersion);
+  // Unique even when retrying or reactivating a retained release.
+  const directoryVersion = `${targetVersion}+install.${randomUUID()}`;
+  const destDir = releaseDir(directoryVersion);
   await unpackTarball({ tarballPath, destDir });
   stampVersionTxt(destDir, targetVersion);
 
@@ -145,24 +148,24 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
   // atomic symlink rename and don't need this — stopService is a no-op
   // there.
   if (process.platform === "win32") {
-    await stopService({ port: opts.runningServer?.port }).catch(() => {
-      /* best effort — swap may still succeed if the streamer wasn't running */
-    });
+    await stopService({ port: opts.runningServer?.port });
   }
 
-  swapCurrent(targetVersion);
+  swapCurrent(targetVersion, directoryVersion);
 
-  const pruned = pruneOldReleases(targetVersion);
+  let pruned: string[] = [];
 
   let restartMethod = "skipped";
   try {
     const r = await restartService();
     restartMethod = r.method;
-    if (opts.runningServer && r.method !== "none") {
+    if (r.method !== "none") {
       await waitForRestartHealth({
-        port: opts.runningServer.port,
+        port: opts.runningServer?.port ?? 8766,
         expectedVersion: targetVersion,
       });
+      // The old process may still need its native modules until restart succeeds.
+      pruned = pruneOldReleases(directoryVersion);
     }
   } catch (err) {
     // The release is on disk, but a command success is not enough: the process

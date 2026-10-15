@@ -26,8 +26,8 @@ const KEEP_LAST_N = 2;
  * `current/` as a plain folder. This mirrors what the existing Windows
  * deploy script does today.
  */
-export function swapCurrent(version: string): void {
-  const target = releaseDir(version);
+export function swapCurrent(version: string, directoryVersion = version): void {
+  const target = releaseDir(directoryVersion);
   if (!existsSync(target)) {
     throw new Error(`Cannot swap to ${version}: ${target} does not exist`);
   }

@@ -207,7 +207,7 @@ describe("runInstall orchestration", () => {
       expect(r.restart.method).toBe("launchctl");
     }
 
-    // Order: fetchManifest → downloadAndVerify → unpackTarball → ensureReleasesDir+swap → prune → restart
+    // Order: fetchManifest → downloadAndVerify → unpackTarball → ensureReleasesDir+swap → restart → health → prune
     const fetchOrder = vi.mocked(fetchManifest).mock.invocationCallOrder[0];
     const downloadOrder = vi.mocked(downloadAndVerify).mock.invocationCallOrder[0];
     const unpackOrder = vi.mocked(unpackTarball).mock.invocationCallOrder[0];
@@ -221,7 +221,8 @@ describe("runInstall orchestration", () => {
     expect(unpackOrder).toBeLessThan(swapOrder);
     expect(ensureOrder).toBeLessThan(swapOrder);
     expect(swapOrder).toBeLessThan(pruneOrder);
-    expect(pruneOrder).toBeLessThan(restartOrder);
+    expect(restartOrder).toBeLessThan(pruneOrder);
+    expect(vi.mocked(waitForRestartHealth).mock.invocationCallOrder[0]).toBeLessThan(pruneOrder);
   });
 
   it("returns installed result with a 'failed' restart method when restart throws", async () => {
@@ -301,4 +302,35 @@ describe("runInstall orchestration", () => {
       expect(stopService).not.toHaveBeenCalled();
     },
   );
+});
+
+it("stages every install attempt separately, including retries of the same release", async () => {
+  await runInstall({ currentVersion: "1.0.0", config: cfg });
+  await runInstall({ currentVersion: "1.0.0", config: cfg });
+  const calls = vi.mocked(unpackTarball).mock.calls;
+  expect(calls.at(-1)?.[0].destDir).not.toBe(calls.at(-2)?.[0].destDir);
+});
+
+it("retains old releases when restart health cannot confirm the new process", async () => {
+  vi.mocked(waitForRestartHealth).mockRejectedValueOnce(new Error("still running old build"));
+  const result = await runInstall({ currentVersion: "1.0.0", config: cfg });
+  expect(result.kind).toBe("installed");
+  expect(pruneOldReleases).not.toHaveBeenCalled();
+});
+
+it("does not replace the Windows runtime when stopping the service fails", async () => {
+  const platform = process.platform;
+  const arch = process.arch;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  Object.defineProperty(process, "arch", { value: "x64" });
+  try {
+    vi.mocked(stopService).mockRejectedValueOnce(new Error("service still running"));
+    await expect(runInstall({ currentVersion: "1.0.0", config: cfg })).rejects.toThrow(
+      "service still running",
+    );
+    expect(swapCurrent).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(process, "platform", { value: platform });
+    Object.defineProperty(process, "arch", { value: arch });
+  }
 });
