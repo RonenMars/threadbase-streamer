@@ -1,3 +1,4 @@
+import type { NameSlots } from "@threadbase-sh/scanner";
 import { type IMarker, Terminal } from "@xterm/headless";
 import type { ManagedSession, UserMessage } from "./types";
 
@@ -66,6 +67,9 @@ export interface InternalSession extends ManagedSession {
   // Ground-truth user messages submitted to this PTY, oldest-first, capped at
   // INPUT_HISTORY_MAX. Recorded in writeSubmit(); replayed via getInputHistory().
   inputHistory: UserMessage[];
+  // The session's name candidates, written only through the scanner's
+  // applyNameCandidate. Internal: `sessionName` is the resolved value.
+  nameSlots?: NameSlots;
 }
 
 /**
