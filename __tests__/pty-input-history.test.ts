@@ -1,4 +1,8 @@
+import { ConversationScanner } from "@threadbase-sh/scanner";
 import { EventEmitter } from "events";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { PTYManager } from "../src/pty-manager";
 import type { UserMessage } from "../src/types";
 
@@ -149,8 +153,78 @@ describe("PTYManager — user message input history", () => {
 
     const updated = mgr.getSession(session.id);
     expect(updated?.firstMessageText).toBe("fix the login bug\nmore detail here");
-    expect(updated?.sessionName).toBe("fix the login bug");
+    expect(updated?.sessionName).toBe("fix the login bug\nmore detail here");
     mgr.dispose();
+  });
+
+  it("stores a long multi-line first prompt in full", async () => {
+    const mgr = new PTYManager();
+    const session = await spawnFresh(mgr);
+    await makeReady(mgr, session.id);
+
+    const prompt = ["a".repeat(190), "b".repeat(192), "c".repeat(197)].join("\n");
+    mgr.sendInput(session.id, prompt);
+    await settle();
+
+    expect(mgr.getSession(session.id)?.sessionName).toBe(prompt);
+    mgr.dispose();
+  });
+
+  it("does not let a slash command name the session; the next real prompt does", async () => {
+    const mgr = new PTYManager();
+    const session = await spawnFresh(mgr);
+    await makeReady(mgr, session.id);
+
+    mgr.sendInput(session.id, "<command-name>/model</command-name>");
+    await settle();
+    expect(mgr.getSession(session.id)?.sessionName).toBeUndefined();
+
+    mgr.sendInput(session.id, "Fix the login bug");
+    await settle();
+    mgr.sendInput(session.id, "second message should not retitle");
+    await settle();
+    expect(mgr.getSession(session.id)?.sessionName).toBe("Fix the login bug");
+    mgr.dispose();
+  });
+
+  it.each([
+    "Fix the login bug",
+    "fix the login bug\nmore detail here",
+    `first ${"a".repeat(190)}\nsecond ${"b".repeat(192)}\nthird ${"c".repeat(197)}`,
+    '<pasted_content id="ab12">Refactor the parser</pasted_content id="ab12">',
+  ])("names a live session the way the scanner names the same JSONL: %#", async (prompt) => {
+    const dir = mkdtempSync(join(tmpdir(), "live-name-parity-"));
+    try {
+      const projects = join(dir, "projects", "-tmp-test");
+      mkdirSync(projects, { recursive: true });
+      writeFileSync(
+        join(projects, "sess-1.jsonl"),
+        `${JSON.stringify({
+          type: "user",
+          sessionId: "sess-1",
+          cwd: "/tmp/test",
+          timestamp: "2026-02-01T10:00:00.000Z",
+          message: { role: "user", content: prompt },
+        })}\n`,
+      );
+      const scanner = new ConversationScanner({ persistent: false });
+      const result = await scanner.scan({
+        profiles: [{ id: "p", label: "p", configDir: dir, enabled: true }],
+      });
+      const scanned = (result.conversations as Array<{ sessionName: string }>)[0]?.sessionName;
+
+      const mgr = new PTYManager();
+      const session = await spawnFresh(mgr);
+      await makeReady(mgr, session.id);
+      mgr.sendInput(session.id, prompt);
+      await settle();
+
+      expect(scanned).toBeTruthy();
+      expect(mgr.getSession(session.id)?.sessionName).toBe(scanned);
+      mgr.dispose();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("derives sessionName from queued input flushed on ready", async () => {

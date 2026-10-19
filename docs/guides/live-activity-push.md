@@ -117,7 +117,7 @@ Two constraints are easy to get wrong and fail silently, because an ActivityKit 
 
 The whole payload must stay under APNs' 4 KB limit, which is what `lastOutput`'s 90-character bound is for.
 
-**`sessionName`** is a user-visible title, derived server-side from the first line of the session's first user message (mirrors `@threadbase-sh/scanner`'s own `deriveSessionNameFromFirstMessage`, capped at 80 chars — see `src/utils/deriveSessionName.ts`). It is absent from the very first push of a turn if the title hasn't been derived yet (a race that resolves within the same turn — see below) and absent for good on a session that somehow never received a user message. Mobile should fall back to `projectName` when `sessionName` is unset, the same fallback already used elsewhere in this codebase (see `deriveProjectChatTitle`).
+**`sessionName`** is a user-visible title, derived server-side from the session's first valid user message through `@threadbase-sh/scanner`'s `applyNameCandidate`, so it is the full text the scanner will compute from the same JSONL (no first-line cut, no 80-char cap; see `recordUserMessage` in `src/pty-manager.ts`). It is absent from the very first push of a turn if the title hasn't been derived yet (a race that resolves within the same turn — see below) and absent for good on a session that somehow never received a user message. Mobile should fall back to `projectName` when `sessionName` is unset, the same fallback already used elsewhere in this codebase (see `deriveProjectChatTitle`).
 
 ## What triggers a send
 
