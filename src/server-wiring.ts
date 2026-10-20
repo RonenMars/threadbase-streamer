@@ -474,18 +474,23 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
       // Captured before the update below overwrites it — the Live Activity
       // notifier needs the pre-transition status to tell a genuine
       // waiting_input↔running edge apart from a same-status re-emit.
-      const previousStatus = deps.sessionStore.getManaged(session.id)?.status;
+      const stored = deps.sessionStore.getManaged(session.id);
+      const previousStatus = stored?.status;
       deps.sessionStore.updateManaged(session.id, {
         status: session.status,
         completedAt: session.completedAt,
         ...(session.lastActivityAt != null && { lastActivityAt: session.lastActivityAt }),
-        // The runner derives this from the first user message, on its own
+        // The runner names the session from its first valid prompt, on its own
         // copy of the session. Without mirroring it here SessionStore never
         // learns it, so a fresh live session is served with no sessionName
         // even though the registry has one — the name only appeared after a
-        // restart rebuilt the row as a stub. Guarded so a runner that has not
-        // derived one yet cannot blank a name set by enrichResumedSessionAsync.
-        ...(session.sessionName != null && { sessionName: session.sessionName }),
+        // restart rebuilt the row as a stub. It only seeds a session the store
+        // has no name for: once the scanner has resolved one (enrichResumedSession
+        // Async, or the turn-end refresh below), that name covers every slot in the
+        // file, so a later status change must not put the lower first-prompt name
+        // back over it.
+        ...(session.sessionName != null &&
+          stored?.sessionName == null && { sessionName: session.sessionName }),
         // Without mirroring this, SessionStore's copy is frozen at whatever
         // `addManaged` saw at spawn ("spawn") forever, because updateManaged
         // is a partial merge — so managedToResponse can never tell a
@@ -545,6 +550,14 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
               // another writer had already queued, and one line per request
               // with an explicit outcome is what makes the two countable —
               // `messageCount` alone never could.
+              // The scanner has now read the turn, so its name resolves every
+              // slot (custom title, AI title, last prompt, first prompt, slug):
+              // take it over the runner's first-prompt seed and tell clients.
+              if (meta?.sessionName) {
+                deps.sessionStore.updateManaged(session.id, { sessionName: meta.sessionName });
+                const resp = deps.sessionStore.get(session.id, deps.ptyAttachedIds());
+                if (resp) deps.wsHub.broadcast({ type: "session_update", session: resp });
+              }
               deps.log().info(`scanner.refreshFile: ${outcome === "refreshed" ? "ok" : outcome}`, {
                 event: "scanner.refresh",
                 sessionId: session.id,
