@@ -427,6 +427,10 @@ export const createMiscRoutes = (
       // cache.db, where a documented troubleshooting step deletes it and every
       // device token with it. Absent means "old server, assume not durable".
       devicesDurable: true,
+      // This server serves GET /api/recent-dirs, recorded at spawn and kept
+      // across restarts. Absent on older servers, where mobile derives the list
+      // from the live session list instead.
+      recentDirs: true,
       // Delivery capability, not endpoint support: whether this server can
       // actually send a push, so mobile can hide an affordance instead of
       // registering tokens nothing will ever send to. Absent on older servers,
