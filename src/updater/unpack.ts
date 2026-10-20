@@ -2,12 +2,24 @@ import { mkdirSync, rmSync } from "node:fs";
 import { extract as tarExtract } from "tar";
 
 /**
- * Extracts a tarball into `destDir`. Wipes `destDir` first to ensure a clean
- * install — callers must ensure the streamer process is not reading from it.
+ * Extracts a tarball into `destDir`. Existing release directories are immutable;
+ * refuse before extraction rather than overwrite files a process may be using.
  */
 export async function unpackTarball(opts: { tarballPath: string; destDir: string }): Promise<void> {
   const { tarballPath, destDir } = opts;
-  rmSync(destDir, { recursive: true, force: true });
-  mkdirSync(destDir, { recursive: true });
-  await tarExtract({ file: tarballPath, cwd: destDir });
+  try {
+    mkdirSync(destDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("Release directory already exists; refusing to overwrite it");
+    }
+    throw error;
+  }
+  try {
+    await tarExtract({ file: tarballPath, cwd: destDir });
+  } catch (error) {
+    // This directory was created by this attempt, never an installed release.
+    rmSync(destDir, { recursive: true, force: true });
+    throw error;
+  }
 }

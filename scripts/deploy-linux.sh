@@ -329,7 +329,7 @@ cmd_status() {
 
   printf '\n\033[1mRecent releases:\033[0m\n'
   if [[ -d "$RELEASES_DIR" ]]; then
-    ls -lt "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | head -n "$KEEP_RELEASES" | awk '{print "  " $0}'
+    ls -lt "$RELEASES_DIR"/cli.*.cjs "$RELEASES_DIR"/cli.*/cli.cjs 2>/dev/null | head -n "$KEEP_RELEASES" | awk '{print "  " $0}' || true
   else
     printf '  (no releases dir yet)\n'
   fi
@@ -411,10 +411,12 @@ cmd_deploy() {
   local sha
   sha="$(git rev-parse --short HEAD)"
   [[ "$force" == "--force" ]] && [[ -n "$(git status --porcelain)" ]] && sha="${sha}-dirty-$(date -u +%Y%m%d%H%M%S)"
-  local rel_filename="cli.${sha}.cjs"
-  local rel_path="releases/${rel_filename}"
-
   mkdir -p "$RELEASES_DIR"
+  # Never overwrite a running build or its loaded native dependencies.
+  local release_dir
+  release_dir="$(mktemp -d "$RELEASES_DIR/cli.${sha}.XXXXXX")"
+  local rel_filename="${release_dir##*/}/cli.cjs"
+  local rel_path="releases/${rel_filename}"
   log "stamping release: $rel_filename"
   cp dist/cli.cjs "$RELEASES_DIR/$rel_filename"
   chmod +x "$RELEASES_DIR/$rel_filename"
@@ -429,22 +431,22 @@ cmd_deploy() {
   # - runtime-migrations/ — SQLite session registry (RuntimeStore.open(); always required)
   # - pg-migrations/      — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
   #                         migration runner reads the dir at startup and crashes if absent)
-  [ -d dist/migrations ] && cp -r dist/migrations "$RELEASES_DIR/migrations"
-  [ -d dist/runtime-migrations ] && cp -r dist/runtime-migrations "$RELEASES_DIR/runtime-migrations"
-  [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$RELEASES_DIR/pg-migrations"
+  [ -d dist/migrations ] && cp -r dist/migrations "$release_dir/migrations"
+  [ -d dist/runtime-migrations ] && cp -r dist/runtime-migrations "$release_dir/runtime-migrations"
+  [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$release_dir/pg-migrations"
 
   # node-pty is external to the tsup bundle (native addon). Copy it from source
   # node_modules so the deployed cli.js can resolve it without a full node_modules tree.
   if [ -d "node_modules/node-pty" ]; then
-    mkdir -p "$RELEASES_DIR/node_modules"
-    cp -r node_modules/node-pty "$RELEASES_DIR/node_modules/node-pty"
+    mkdir -p "$release_dir/node_modules"
+    cp -r node_modules/node-pty "$release_dir/node_modules/node-pty"
   fi
   # better-sqlite3 is external to the tsup bundle (native addon). Copy it and its
   # transitive deps (bindings, file-uri-to-path) alongside the cli.
   for mod in better-sqlite3 bindings file-uri-to-path; do
     if [ -d "node_modules/$mod" ]; then
-      mkdir -p "$RELEASES_DIR/node_modules"
-      cp -r "node_modules/$mod" "$RELEASES_DIR/node_modules/$mod"
+      mkdir -p "$release_dir/node_modules"
+      cp -r "node_modules/$mod" "$release_dir/node_modules/$mod"
     fi
   done
 
@@ -462,6 +464,12 @@ cmd_deploy() {
   cmd_healthcheck
 
   log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
+  local active_release="$INSTALL_DIR/$(readlink "$ACTIVE_LINK")"
+  ls -td "$RELEASES_DIR"/cli.*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) |
+    while IFS= read -r obsolete; do
+      [[ "${obsolete%/}" == "$(dirname "$active_release")" ]] && continue
+      rm -rf -- "$obsolete"
+    done || true
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
 
   # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal.

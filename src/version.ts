@@ -65,3 +65,9 @@ function resolveVersion(): string {
   } catch {}
   return "0.0.0+unknown";
 }
+
+// Embedded at build time, so switching the installed files cannot relabel a live process.
+declare const __TB_BUILD_INFO__: { commit: string; branch: string; dirty: boolean } | null;
+export function getBuildInfo(): { commit: string; branch: string; dirty: boolean } | null {
+  return typeof __TB_BUILD_INFO__ === "undefined" ? null : __TB_BUILD_INFO__;
+}

@@ -301,12 +301,45 @@ describe("stopService", () => {
             "  TCP    127.0.0.1:8766    0.0.0.0:0    LISTENING    5678\r\n",
           stderr: "",
         })
-        .mockResolvedValueOnce({ stdout: "SUCCESS", stderr: "" });
+        .mockResolvedValueOnce({ stdout: "SUCCESS", stderr: "" })
+        .mockResolvedValueOnce({ stdout: "", stderr: "" });
 
       await stopService({ port: 9999 });
 
       expect(execFileMock).toHaveBeenNthCalledWith(3, "taskkill.exe", ["/PID", "1234", "/T", "/F"]);
-      expect(execFileMock).toHaveBeenCalledTimes(3);
+      expect(execFileMock).toHaveBeenNthCalledWith(4, "netstat.exe", ["-ano", "-p", "tcp"]);
+      expect(execFileMock).toHaveBeenCalledTimes(4);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("verified Windows stop", () => {
+  it("refuses to proceed when listener inspection fails", async () => {
+    const restore = spoofPlatform("win32");
+    try {
+      execFileMock.mockReset();
+      execFileMock
+        .mockResolvedValueOnce({ stdout: "ended", stderr: "" })
+        .mockRejectedValueOnce(new Error("netstat unavailable"));
+      await expect(stopService()).rejects.toThrow("netstat unavailable");
+    } finally {
+      restore();
+    }
+  });
+
+  it("refuses to proceed when taskkill leaves the listener alive", async () => {
+    const restore = spoofPlatform("win32");
+    const listening = { stdout: "TCP 127.0.0.1:8766 0.0.0.0:0 LISTENING 1234", stderr: "" };
+    try {
+      execFileMock.mockReset();
+      execFileMock
+        .mockResolvedValueOnce({ stdout: "ended", stderr: "" })
+        .mockResolvedValueOnce(listening)
+        .mockRejectedValueOnce(new Error("access denied"))
+        .mockResolvedValueOnce(listening);
+      await expect(stopService()).rejects.toThrow("still listening");
     } finally {
       restore();
     }

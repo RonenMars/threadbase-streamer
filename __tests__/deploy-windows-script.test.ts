@@ -87,3 +87,20 @@ describe("Windows deploy script", () => {
     expect(basename(stderr)).toBe("stderr.log");
   });
 });
+
+it("stops the Windows service before replacing shared migration files", () => {
+  const start = deployScript.indexOf("function Invoke-Deploy");
+  const body = deployScript.slice(start);
+  expect(body.indexOf("Invoke-StopServiceForCopy")).toBeGreaterThan(-1);
+  expect(body.indexOf("Invoke-StopServiceForCopy")).toBeLessThan(body.indexOf("foreach ($mig"));
+});
+
+it("verifies that Windows has no streamer listener before copying runtime files", () => {
+  const start = deployScript.indexOf("function Invoke-StopServiceForCopy");
+  const end = deployScript.indexOf("\nfunction ", start + 1);
+  const body = deployScript.slice(start, end);
+  expect(body).toContain("netstat.exe -ano -p tcp");
+  expect(body).toContain("$LASTEXITCODE -ne 0");
+  expect(body).toContain("refusing runtime replacement");
+  expect(body).not.toContain("if (-not $task) { return }");
+});

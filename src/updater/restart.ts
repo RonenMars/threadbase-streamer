@@ -137,14 +137,8 @@ export async function stopService(opts: RestartOptions = {}): Promise<StopResult
   };
 }
 
-async function stopWindowsListener(port: number): Promise<{ stdout: string; stderr: string }> {
-  let netstat: { stdout: string; stderr: string };
-  try {
-    netstat = await execFileP("netstat.exe", ["-ano", "-p", "tcp"]);
-  } catch (err) {
-    return { stdout: "", stderr: `Could not inspect port ${port}: ${String(err)}` };
-  }
-
+async function windowsListenerPids(port: number): Promise<Set<string>> {
+  const netstat = await execFileP("netstat.exe", ["-ano", "-p", "tcp"]);
   const pids = new Set<string>();
   for (const line of netstat.stdout.split(/\r?\n/)) {
     const columns = line.trim().split(/\s+/);
@@ -154,6 +148,11 @@ async function stopWindowsListener(port: number): Promise<{ stdout: string; stde
     if (localAddress?.endsWith(`:${port}`)) pids.add(pid);
   }
 
+  return pids;
+}
+
+async function stopWindowsListener(port: number): Promise<{ stdout: string; stderr: string }> {
+  const pids = await windowsListenerPids(port);
   const output: string[] = [];
   const errors: string[] = [];
   for (const pid of pids) {
@@ -164,6 +163,9 @@ async function stopWindowsListener(port: number): Promise<{ stdout: string; stde
     } catch (err) {
       errors.push(`Could not stop PID ${pid} on port ${port}: ${String(err)}`);
     }
+  }
+  if (pids.size && (await windowsListenerPids(port)).size) {
+    throw new Error(`Streamer is still listening on port ${port}; refusing runtime replacement`);
   }
   return { stdout: output.join("\n"), stderr: errors.join("\n") };
 }
