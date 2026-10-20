@@ -1,3 +1,9 @@
+## [1.116.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.0...v1.116.1) (2026-10-20)
+
+### Bug Fixes
+
+* let the scanner's resolved name win over the live runner's first-prompt name ([#1078](https://github.com/RonenMars/threadbase-streamer/issues/1078)) ([6f9bdb2](https://github.com/RonenMars/threadbase-streamer/commit/6f9bdb2c76006aea0a41677d7ce8d9f8a6ea1bf0))
+
 ## [1.116.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.115.0...v1.116.0) (2026-10-20)
 
 ### Features
