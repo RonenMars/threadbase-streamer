@@ -766,6 +766,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleSetSessionEffort: (id, req, res) => deps.applyLiveSessionSetting(id, req, res, "effort"),
     handleUploadFile: (id, req, res) => deps.sessionHandlers.handleUploadFile(id, req, res),
     handleAdopt: (id, res) => deps.sessionHandlers.handleAdopt(id, res),
+    handleTerminate: (id, res) => deps.sessionHandlers.handleTerminate(id, res),
     handleFork: (id, req, res) => deps.sessionHandlers.handleFork(id, req, res),
     handleResume: (req, res) => deps.sessionHandlers.handleResume(req, res),
     handleStartSession: (req, res) => deps.sessionHandlers.handleStartSession(req, res),
