@@ -223,6 +223,14 @@ function codexSessionActiveBody(outcome: {
  * returns for the same "this answer cannot be applied to this prompt" family;
  * the state class — the prompt moved on, or never existed here — is 409/404.
  */
+// Codex and Copilot cards are synthesized by their runners from their own TUI,
+// and retired by them when the dialog leaves the screen. No Claude scraper
+// matches either screen, so for these the pending map is the authority on
+// whether a gate is still open, never a re-scrape.
+function runnerOwnsGates(provider: string | undefined): boolean {
+  return provider === CODEX_CLI_PROVIDER || provider === COPILOT_PROVIDER;
+}
+
 function promptAnswerStatus(code: PromptAnswerErrorCode): number {
   switch (code) {
     case "prompt_not_found":
@@ -1490,7 +1498,7 @@ export class SessionHandlers {
       if (!option) return { ok: false, code: "unknown_option" };
       const provider = this.sessionStore.getManaged(sessionId)?.provider;
       if (
-        provider !== CODEX_CLI_PROVIDER &&
+        !runnerOwnsGates(provider) &&
         !(await this.permissionGateStillOpen(sessionId, permissionGateKey(gate)))
       ) {
         // The terminal below settles the registry record, but nothing else
@@ -1733,9 +1741,10 @@ export class SessionHandlers {
     // asking it refused every Codex answer as gate_closed. The Codex runner
     // clears the pending gate itself when the dialog leaves the screen, so for
     // Codex the map is the authority and gateId carries instance identity.
+    // Copilot's cards are raised and retired by its runner the same way.
     const provider = this.sessionStore.getManaged(sessionId)?.provider;
     if (
-      provider !== CODEX_CLI_PROVIDER &&
+      !runnerOwnsGates(provider) &&
       !(await this.permissionGateStillOpen(sessionId, contentKey ?? permissionGateKey(gate)))
     ) {
       gateClosed();
@@ -1917,7 +1926,7 @@ export class SessionHandlers {
       }
       if (
         focused?.kind === "permission" &&
-        this.sessionStore.getManaged(sessionId)?.provider !== CODEX_CLI_PROVIDER &&
+        !runnerOwnsGates(this.sessionStore.getManaged(sessionId)?.provider) &&
         !(await this.permissionGateStillOpen(sessionId, focused.contentKey))
       ) {
         const pending = this.pendingPermission.get(sessionId);

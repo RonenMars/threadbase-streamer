@@ -60,7 +60,8 @@ The busy row is only matched on the bottom row, and the card footers only in the
 
 `__tests__/turn-signal-replay.test.ts` replays the three captures through the runner: the plain turn ends once with `turn-signal`, and the two card captures stay `running` while the card is open.
 
-Surfacing the trust card, the permission card or the `ask_user` form as question cards is a separate change, tracked in #1047, and would flip `structuredQuestions` / `permissionGates` in `COPILOT_CAPABILITIES`.
+The same footers now also raise a card: the trust card, a permission card and an `ask_user` choice go out over the `permission` transport while they are on screen, and `permissionGates` is `true` in `COPILOT_CAPABILITIES`.
+How they are parsed and answered is in `docs/architecture/provider-question-parsing.md`, section 4.9.
 
 ## Not established
 

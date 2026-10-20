@@ -16,7 +16,7 @@ import { CodexPtyRunner } from "../src/codex-pty-runner";
 import { CopilotPtyRunner } from "../src/copilot-pty-runner";
 import { CursorPtyRunner } from "../src/cursor-pty-runner";
 import { PTYManager } from "../src/pty-manager";
-import type { ManagedSession } from "../src/types";
+import type { ManagedSession, PTYManagerOptions } from "../src/types";
 
 vi.mock("node-pty", () => {
   function makeMockProcess() {
@@ -405,9 +405,16 @@ describe("Cursor: a card on screen keeps the turn open", () => {
 // Boot is replayed to `marks.ready` rather than to the submit: the capture types
 // its prompt before submitting, and typed text hides the idle footer that
 // settles boot.
+type Card = Parameters<NonNullable<PTYManagerOptions["onPermissionChange"]>>[1];
+
 async function replayCopilot(cap: Capture, holdAtMs: number) {
   const changes: ManagedSession[] = [];
-  const runner = new CopilotPtyRunner({ onStatusChange: (s) => changes.push({ ...s }) });
+  // Every card event in order: a card as it opens or changes, null as it closes.
+  const cards: Card[] = [];
+  const runner = new CopilotPtyRunner({
+    onStatusChange: (s) => changes.push({ ...s }),
+    onPermissionChange: (_id, card) => cards.push(card),
+  });
   const session = await runner.startFresh({ projectPath: "/tmp", projectName: "proj" });
   const proc = (runner as any).sessions.get(session.id).process;
   const emit = (after: number, upTo: number) => {
@@ -417,6 +424,7 @@ async function replayCopilot(cap: Capture, holdAtMs: number) {
   emit(-1, cap.marks.ready);
   await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), { timeout: 2_000 });
   const boot = changes.at(-1)?.statusSource;
+  const bootCards = cards.splice(0);
   changes.length = 0;
 
   runner.sendInput(session.id, "prompt");
@@ -424,12 +432,18 @@ async function replayCopilot(cap: Capture, holdAtMs: number) {
   // Past the 500ms quiet check and the 2s submit-stale.
   await sleep(2_600);
   const held = changes.map((c) => [c.status, c.statusSource]);
+  const heldCards = [...cards];
+  // The answer goes to the PTY as the card's own keys; the capture then plays
+  // what Copilot painted once it was answered.
+  const answer = heldCards.at(-1)?.options[0]?.answerKeys;
+  if (answer !== undefined) runner.sendKeys(session.id, answer);
+  const answered = answer === undefined ? undefined : proc.write.mock.calls.at(-1)?.[0];
 
   emit(holdAtMs, Number.POSITIVE_INFINITY);
   await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), { timeout: 3_000 });
   const all = changes.map((c) => [c.status, c.statusSource]);
   runner.dispose();
-  return { boot, held, all };
+  return { boot, held, all, bootCards, heldCards, answered, cards };
 }
 
 describe("Copilot: the turn is read off the rendered status row", () => {
@@ -455,6 +469,94 @@ describe("Copilot: the turn is read off the rendered status row", () => {
     const r = await replayCopilot(COPILOT_ASK, COPILOT_ASK.marks.askOpen);
     expect(r.held).toEqual([["running", "user-input"]]);
     expect(r.all).toEqual(TURN);
+  }, 15_000);
+
+  it("raises the folder trust card during boot and closes it once answered", async () => {
+    const r = await replayCopilot(COPILOT_TURN, COPILOT_TURN.submitAt + 1_000);
+    expect(r.bootCards).toEqual([
+      expect.objectContaining({
+        prompt: "Do you trust the files in this folder?",
+        options: [
+          { index: 1, label: "Yes", answerKeys: "\r" },
+          {
+            index: 2,
+            label: "Yes, and remember this folder for future sessions",
+            answerKeys: "\x1b[B\r",
+          },
+          { index: 3, label: "No (Esc)", answerKeys: "\x1b[B\x1b[B\r" },
+        ],
+      }),
+      null,
+    ]);
+    // A plain turn raises no card.
+    expect(r.cards).toEqual([]);
+  }, 15_000);
+
+  it("raises the permission card once, answers it from the highlight, and closes it", async () => {
+    const r = await replayCopilot(COPILOT_GATE, COPILOT_GATE.marks.gateOpen);
+    expect(r.heldCards).toEqual([
+      expect.objectContaining({
+        prompt: "Do you want to run this command?",
+        detail: "Create the requested empty file in the current workspace\ntouch a.txt",
+      }),
+    ]);
+    expect(r.heldCards[0]?.options.map((o) => o.answerKeys)).toEqual([
+      "\r",
+      "\x1b[B\r",
+      "\x1b[B\x1b[B\r",
+    ]);
+    expect(r.answered).toBe("\r");
+    expect(r.cards).toEqual([r.heldCards[0], null]);
+    expect(r.all).toEqual(TURN);
+  }, 15_000);
+
+  it("raises an ask_user choice once, answers it from the highlight, and closes it", async () => {
+    const r = await replayCopilot(COPILOT_ASK, COPILOT_ASK.marks.askOpen);
+    expect(r.heldCards).toEqual([
+      {
+        prompt: "Pick one color out of red, green, and blue.",
+        detail: "Color:\nChoose exactly one color.",
+        options: [
+          { index: 1, label: "red", answerKeys: "\r" },
+          { index: 2, label: "green", answerKeys: "\x1b[B\r" },
+          { index: 3, label: "blue", answerKeys: "\x1b[B\x1b[B\r" },
+        ],
+        cursor: 1,
+      },
+    ]);
+    expect(r.answered).toBe("\r");
+    expect(r.cards).toEqual([r.heldCards[0], null]);
+    expect(r.all).toEqual(TURN);
+  }, 15_000);
+
+  it("re-sends a card when the highlight moves, and closes it when the process exits", async () => {
+    const cards: Card[] = [];
+    const runner = new CopilotPtyRunner({ onPermissionChange: (_id, card) => cards.push(card) });
+    const session = await runner.startFresh({ projectPath: "/tmp", projectName: "proj" });
+    const proc = (runner as any).sessions.get(session.id).process;
+    for (const [ms, d] of COPILOT_ASK.chunks) {
+      if (ms <= COPILOT_ASK.marks.askOpen) proc._emit("data", d);
+    }
+    await vi.waitFor(() => expect(cards.at(-1)?.cursor).toBe(1));
+    cards.length = 0;
+
+    // Down in the terminal: Copilot repaints the two rows the highlight left and reached.
+    proc._emit("data", "\x1b[34;1H\x1b[2K   red\x1b[35;1H\x1b[2K \u276f green");
+    await vi.waitFor(() => expect(cards.length).toBeGreaterThan(0));
+    expect(cards).toEqual([
+      expect.objectContaining({
+        cursor: 2,
+        options: [
+          { index: 1, label: "red", answerKeys: "\x1b[A\r" },
+          { index: 2, label: "green", answerKeys: "\r" },
+          { index: 3, label: "blue", answerKeys: "\x1b[B\r" },
+        ],
+      }),
+    ]);
+
+    proc._emit("exit", { exitCode: 0 });
+    expect(cards.at(-1)).toBeNull();
+    runner.dispose();
   }, 15_000);
 
   it("ignores Working in a reply, and reopens on a busy row nobody announced", async () => {
