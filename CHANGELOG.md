@@ -1,3 +1,9 @@
+## [1.116.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.115.0...v1.116.0) (2026-10-20)
+
+### Features
+
+* **copilot:** index Copilot CLI session history ([#1059](https://github.com/RonenMars/threadbase-streamer/issues/1059)) ([1ebb00b](https://github.com/RonenMars/threadbase-streamer/commit/1ebb00bf3a2e016c3bcabca55e5c725fb1fe19f1))
+
 ## [1.115.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.114.0...v1.115.0) (2026-10-19)
 
 ### Features
