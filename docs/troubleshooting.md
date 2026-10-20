@@ -426,6 +426,17 @@ git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 ## Browser clients (Expo web)
 
+### The web app says "Could not reach that server" though the streamer and tunnel are up
+
+**When:** pairing from https://app.threadbase.sh (or any browser build) fails on the first connection test; the same server pairs fine from the phone app.
+
+**Cause:** browser CORS is off by default, so the preflight `OPTIONS` request gets a `403` and the browser cancels the real request.
+The app reports that as unreachable.
+A plain `GET /healthz` still returns `401`, which is why the tunnel looks healthy.
+
+**Fix:** allow the web app's origin: run `bash scripts/allow-web-app.sh` (or add `browser_cors: https://app.threadbase.sh` to `~/.threadbase/server.yaml`) and restart the streamer.
+Steps, rules and a check command: [guides/web-app-access.md](guides/web-app-access.md).
+
 ### The web app pairs, then fails with `TypeError: Failed to fetch`
 
 **When:** tb-mobile running in a browser (`npx expo start --web`, or a hosted static export) against a streamer with `browser_cors:` set.

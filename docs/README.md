@@ -6,6 +6,7 @@
 | How to use auto-update | [guides/auto-update.md](guides/auto-update.md) |
 | Server feature flags (`--feature`, `feature_flags:`, env) | [guides/feature-flags.md](guides/feature-flags.md) |
 | Exposing the streamer remotely (tunnels, proxies) | [guides/remote-access/](guides/remote-access/) |
+| Using your sessions from the web app (app.threadbase.sh) | [guides/web-app-access.md](guides/web-app-access.md) |
 | Manual Windows lifecycle verification | [guides/lifecycle-windows-test.md](guides/lifecycle-windows-test.md) |
 | Smoke-testing the built CLI in an isolated `HOME` (`scripts/smoke-isolated.sh`) | [guides/isolated-smoke.md](guides/isolated-smoke.md) |
 | How the streamer was designed (per-feature design docs) | [architecture/](architecture/) |
