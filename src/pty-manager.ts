@@ -1,3 +1,4 @@
+import { applyNameCandidate, resolveSessionName } from "@threadbase-sh/scanner";
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
@@ -44,7 +45,6 @@ import type {
   UserMessage,
 } from "./types";
 import { debounce } from "./utils/debounce";
-import { deriveSessionName } from "./utils/deriveSessionName";
 
 const OUTPUT_BUFFER_MAX = 65536;
 
@@ -869,13 +869,18 @@ export class PTYManager implements SessionRunner {
     if (session.inputHistory.length > INPUT_HISTORY_MAX) {
       session.inputHistory.shift();
     }
-    // First message of the session: derive a title the same way the scanner
-    // would once it observes this line, so a live session has a name from its
-    // very first turn rather than waiting on a resume/rescan to compute it.
-    if (session.firstMessageText === undefined) {
-      session.firstMessageText = text;
-      session.sessionName = deriveSessionName(text);
-    }
+    if (session.firstMessageText === undefined) session.firstMessageText = text;
+    // Name the session through the scanner's own write path, so a live session
+    // gets the name the scanner will compute from the same JSONL line (the
+    // first valid prompt, in full; slash commands and injected rows don't count)
+    // without waiting on a rescan.
+    session.nameSlots = applyNameCandidate(
+      session.nameSlots ?? {},
+      "firstUserMessage",
+      text,
+      CLAUDE_CODE_PROVIDER,
+    );
+    session.sessionName = resolveSessionName(session.nameSlots).name ?? session.sessionName;
     this.onUserMessage?.(session.id, text, ts);
   }
 

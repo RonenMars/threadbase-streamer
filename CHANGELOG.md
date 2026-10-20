@@ -1,3 +1,9 @@
+## [1.115.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.114.0...v1.115.0) (2026-10-19)
+
+### Features
+
+* **streamer:** name live sessions through the scanner's five-slot precedence ([aed3cd7](https://github.com/RonenMars/threadbase-streamer/commit/aed3cd73fac382b42ac5e8bb81efd92817eeab88))
+
 ## [1.114.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.113.7...v1.114.0) (2026-10-10)
 
 ### Features
