@@ -58,9 +58,36 @@ vi.mock("fs/promises", () => ({
   }),
 }));
 
-import { ConversationWatcher } from "../src/services/conversations/conversationWatcher";
+import {
+  ConversationWatcher,
+  ignoreNonJsonlWatchPath,
+} from "../src/services/conversations/conversationWatcher";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+
+describe("ignoreNonJsonlWatchPath", () => {
+  const file = { isFile: () => true, isDirectory: () => false } as import("fs").Stats;
+  const dir = { isFile: () => false, isDirectory: () => true } as import("fs").Stats;
+
+  it("keeps directories and .jsonl files", () => {
+    expect(ignoreNonJsonlWatchPath("/proj/sub", dir)).toBe(false);
+    expect(ignoreNonJsonlWatchPath("/proj/a.jsonl", file)).toBe(false);
+    expect(ignoreNonJsonlWatchPath("/proj/A.JSONL", file)).toBe(false);
+  });
+
+  it("ignores non-jsonl files (sidecars that were blowing the macOS watch ceiling)", () => {
+    expect(ignoreNonJsonlWatchPath("/proj/custom-title.json", file)).toBe(true);
+    expect(ignoreNonJsonlWatchPath("/proj/note.md", file)).toBe(true);
+    expect(ignoreNonJsonlWatchPath("/proj/.DS_Store", file)).toBe(true);
+    expect(ignoreNonJsonlWatchPath("/proj/archive.jsonl.zst", file)).toBe(true);
+  });
+
+  it("without stats, ignores only paths that already look like non-jsonl files", () => {
+    expect(ignoreNonJsonlWatchPath("/proj/sub")).toBe(false);
+    expect(ignoreNonJsonlWatchPath("/proj/a.jsonl")).toBe(false);
+    expect(ignoreNonJsonlWatchPath("/proj/a.txt")).toBe(true);
+  });
+});
 
 describe("ConversationWatcher — directory watching", () => {
   beforeEach(() => {
@@ -73,6 +100,14 @@ describe("ConversationWatcher — directory watching", () => {
     const w = new ConversationWatcher({ onConversationChanged: onChanged });
     w.watchDirectory("/some/dir");
     expect(watchSpy).toHaveBeenCalled();
+    w.dispose();
+  });
+
+  it("passes an ignored filter that skips non-jsonl files", () => {
+    const w = new ConversationWatcher();
+    w.watchDirectory("/some/dir");
+    const opts = watchSpy.mock.calls[0]?.[1] as { ignored?: typeof ignoreNonJsonlWatchPath };
+    expect(opts.ignored).toBe(ignoreNonJsonlWatchPath);
     w.dispose();
   });
 
