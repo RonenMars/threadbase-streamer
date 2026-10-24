@@ -1,3 +1,9 @@
+## [1.116.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.2...v1.116.3) (2026-10-24)
+
+### Bug Fixes
+
+* **sessions:** stop rehydrated sessions reporting activity at request time ([#1003](https://github.com/RonenMars/threadbase-streamer/issues/1003)) ([7aa51cb](https://github.com/RonenMars/threadbase-streamer/commit/7aa51cb7a020675cc1185784e4bb2f8460e8fdbc))
+
 ## [1.116.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.1...v1.116.2) (2026-10-24)
 
 ### Bug Fixes
