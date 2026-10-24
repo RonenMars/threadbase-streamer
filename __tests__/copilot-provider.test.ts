@@ -15,6 +15,7 @@ describe("Copilot provider contract", () => {
       structuredQuestions: false,
       permissionGates: true,
       liveControl: true,
+      multiDirectory: false,
     });
   });
   it("reports missing CLI and unverified installed versions honestly", async () => {

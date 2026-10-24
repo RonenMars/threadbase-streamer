@@ -172,6 +172,9 @@ export const COPILOT_CAPABILITIES: ProviderCapabilities = {
   structuredQuestions: false,
   permissionGates: true,
   liveControl: true,
+  // The runner passes no extra directories, and no `--add-dir` equivalent is
+  // verified for this CLI yet.
+  multiDirectory: false,
 };
 
 export function capabilitiesFor(provider: ProviderName): ProviderCapabilities {

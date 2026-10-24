@@ -146,7 +146,9 @@ describe("declared capabilities match runner behaviour", () => {
       expect(codexSpawnArgs()).toContain('"--add-dir"');
     });
 
-    it("is not declared for Cursor or the generic fallback", () => {
+    it("is not declared for Cursor, Copilot or the generic fallback", () => {
+      expect(capabilitiesFor("copilot").multiDirectory).toBe(false);
+      expect(spawnArgsFrom("copilot-pty-runner.ts")).not.toContain("--add-dir");
       expect(CURSOR_CLI_CAPABILITIES.multiDirectory).toBe(false);
       expect(spawnArgsFrom("cursor-pty-runner.ts")).not.toContain("--add-dir");
       expect(GENERIC_TERMINAL_CAPABILITIES.multiDirectory).toBe(false);
