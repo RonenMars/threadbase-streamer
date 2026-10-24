@@ -1,10 +1,11 @@
 // The ConversationWatcher's `onError` channel was constructed but never wired
 // by server.ts, so every watcher error was discarded.
 //
-// The one that has to be loud is ENOSPC. A directory watch costs one OS watch
-// handle PER FILE under the root (chokidar recurses), so the handle count
-// tracks the conversation corpus — on Linux that is spent against inotify's
-// per-user max_user_watches, which can be as low as 8192. Past the ceiling the
+// The ones that have to be loud are watch-handle exhaustion. A directory watch
+// costs one OS watch handle PER watched file under the root (chokidar
+// recurses), so the handle count tracks the conversation corpus — on Linux
+// ENOSPC against inotify's per-user max_user_watches (as low as 8192); on
+// macOS EMFILE against the ~4096 fs.watch/FSEvents ceiling. Past either the
 // watch simply never attaches: live tails go quiet and new conversations stop
 // being discovered, with nothing in the log connecting either symptom to the
 // watch budget.
@@ -79,7 +80,24 @@ describe("watcher error wiring", () => {
     }
   });
 
-  it("still reports a non-ENOSPC watcher error, under a distinct event", () => {
+  it("routes a macOS EMFILE watch failure as the same limit-exhausted event", () => {
+    const { server, errors, cleanup } = buildServer();
+    try {
+      const err: NodeJS.ErrnoException = new Error("EMFILE: too many open files, watch");
+      err.code = "EMFILE";
+
+      wiredOnError(server)("/Users/u/.claude/projects", err);
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0].meta.event).toBe("watcher.limit_exhausted");
+      expect(errors[0].message).toContain("FSEvents");
+      expect(errors[0].message).toContain("/Users/u/.claude/projects");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("still reports a non-limit watcher error, under a distinct event", () => {
     const { server, errors, cleanup } = buildServer();
     try {
       wiredOnError(server)("/tmp/whatever.jsonl", new Error("EACCES: permission denied"));

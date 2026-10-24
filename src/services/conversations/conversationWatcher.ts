@@ -1,8 +1,26 @@
 import chokidar, { type FSWatcher } from "chokidar";
-import { statSync } from "fs";
+import { type Stats, statSync } from "fs";
 import { open, stat } from "fs/promises";
 import { canonicalizeFilePath } from "../../utils/canonicalizeFilePath";
 import { type LineSpan, splitCompleteLines } from "../../utils/fileIdentity";
+
+/**
+ * chokidar `ignored` for directory watches: skip every non-`.jsonl` *file*
+ * while keeping directories so newly created transcripts still fire `add`.
+ *
+ * Without this, a populated `~/.claude/projects` opens one `fs.watch` handle
+ * per sidecar (custom-title.json, memory notes, .zst archives, …) and trips
+ * macOS's ~4096 FSEvents/`fs.watch` ceiling with `EMFILE` — long before
+ * RLIMIT_NOFILE (SoftResourceLimits) is relevant.
+ */
+export function ignoreNonJsonlWatchPath(watchPath: string, stats?: Stats): boolean {
+  if (stats?.isDirectory()) return false;
+  if (stats?.isFile()) return !/\.jsonl$/i.test(watchPath);
+  // No stats yet (some chokidar paths): ignore only when the path already
+  // looks like a non-jsonl file, so bare directory names stay eligible.
+  if (/\.[^./\\]+$/.test(watchPath) && !/\.jsonl$/i.test(watchPath)) return true;
+  return false;
+}
 
 export interface ConversationWatcherEvents {
   /** Fires once per new newline-terminated line appended to a watched file. */
@@ -162,25 +180,36 @@ export class ConversationWatcher {
    * onConversationChanged for any add/change/unlink event so the caller
    * can mark the cache dirty without scanning everything immediately.
    *
-   * **This costs one OS watch handle per file under `directory`, not one per
-   * directory.** chokidar recurses the tree and registers a separate fs.watch
-   * per entry, because a directory watch alone does not report writes to files
-   * inside it — and per-file `change` events are exactly what the caller needs
-   * (they drive poke()'s tail self-heal and the external-tail attach). So the
-   * handle count tracks the size of the conversation corpus on disk, not the
-   * number of live sessions, and it does not shrink until transcripts are
-   * deleted. `ignoreInitial` suppresses the startup *events*, not the walk.
+   * **This costs one OS watch handle per watched file under `directory`, not
+   * one per directory.** chokidar recurses the tree and registers a separate
+   * fs.watch per entry, because a directory watch alone does not report writes
+   * to files inside it — and per-file `change` events are exactly what the
+   * caller needs (they drive poke()'s tail self-heal and the external-tail
+   * attach). So the handle count tracks the size of the conversation corpus on
+   * disk, not the number of live sessions, and it does not shrink until
+   * transcripts are deleted. `ignoreInitial` suppresses the startup *events*,
+   * not the walk.
+   *
+   * Non-`.jsonl` files under the roots (sidecar `.json`/`.txt`/`.md`/`.zst`,
+   * `.DS_Store`, memory notes, …) are ignored: they are not conversation
+   * transcripts, and watching them on a populated box was enough to blow past
+   * macOS's ~4096 `fs.watch`/FSEvents ceiling (EMFILE) even with
+   * SoftResourceLimits at 65536. Measured 2026-10-24: ~5640 open REG fds of
+   * which ~2660 were non-jsonl; restricting the walk to `.jsonl` leaves the
+   * transcript set (~3000) under the ceiling. Directories stay watched so a
+   * newly created `.jsonl` still fires `add`.
    *
    * Measured 2026-08-09 on the live macOS instance: 2131 open .jsonl fds
    * against 2133 files under the watched roots — 1:1, ~88% of all fds on the
-   * process, at 2.0% of that box's 122 880 per-process ceiling. Comfortable
-   * there. **Linux is the tight one**: these are inotify watches billed to the
-   * per-user `max_user_watches`, which can be 8192 and is shared with every
-   * other watcher the user runs. Exhaustion surfaces as ENOSPC on the `error`
+   * process. That was below the FSEvents wall; the RLIMIT_NOFILE headroom
+   * (122 880) is not the binding constraint on Darwin. **Linux** bills these
+   * as inotify watches against the per-user `max_user_watches`, which can be
+   * 8192 and is shared with every other watcher the user runs. Exhaustion
+   * surfaces as ENOSPC (Linux) or EMFILE (macOS `fs.watch`) on the `error`
    * event — which is why server.ts wires onError rather than leaving it unset.
    *
-   * Before trading handles for a bound here, note the regression it invites: a
-   * conversation excluded from the walk (by age or by an LRU cap) is one whose
+   * Before trading handles for an age/LRU bound on `.jsonl` itself, note the
+   * regression it invites: a conversation excluded from the walk is one whose
    * external appends produce no event at all, and that failure is silent.
    */
   watchDirectory(directory: string): void {
@@ -188,6 +217,8 @@ export class ConversationWatcher {
     const watcher = chokidar.watch(directory, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
+      // Only transcript files need per-file watches. See the method note.
+      ignored: ignoreNonJsonlWatchPath,
     });
     const fire = (filePath: string) => {
       void Promise.resolve(this.onConversationChanged?.(filePath)).catch(() => {

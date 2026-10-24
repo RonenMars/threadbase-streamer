@@ -301,24 +301,27 @@ export function createConversationWatcherEvents(
     },
     onFileDeleted: (filePath) => deps.externalTailManager().handleJsonlDeleted(filePath),
     onError: (filePath, err) => {
-      // Was unwired, so every watcher error was dropped on the floor. The one
-      // that matters is ENOSPC from a directory watch: chokidar takes one
-      // OS-level watch handle PER FILE under a watched root (see
-      // watchDirectory's note), so on Linux the conversation corpus is spent
-      // directly against inotify's per-user max_user_watches — a ceiling as
-      // low as 8192 on some distros, shared with every other watcher the user
-      // is running. Past it the watch never attaches: tails go quiet and new
-      // conversations stop being discovered, with nothing in the log tying it
-      // to the fd budget. Name the cause here so it isn't re-derived.
-      const enospc = (err as NodeJS.ErrnoException).code === "ENOSPC";
-      deps
-        .log()
-        .error(
-          enospc
-            ? `Watcher hit the OS watch-handle limit on ${filePath} — raise fs.inotify.max_user_watches (Linux) or the process fd limit; conversation discovery and live tails are degraded until then`
-            : `Watcher error on ${filePath}: ${err.message}`,
-          { filePath, err, event: enospc ? "watcher.limit_exhausted" : "watcher.error" },
-        );
+      // Was unwired, so every watcher error was dropped on the floor. The ones
+      // that matter are watch-handle exhaustion from a directory watch:
+      // chokidar takes one OS-level watch handle PER watched file under a
+      // root (see watchDirectory's note). On Linux that is spent against
+      // inotify's per-user max_user_watches (as low as 8192, shared); on
+      // macOS `fs.watch`/FSEvents fails with EMFILE around ~4096 watches even
+      // when SoftResourceLimits.NumberOfFiles is far higher. Past either
+      // ceiling the watch never attaches: tails go quiet and new conversations
+      // stop being discovered, with nothing in the log tying it to the budget.
+      // Name the cause here so it isn't re-derived.
+      const code = (err as NodeJS.ErrnoException).code;
+      const limitHit = code === "ENOSPC" || code === "EMFILE";
+      const limitHint =
+        code === "EMFILE"
+          ? `Watcher hit the macOS fs.watch/FSEvents ceiling on ${filePath} (~4096 watches; RLIMIT_NOFILE does not raise it) — conversation discovery and live tails are degraded until the watched set shrinks`
+          : `Watcher hit the OS watch-handle limit on ${filePath} — raise fs.inotify.max_user_watches (Linux) or the process fd limit; conversation discovery and live tails are degraded until then`;
+      deps.log().error(limitHit ? limitHint : `Watcher error on ${filePath}: ${err.message}`, {
+        filePath,
+        err,
+        event: limitHit ? "watcher.limit_exhausted" : "watcher.error",
+      });
     },
   };
 }
