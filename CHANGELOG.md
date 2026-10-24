@@ -1,3 +1,9 @@
+## [1.116.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.3...v1.116.4) (2026-10-24)
+
+### Bug Fixes
+
+* **sessions:** keep a live session's messageCount current after each turn ([#1022](https://github.com/RonenMars/threadbase-streamer/issues/1022)) ([d179a57](https://github.com/RonenMars/threadbase-streamer/commit/d179a57759304c31d9a709d907217cab9d74e443))
+
 ## [1.116.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.2...v1.116.3) (2026-10-24)
 
 ### Bug Fixes
