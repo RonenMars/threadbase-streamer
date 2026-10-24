@@ -1,3 +1,9 @@
+## [1.116.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.1...v1.116.2) (2026-10-24)
+
+### Bug Fixes
+
+* **watcher:** ignore non-jsonl files in directory watches ([#1080](https://github.com/RonenMars/threadbase-streamer/issues/1080)) ([f9990ae](https://github.com/RonenMars/threadbase-streamer/commit/f9990ae3753b62ed6aaec9d6fbd90833bc8064c8))
+
 ## [1.116.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.0...v1.116.1) (2026-10-20)
 
 ### Bug Fixes
