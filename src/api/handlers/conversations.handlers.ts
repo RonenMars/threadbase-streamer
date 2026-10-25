@@ -33,6 +33,7 @@ import {
   type InheritedHistory,
   resolveInheritedHistory,
 } from "../../services/conversations/inheritedHistory";
+import { readSubagentInfo } from "../../services/conversations/subagentInfo";
 import { deriveProjectChatTitle } from "../../services/projectChats/deriveProjectChatTitle";
 import {
   applyFilters,
@@ -223,6 +224,7 @@ export class ConversationHandlers {
       project: url.searchParams.get("project") ?? undefined,
       provider: url.searchParams.get("provider") ?? undefined,
       include: includeQueryParam(url),
+      parent: url.searchParams.get("parent") || undefined,
       isImportedFromClaude: boolQueryParam(url, "isImportedFromClaude"),
       isImportedFromCodex: boolQueryParam(url, "isImportedFromCodex"),
       isImportedFromCursor: boolQueryParam(url, "isImportedFromCursor"),
@@ -319,10 +321,16 @@ export class ConversationHandlers {
         limit,
         offset,
       });
-      const adapted = conversations.map((c) => ({
+      const subagentInfo = await Promise.all(
+        conversations.map((c) =>
+          c.isSubagent ? readSubagentInfo(c.filePath, c.lastActivity) : undefined,
+        ),
+      );
+      const adapted = conversations.map((c, i) => ({
         id: c.id,
         isSubagent: c.isSubagent,
         parentConversationId: c.parentConversationId,
+        ...subagentInfo[i],
         title: deriveProjectChatTitle({
           title: c.title,
           projectName: c.projectName,
