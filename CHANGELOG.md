@@ -1,3 +1,9 @@
+## [1.118.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.117.0...v1.118.0) (2026-10-26)
+
+### Features
+
+* **conversations:** list a parent's sub-agents with label and activity ([#1081](https://github.com/RonenMars/threadbase-streamer/issues/1081)) ([d7b95e6](https://github.com/RonenMars/threadbase-streamer/commit/d7b95e66d890215c53514ce74ac99a87cac7af98))
+
 ## [1.117.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.5...v1.117.0) (2026-10-26)
 
 ### Features
