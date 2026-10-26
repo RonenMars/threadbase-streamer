@@ -132,6 +132,7 @@ import { ConversationWatcher } from "./services/conversations/conversationWatche
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { refreshConversationCache } from "./services/conversations/refreshConversationCache";
+import { startRuntimeDiagnostics } from "./services/diagnostics/runtimeDiagnostics";
 import {
   createHostPressureMonitor,
   type HostPressureMonitor,
@@ -482,6 +483,7 @@ export class StreamerServer {
   private cache: ConversationCache | null = null;
   private cacheMonitor: CacheIntegrityMonitor | null = null;
   private hostPressureMonitor: HostPressureMonitor | null = null;
+  private stopRuntimeDiagnostics: (() => void) | null = null;
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
   private sessionsRepo: SessionsRepository | null = null;
@@ -1649,6 +1651,7 @@ export class StreamerServer {
 
     // Informational only: samples cheap OS + event-loop signals and broadcasts
     // host_pressure on a level change. Never holds, kills, or refuses sessions.
+    this.stopRuntimeDiagnostics = startRuntimeDiagnostics(this.log);
     this.hostPressureMonitor = createHostPressureMonitor(
       this.wsHub,
       () => this.ptyAttachedIds().size,
@@ -2149,6 +2152,8 @@ export class StreamerServer {
       clearInterval(this.codexFormatCanaryTimer);
       this.codexFormatCanaryTimer = null;
     }
+    this.stopRuntimeDiagnostics?.();
+    this.stopRuntimeDiagnostics = null;
     this.hostPressureMonitor?.dispose();
     this.hostPressureMonitor = null;
     this.lastAgentChunkAt.clear();
