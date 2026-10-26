@@ -1,3 +1,9 @@
+## [1.116.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.4...v1.116.5) (2026-10-26)
+
+### Bug Fixes
+
+* **api:** bound request bodies as they arrive ([#1056](https://github.com/RonenMars/threadbase-streamer/issues/1056)) ([824bc25](https://github.com/RonenMars/threadbase-streamer/commit/824bc257f286e311f0a3ed892acd6416c5a27dbf))
+
 ## [1.116.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.3...v1.116.4) (2026-10-24)
 
 ### Bug Fixes
