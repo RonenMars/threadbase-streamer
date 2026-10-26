@@ -85,6 +85,8 @@ export interface ConversationListFilters {
   project?: string;
   provider?: string;
   include?: ConversationInclude;
+  /** Only this conversation's sub-agents. Overrides `include`: asking for a parent's children is explicit. */
+  parent?: string;
   isImportedFromClaude?: boolean;
   isImportedFromCodex?: boolean;
   isImportedFromCursor?: boolean;
@@ -1805,7 +1807,10 @@ export class ConversationCache {
     const clauses = ["has_messages IS NOT 0", "deleted_at IS NULL"];
     const params: unknown[] = [];
     const include = opts.include ?? (this.includeSubagentSessions ? "all" : "conversations");
-    if (include === "conversations") clauses.push("is_subagent IS NOT 1");
+    if (opts.parent) {
+      clauses.push("is_subagent = 1", "parent_conversation_id = ?");
+      params.push(opts.parent);
+    } else if (include === "conversations") clauses.push("is_subagent IS NOT 1");
     else if (include === "subagents") clauses.push("is_subagent = 1");
     if (opts.project) {
       clauses.push("project_path = ?");
