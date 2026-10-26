@@ -1,3 +1,14 @@
+## [1.117.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.5...v1.117.0) (2026-10-26)
+
+### Features
+
+* **api:** keep recent session directories across restarts ([#1025](https://github.com/RonenMars/threadbase-streamer/issues/1025)) ([ac92341](https://github.com/RonenMars/threadbase-streamer/commit/ac92341359ad6037cd5a1276a89b28e47c1659dd))
+* **api:** store saved items in runtime.db and serve them over /api/saved-items ([#1024](https://github.com/RonenMars/threadbase-streamer/issues/1024)) ([49f3ea7](https://github.com/RonenMars/threadbase-streamer/commit/49f3ea735b63984e9a7226b0821a8e6481e9a633)), closes [RonenMars/threadbase-mobile#1251](https://github.com/RonenMars/threadbase-mobile/issues/1251)
+
+### Bug Fixes
+
+* **relay:** keep the pair token and outer credentials off the relay ([#1057](https://github.com/RonenMars/threadbase-streamer/issues/1057)) ([7452991](https://github.com/RonenMars/threadbase-streamer/commit/7452991a5fd9a641052490dd494a6b7eccc82ca0))
+
 ## [1.116.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.4...v1.116.5) (2026-10-26)
 
 ### Bug Fixes
