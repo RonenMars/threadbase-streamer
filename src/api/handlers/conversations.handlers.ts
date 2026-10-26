@@ -936,11 +936,8 @@ export class ConversationHandlers {
   ): Promise<void> {
     if (this.deps.rejectIfWarmingUp(res)) return;
 
-    if (await this.isExcludedSubagent(id)) {
-      json(res, 404, { error: "Conversation not found" });
-      return;
-    }
-
+    // No sub-agent gate here: the list serves a parent's children (?parent=), so
+    // opening one by id must work. The gate stays on session controls.
     // Soft-deleted: the JSONL may still be on disk (the scanner would happily
     // find it below), so this has to reject before any of that runs — a
     // cache-row check alone wouldn't stop the scanner fallback from serving

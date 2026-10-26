@@ -238,14 +238,41 @@ it("keeps list totals, hasMore, recents, and count consistent", async () => {
   expect(recents.body.sessions.map((s: any) => s.id)).toEqual(["ordinary"]);
 });
 
-it("refuses direct child detail and every session control before reaching the handler", async () => {
+it("serves a child's detail by id but refuses every session control before reaching the handler", async () => {
+  const served = new ConversationHandlers({
+    cache: () => cache,
+    sessionStore: sessions,
+    includeSubagentSessions: () => enabled,
+    scannerManager: {
+      ready: true,
+      get: async () => ({
+        parseSingleFilePage: async () => ({
+          conversation: {
+            id: CHILD,
+            sessionId: CHILD,
+            filePath: metas[2].filePath,
+            projectPath: dir,
+            messages: [{ role: "user", text: "needle", timestamp: new Date().toISOString() }],
+          },
+        }),
+      }),
+      current: null,
+      codexScanOpts: () => ({}),
+      reconcileMode: () => null,
+    },
+    resolveConversationLookupId: (id: string) => id,
+    rejectIfWarmingUp: () => false,
+    findLiveSessionFilePath: () => null,
+    log: () => ({ warn: vi.fn() }),
+  } as unknown as ConversationHandlersDeps);
   const detail = response();
-  await handlers.handleGetConversation(
+  await served.handleGetConversation(
     CHILD,
     new URL(`http://localhost/api/conversations/${CHILD}`),
     detail,
   );
-  expect(detail.code).toBe(404);
+  expect(detail.code).toBe(200);
+  expect(detail.body.messages.length).toBeGreaterThan(0);
   const reached = vi.fn();
   const routes = createSessionRoutes({
     isExcludedSubagent: (id: string) => handlers.isExcludedSubagent(id),
