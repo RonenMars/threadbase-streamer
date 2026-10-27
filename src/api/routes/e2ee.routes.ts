@@ -53,7 +53,6 @@ import { getBuildInfo } from "../../version";
 import type { AppEnv } from "../app";
 import {
   createRateBudget,
-  createRateLimiter,
   OPEN_SOURCE_FAILURE_LIMIT,
   PAIR_EXCHANGE_LIMIT,
   PAIR_EXCHANGE_WINDOW_MS,
@@ -186,9 +185,9 @@ export const createE2eeRoutes = (
   // Same policy `/api/pair/exchange` enforces, applied to two different keys
   // for two different jobs (§8).
   //
-  // `rateLimit` bounds ALLOCATION per authenticated device, after the
+  // `perDevice` bounds ALLOCATION per authenticated device, after the
   // handshake has named one.
-  const rateLimit = createRateLimiter({
+  const perDevice = createRateBudget({
     limit: PAIR_EXCHANGE_LIMIT,
     windowMs: PAIR_EXCHANGE_WINDOW_MS,
   });
@@ -259,6 +258,7 @@ export const createE2eeRoutes = (
     // device reaches it, which is what keeps this from being the self-DoS it
     // was at five.
     if (!failures.check(ip)) {
+      c.header("Retry-After", String(failures.retryAfterSeconds(ip)));
       return c.json({ error: "Too many handshake attempts; try again in a minute" }, 429);
     }
 
@@ -358,10 +358,14 @@ export const createE2eeRoutes = (
     // it is charged to only exists once the handshake has run. What this bounds
     // is context and ticket ALLOCATION per device, which is the D-9 concern;
     // the per-device cap is the other half and the real bound.
-    if (!rateLimit(`key:${staticPub}`)) {
-      // The same status `/pair/exchange` uses for the same policy.
+    const deviceKey = `key:${staticPub}`;
+    if (!perDevice.check(deviceKey)) {
+      // The same status `/pair/exchange` uses for the same policy. `Retry-After`
+      // is what lets a client wait out the window instead of retrying into it.
+      c.header("Retry-After", String(perDevice.retryAfterSeconds(deviceKey)));
       return c.json({ error: "Too many handshake attempts; try again in a minute" }, 429);
     }
+    perDevice.charge(deviceKey);
 
     const fingerprint = (key: Buffer) =>
       createHash("sha256").update(key).digest("hex").slice(0, 16);

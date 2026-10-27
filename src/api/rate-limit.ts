@@ -74,6 +74,8 @@ export interface RateBudget {
   check(key: string): boolean;
   /** Spend one unit against `key`. */
   charge(key: string): void;
+  /** Whole seconds until `key` regains room, at least 1. For a `Retry-After` header. */
+  retryAfterSeconds(key: string): number;
 }
 
 export function createRateBudget(options: { limit: number; windowMs: number }): RateBudget {
@@ -97,6 +99,13 @@ export function createRateBudget(options: { limit: number; windowMs: number }): 
     charge(key: string): void {
       const now = Date.now();
       recentFor(key, now).push(now);
+    },
+    retryAfterSeconds(key: string): number {
+      const now = Date.now();
+      const recent = recentFor(key, now);
+      // Room returns when the hit that takes `recent` back under the limit ages out.
+      const freeing = recent[recent.length - options.limit] ?? now;
+      return Math.max(1, Math.ceil((freeing + options.windowMs - now) / 1000));
     },
   };
 }
