@@ -19,14 +19,13 @@ export interface CheckOptions {
 
 /**
  * Strips tsup's build-metadata suffix ("+abc1234-dirty") from a version
- * string before passing it to semver. semver tolerates build metadata in
- * a few APIs but coerce gives us a clean baseline.
+ * string before passing it to semver. Prerelease identifiers remain part of the version identity.
  */
 function normalizeVersion(raw: string): string {
   const stripped = raw.split("+")[0];
-  const coerced = semver.coerce(stripped);
-  if (!coerced) throw new Error(`Cannot parse version: ${raw}`);
-  return coerced.version;
+  const parsed = semver.parse(stripped);
+  if (!parsed) throw new Error(`Cannot parse version: ${raw}`);
+  return parsed.version;
 }
 
 export async function checkForUpdate(opts: CheckOptions): Promise<CheckResult> {
@@ -69,7 +68,7 @@ export async function checkForUpdate(opts: CheckOptions): Promise<CheckResult> {
     return { current, latest, diff: null, wouldInstall: false, reason: "No semver diff" };
   }
 
-  if (diff === "major" && !opts.allowMajor) {
+  if ((diff === "major" || diff === "premajor") && !opts.allowMajor) {
     return {
       current,
       latest,
@@ -79,13 +78,21 @@ export async function checkForUpdate(opts: CheckOptions): Promise<CheckResult> {
     };
   }
 
+  const policyDiff =
+    diff === "prerelease" || diff === "prepatch"
+      ? "patch"
+      : diff === "preminor"
+        ? "minor"
+        : diff === "premajor"
+          ? "major"
+          : diff;
   const allowList = opts.config.allow;
   const allowed =
-    diff === "patch"
+    policyDiff === "patch"
       ? allowList.includes("patch")
-      : diff === "minor"
+      : policyDiff === "minor"
         ? allowList.includes("minor")
-        : diff === "major"
+        : policyDiff === "major"
           ? allowList.includes("major") || Boolean(opts.allowMajor)
           : false;
 
