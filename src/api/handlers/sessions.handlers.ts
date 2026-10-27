@@ -2737,7 +2737,7 @@ export class SessionHandlers {
       ...(owner.resumeId != null && { resumeId: owner.resumeId }),
       claudeFlags: this.claudeFlags,
       claudeExtraArgs: this.claudeExtraArgs,
-      ...(opts.provider !== COPILOT_PROVIDER && this.deps.spawnFlagOverrides()),
+      ...(owner.provider !== COPILOT_PROVIDER && this.deps.spawnFlagOverrides()),
     });
 
     this.sessionStore.addManaged(session);
