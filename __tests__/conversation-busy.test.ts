@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { overlayClaudeRegistry } from "../src/process-discovery";
 import {
   conversationBusy,
   RESUME_BUSY_WINDOW_MS,
@@ -92,6 +93,23 @@ describe("conversationBusy", () => {
     expect(r.busy).toBe(true);
     expect(r.detectedBy).toContain("process_argv");
     expect(r.likelyOwner).toBe("external");
+  });
+
+  it("reports busy via process_argv for a plain `claude` terminal named only by the session registry", async () => {
+    const old = new Date(Date.now() - (RESUME_BUSY_WINDOW_MS + 60_000));
+    utimesSync(jsonlPath, old, old);
+    const registry = mkdtempSync(join(tmpdir(), "cc-sessions-"));
+    writeFileSync(join(registry, "1234.json"), JSON.stringify({ pid: 1234, sessionId: CONV }));
+    const discovered = await overlayClaudeRegistry([proc({ provider: "claude-code" })], registry);
+    rmSync(registry, { recursive: true, force: true });
+    const r = conversationBusy({
+      conversationId: CONV,
+      projectPath: PROJECT,
+      jsonlPath,
+      discovered,
+      platform: "linux",
+    });
+    expect(r.detectedBy).toContain("process_argv");
   });
 
   it("reports busy via process_cwd on POSIX when a process runs in the project dir", () => {

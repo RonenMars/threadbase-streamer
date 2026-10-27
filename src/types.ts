@@ -236,7 +236,7 @@ export interface DiscoveredProcess {
   projectPath: string;
   projectName: string;
   branch: string;
-  conversationId: string | null; // JSONL UUID extracted from --resume arg
+  conversationId: string | null; // JSONL UUID from the --resume arg, else ~/.claude/sessions/<pid>.json
   startedAt: Date;
 }
 

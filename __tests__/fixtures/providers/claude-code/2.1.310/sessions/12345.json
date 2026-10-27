@@ -1,0 +1,21 @@
+{
+  "pid": 12345,
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "cwd": "/home/example/project",
+  "startedAt": 1792838815236,
+  "procStart": "Sat Oct 24 10:46:54 2026",
+  "version": "2.1.310",
+  "peerProtocol": 1,
+  "peerFeatures": ["notify_idle", "reply_across_default_dirs", "artifact_yield"],
+  "kind": "interactive",
+  "entrypoint": "cli",
+  "pidDomain": "darwin",
+  "tmux": "",
+  "messagingSocketPath": "/tmp/cc-socks/12345.sock",
+  "name": "example",
+  "nameSource": "user",
+  "nameSince": 1792838815449,
+  "updatedAt": 1793039297014,
+  "status": "idle",
+  "statusUpdatedAt": 1793039297014
+}

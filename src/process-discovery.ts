@@ -1,6 +1,8 @@
 import { execFile } from "child_process";
-import { platform } from "os";
-import { basename, dirname } from "path";
+import { readdir, readFile } from "fs/promises";
+import { homedir, platform } from "os";
+import { basename, dirname, join } from "path";
+import { z } from "zod";
 import { isWindows } from "./platform";
 import {
   CLAUDE_CODE_PROVIDER,
@@ -9,11 +11,77 @@ import {
   CURSOR_PROVIDER,
   type ProviderName,
 } from "./providers";
+import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import type { DiscoveredProcess } from "./types";
 
 export async function discoverClaudeProcesses(): Promise<DiscoveredProcess[]> {
-  if (platform() === "win32") return discoverWindows();
-  return discoverUnix();
+  const procs = await (platform() === "win32" ? discoverWindows() : discoverUnix());
+  return overlayClaudeRegistry(procs);
+}
+
+// ─── Claude Code session registry ──────────────────────────────────
+
+// Claude Code (≥ 2.1.310) writes `~/.claude/sessions/<pid>.json` for every live
+// process and removes it on clean exit. It is the only place a plain `claude`
+// launch (no `--resume`) names its conversation, so without it such terminals
+// have a null conversationId and `SessionStore.list()` drops them. The sibling
+// `<pid>.<hash>.key` files hold a peer token: never read them.
+const registryRecord = z
+  .object({
+    pid: z.number(),
+    sessionId: z.string(),
+    cwd: z.string().optional(),
+    startedAt: z.number().optional(),
+    entrypoint: z.string().optional(),
+  })
+  .passthrough();
+
+/**
+ * Fill what the command line could not tell us from the registry, joined by pid
+ * on processes the sweep already identified as Claude. Fill-when-null only: a
+ * streamer-spawned PTY passes `--resume`/`--session-id` = ManagedSession.id, and
+ * `/clear` inside it flips the registry's sessionId while argv keeps the old one,
+ * so preferring the registry would surface our own process as a second,
+ * external row. Any failure leaves `procs` untouched — this must never fail a
+ * discovery sweep.
+ */
+export async function overlayClaudeRegistry(
+  procs: DiscoveredProcess[],
+  dir = join(homedir(), ".claude", "sessions"),
+): Promise<DiscoveredProcess[]> {
+  try {
+    const names = (await readdir(dir)).filter((n) => n.endsWith(".json"));
+    if (names.length === 0) return procs;
+    const agentEntrypoints = parseAgentEntrypointsEnv(process.env.THREADBASE_AGENT_ENTRYPOINTS);
+    const byPid = new Map<number, z.infer<typeof registryRecord>>();
+    for (const name of names) {
+      try {
+        const parsed = registryRecord.safeParse(
+          JSON.parse(await readFile(join(dir, name), "utf8")),
+        );
+        if (!parsed.success) continue;
+        if (parsed.data.entrypoint && agentEntrypoints.has(parsed.data.entrypoint)) continue;
+        byPid.set(parsed.data.pid, parsed.data);
+      } catch {
+        // Deleted between readdir and read (seen live), or a partial write.
+      }
+    }
+    // ponytail: registry-only pids ignored; add when a Claude not visible to ps matters.
+    return procs.map((p) => {
+      const rec = p.provider === CLAUDE_CODE_PROVIDER ? byPid.get(p.pid) : undefined;
+      if (!rec) return p;
+      const projectPath = p.projectPath || rec.cwd || "";
+      return {
+        ...p,
+        conversationId: p.conversationId ?? rec.sessionId,
+        projectPath,
+        projectName: p.projectPath ? p.projectName : basename(projectPath),
+        startedAt: rec.startedAt !== undefined ? new Date(rec.startedAt) : p.startedAt,
+      };
+    });
+  } catch {
+    return procs;
+  }
 }
 
 // ─── Command-line identification ───────────────────────────────────

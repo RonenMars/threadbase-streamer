@@ -1,0 +1,9 @@
+{
+  "provider": "claude-code",
+  "providerVersion": "2.1.310",
+  "capturedAt": "2026-10-27",
+  "source": "real ~/.claude/sessions/<pid>.json record, sanitized",
+  "sanitized": true,
+  "notes": "Pins the shape of Claude Code's per-process session registry record (sessions/<pid>.json), not a JSONL transcript. pid, sessionId, cwd and socket path are synthetic.",
+  "envelopeTypes": []
+}
