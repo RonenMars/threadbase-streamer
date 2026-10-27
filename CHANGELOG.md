@@ -1,3 +1,9 @@
+## [1.119.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.118.0...v1.119.0) (2026-10-27)
+
+### Features
+
+* **questions:** carry option descriptions from the screen scrape ([#1012](https://github.com/RonenMars/threadbase-streamer/issues/1012)) ([37a860a](https://github.com/RonenMars/threadbase-streamer/commit/37a860a9578d1ee618587f0a3dae758c9450fa4d))
+
 ## [1.118.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.117.0...v1.118.0) (2026-10-26)
 
 ### Features
