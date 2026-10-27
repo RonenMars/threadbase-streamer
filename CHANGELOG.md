@@ -1,3 +1,9 @@
+## [1.121.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.120.0...v1.121.0) (2026-10-27)
+
+### Features
+
+* **sessions:** add POST /api/sessions/:id/terminate for external agents ([#1013](https://github.com/RonenMars/threadbase-streamer/issues/1013)) ([f9784fd](https://github.com/RonenMars/threadbase-streamer/commit/f9784fdf967392178f965e43e4b69ca806545ec0))
+
 ## [1.120.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.119.0...v1.120.0) (2026-10-27)
 
 ### Features
