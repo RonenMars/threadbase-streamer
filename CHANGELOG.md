@@ -1,3 +1,9 @@
+## [1.121.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.1...v1.121.2) (2026-10-27)
+
+### Bug Fixes
+
+* **deploy:** explain auto-resume and offer to continue in the live-session guard ([#1055](https://github.com/RonenMars/threadbase-streamer/issues/1055)) ([4a43e93](https://github.com/RonenMars/threadbase-streamer/commit/4a43e933c04d7f049ad2edd40d0b27dcee4fdd6e))
+
 ## [1.121.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.0...v1.121.1) (2026-10-27)
 
 ### Bug Fixes
