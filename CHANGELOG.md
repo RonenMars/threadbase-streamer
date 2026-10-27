@@ -1,3 +1,9 @@
+## [1.121.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.0...v1.121.1) (2026-10-27)
+
+### Bug Fixes
+
+* **streamer:** distinguish pairing failures and isolate deployments ([#1075](https://github.com/RonenMars/threadbase-streamer/issues/1075)) ([7d3f548](https://github.com/RonenMars/threadbase-streamer/commit/7d3f548a9736e2c30a8afd711b8f00bdff4ec8e9))
+
 ## [1.121.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.120.0...v1.121.0) (2026-10-27)
 
 ### Features
