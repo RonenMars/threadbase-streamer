@@ -377,8 +377,22 @@ check_active_sessions() {
     warn "$count active PTY session(s) will be killed by restart, forcing"
     return 0
   fi
-  err "$count active PTY session(s) in flight — redeploying now will kill them mid-turn."
-  err "Wait for them to finish, ask the client to hold them, or re-run with npm run deploy:force to override."
+  err "$count live PTY session(s) — the restart ends every one, cutting off any turn in progress."
+  err "Wait for them to finish, end them from the app (session menu → End session → Terminate), or re-run with npm run deploy:force."
+  if [[ "$(read_yaml_key auto_resume_on_boot)" == "true" ]]; then
+    err "If you force it: auto_resume_on_boot is on in server.yaml, so the streamer re-attaches recently interrupted sessions by itself after the restart. A turn that was cut off is not replayed."
+  else
+    err "If you force it: auto_resume_on_boot is off in server.yaml, so nothing restarts by itself. Each session stays in the list as resumable, history intact, until you resume it by hand."
+  fi
+  # Branch and dirty-tree checks have already passed here, so continuing is
+  # exactly what deploy:force would do. No TTY → no question, refuse as before.
+  [[ -t 0 ]] || exit 1
+  printf '\nDeploy anyway, as npm run deploy:force would, and end the %s session(s) above? [y/N]: ' "$count"
+  local ans; read -r ans
+  if [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]; then
+    warn "$count live PTY session(s) will be ended by the restart, continuing"
+    return 0
+  fi
   exit 1
 }
 
