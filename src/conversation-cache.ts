@@ -1059,7 +1059,11 @@ export class ConversationCache {
       Math.max(0, from - lookback),
       to,
     );
-    if (rows.length === 0) return { messages: [], total, fromIndex: from };
+    // file_state claims messages `from..to` exist, so no rows means the index
+    // lost them (`clearAll` / `dropRowsById` delete rows but not file_state):
+    // serving that as an empty page rendered 1105 real conversations blank.
+    // Decline so the caller falls back to the scanner and backfills.
+    if (rows.length === 0) return null;
 
     const messages: ConversationMessage[] = [];
     const fd = openSync(filePath, "r");
