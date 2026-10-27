@@ -398,6 +398,48 @@ describe("Codex active-writer over HTTP", () => {
     }
   });
 
+  it("terminates a standalone codex TUI without resuming the rollout", async () => {
+    preflightOwner.value = { pid: 424_243, command: "codex", source: "terminal" };
+    const killed: Array<[number, unknown]> = [];
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: unknown,
+    ) => {
+      killed.push([pid, signal]);
+      if (signal === 0) throw new Error("ESRCH");
+      return true;
+    }) as never);
+    const server = await startServer("terminate");
+    try {
+      const res = await post(server, `/api/sessions/${CODEX_SESSION_ID}/terminate`, {});
+      expect(res.status).toBe(200);
+      expect(killed).toContainEqual([424_243, "SIGTERM"]);
+      expect(ptySpawn.mock.calls.length).toBe(0);
+    } finally {
+      killSpy.mockRestore();
+      delete process.env.TB_SCANNER_DB;
+      await server.close();
+    }
+  });
+
+  it("refuses to terminate a codex app-server, and kills nothing", async () => {
+    // Same rule as takeover: stopping the app-server would end every other
+    // conversation it hosts.
+    preflightOwner.value = { pid: 313_132, command: "node", source: "unknown" };
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((() => true) as never);
+    const server = await startServer("terminate-appserver");
+    try {
+      const res = await post(server, `/api/sessions/${CODEX_SESSION_ID}/terminate`, {});
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("TERMINATE_OWNER_NOT_TERMINAL");
+      expect(killSpy).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+      delete process.env.TB_SCANNER_DB;
+      await server.close();
+    }
+  });
+
   it("refuses when nobody holds the rollout any more, and kills nothing", async () => {
     // The collision cleared between the 409 and the user pressing the button.
     // Re-probing here is what catches it — and is also why a pid from the
