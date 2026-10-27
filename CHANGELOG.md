@@ -1,3 +1,9 @@
+## [1.120.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.119.0...v1.120.0) (2026-10-27)
+
+### Features
+
+* **copilot:** surface trust, permission and ask_user cards as permission cards ([#1066](https://github.com/RonenMars/threadbase-streamer/issues/1066)) ([d500cab](https://github.com/RonenMars/threadbase-streamer/commit/d500cabd79df0443027b83b2217624307e2a5a43)), closes [#1047](https://github.com/RonenMars/threadbase-streamer/issues/1047)
+
 ## [1.119.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.118.0...v1.119.0) (2026-10-27)
 
 ### Features
