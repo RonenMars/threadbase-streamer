@@ -106,7 +106,7 @@ $electronProcs = Get-Process electron -ErrorAction SilentlyContinue
 $alreadyRunning = !!$electronProcs
 ```
 
-If already running, report "menubar is already running" and stop — do not kill and relaunch unless the user explicitly asked for a restart.
+If already running, report "menubar is already running" and stop — do not kill and relaunch unless the user explicitly asked for a restart, **or Step 4 just rebuilt `dist/`**. A source-run menubar reads `assets/` from the checkout but its code from the `dist/` it started with, so after a rebuild the running instance is stale and must be restarted (kill as below, then Step 6). Leaving it up after a `vendor/menubar` move is what produced an endless stream of `ENOENT … tray-icon-online@2x.png` error dialogs on Windows — see [troubleshooting](../../../docs/troubleshooting.md#menubar-shows-a-javascript-error-occurred-in-the-main-process-enoent-tray-icon-every-few-seconds).
 
 **Important (Windows):** always kill ALL existing electron processes before launching — Electron spawns ~10 child processes per instance, so even one prior failed launch leaves many orphans. Kill them all, then launch fresh:
 ```powershell
