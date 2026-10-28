@@ -351,6 +351,34 @@ describe("failing closed (§9, §10)", () => {
     expect(registry.size).toBe(0);
   });
 
+  it("tells a rate-limited device how long to wait, per device and per source", async () => {
+    // A client that cannot tell how long a 429 lasts retries into it, and a
+    // budget that only drains when nobody asks keeps it locked out.
+    const secondsLeft = (res: Response) => {
+      const header = res.headers.get("Retry-After");
+      expect(header).toMatch(/^\d+$/);
+      return Number(header);
+    };
+
+    const device = pairDevice();
+    for (let i = 0; i < PAIR_EXCHANGE_LIMIT; i++) {
+      await post(message1(device.staticKeyPair, { v: 1, kind: "ws" }).body);
+    }
+    const perDevice = await post(message1(device.staticKeyPair, { v: 1, kind: "ws" }).body);
+    expect(perDevice.status).toBe(429);
+    expect(secondsLeft(perDevice)).toBeGreaterThanOrEqual(1);
+    expect(secondsLeft(perDevice)).toBeLessThanOrEqual(60);
+
+    const garbage = JSON.stringify({
+      e2ee: { v: 1, noise: randomBytes(220).toString("base64") },
+    });
+    for (let i = 0; i < OPEN_SOURCE_FAILURE_LIMIT; i++) await post(garbage);
+    const perSource = await post(garbage);
+    expect(perSource.status).toBe(429);
+    expect(secondsLeft(perSource)).toBeGreaterThanOrEqual(1);
+    expect(secondsLeft(perSource)).toBeLessThanOrEqual(60);
+  });
+
   it("refuses a spent failure budget BEFORE any Diffie-Hellman runs (§10)", async () => {
     // Long enough to pass the size check, so each of these really does reach
     // `readMessage1` and really does cost two DH — the cost this budget bounds.
