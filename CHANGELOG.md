@@ -1,3 +1,9 @@
+## [1.121.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.2...v1.121.3) (2026-10-28)
+
+### Bug Fixes
+
+* **conversations:** decline an offset-index window that has no rows ([#1082](https://github.com/RonenMars/threadbase-streamer/issues/1082)) ([0eec323](https://github.com/RonenMars/threadbase-streamer/commit/0eec323da8dad9491db8ccede4c2d20c761e7a38))
+
 ## [1.121.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.1...v1.121.2) (2026-10-27)
 
 ### Bug Fixes
