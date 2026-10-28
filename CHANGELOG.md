@@ -1,3 +1,9 @@
+## [1.121.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.3...v1.121.4) (2026-10-28)
+
+### Bug Fixes
+
+* **e2ee:** tell a rate-limited device how long to wait ([#1084](https://github.com/RonenMars/threadbase-streamer/issues/1084)) ([a2f74fa](https://github.com/RonenMars/threadbase-streamer/commit/a2f74fa6246991e311289345918892bd04705fb1))
+
 ## [1.121.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.2...v1.121.3) (2026-10-28)
 
 ### Bug Fixes
