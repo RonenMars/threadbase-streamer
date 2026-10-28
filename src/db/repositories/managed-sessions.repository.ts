@@ -54,6 +54,8 @@ export interface ManagedSessionRow {
    * reconciler treats exactly like a mismatch — never like a match.
    */
   boot_token?: string | null;
+  /** JSON array of extra directories (migration 006). Null or absent means none. */
+  additional_paths?: string | null;
 }
 
 /** Most rows the boot reconciler will probe in one pass. */
@@ -82,6 +84,7 @@ export class ManagedSessionsRepository {
   private pruneTerminalStmt: Database.Statement;
   private listRecoverableStmt: Database.Statement;
   private deleteStmt: Database.Statement;
+  private additionalPathsStmt: Database.Statement;
 
   constructor(db: Database.Database) {
     this.upsertStmt = db.prepare(`
@@ -90,13 +93,15 @@ export class ManagedSessionsRepository {
         status, status_source, status_updated_at, started_at, completed_at,
         last_activity_at, prompt_count, session_name, project_id,
         bound_conversation_id, resumed_from_conversation_id, failure_reason,
-        streamer_instance_id, boot_token, is_subagent, parent_conversation_id
+        streamer_instance_id, boot_token, is_subagent, parent_conversation_id,
+        additional_paths
       ) VALUES (
         @session_id, @provider, @pid, @cmdline, @project_path, @project_name, @branch,
         @status, @status_source, @status_updated_at, @started_at, @completed_at,
         @last_activity_at, @prompt_count, @session_name, @project_id,
         @bound_conversation_id, @resumed_from_conversation_id, @failure_reason,
-        @streamer_instance_id, @boot_token, @is_subagent, @parent_conversation_id
+        @streamer_instance_id, @boot_token, @is_subagent, @parent_conversation_id,
+        @additional_paths
       )
       ON CONFLICT(session_id) DO UPDATE SET
         pid = excluded.pid,
@@ -118,7 +123,8 @@ export class ManagedSessionsRepository {
         streamer_instance_id = excluded.streamer_instance_id,
         boot_token = excluded.boot_token,
         is_subagent = excluded.is_subagent,
-        parent_conversation_id = excluded.parent_conversation_id
+        parent_conversation_id = excluded.parent_conversation_id,
+        additional_paths = excluded.additional_paths
     `);
 
     // Narrow status-only write for the hot transition path, so a
@@ -198,6 +204,15 @@ export class ManagedSessionsRepository {
     `);
 
     this.deleteStmt = db.prepare("DELETE FROM managed_sessions WHERE session_id = ?");
+
+    this.additionalPathsStmt = db.prepare(`
+      SELECT additional_paths FROM managed_sessions
+       WHERE session_id = @id
+          OR bound_conversation_id = @id
+          OR resumed_from_conversation_id = @id
+       ORDER BY status_updated_at DESC
+       LIMIT 1
+    `);
   }
 
   /** Record a session at spawn, or refresh every field of an existing row. */
@@ -228,7 +243,23 @@ export class ManagedSessionsRepository {
       // Recorded, never backfilled: the pid above is only probeable while this
       // token still matches the running machine.
       boot_token: currentBootToken(),
+      additional_paths: session.additionalPaths?.length
+        ? JSON.stringify(session.additionalPaths)
+        : null,
     });
+  }
+
+  /**
+   * The extra directories most recently recorded for a conversation, so a
+   * resume can respawn with them. Matches the row's own id (Claude resumes by
+   * it) and the conversation it was bound to or resumed from (Codex keys its
+   * rows by a placeholder). Empty when no row carries any.
+   */
+  findAdditionalPaths(conversationId: string): string[] {
+    const row = this.additionalPathsStmt.get({ id: conversationId }) as
+      | { additional_paths: string | null }
+      | undefined;
+    return parseAdditionalPaths(row?.additional_paths);
   }
 
   /**
@@ -333,5 +364,16 @@ export class ManagedSessionsRepository {
 
   delete(sessionId: string): void {
     this.deleteStmt.run(sessionId);
+  }
+}
+
+/** Decode the `additional_paths` column. Anything but a string array reads as none. */
+export function parseAdditionalPaths(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const value: unknown = JSON.parse(raw);
+    return Array.isArray(value) ? value.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
   }
 }
