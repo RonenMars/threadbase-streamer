@@ -1155,6 +1155,17 @@ The menubar (`vendor/menubar`) is shipped as an installed `.app` under `/Applica
 
 If you've already lost work, it's not gone if you pushed: `git -C vendor/menubar fetch origin main && git -C vendor/menubar reset --hard origin/main`.
 
+### Menubar shows "A JavaScript error occurred in the main process" (ENOENT tray icon) every few seconds
+
+**When:** The menubar is running *from source* (`electron.exe` under `vendor/menubar/node_modules`, the usual setup on Windows and Linux, where nothing installs a packaged app), and `vendor/menubar` was then moved to another commit — `git submodule update`, a branch switch, or checking out a tag. Observed 2026-10-28 moving the submodule from menubar 0.2.6 to 0.3.2, which renamed `tray-icon-online@2x.png` to `tray-icon-online{Template,-light}@2x.png`.
+**Cause:** the running app executes the `dist/` it was built from (gitignored, untouched by the checkout) but reads icons from the checkout's `assets/`. Old code asked for a file the new checkout no longer has, and before menubar's never-throw icon loader the `fs.readFileSync` sat inside the `status-update` IPC handler, so every 5 s poll raised an uncaught exception and a new modal dialog.
+**Fix:** kill every menubar `electron.exe`, rebuild, relaunch one instance:
+```powershell
+Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force
+Set-Location vendor\menubar; npm run build   # npm ci first only if package.json dependencies changed
+```
+then launch as in the `deploy-menubar` skill (Step 6). Any time the submodule moves under a running source copy, rebuild and restart it — menubar releases with the never-throw loader degrade a missing icon instead of raising dialogs, but stale code is still stale.
+
 ## Auto-update
 
 ### `threadbase-streamer update` prints "No update config found"
