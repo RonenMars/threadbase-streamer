@@ -14,6 +14,12 @@ import {
   refuseIfDisposed,
   stripAnsi,
 } from "./pty-shared";
+import {
+  COPILOT_FOOTER_ROWS,
+  COPILOT_FORM_FOOTER_RE,
+  COPILOT_SELECT_FOOTER_RE,
+  detectCopilotCard,
+} from "./services/questions/copilotScreen";
 import type {
   ManagedSession,
   PTYManagerOptions,
@@ -42,8 +48,7 @@ const COPILOT_IDLE_FOOTER = "open sidebar";
 // A permission card or an ask_user form replaces the status row, so the busy
 // row is gone while Copilot waits on the user. Their footers sit just above the
 // bottom border, and the turn stays open while either shows.
-const COPILOT_CARD_FOOTERS = [/enter to select\b.*\besc to cancel/, /enter accept\b.*\besc cancel/];
-const COPILOT_FOOTER_ROWS = 3;
+const COPILOT_CARD_FOOTERS = [COPILOT_SELECT_FOOTER_RE, COPILOT_FORM_FOOTER_RE];
 
 /** The last rows Copilot painted, bottom row first. */
 function bottomRows(session: InternalSession): string[] {
@@ -56,15 +61,31 @@ function bottomRows(session: InternalSession): string[] {
   return rows;
 }
 
+function cardFooterShowing(session: InternalSession): boolean {
+  return bottomRows(session).some((row) => COPILOT_CARD_FOOTERS.some((re) => re.test(row)));
+}
+
+function viewportRows(session: InternalSession): string[] {
+  const buf = session.screen.buffer.active;
+  const rows: string[] = [];
+  for (let y = 0; y < session.screen.rows; y++) {
+    rows.push(buf.getLine(buf.baseY + y)?.translateToString(true) ?? "");
+  }
+  return rows;
+}
+
 /**
  * Copilot's live-v1 adapter: native explicit IDs/resume, raw terminal I/O.
  * No trust bypass, Claude flags, or borrowed transcript watcher. The start
- * route returns the attachable session without waiting for readiness; users
- * handle trust/auth prompts and permission cards in the terminal.
+ * route returns the attachable session without waiting for readiness.
  *
  * Status is read off the rendered screen: boot settles on the first idle
  * footer, a turn is `running` while the status row shows `Working`, and it ends
  * once the output is quiet with neither that row nor a card footer on screen.
+ *
+ * The folder trust card, a tool permission card and an `ask_user` choice are
+ * raised over `onPermissionChange` while they are on screen, and answered by
+ * the keys each option carries (`sendKeys`). Sign-in is still a terminal job.
  */
 export class CopilotPtyRunner implements SessionRunner {
   private sessions = new Map<string, InternalSession>();
@@ -79,6 +100,8 @@ export class CopilotPtyRunner implements SessionRunner {
   private submittedAt = new Map<string, number>();
   private quietCheckers = new Map<string, ReturnType<typeof debounce<[]>>>();
   private submitWatchTimers = new Map<string, NodeJS.Timeout>();
+  // The card last raised for a session, as sent, until it leaves the screen.
+  private openCards = new Map<string, string>();
 
   constructor(private options: PTYManagerOptions = {}) {
     this.log = options.logger ?? getLogger();
@@ -157,7 +180,10 @@ export class CopilotPtyRunner implements SessionRunner {
       }
       // The spinner repaints faster than the quiet check, so the busy row is
       // only ever seen by looking as each chunk lands.
-      session.screen.write(data, () => this.detectBusy(session));
+      session.screen.write(data, () => {
+        this.detectBusy(session);
+        this.detectCard(session);
+      });
       session.lastOutput = stripAnsi(data);
       session.lastActivityAt = new Date();
       this.options.onOutput?.(sessionId, data);
@@ -189,6 +215,29 @@ export class CopilotPtyRunner implements SessionRunner {
     if (session.status === "waiting_input") this.setRunning(session, "turn-signal");
   }
 
+  // Raise the card on screen, once per change of content: Copilot repaints it
+  // as the highlight moves, and an ask_user option's keys count from the
+  // highlight. A footer with no card readable under it is one still painting.
+  private detectCard(session: InternalSession): void {
+    const id = session.id;
+    if (this.sessions.get(id) !== session) return;
+    if (!cardFooterShowing(session)) {
+      if (this.openCards.delete(id)) this.options.onPermissionChange?.(id, null);
+      return;
+    }
+    const card = detectCopilotCard(viewportRows(session));
+    if (!card) return;
+    const sent = JSON.stringify(card);
+    if (this.openCards.get(id) === sent) return;
+    this.openCards.set(id, sent);
+    this.log.info(`[copilot.card] ${id.slice(0, 8)} options=${card.options.length}`, {
+      event: "copilot.card",
+      sessionId: id,
+      optionCount: card.options.length,
+    });
+    this.options.onPermissionChange?.(id, card);
+  }
+
   private detectQuiet(session: InternalSession): void {
     if (this.sessions.get(session.id) !== session) return;
     // Flush pending writes first: xterm parses on a later tick.
@@ -201,7 +250,7 @@ export class CopilotPtyRunner implements SessionRunner {
     const rows = bottomRows(session);
     if (COPILOT_BUSY_ROW.test(rows[0] ?? "")) return;
     // Copilot is waiting on the user, not finished.
-    if (rows.some((row) => COPILOT_CARD_FOOTERS.some((footer) => footer.test(row)))) return;
+    if (cardFooterShowing(session)) return;
     if (this.turnBusy.has(id)) {
       this.markReady(session, "turn-signal", "turn-signal:busy-row-cleared");
     } else if (this.booting.has(id) && rows[0]?.includes(COPILOT_IDLE_FOOTER)) {
@@ -322,6 +371,8 @@ export class CopilotPtyRunner implements SessionRunner {
     this.booting.delete(session.id);
     this.turnBusy.delete(session.id);
     this.submittedAt.delete(session.id);
+    // No PTY left to answer it.
+    if (this.openCards.delete(session.id)) this.options.onPermissionChange?.(session.id, null);
     session.status = "idle";
     session.statusSource = source;
     session.statusUpdatedAt = new Date();

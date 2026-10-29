@@ -170,6 +170,45 @@ describe("conversation list import flags and filters", () => {
     expect(ids).toEqual(["cursor-child"]);
   });
 
+  it("lists a parent's sub-agents with parent=<id> even though the default list hides them", async () => {
+    const res = response();
+    await handlers.handleListConversations(
+      new URL("http://localhost/api/conversations?parent=native-cursor&limit=20"),
+      res,
+    );
+    const convs = res.body.conversations as Array<Record<string, unknown>>;
+    expect(convs.map((c) => c.id)).toEqual(["cursor-child"]);
+    expect(convs[0]?.parentConversationId).toBe("native-cursor");
+    expect(res.body.total).toBe(1);
+  });
+
+  it("returns nothing for a parent with no sub-agents", async () => {
+    const res = response();
+    await handlers.handleListConversations(
+      new URL("http://localhost/api/conversations?parent=from-codex&limit=20"),
+      res,
+    );
+    expect(res.body.conversations).toEqual([]);
+  });
+
+  it("flags a stale sub-agent inactive and leaves top-level rows without sub-agent fields", async () => {
+    const res = response();
+    await handlers.handleListConversations(
+      new URL("http://localhost/api/conversations?parent=native-cursor"),
+      res,
+    );
+    const [row] = res.body.conversations as Array<Record<string, unknown>>;
+    expect(row?.subagentActive).toBe(false); // fixture timestamp is from 2026-06
+    const top = response();
+    await handlers.handleListConversations(
+      new URL("http://localhost/api/conversations?provider=cursor&limit=20"),
+      top,
+    );
+    for (const c of top.body.conversations as Array<Record<string, unknown>>) {
+      expect("subagentActive" in c).toBe(false);
+    }
+  });
+
   it("treats provider=cursor-cli as cursor", async () => {
     const res = response();
     await handlers.handleConversationsCount(

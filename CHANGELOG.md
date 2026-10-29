@@ -1,3 +1,51 @@
+## [1.121.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.3...v1.121.4) (2026-10-28)
+
+### Bug Fixes
+
+* **e2ee:** tell a rate-limited device how long to wait ([#1084](https://github.com/RonenMars/threadbase-streamer/issues/1084)) ([a2f74fa](https://github.com/RonenMars/threadbase-streamer/commit/a2f74fa6246991e311289345918892bd04705fb1))
+
+## [1.121.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.2...v1.121.3) (2026-10-28)
+
+### Bug Fixes
+
+* **conversations:** decline an offset-index window that has no rows ([#1082](https://github.com/RonenMars/threadbase-streamer/issues/1082)) ([0eec323](https://github.com/RonenMars/threadbase-streamer/commit/0eec323da8dad9491db8ccede4c2d20c761e7a38))
+
+## [1.121.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.1...v1.121.2) (2026-10-27)
+
+### Bug Fixes
+
+* **deploy:** explain auto-resume and offer to continue in the live-session guard ([#1055](https://github.com/RonenMars/threadbase-streamer/issues/1055)) ([4a43e93](https://github.com/RonenMars/threadbase-streamer/commit/4a43e933c04d7f049ad2edd40d0b27dcee4fdd6e))
+
+## [1.121.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.0...v1.121.1) (2026-10-27)
+
+### Bug Fixes
+
+* **streamer:** distinguish pairing failures and isolate deployments ([#1075](https://github.com/RonenMars/threadbase-streamer/issues/1075)) ([7d3f548](https://github.com/RonenMars/threadbase-streamer/commit/7d3f548a9736e2c30a8afd711b8f00bdff4ec8e9))
+
+## [1.121.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.120.0...v1.121.0) (2026-10-27)
+
+### Features
+
+* **sessions:** add POST /api/sessions/:id/terminate for external agents ([#1013](https://github.com/RonenMars/threadbase-streamer/issues/1013)) ([f9784fd](https://github.com/RonenMars/threadbase-streamer/commit/f9784fdf967392178f965e43e4b69ca806545ec0))
+
+## [1.120.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.119.0...v1.120.0) (2026-10-27)
+
+### Features
+
+* **copilot:** surface trust, permission and ask_user cards as permission cards ([#1066](https://github.com/RonenMars/threadbase-streamer/issues/1066)) ([d500cab](https://github.com/RonenMars/threadbase-streamer/commit/d500cabd79df0443027b83b2217624307e2a5a43)), closes [#1047](https://github.com/RonenMars/threadbase-streamer/issues/1047)
+
+## [1.119.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.118.0...v1.119.0) (2026-10-27)
+
+### Features
+
+* **questions:** carry option descriptions from the screen scrape ([#1012](https://github.com/RonenMars/threadbase-streamer/issues/1012)) ([37a860a](https://github.com/RonenMars/threadbase-streamer/commit/37a860a9578d1ee618587f0a3dae758c9450fa4d))
+
+## [1.118.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.117.0...v1.118.0) (2026-10-26)
+
+### Features
+
+* **conversations:** list a parent's sub-agents with label and activity ([#1081](https://github.com/RonenMars/threadbase-streamer/issues/1081)) ([d7b95e6](https://github.com/RonenMars/threadbase-streamer/commit/d7b95e66d890215c53514ce74ac99a87cac7af98))
+
 ## [1.117.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.116.5...v1.117.0) (2026-10-26)
 
 ### Features

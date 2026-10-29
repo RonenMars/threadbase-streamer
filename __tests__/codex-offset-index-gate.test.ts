@@ -530,4 +530,22 @@ describe("Claude keeps the offset-index fast path", () => {
     expect(texts(body)).toEqual(["claude question", "claude answer"]);
     expect(body.message_pagination.total).toBe(2);
   });
+
+  it("declines the index when its rows are gone but file_state still covers the file", async () => {
+    const path = join(dir, `${CONV}.jsonl`);
+    writeFileSync(
+      path,
+      `${[claudeLine(0, "claude question"), claudeLine(1, "claude answer")].join("\n")}\n`,
+    );
+    seedMeta(CONV, path, "claude-code");
+    await cache.backfillIndex(path);
+    expect(cache.readMessageWindow(path, 0, 80)?.messages).toHaveLength(2);
+
+    // Rows only, keeping the meta row and file_state: the shape `clearAll` leaves.
+    (cache as unknown as { db: { exec(sql: string): void } }).db.exec(
+      "DELETE FROM conversation_message_index",
+    );
+
+    expect(cache.readMessageWindow(path, 0, 80)).toBeNull();
+  });
 });

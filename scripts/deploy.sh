@@ -377,8 +377,22 @@ check_active_sessions() {
     warn "$count active PTY session(s) will be killed by restart, forcing"
     return 0
   fi
-  err "$count active PTY session(s) in flight — redeploying now will kill them mid-turn."
-  err "Wait for them to finish, ask the client to hold them, or re-run with npm run deploy:force to override."
+  err "$count live PTY session(s) — the restart ends every one, cutting off any turn in progress."
+  err "Wait for them to finish, end them from the app (session menu → End session → Terminate), or re-run with npm run deploy:force."
+  if [[ "$(read_yaml_key auto_resume_on_boot)" == "true" ]]; then
+    err "If you force it: auto_resume_on_boot is on in server.yaml, so the streamer re-attaches recently interrupted sessions by itself after the restart. A turn that was cut off is not replayed."
+  else
+    err "If you force it: auto_resume_on_boot is off in server.yaml, so nothing restarts by itself. Each session stays in the list as resumable, history intact, until you resume it by hand."
+  fi
+  # Branch and dirty-tree checks have already passed here, so continuing is
+  # exactly what deploy:force would do. No TTY → no question, refuse as before.
+  [[ -t 0 ]] || exit 1
+  printf '\nDeploy anyway, as npm run deploy:force would, and end the %s session(s) above? [y/N]: ' "$count"
+  local ans; read -r ans
+  if [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]; then
+    warn "$count live PTY session(s) will be ended by the restart, continuing"
+    return 0
+  fi
   exit 1
 }
 
@@ -806,7 +820,7 @@ cmd_status() {
 
   printf '\n\033[1mRecent releases:\033[0m\n'
   if [[ -d "$RELEASES_DIR" ]]; then
-    ls -lt "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | head -n "$KEEP_RELEASES" | awk '{print "  " $0}'
+    ls -lt "$RELEASES_DIR"/cli.*.cjs "$RELEASES_DIR"/cli.*/cli.cjs 2>/dev/null | head -n "$KEEP_RELEASES" | awk '{print "  " $0}' || true
   else
     printf '  (no releases dir yet)\n'
   fi
@@ -1061,10 +1075,12 @@ cmd_deploy() {
   local sha
   sha="$(git rev-parse --short HEAD)"
   [[ "$force" == "--force" ]] && [[ -n "$(git status --porcelain)" ]] && sha="${sha}-dirty-$(date -u +%Y%m%d%H%M%S)"
-  local rel_filename="cli.${sha}.cjs"
-  local rel_path="releases/${rel_filename}"
-
   mkdir -p "$RELEASES_DIR"
+  # Never overwrite a running build or its loaded native dependencies.
+  local release_dir
+  release_dir="$(mktemp -d "$RELEASES_DIR/cli.${sha}.XXXXXX")"
+  local rel_filename="${release_dir##*/}/cli.cjs"
+  local rel_path="releases/${rel_filename}"
   log "stamping release: $rel_filename"
   cp dist/cli.cjs "$RELEASES_DIR/$rel_filename"
   chmod +x "$RELEASES_DIR/$rel_filename"
@@ -1089,22 +1105,17 @@ cmd_deploy() {
   # - runtime-migrations/ — SQLite session registry (RuntimeStore.open(); always required)
   # - pg-migrations/      — Postgres (loaded when THREADBASE_DATABASE_URL is set, but the
   #                         migration runner reads the dir at startup and crashes if absent)
-  # Remove existing dirs first: `cp -r src dst` nests as `dst/src` when dst exists,
-  # which previously fed the SQLite loader a stale set of pg-flavored files.
-  rm -rf "$RELEASES_DIR/migrations" "$RELEASES_DIR/runtime-migrations" "$RELEASES_DIR/pg-migrations"
-  cp -r dist/migrations "$RELEASES_DIR/migrations"
-  cp -r dist/runtime-migrations "$RELEASES_DIR/runtime-migrations"
-  [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$RELEASES_DIR/pg-migrations"
+  # This release directory is new, so no shared files need replacing.
+  cp -r dist/migrations "$release_dir/migrations"
+  cp -r dist/runtime-migrations "$release_dir/runtime-migrations"
+  [ -d dist/pg-migrations ] && cp -r dist/pg-migrations "$release_dir/pg-migrations"
 
   # Native addons are external to the tsup bundle. Copy them and their transitive
   # deps so the deployed cli.js can resolve them without a full node_modules tree.
-  mkdir -p "$RELEASES_DIR/node_modules"
+  mkdir -p "$release_dir/node_modules"
   for mod in node-pty better-sqlite3 bindings file-uri-to-path; do
     if [[ -d "node_modules/$mod" ]]; then
-      # Remove first: `cp -r src dst` copies INTO dst when dst already exists,
-      # so every deploy after the first nested another copy at dst/$mod/$mod.
-      rm -rf "$RELEASES_DIR/node_modules/$mod"
-      cp -r "node_modules/$mod" "$RELEASES_DIR/node_modules/$mod"
+      cp -r "node_modules/$mod" "$release_dir/node_modules/$mod"
     fi
   done
 
@@ -1149,6 +1160,12 @@ cmd_deploy() {
   fi
 
   log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
+  local active_release="$INSTALL_DIR/$(readlink "$ACTIVE_LINK")"
+  ls -td "$RELEASES_DIR"/cli.*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) |
+    while IFS= read -r obsolete; do
+      [[ "${obsolete%/}" == "$(dirname "$active_release")" ]] && continue
+      rm -rf -- "$obsolete"
+    done || true
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
 
   # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal:

@@ -24,8 +24,10 @@
 // unless something authenticates under it — and per-device caps bound how many
 // a replayer can hold at once.
 
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import type { IncomingMessage } from "http";
+import type { DeviceRow } from "../../db/repositories/devices.repository";
 import {
   type ContextKind,
   contextRegistry,
@@ -47,10 +49,10 @@ import { Msg1ReplayCache } from "../../e2ee/replay-cache";
 import { getLogger } from "../../logger";
 import { rateLimitKey } from "../../relay/ingress";
 import { loadOrCreateServerIdentity } from "../../server-identity";
+import { getBuildInfo } from "../../version";
 import type { AppEnv } from "../app";
 import {
   createRateBudget,
-  createRateLimiter,
   OPEN_SOURCE_FAILURE_LIMIT,
   PAIR_EXCHANGE_LIMIT,
   PAIR_EXCHANGE_WINDOW_MS,
@@ -183,9 +185,9 @@ export const createE2eeRoutes = (
   // Same policy `/api/pair/exchange` enforces, applied to two different keys
   // for two different jobs (§8).
   //
-  // `rateLimit` bounds ALLOCATION per authenticated device, after the
+  // `perDevice` bounds ALLOCATION per authenticated device, after the
   // handshake has named one.
-  const rateLimit = createRateLimiter({
+  const perDevice = createRateBudget({
     limit: PAIR_EXCHANGE_LIMIT,
     windowMs: PAIR_EXCHANGE_WINDOW_MS,
   });
@@ -256,6 +258,7 @@ export const createE2eeRoutes = (
     // device reaches it, which is what keeps this from being the self-DoS it
     // was at five.
     if (!failures.check(ip)) {
+      c.header("Retry-After", String(failures.retryAfterSeconds(ip)));
       return c.json({ error: "Too many handshake attempts; try again in a minute" }, 429);
     }
 
@@ -355,14 +358,46 @@ export const createE2eeRoutes = (
     // it is charged to only exists once the handshake has run. What this bounds
     // is context and ticket ALLOCATION per device, which is the D-9 concern;
     // the per-device cap is the other half and the real bound.
-    if (!rateLimit(`key:${staticPub}`)) {
-      // The same status `/pair/exchange` uses for the same policy.
+    const deviceKey = `key:${staticPub}`;
+    if (!perDevice.check(deviceKey)) {
+      // The same status `/pair/exchange` uses for the same policy. `Retry-After`
+      // is what lets a client wait out the window instead of retrying into it.
+      c.header("Retry-After", String(perDevice.retryAfterSeconds(deviceKey)));
       return c.json({ error: "Too many handshake attempts; try again in a minute" }, 429);
     }
+    perDevice.charge(deviceKey);
 
-    const device = deps.devicesRepo()?.getByE2eeStaticPub(staticPub) ?? null;
+    const fingerprint = (key: Buffer) =>
+      createHash("sha256").update(key).digest("hex").slice(0, 16);
+    const diagnostic = {
+      deviceFingerprint: fingerprint(handshake.initiatorStaticPub),
+      serverFingerprint: fingerprint(
+        Buffer.from(loadOrCreateServerIdentity().publicKey, "base64url"),
+      ),
+      build: getBuildInfo(),
+    };
+    let device: DeviceRow | null;
+    try {
+      const repo = deps.devicesRepo();
+      if (!repo) throw new Error("Pairing storage unavailable");
+      device = repo.getByE2eeStaticPub(staticPub);
+    } catch {
+      // Charge the source before logging: fresh static keys must not bypass
+      // the failure budget during an outage. This is still a transient refusal.
+      failures.charge(ip);
+      // A storage failure is not evidence that the device was revoked.
+      log.warn("[e2ee] pairing storage is unavailable", {
+        event: "e2ee.open_unavailable",
+        ...diagnostic,
+      });
+      c.header("Retry-After", "5");
+      return c.json(
+        { error: "Pairing storage is temporarily unavailable", code: "E2EE_UNAVAILABLE" },
+        503,
+      );
+    }
     if (!device || device.revoked_at != null) {
-      // The static key is deliberately not logged: it identifies a device.
+      // Only fingerprints are logged; raw keys and credentials stay private.
       // Charged to the source, because this IS a failure from it. The server's
       // static key is public, so anyone can mint unlimited WELL-FORMED msg1s
       // from fresh keypairs; each costs two Diffie-Hellmans and is refused only
@@ -372,7 +407,8 @@ export const createE2eeRoutes = (
       failures.charge(ip);
       log.warn("[e2ee] open refused: no live device holds that static key", {
         event: "e2ee.open_refused",
-        reason: "unknown_device",
+        reason: device ? "revoked_device" : "unknown_device",
+        ...diagnostic,
       });
       return c.json(
         { error: "This device is not paired for encryption", code: E2EE_DEVICE_REVOKED },
@@ -457,7 +493,11 @@ export const createE2eeRoutes = (
     // `consume()` hands the traffic keys over exactly once: the registry gets
     // OpenSSL key handles and this route keeps nothing (§13).
     registry.open({ deviceId: device.device_id, kind, ctxIdRaw, ctxId, keys: keys.consume(), now });
-    log.info(`[e2ee] opened a ${kind} context`, { event: "e2ee.context_opened", kind });
+    log.info(`[e2ee] opened a ${kind} context`, {
+      event: "e2ee.context_opened",
+      kind,
+      ...diagnostic,
+    });
 
     // `ctxId`, `expiresAt` and `ticket` travel ONLY inside the sealed payload.
     // The outer body carries the version and the Noise message and nothing else
