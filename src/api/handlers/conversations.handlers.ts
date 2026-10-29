@@ -341,10 +341,24 @@ export class ConversationHandlers {
           c.isSubagent ? readSubagentInfo(c.filePath, c.lastActivity) : undefined,
         ),
       );
+      // A sub-agent's parent is often on another page, so a client grouping
+      // children under it cannot name the group from rows it has loaded.
+      const parentTitle = (id: string | null | undefined) => {
+        const parent = id ? this.cache?.getMetaById(id) : null;
+        return parent
+          ? deriveProjectChatTitle({
+              title: parent.title,
+              projectName: parent.projectName,
+              projectPath: parent.projectPath,
+              id: parent.id,
+            })
+          : undefined;
+      };
       const adapted = conversations.map((c, i) => ({
         id: c.id,
         isSubagent: c.isSubagent,
         parentConversationId: c.parentConversationId,
+        ...(c.isSubagent ? { parentTitle: parentTitle(c.parentConversationId) } : {}),
         ...subagentInfo[i],
         title: deriveProjectChatTitle({
           title: c.title,
