@@ -731,14 +731,20 @@ export class ConversationHandlers {
     // conversation we care about, so a sibling file changing must not stall this
     // single-conversation request behind a full-tree rescan.
     const scanner = await this.scannerManager.get(true);
-    const child = this.cache?.getMetaById(lookupId);
-    if (child?.isSubagent && child.filePath) {
-      const page = await scanner.parseSingleFilePage(child.filePath, child.account ?? undefined, {
+    const row = this.cache?.getMetaById(lookupId);
+    if (row?.isSubagent && row.filePath) {
+      const page = await scanner.parseSingleFilePage(row.filePath, row.account ?? undefined, {
         limit: Number.MAX_SAFE_INTEGER,
       });
       return page?.conversation ? { ...page.conversation, sessionId: lookupId } : null;
     }
-    const fromIndex = await scanner.getConversation(lookupId);
+    // A Claude sub-agent transcript carries its parent's sessionId, and the
+    // scanner resolves an id to the newest file with that sessionId, so a parent
+    // looked up by id can come back as one of its children. The cache row names
+    // the conversation's own file.
+    const fromIndex =
+      (row?.filePath ? await scanner.getConversation(row.filePath) : null) ??
+      (await scanner.getConversation(lookupId));
     if (fromIndex) {
       // Live-session bypass: a conversation with a live PTY is exactly the case
       // that stalls — its mtime is always newer than the snapshot, so the stale
