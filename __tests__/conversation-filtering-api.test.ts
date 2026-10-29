@@ -238,6 +238,28 @@ it("keeps list totals, hasMore, recents, and count consistent", async () => {
   expect(recents.body.sessions.map((s: any) => s.id)).toEqual(["ordinary"]);
 });
 
+it("keeps sub-agents out of project lists and summaries with the flag on unless asked for", async () => {
+  cache.close();
+  open(true);
+  cache.upsertFromScannerMeta(metas);
+  enabled = true;
+  const project = encodeURIComponent(dir);
+  const list = response();
+  await handlers.handleListConversations(
+    new URL(`http://localhost/api/conversations?project=${project}`),
+    list,
+  );
+  expect(list.body.conversations.map((c: any) => c.id)).toEqual(["ordinary"]);
+  expect(cache.listProjectSummaries({ limit: 10, offset: 0 }).projects).toMatchObject([
+    { conversationCount: 1 },
+  ]);
+  const children = response();
+  await handlers.handleListConversations(
+    new URL(`http://localhost/api/conversations?project=${project}&include=subagents`),
+    children,
+  );
+  expect(children.body.conversations.map((c: any) => c.id)).toEqual([CHILD]);
+});
 it("serves a child's detail by id but refuses every session control before reaching the handler", async () => {
   const served = new ConversationHandlers({
     cache: () => cache,
