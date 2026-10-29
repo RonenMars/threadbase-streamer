@@ -33,11 +33,31 @@ describe("task-scheduler wrappers", () => {
     expect(isAgentLoaded()).toBe(false);
   });
 
+  it("isAgentLoaded returns false for a disabled task (what bootoutAgent leaves behind)", () => {
+    vi.mocked(execFileSync).mockReturnValue(Buffer.from("Disabled\r\n"));
+    expect(isAgentLoaded()).toBe(false);
+  });
+
   it("bootoutAgent runs Stop-ScheduledTask + Disable-ScheduledTask, swallows errors", () => {
     vi.mocked(execFileSync).mockImplementation(() => {
       throw new Error("nope");
     });
     expect(() => bootoutAgent()).not.toThrow();
+  });
+
+  it("bootoutAgent kills the --prod server tree, which the task does not own", () => {
+    vi.mocked(execFileSync).mockReturnValue(Buffer.from(""));
+    bootoutAgent();
+    const cmds = vi.mocked(execFileSync).mock.calls.map((c) => (c[1] as string[]).join(" "));
+    const kill = cmds.find((c) => /taskkill/.test(c));
+    expect(kill).toMatch(/\/T \/F/);
+    expect(kill).toMatch(/\*--prod\*/);
+    expect(kill).toContain(`-ne ${process.pid}`);
+    expect(kill).not.toMatch(/8766|netstat|Get-NetTCPConnection/);
+    // Killed before the task is disabled.
+    expect(cmds.findIndex((c) => /taskkill/.test(c))).toBeLessThan(
+      cmds.findIndex((c) => /Disable-ScheduledTask/.test(c)),
+    );
   });
 
   it("bootstrapAgent runs Enable-ScheduledTask + Start-ScheduledTask", () => {
@@ -54,6 +74,15 @@ describe("task-scheduler wrappers", () => {
     const cmds = vi.mocked(execFileSync).mock.calls.map((c) => (c[1] as string[]).join(" "));
     expect(cmds.some((c) => /Stop-ScheduledTask/.test(c))).toBe(true);
     expect(cmds.some((c) => /Start-ScheduledTask/.test(c))).toBe(true);
+  });
+
+  it("kickstartAgent kills the running server before starting the task", () => {
+    vi.mocked(execFileSync).mockReturnValue(Buffer.from(""));
+    kickstartAgent();
+    const cmds = vi.mocked(execFileSync).mock.calls.map((c) => (c[1] as string[]).join(" "));
+    const killAt = cmds.findIndex((c) => /taskkill/.test(c));
+    expect(killAt).toBeGreaterThanOrEqual(0);
+    expect(killAt).toBeLessThan(cmds.findIndex((c) => /Start-ScheduledTask/.test(c)));
   });
 
   it("getAgentPid parses the PID from Get-CimInstance output", () => {

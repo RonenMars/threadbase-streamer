@@ -26,18 +26,38 @@ function psSafe(command: string): void {
 }
 
 export function isAgentLoaded(): boolean {
+  // A disabled task is what bootoutAgent() leaves behind, so it counts as not
+  // loaded — the same answer launchd gives after a bootout. Treating it as
+  // loaded sent `service start` down the kickstart path, whose
+  // Start-ScheduledTask fails on a disabled task.
   try {
-    ps(`Get-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction Stop | Out-Null`);
-    return true;
+    const state = ps(`(Get-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction Stop).State`);
+    return state.trim() !== "Disabled";
   } catch {
     return false;
   }
+}
+
+/**
+ * Kill the prod server's process tree. Stop-ScheduledTask cannot do this: the
+ * task's action is wscript -> launch.vbs, which spawns a hidden cmd -> node and
+ * exits at once, so the task instance is already over (State `Ready`) while the
+ * server runs on outside it. Matched by command line, not by port, so a dev
+ * instance holding 8766 is never touched; `/T` takes the PTY children with it.
+ */
+function killProdServer(): void {
+  psSafe(
+    `Get-CimInstance Win32_Process -Filter "Name='node.exe'" ` +
+      `| Where-Object { $_.CommandLine -like '*cli.js*serve*' -and $_.CommandLine -like '*--prod*' -and $_.ProcessId -ne ${process.pid} } ` +
+      `| ForEach-Object { taskkill.exe /PID $_.ProcessId /T /F | Out-Null; Wait-Process -Id $_.ProcessId -Timeout 10 -ErrorAction SilentlyContinue }`,
+  );
 }
 
 export function bootoutAgent(): void {
   // Stop running instance + disable trigger. Mirrors macOS bootout semantics:
   // the task stays registered but will not run again until bootstrap.
   psSafe(`Stop-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction SilentlyContinue`);
+  killProdServer();
   psSafe(`Disable-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction SilentlyContinue | Out-Null`);
 }
 
@@ -52,6 +72,7 @@ export function bootstrapAgent(_specPath: string, _opts?: { afterBootout?: boole
 
 export function kickstartAgent(): void {
   psSafe(`Stop-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction SilentlyContinue`);
+  killProdServer();
   ps(`Start-ScheduledTask -TaskName '${TASK_NAME}' -ErrorAction Stop`);
 }
 
