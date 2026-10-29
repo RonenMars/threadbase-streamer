@@ -835,6 +835,7 @@ export class StreamerServer {
       resolveConversationLookupId: (uuid) => this.resolveConversationLookupId(uuid),
       findLiveSessionFilePath: (uuid) => this.findLiveSessionFilePath(uuid),
       isBoundConversationLive: (boundId) => this.isBoundConversationLive(boundId),
+      attachSubagentTail: (filePath) => this.externalTailManager.attachSubagentTail(filePath),
     });
 
     // ─── Multi-agent mode bootstrap ──────────────────────────────────
