@@ -1,3 +1,9 @@
+## [1.121.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.4...v1.121.5) (2026-10-29)
+
+### Bug Fixes
+
+* **lifecycle:** make service stop and start work on Windows ([#1086](https://github.com/RonenMars/threadbase-streamer/issues/1086)) ([c0e7e6b](https://github.com/RonenMars/threadbase-streamer/commit/c0e7e6b29af952fa03166dfddf8ccc2928d7cede))
+
 ## [1.121.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.3...v1.121.4) (2026-10-28)
 
 ### Bug Fixes
