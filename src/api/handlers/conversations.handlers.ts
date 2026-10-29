@@ -315,6 +315,21 @@ export class ConversationHandlers {
       }
     }
 
+    // A running parent's children may have no watch (fs.watch ceiling), so
+    // read its sub-agent folder before answering instead of waiting on one.
+    const parentPath = filters.parent
+      ? this.cache?.getMetaById(this.deps.resolveConversationLookupId(filters.parent))?.filePath
+      : undefined;
+    if (parentPath) {
+      try {
+        await this.scannerManager.refreshSubagentsOf(parentPath);
+      } catch (err) {
+        this.log.warn("conversations.subagent_refresh_failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     if (this.cache) {
       const { conversations, total } = this.cache.listConversations({
         ...filters,

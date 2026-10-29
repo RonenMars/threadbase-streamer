@@ -4,9 +4,9 @@ import {
   ConversationScanner,
   type FileStatEntry,
 } from "@threadbase-sh/scanner";
-import { statSync } from "fs";
+import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import type { ConversationCache } from "./conversation-cache";
 import type { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "./db/repositories/conversations.repository";
@@ -783,6 +783,46 @@ export class ScannerManager {
         { event: "conversations.reconcile_failed" },
       );
     }
+  }
+
+  /**
+   * Re-index a parent's sub-agent transcripts the cache is behind on. The
+   * `?parent=` list reads the cache only, and a new `subagents/` dir gets no
+   * watch once the box is at the fs.watch ceiling (EMFILE), so without this
+   * the children of a running parent showed up ~75 s late and their
+   * `subagentActive` flapped false mid-run (measured 2026-10-29, 8 children).
+   * Claude keeps them in `<parent>/subagents/`, Cursor beside the parent file;
+   * Codex children live elsewhere and still wait for the watcher.
+   */
+  async refreshSubagentsOf(parentFilePath: string): Promise<void> {
+    const cache = this.deps.cache();
+    if (!cache) return;
+    const dirs = [
+      join(parentFilePath.replace(/\.jsonl$/, ""), "subagents"),
+      join(dirname(parentFilePath), "subagents"),
+    ];
+    const paths = dirs.flatMap((dir) => {
+      try {
+        return readdirSync(dir)
+          .filter((f) => f.endsWith(".jsonl"))
+          .map((f) => join(dir, f));
+      } catch {
+        return [];
+      }
+    });
+    if (paths.length === 0) return;
+    const cached = cache.getFileStats();
+    const stale = paths.filter((p) => {
+      const known = cached.get(canonicalizeFilePath(p));
+      if (!known) return !cache.isAgentFileFiltered(p);
+      try {
+        const s = statSync(p);
+        return s.mtimeMs !== known.mtimeMs || s.size !== known.size;
+      } catch {
+        return false;
+      }
+    });
+    if (stale.length > 0) await this.reconcileStaleFilesFromDisk(stale);
   }
 
   // ─── teardown ─────────────────────────────────────────────────────

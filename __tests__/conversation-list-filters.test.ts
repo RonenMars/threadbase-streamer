@@ -31,6 +31,7 @@ describe("conversation list import flags and filters", () => {
   let dir: string;
   let cache: ConversationCache;
   let handlers: ConversationHandlers;
+  let refreshSubagentsOf: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "conversation-list-filters-"));
@@ -93,6 +94,7 @@ describe("conversation list import flags and filters", () => {
         parentSessionId: join(transcripts, "native-cursor.jsonl"),
       },
     ]);
+    refreshSubagentsOf = vi.fn(async () => {});
     handlers = new ConversationHandlers({
       cache: () => cache,
       includeSubagentSessions: () => false,
@@ -100,6 +102,7 @@ describe("conversation list import flags and filters", () => {
         get: async () => ({}),
         codexScanOpts: () => ({}),
         reconcileMode: () => null,
+        refreshSubagentsOf,
       },
       resolveConversationLookupId: (id: string) => id,
       rejectIfWarmingUp: () => false,
@@ -180,6 +183,9 @@ describe("conversation list import flags and filters", () => {
     expect(convs.map((c) => c.id)).toEqual(["cursor-child"]);
     expect(convs[0]?.parentConversationId).toBe("native-cursor");
     expect(res.body.total).toBe(1);
+    expect(refreshSubagentsOf).toHaveBeenCalledWith(
+      join(dir, "agent-transcripts", "native-cursor", "native-cursor.jsonl"),
+    );
   });
 
   it("returns nothing for a parent with no sub-agents", async () => {
