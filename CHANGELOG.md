@@ -1,3 +1,9 @@
+## [1.122.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.122.0...v1.122.1) (2026-10-30)
+
+### Bug Fixes
+
+* **conversations:** read a parent's sub-agents from disk on ?parent= ([#1089](https://github.com/RonenMars/threadbase-streamer/issues/1089)) ([f4ef06f](https://github.com/RonenMars/threadbase-streamer/commit/f4ef06fbb6d7eb5a1daad163f17c2a5c6ccf48bd))
+
 ## [1.122.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.5...v1.122.0) (2026-10-30)
 
 ### Features
