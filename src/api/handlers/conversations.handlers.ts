@@ -315,6 +315,21 @@ export class ConversationHandlers {
       }
     }
 
+    // A running parent's children may have no watch (fs.watch ceiling), so
+    // read its sub-agent folder before answering instead of waiting on one.
+    const parentPath = filters.parent
+      ? this.cache?.getMetaById(this.deps.resolveConversationLookupId(filters.parent))?.filePath
+      : undefined;
+    if (parentPath) {
+      try {
+        await this.scannerManager.refreshSubagentsOf(parentPath);
+      } catch (err) {
+        this.log.warn("conversations.subagent_refresh_failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     if (this.cache) {
       const { conversations, total } = this.cache.listConversations({
         ...filters,
@@ -326,10 +341,24 @@ export class ConversationHandlers {
           c.isSubagent ? readSubagentInfo(c.filePath, c.lastActivity) : undefined,
         ),
       );
+      // A sub-agent's parent is often on another page, so a client grouping
+      // children under it cannot name the group from rows it has loaded.
+      const parentTitle = (id: string | null | undefined) => {
+        const parent = id ? this.cache?.getMetaById(id) : null;
+        return parent
+          ? deriveProjectChatTitle({
+              title: parent.title,
+              projectName: parent.projectName,
+              projectPath: parent.projectPath,
+              id: parent.id,
+            })
+          : undefined;
+      };
       const adapted = conversations.map((c, i) => ({
         id: c.id,
         isSubagent: c.isSubagent,
         parentConversationId: c.parentConversationId,
+        ...(c.isSubagent ? { parentTitle: parentTitle(c.parentConversationId) } : {}),
         ...subagentInfo[i],
         title: deriveProjectChatTitle({
           title: c.title,
@@ -716,14 +745,20 @@ export class ConversationHandlers {
     // conversation we care about, so a sibling file changing must not stall this
     // single-conversation request behind a full-tree rescan.
     const scanner = await this.scannerManager.get(true);
-    const child = this.cache?.getMetaById(lookupId);
-    if (child?.isSubagent && child.filePath) {
-      const page = await scanner.parseSingleFilePage(child.filePath, child.account ?? undefined, {
+    const row = this.cache?.getMetaById(lookupId);
+    if (row?.isSubagent && row.filePath) {
+      const page = await scanner.parseSingleFilePage(row.filePath, row.account ?? undefined, {
         limit: Number.MAX_SAFE_INTEGER,
       });
       return page?.conversation ? { ...page.conversation, sessionId: lookupId } : null;
     }
-    const fromIndex = await scanner.getConversation(lookupId);
+    // A Claude sub-agent transcript carries its parent's sessionId, and the
+    // scanner resolves an id to the newest file with that sessionId, so a parent
+    // looked up by id can come back as one of its children. The cache row names
+    // the conversation's own file.
+    const fromIndex =
+      (row?.filePath ? await scanner.getConversation(row.filePath) : null) ??
+      (await scanner.getConversation(lookupId));
     if (fromIndex) {
       // Live-session bypass: a conversation with a live PTY is exactly the case
       // that stalls — its mtime is always newer than the snapshot, so the stale
