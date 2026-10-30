@@ -1,3 +1,9 @@
+## [1.122.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.5...v1.122.0) (2026-10-30)
+
+### Features
+
+* **sessions:** start a session with more than one directory ([#1031](https://github.com/RonenMars/threadbase-streamer/issues/1031)) ([87dc044](https://github.com/RonenMars/threadbase-streamer/commit/87dc044efd5cf35795618cdc59e114fda09e05a3)), closes [RonenMars/threadbase-mobile#1262](https://github.com/RonenMars/threadbase-mobile/issues/1262)
+
 ## [1.121.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.121.4...v1.121.5) (2026-10-29)
 
 ### Bug Fixes
