@@ -9,7 +9,10 @@ import { tmpdir } from "os";
 import { join } from "path";
 import WebSocket from "ws";
 import { StreamerServer } from "../src/server";
-import { SUBAGENT_ACTIVE_MS } from "../src/services/conversations/subagentInfo";
+import {
+  SUBAGENT_ACTIVE_MS,
+  SUBAGENT_TOOL_CALL_MAX_MS,
+} from "../src/services/conversations/subagentInfo";
 import { canonicalizeFilePath } from "../src/utils/canonicalizeFilePath";
 
 const API_KEY = "tb_test_subagent_live_tail";
@@ -150,5 +153,37 @@ describe("sub-agent live tail from ?parent=", () => {
     expect(tails().size).toBe(0);
     expect((server as any).fileWatcher.files.has(canonicalizeFilePath(activePath))).toBe(false);
     expect(manager.subagentPollTimer).toBeNull();
+  });
+
+  it("keeps the tail through a silent tool call, so later lines still stream", async () => {
+    writeFileSync(activePath.replace(/\.jsonl$/, ".meta.json"), JSON.stringify({ agentType: "x" }));
+    await listChildren();
+    const manager = (server as any).externalTailManager;
+    manager.pollSubagentTails(Date.now() + SUBAGENT_ACTIVE_MS + 30_000);
+    expect(tails().has(canonicalizeFilePath(activePath))).toBe(true);
+
+    appendFileSync(activePath, line(parentId, "after the long tool call", projectPath, side));
+    manager.pollSubagentTails();
+    expect(await waitFor(() => JSON.stringify(events).includes("after the long tool call"))).toBe(
+      true,
+    );
+  });
+
+  it("releases a quiet tail at once when the sidecar says finished", async () => {
+    const meta = activePath.replace(/\.jsonl$/, ".meta.json");
+    writeFileSync(meta, JSON.stringify({ agentType: "x" }));
+    await listChildren();
+    writeFileSync(meta, JSON.stringify({ agentType: "x", finished: true }));
+    (server as any).externalTailManager.pollSubagentTails(Date.now() + SUBAGENT_ACTIVE_MS + 1_000);
+    expect(tails().size).toBe(0);
+  });
+
+  it("releases a dangling tail at the tool-call cap", async () => {
+    writeFileSync(activePath.replace(/\.jsonl$/, ".meta.json"), JSON.stringify({ agentType: "x" }));
+    await listChildren();
+    (server as any).externalTailManager.pollSubagentTails(
+      Date.now() + SUBAGENT_TOOL_CALL_MAX_MS + 1_000,
+    );
+    expect(tails().size).toBe(0);
   });
 });

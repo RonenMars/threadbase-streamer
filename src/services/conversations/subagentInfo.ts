@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { open, readFile } from "node:fs/promises";
 import { z } from "zod";
 
@@ -60,6 +61,17 @@ async function hasOpenToolCall(filePath: string): Promise<boolean> {
     }
   }
   return [...uses].some((id) => !results.has(id));
+}
+
+/** True while a Claude sidecar exists and has not been marked finished. */
+export function isSubagentSidecarOpen(filePath: string): boolean {
+  try {
+    const raw = readFileSync(filePath.replace(/\.jsonl$/, ".meta.json"), "utf8");
+    const parsed = sidecar.safeParse(JSON.parse(raw));
+    return parsed.success && parsed.data.finished !== true;
+  } catch {
+    return false;
+  }
 }
 
 /**
