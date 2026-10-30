@@ -7,6 +7,7 @@ import {
   type ConversationHandlersDeps,
 } from "../src/api/handlers/conversations.handlers";
 import { ConversationCache } from "../src/conversation-cache";
+import { canonicalizeFilePath } from "../src/utils/canonicalizeFilePath";
 
 function response() {
   let code = 0;
@@ -184,7 +185,7 @@ describe("conversation list import flags and filters", () => {
     expect(convs[0]?.parentConversationId).toBe("native-cursor");
     expect(res.body.total).toBe(1);
     expect(refreshSubagentsOf).toHaveBeenCalledWith(
-      join(dir, "agent-transcripts", "native-cursor", "native-cursor.jsonl"),
+      canonicalizeFilePath(join(dir, "agent-transcripts", "native-cursor", "native-cursor.jsonl")),
     );
   });
 
