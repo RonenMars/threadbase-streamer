@@ -1,3 +1,9 @@
+## [1.122.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.122.1...v1.122.2) (2026-10-30)
+
+### Bug Fixes
+
+* **conversations:** keep sub-agents out of default lists with the flag on ([#1091](https://github.com/RonenMars/threadbase-streamer/issues/1091)) ([596aee4](https://github.com/RonenMars/threadbase-streamer/commit/596aee4cc0c4366f3867334f310bb4fbfc5925a7))
+
 ## [1.122.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.122.0...v1.122.1) (2026-10-30)
 
 ### Bug Fixes
