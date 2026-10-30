@@ -384,7 +384,7 @@ export class ConversationCache {
     // key and its callers want every column.
     const LIST_COLUMNS =
       "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor";
-    const visible = `has_messages IS NOT 0 AND deleted_at IS NULL${this.includeSubagentSessions ? "" : " AND is_subagent IS NOT 1"}`;
+    const visible = "has_messages IS NOT 0 AND deleted_at IS NULL AND is_subagent IS NOT 1";
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
       getFullById: db.prepare("SELECT * FROM conversation_meta WHERE id = ?"),
@@ -1810,7 +1810,7 @@ export class ConversationCache {
   } {
     const clauses = ["has_messages IS NOT 0", "deleted_at IS NULL"];
     const params: unknown[] = [];
-    const include = opts.include ?? (this.includeSubagentSessions ? "all" : "conversations");
+    const include = opts.include ?? "conversations";
     if (opts.parent) {
       clauses.push("is_subagent = 1", "parent_conversation_id = ?");
       params.push(opts.parent);

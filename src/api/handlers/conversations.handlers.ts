@@ -387,9 +387,7 @@ export class ConversationHandlers {
 
     const scanner = await this.scannerManager.get();
     let metas = [...scanner.getMetadataCache().values()];
-    const include =
-      filters.include ??
-      ((this.deps.includeSubagentSessions?.() ?? false) ? "all" : "conversations");
+    const include = filters.include ?? "conversations";
     metas = metas.flatMap((meta) => this.publicScannerMeta(meta, include) ?? []);
     metas = applyIncludeFilter(metas, include);
     if (filters.project) metas = applyProjectFilter(metas, filters.project);
@@ -467,9 +465,7 @@ export class ConversationHandlers {
 
     const scanner = await this.scannerManager.get(true);
     let metas = [...scanner.getMetadataCache().values()];
-    const include =
-      filters.include ??
-      ((this.deps.includeSubagentSessions?.() ?? false) ? "all" : "conversations");
+    const include = filters.include ?? "conversations";
     metas = metas.flatMap((meta) => this.publicScannerMeta(meta, include) ?? []);
     metas = applyIncludeFilter(metas, include);
     if (filters.project) metas = applyProjectFilter(metas, filters.project);

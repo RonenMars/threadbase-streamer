@@ -310,7 +310,8 @@ it("uses the same filtered corpus for pages, counts, projects, and provider list
   cache = ConversationCache.open(join(dir, "cache.db"), 10, undefined, {
     includeSubagentSessions: true,
   });
-  expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(3);
+  expect(cache.listConversations({ limit: 10, offset: 0 }).total).toBe(2);
+  expect(cache.listConversations({ include: "all", limit: 10, offset: 0 }).total).toBe(3);
 });
 
 it("resolves subagentSessions through default, YAML, CLI, and environment precedence", () => {
