@@ -1,3 +1,9 @@
+## [1.123.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.122.2...v1.123.0) (2026-10-30)
+
+### Features
+
+* **sessions:** carry each session's pending prompts on GET /api/sessions ([#1093](https://github.com/RonenMars/threadbase-streamer/issues/1093)) ([d40f3ab](https://github.com/RonenMars/threadbase-streamer/commit/d40f3ab30ffbbd6ff134282cdef35b6913ae864f))
+
 ## [1.122.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.122.1...v1.122.2) (2026-10-30)
 
 ### Bug Fixes
