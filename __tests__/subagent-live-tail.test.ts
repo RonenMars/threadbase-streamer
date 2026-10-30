@@ -119,7 +119,7 @@ describe("sub-agent live tail from ?parent=", () => {
 
   it("tails an active child and pushes its new lines with no chokidar event", async () => {
     const children = await listChildren();
-    const active = children.find((c) => c.filePath === activePath);
+    const active = children.find((c) => c.filePath === canonicalizeFilePath(activePath));
     expect(active?.subagentActive).toBe(true);
     expect(tails().has(canonicalizeFilePath(activePath))).toBe(true);
     expect(tails().has(canonicalizeFilePath(finishedPath))).toBe(false);
