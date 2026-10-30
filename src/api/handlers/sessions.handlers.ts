@@ -546,8 +546,10 @@ export class SessionHandlers {
       json(
         res,
         200,
-        this.externalTailManager.withExternalActivity(
-          this.deps.withReconciledLifecycle(this.sessionStore.list(this.deps.ptyAttachedIds())),
+        this.withPendingPrompts(
+          this.externalTailManager.withExternalActivity(
+            this.deps.withReconciledLifecycle(this.sessionStore.list(this.deps.ptyAttachedIds())),
+          ),
         ),
       );
       return;
@@ -561,8 +563,10 @@ export class SessionHandlers {
 
     try {
       const page = this.sessionStore.paginate(this.deps.ptyAttachedIds(), parsed.query);
-      page.sessions = this.externalTailManager.withExternalActivity(
-        this.deps.withReconciledLifecycle(page.sessions),
+      page.sessions = this.withPendingPrompts(
+        this.externalTailManager.withExternalActivity(
+          this.deps.withReconciledLifecycle(page.sessions),
+        ),
       );
       json(res, 200, page);
     } catch (err) {
@@ -572,6 +576,15 @@ export class SessionHandlers {
       }
       throw err;
     }
+  }
+
+  // Added here rather than in SessionStore, which also feeds session_update:
+  // only the list needs the prompt text. hasOpenPrompt flipping is the refetch cue.
+  private withPendingPrompts(sessions: readonly SessionResponse[]): SessionResponse[] {
+    return sessions.map((session) => {
+      const pendingPrompts = this.promptRegistry.openPrompts(session.id);
+      return pendingPrompts.length > 0 ? { ...session, pendingPrompts } : session;
+    });
   }
 
   /**

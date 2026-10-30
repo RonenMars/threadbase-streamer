@@ -358,6 +358,13 @@ export class PromptRegistry {
     };
   }
 
+  /** The session's actionable prompts, swept first so an expired one is never returned. */
+  openPrompts(sessionId: string): Prompt[] {
+    return this.snapshot(sessionId).prompts.filter(
+      (prompt) => prompt.state === "open" || prompt.state === "updated",
+    );
+  }
+
   dispose(): void {
     for (const entry of this.byId.values()) this.clearExpiration(entry);
   }

@@ -83,6 +83,26 @@ describe("PromptRegistry lifecycle", () => {
     }
   });
 
+  it("openPrompts sweeps, so a prompt past its deadline is gone before its timer fires", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-26T12:00:00.000Z");
+    try {
+      const registry = new PromptRegistry({ createId: ids() });
+      const opened = registry.open({ ...draft(), expiresAt: "2026-08-26T12:00:00.100Z" });
+      expect(registry.openPrompts(opened.sessionId).map((p) => p.promptId)).toEqual([
+        opened.promptId,
+      ]);
+
+      // Moves the clock without firing timers, unlike advanceTimersByTime.
+      vi.setSystemTime("2026-08-26T12:00:01.000Z");
+
+      expect(registry.openPrompts(opened.sessionId)).toEqual([]);
+      registry.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reschedules expiration when an update changes the deadline", async () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-08-26T12:00:00.000Z");

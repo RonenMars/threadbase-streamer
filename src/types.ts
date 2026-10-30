@@ -4,6 +4,7 @@ import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "./claude-fla
 import type { FeatureFlagValues } from "./feature-flags";
 import type { ProviderName } from "./providers";
 import type { ReplayLines } from "./pty-shared";
+import type { Prompt } from "./schemas/prompt.schema";
 import type { PromptEvent, PromptSnapshot } from "./services/prompts/promptRegistry";
 
 // ─── Session Lifecycle ─────────────────────────────────────────────
@@ -598,6 +599,13 @@ export interface SessionResponse {
    * Additive: older streamers omit it.
    */
   hasOpenPrompt: boolean;
+  /**
+   * The prompts behind `hasOpenPrompt`, on `GET /api/sessions` only, so a list
+   * screen can show and answer one without subscribing. Same shape as
+   * `prompt_snapshot.prompts`, limited to `open` and `updated`; answer with
+   * `POST /api/sessions/:id/prompt/answer`. Omitted when there are none.
+   */
+  pendingPrompts?: Prompt[];
   account?: string;
   messageCount?: number;
   preview?: string;
