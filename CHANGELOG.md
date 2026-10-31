@@ -1,3 +1,9 @@
+## [1.125.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.124.2...v1.125.0) (2026-10-31)
+
+### Features
+
+* **conversations:** tag conversations running outside the streamer as external and alive ([#1100](https://github.com/RonenMars/threadbase-streamer/issues/1100)) ([df20d1e](https://github.com/RonenMars/threadbase-streamer/commit/df20d1e712dfecdc324c8bb66b3e3984478fdb4c))
+
 ## [1.124.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.124.1...v1.124.2) (2026-10-31)
 
 ### Bug Fixes
