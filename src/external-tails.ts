@@ -3,7 +3,11 @@ import { ConversationCache } from "./conversation-cache";
 import { getLogger } from "./logger";
 import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import type { ConversationWatcher } from "./services/conversations/conversationWatcher";
-import { SUBAGENT_ACTIVE_MS } from "./services/conversations/subagentInfo";
+import {
+  isSubagentSidecarOpen,
+  SUBAGENT_ACTIVE_MS,
+  SUBAGENT_TOOL_CALL_MAX_MS,
+} from "./services/conversations/subagentInfo";
 import { RESUME_BUSY_WINDOW_MS } from "./services/sessions/conversationBusy";
 import type { SessionActivity, SessionResponse } from "./types";
 import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
@@ -145,7 +149,7 @@ export class ExternalTailManager {
     }
   }
 
-  /** Advance each polled sub-agent tail; release the ones that went quiet. */
+  /** Advance each polled sub-agent tail; release the finished ones. */
   pollSubagentTails(now = Date.now()): void {
     for (const key of this.polledSubagents) {
       let mtimeMs = 0;
@@ -154,7 +158,13 @@ export class ExternalTailManager {
       } catch {
         // deleted: released below
       }
-      if (!this.externalTails.has(key) || now - mtimeMs > SUBAGENT_ACTIVE_MS) {
+      // A quiet agent may be inside a long tool call: only its sidecar says it
+      // is done. With no sidecar (Codex, Cursor) quiet is all there is.
+      const quietMs = now - mtimeMs;
+      const released =
+        quietMs > SUBAGENT_TOOL_CALL_MAX_MS ||
+        (quietMs > SUBAGENT_ACTIVE_MS && !isSubagentSidecarOpen(key));
+      if (!this.externalTails.has(key) || released) {
         this.polledSubagents.delete(key);
         this.detachExternalTail(key);
         continue;
