@@ -289,12 +289,14 @@ export class ConversationHandlers {
     return this.deps.sessionStore?.externalProcesses?.() ?? [];
   }
 
-  private async externalConversationIds(): Promise<Set<string>> {
-    try {
-      await this.deps.refreshDiscovery?.();
-    } catch {
+  private async externalConversationIds(waitForDiscovery = true): Promise<Set<string>> {
+    // The single-conversation view must not wait on a cold process scan (slow on
+    // Windows, and the #368 latency test fails on it): refresh in the background
+    // and tag from whatever the last scan saw.
+    const refresh = Promise.resolve(this.deps.refreshDiscovery?.()).catch(() => {
       // untagged is the safe fallback
-    }
+    });
+    if (waitForDiscovery) await refresh;
     const ids = new Set<string>();
     for (const d of this.externalProcesses()) {
       if (d.conversationId) ids.add(d.conversationId);
@@ -1235,7 +1237,7 @@ export class ConversationHandlers {
     // the validator. Without it a client caches half a conversation under a tag
     // that cannot change when the other half does. The prefix is immutable, so
     // its path and cut are enough — no source mtime needed.
-    const external = await this.externalConversationIds();
+    const external = await this.externalConversationIds(false);
     const etag = computeConversationEtag({
       filePath: `${
         inherited

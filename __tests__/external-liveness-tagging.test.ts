@@ -85,4 +85,24 @@ describe("conversations tagged with the outside process running them", () => {
     const proj = list.find((p: any) => p.path === row.projectPath);
     expect(proj.liveExternalCount).toBe(1);
   });
+
+  it("the single view does not wait for a slow discovery scan", async () => {
+    const list = (await get("/api/conversations?limit=50")) as any;
+    const id = list.conversations.find((c: any) => c.id.includes(SESSION_ID)).id;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const refresh = vi
+      .spyOn((server as any).sessionHandlers, "refreshDiscovery")
+      .mockImplementation(async () => {
+        await gate;
+        return [];
+      });
+    const t0 = Date.now();
+    const one = (await get(`/api/conversations/${id}?msg_limit=5`)) as any;
+    const elapsed = Date.now() - t0;
+    expect(refresh).toHaveBeenCalled(); // positive control: the scan was asked for, just not awaited
+    expect(one.meta.id).toBe(id);
+    expect(elapsed).toBeLessThan(2000);
+    release();
+  });
 });
