@@ -1,3 +1,9 @@
+## [1.124.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.124.1...v1.124.2) (2026-10-31)
+
+### Bug Fixes
+
+* **discovery:** find lsof under launchd and log failed discovery ([#1099](https://github.com/RonenMars/threadbase-streamer/issues/1099)) ([4f3428f](https://github.com/RonenMars/threadbase-streamer/commit/4f3428f1c080edeaaad33e342f920a1341a6d223))
+
 ## [1.124.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.124.0...v1.124.1) (2026-10-31)
 
 ### Bug Fixes
