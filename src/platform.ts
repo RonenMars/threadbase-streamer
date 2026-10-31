@@ -13,6 +13,16 @@ import {
 
 export const isWindows = platform() === "win32";
 
+/**
+ * macOS keeps lsof in /usr/sbin, which a launchd job's explicit PATH omits, so
+ * a bare "lsof" failed with ENOENT there and discovery dropped every process.
+ */
+export function pickLsofBin(exists: (path: string) => boolean): string {
+  return exists("/usr/sbin/lsof") ? "/usr/sbin/lsof" : "lsof";
+}
+
+export const LSOF_BIN = pickLsofBin(existsSync);
+
 // where.exe matches any file literally named after the query, including
 // extension-less POSIX shim scripts that npm installs alongside <name>.cmd /
 // <name>.ps1 for git-bash/WSL. Windows CreateProcess can't execute those

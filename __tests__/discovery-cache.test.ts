@@ -60,4 +60,20 @@ describe("GET /api/sessions — discovery TTL cache", () => {
     expect(b.status).toBe(200);
     expect(vi.mocked(discoverClaudeProcesses)).toHaveBeenCalledTimes(1);
   });
+  it("logs a failed discovery instead of silently serving the previous cache", async () => {
+    // A bare catch used to turn any discovery failure into "nothing is running"
+    // with no trace, so live outside sessions vanished from every list.
+    const warn = vi.spyOn((server as any).sessionHandlers.log, "warn").mockImplementation(() => {});
+    vi.mocked(discoverClaudeProcesses).mockRejectedValueOnce(new Error("spawn ps EMFILE"));
+
+    const res = await fetch(`${baseUrl}/api/sessions`, {
+      headers: { Authorization: `Bearer ${API_KEY}` },
+    });
+
+    expect(res.status).toBe(200);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("discovery failed"),
+      expect.objectContaining({ event: "session.discovery_failed" }),
+    );
+  });
 });

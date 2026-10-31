@@ -464,6 +464,8 @@ uninstall_nightly_restart_job() {
 # node-pty's execvp("claude", …) fails with ENOENT. See troubleshooting.md
 # entry "Mobile app shows session as Idle 0s 0 prompts immediately after
 # start/resume" for the symptom.
+# The explicit PATH below replaces that default, so it must carry /usr/sbin
+# itself: process discovery needs lsof, which lives there on macOS.
 write_plist() {
   local plist_path="$1" node_bin="$2" run_at_load="$3"
   local logs_dir="$INSTALL_DIR/logs"
@@ -491,7 +493,7 @@ write_plist() {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>$node_bin_dir:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
     <string>$HOME</string>
   </dict>
