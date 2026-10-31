@@ -3,6 +3,7 @@ import { ConversationCache } from "./conversation-cache";
 import { getLogger } from "./logger";
 import type { CacheIntegrityMonitor } from "./services/cache-integrity/cacheIntegrityMonitor";
 import type { ConversationWatcher } from "./services/conversations/conversationWatcher";
+import { SUBAGENT_ACTIVE_MS } from "./services/conversations/subagentInfo";
 import { RESUME_BUSY_WINDOW_MS } from "./services/sessions/conversationBusy";
 import type { SessionActivity, SessionResponse } from "./types";
 import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
@@ -32,6 +33,10 @@ export const EXTERNAL_TAIL_IDLE_MS = 300_000; // 5 minutes
 // A JSONL that grew within this window reads as "active_writing"; older reads as
 // "quiet". Deliberately short — this is an inferred hint, not a status.
 export const EXTERNAL_ACTIVE_WRITING_MS = 30_000;
+
+// A sub-agent's tail is advanced by polling, not chokidar: past the fs.watch
+// ceiling (EMFILE) a new `<parent>/subagents/` dir gets no events at all.
+export const SUBAGENT_TAIL_POLL_MS = 1_000;
 
 export type ExternalTailEntry = { conversationId: string; lastActivityAt: number };
 
@@ -70,6 +75,8 @@ export type ExternalTailManagerDeps = {
  */
 export class ExternalTailManager {
   private log = getLogger("server");
+  private polledSubagents = new Set<string>();
+  private subagentPollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private deps: ExternalTailManagerDeps) {}
 
@@ -122,6 +129,42 @@ export class ExternalTailManager {
       tails: this.externalTails.size,
       event: "external_tail.attach",
     });
+  }
+
+  /**
+   * Tail an active sub-agent the `?parent=` list found, and poll it while it
+   * keeps writing. Bounded by EXTERNAL_TAIL_MAX like any external tail.
+   */
+  attachSubagentTail(filePath: string): void {
+    this.maybeAttachExternalTail(filePath);
+    // A path we did not attach (managed, or at the cap) drops on the next poll.
+    this.polledSubagents.add(canonicalizeFilePath(filePath));
+    if (!this.subagentPollTimer) {
+      this.subagentPollTimer = setInterval(() => this.pollSubagentTails(), SUBAGENT_TAIL_POLL_MS);
+      this.subagentPollTimer.unref?.();
+    }
+  }
+
+  /** Advance each polled sub-agent tail; release the ones that went quiet. */
+  pollSubagentTails(now = Date.now()): void {
+    for (const key of this.polledSubagents) {
+      let mtimeMs = 0;
+      try {
+        mtimeMs = statSync(key).mtimeMs;
+      } catch {
+        // deleted: released below
+      }
+      if (!this.externalTails.has(key) || now - mtimeMs > SUBAGENT_ACTIVE_MS) {
+        this.polledSubagents.delete(key);
+        this.detachExternalTail(key);
+        continue;
+      }
+      this.deps.fileWatcher.poke(key);
+    }
+    if (this.polledSubagents.size === 0 && this.subagentPollTimer) {
+      clearInterval(this.subagentPollTimer);
+      this.subagentPollTimer = null;
+    }
   }
 
   /** Stop tailing an external file and drop its bookkeeping. */

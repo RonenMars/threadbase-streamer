@@ -128,6 +128,7 @@ export type ConversationHandlersDeps = {
   resolveConversationLookupId: (uuid: string) => string;
   findLiveSessionFilePath: (uuid: string) => string | null;
   isBoundConversationLive: (boundId: string) => boolean;
+  attachSubagentTail?: (filePath: string) => void;
 };
 
 /**
@@ -354,6 +355,12 @@ export class ConversationHandlers {
             })
           : undefined;
       };
+      // Its subagents/ dir may get no watch events, so tail active children here.
+      if (parentPath) {
+        conversations.forEach((c, i) => {
+          if (subagentInfo[i]?.subagentActive) this.deps.attachSubagentTail?.(c.filePath);
+        });
+      }
       const adapted = conversations.map((c, i) => ({
         id: c.id,
         isSubagent: c.isSubagent,
