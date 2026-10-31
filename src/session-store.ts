@@ -89,6 +89,11 @@ export class SessionStore {
     return this.externalProcesses().find((d) => d.conversationId === conversationId) ?? null;
   }
 
+  private hasDiscovered(conversationId: string): boolean {
+    for (const d of this.discovered.values()) if (d.conversationId === conversationId) return true;
+    return false;
+  }
+
   /** Forget one discovered process, e.g. after the streamer terminated it. */
   dropDiscovered(pid: number): void {
     this.discovered.delete(pid);
@@ -104,6 +109,9 @@ export class SessionStore {
    */
   ownsConversation(conversationId: string): boolean {
     for (const s of this.managed.values()) {
+      // A stub has no process behind it, so it cannot own one; letting it would
+      // hide an outside process resumed after the PTY died.
+      if (isProcessless(s)) continue;
       if (
         s.id === conversationId ||
         s.boundConversationId === conversationId ||
@@ -137,6 +145,8 @@ export class SessionStore {
 
     for (const s of this.managed.values()) {
       if (!this.visibility(s.boundConversationId ?? s.id, s)) continue;
+      // The outside process replaces the stub's historical row.
+      if (isProcessless(s) && this.hasDiscovered(s.boundConversationId ?? s.id)) continue;
       results.push(managedToResponse(s, ptyAttachedIds.has(s.id), this.hasOpenPrompt(s.id)));
       seenIds.add(s.id);
     }
@@ -157,7 +167,7 @@ export class SessionStore {
   // when you want the live record.
   get(sessionId: string, ptyAttachedIds: Set<string>): Readonly<SessionResponse> | null {
     const managed = this.managed.get(sessionId);
-    if (managed) {
+    if (managed && !(isProcessless(managed) && this.hasDiscovered(sessionId))) {
       return managedToResponse(
         managed,
         ptyAttachedIds.has(sessionId),
@@ -459,4 +469,9 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
     ptyAttached: false,
     pid: d.pid,
   };
+}
+
+/** A managed record with no process behind it: seeded at boot, or put on hold. */
+function isProcessless(s: ManagedSession): boolean {
+  return s.rehydrated === true || s.statusSource === "shutdown";
 }
