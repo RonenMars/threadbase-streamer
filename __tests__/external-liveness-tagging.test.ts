@@ -105,4 +105,10 @@ describe("conversations tagged with the outside process running them", () => {
     expect(elapsed).toBeLessThan(2000);
     release();
   });
+
+  it("treats a negative limit or offset as the floor, not as unbounded", async () => {
+    const res = (await get("/api/conversations?limit=-1&offset=-5")) as any;
+    expect(res.offset).toBe(0);
+    expect(res.conversations.length).toBeGreaterThanOrEqual(1);
+  });
 });
