@@ -77,6 +77,18 @@ export class SessionStore {
     }
   }
 
+  /** Discovered processes no managed session owns: agents running outside the streamer. */
+  externalProcesses(): DiscoveredProcess[] {
+    return [...this.discovered.values()].filter(
+      (d) => d.conversationId == null || !this.ownsConversation(d.conversationId),
+    );
+  }
+
+  /** The outside process running this conversation, or null. */
+  externalFor(conversationId: string): DiscoveredProcess | null {
+    return this.externalProcesses().find((d) => d.conversationId === conversationId) ?? null;
+  }
+
   /** Forget one discovered process, e.g. after the streamer terminated it. */
   dropDiscovered(pid: number): void {
     this.discovered.delete(pid);
