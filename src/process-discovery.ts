@@ -2,7 +2,7 @@ import { execFile } from "child_process";
 import { platform } from "os";
 import { basename, dirname } from "path";
 import { getLogger } from "./logger";
-import { isWindows } from "./platform";
+import { isWindows, LSOF_BIN } from "./platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
@@ -484,7 +484,7 @@ async function getPidsUnix(): Promise<number[]> {
 }
 
 async function getProcessCwdUnix(pid: number): Promise<string> {
-  const output = await run("lsof", ["-p", String(pid), "-a", "-d", "cwd", "-Fn"]);
+  const output = await run(LSOF_BIN, ["-p", String(pid), "-a", "-d", "cwd", "-Fn"]);
   const match = output.match(/n(.+)/);
   return match?.[1] ?? "";
 }
