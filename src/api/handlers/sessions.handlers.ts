@@ -607,9 +607,14 @@ export class SessionHandlers {
         this.sessionStore.setDiscovered(discovered);
         this.discoveryCache = { entries: discovered, fetchedAt: Date.now() };
         return discovered;
-      } catch {
+      } catch (err) {
         // Discovery is best-effort — keep any previous cache rather than
-        // remembering a failure as "nothing is running".
+        // remembering a failure as "nothing is running". Logged, because the
+        // fallback is empty after a restart and looks exactly like "nothing is".
+        this.log.warn(
+          `[discovery] discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+          { event: "session.discovery_failed" },
+        );
         return this.discoveryCache?.entries ?? [];
       } finally {
         if (this.discoveryInFlight === flight) {
