@@ -85,4 +85,10 @@ describe("conversations tagged with the outside process running them", () => {
     const proj = list.find((p: any) => p.path === row.projectPath);
     expect(proj.liveExternalCount).toBe(1);
   });
+
+  it("treats a negative limit or offset as the floor, not as unbounded", async () => {
+    const res = (await get("/api/conversations?limit=-1&offset=-5")) as any;
+    expect(res.offset).toBe(0);
+    expect(res.conversations.length).toBeGreaterThanOrEqual(1);
+  });
 });
