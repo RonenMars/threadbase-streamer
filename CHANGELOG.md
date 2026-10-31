@@ -1,3 +1,9 @@
+## [1.123.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.123.0...v1.123.1) (2026-10-31)
+
+### Bug Fixes
+
+* **conversations:** stream an active sub-agent's lines live from ?parent= ([#1090](https://github.com/RonenMars/threadbase-streamer/issues/1090)) ([63c133a](https://github.com/RonenMars/threadbase-streamer/commit/63c133aaf90db4f4f0554c8f6a52a2cf2ada8754))
+
 ## [1.123.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.122.2...v1.123.0) (2026-10-30)
 
 ### Features
