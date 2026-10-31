@@ -120,6 +120,12 @@ describe("external live tails", () => {
       if (String(path).endsWith("watch-probe.txt")) armed = true;
     };
     const dirWatcher = watcher.directories.get(join(configDir, "projects"));
+    if (typeof dirWatcher.on !== "function") {
+      // darwin: a recursive fs.watch has no chokidar `raw` event to probe, and
+      // it reports only .jsonl, so give its FSEvents stream time to start.
+      await new Promise((r) => setTimeout(r, 1000));
+      return;
+    }
     dirWatcher.on("raw", onRaw);
     for (let i = 0; !armed && i < 100; i++) {
       writeFileSync(probe, String(i));
