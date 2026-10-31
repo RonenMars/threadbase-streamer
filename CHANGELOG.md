@@ -1,3 +1,9 @@
+## [1.123.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.123.1...v1.123.2) (2026-10-31)
+
+### Bug Fixes
+
+* **conversations:** mark a sub-agent active from its finished flag and open tool calls ([#1092](https://github.com/RonenMars/threadbase-streamer/issues/1092)) ([0553bf4](https://github.com/RonenMars/threadbase-streamer/commit/0553bf4899891b7b70929d3558aec7b267519edc))
+
 ## [1.123.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.123.0...v1.123.1) (2026-10-31)
 
 ### Bug Fixes
