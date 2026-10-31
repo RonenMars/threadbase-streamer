@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 it("stages twice without changing the previous CLI, migrations or native dependency tree", () => {
+  // Exercises the POSIX staging in deploy.sh / deploy-linux.sh; Windows deploys via deploy.ps1.
+  if (process.platform === "win32") return;
   const root = resolve(import.meta.dirname, "..");
   const fixture = mkdtempSync(join(tmpdir(), "tb-stage-"));
   const install = join(fixture, "install");
