@@ -1,3 +1,9 @@
+## [1.124.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.123.2...v1.124.0) (2026-10-31)
+
+### Features
+
+* **conversations:** add parentProjectPath to sub-agent rows ([#1098](https://github.com/RonenMars/threadbase-streamer/issues/1098)) ([f4b63b8](https://github.com/RonenMars/threadbase-streamer/commit/f4b63b8ae4d70356c39c94214daf916f98a9498d))
+
 ## [1.123.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.123.1...v1.123.2) (2026-10-31)
 
 ### Bug Fixes
