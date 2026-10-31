@@ -836,6 +836,7 @@ export class StreamerServer {
       findLiveSessionFilePath: (uuid) => this.findLiveSessionFilePath(uuid),
       isBoundConversationLive: (boundId) => this.isBoundConversationLive(boundId),
       attachSubagentTail: (filePath) => this.externalTailManager.attachSubagentTail(filePath),
+      refreshDiscovery: () => this.sessionHandlers.refreshDiscovery(),
     });
 
     // ─── Multi-agent mode bootstrap ──────────────────────────────────
