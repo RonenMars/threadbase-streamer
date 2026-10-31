@@ -670,4 +670,50 @@ describe("SessionStore external lookups", () => {
         .sort((a, b) => a - b),
     ).toEqual([2, 12345]);
   });
+
+  describe("a dead managed record does not shadow an outside process", () => {
+    const stubs = {
+      rehydrated: { rehydrated: true },
+      "put on hold": { statusSource: "shutdown" as const },
+    };
+    for (const [name, patch] of Object.entries(stubs)) {
+      it(`${name}: outside process is external, historical row dropped`, () => {
+        const store = new SessionStore();
+        store.addManaged(makeManagedSession({ id: UUID_B, status: "idle", ...patch }));
+        store.setDiscovered([makeDiscoveredProcess()]);
+        expect(store.ownsConversation(UUID_B)).toBe(false);
+        expect(store.externalFor(UUID_B)?.pid).toBe(12345);
+        const rows = store.list(new Set()).filter((r) => r.id === UUID_B);
+        expect(rows).toHaveLength(1);
+        expect(rows[0].ownership).toBe("external");
+        expect(store.get(UUID_B, new Set())?.ownership).toBe("external");
+      });
+
+      it(`${name}: with no outside process the stub still lists as before`, () => {
+        const store = new SessionStore();
+        store.addManaged(makeManagedSession({ id: UUID_B, status: "idle", ...patch }));
+        expect(store.list(new Set()).map((r) => r.id)).toEqual([UUID_B]);
+        expect(store.get(UUID_B, new Set())?.id).toBe(UUID_B);
+      });
+    }
+
+    it("control: a live managed session still hides the process, under every id", () => {
+      const store = new SessionStore();
+      store.addManaged(
+        makeManagedSession({
+          id: "placeholder",
+          boundConversationId: UUID_B,
+          resumedFromConversationId: UUID_A,
+        }),
+      );
+      store.setDiscovered([
+        makeDiscoveredProcess(),
+        makeDiscoveredProcess({ pid: 2, conversationId: UUID_A }),
+      ]);
+      expect(store.ownsConversation(UUID_B)).toBe(true);
+      expect(store.ownsConversation(UUID_A)).toBe(true);
+      expect(store.externalProcesses()).toEqual([]);
+      expect(store.list(new Set()).every((r) => r.ownership !== "external")).toBe(true);
+    });
+  });
 });
