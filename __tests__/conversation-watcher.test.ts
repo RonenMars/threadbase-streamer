@@ -41,6 +41,11 @@ let readGate: Promise<void> | null = null;
 // error-path recovery (a change that arrived mid-read must still be picked up).
 let failNextRead = false;
 
+const recursiveWatchSpy = vi.hoisted(() => vi.fn(() => ({ close: vi.fn(), detach: vi.fn() })));
+vi.mock("../src/services/conversations/recursiveJsonlWatch", () => ({
+  watchJsonlRecursively: recursiveWatchSpy,
+}));
+
 vi.mock("fs/promises", () => ({
   stat: async () => ({ size: Buffer.byteLength(fileBytes, "utf-8") }),
   open: async () => ({
@@ -90,9 +95,15 @@ describe("ignoreNonJsonlWatchPath", () => {
 });
 
 describe("ConversationWatcher — directory watching", () => {
+  const realPlatform = process.platform;
   beforeEach(() => {
     emitters.length = 0;
     watchSpy.mockClear();
+    // These tests drive the chokidar path; darwin takes the recursive fs.watch path.
+    Object.defineProperty(process, "platform", { value: "linux" });
+  });
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: realPlatform });
   });
 
   it("registers a chokidar watcher when watchDirectory is called", () => {
@@ -392,6 +403,26 @@ describe("ConversationWatcher — poke (dead-handle self-heal)", () => {
     // The entry is gone regardless of which separator style is used to poke it.
     expect(w.poke("C:\\Users\\dev\\proj\\x.jsonl")).toBe(false);
     expect(w.poke("C:/Users/dev/proj/x.jsonl")).toBe(false);
+    w.dispose();
+  });
+});
+
+describe("ConversationWatcher — darwin uses one recursive watch", () => {
+  const realPlatform = process.platform;
+  beforeEach(() => {
+    watchSpy.mockClear();
+    Object.defineProperty(process, "platform", { value: "darwin" });
+  });
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: realPlatform });
+  });
+
+  it("does not open a chokidar per-file watcher, and is ready immediately", async () => {
+    const w = new ConversationWatcher();
+    w.watchDirectory("/some/dir");
+    expect(watchSpy).not.toHaveBeenCalled();
+    expect(recursiveWatchSpy).toHaveBeenCalledTimes(1);
+    await w.whenReady();
     w.dispose();
   });
 });

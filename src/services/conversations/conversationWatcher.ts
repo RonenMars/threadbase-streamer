@@ -3,6 +3,7 @@ import { type Stats, statSync } from "fs";
 import { open, stat } from "fs/promises";
 import { canonicalizeFilePath } from "../../utils/canonicalizeFilePath";
 import { type LineSpan, splitCompleteLines } from "../../utils/fileIdentity";
+import { type DirectoryWatch, watchJsonlRecursively } from "./recursiveJsonlWatch";
 
 /**
  * chokidar `ignored` for directory watches: skip every non-`.jsonl` *file*
@@ -89,7 +90,7 @@ interface WatchedFile {
  */
 export class ConversationWatcher {
   private files = new Map<string, WatchedFile>();
-  private directories = new Map<string, FSWatcher>();
+  private directories = new Map<string, DirectoryWatch>();
   private directoriesReady = new Map<string, Promise<void>>();
   private onNewLine: ConversationWatcherEvents["onNewLine"];
   private onNewLines: ConversationWatcherEvents["onNewLines"];
@@ -214,25 +215,36 @@ export class ConversationWatcher {
    */
   watchDirectory(directory: string): void {
     if (this.directories.has(directory)) return;
+    const fire = (filePath: string) => {
+      void Promise.resolve(this.onConversationChanged?.(filePath)).catch(() => {
+        // best-effort
+      });
+    };
+    const onError = (error: Error) => this.onError?.(directory, error);
+    // macOS: one recursive FSEvents stream instead of a handle per transcript,
+    // which stalls boot once the corpus passes the FSEvents ceiling (#1094).
+    if (process.platform === "darwin") {
+      this.directories.set(directory, watchJsonlRecursively(directory, fire, onError));
+      this.directoriesReady.set(directory, Promise.resolve());
+      return;
+    }
     const watcher = chokidar.watch(directory, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
       // Only transcript files need per-file watches. See the method note.
       ignored: ignoreNonJsonlWatchPath,
     });
-    const fire = (filePath: string) => {
-      void Promise.resolve(this.onConversationChanged?.(filePath)).catch(() => {
-        // best-effort
-      });
-    };
     watcher.on("add", fire);
     watcher.on("change", fire);
     watcher.on("unlink", fire);
-    watcher.on("error", (err) => {
-      const error = err instanceof Error ? err : new Error(String(err));
-      this.onError?.(directory, error);
+    watcher.on("error", (err) => onError(err instanceof Error ? err : new Error(String(err))));
+    this.directories.set(directory, {
+      close: () => watcher.close(),
+      detach: () => {
+        watcher.removeAllListeners();
+        watcher.on("error", () => {});
+      },
     });
-    this.directories.set(directory, watcher);
     this.directoriesReady.set(
       directory,
       new Promise((resolve) => watcher.once("ready", () => resolve())),
@@ -270,14 +282,11 @@ export class ConversationWatcher {
    * error from throwing as an unhandled 'error' event.
    */
   detach(): void {
-    const watchers = [
-      ...[...this.files.values()].map((e) => e.watcher),
-      ...this.directories.values(),
-    ];
-    for (const watcher of watchers) {
+    for (const { watcher } of this.files.values()) {
       watcher.removeAllListeners();
       watcher.on("error", () => {});
     }
+    for (const dir of this.directories.values()) dir.detach();
     this.files.clear();
     this.directories.clear();
     this.directoriesReady.clear();
