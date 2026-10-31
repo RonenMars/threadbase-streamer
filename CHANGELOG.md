@@ -1,3 +1,9 @@
+## [1.124.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.124.0...v1.124.1) (2026-10-31)
+
+### Bug Fixes
+
+* **watcher:** use one recursive watch per root on macOS ([04b1465](https://github.com/RonenMars/threadbase-streamer/commit/04b1465bc50c3e23bc4c43524ee6a2d85183e268))
+
 ## [1.124.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.123.2...v1.124.0) (2026-10-31)
 
 ### Features
