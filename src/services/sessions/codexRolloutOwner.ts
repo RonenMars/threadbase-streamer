@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { LSOF_BIN } from "../../platform";
 
 /**
  * Who is holding a Codex rollout JSONL open right now.
@@ -59,7 +60,7 @@ function lsofForRollout(rolloutPath: string, timeoutMs: number): Promise<string>
 /** Run `lsof` with a hard deadline. Exported for the pid → rollout lookup. */
 export function runLsof(args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile("lsof", args, { windowsHide: true }, (err, stdout) => {
+    const child = execFile(LSOF_BIN, args, { windowsHide: true }, (err, stdout) => {
       clearTimeout(timer);
       // lsof exits 1 when nothing matches — that is a normal empty result,
       // and stdout is what we parse either way.
