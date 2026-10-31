@@ -57,6 +57,7 @@ beforeEach(async () => {
     line("You are demo agent 4 of 8", "2026-10-29T11:00:00.000Z", {
       isSidechain: true,
       agentId: CHILD.slice(6),
+      cwd: `${dir}-worktree`,
     }),
   );
   const scanner = new ConversationScanner({ persistent: false });
@@ -115,4 +116,20 @@ it("titles a sub-agent row with its parent's list title", async () => {
   expect(parent.title).toBeTruthy();
   expect(child.parentTitle).toBe(parent.title);
   expect(parent).not.toHaveProperty("parentTitle");
+});
+
+it("gives a sub-agent row its parent's project path, not its own cwd", async () => {
+  const body = await call((res) =>
+    handlers.handleListConversations(
+      new URL("http://localhost/api/conversations?include=all"),
+      res,
+    ),
+  );
+  const byId = new Map(body.conversations.map((c: any) => [c.id, c]));
+  const parent = byId.get(PARENT) as any;
+  const child = byId.get(CHILD) as any;
+
+  expect(child.projectPath).not.toBe(parent.projectPath);
+  expect(child.parentProjectPath).toBe(parent.projectPath);
+  expect(parent).not.toHaveProperty("parentProjectPath");
 });

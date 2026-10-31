@@ -355,6 +355,8 @@ export class ConversationHandlers {
             })
           : undefined;
       };
+      const parentProjectPath = (id: string | null | undefined) =>
+        id ? (this.cache?.getMetaById(id)?.projectPath ?? undefined) : undefined;
       // Its subagents/ dir may get no watch events, so tail active children here.
       if (parentPath) {
         conversations.forEach((c, i) => {
@@ -365,7 +367,12 @@ export class ConversationHandlers {
         id: c.id,
         isSubagent: c.isSubagent,
         parentConversationId: c.parentConversationId,
-        ...(c.isSubagent ? { parentTitle: parentTitle(c.parentConversationId) } : {}),
+        ...(c.isSubagent
+          ? {
+              parentTitle: parentTitle(c.parentConversationId),
+              parentProjectPath: parentProjectPath(c.parentConversationId),
+            }
+          : {}),
         ...subagentInfo[i],
         title: deriveProjectChatTitle({
           title: c.title,
