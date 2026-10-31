@@ -113,6 +113,17 @@ export function intParam(url: URL, name: string, defaultValue: number): number {
   return Number.isNaN(parsed) ? defaultValue : parsed;
 }
 
+/** `intParam` held to `[min, max]`, so a client cannot ask for a negative or unbounded page. */
+export function boundedIntParam(
+  url: URL,
+  name: string,
+  defaultValue: number,
+  min: number,
+  max: number,
+): number {
+  return Math.min(Math.max(intParam(url, name, defaultValue), min), max);
+}
+
 /** `refresh=1` style: 1/true → true, 0/false → false, absent/invalid → undefined. */
 export function boolQueryParam(url: URL, name: string): boolean | undefined {
   const val = url.searchParams.get(name);

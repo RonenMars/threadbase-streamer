@@ -2171,6 +2171,33 @@ describe("StreamerServer", () => {
       expect(out.lifecycleSource).toBe("spawn");
     });
 
+    // A boot verdict of "no process" was true when it was made. A live outside
+    // process on the row proves it stale, and discovery's own `detached` stands.
+    it("does not stamp a no-process verdict onto a live external row", () => {
+      setVerdict("prev-run-sess", "resumable");
+      const input = mkResp({
+        ownership: "external",
+        processLiveness: "alive",
+        lifecycle: "detached",
+        lifecycleSource: "probe",
+      });
+
+      const [out] = (server as any).withReconciledLifecycle([input]);
+
+      expect(out.lifecycle).toBe("detached");
+      expect(out.lifecycleSource).toBe("probe");
+    });
+
+    it("still applies a process-bearing verdict to an external row", () => {
+      setVerdict("prev-run-sess", "orphaned");
+
+      const [out] = (server as any).withReconciledLifecycle([
+        mkResp({ ownership: "external", processLiveness: "alive", lifecycle: "detached" }),
+      ]);
+
+      expect(out.lifecycle).toBe("orphaned");
+    });
+
     it("leaves sessions with no verdict untouched", () => {
       const input = mkResp();
       const [out] = (server as any).withReconciledLifecycle([input]);
