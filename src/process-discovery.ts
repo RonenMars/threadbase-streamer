@@ -1,7 +1,8 @@
 import { execFile } from "child_process";
 import { platform } from "os";
 import { basename, dirname } from "path";
-import { isWindows } from "./platform";
+import { getLogger } from "./logger";
+import { isWindows, LSOF_BIN } from "./platform";
 import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
@@ -15,6 +16,12 @@ import {
   readClaudeSessionRegistry,
 } from "./services/sessions/processSessionIds";
 import type { DiscoveredProcess } from "./types";
+
+const log = getLogger("process-discovery");
+
+function reason(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export async function discoverClaudeProcesses(): Promise<DiscoveredProcess[]> {
   // OS start times we actually read, as opposed to the `new Date()` stand-in a
@@ -357,7 +364,12 @@ async function discoverUnix(knownStarts: Map<number, Date>): Promise<DiscoveredP
           conversationId: extractConversationId(args, provider),
           startedAt,
         } satisfies DiscoveredProcess;
-      } catch {
+      } catch (err) {
+        // A swept agent we could not read vanishes from every list; say why.
+        log.warn(`process ${pid} unreadable: ${reason(err)}`, {
+          event: "discovery.process_unreadable",
+          pid,
+        });
         return null;
       }
     }),
@@ -447,8 +459,10 @@ async function getPidsUnix(): Promise<number[]> {
   // only, which is still better than returning nothing.
   try {
     return parsePsOutput(await run("ps", ["-eo", "pid=,args="]));
-  } catch {
-    // fall through
+  } catch (err) {
+    log.warn(`ps sweep failed, falling back to pgrep: ${reason(err)}`, {
+      event: "discovery.ps_failed",
+    });
   }
   // Name-only fallback, one sweep per agent. It cannot see shim installs (those
   // run as `node`) and cannot tell an interactive `codex` from the ChatGPT
@@ -470,7 +484,7 @@ async function getPidsUnix(): Promise<number[]> {
 }
 
 async function getProcessCwdUnix(pid: number): Promise<string> {
-  const output = await run("lsof", ["-p", String(pid), "-a", "-d", "cwd", "-Fn"]);
+  const output = await run(LSOF_BIN, ["-p", String(pid), "-a", "-d", "cwd", "-Fn"]);
   const match = output.match(/n(.+)/);
   return match?.[1] ?? "";
 }
