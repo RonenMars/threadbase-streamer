@@ -640,3 +640,34 @@ describe("SessionStore.ownsConversation", () => {
     expect(store.get(UUID_B, new Set([PLACEHOLDER]))).toBeNull();
   });
 });
+
+describe("SessionStore external lookups", () => {
+  it("externalFor finds a discovered process by conversation id", () => {
+    const store = new SessionStore();
+    store.setDiscovered([makeDiscoveredProcess()]);
+    expect(store.externalFor(UUID_B)?.pid).toBe(12345);
+    expect(store.externalFor(UUID_A)).toBeNull();
+  });
+
+  it("externalFor and externalProcesses skip a conversation a managed session owns", () => {
+    const store = new SessionStore();
+    store.setDiscovered([makeDiscoveredProcess()]);
+    store.addManaged(makeManagedSession({ id: "managed-1", boundConversationId: UUID_B }));
+    expect(store.externalFor(UUID_B)).toBeNull();
+    expect(store.externalProcesses()).toEqual([]);
+  });
+
+  it("externalProcesses lists every unowned discovered process", () => {
+    const store = new SessionStore();
+    store.setDiscovered([
+      makeDiscoveredProcess(),
+      makeDiscoveredProcess({ pid: 2, conversationId: UUID_A }),
+    ]);
+    expect(
+      store
+        .externalProcesses()
+        .map((d) => d.pid)
+        .sort((a, b) => a - b),
+    ).toEqual([2, 12345]);
+  });
+});

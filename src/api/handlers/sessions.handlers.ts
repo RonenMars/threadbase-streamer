@@ -591,7 +591,7 @@ export class SessionHandlers {
    * Refresh the discovered-process list, sharing one in-flight enumeration
    * across concurrent callers and honouring the 15s TTL cache.
    */
-  private async refreshDiscovery(): Promise<DiscoveredProcess[]> {
+  async refreshDiscovery(): Promise<DiscoveredProcess[]> {
     const cached = this.discoveryCache;
     if (cached && Date.now() - cached.fetchedAt < DISCOVERY_TTL_MS) {
       return cached.entries;

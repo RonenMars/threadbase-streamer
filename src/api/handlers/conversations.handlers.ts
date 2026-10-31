@@ -45,6 +45,7 @@ import {
 import type { SessionStore } from "../../session-store";
 import { TRANSCRIPT_WATCH_DEADLINE_MS } from "../../session-watchers";
 import type { ManagedSession, ServerWarmupState } from "../../types";
+import { canonicalizeProjectPath } from "../../utils/canonicalizeProjectPath";
 import { toolResultText } from "../../utils/claudeShapedLine";
 import { isLeadingInjectedContext } from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
@@ -88,6 +89,13 @@ interface SnakeConversationMeta {
  * snake_case keys, so those stay; the camelCase names ride alongside so a
  * client can read one field set from either endpoint.
  */
+/** `ownership`/`processLiveness` for a conversation an outside process is running; nothing otherwise. */
+function externalTag(external: Set<string>, id: string) {
+  return external.has(id)
+    ? { ownership: "external" as const, processLiveness: "alive" as const }
+    : {};
+}
+
 function withCamelMetaAliases<T extends SnakeConversationMeta>(meta: T) {
   return {
     ...meta,
@@ -129,6 +137,8 @@ export type ConversationHandlersDeps = {
   findLiveSessionFilePath: (uuid: string) => string | null;
   isBoundConversationLive: (boundId: string) => boolean;
   attachSubagentTail?: (filePath: string) => void;
+  /** Refreshes the discovered-process list (TTL-cached, single-flight). */
+  refreshDiscovery?: () => Promise<unknown>;
 };
 
 /**
@@ -269,8 +279,32 @@ export class ConversationHandlers {
     return true;
   }
 
+  /**
+   * Conversation ids an agent outside the streamer is running right now.
+   * Discovery is TTL-cached, so asking per request is cheap; a failure is
+   * logged by discovery itself and leaves the rows untagged, never errors.
+   */
+  /** Optional-called: handler tests build this class with minimal session-store fakes. */
+  private externalProcesses() {
+    return this.deps.sessionStore?.externalProcesses?.() ?? [];
+  }
+
+  private async externalConversationIds(): Promise<Set<string>> {
+    try {
+      await this.deps.refreshDiscovery?.();
+    } catch {
+      // untagged is the safe fallback
+    }
+    const ids = new Set<string>();
+    for (const d of this.externalProcesses()) {
+      if (d.conversationId) ids.add(d.conversationId);
+    }
+    return ids;
+  }
+
   async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
     if (this.deps.rejectIfWarmingUp(res)) return;
+    const external = await this.externalConversationIds();
 
     const limit = intParam(url, "limit", 50);
     const offset = intParam(url, "offset", 0);
@@ -394,6 +428,7 @@ export class ConversationHandlers {
         model: c.model ?? undefined,
         provider: canonicalizeProviderName(c.provider) ?? c.provider ?? CLAUDE_CODE_PROVIDER,
         ...this.importFlags(c),
+        ...externalTag(external, c.id),
       }));
       json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
       return;
@@ -449,6 +484,7 @@ export class ConversationHandlers {
         model: c.model ?? undefined,
         provider: canonicalizeProviderName(c.provider) ?? c.provider ?? CLAUDE_CODE_PROVIDER,
         ...this.importFlags(c),
+        ...externalTag(external, id),
       };
     });
     json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
@@ -562,7 +598,7 @@ export class ConversationHandlers {
     json(res, 200, { projects, total: projects.length });
   }
 
-  handleGetProjectSummaries(url: URL, res: ServerResponse): void {
+  async handleGetProjectSummaries(url: URL, res: ServerResponse): Promise<void> {
     if (this.deps.rejectIfWarmingUp(res)) return;
     const limit = intParam(url, "limit", 200);
     const offset = intParam(url, "offset", 0);
@@ -577,7 +613,17 @@ export class ConversationHandlers {
       return;
     }
     const { projects, total } = this.cache.listProjectSummaries({ limit, offset });
-    json(res, 200, { projects, total, offset, hasMore: offset + projects.length < total });
+    await this.externalConversationIds();
+    const live = new Map<string, number>();
+    for (const d of this.externalProcesses()) {
+      const key = canonicalizeProjectPath(d.projectPath);
+      live.set(key, (live.get(key) ?? 0) + 1);
+    }
+    const tagged = projects.map((p) => ({
+      ...p,
+      liveExternalCount: live.get(canonicalizeProjectPath(p.path)) ?? 0,
+    }));
+    json(res, 200, { projects: tagged, total, offset, hasMore: offset + projects.length < total });
   }
 
   findJsonlPath(uuid: string): string | null {
@@ -1189,10 +1235,13 @@ export class ConversationHandlers {
     // the validator. Without it a client caches half a conversation under a tag
     // that cannot change when the other half does. The prefix is immutable, so
     // its path and cut are enough — no source mtime needed.
+    const external = await this.externalConversationIds();
     const etag = computeConversationEtag({
-      filePath: inherited
-        ? `${etagSource.filePath}+${inherited.sourceFilePath ?? inherited.sourceId}@${inherited.ordinalExclusive}`
-        : etagSource.filePath,
+      filePath: `${
+        inherited
+          ? `${etagSource.filePath}+${inherited.sourceFilePath ?? inherited.sourceId}@${inherited.ordinalExclusive}`
+          : etagSource.filePath
+      }${external.has(id) ? "+external" : ""}`,
       messageCount: etagMessageCount + (inherited?.messages.length ?? 0),
       timestamp: etagSource.timestamp,
     });
@@ -1561,6 +1610,7 @@ export class ConversationHandlers {
     const body: Record<string, unknown> = {
       meta: withCamelMetaAliases({
         id,
+        ...externalTag(external, id),
         isSubagent: this.cache?.getMetaById(id)?.isSubagent,
         parentConversationId: this.cache?.getMetaById(id)?.parentConversationId,
         profile_id: conv.account,
