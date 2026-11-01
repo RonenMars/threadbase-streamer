@@ -53,6 +53,7 @@ import { createScanProgressThrottle } from "../../utils/scanProgressThrottle";
 import type { WSHub } from "../../ws-hub";
 import {
   boolQueryParam,
+  boundedIntParam,
   classifyResumability,
   includeQueryParam,
   intParam,
@@ -308,8 +309,8 @@ export class ConversationHandlers {
     if (this.deps.rejectIfWarmingUp(res)) return;
     const external = await this.externalConversationIds();
 
-    const limit = intParam(url, "limit", 50);
-    const offset = intParam(url, "offset", 0);
+    const limit = boundedIntParam(url, "limit", 50, 1, 500);
+    const offset = boundedIntParam(url, "offset", 0, 0, Number.MAX_SAFE_INTEGER);
     const sort = (url.searchParams.get("sort") ?? "recent") as SortOrder;
     const filters = this.listFilters(url);
     const bustCache = url.searchParams.get("refresh") === "1";
@@ -560,7 +561,7 @@ export class ConversationHandlers {
 
   handleGetRecentSessions(url: URL, res: ServerResponse): void {
     if (this.deps.rejectIfWarmingUp(res)) return;
-    const limit = intParam(url, "limit", 20);
+    const limit = boundedIntParam(url, "limit", 20, 1, 100);
     if (!this.cache) {
       json(res, 200, { sessions: [], total: 0 });
       return;
@@ -591,7 +592,7 @@ export class ConversationHandlers {
   }
 
   handleGetPopularProjects(url: URL, res: ServerResponse): void {
-    const limit = intParam(url, "limit", 20);
+    const limit = boundedIntParam(url, "limit", 20, 1, 100);
     if (!this.cache) {
       json(res, 200, { projects: [], total: 0 });
       return;
@@ -602,8 +603,8 @@ export class ConversationHandlers {
 
   async handleGetProjectSummaries(url: URL, res: ServerResponse): Promise<void> {
     if (this.deps.rejectIfWarmingUp(res)) return;
-    const limit = intParam(url, "limit", 200);
-    const offset = intParam(url, "offset", 0);
+    const limit = boundedIntParam(url, "limit", 200, 1, 500);
+    const offset = boundedIntParam(url, "offset", 0, 0, Number.MAX_SAFE_INTEGER);
     if (!this.cache) {
       // Deliberately not an empty 200: without the cache /api/conversations
       // falls back to the scanner and still returns rows, so "no projects"

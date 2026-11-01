@@ -1124,6 +1124,16 @@ export class StreamerServer {
       if (s.ptyAttached) return s;
       const verdict = this.sessionVerdicts.get(s.id);
       if (!verdict) return s;
+      // Discovery found a live outside process, which a boot verdict of "no
+      // process" (resumable, completed, failed) predates; only a verdict that
+      // itself saw a process may refine `detached`.
+      if (
+        s.ownership === "external" &&
+        verdict.lifecycle !== "detached" &&
+        verdict.lifecycle !== "orphaned"
+      ) {
+        return s;
+      }
       return { ...s, lifecycle: verdict.lifecycle, lifecycleSource: "reconcile" as const };
     });
   }
