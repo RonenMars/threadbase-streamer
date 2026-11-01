@@ -58,6 +58,7 @@ import { computeConversationEtag } from "../../utils/conversationEtag";
 import { createScanProgressThrottle } from "../../utils/scanProgressThrottle";
 import type { WSHub } from "../../ws-hub";
 import {
+  BodyTooLargeError,
   boolQueryParam,
   boundedIntParam,
   classifyResumability,
@@ -1857,7 +1858,8 @@ export class ConversationHandlers {
     let body: unknown;
     try {
       body = await readBody(req);
-    } catch {
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) throw err;
       res.setHeader("Accept-Query", "application/json");
       json(res, 422, { error: "Malformed JSON body", code: "invalid_query" });
       return;

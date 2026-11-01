@@ -285,6 +285,17 @@ describe("PATCH /api/sessions/:id/{model,effort}", () => {
     expect(written(proc)).toBe("/model claude-opus-4-5\r");
   }, 30000);
 
+  it("answers 413 for an oversized body without writing anything", async () => {
+    const id = await startSession();
+    await waitForStatus(id, "waiting_input");
+    const proc = lastProc();
+    proc.write.mock.calls.length = 0;
+
+    const res = await patch(id, "model", { model: "A".repeat(5 * 1024 * 1024) });
+    expect(res.status).toBe(413);
+    expect(written(proc)).toBe("");
+  }, 30000);
+
   it("rejects an off-registry effort level", async () => {
     const id = await startSession();
     await waitForStatus(id, "waiting_input");

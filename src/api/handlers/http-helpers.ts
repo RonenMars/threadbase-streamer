@@ -208,7 +208,12 @@ export function parseSessionListQuery(url: URL): ParsedSessionListQuery {
   return { query: { limit, sortBy, order, status, cursor } };
 }
 
-export class BodyTooLargeError extends Error {}
+export class BodyTooLargeError extends Error {
+  // errorMiddleware honours { statusCode, code }, so a handler that does not
+  // catch this itself still answers 413 rather than a bare 500.
+  readonly statusCode = 413;
+  readonly code = "PAYLOAD_TOO_LARGE";
+}
 
 /**
  * Read a request body, refusing one that grows past `maxBytes` as the bytes arrive.
