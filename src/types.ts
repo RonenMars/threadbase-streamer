@@ -244,6 +244,8 @@ export interface DiscoveredProcess {
   branch: string;
   conversationId: string | null; // JSONL UUID extracted from --resume arg
   startedAt: Date;
+  /** Set for a Claude teammate (`--agent-name` + `--team-name` in argv), which has no registry entry. */
+  teammate?: { agentName: string; teamName: string };
 }
 
 // ─── WebSocket Messages ────────────────────────────────────────────
