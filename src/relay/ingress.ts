@@ -1,6 +1,7 @@
 import { rmSync } from "fs";
 import type { Server as HttpServer, IncomingMessage } from "http";
 import { createServer, type Server } from "net";
+import { own } from "../e2ee/protocol";
 
 // Sockets the relay ingress listener accepted. Membership is decided by WHICH
 // LISTENER took the connection — never by a header, which a caller could forge
@@ -30,7 +31,7 @@ export const RELAY_CLIENT_HEADER = "x-tb-relay-client";
  */
 export function rateLimitKey(req: IncomingMessage | undefined): string {
   if (!isViaRelay(req?.socket)) return req?.socket?.remoteAddress ?? "unknown";
-  const tag = req?.headers[RELAY_CLIENT_HEADER];
+  const tag = req?.headers ? own(req.headers, RELAY_CLIENT_HEADER) : undefined;
   return `relay:${typeof tag === "string" ? tag : "unknown"}`;
 }
 
