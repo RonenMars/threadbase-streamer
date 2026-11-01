@@ -143,6 +143,10 @@ export function looksLikeClaudeProcess(commandLine: string): boolean {
   const tokens = tokenizeCommandLine(commandLine);
   if (tokens.length === 0) return false;
 
+  // The macOS desktop app (`Claude.app/Contents/MacOS/Claude`) and its helpers
+  // (a space in "Claude Helper" cuts the path at `.../Claude`) are not the CLI.
+  if (tokens[0].includes(".app/Contents/")) return false;
+
   const exe = exeBaseName(tokens[0]).toLowerCase();
   if (exe === "claude" || exe === "claude.exe") return true;
 

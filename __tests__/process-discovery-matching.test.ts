@@ -58,6 +58,23 @@ describe("looksLikeClaudeProcess", () => {
     expect(looksLikeClaudeProcess("")).toBe(false);
   });
 
+  // The desktop app's executable is also called `Claude`, and its helpers live
+  // under a `Claude.app/...` path whose first space-delimited token ends in
+  // `Claude` too (#1116).
+  it("does NOT match the Claude desktop app or its helpers", () => {
+    expect(looksLikeClaudeProcess("/Applications/Claude.app/Contents/MacOS/Claude")).toBe(false);
+    expect(
+      looksLikeClaudeProcess(
+        "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer) --type=renderer",
+      ),
+    ).toBe(false);
+    expect(
+      looksLikeClaudeProcess(
+        "/Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper --type=utility",
+      ),
+    ).toBe(false);
+  });
+
   it("does not match a node process running some other script", () => {
     expect(looksLikeClaudeProcess("node /opt/app/server.js --claude")).toBe(false);
   });
