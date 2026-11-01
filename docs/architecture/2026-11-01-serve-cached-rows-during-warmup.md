@@ -65,6 +65,21 @@ The condition is checked on every request, so a `cache_reset` that begins during
 Nothing in tb-mobile rejects an unknown field or header.
 Client work that would use the label (keep the banner up until `cache_ready` while showing the cached rows) is a separate change in tb-mobile.
 
+## Measured
+
+Fake `$HOME` with symlinked real roots (2981 Claude project dirs plus Codex and Cursor roots), its own `cache.db`, port 8799, build of this change, restart on a populated cache.
+Seconds from process start to the first 200, three restarts:
+
+| Endpoint | Before (503 until scan end) | After |
+|---|---|---|
+| `GET /api/conversations` | 5.8 – 6.2 s | 0.55 – 0.72 s |
+| `GET /api/conversations/count` | 5.8 – 6.2 s | 0.55 – 0.73 s |
+| `GET /api/sessions/count` | 5.8 – 6.2 s | 0.69 – 0.87 s |
+| `GET /api/conversations/:id` (still gated) | 5.8 – 6.2 s | 5.84 – 6.17 s |
+
+"Before" is read off the still-gated detail endpoint, which opens when the scan ends, on the same binary.
+The first boot on an empty cache is unchanged: every endpoint answered 503 until 98 s (one run, machine under load), with no `warming` label.
+
 ## Not done, on purpose
 
 - `GET /api/conversations/:id` stays gated: serving it means a second scan racing the first.
