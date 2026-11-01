@@ -4,14 +4,19 @@
  * Codex pid holds open. Both must be exact or say nothing — a wrong pairing
  * would let terminate/adopt act on someone else's conversation.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveSessionIds, type SessionIdResolvers } from "../src/process-discovery";
+import {
+  resolveSessionIds,
+  type SessionIdResolvers,
+  teammateFromArgs,
+} from "../src/process-discovery";
 import {
   CLAUDE_REGISTRY_START_SLACK_MS,
   claudeConfigDir,
   codexRolloutIdForPid,
+  findTeammateSessionId,
   parseClaudeRegistryEntry,
   parseLsofRolloutIds,
   procStartFromStat,
@@ -196,6 +201,7 @@ describe("resolveSessionIds", () => {
     return {
       claude: async () => null,
       codex: async () => null,
+      teammate: async () => null,
       ...overrides,
     };
   }
@@ -267,5 +273,164 @@ describe("resolveSessionIds", () => {
       }),
     );
     expect(out.map((p) => p.conversationId)).toEqual([null, null, null]);
+  });
+});
+
+// ─── Teammates: `claude --agent-id … --agent-name … --team-name …` ───────────
+//
+// A teammate is a separate `claude` process the lead spawned. It writes no
+// ~/.claude/sessions/<pid>.json and its argv names no session, so the only
+// exact evidence of its session is its own transcript, which records the
+// agentName and teamName it was launched with.
+
+const TEAMMATE_ARGS =
+  "/opt/homebrew/Caskroom/claude-code@latest/2.1.316/claude --agent-id cold-start@session-c4717b02 " +
+  "--agent-name cold-start --team-name session-c4717b02 --agent-color blue " +
+  "--parent-session-id c4717b02-545b-462b-b34c-0dc2e84cb553 --agent-type general-purpose";
+
+describe("teammateFromArgs", () => {
+  it("reads the agent and team name, and ignores the lead's --parent-session-id", () => {
+    expect(teammateFromArgs(TEAMMATE_ARGS)).toEqual({
+      agentName: "cold-start",
+      teamName: "session-c4717b02",
+    });
+  });
+
+  it("is null for a plain claude and when either name is missing", () => {
+    expect(teammateFromArgs("claude --dangerously-skip-permissions")).toBeNull();
+    expect(teammateFromArgs("claude --agent-name solo")).toBeNull();
+    expect(teammateFromArgs("claude --team-name t --agent-name")).toBeNull();
+    expect(teammateFromArgs("claude --agent-name --team-name t")).toBeNull();
+  });
+});
+
+describe("findTeammateSessionId", () => {
+  const MINE = "74d3fb6a-bc09-42cc-a887-cf75a3dda782";
+  const OTHER = "230d3794-7f03-4249-83f1-ae6cd6dbfbfc";
+  const CWD = "/Users/someone/dev/my.repo";
+  const START = new Date("2026-11-01T18:00:00Z");
+  let configDir: string;
+  let projectDir: string;
+
+  function transcript(
+    name: string,
+    id: string,
+    who: { agentName: string; teamName: string } | null,
+    mtime: Date,
+  ): void {
+    const lines = [
+      JSON.stringify({ type: "summary", note: "no agent fields here" }),
+      JSON.stringify({ type: "user", ...(who ?? {}), sessionId: id }),
+    ];
+    writeFileSync(join(projectDir, name), `${lines.join("\n")}\n`);
+    utimesSync(join(projectDir, name), mtime, mtime);
+  }
+  const after = new Date("2026-11-01T18:05:00Z");
+  const me = { agentName: "cold-start", teamName: "session-c4717b02" };
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "threadbase-teammate-"));
+    // Claude names a project's directory by replacing every non-alphanumeric.
+    projectDir = join(configDir, "projects", "-Users-someone-dev-my-repo");
+    mkdirSync(projectDir, { recursive: true });
+  });
+  afterEach(() => rmSync(configDir, { recursive: true, force: true }));
+
+  const find = (processStartedAt: Date | undefined = START) =>
+    findTeammateSessionId(CWD, "cold-start", "session-c4717b02", { configDir, processStartedAt });
+
+  it("returns the id of the one transcript carrying this agent and team", async () => {
+    transcript(`${MINE}.jsonl`, MINE, me, after);
+    transcript(`${OTHER}.jsonl`, OTHER, { ...me, agentName: "someone-else" }, after);
+    await expect(find()).resolves.toBe(MINE);
+  });
+
+  it("ignores a transcript from a different team with the same agent name", async () => {
+    transcript(`${OTHER}.jsonl`, OTHER, { ...me, teamName: "session-other" }, after);
+    await expect(find()).resolves.toBeNull();
+  });
+
+  it("ignores a transcript last written before the process started", async () => {
+    transcript(`${MINE}.jsonl`, MINE, me, new Date("2026-11-01T10:00:00Z"));
+    await expect(find()).resolves.toBeNull();
+  });
+
+  it("refuses to choose when two transcripts both match", async () => {
+    transcript(`${MINE}.jsonl`, MINE, me, after);
+    transcript(`${OTHER}.jsonl`, OTHER, me, after);
+    await expect(find()).resolves.toBeNull();
+  });
+
+  it("ignores a file whose name is not a session uuid", async () => {
+    transcript("notes.jsonl", MINE, me, after);
+    await expect(find()).resolves.toBeNull();
+  });
+
+  it("is null when the project directory does not exist", async () => {
+    await expect(
+      findTeammateSessionId("/nowhere/at/all", "cold-start", "session-c4717b02", { configDir }),
+    ).resolves.toBeNull();
+  });
+});
+
+describe("resolveSessionIds for a teammate", () => {
+  const TEAM = { agentName: "cold-start", teamName: "session-c4717b02" };
+  const TEAMMATE_ID = "74d3fb6a-bc09-42cc-a887-cf75a3dda782";
+  const base: DiscoveredProcess = {
+    pid: PID,
+    provider: "claude-code",
+    projectPath: "/Users/someone/dev/foo",
+    projectName: "foo",
+    branch: "main",
+    conversationId: null,
+    startedAt: new Date("2026-10-02T10:00:00Z"),
+  };
+  const none: SessionIdResolvers = {
+    claude: async () => null,
+    codex: async () => null,
+    teammate: async () => null,
+  };
+
+  it("gives a teammate with no registry entry the id of its own transcript", async () => {
+    const teammate = vi.fn(async () => TEAMMATE_ID);
+    const [out] = await resolveSessionIds(
+      [{ ...base, teammate: TEAM }],
+      new Map([[PID, base.startedAt]]),
+      { ...none, teammate },
+    );
+    expect(out.conversationId).toBe(TEAMMATE_ID);
+    expect(teammate).toHaveBeenCalledWith(
+      expect.objectContaining({ projectPath: base.projectPath, teammate: TEAM }),
+      base.startedAt,
+    );
+  });
+
+  it("lets the registry win over the transcript lookup", async () => {
+    const teammate = vi.fn(async () => TEAMMATE_ID);
+    const [out] = await resolveSessionIds([{ ...base, teammate: TEAM }], new Map(), {
+      ...none,
+      claude: async () => ({ pid: PID, sessionId: SESSION }),
+      teammate,
+    });
+    expect(out.conversationId).toBe(SESSION);
+    expect(teammate).not.toHaveBeenCalled();
+  });
+
+  it("keeps an id the teammate's argv already states", async () => {
+    const teammate = vi.fn(async () => TEAMMATE_ID);
+    const [out] = await resolveSessionIds(
+      [{ ...base, teammate: TEAM, conversationId: SESSION }],
+      new Map(),
+      { ...none, teammate },
+    );
+    expect(out.conversationId).toBe(SESSION);
+    expect(teammate).not.toHaveBeenCalled();
+  });
+
+  it("never runs the transcript lookup for a process that is not a teammate", async () => {
+    const teammate = vi.fn(async () => TEAMMATE_ID);
+    const [out] = await resolveSessionIds([base], new Map(), { ...none, teammate });
+    expect(out.conversationId).toBeNull();
+    expect(teammate).not.toHaveBeenCalled();
   });
 });
