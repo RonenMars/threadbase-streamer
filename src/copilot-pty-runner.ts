@@ -13,6 +13,7 @@ import {
   readReplayLines,
   refuseIfDisposed,
   stripAnsi,
+  trimOutputBuffer,
 } from "./pty-shared";
 import {
   COPILOT_FOOTER_ROWS,
@@ -175,9 +176,7 @@ export class CopilotPtyRunner implements SessionRunner {
     proc.onData((data: string) => {
       if (this.sessions.get(sessionId) !== session) return;
       session.outputBuffer = Buffer.concat([session.outputBuffer, Buffer.from(data)]);
-      if (session.outputBuffer.length > OUTPUT_BUFFER_MAX) {
-        session.outputBuffer = session.outputBuffer.subarray(-OUTPUT_BUFFER_MAX);
-      }
+      session.outputBuffer = trimOutputBuffer(session.outputBuffer, OUTPUT_BUFFER_MAX);
       // The spinner repaints faster than the quiet check, so the busy row is
       // only ever seen by looking as each chunk lands.
       session.screen.write(data, () => {
