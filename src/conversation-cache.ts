@@ -217,6 +217,12 @@ function shortProjectName(fullPath: string): string {
   return parts.slice(-3).join("/");
 }
 
+// Bounds on one populateTailFromFile call (see there).
+const TAIL_MAX_LINE_BYTES = 1024 * 1024;
+const TAIL_READ_BUDGET_BYTES = 64 * 1024 * 1024;
+// Chunk size while skipping an oversized line, so a 30 MB line costs ~30 reads, not ~4000.
+const TAIL_SKIP_CHUNK_BYTES = 1024 * 1024;
+
 function normalizeContent(raw: ContentBlock[] | string | null | undefined): ContentBlock[] {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === "string") return [{ type: "text", text: raw }];
@@ -1686,6 +1692,12 @@ export class ConversationCache {
   // bounded regardless of file size. Uses updated_at=0 so any live
   // updateFromLine() call (which uses Date.now()) always wins the upsert.
   // Returns false if the file cannot be read or the tail already exists.
+  //
+  // Cost per call is bounded: a line is assembled once from byte pieces (the old
+  // `chunk + partial` re-copy and re-split per 8 KB step was quadratic in the
+  // line length, ~7 s for one 32 MB Codex tool output), a line over
+  // TAIL_MAX_LINE_BYTES is skipped (in 1 MiB reads, never decoded), and the backward walk stops after
+  // TAIL_READ_BUDGET_BYTES. A tail built from lines that large is not a preview.
   populateTailFromFile(convId: string, filePath: string): boolean {
     if (this.stmts.hasTail.get(convId)) return false;
 
@@ -1699,26 +1711,51 @@ export class ConversationCache {
     }
 
     const CHUNK = 8192;
-    const buf = Buffer.allocUnsafe(CHUNK);
+    const buf = Buffer.allocUnsafe(TAIL_SKIP_CHUNK_BYTES);
     let pos = fileSize;
-    let partial = "";
+    let readBytes = 0;
     const lines: string[] = [];
+    // Pieces of the line being assembled, nearest-to-end of file first.
+    let pieces: Buffer[] = [];
+    let pieceBytes = 0;
+    let oversized = false;
+    const addPiece = (piece: Buffer) => {
+      if (oversized || piece.length === 0) return;
+      pieceBytes += piece.length;
+      if (pieceBytes > TAIL_MAX_LINE_BYTES) {
+        oversized = true;
+        pieces = [];
+        return;
+      }
+      pieces.push(Buffer.from(piece)); // copy: `buf` is reused for the next read
+    };
+    const endLine = () => {
+      lines.push(oversized ? "" : Buffer.concat(pieces.reverse()).toString("utf8"));
+      pieces = [];
+      pieceBytes = 0;
+      oversized = false;
+    };
 
     try {
-      while (pos > 0 && lines.length < this.tailSize * 4) {
-        const toRead = Math.min(CHUNK, pos);
+      while (pos > 0 && lines.length < this.tailSize * 4 && readBytes < TAIL_READ_BUDGET_BYTES) {
+        const toRead = Math.min(oversized ? TAIL_SKIP_CHUNK_BYTES : CHUNK, pos);
         pos -= toRead;
         readSync(fd, buf, 0, toRead, pos);
-        const chunk = buf.subarray(0, toRead).toString("utf8");
-        const combined = chunk + partial;
-        const parts = combined.split("\n");
-        // parts[0] may be a partial line — keep it for the next iteration
-        partial = parts[0];
-        for (let i = parts.length - 1; i >= 1; i--) {
-          lines.push(parts[i]);
+        readBytes += toRead;
+        const chunk = buf.subarray(0, toRead);
+        // Walk the newlines from the end; what precedes the first one may be
+        // the tail of a line that began in an earlier chunk, so it is kept.
+        let end = toRead;
+        while (end > 0) {
+          const nl = chunk.lastIndexOf(10, end - 1);
+          if (nl === -1) break;
+          addPiece(chunk.subarray(nl + 1, end));
+          endLine();
+          end = nl;
         }
+        addPiece(chunk.subarray(0, end));
       }
-      if (partial) lines.push(partial);
+      if (pieceBytes > 0 || oversized) endLine();
     } finally {
       closeSync(fd);
     }
