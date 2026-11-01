@@ -14,6 +14,7 @@ import {
   readReplayLines,
   refuseIfDisposed,
   stripAnsi,
+  trimOutputBuffer,
 } from "./pty-shared";
 import type {
   ManagedSession,
@@ -520,11 +521,7 @@ export class CursorPtyRunner implements SessionRunner {
 
     const chunk = Buffer.from(data, "utf-8");
     session.outputBuffer = Buffer.concat([session.outputBuffer, chunk]);
-    if (session.outputBuffer.length > OUTPUT_BUFFER_MAX) {
-      session.outputBuffer = session.outputBuffer.subarray(
-        session.outputBuffer.length - OUTPUT_BUFFER_MAX,
-      );
-    }
+    session.outputBuffer = trimOutputBuffer(session.outputBuffer, OUTPUT_BUFFER_MAX);
 
     session.screen.write(data);
     session.lastOutput = stripAnsi(data);

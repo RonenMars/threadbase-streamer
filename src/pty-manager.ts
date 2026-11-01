@@ -15,6 +15,7 @@ import {
   readReplayLines,
   refuseIfDisposed,
   stripAnsi,
+  trimOutputBuffer,
 } from "./pty-shared";
 import {
   detectGateScreen,
@@ -970,11 +971,7 @@ export class PTYManager implements SessionRunner {
 
     session.outputBuffer = Buffer.concat([session.outputBuffer, chunk]);
 
-    if (session.outputBuffer.length > OUTPUT_BUFFER_MAX) {
-      session.outputBuffer = session.outputBuffer.subarray(
-        session.outputBuffer.length - OUTPUT_BUFFER_MAX,
-      );
-    }
+    session.outputBuffer = trimOutputBuffer(session.outputBuffer, OUTPUT_BUFFER_MAX);
 
     // Render into the headless screen so getOutputLines() can reproduce true
     // on-screen order. write() is async (parsed on a later tick) but we never
