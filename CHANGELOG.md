@@ -1,3 +1,9 @@
+## [1.126.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.125.2...v1.126.0) (2026-11-01)
+
+### Features
+
+* **search:** tag search results with the outside process running them ([#1105](https://github.com/RonenMars/threadbase-streamer/issues/1105)) ([b2f11bf](https://github.com/RonenMars/threadbase-streamer/commit/b2f11bf8286d6045889ebd7096fc447c253eab2b))
+
 ## [1.125.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.125.1...v1.125.2) (2026-11-01)
 
 ### Bug Fixes
