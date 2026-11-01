@@ -1952,11 +1952,25 @@ export class StreamerServer {
             // the whole call in one synchronous db.transaction with a sync
             // file read per item and otherwise blocks the event loop for
             // the whole corpus in one shot.
+            //
+            // A batch of 50 is only as short as its slowest file, and the agent
+            // classification reads a file whole when it holds no `"entrypoint":`
+            // field (every Codex rollout), so a batch of Codex rollouts held the
+            // loop for 165 ms. The size therefore starts at 1, doubles while a
+            // batch stays inside the slice budget and halves when it does not.
             const UPSERT_BATCH = 50;
+            const SLICE_MS = 20;
             const upsertedIds = new Set<string>();
-            for (let i = 0; i < metas.length; i += UPSERT_BATCH) {
-              const batch = metas.slice(i, i + UPSERT_BATCH);
+            let upsertSize = 1;
+            for (let i = 0; i < metas.length; ) {
+              const batch = metas.slice(i, i + upsertSize);
+              i += batch.length;
+              const started = performance.now();
               for (const id of this.cache.upsertFromScannerMeta(batch)) upsertedIds.add(id);
+              upsertSize =
+                performance.now() - started > SLICE_MS
+                  ? Math.max(1, upsertSize >> 1)
+                  : Math.min(UPSERT_BATCH, upsertSize * 2);
               await new Promise<void>((r) => setImmediate(r));
             }
             const tailTargets: Array<{ id: string; filePath: string }> = [];
@@ -1974,7 +1988,6 @@ export class StreamerServer {
             const BATCH = 50;
             // A batch of 50 is only as short as its slowest call, so also yield once a
             // slice has used its time budget (a huge rollout once cost 7 s per call).
-            const TAIL_SLICE_MS = 20;
             let sliceStart = performance.now();
             let tailFailures = 0;
             for (let i = 0; i < tailTargets.length; i += BATCH) {
@@ -2001,7 +2014,7 @@ export class StreamerServer {
                     { id: t.id, event: "cache.warmup_tail_failed" },
                   );
                 }
-                if (performance.now() - sliceStart >= TAIL_SLICE_MS) {
+                if (performance.now() - sliceStart >= SLICE_MS) {
                   await new Promise<void>((r) => setImmediate(r));
                   sliceStart = performance.now();
                 }
