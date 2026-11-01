@@ -14,6 +14,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { basename, join } from "path";
 import { createInterface } from "readline";
 import { ConversationCache } from "../../conversation-cache";
+import { own } from "../../e2ee/protocol";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { Logger } from "../../logger";
 import {
@@ -1675,7 +1676,7 @@ export class ConversationHandlers {
   // endpoint's single-string input exactly. `Accept-Query` advertises the
   // supported request media type per the spec.
   async handleSearchTarget(id: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const contentType = (req.headers["content-type"] ?? "").split(";")[0].trim();
+    const contentType = (own(req.headers, "content-type") ?? "").split(";")[0].trim();
     if (contentType && contentType !== "application/json") {
       res.setHeader("Accept-Query", "application/json");
       json(res, 415, {
