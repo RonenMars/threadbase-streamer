@@ -10,7 +10,7 @@ import {
   PUSH_TOKEN_KINDS,
   tokenState,
 } from "../../db/repositories/push.repository";
-import { E2EE_PROTOCOL_VERSION } from "../../e2ee/protocol";
+import { E2EE_PROTOCOL_VERSION, own } from "../../e2ee/protocol";
 import type { FeatureFlagSource } from "../../feature-flags";
 import { getLogger } from "../../logger";
 import { NotificationPrefsSchema } from "../../schemas/notification-prefs.schema";
@@ -560,7 +560,7 @@ export const createMiscRoutes = (
         400,
       );
     }
-    const headerLocale = c.env.incoming.headers["accept-language"]?.split(/[,;]/)[0]?.trim();
+    const headerLocale = own(c.env.incoming.headers, "accept-language")?.split(/[,;]/)[0]?.trim();
     const locale =
       bodyLocale ?? (headerLocale && LOCALE_TAG_RE.test(headerLocale) ? headerLocale : null);
 
