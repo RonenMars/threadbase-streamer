@@ -15,7 +15,14 @@ import { type AgentConfig, readAgentConfig } from "./agent/agent-config";
 import { type ConversationWriter, createConversationWriter } from "./agent/conversation-writer";
 import { type AppEnv, createHonoApp } from "./api/app";
 import { ConversationHandlers } from "./api/handlers/conversations.handlers";
-import { BodyTooLargeError, json, readBody, writeHonoResponse } from "./api/handlers/http-helpers";
+import {
+  BodyTooLargeError,
+  json,
+  readBody,
+  WARMING_HEADER,
+  warmingTag,
+  writeHonoResponse,
+} from "./api/handlers/http-helpers";
 import { SessionHandlers } from "./api/handlers/sessions.handlers";
 import { describeE2eeCapability, E2EE_OFF_SWITCH } from "./api/routes/misc.routes";
 import { ALREADY_HANDLED } from "./api/routes/sessions.routes";
@@ -380,6 +387,13 @@ export class StreamerServer {
   private binding = false;
   private activeWarmups = new Map<number, ServerWarmupState>([[0, "startup"]]);
   private nextWarmupId = 1;
+  // True when cache.db already held conversation rows at boot. Fixed before the
+  // startup scan begins, so a first boot never starts serving the rows its own
+  // scan is inserting. Only then may the startup gate answer reads from cache.
+  private startupHadCachedRows = false;
+  // The session registry's rehydration (listen()) has finished, so the session
+  // list is complete. Starts true: it is cleared only when a boot recovery runs.
+  private bootRecoverySettled = true;
   // Every fire-and-forget task that runs a scan and then writes to this.cache
   // in an async continuation (startup warm-up, background count refresh, …).
   // close() awaits all of them before closing this.cache, so a scan's post-scan
@@ -829,7 +843,8 @@ export class StreamerServer {
       // reset-and-rescan, and tests swap `log` on the server instance.
       cache: () => this.cache,
       log: () => this.log,
-      rejectIfWarmingUp: (res) => this.rejectIfWarmingUp(res),
+      rejectIfWarmingUp: (res, serveCached) => this.rejectIfWarmingUp(res, serveCached),
+      warmupState: () => this.currentWarmupState(),
       withWarmup: (state, operation) => this.withWarmup(state, operation),
       trackCacheWrite: (task) => this.trackCacheWrite(task),
       resolveConversationLookupId: (uuid) => this.resolveConversationLookupId(uuid),
@@ -915,7 +930,8 @@ export class StreamerServer {
       setDiscoveryInFlight: (value) => {
         this.discoveryInFlight = value;
       },
-      rejectIfWarmingUp: (res) => this.rejectIfWarmingUp(res),
+      rejectIfWarmingUp: (res, serveCached) => this.rejectIfWarmingUp(res, serveCached),
+      warmupState: () => this.currentWarmupState(),
       ptyAttachedIds: () => this.ptyAttachedIds(),
       withReconciledLifecycle: (sessions) => this.withReconciledLifecycle(sessions),
       broadcastOrUnicastSessionList: (req) => this.broadcastOrUnicastSessionList(req),
@@ -1478,6 +1494,12 @@ export class StreamerServer {
     return current;
   }
 
+  private canServeDuringWarmup(kind: "conversations" | "sessions"): boolean {
+    if (!this.startupHadCachedRows) return false;
+    for (const state of this.activeWarmups.values()) if (state !== "startup") return false;
+    return kind === "conversations" || this.bootRecoverySettled;
+  }
+
   private beginWarmup(state: ServerWarmupState): number {
     const id = this.nextWarmupId++;
     this.activeWarmups.set(id, state);
@@ -1498,9 +1520,25 @@ export class StreamerServer {
     }
   }
 
-  private rejectIfWarmingUp(res: ServerResponse): boolean {
+  /**
+   * The startup gate. With `serveCached` the read may answer during the startup
+   * scan instead of 503, provided cache.db had rows at boot and nothing but the
+   * startup scan is running (a cache reset or refresh means the rows are being
+   * rebuilt). `"sessions"` also waits for boot recovery, since the session list
+   * is the registry, not the cache. A served response carries WARMING_HEADER;
+   * its rows are from the last completed scan and may be stale.
+   */
+  private rejectIfWarmingUp(
+    res: ServerResponse,
+    serveCached?: "conversations" | "sessions",
+  ): boolean {
     const warmupState = this.currentWarmupState();
     if (!warmupState) return false;
+    if (serveCached && this.canServeDuringWarmup(serveCached)) {
+      res.setHeader(WARMING_HEADER, warmupState);
+      return false;
+    }
+    res.removeHeader(WARMING_HEADER);
     const body: ServerWarmingUpResponse = {
       error: "Server is warming up",
       code: "SERVER_WARMING_UP",
@@ -1748,6 +1786,8 @@ export class StreamerServer {
               );
             }
           }
+          this.startupHadCachedRows =
+            this.cache.listConversations({ limit: 0, offset: 0 }).total > 0;
           const db = this.cache.getDatabase();
           this.projectsRepo = new ProjectsRepository(db);
           this.conversationsRepo = new ConversationsRepository(this.cache);
@@ -1882,9 +1922,13 @@ export class StreamerServer {
         //
         // Each step bails once close() has begun: a stop can land mid-chain,
         // and anything after teardown would read or write a closed registry.
+        this.bootRecoverySettled = false;
         this.bootRecovery = this.registryBoot.reconcilePreviousSessions().then(async (v) => {
           if (this.closing) return;
           const recoverableRows = this.registryBoot.rehydratePreviousSessions(v);
+          // The session list is complete once rehydration is done; auto-resume
+          // can take as long as it needs without holding the list back.
+          this.bootRecoverySettled = true;
           await this.registryBoot.autoResumePreviousSessions(recoverableRows);
           // Last, so retention can never delete a row this boot still wanted:
           // reconciliation has finished probing, rehydration has finished
@@ -2947,14 +2991,14 @@ export class StreamerServer {
   }
 
   private handleSessionsCount(res: ServerResponse): void {
-    if (this.rejectIfWarmingUp(res)) return;
+    if (this.rejectIfWarmingUp(res, "sessions")) return;
     // Recovered stubs are excluded: this badge means "sessions this streamer is
     // running", and a restart must not inflate it with everything it could
     // offer to resume. The updater's active-session probe reads the same number.
     const total = this.sessionStore
       .list(this.ptyAttachedIds())
       .filter((s) => s.ownership !== "historical").length;
-    json(res, 200, { total });
+    json(res, 200, { total, ...warmingTag(this.currentWarmupState()) });
   }
 
   /**

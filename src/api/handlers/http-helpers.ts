@@ -4,6 +4,7 @@ import type { ConversationListItem } from "../../conversation-cache";
 import { MAX_RECORD_BYTES } from "../../e2ee/record";
 import { CLAUDE_CODE_PROVIDER, isProviderResumable } from "../../providers";
 import type {
+  ServerWarmupState,
   SessionListQuery,
   SessionSortKey,
   SortOrder as SessionSortOrder,
@@ -78,6 +79,22 @@ export function conversationToResumableSession(c: ConversationListItem) {
       unavailable_reason: availability.unavailable_reason,
     }),
   };
+}
+
+/**
+ * Set on a read answered from cache.db while the startup scan is still running.
+ * The same fact goes in the body as `warming` wherever the body is an object,
+ * because a relayed (e2ee) response may not carry headers. Absent once the scan
+ * has finished; clients treat a labelled answer as possibly stale and refetch on
+ * the `cache_ready` WebSocket event.
+ */
+export const WARMING_HEADER = "X-Threadbase-Warming";
+
+/** Spread into an object response body: `warming` while serving partial, else nothing. */
+export function warmingTag(state: ServerWarmupState | null | undefined): {
+  warming?: ServerWarmupState;
+} {
+  return state ? { warming: state } : {};
 }
 
 export function json(res: ServerResponse, status: number, data: unknown): void {

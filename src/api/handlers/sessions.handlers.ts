@@ -79,6 +79,7 @@ import type {
   DiscoveredProcess,
   ManagedSession,
   PermissionOption,
+  ServerWarmupState,
   SessionResponse,
   WSMessage,
 } from "../../types";
@@ -91,6 +92,7 @@ import {
   json,
   parseSessionListQuery,
   readBody,
+  warmingTag,
 } from "./http-helpers";
 
 const BROWSE_SYSTEM_PROMPT = (browseRoot: string) =>
@@ -334,7 +336,10 @@ export type SessionHandlersDeps = {
   setDiscoveryInFlight: (value: Promise<DiscoveredProcess[]> | null) => void;
 
   // Methods that stay on StreamerServer.
-  rejectIfWarmingUp: (res: ServerResponse) => boolean;
+  /** `serveCached`: the read may answer during the startup scan (see StreamerServer). */
+  rejectIfWarmingUp: (res: ServerResponse, serveCached?: "conversations" | "sessions") => boolean;
+  /** The warm-up in progress, read after the gate let a request through (so: partial). */
+  warmupState?: () => ServerWarmupState | null;
   ptyAttachedIds: () => Set<string>;
   withReconciledLifecycle: (sessions: readonly SessionResponse[]) => readonly SessionResponse[];
   broadcastOrUnicastSessionList: (req: IncomingMessage) => void;
@@ -529,7 +534,8 @@ export class SessionHandlers {
   }
 
   async handleListSessions(url: URL, res: ServerResponse): Promise<void> {
-    if (this.deps.rejectIfWarmingUp(res)) return;
+    if (this.deps.rejectIfWarmingUp(res, "sessions")) return;
+    const warming = this.deps.warmupState?.() ?? null;
 
     await this.refreshDiscovery();
 
@@ -568,7 +574,7 @@ export class SessionHandlers {
           this.deps.withReconciledLifecycle(page.sessions),
         ),
       );
-      json(res, 200, page);
+      json(res, 200, { ...page, ...warmingTag(warming) });
     } catch (err) {
       if (err instanceof Error && err.message === "INVALID_CURSOR") {
         json(res, 400, { error: "Invalid cursor" });
@@ -628,7 +634,7 @@ export class SessionHandlers {
   }
 
   async handleGetSession(sessionId: string, res: ServerResponse): Promise<void> {
-    if (this.deps.rejectIfWarmingUp(res)) return;
+    if (this.deps.rejectIfWarmingUp(res, "sessions")) return;
     // A response copy, so decorating it means building a new object — see
     // SessionStore.get(). Persisting anything here would need updateManaged().
     const base = this.sessionStore.get(sessionId, this.deps.ptyAttachedIds());
@@ -673,6 +679,9 @@ export class SessionHandlers {
       json(res, 200, conversationToResumableSession(conversation));
       return;
     }
+    // A partial index cannot say "not found": the conversation may be on disk
+    // and not scanned yet. Ask the client to retry, as before the warm-up served.
+    if (this.deps.warmupState?.() && this.deps.rejectIfWarmingUp(res)) return;
     json(res, 404, { error: "Session not found" });
   }
 
