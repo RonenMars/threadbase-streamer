@@ -86,6 +86,37 @@ describe("conversations tagged with the outside process running them", () => {
     expect(proj.liveExternalCount).toBe(1);
   });
 
+  it("tags a search result, and does not wait for a slow discovery scan", async () => {
+    const q = "/api/search?q=security&limit=50";
+    const before = (await get(q)) as any;
+    const row = before.conversations.find((c: any) => c.id.includes(SESSION_ID));
+    // control: the query finds the conversation, and nothing outside is running
+    expect(row).toBeDefined();
+    expect(row.ownership).toBeUndefined();
+
+    await discoverOutside(row.id, row.projectPath);
+    const after = (await get(q)) as any;
+    const tagged = after.conversations.find((c: any) => c.id === row.id);
+    expect(tagged.ownership).toBe("external");
+    expect(tagged.processLiveness).toBe("alive");
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const refresh = vi
+      .spyOn((server as any).sessionHandlers, "refreshDiscovery")
+      .mockImplementation(async () => {
+        await gate;
+        return [];
+      });
+    const started = Date.now();
+    const slow = (await get(q)) as any;
+    const elapsed = Date.now() - started;
+    release();
+    expect(refresh).toHaveBeenCalled();
+    expect(slow.conversations.find((c: any) => c.id === row.id)).toBeDefined();
+    expect(elapsed).toBeLessThan(2000);
+  });
+
   it("the single view does not wait for a slow discovery scan", async () => {
     const list = (await get("/api/conversations?limit=50")) as any;
     const id = list.conversations.find((c: any) => c.id.includes(SESSION_ID)).id;

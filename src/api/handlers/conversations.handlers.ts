@@ -1799,8 +1799,11 @@ export class ConversationHandlers {
 
     const visible = adapted.filter((r) => this.cache?.isVisible(r.id) ?? true);
     const page = paginate(applyFilters(visible, filters), offset, limit);
+    // Same non-blocking read as the single view: a cold process scan must not
+    // hold a search response, and an untagged row is the safe fallback.
+    const external = await this.externalConversationIds(false);
     json(res, 200, {
-      conversations: page.items,
+      conversations: page.items.map((r) => ({ ...r, ...externalTag(external, r.id) })),
       hasMore: page.hasMore,
       offset: page.offset,
       total: page.total,
