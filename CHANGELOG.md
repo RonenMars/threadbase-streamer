@@ -1,3 +1,9 @@
+## [1.125.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.125.1...v1.125.2) (2026-11-01)
+
+### Bug Fixes
+
+* **sessions:** keep external lifecycle and clamp list limit and offset ([#1102](https://github.com/RonenMars/threadbase-streamer/issues/1102)) ([23f8c72](https://github.com/RonenMars/threadbase-streamer/commit/23f8c72362f845fe5b04837f61f6236dc679153e)), closes [#1101](https://github.com/RonenMars/threadbase-streamer/issues/1101) [#1100](https://github.com/RonenMars/threadbase-streamer/issues/1100) [#1099](https://github.com/RonenMars/threadbase-streamer/issues/1099)
+
 ## [1.125.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.125.0...v1.125.1) (2026-11-01)
 
 ### Bug Fixes
