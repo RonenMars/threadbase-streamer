@@ -59,6 +59,7 @@ import {
   intParam,
   json,
   readBody,
+  warmingTag,
 } from "./http-helpers";
 
 // Search filters are applied after the scanner returns, so we ask it for more
@@ -131,7 +132,10 @@ export type ConversationHandlersDeps = {
   scanProfiles: ScanProfile[] | undefined;
   cache: () => ConversationCache | null;
   log: () => Logger;
-  rejectIfWarmingUp: (res: ServerResponse) => boolean;
+  /** `serveCached`: the read may answer from cache.db during the startup scan. */
+  rejectIfWarmingUp: (res: ServerResponse, serveCached?: "conversations" | "sessions") => boolean;
+  /** The warm-up in progress, read after the gate let a request through (so: partial). */
+  warmupState?: () => ServerWarmupState | null;
   withWarmup: <T>(state: ServerWarmupState, operation: () => Promise<T>) => Promise<T>;
   trackCacheWrite: (task: Promise<unknown>) => void;
   resolveConversationLookupId: (uuid: string) => string;
@@ -306,7 +310,9 @@ export class ConversationHandlers {
   }
 
   async handleListConversations(url: URL, res: ServerResponse): Promise<void> {
-    if (this.deps.rejectIfWarmingUp(res)) return;
+    if (this.deps.rejectIfWarmingUp(res, "conversations")) return;
+    // Non-null only when the gate let this through during the startup scan.
+    const warming = this.deps.warmupState?.() ?? null;
     const external = await this.externalConversationIds();
 
     const limit = boundedIntParam(url, "limit", 50, 1, 500);
@@ -326,8 +332,10 @@ export class ConversationHandlers {
     // next poll sees the fresh data (stale-while-revalidate). Block only when
     // there is nothing to serve (cold cache) or the caller asked for fresh data
     // explicitly with ?refresh=1.
-    const reconcileMode = this.scannerManager.reconcileMode();
-    if (this.cache && (bustCache || reconcileMode)) {
+    // Never while the startup scan runs: it is the reconcile, and a second scan
+    // beside it doubles the work this answer exists to avoid waiting for.
+    const reconcileMode = warming ? null : this.scannerManager.reconcileMode();
+    if (this.cache && ((bustCache && !warming) || reconcileMode)) {
       const warm = this.cache.listConversations({ limit: 0, offset: 0 }).total > 0;
       if (warm && !bustCache) {
         this.scannerManager.startBackgroundReconcile(reconcileMode ?? "full");
@@ -358,7 +366,7 @@ export class ConversationHandlers {
     const parentPath = filters.parent
       ? this.cache?.getMetaById(this.deps.resolveConversationLookupId(filters.parent))?.filePath
       : undefined;
-    if (parentPath) {
+    if (parentPath && !warming) {
       try {
         await this.scannerManager.refreshSubagentsOf(parentPath);
       } catch (err) {
@@ -433,7 +441,13 @@ export class ConversationHandlers {
         ...this.importFlags(c),
         ...externalTag(external, c.id),
       }));
-      json(res, 200, { conversations: adapted, hasMore: offset + limit < total, offset, total });
+      json(res, 200, {
+        conversations: adapted,
+        hasMore: offset + limit < total,
+        offset,
+        total,
+        ...warmingTag(warming),
+      });
       return;
     }
 
@@ -494,7 +508,8 @@ export class ConversationHandlers {
   }
 
   async handleConversationsCount(url: URL, res: ServerResponse): Promise<void> {
-    if (this.deps.rejectIfWarmingUp(res)) return;
+    if (this.deps.rejectIfWarmingUp(res, "conversations")) return;
+    const warming = this.deps.warmupState?.() ?? null;
 
     const filters = this.listFilters(url);
     const bustCache = url.searchParams.get("refresh") === "1";
@@ -511,8 +526,8 @@ export class ConversationHandlers {
         limit: 0,
         offset: 0,
       });
-      json(res, 200, { total });
-      if (bustCache) this.refreshCountInBackground();
+      json(res, 200, { total, ...warmingTag(warming) });
+      if (bustCache && !warming) this.refreshCountInBackground();
       return;
     }
 
@@ -560,7 +575,7 @@ export class ConversationHandlers {
   }
 
   handleGetRecentSessions(url: URL, res: ServerResponse): void {
-    if (this.deps.rejectIfWarmingUp(res)) return;
+    if (this.deps.rejectIfWarmingUp(res, "conversations")) return;
     const limit = boundedIntParam(url, "limit", 20, 1, 100);
     if (!this.cache) {
       json(res, 200, { sessions: [], total: 0 });
@@ -588,7 +603,11 @@ export class ConversationHandlers {
       startedAt: c.lastActivity,
       lastActivityAt: c.lastActivity,
     }));
-    json(res, 200, { sessions, total: sessions.length });
+    json(res, 200, {
+      sessions,
+      total: sessions.length,
+      ...warmingTag(this.deps.warmupState?.() ?? null),
+    });
   }
 
   handleGetPopularProjects(url: URL, res: ServerResponse): void {
@@ -602,7 +621,7 @@ export class ConversationHandlers {
   }
 
   async handleGetProjectSummaries(url: URL, res: ServerResponse): Promise<void> {
-    if (this.deps.rejectIfWarmingUp(res)) return;
+    if (this.deps.rejectIfWarmingUp(res, "conversations")) return;
     const limit = boundedIntParam(url, "limit", 200, 1, 500);
     const offset = boundedIntParam(url, "offset", 0, 0, Number.MAX_SAFE_INTEGER);
     if (!this.cache) {
@@ -626,7 +645,13 @@ export class ConversationHandlers {
       ...p,
       liveExternalCount: live.get(canonicalizeProjectPath(p.path)) ?? 0,
     }));
-    json(res, 200, { projects: tagged, total, offset, hasMore: offset + projects.length < total });
+    json(res, 200, {
+      projects: tagged,
+      total,
+      offset,
+      hasMore: offset + projects.length < total,
+      ...warmingTag(this.deps.warmupState?.() ?? null),
+    });
   }
 
   findJsonlPath(uuid: string): string | null {
