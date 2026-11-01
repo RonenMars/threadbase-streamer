@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import type { UpdateConfig } from "../schemas/updateConfig.schema";
 import { countActiveSessions } from "./active-sessions";
 import { isBrewInstall } from "./brew-detect";
@@ -139,6 +139,16 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
   const directoryVersion = `${targetVersion}+install.${randomUUID()}`;
   const destDir = releaseDir(directoryVersion);
   await unpackTarball({ tarballPath, destDir });
+  // The release now lives in destDir and rollback reads that tree, so the
+  // tarball is dead weight (24-35 MB per release). Only the file this run
+  // downloaded is removed, and a failure here must not abort the install.
+  try {
+    rmSync(tarballPath, { force: true });
+  } catch (err) {
+    appendUpdateLog(
+      `[warn] could not remove ${tarballPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   stampVersionTxt(destDir, targetVersion);
 
   // On Windows the streamer process holds open handles inside
