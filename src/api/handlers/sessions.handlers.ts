@@ -653,8 +653,9 @@ export class SessionHandlers {
         try {
           const lines = await this.ptyManager.getOutputLines(sessionId, 10);
           const status = parseStatusLine(lines);
-          // Don't clobber the scanner-provided model with a scraped one.
-          if (session.model == null && status.model) session.model = status.model;
+          // The scrape is what the TUI shows now, so it outranks the model
+          // recorded at spawn (a /model switch changes it).
+          if (status.model) session.model = status.model;
           if (status.effort) session.effort = status.effort;
           if (status.permissionMode) session.permissionMode = status.permissionMode;
         } catch {

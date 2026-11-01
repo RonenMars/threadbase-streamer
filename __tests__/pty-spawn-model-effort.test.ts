@@ -107,4 +107,98 @@ describe("PTYManager — model/effort/permission-mode argv", () => {
     expect(flagValue(args, "--effort")).toBe("max");
     expect(args).toContain("--resume");
   });
+
+  // Issue #960: claude_extra_args is appended last, so a --model / --effort in it
+  // wins inside Claude. The session must report what Claude actually runs.
+  describe("effective model and effort on the returned session", () => {
+    const RESUME_ID = "00000000-0000-4000-8000-000000000001";
+
+    it("reports the spawn values when extra args do not touch them", async () => {
+      const s = await newManager().startFresh({
+        projectPath: "/tmp/test",
+        model: "opus",
+        effort: "high",
+        claudeExtraArgs: "--verbose",
+      });
+      expect(s.model).toBe("opus");
+      expect(s.effort).toBe("high");
+    });
+
+    it("reports the defaults the spawn fell back to when nothing was supplied", async () => {
+      const s = await newManager().startFresh({ projectPath: "/tmp/test" });
+      expect(s.model).toBe("sonnet");
+      expect(s.effort).toBe("low");
+    });
+
+    it("reports the --model from claude_extra_args, not the one the spawn passed first", async () => {
+      const s = await newManager().startFresh({
+        projectPath: "/tmp/test",
+        model: "sonnet",
+        effort: "low",
+        claudeExtraArgs: "--model claude-sonnet-5",
+      });
+      expect(s.model).toBe("claude-sonnet-5");
+      expect(s.effort).toBe("low");
+    });
+
+    it("reports the --effort from claude_extra_args", async () => {
+      const s = await newManager().startFresh({
+        projectPath: "/tmp/test",
+        model: "sonnet",
+        effort: "low",
+        claudeExtraArgs: "--effort high",
+      });
+      expect(s.effort).toBe("high");
+      expect(s.model).toBe("sonnet");
+    });
+
+    it("reads the --flag=value form", async () => {
+      const s = await newManager().startFresh({
+        projectPath: "/tmp/test",
+        claudeExtraArgs: "--model=opus --effort=max",
+      });
+      expect(s.model).toBe("opus");
+      expect(s.effort).toBe("max");
+    });
+
+    it("lets the last of several overrides win", async () => {
+      const s = await newManager().startFresh({
+        projectPath: "/tmp/test",
+        claudeExtraArgs: "--model a --model=b",
+      });
+      expect(s.model).toBe("b");
+    });
+
+    it("agrees with the argv that was actually handed to the PTY", async () => {
+      const s = await newManager().startFresh({
+        projectPath: "/tmp/test",
+        claudeExtraArgs: "--model claude-sonnet-5 --effort high",
+      });
+      const args = lastSpawnArgs();
+      expect(args.slice(-4)).toEqual(["--model", "claude-sonnet-5", "--effort", "high"]);
+      expect(s.model).toBe("claude-sonnet-5");
+      expect(s.effort).toBe("high");
+    });
+
+    it("applies the same resolution on the resume path", async () => {
+      const s = await newManager().start(RESUME_ID, {
+        projectPath: "/tmp/test",
+        model: "sonnet",
+        effort: "low",
+        claudeExtraArgs: "--model=opus --effort high",
+      });
+      expect(s.model).toBe("opus");
+      expect(s.effort).toBe("high");
+    });
+
+    it("resume reports the spawn values when extra args do not override", async () => {
+      const s = await newManager().start(RESUME_ID.replace(/1$/, "2"), {
+        projectPath: "/tmp/test",
+        model: "opus",
+        effort: "max",
+      });
+      expect(s.model).toBe("opus");
+      expect(s.effort).toBe("max");
+    });
+  });
 });

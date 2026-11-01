@@ -223,12 +223,29 @@ describe("PATCH /api/sessions/:id/{model,effort}", () => {
     expect(after.effort).toBe("xhigh");
   }, 30000);
 
-  it("does not persist a model, which the scanner owns", async () => {
+  // The spawn now seeds the effective model onto the session (issue #960), so a
+  // PATCH has to move it too, or every later session_update frame would put the
+  // spawn-time value back over the one the user just chose.
+  it("persists the model onto the session so session_update carries it", async () => {
     const id = await startSession();
     await waitForStatus(id, "waiting_input");
-    const before = (await get(id)).model;
+    expect((await get(id)).model).toBe("sonnet");
     expect((await patch(id, "model", { model: "opus" })).status).toBe(202);
-    expect((await get(id)).model).toBe(before);
+    expect((await get(id)).model).toBe("opus");
+  }, 30000);
+
+  it("reports the model and effort claude_extra_args forces, not the ones passed first", async () => {
+    const session = await internals.ptyManager.startFresh({
+      projectPath: projectDir,
+      model: "sonnet",
+      effort: "low",
+      claudeExtraArgs: "--model claude-sonnet-5 --effort=high",
+    });
+    internals.sessionStore.addManaged(session as unknown as Record<string, unknown>);
+    await waitForStatus(session.id, "waiting_input");
+    const body = await get(session.id);
+    expect(body.model).toBe("claude-sonnet-5");
+    expect(body.effort).toBe("high");
   }, 30000);
 
   it("accepts a full model name, not just an alias", async () => {
