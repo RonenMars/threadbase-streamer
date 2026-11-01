@@ -1,3 +1,9 @@
+## [1.125.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.125.0...v1.125.1) (2026-11-01)
+
+### Bug Fixes
+
+* **sessions:** stop a dead managed record from shadowing an outside process ([#1101](https://github.com/RonenMars/threadbase-streamer/issues/1101)) ([9a21566](https://github.com/RonenMars/threadbase-streamer/commit/9a2156692e496c267211d181ceddd44551c9c60d)), closes [#1100](https://github.com/RonenMars/threadbase-streamer/issues/1100) [#1099](https://github.com/RonenMars/threadbase-streamer/issues/1099)
+
 ## [1.125.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.124.2...v1.125.0) (2026-10-31)
 
 ### Features
