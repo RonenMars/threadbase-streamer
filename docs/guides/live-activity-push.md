@@ -39,18 +39,46 @@ From the phone the absence looks identical to a server that answered `false`; th
 Turn the flag on where a `liveactivity_start` token is actually registered; without one, the push half has nothing to send to and only the degraded local path remains.
 
 All credentials come from the environment.
-No key, key id, or team id is committed, and neither the key nor any device token is ever logged.
+Neither the key nor any device token is ever logged.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `APNS_KEY` | Yes | — | **Contents** of the p8 signing key (PEM). Not a path. Live Activity push stays off when unset. |
 | `APNS_KEY_ID` | With `APNS_KEY` | derived from the key filename under launchd | Key id of the p8 above. The shim reads it from `AuthKey_<keyId>.p8`, so it normally needs no setting. |
-| `APNS_TEAM_ID` | With `APNS_KEY` | — | Apple Developer team id. |
-| `APNS_BUNDLE_ID` | With `APNS_KEY` | — | App bundle id. The APNs topic is this plus `.push-type.liveactivity`. |
-| `APNS_HOST` | No | `api.sandbox.push.apple.com` | Set to `api.push.apple.com` for production. |
+| `APNS_TEAM_ID` | No | the official app's team id | Apple Developer team id. Override only for your own app. |
+| `APNS_BUNDLE_ID` | No | `com.ronenmars.threadbase` | App bundle id. The APNs topic is this plus `.push-type.liveactivity`. |
+| `APNS_HOST` | No | `api.push.apple.com` (production) | Set to `api.sandbox.push.apple.com` for a development-signed build. |
 
-The default host is **sandbox**, because the app's `aps-environment` is still `development`.
-A build signed for production will not receive sandbox pushes, and vice versa — a mismatch here is the most common reason pushes silently never arrive.
+The default host is **production**: every TestFlight and App Store build is production-signed.
+A build signed for production will not receive sandbox pushes, and vice versa, so a development build needs `APNS_HOST=api.sandbox.push.apple.com` — a mismatch is the most common reason pushes silently never arrive.
+Sandbox is an explicit opt-in and nothing infers it.
+
+There is no first-run prompt.
+The team and bundle ids default to the official app's, and the p8 key is found by [the launchd shim](#the-supervised-prod-instance), so the one thing an operator supplies is the key file.
+A blank `APNS_TEAM_ID` or `APNS_BUNDLE_ID` counts as unset and takes the default.
+The key id is the one identifier with no default, because it belongs to the key.
+
+### Setup
+
+1. Put the signing key at `~/.threadbase/AuthKey_<keyId>.p8` with mode `0600`: `chmod 600 ~/.threadbase/AuthKey_<keyId>.p8`. The filename is how the key id is found, so keep Apple's name.
+2. Turn on the `liveActivityPush` flag (see Configuration above) and restart.
+3. Leave `APNS_TEAM_ID`, `APNS_BUNDLE_ID` and `APNS_HOST` unset for the official app. For a development-signed build of your own, set `APNS_HOST=api.sandbox.push.apple.com`.
+4. Check the boot log for `loaded APNs key <keyId>`, and `GET /api/push/health` for `liveActivity: true`.
+
+Under launchd, a `~/.threadbase/.env` file with `APNS_*` lines is read as well.
+Outside launchd (Windows, Linux, a foreground `serve`) nothing discovers the key file: export `APNS_KEY` yourself (the section below).
+Those platforms are tracked in [#481](https://github.com/RonenMars/threadbase-streamer/issues/481).
+
+### Who can push to the official app
+
+Only the owner of the official app's bundle id can push to it.
+APNs accepts a provider token only when it is signed by a key from the team that owns the topic, so a streamer holding any other key is refused with `InvalidProviderToken` or `DeviceTokenNotForTopic`, whatever the defaults say.
+The defaults exist so the owner's own streamer needs no configuration; they grant nobody else anything.
+
+**A self-hoster cannot use the official app's Live Activity push.**
+Their phone runs the official app, but they do not hold the key that signs for it.
+What they need is the push relay, which holds the key once and forwards: [threadbase-streamer #528](https://github.com/RonenMars/threadbase-streamer/issues/528) on the streamer side and [threadbase-mobile #636](https://github.com/RonenMars/threadbase-mobile/issues/636) on the app side.
+Until it ships, a self-hoster either builds and signs their own copy of the app and sets all three of `APNS_TEAM_ID`, `APNS_BUNDLE_ID` and `APNS_HOST`, or runs without Live Activity push.
 
 ### Supplying the key
 
@@ -60,13 +88,14 @@ The operator exports it before starting the server:
 ```bash
 export APNS_KEY="$(op read 'op://<vault>/<item>/AuthKey_<keyId>.p8')"
 export APNS_KEY_ID="<keyId>"
-export APNS_TEAM_ID="<teamId>"
-export APNS_BUNDLE_ID="<bundleId>"
+# Only for your own app; the official app's ids are the defaults:
+# export APNS_TEAM_ID="<teamId>"
+# export APNS_BUNDLE_ID="<bundleId>"
 ```
 
-None of the identifiers have defaults in the source.
-Baking one deployment's Apple account into the package would make it silently sign for the wrong team when someone else deploys it, and the APNs rejection that follows names none of that.
-If `APNS_KEY` is set but an identifier is missing, the feature stays off and the log says which variable is absent.
+Only the key id has no default.
+If `APNS_KEY` is set without one, the feature stays off and the log says so.
+An operator who overrides the team or bundle id must override both: a mixed pair names a topic no key signs for, and APNs answers with a bare `InvalidProviderToken`.
 
 ### The supervised prod instance
 

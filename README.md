@@ -170,6 +170,10 @@ Three layers: **core engine** (`src/*.ts`) → **API layer** (`src/api/` + `src/
 
 More detail: [docs/how-it-works.md](docs/how-it-works.md) and [docs/architecture/](docs/architecture/README.md).
 
+## Live Activity push (iOS)
+
+Lock Screen and Dynamic Island updates over APNs. Setup, defaults, where the `AuthKey_<keyId>.p8` goes, the sandbox override and what self-hosters need: [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md).
+
 ## Feature flags
 
 Streamer experiments are the `FEATURE_FLAGS` object in `src/feature-flags.ts`, keyed by name (`ptyHost`, `liveActivityPush`, …). `--feature <id=bool>` and `feature_flags:` in `server.yaml` use **those same camelCase keys**. Env vars are a different spelling (`THREADBASE_FEATURE_PTY_HOST`) and outrank both.
