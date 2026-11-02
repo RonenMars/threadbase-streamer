@@ -527,8 +527,11 @@ export class CursorPtyRunner implements SessionRunner {
     }
 
     session.screen.write(data);
+    // The previous chunk's tail rides along so a hint cut by a chunk boundary is
+    // still seen whole; the screen, not this window, decides when it has left.
+    const carry = session.lastOutput.slice(-(CURSOR_TURN_BUSY_TEXT.length - 1));
     session.lastOutput = stripAnsi(data);
-    if (session.lastOutput.includes(CURSOR_TURN_BUSY_TEXT)) {
+    if ((carry + session.lastOutput).includes(CURSOR_TURN_BUSY_TEXT)) {
       if (session.status === "running") {
         this.turnBusy.add(sessionId);
         this.awaitingStart.delete(sessionId);
