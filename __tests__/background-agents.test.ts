@@ -142,6 +142,7 @@ describe("GET /api/conversations/:id?include=backgroundAgents", () => {
   let server: StreamerServer;
   let port: number;
   let transcript: string;
+  const CODEX_ID = "019edbc1-13a7-7fa1-80b4-7eafc270f03e";
 
   beforeAll(async () => {
     const profileDir = mkdtempSync(join(tmpdir(), "threadbase-bg-agents-profile-"));
@@ -149,6 +150,14 @@ describe("GET /api/conversations/:id?include=backgroundAgents", () => {
     mkdirSync(projDir, { recursive: true });
     transcript = join(projDir, `${ID}.jsonl`);
     copyFileSync(FIXTURE, transcript);
+    // A Codex rollout beside the Claude transcript, to prove the provider gate.
+    const codexRoot = join(mkdtempSync(join(tmpdir(), "threadbase-bg-agents-codex-")), "sessions");
+    const codexDir = join(codexRoot, "2026", "06", "18");
+    mkdirSync(codexDir, { recursive: true });
+    copyFileSync(
+      join(__dirname, "fixtures", "codex-rollout.jsonl"),
+      join(codexDir, `rollout-2026-06-18T20-22-04-${CODEX_ID}.jsonl`),
+    );
     server = new StreamerServer({
       port: 0,
       apiKey: API_KEY,
@@ -157,7 +166,7 @@ describe("GET /api/conversations/:id?include=backgroundAgents", () => {
       disableDb: true,
       cacheDir: mkdtempSync(join(tmpdir(), "threadbase-bg-agents-cache-")),
       scanProfiles: [{ id: "bg", label: "Bg", configDir: profileDir, enabled: true, emoji: "🤖" }],
-      codexRoots: [],
+      codexRoots: [codexRoot],
       scannerPersistent: false,
     });
     await server.listen(0, { awaitReady: true });
@@ -210,6 +219,18 @@ describe("GET /api/conversations/:id?include=backgroundAgents", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("leaves a non-Claude conversation without the field, even when asked", async () => {
+    const res = await fetch(
+      `http://localhost:${port}/api/conversations/${CODEX_ID}?include=backgroundAgents`,
+      { headers: { Authorization: `Bearer ${API_KEY}` } },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { meta: { provider: string } };
+    // The positive control: this really is the Codex conversation.
+    expect(body.meta.provider).toBe("codex-cli");
+    expect(body).not.toHaveProperty("backgroundAgents");
   });
 
   it("changes the ETag when only the file changes, so a 304 cannot hide a completion", async () => {
