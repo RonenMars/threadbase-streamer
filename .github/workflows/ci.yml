@@ -226,7 +226,7 @@ jobs:
           - os: macos-latest
             node: 24
           - os: windows-latest
-            node: 22
+            node: 24
     steps:
       - uses: actions/checkout@v5
         with:
@@ -318,10 +318,31 @@ jobs:
       # A test that genuinely cannot run on a platform guards itself in-file
       # with `describe.skipIf(process.platform === …)`, which is visible to
       # whoever writes it, rather than in a central list nobody remembers.
+      # DIAGNOSTIC (#530): verbose reporter names each file as it starts, so the
+      # last name before each "Worker exited unexpectedly" is the candidate.
+      # Not for merge.
       - name: Tests
         if: needs.gate.outputs.skip != 'true'
-        run: npm test
+        run: npx vitest run --reporter=verbose 2>&1 | tee vitest-verbose.log; exit ${PIPESTATUS[0]}
         shell: bash
+
+      - name: Diagnose worker deaths (#530)
+        if: always() && needs.gate.outputs.skip != 'true'
+        run: |
+          echo "node: $(node -v) abi: $(node -p process.versions.modules)"
+          grep -n -E "Worker exited unexpectedly|Worker forks emitted error|emitUnexpectedExit" vitest-verbose.log | head -20 || true
+          echo "--- 15 lines before each death ---"
+          grep -n -B15 -E "Worker exited unexpectedly" vitest-verbose.log | head -200 || true
+          echo "--- loaded native addons ---"
+          node -e "for (const m of ['node-pty','better-sqlite3']) { try { require(m); console.log(m, 'loads') } catch (e) { console.log(m, 'FAILS', e.message) } }"
+        shell: bash
+
+      - name: Upload verbose log (#530)
+        if: always() && needs.gate.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-verbose-${{ matrix.os }}-node${{ matrix.node }}
+          path: vitest-verbose.log
 
       # node-pty is the dependency most likely to break per-platform, and a
       # failure here is the one a Linux-only matrix can never catch.
