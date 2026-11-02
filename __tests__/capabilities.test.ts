@@ -251,7 +251,7 @@ describe("every mounted route is classified", () => {
       expect(file, `no import found for ${factory} mounted at ${prefix}`).toBeDefined();
       const routeSrc = readFileSync(join(API_DIR, file as string), "utf8");
       for (const r of routeSrc.matchAll(
-        /app\.(?:get|post|put|patch|delete|options|all|on)\(\s*"([^"]*)"/g,
+        /app\.(?:(?:get|post|put|patch|delete|options|all)\(|on\(\s*"[A-Z]+"\s*,)\s*"([^"]*)"/g,
       )) {
         paths.add(staticPrefix(joinPath(prefix, r[1])));
       }

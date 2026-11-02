@@ -155,6 +155,7 @@ export type ApiDeps = {
     ifNoneMatch?: string,
   ) => Promise<void>;
   handleSearch: (url: URL, res: ServerResponse) => Promise<void>;
+  handleSearchQuery: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleSearchTarget: (id: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleListProjects: (url: URL, res: ServerResponse) => void;
   handleGetPopularProjects: (url: URL, res: ServerResponse) => void;

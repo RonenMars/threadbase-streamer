@@ -37,6 +37,7 @@ import { readSubagentInfo } from "../../services/conversations/subagentInfo";
 import { deriveProjectChatTitle } from "../../services/projectChats/deriveProjectChatTitle";
 import {
   applyFilters,
+  MAX_QUERY_LENGTH,
   type ParsedSearchQuery,
   paginate,
   parseSearchQuery,
@@ -1728,6 +1729,49 @@ export class ConversationHandlers {
       match_indexes: target.matchIndexes,
       total_matches: target.totalMatches,
     });
+  }
+
+  // QUERY (RFC 10008) twin of GET /api/search: `q` and `limit` arrive in a JSON
+  // body, validated with the same 415/422 shape as handleSearchTarget, then
+  // handed to handleSearch so both methods return identical results.
+  async handleSearchQuery(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const reject = (status: number, error: string, code: string) => {
+      res.setHeader("Accept-Query", "application/json");
+      json(res, status, { error, code });
+    };
+    const contentType = (req.headers["content-type"] ?? "").split(";")[0].trim();
+    if (contentType && contentType !== "application/json") {
+      reject(415, "Unsupported Content-Type; expected application/json", "unsupported_media_type");
+      return;
+    }
+
+    let body: { q?: unknown; limit?: unknown } | null;
+    try {
+      body = await readBody(req);
+    } catch {
+      reject(422, "Malformed JSON body", "invalid_query");
+      return;
+    }
+
+    const q = typeof body?.q === "string" ? body.q.trim() : "";
+    if (!q) {
+      reject(422, "Missing or empty query field: q", "invalid_query");
+      return;
+    }
+    if (q.length > MAX_QUERY_LENGTH) {
+      reject(422, `Query too long (max ${MAX_QUERY_LENGTH} characters)`, "invalid_query");
+      return;
+    }
+    if (body?.limit !== undefined && !Number.isInteger(body.limit)) {
+      reject(422, "Invalid field: limit must be an integer", "invalid_query");
+      return;
+    }
+
+    const url = new URL("http://localhost/api/search");
+    url.searchParams.set("q", q);
+    if (body?.limit !== undefined) url.searchParams.set("limit", String(body.limit));
+    res.setHeader("Accept-Query", "application/json");
+    await this.handleSearch(url, res);
   }
 
   async handleSearch(url: URL, res: ServerResponse): Promise<void> {
