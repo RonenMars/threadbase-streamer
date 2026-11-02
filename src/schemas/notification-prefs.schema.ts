@@ -21,6 +21,12 @@ export type Weekday = (typeof WEEKDAYS)[number];
 
 export const QuietHoursSchema = z.object({
   enabled: z.boolean(),
+  /**
+   * What a push inside the window does. Absent means `drop`, so a build that
+   * never sends it keeps today's behaviour. `silent` still delivers, without
+   * sound, so it waits in the notification list.
+   */
+  mode: z.enum(["drop", "silent"]).optional(),
   /** The phone's zone. Without it "22:00" means the server's clock, not the user's. */
   tz: z.string().refine(isValidTimeZone, "unknown IANA time zone"),
   default: QuietWindowSchema,

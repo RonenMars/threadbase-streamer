@@ -89,3 +89,19 @@ export function allows(prefs: NotificationPrefs | null, event: PushEvent, now: D
   if (!prefs[event]) return false;
   return !(prefs.quietHours && isQuietNow(prefs.quietHours, now));
 }
+
+/**
+ * Called only for a push `allows` refused: should it still go out, silently?
+ *
+ * iOS only. Expo's `sound` and `interruptionLevel` are iOS fields; on Android
+ * the sound belongs to the notification channel the app created, and every
+ * channel today makes noise, so the message has no way to ask for quiet. A
+ * silent token on Android therefore stays a drop.
+ */
+export function deliversSilently(
+  prefs: NotificationPrefs | null,
+  event: PushEvent,
+  platform: string,
+): boolean {
+  return prefs?.[event] === true && prefs.quietHours?.mode === "silent" && platform === "ios";
+}
