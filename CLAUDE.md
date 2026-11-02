@@ -203,6 +203,15 @@ Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP ser
 
 Use the Node version in `.nvmrc` for local verification, especially for tests or code paths that load `better-sqlite3`. Running under a newer Homebrew/global Node can pick up native modules compiled for a different `NODE_MODULE_VERSION`, causing ABI errors or failed rebuilds unrelated to the product change.
 
+**Triage a failing local suite by its failure signature, not by a list of "known flaky" files.** Such a list is incomplete the day it is written and drifts every time the box gets busier. Redirect the run to a file, then count:
+
+```sh
+grep -c "timed out" <output>                        # load
+grep -cE "AssertionError|toBe|toEqual" <output>     # possibly real
+```
+
+Only timeouts and no assertion failures means a loaded box: push and let CI decide, since it runs the suite on a clean box. Any assertion failure means the base-commit comparison applies in full. Evidence: a full local run once failed 33 tests across 9 files, every one a 39-97 second timeout with no assertion failure, while CI was green on the same commit (`docs/pr-follow/Streamer-FD-BUDGET-AND-SUITE-NOISE.md`).
+
 ## Backward compatibility with tb-mobile
 
 **Compatibility is advisory, not a gate.** [docs/compatibility/tb-mobile.md](docs/compatibility/tb-mobile.md) maps the paths, fields and events mobile touches, but it is a reference for orientation, not a gate — it is hand-maintained and rots between updates, which is what used to turn every wire change into a negotiation. Nothing in this section blocks a change: it decides what you *report*.
