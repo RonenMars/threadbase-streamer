@@ -123,8 +123,14 @@ export class ConversationWatcher {
     let offset: number;
     try {
       offset = statSync(filePath).size;
-    } catch {
+    } catch (err) {
       offset = 0;
+      // ENOENT is a file that does not exist yet (the normal case: watch first,
+      // Claude writes later). Anything else (EACCES, ENOTDIR) means we tail
+      // from 0 and will re-emit lines that were already there.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        this.onError?.(filePath, err instanceof Error ? err : new Error(String(err)));
+      }
     }
 
     const watcher = chokidar.watch(filePath, {
@@ -216,8 +222,8 @@ export class ConversationWatcher {
   watchDirectory(directory: string): void {
     if (this.directories.has(directory)) return;
     const fire = (filePath: string) => {
-      void Promise.resolve(this.onConversationChanged?.(filePath)).catch(() => {
-        // best-effort
+      void Promise.resolve(this.onConversationChanged?.(filePath)).catch((err) => {
+        this.onError?.(filePath, err instanceof Error ? err : new Error(String(err)));
       });
     };
     const onError = (error: Error) => this.onError?.(directory, error);

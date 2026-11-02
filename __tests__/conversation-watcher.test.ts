@@ -31,8 +31,14 @@ vi.mock("chokidar", () => ({
 let fileBytes = "";
 const initialSize = { value: 0 };
 
+// `statError` makes the seed statSync in watch() throw with that errno code.
+let statError: string | null = null;
+
 vi.mock("fs", () => ({
-  statSync: () => ({ size: initialSize.value }),
+  statSync: () => {
+    if (statError) throw Object.assign(new Error(statError), { code: statError });
+    return { size: initialSize.value };
+  },
 }));
 
 // `readGate` lets a test hold a read open to exercise the concurrency guard.
@@ -136,6 +142,21 @@ describe("ConversationWatcher — directory watching", () => {
     expect(() => w.dispose()).not.toThrow();
   });
 
+  it("routes a rejected onConversationChanged to onError instead of dropping it", async () => {
+    const onError = vi.fn();
+    const w = new ConversationWatcher({
+      onConversationChanged: () => Promise.reject(new Error("callback failed")),
+      onError,
+    });
+    w.watchDirectory("/dir-4");
+    lastEmitter().emit("change", "/dir-4/x.jsonl");
+    await flush();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBe("/dir-4/x.jsonl");
+    expect((onError.mock.calls[0][1] as Error).message).toBe("callback failed");
+    w.dispose();
+  });
+
   it("detach silences every watcher without closing any of them", () => {
     const onChanged = vi.fn();
     const onFileDeleted = vi.fn();
@@ -158,6 +179,38 @@ describe("ConversationWatcher — directory watching", () => {
     expect(onFileDeleted).toHaveBeenCalledTimes(1);
     expect(file.close).not.toHaveBeenCalled();
     expect(dir.close).not.toHaveBeenCalled();
+  });
+});
+
+describe("ConversationWatcher — seed stat failure", () => {
+  beforeEach(() => {
+    emitters.length = 0;
+    statError = null;
+  });
+  afterEach(() => {
+    statError = null;
+  });
+
+  it("reports a non-ENOENT stat failure through onError and still watches from 0", () => {
+    statError = "EACCES";
+    const onError = vi.fn();
+    const w = new ConversationWatcher({ onError });
+    w.watch("/proj/denied.jsonl");
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBe("/proj/denied.jsonl");
+    expect((onError.mock.calls[0][1] as NodeJS.ErrnoException).code).toBe("EACCES");
+    expect(emitters).toHaveLength(1);
+    w.dispose();
+  });
+
+  it("stays quiet for ENOENT, a file that does not exist yet", () => {
+    statError = "ENOENT";
+    const onError = vi.fn();
+    const w = new ConversationWatcher({ onError });
+    w.watch("/proj/not-yet.jsonl");
+    expect(onError).not.toHaveBeenCalled();
+    expect(emitters).toHaveLength(1);
+    w.dispose();
   });
 });
 
