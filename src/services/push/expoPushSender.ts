@@ -1,6 +1,6 @@
 import type { PushRepository, PushTokenRow } from "../../db/repositories/push.repository";
 import { getLogger } from "../../logger";
-import { allows, type PushEvent, parseStoredPrefs } from "./notificationPrefs";
+import { allows, deliversSilently, type PushEvent, parseStoredPrefs } from "./notificationPrefs";
 
 /**
  * Ordinary push notifications, sent through Expo's relay.
@@ -96,6 +96,11 @@ function storedFeatures(json: string | null): ReadonlySet<string> {
   }
 }
 
+/** The same push without sound or urgency: it lands in the list and makes no noise. */
+function quietVariant(message: ExpoPushMessage): ExpoPushMessage {
+  return { ...message, sound: undefined, priority: "normal", interruptionLevel: "passive" };
+}
+
 export class ExpoPushSender {
   /**
    * @param accessToken Expo access token, when the project has enhanced
@@ -126,12 +131,18 @@ export class ExpoPushSender {
     const now = opts.now ?? Date.now();
     const deliverable = this.repo.listDeliverable();
     const { event } = opts;
+    const silent = new Set<PushTokenRow>();
     const rows = event
-      ? deliverable.filter((row) =>
-          allows(parseStoredPrefs(row.notification_prefs), event, new Date(now)),
-        )
+      ? deliverable.filter((row) => {
+          const prefs = parseStoredPrefs(row.notification_prefs);
+          if (allows(prefs, event, new Date(now))) return true;
+          if (!deliversSilently(prefs, event, row.platform)) return false;
+          silent.add(row);
+          return true;
+        })
       : deliverable;
-    return this.deliver(rows, message, now, deliverable.length - rows.length);
+    // Silent rows are attempted, so `suppressed` counts only what was dropped.
+    return this.deliver(rows, message, now, deliverable.length - rows.length, silent);
   }
 
   /**
@@ -154,6 +165,7 @@ export class ExpoPushSender {
     message: ExpoPushContent,
     now: number,
     suppressed: number,
+    silent: ReadonlySet<PushTokenRow> = new Set(),
   ): Promise<ExpoPushOutcome> {
     const outcome: ExpoPushOutcome = {
       attempted: rows.length,
@@ -165,7 +177,7 @@ export class ExpoPushSender {
 
     for (let i = 0; i < rows.length; i += EXPO_PUSH_BATCH_SIZE) {
       const chunk = rows.slice(i, i + EXPO_PUSH_BATCH_SIZE);
-      await this.sendChunk(chunk, message, now, outcome);
+      await this.sendChunk(chunk, message, now, outcome, silent);
     }
     return outcome;
   }
@@ -175,6 +187,7 @@ export class ExpoPushSender {
     content: ExpoPushContent,
     now: number,
     outcome: ExpoPushOutcome,
+    silent: ReadonlySet<PushTokenRow>,
   ): Promise<void> {
     let payload: unknown;
     try {
@@ -187,10 +200,11 @@ export class ExpoPushSender {
         },
         body: JSON.stringify(
           rows.map((row) => {
-            const message =
+            const full =
               typeof content === "function"
                 ? content(row.locale, row.platform, storedFeatures(row.notification_features))
                 : content;
+            const message = silent.has(row) ? quietVariant(full) : full;
             return {
               to: row.token,
               ...message,

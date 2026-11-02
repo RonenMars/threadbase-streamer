@@ -167,3 +167,20 @@ describe("NotificationPrefsSchema", () => {
     expect(NotificationPrefsSchema.safeParse(bad).success).toBe(false);
   });
 });
+
+describe("quiet hours mode", () => {
+  const base = { waitingInput: true, sessionFailed: true, quietHours: qh() };
+
+  it("accepts drop and silent, and rejects anything else", () => {
+    expect(
+      NotificationPrefsSchema.safeParse({ ...base, quietHours: qh({ mode: "silent" }) }).success,
+    ).toBe(true);
+    expect(
+      NotificationPrefsSchema.safeParse({ ...base, quietHours: qh({ mode: "drop" }) }).success,
+    ).toBe(true);
+    expect(NotificationPrefsSchema.safeParse(base).success).toBe(true);
+    expect(
+      NotificationPrefsSchema.safeParse({ ...base, quietHours: { ...qh(), mode: "loud" } }).success,
+    ).toBe(false);
+  });
+});
