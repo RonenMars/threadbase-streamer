@@ -57,6 +57,7 @@ export type StatusSource =
   | "prompt-marker" // a provider prompt marker appeared in the stream
   | "screen-marker" // marker found by re-reading the rendered screen
   | "turn-signal" // the provider signalled its turn started late or ended (title spinner, OSC 9;4, Working line)
+  | "thread-ready" // a structured-event provider confirmed its thread exists and is idle (no turn has ended)
   | "user-input" // we wrote input, so it is running by construction
   | "process-exit" // the process exited; status follows from that
   | "timeout-fallback" // NO marker appeared; a timer elapsed and we assumed
@@ -285,6 +286,23 @@ export interface UserMessage {
   ts: number;
 }
 
+/**
+ * Provider-neutral events a structured runner (codex app-server) reads straight
+ * off the provider's own event stream, with no screen scraping. Additive: a
+ * PTY runner never emits them.
+ */
+export type SessionEvent =
+  | { type: "turn_started"; turnId: string }
+  | {
+      type: "turn_completed";
+      turnId: string;
+      status: "completed" | "interrupted" | "failed";
+      error?: string;
+    }
+  | { type: "agent_message_delta"; itemId: string; delta: string }
+  | { type: "agent_message"; itemId: string; text: string }
+  | { type: "error"; message: string; willRetry: boolean };
+
 export type WSMessage =
   // `seq` is a per-session monotonically increasing chunk counter (starts at
   // 1). Additive — old clients ignore it. Lets a client detect a stale chunk
@@ -322,6 +340,19 @@ export type WSMessage =
       sessionId: string;
       phase: AgentPhase | null;
       updatedAt: string; // ISO 8601
+    }
+  /**
+   * A normalized provider event (see SessionEvent). Scoped to the session's
+   * subscribers. `seq` is a per-session counter starting at 1, so a client can
+   * order frames and detect a gap. Additive: terminal_output and every other
+   * message are unchanged, and a client that does not know this type ignores it.
+   */
+  | {
+      type: "session_event";
+      sessionId: string;
+      seq: number;
+      event: SessionEvent;
+      at: string; // ISO 8601
     }
   /**
    * The composer's predicted next prompt changed. Scoped to the session's
@@ -823,6 +854,8 @@ export interface PTYManagerOptions {
    * session for the whole turn.
    */
   onPhaseChange?: (sessionId: string, phase: AgentPhase | null) => void;
+  /** Fired by a structured runner for each normalized provider event. Additive; PTY runners never call it. */
+  onSessionEvent?: (sessionId: string, event: SessionEvent) => void;
   // Fired when the composer's dim next-prompt suggestion appears, changes or is
   // cleared (`null`). Change-guarded like onPhaseChange: the scrape runs per chunk.
   onPromptSuggestionChange?: (sessionId: string, text: string | null) => void;

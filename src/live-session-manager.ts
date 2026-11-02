@@ -1,4 +1,5 @@
 import { basename } from "path";
+import { CodexAppServerRunner } from "./codex-app-server-runner";
 import { CodexPtyRunner } from "./codex-pty-runner";
 import { CopilotPtyRunner } from "./copilot-pty-runner";
 import { CursorPtyRunner } from "./cursor-pty-runner";
@@ -40,11 +41,14 @@ export class LiveSessionManager {
   private options: PTYManagerOptions;
   private disposed = false;
 
-  constructor(options: PTYManagerOptions = {}) {
+  constructor(options: PTYManagerOptions = {}, flags: { codexAppServer?: boolean } = {}) {
     this.options = options;
     this.runners = new Map<ProviderName, SessionRunner>([
       [CLAUDE_CODE_PROVIDER, new PTYManager(options)],
-      [CODEX_CLI_PROVIDER, new CodexPtyRunner(options)],
+      [
+        CODEX_CLI_PROVIDER,
+        flags.codexAppServer ? new CodexAppServerRunner(options) : new CodexPtyRunner(options),
+      ],
       [CURSOR_PROVIDER, new CursorPtyRunner(options)],
       [COPILOT_PROVIDER, new CopilotPtyRunner(options)],
     ]);
