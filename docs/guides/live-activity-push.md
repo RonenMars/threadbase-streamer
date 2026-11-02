@@ -119,6 +119,19 @@ The whole payload must stay under APNs' 4 KB limit, which is what `lastOutput`'s
 
 **`sessionName`** is a user-visible title, derived server-side from the session's first valid user message through `@threadbase-sh/scanner`'s `applyNameCandidate`, so it is the full text the scanner will compute from the same JSONL (no first-line cut, no 80-char cap; see `recordUserMessage` in `src/pty-manager.ts`). It is absent from the very first push of a turn if the title hasn't been derived yet (a race that resolves within the same turn — see below) and absent for good on a session that somehow never received a user message. Mobile should fall back to `projectName` when `sessionName` is unset, the same fallback already used elsewhere in this codebase (see `deriveProjectChatTitle`).
 
+### Where `serverId` comes from
+
+`serverId` is the streamer's instance id, resolved by `getInstanceId()` in `src/instance-id.ts`.
+The same function supplies the id that scopes DB-persisted sessions and names the pty-host socket, so the three cannot disagree.
+Resolution order: a non-empty `THREADBASE_INSTANCE_ID` wins and is never written to disk; otherwise the id persisted in `<config dir>/instance-id` (default `~/.threadbase/instance-id`); otherwise the file is created on first boot.
+The first-boot value is `os.hostname()`, the value every reader returned before the file existed.
+Seeding with it, rather than minting a random id, keeps paired clients, DB-scoped sessions and a pty-host already listening under that name matching across the upgrade, and from then on a hostname rename changes nothing.
+A random UUID is generated only when the hostname is blank.
+The file is created exclusively, so a streamer and a CLI command racing on first boot end with one file.
+An unwritable config dir does not stop the boot: the id is used in memory for that run and one warning (`instance_id.persist_failed`) is logged.
+The wire shape is unchanged: still the same string field with the same meaning.
+A machine whose service unit sets `THREADBASE_INSTANCE_ID` (the local-deploy templates do, in DB mode) is still pinned by that variable, and a hostname rename there still changes the id until the variable is edited.
+
 ## What triggers a send
 
 `onStatusChange` in `server.ts` is the single funnel every status transition passes through, for both the Claude and Codex runners, so hooking there covers every path. The notifier is **per-turn**, not per-session: it tracks whether a turn is currently open per session id, keyed off the specific status *edge*, not the status alone.

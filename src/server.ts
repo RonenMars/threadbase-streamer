@@ -98,6 +98,7 @@ import {
   type ResolvedFeatureFlags,
   resolveFeatureFlags,
 } from "./feature-flags";
+import { getInstanceId } from "./instance-id";
 import { LiveSessionManager } from "./live-session-manager";
 import { getLogger } from "./logger";
 import { PairTokenStore } from "./pair-store";
@@ -1209,7 +1210,7 @@ export class StreamerServer {
     const sender = new LiveActivitySender(this.apnsClient, pushRepo);
     // Identifies this streamer to mobile, which shows several servers at once.
     // Matches the id used for DB-persisted session scoping.
-    const serverId = process.env.THREADBASE_INSTANCE_ID ?? hostname();
+    const serverId = getInstanceId();
     this.liveActivityNotifier = new LiveActivityNotifier(sender, serverId, hostname());
     // Re-arms pending renewals from the DB. Started here rather than lazily
     // because the deadlines were persisted precisely so a restart inside an
@@ -1571,7 +1572,7 @@ export class StreamerServer {
         let sessions: ManagedSession[] | null = null;
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const transport = await connectOrSpawnHost({
-            instanceId: process.env.THREADBASE_INSTANCE_ID ?? hostname(),
+            instanceId: getInstanceId(),
           });
           try {
             sessions = await this.ptyManager.useRemoteRunner(transport);
