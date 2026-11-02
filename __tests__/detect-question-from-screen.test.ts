@@ -326,6 +326,7 @@ describe("multi-select shape classification (#721)", () => {
       expect(r).not.toBeNull();
       expect(r?.questions).toHaveLength(1);
       expect(r?.questions[0].multiSelect).toBe(true);
+      expect(r?.questions[0].multiSelectUnverified).toBeUndefined(); // a readable checkbox
     },
   );
 
@@ -361,6 +362,7 @@ describe("multi-select shape classification (#721)", () => {
     ];
     const r = detectQuestionFromScreen(unknown);
     expect(r?.questions[0].multiSelect).toBe(true);
+    expect(r?.questions[0].multiSelectUnverified).toBe(true);
     expect(r?.questions[0].options.map((o) => o.label)).toEqual(["[?] Foo", "( ) Bar"]);
   });
 
