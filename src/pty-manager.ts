@@ -34,6 +34,7 @@ import { detectShellPrompt } from "./services/questions/detectShellPrompt";
 import { detectStartupChoiceGate } from "./services/questions/detectStartupChoiceGate";
 import { parseAgentPhase } from "./services/questions/parseAgentPhase";
 import { isPermissionAnswer } from "./services/questions/permissionAnswerKeys";
+import { transcriptTurnEndAt } from "./services/sessions/transcriptTurnEnd";
 import type {
   AgentPhase,
   ManagedSession,
@@ -1518,6 +1519,23 @@ export class PTYManager implements SessionRunner {
     if ((session.promptSuggestion ?? null) === text) return;
     session.promptSuggestion = text;
     this.onPromptSuggestionChange?.(sessionId, text);
+  }
+
+  /**
+   * The transcript says the turn ended (`system`/`turn_duration`). Supplements
+   * the title signal: settles a still-`running` turn the PTY path has not, and
+   * only one that started no later than the line (a late line for the previous
+   * turn must not end the next). Once settled the status is no longer `running`,
+   * so the PTY path and a repeat of this one both fall through.
+   */
+  settleFromTranscript(sessionId: string, lines: string[]): void {
+    const session = this.sessions.get(sessionId);
+    if (session?.status !== "running" || session.statusUpdatedAt == null) return;
+    const endedAt = transcriptTurnEndAt("claude-code", lines);
+    if (endedAt === null || endedAt < session.statusUpdatedAt.getTime()) return;
+    this.turnOpen.delete(sessionId);
+    this.awaitingStart.delete(sessionId);
+    this.markReady(sessionId, session, "turn-signal", "transcript:turn_duration");
   }
 
   private markReady(

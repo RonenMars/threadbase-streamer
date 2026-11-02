@@ -206,6 +206,13 @@ export const IDLE_REAP_AFTER_MS = 6 * 60 * 60 * 1000;
 // nothing, and a frequent timer on an idle server does not earn its wakeups.
 export const IDLE_REAP_SWEEP_MS = 5 * 60 * 1000;
 
+// A `running` turn with no output chunk and no transcript line for this long
+// logs `pty.turn_ceiling` once. It only reports (#1048): the status stays
+// `running`, nothing is held or killed, because a long silent turn is real work
+// and a hard cutoff was rejected. Checked on the reaper sweep, so it fires up to
+// IDLE_REAP_SWEEP_MS late.
+export const TURN_SILENCE_CEILING_MS = 30 * 60 * 1000;
+
 /**
  * How often the Codex rollout format is sampled. Hourly: the thing being
  * watched changes with a Codex release, not minute to minute, and a sweep
@@ -743,6 +750,12 @@ export class StreamerServer {
         externalTailManager: () => this.externalTailManager,
         trackCacheWrite: (task) => this.trackCacheWrite(task),
         processJsonlQuestions: (sessionId, lines) => this.processJsonlQuestions(sessionId, lines),
+        noteTranscriptLines: (sessionId, lines) => {
+          // A transcript line is agent activity (reaper and ceiling read this),
+          // and may carry the provider's own end-of-turn signal.
+          this.lastAgentChunkAt.set(sessionId, Date.now());
+          this.ptyManager.settleFromTranscript(sessionId, lines);
+        },
         broadcastConversationLines: (sessionId, lines, seqs) =>
           this.broadcastConversationLines(sessionId, lines, seqs),
       }),
@@ -1305,7 +1318,10 @@ export class StreamerServer {
     const reaped: string[] = [];
     for (const session of this.ptyManager.listSessions()) {
       // Never touch a session mid-turn. This is the whole point.
-      if (session.status === "running") continue;
+      if (session.status === "running") {
+        this.warnTurnCeiling(session, now);
+        continue;
+      }
 
       // Fall back to startedAt so a session that never produced a chunk is
       // still eligible eventually — otherwise a PTY that failed to emit
@@ -1333,6 +1349,27 @@ export class StreamerServer {
       if (held) this.wsHub.broadcast({ type: "session_update", session: held });
     }
     return reaped;
+  }
+
+  // One warning per turn: the turn is identified by when `running` was entered.
+  private ceilingWarnedTurn = new Map<string, number>();
+
+  private warnTurnCeiling(session: ManagedSession, now: number): void {
+    const turn = session.statusUpdatedAt?.getTime() ?? session.startedAt.getTime();
+    const lastActive = Math.max(
+      this.lastAgentChunkAt.get(session.id) ?? 0,
+      session.lastActivityAt?.getTime() ?? 0,
+      turn,
+    );
+    const silentMs = now - lastActive;
+    if (silentMs < TURN_SILENCE_CEILING_MS || this.ceilingWarnedTurn.get(session.id) === turn) {
+      return;
+    }
+    this.ceilingWarnedTurn.set(session.id, turn);
+    this.log.warn(
+      `[turn] ${session.id} silent for ${Math.round(silentMs / 60_000)}m while running; status unchanged`,
+      { event: "pty.turn_ceiling", sessionId: session.id, provider: session.provider, silentMs },
+    );
   }
 
   private startGraceTimer(sessionId: string, delayMs: number): void {
@@ -2171,6 +2208,7 @@ export class StreamerServer {
     this.hostPressureMonitor?.dispose();
     this.hostPressureMonitor = null;
     this.lastAgentChunkAt.clear();
+    this.ceilingWarnedTurn.clear();
     this.terminalSeq.clear();
     // An in-process runner is about to kill its children, so record that before
     // dispose() and before runtimeStore.close() takes the registry handle away.

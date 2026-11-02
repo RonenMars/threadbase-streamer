@@ -37,6 +37,7 @@ import {
   gateCard,
 } from "./services/questions/codexScreen";
 import { parseAgentPhase } from "./services/questions/parseAgentPhase";
+import { transcriptTurnEndAt } from "./services/sessions/transcriptTurnEnd";
 import type {
   AgentPhase,
   ManagedSession,
@@ -1284,6 +1285,23 @@ export class CodexPtyRunner implements SessionRunner {
     if ((session.subStatus ?? null) === next) return;
     session.subStatus = next;
     this.onPhaseChange?.(sessionId, next);
+  }
+
+  /**
+   * The rollout says the turn ended (`task_complete` / `turn_aborted`).
+   * Supplements the title/Ready signal: settles a still-`running` turn the PTY
+   * path has not, and only one that started no later than the line (a late line
+   * for the previous turn must not end the next). Once settled the status is no
+   * longer `running`, so the PTY path and a repeat of this one both fall through.
+   */
+  settleFromTranscript(sessionId: string, lines: string[]): void {
+    const session = this.sessions.get(sessionId);
+    if (session?.status !== "running" || session.statusUpdatedAt == null) return;
+    const endedAt = transcriptTurnEndAt("codex-cli", lines);
+    if (endedAt === null || endedAt < session.statusUpdatedAt.getTime()) return;
+    this.turnBusy.delete(sessionId);
+    this.awaitingStart.delete(sessionId);
+    this.markReady(sessionId, session, "turn-signal", "transcript:turn-end");
   }
 
   private markReady(

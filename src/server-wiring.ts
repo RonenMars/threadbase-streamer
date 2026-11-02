@@ -148,6 +148,7 @@ export type ConversationWatcherWiringDeps = {
   externalTailManager: () => ExternalTailManager;
   trackCacheWrite: (task: Promise<unknown>) => void;
   processJsonlQuestions: (sessionId: string, lines: string[]) => void;
+  noteTranscriptLines: (sessionId: string, lines: string[]) => void;
   broadcastConversationLines: (
     sessionId: string,
     lines: string[],
@@ -221,6 +222,7 @@ export function createConversationWatcherEvents(
       for (const [sessionId, watchedPath] of deps.sessionFileMap) {
         if (watchedPath === filePath) {
           managed = true;
+          deps.noteTranscriptLines(sessionId, lines);
           deps.processJsonlQuestions(sessionId, lines);
           // Additive batched event (one socket write) for newer clients. When
           // the offset index assigned seqs for this read, carry them parallel
