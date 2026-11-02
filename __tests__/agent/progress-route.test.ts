@@ -46,8 +46,12 @@ function makeDeps(
   };
 }
 
-function sign(body: string, secret: string): string {
-  return crypto.createHmac("sha256", secret).update(body).digest("hex");
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+const TS = String(nowSeconds());
+
+/** The signed payload is `${timestamp}.${rawBody}`; the timestamp is covered. */
+function sign(body: string, secret: string, ts: string = TS): string {
+  return crypto.createHmac("sha256", secret).update(`${ts}.${body}`).digest("hex");
 }
 
 function makeApp(deps: ReturnType<typeof makeDeps>) {
@@ -69,15 +73,21 @@ function event(overrides: Partial<ProgressEvent> = {}): ProgressEvent {
   } as ProgressEvent;
 }
 
-async function post(app: Hono, body: ProgressEvent, sig: string): Promise<Response> {
+async function post(
+  app: Hono,
+  body: ProgressEvent,
+  sig: string,
+  ts: string | null = TS,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "x-progress-signature": sig,
+    "x-progress-event-id": body.eventId,
+  };
+  if (ts !== null) headers["x-timestamp"] = ts;
   return app.request(`/internal/sessions/${body.sessionId}/progress`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-progress-signature": sig,
-      "x-progress-timestamp": String(Math.floor(Date.now() / 1000)),
-      "x-progress-event-id": body.eventId,
-    },
+    headers,
     body: JSON.stringify(body),
   });
 }
@@ -112,6 +122,92 @@ describe("progress route", () => {
     expect(msg.type).toBe("session_update");
     expect(msg.sessionId).toBe("sess_t");
     expect(msg.stage).toBe("processing");
+  });
+
+  it("rejects a missing X-Timestamp with 401, even when the signature is otherwise correct", async () => {
+    const deps = makeDeps();
+    const app = makeApp(deps);
+    const body = event({ eventId: "evt_nots" });
+    const raw = JSON.stringify(body);
+    const res = await post(app, body, sign(raw, SECRET), null);
+    expect(res.status).toBe(401);
+    expect(deps.broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unparseable X-Timestamp with 401", async () => {
+    const deps = makeDeps();
+    const app = makeApp(deps);
+    const body = event({ eventId: "evt_badts" });
+    const raw = JSON.stringify(body);
+    for (const ts of [
+      "abc",
+      "",
+      "1e9",
+      "-5",
+      "12.5",
+      `${TS}.5`,
+      ` ${TS}`,
+      `${TS}e0`,
+      `0x${Number(TS).toString(16)}`,
+    ]) {
+      const res = await post(app, body, sign(raw, SECRET, ts), ts);
+      expect(res.status).toBe(401);
+    }
+    expect(deps.broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale timestamp with 401 even though its signature covers that timestamp", async () => {
+    const deps = makeDeps();
+    const app = makeApp(deps);
+    const body = event({ eventId: "evt_stale" });
+    const raw = JSON.stringify(body);
+    const old = String(nowSeconds() - 301);
+    const res = await post(app, body, sign(raw, SECRET, old), old);
+    expect(res.status).toBe(401);
+    expect(deps.broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a timestamp too far in the future with 401", async () => {
+    const deps = makeDeps();
+    const app = makeApp(deps);
+    const body = event({ eventId: "evt_future" });
+    const raw = JSON.stringify(body);
+    const ahead = String(nowSeconds() + 301);
+    const res = await post(app, body, sign(raw, SECRET, ahead), ahead);
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a body-only signature (no legacy fallback) with 401", async () => {
+    const deps = makeDeps();
+    const app = makeApp(deps);
+    const body = event({ eventId: "evt_legacy" });
+    const raw = JSON.stringify(body);
+    const bodyOnly = crypto.createHmac("sha256", SECRET).update(raw).digest("hex");
+    const res = await post(app, body, bodyOnly);
+    expect(res.status).toBe(401);
+    expect(deps.broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a replay with a refreshed header: the timestamp is covered by the signature", async () => {
+    const deps = makeDeps();
+    const app = makeApp(deps);
+    const body = event({ eventId: "evt_replay" });
+    const raw = JSON.stringify(body);
+    const old = String(nowSeconds() - 3600);
+    const captured = sign(raw, SECRET, old);
+    const res = await post(app, body, captured, TS);
+    expect(res.status).toBe(401);
+  });
+
+  it("honours timestampSkewSeconds from config", async () => {
+    const deps = makeDeps();
+    deps.agentConfig.webhook.timestampSkewSeconds = 10;
+    const app = makeApp(deps);
+    const body = event({ eventId: "evt_skew" });
+    const raw = JSON.stringify(body);
+    const ts = String(nowSeconds() - 60);
+    const res = await post(app, body, sign(raw, SECRET, ts), ts);
+    expect(res.status).toBe(401);
   });
 
   it("dedupes a repeated eventId — second POST returns 200 deduped:true and does NOT broadcast", async () => {

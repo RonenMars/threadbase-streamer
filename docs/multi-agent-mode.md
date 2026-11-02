@@ -57,7 +57,23 @@ Full design and decision rationale: `tb-multi-agent/docs/superpowers/specs/2026-
 
 ## Wire endpoints
 
-- `POST /internal/sessions/:sessionId/progress` — worker → tb-streamer progress webhook. HMAC-signed via `X-Progress-Signature`. Bypasses Bearer auth (HMAC-only).
+- `POST /internal/sessions/:sessionId/progress` — worker → tb-streamer progress webhook. Bypasses Bearer auth (HMAC-only). Signing rule below.
+
+### Progress webhook signing
+
+The sender sets two headers:
+
+- `X-Timestamp` — unix seconds, digits only.
+- `X-Progress-Signature` — hex `HMAC-SHA256(secret, "<X-Timestamp>.<raw request body>")`.
+
+The timestamp is part of the signed payload, so a captured request cannot be replayed with a refreshed header.
+The streamer answers `401` when `X-Timestamp` is missing or not digits, when it is further than `PROGRESS_WEBHOOK_TIMESTAMP_SKEW_SECONDS` (default 300) from the server clock in either direction, or when the signature does not match.
+A body-only signature (the old rule) is rejected; there is no fallback.
+Inside the window, a repeated `eventId` still returns `200 {ok: true, deduped: true}` without a broadcast.
+Sender and receiver clocks must agree to within the skew.
+
+Why no fallback: multi-agent mode is off by default, so the sender and receiver change together.
+Closes the replay gap recorded as M4 in [docs/security/2026-11-02-reverted-hardening-decisions.md](security/2026-11-02-reverted-hardening-decisions.md).
 - Existing WebSocket protocol — augmented with `session_update.stage`, `session_update.stalledSinceMs`, plus two new event types: `agent_output` and `turn_failure`. All additive — old clients ignore unknown fields.
 
 ## Smoke test

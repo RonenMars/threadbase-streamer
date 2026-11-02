@@ -2,7 +2,11 @@
 //
 // Webhook receiver for worker → tb-streamer progress events.
 //
-// Auth: HMAC over the raw request body, header X-Progress-Signature.
+// Auth: header X-Progress-Signature = hex HMAC-SHA256(secret, `${timestamp}.${rawBody}`),
+// where timestamp is the unix-seconds X-Timestamp header. The timestamp is
+// covered by the signature, so a captured request cannot be replayed with a
+// fresh header, and one outside the skew window is refused. No legacy
+// body-only signature is accepted.
 // Auth bypass: the auth middleware skips this prefix because validation
 // happens inside the handler (mirrors /api/__update).
 //
@@ -41,9 +45,18 @@ interface AgentDeps {
   };
 }
 
-function verifySignature(rawBody: Buffer, signature: string, secret: string): boolean {
+function verifySignature(
+  timestamp: string,
+  rawBody: Buffer,
+  signature: string,
+  secret: string,
+): boolean {
   if (!signature || signature.length === 0) return false;
-  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(`${timestamp}.`)
+    .update(rawBody)
+    .digest("hex");
   if (expected.length !== signature.length) return false;
   try {
     return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
@@ -52,12 +65,11 @@ function verifySignature(rawBody: Buffer, signature: string, secret: string): bo
   }
 }
 
+/** Unix seconds, digits only. A missing or unparseable header is outside the window. */
 function isWithinSkew(timestampHeader: string | undefined, skewSeconds: number): boolean {
-  if (!timestampHeader) return true; // header optional in milestone B
-  const t = Number(timestampHeader);
-  if (!Number.isFinite(t)) return false;
+  if (!timestampHeader || !/^\d+$/.test(timestampHeader)) return false;
   const now = Math.floor(Date.now() / 1000);
-  return Math.abs(now - t) <= skewSeconds;
+  return Math.abs(now - Number(timestampHeader)) <= skewSeconds;
 }
 
 function stageToRole(stage: Stage | string | undefined): "worker" | "reviewer" | "signoff" {
@@ -92,16 +104,14 @@ export const createProgressRoutes = (deps: ApiDeps & AgentDeps) => {
       return c.json({ error: "could not read body" }, 400);
     }
     const sigHeader = c.req.header("x-progress-signature") ?? "";
-    if (!verifySignature(rawBuf, sigHeader, deps.agentConfig.webhook.hmacSecret)) {
-      return c.json({ error: "unauthorized" }, 401);
+    const timestamp = c.req.header("x-timestamp");
+    if (!isWithinSkew(timestamp, deps.agentConfig.webhook.timestampSkewSeconds)) {
+      return c.json({ error: "stale or missing timestamp" }, 401);
     }
     if (
-      !isWithinSkew(
-        c.req.header("x-progress-timestamp"),
-        deps.agentConfig.webhook.timestampSkewSeconds,
-      )
+      !verifySignature(timestamp as string, rawBuf, sigHeader, deps.agentConfig.webhook.hmacSecret)
     ) {
-      return c.json({ error: "stale timestamp" }, 401);
+      return c.json({ error: "unauthorized" }, 401);
     }
 
     let event: ProgressEvent;

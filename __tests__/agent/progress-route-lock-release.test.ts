@@ -6,8 +6,10 @@ import { createProgressRoutes } from "../../src/api/routes/progress.routes";
 
 const SECRET = "unit-secret";
 
+const TS = String(Math.floor(Date.now() / 1000));
+
 function sign(body: string) {
-  return crypto.createHmac("sha256", SECRET).update(body).digest("hex");
+  return crypto.createHmac("sha256", SECRET).update(`${TS}.${body}`).digest("hex");
 }
 
 function makeDeps(sessionOverrides: Record<string, unknown> = {}) {
@@ -43,7 +45,7 @@ async function post(app: Hono, sessionId: string, body: object): Promise<Respons
     headers: {
       "content-type": "application/json",
       "x-progress-signature": sign(raw),
-      "x-progress-timestamp": String(Math.floor(Date.now() / 1000)),
+      "x-timestamp": TS,
       "x-progress-event-id": (body as { eventId: string }).eventId,
     },
     body: raw,
