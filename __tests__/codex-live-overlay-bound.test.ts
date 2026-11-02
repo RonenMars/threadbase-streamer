@@ -116,7 +116,10 @@ function live(lines: string[], seqs: (number | null)[] | null): string[] {
   const broadcast = vi.fn();
   // Private method, driven directly: this is the hunk that threads seqs through.
   (StreamerServer.prototype as any).broadcastConversationLines.call(
-    { wsHub: { broadcast } },
+    {
+      wsHub: { broadcastToClients: (_clients: unknown, msg: unknown) => broadcast(msg) },
+      sessionSubscribers: new Map(),
+    },
     CONV,
     lines,
     seqs,
