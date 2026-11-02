@@ -492,6 +492,22 @@ describe("push preference routes", () => {
       expect(calls[0].body[0].body).toContain("בדיקה");
     });
 
+    it("reports accepted but not yet delivered while the receipt is pending", async () => {
+      repo.register({ token: EXPO_A, platform: "ios" });
+      stubExpo([{ body: { data: [{ status: "ok", id: "ticket-1" }] } }]);
+
+      const body = await (await send("POST", "/api/push/test", { token: EXPO_A })).json();
+
+      // Same fields as before: ok still means Expo accepted it.
+      expect(body).toMatchObject({
+        ok: true,
+        attempted: 1,
+        succeeded: 1,
+        state: "never-delivered",
+      });
+      expect(repo.get(EXPO_A)?.last_success_at).toBeNull();
+    });
+
     it("is not muted by the user's own quiet hours", async () => {
       repo.register({ token: EXPO_A, platform: "ios", notificationPrefs: ALWAYS_QUIET });
       const calls = stubExpo();
