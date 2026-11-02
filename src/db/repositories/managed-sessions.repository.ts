@@ -56,6 +56,9 @@ export interface ManagedSessionRow {
   boot_token?: string | null;
   /** JSON array of extra directories (migration 006). Null or absent means none. */
   additional_paths?: string | null;
+  /** Effective model / effort the session was spawned with (migration 008). Null or absent means unknown. */
+  model?: string | null;
+  effort?: string | null;
 }
 
 /** Most rows the boot reconciler will probe in one pass. */
@@ -78,6 +81,7 @@ export class ManagedSessionsRepository {
   private upsertStmt: Database.Statement;
   private updateStatusStmt: Database.Statement;
   private bindStmt: Database.Statement;
+  private settingStmts: Record<"model" | "effort", Database.Statement>;
   private getStmt: Database.Statement;
   private listNonTerminalStmt: Database.Statement;
   private listAllStmt: Database.Statement;
@@ -94,14 +98,14 @@ export class ManagedSessionsRepository {
         last_activity_at, prompt_count, session_name, project_id,
         bound_conversation_id, resumed_from_conversation_id, failure_reason,
         streamer_instance_id, boot_token, is_subagent, parent_conversation_id,
-        additional_paths
+        additional_paths, model, effort
       ) VALUES (
         @session_id, @provider, @pid, @cmdline, @project_path, @project_name, @branch,
         @status, @status_source, @status_updated_at, @started_at, @completed_at,
         @last_activity_at, @prompt_count, @session_name, @project_id,
         @bound_conversation_id, @resumed_from_conversation_id, @failure_reason,
         @streamer_instance_id, @boot_token, @is_subagent, @parent_conversation_id,
-        @additional_paths
+        @additional_paths, @model, @effort
       )
       ON CONFLICT(session_id) DO UPDATE SET
         pid = excluded.pid,
@@ -124,7 +128,9 @@ export class ManagedSessionsRepository {
         boot_token = excluded.boot_token,
         is_subagent = excluded.is_subagent,
         parent_conversation_id = excluded.parent_conversation_id,
-        additional_paths = excluded.additional_paths
+        additional_paths = excluded.additional_paths,
+        model = excluded.model,
+        effort = excluded.effort
     `);
 
     // Narrow status-only write for the hot transition path, so a
@@ -156,6 +162,11 @@ export class ManagedSessionsRepository {
          SET bound_conversation_id = @bound_conversation_id
        WHERE session_id = @session_id
     `);
+
+    this.settingStmts = {
+      model: db.prepare("UPDATE managed_sessions SET model = ? WHERE session_id = ?"),
+      effort: db.prepare("UPDATE managed_sessions SET effort = ? WHERE session_id = ?"),
+    };
 
     this.getStmt = db.prepare("SELECT * FROM managed_sessions WHERE session_id = ?");
 
@@ -246,6 +257,8 @@ export class ManagedSessionsRepository {
       additional_paths: session.additionalPaths?.length
         ? JSON.stringify(session.additionalPaths)
         : null,
+      model: session.model ?? null,
+      effort: session.effort ?? null,
     });
   }
 
@@ -308,6 +321,11 @@ export class ManagedSessionsRepository {
       session_id: sessionId,
       bound_conversation_id: boundConversationId,
     });
+  }
+
+  /** A live `/model` or `/effort` switch; `recordStatus` never touches these columns. */
+  recordSetting(sessionId: string, setting: "model" | "effort", value: string): void {
+    this.settingStmts[setting].run(value, sessionId);
   }
 
   get(sessionId: string): ManagedSessionRow | null {

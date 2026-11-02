@@ -39,12 +39,18 @@ export type ApiDeps = {
     registry: readonly FlagDefinition[];
     values: ClaudeFlagValues;
     extraArgs: string | null;
+    overriddenByExtraArgs: { model?: string; effort?: string };
     persisted: boolean;
   };
   setClaudeFlagsConfig: (
     values: ClaudeFlagValues,
     extraArgs: string | undefined,
-  ) => { values: ClaudeFlagValues; extraArgs: string | null; persisted: boolean };
+  ) => {
+    values: ClaudeFlagValues;
+    extraArgs: string | null;
+    overriddenByExtraArgs: { model?: string; effort?: string };
+    persisted: boolean;
+  };
   featureFlagsConfig: () => {
     registry: readonly FeatureFlagDefinition[];
     values: ResolvedFeatureFlags;

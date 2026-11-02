@@ -7,6 +7,7 @@ import {
   flagValueRisk,
   isEffortLevel,
   isPermissionMode,
+  resolveEffectiveModelEffort,
   tokenizeExtraArgs,
   validateFlagValues,
 } from "../src/claude-flags";
@@ -226,5 +227,61 @@ describe("effectivePermissionMode", () => {
     expect(effectivePermissionMode(undefined, undefined)).toBeUndefined();
     expect(effectivePermissionMode(undefined, "nonsense")).toBeUndefined();
     expect(effectivePermissionMode({ permissionMode: "nonsense" }, undefined)).toBeUndefined();
+  });
+});
+
+describe("resolveEffectiveModelEffort", () => {
+  it("reads the single --model / --effort the spawn passed", () => {
+    expect(resolveEffectiveModelEffort(["--model", "sonnet", "--effort", "low"])).toEqual({
+      model: "sonnet",
+      effort: "low",
+    });
+  });
+
+  it("lets the last occurrence win, as the Claude CLI does", () => {
+    expect(
+      resolveEffectiveModelEffort([
+        "--model",
+        "sonnet",
+        "--effort",
+        "low",
+        "--model",
+        "claude-sonnet-5",
+        "--effort",
+        "high",
+      ]),
+    ).toEqual({ model: "claude-sonnet-5", effort: "high" });
+  });
+
+  it("understands the --flag=value form, and mixes it with the spaced form", () => {
+    expect(
+      resolveEffectiveModelEffort(["--model", "sonnet", "--model=opus", "--effort=max"]),
+    ).toEqual({ model: "opus", effort: "max" });
+    expect(resolveEffectiveModelEffort(["--model=opus", "--model", "haiku"]).model).toBe("haiku");
+  });
+
+  it("reports null for a flag that never appears, never a guessed default", () => {
+    expect(resolveEffectiveModelEffort(["--add-dir", "/x"])).toEqual({ model: null, effort: null });
+    expect(resolveEffectiveModelEffort(["--model", "opus"])).toEqual({
+      model: "opus",
+      effort: null,
+    });
+  });
+
+  it("ignores a trailing flag with no value and keeps the earlier one", () => {
+    expect(resolveEffectiveModelEffort(["--model", "opus", "--model"]).model).toBe("opus");
+    expect(resolveEffectiveModelEffort(["--effort="]).effort).toBeNull();
+  });
+
+  it("does not mistake a prefix match or another flag's value for the flag", () => {
+    expect(resolveEffectiveModelEffort(["--model-foo", "x", "--effortless=1"])).toEqual({
+      model: null,
+      effort: null,
+    });
+    // A value-less flag does not swallow the next flag as its value.
+    expect(resolveEffectiveModelEffort(["--model", "--effort", "high"])).toEqual({
+      model: null,
+      effort: "high",
+    });
   });
 });

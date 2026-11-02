@@ -69,6 +69,7 @@ describe("RuntimeStore", () => {
       "006_add_managed_session_additional_paths.sql",
       "006_create_saved_items.sql",
       "007_create_recent_dirs.sql",
+      "008_add_managed_session_model_effort.sql",
     ]);
     store.close();
 
