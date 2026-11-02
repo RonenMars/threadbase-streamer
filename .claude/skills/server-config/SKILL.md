@@ -27,9 +27,9 @@ Moved out of the repo root `CLAUDE.md` so it loads on demand rather than in ever
 | `THREADBASE_ALLOW_BROWSER_CORS` | Enables browser CORS (off by default; no web page can make authenticated requests without it). Set to `1`/`true`/`yes`/`on` to allow the localhost dev origins, or to a comma-separated origin list (e.g. `https://app.example.com`) to allow those on top of the dev defaults. Overrides `browser_cors:` in server.yaml when set. Mobile is unaffected (no `Origin` header). In `server.yaml` write the origin list unquoted (`browser_cors: https://app.example.com`) — the line is read by regex, so quotes become part of the origin and nothing matches. An allowed origin gets both REST (including the `X-Client-Id` header) and the `/ws` upgrade. |
 | `APNS_KEY` | **Contents** of the APNs p8 signing key (PEM), not a path. Required for iOS Live Activity push but no longer sufficient on its own — the `liveActivityPush` feature flag must also be on. Either missing leaves the feature off with one info log and a normal boot. Never logged. See [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md). |
 | `APNS_KEY_ID` | Key id of the p8 in `APNS_KEY`. Required when `APNS_KEY` is set; under launchd it is derived from the `AuthKey_<keyId>.p8` filename. |
-| `APNS_TEAM_ID` | Apple Developer team id. Required when `APNS_KEY` is set; no default, so one deployment's Apple account is never baked into the source. |
-| `APNS_BUNDLE_ID` | App bundle id; the APNs topic is this plus `.push-type.liveactivity`. Required when `APNS_KEY` is set. |
-| `APNS_HOST` | APNs host. Defaults to sandbox (`api.sandbox.push.apple.com`) because the app's `aps-environment` is still `development`; set `api.push.apple.com` for production. |
+| `APNS_TEAM_ID` | Apple Developer team id. Defaults to the official app's team id; override with your own app's. |
+| `APNS_BUNDLE_ID` | App bundle id; the APNs topic is this plus `.push-type.liveactivity`. Defaults to the official app's. |
+| `APNS_HOST` | APNs host. Defaults to production (`api.push.apple.com`); set `api.sandbox.push.apple.com` for a development-signed build. Setup: [docs/guides/live-activity-push.md](../../../docs/guides/live-activity-push.md). |
 | `THREADBASE_EXPO_ACCESS_TOKEN` | Expo access token for the "your turn" push relay. Only needed if the Expo project has enhanced security enabled; unset is the normal case and sends go unauthenticated. Never logged. See [Waiting-for-input push] (see the push-notifications skill). |
 
 ## CLI flags vs. `server.yaml`

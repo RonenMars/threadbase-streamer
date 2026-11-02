@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
 import {
+  APNS_DEFAULT_BUNDLE_ID,
+  APNS_DEFAULT_TEAM_ID,
+  APNS_HOST_PRODUCTION,
   APNS_HOST_SANDBOX,
   APNS_MAX_PAYLOAD_BYTES,
   type ApnsSendResult,
@@ -111,10 +114,51 @@ describe("credentials", () => {
     const creds = readApnsCredentialsFromEnv(FULL_ENV);
 
     expect(creds?.key).toContain("BEGIN PRIVATE KEY");
-    // Sandbox by default: the app's aps-environment is still development.
-    expect(creds?.host).toBe(APNS_HOST_SANDBOX);
+    // Production by default: a TestFlight or App Store build is production-signed.
+    expect(creds?.host).toBe(APNS_HOST_PRODUCTION);
+    expect(creds?.host).toBe("api.push.apple.com");
     expect(creds?.bundleId).toBe("com.example.testapp");
   });
+
+  it("uses the sandbox host only when APNS_HOST asks for it", () => {
+    expect(readApnsCredentialsFromEnv({ ...FULL_ENV, APNS_HOST: APNS_HOST_SANDBOX })?.host).toBe(
+      "api.sandbox.push.apple.com",
+    );
+  });
+
+  // The official app's identifiers are the defaults, so a key and its id are
+  // all an operator has to supply. Env overrides still win (see below).
+  it("defaults the team and bundle ids to the official app when unset", () => {
+    const creds = readApnsCredentialsFromEnv({
+      APNS_KEY: FULL_ENV.APNS_KEY,
+      APNS_KEY_ID: FULL_ENV.APNS_KEY_ID,
+    });
+
+    expect(creds?.teamId).toBe(APNS_DEFAULT_TEAM_ID);
+    expect(creds?.bundleId).toBe(APNS_DEFAULT_BUNDLE_ID);
+    expect(APNS_DEFAULT_TEAM_ID).toBe("GUW6BN8X57");
+    expect(APNS_DEFAULT_BUNDLE_ID).toBe("com.ronenmars.threadbase");
+  });
+
+  it("lets the environment override the team and bundle defaults", () => {
+    const creds = readApnsCredentialsFromEnv(FULL_ENV);
+
+    expect(creds?.teamId).toBe("FAKETEAM99");
+    expect(creds?.bundleId).toBe("com.example.testapp");
+  });
+
+  // An empty or blank override is a misconfiguration, not a request for the default.
+  it.each(["APNS_TEAM_ID", "APNS_BUNDLE_ID"] as const)(
+    "falls back to the default when %s is set but blank",
+    (name) => {
+      const creds = readApnsCredentialsFromEnv({ ...FULL_ENV, [name]: "  " });
+
+      expect(creds?.teamId).toBe(name === "APNS_TEAM_ID" ? APNS_DEFAULT_TEAM_ID : "FAKETEAM99");
+      expect(creds?.bundleId).toBe(
+        name === "APNS_BUNDLE_ID" ? APNS_DEFAULT_BUNDLE_ID : "com.example.testapp",
+      );
+    },
+  );
 
   // A missing optional push credential must never stop the server booting.
   it("returns null when APNS_KEY is absent", () => {
@@ -122,17 +166,14 @@ describe("credentials", () => {
     expect(readApnsCredentialsFromEnv({ APNS_KEY: "   " })).toBeNull();
   });
 
-  // No account identifier is defaulted in the source: baking one deployment's
-  // Apple account in would make this silently sign for the wrong team elsewhere.
-  it.each(["APNS_KEY_ID", "APNS_TEAM_ID", "APNS_BUNDLE_ID"] as const)(
-    "returns null when %s is missing rather than guessing an account",
-    (missing) => {
-      const env: NodeJS.ProcessEnv = { ...FULL_ENV };
-      delete env[missing];
+  // The key id is the one identifier that is never defaulted: it belongs to the
+  // key, and a guess would sign with an id that does not match it.
+  it("returns null when APNS_KEY_ID is missing rather than guessing a key id", () => {
+    const env: NodeJS.ProcessEnv = { ...FULL_ENV };
+    delete env.APNS_KEY_ID;
 
-      expect(readApnsCredentialsFromEnv(env)).toBeNull();
-    },
-  );
+    expect(readApnsCredentialsFromEnv(env)).toBeNull();
+  });
 
   it("explains the absence of the key without revealing anything", () => {
     const why = describeMissingApnsCredentials({});
@@ -142,16 +183,14 @@ describe("credentials", () => {
 
   // The harder case to diagnose: it looks configured, and APNs answers a
   // mismatch with a bare InvalidProviderToken that names nothing.
-  it("names which identifier is missing when the key is present", () => {
-    const why = describeMissingApnsCredentials({
-      APNS_KEY: "k",
-      APNS_KEY_ID: "FAKEKEY123",
-    });
+  it("names the key id as the missing identifier when only the key is present", () => {
+    const why = describeMissingApnsCredentials({ APNS_KEY: "k" });
 
-    // Assert on the "is set but X are not" list rather than the whole string:
-    // the trailing guidance sentence legitimately mentions APNS_KEY_ID.
-    const listed = why?.match(/APNS_KEY is set but (.+?) are not/)?.[1];
-    expect(listed).toBe("APNS_TEAM_ID, APNS_BUNDLE_ID");
+    expect(why).toMatch(/APNS_KEY is set but APNS_KEY_ID is not/);
+  });
+
+  it("reports nothing missing when only the key and key id are set", () => {
+    expect(describeMissingApnsCredentials({ APNS_KEY: "k", APNS_KEY_ID: "FAKEKEY123" })).toBeNull();
   });
 
   it("allows overriding the host for production", () => {
