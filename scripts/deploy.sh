@@ -41,7 +41,8 @@ LAUNCHD_LABEL="com.ronen.threadbase"
 NIGHTLY_RESTART_LABEL="com.ronen.threadbase-nightly-restart"
 PORT="${THREADBASE_PORT:-8766}"
 HEALTH_URL="${THREADBASE_HEALTH_URL:-http://localhost:$PORT/healthz}"
-KEEP_RELEASES=5
+# Two builds: the active one plus one for `deploy rollback` (#900).
+KEEP_RELEASES=2
 
 # --- logging -----------------------------------------------------------------
 # Leveled, timestamped logging. Every line carries an ISO-8601 local timestamp
@@ -67,6 +68,9 @@ log()   { info "$@"; }                       # backward-compatible alias
 ok()    { _log_emit INFO  '1;32' '✓' 1 "$@"; }
 warn()  { _log_emit WARN  '1;33' '!' 2 "$@"; }
 err()   { _log_emit ERROR '1;31' '✗' 2 "$@"; }
+
+# shellcheck source=lib/prune-builds.sh
+. "$REPO_ROOT/scripts/lib/prune-builds.sh"
 
 # Global-shim installer (creates `threadbase-streamer` on PATH).
 # shellcheck source=lib/install-shim.sh
@@ -1161,14 +1165,9 @@ cmd_deploy() {
     [[ "${yn,,}" == "y" ]] && install_nightly_restart_job
   fi
 
-  log "garbage-collecting old releases (keeping last $KEEP_RELEASES)"
-  local active_release="$INSTALL_DIR/$(readlink "$ACTIVE_LINK")"
-  ls -td "$RELEASES_DIR"/cli.*/ 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) |
-    while IFS= read -r obsolete; do
-      [[ "${obsolete%/}" == "$(dirname "$active_release")" ]] && continue
-      rm -rf -- "$obsolete"
-    done || true
-  ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
+  log "pruning old builds (keeping $KEEP_RELEASES) and the updater's current/ and releases/<semver>/"
+  prune_builds "$INSTALL_DIR" "$KEEP_RELEASES" || warn "build pruning skipped (deploy itself is OK)"
+  warn_if_auto_update_enabled "$INSTALL_DIR"
 
   # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal:
   # deploy is already healthy at this point; only the convenience shim is at stake.

@@ -60,6 +60,41 @@ To run it from source instead, use the `deploy-menubar` skill (`.claude/skills/d
 
 During install/update the streamer is briefly down (a few seconds); the menubar shows "disconnected" until its next 5s health poll. If that gap exceeds ~10s, something's wrong with the restart step — check `~/.threadbase/logs/updater.{log,err}`.
 
+## One owner per machine, and build pruning
+
+A machine is owned by either the deploy script or the auto-updater, never both (#900).
+The two lay out the install dir differently, and a machine that runs both keeps both layouts: the deploy artifacts `releases/cli.<git-sha>…` and the updater's `current` plus `releases/<semver>/` trees, each with its own `node_modules`.
+
+On a machine you deploy to from source, set `auto_update: false` in `~/.threadbase/update.yaml` (or have no `update.yaml`).
+`deploy.sh`, `deploy-linux.sh` and `deploy.ps1` warn once at the end of a deploy when they find `auto_update: true` there; they never edit the file.
+
+After a healthy deploy the scripts call `prune_builds` (`scripts/lib/prune-builds.sh`; `Invoke-PruneBuilds` in `scripts/lib/prune-builds.ps1`), which keeps **2** builds (`KEEP_RELEASES`, was 5): the active one plus the one `deploy rollback` would pick, so `.history` and the `.cjs.version` sidecars stay consistent with what is on disk.
+It deletes exactly these, each through one guarded primitive (`_pb_rm`) that refuses any path that is not `<install>/current`, one `cli.*` or `<semver>` entry directly under `<install>/releases`, or `<install>/releases/.tmp/*.tgz`:
+
+- `current`
+- `releases/cli.*` beyond the two kept, with their sidecars
+- `releases/<semver>/`, the updater's trees
+- `releases/.tmp/*.tgz`, the updater's downloads
+
+It never touches `cache.db`, `runtime.db`, `server.yaml`, logs, the install's `node_modules`, `releases/.history` or `releases/menubar`.
+It honours `THREADBASE_INSTALL_DIR`, and refuses a root that is empty, relative, contains `..`, is `$HOME` or a system directory, or is not a directory.
+
+**A live pty-host can still be running an older build.**
+With the `ptyHost` flag on, the host is a detached `node <install>/launchd-entry.cjs pty-host --socket …` that survives streamer restarts, and it loads node-pty lazily from its own build's `node_modules`.
+Its command line does not name the build (`cli.js` is a symlink), and the status protocol carries no build id, so the prune finds it by:
+
+1. the files it holds open or mapped (`/proc/<pid>/fd` and `maps` on Linux, `lsof` on macOS): any `releases/<build>/` or `current/` it holds is kept, and `current` with it;
+2. otherwise the activation timeline: the host's start time (`ps -o etime`) against `.history` and the updater trees' mtimes picks the build `cli.js` pointed at when it started, and that build is kept;
+3. otherwise, if neither works, **nothing is pruned** and a warning says so.
+
+Hosts whose command line and open files do not mention this install dir are ignored.
+Known limits: the start time has one-second resolution, and a host with no loaded natives started within a second of an activation can be attributed to the neighbouring build.
+
+Windows differs.
+`cli.js` there is a copy of the active artifact, so `releases\cli.*.cjs` are rollback-only and never executed, and natives live in the shared `<install>\node_modules`.
+Only the updater layout (`current\`, `releases\<semver>\`) can still be loaded by a host, so those are protected by the host's loaded modules, and kept whole if the modules cannot be read.
+`scripts/deploy.ps1` and its pruner were reviewed and parsed but not executed on Windows when this was written.
+
 ## Windows local deploys
 
 Use `npm run deploy:windows` for the normal linted and tested deployment, or `npm run deploy:windows:force` when intentionally deploying a non-main integration checkout. The force path visibly skips lint, tests, the dirty-tree guard, and the advisory npm published-version lookup, so it never waits on an unavailable npm registry before building the selected checkout.
