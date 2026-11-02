@@ -10,6 +10,7 @@ import {
   createScreen,
   type InternalSession,
   loadPty,
+  PTY_COLS,
   PTY_ROWS,
   type ReplayLines,
   readReplayLines,
@@ -372,8 +373,8 @@ export class PTYManager implements SessionRunner {
     try {
       proc = nodePty.spawn(resolveClaudeExe(), args, {
         name: "xterm-256color",
-        cols: 120,
-        rows: 40,
+        cols: PTY_COLS,
+        rows: PTY_ROWS,
         cwd: options.projectPath,
         env: buildSpawnEnv(),
       });
@@ -468,8 +469,8 @@ export class PTYManager implements SessionRunner {
     try {
       proc = nodePty.spawn(resolveClaudeExe(), args, {
         name: "xterm-256color",
-        cols: 120,
-        rows: 40,
+        cols: PTY_COLS,
+        rows: PTY_ROWS,
         cwd: options.projectPath,
         env: buildSpawnEnv(),
       });
