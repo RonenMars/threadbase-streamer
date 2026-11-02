@@ -1,0 +1,17 @@
+{
+  "provider": "claude-code",
+  "providerVersion": "2.1.247",
+  "capturedAt": "2026-08-28",
+  "source": "real session capture (non-interactive stream-json run, entrypoint sdk-cli), minimal lines sanitized",
+  "sanitized": true,
+  "notes": "Free-text payloads (text/thinking/signature/aiTitle/lastPrompt) replaced with [redacted], ids replaced with synthetic uuids, cwd normalized. The fixture pins the SHAPE of Claude's JSONL envelopes, not their content. Adds queue-operation, ai-title and atis-latch, which 2.1.214 did not list. permission-mode and mode were not observed in this capture.",
+  "envelopeTypes": [
+    "queue-operation",
+    "user",
+    "attachment",
+    "ai-title",
+    "atis-latch",
+    "assistant",
+    "last-prompt"
+  ]
+}

@@ -27,7 +27,7 @@ import { capabilitiesFor, type ProviderCapabilities, type VerifiedAgainst } from
 export const VERIFIED_AGAINST: Record<ProviderName, VerifiedAgainst> = {
   // Intake is not a captured transcript/TUI: every installed build warns.
   [COPILOT_PROVIDER]: { captured: [] },
-  [CLAUDE_CODE_PROVIDER]: { captured: ["2.1.214"], min: "2.1.0" },
+  [CLAUDE_CODE_PROVIDER]: { captured: ["2.1.214", "2.1.247"], min: "2.1.0" },
   [CODEX_CLI_PROVIDER]: { captured: ["0.140.0-alpha.19"], min: "0.140.0" },
   // Transcript *shape* era (agent-transcripts JSONL), not a live `agent --version`
   // pin — we have no captured CLI build yet, so any installed version warns.
