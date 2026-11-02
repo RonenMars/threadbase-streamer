@@ -33,10 +33,8 @@ const testTimeout = process.platform === "win32" ? 900_000 : 45_000;
 //   If you want the suite faster, lower maxForks to 4-6; raising it is worse.
 // See docs/testing/cross-platform-ci.md.
 const nodeMajor = Number.parseInt(process.versions.node, 10);
-const fileParallelism = !(
-  process.platform === "darwin" ||
-  (process.platform === "win32" && nodeMajor >= 24)
-);
+// DIAGNOSTIC (#530): Windows Node 24 parallel again, to name the dying files.
+const fileParallelism = process.platform !== "darwin" || nodeMajor < 0;
 
 export default defineConfig({
   define: { __VERSION__: JSON.stringify(version) },
