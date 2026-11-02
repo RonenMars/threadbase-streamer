@@ -655,6 +655,10 @@ function Invoke-Deploy {
       Sort-Object LastWriteTime -Descending |
       Select-Object -Skip $keepReleases |
       Remove-Item -Force
+    # A bundle's .version sidecar goes with it; this also sweeps ones orphaned by earlier deploys (#871).
+    Get-ChildItem $releasesDir -Filter 'cli.*.cjs.version' |
+      Where-Object { -not (Test-Path -LiteralPath ($_.FullName -replace '\.version$', '')) } |
+      Remove-Item -Force
 
     # Install (or refresh) the global `threadbase-streamer.cmd` shim. Non-fatal:
     # deploy is already healthy at this point.
