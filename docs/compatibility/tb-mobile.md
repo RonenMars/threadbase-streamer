@@ -36,6 +36,8 @@ This file is hand-maintained and drifts between updates. The client checkout is 
 
 (`q` is still a URL query param on `GET /api/search`, unchanged. It moved to a QUERY-method JSON body field of the same name only for `search-target` — see above.)
 
+`QUERY /api/search` (#502) is an addition, not a migration: `GET /api/search?q=&limit=` is retained unchanged because released builds cannot be force-updated. QUERY accepts `{ "q": "<query>", "limit": <integer, optional> }` as `application/json` and returns the same body as GET for the same `q`/`limit`, with `Accept-Query: application/json`. Errors mirror `search-target`: `415` `unsupported_media_type` for a non-JSON `Content-Type`; `422` `invalid_query` for a malformed body, a missing/blank/non-string/>256-char `q`, or a non-integer `limit`. QUERY takes only `q` and `limit` (no `offset` or filters yet); use GET for those. No CORS or auth change was needed: `QUERY` is already in `Access-Control-Allow-Methods` and the auth middleware is method-agnostic.
+
 - `anchor_index` on `GET /api/conversations/{id}` — returns a bounded window centered on that absolute message index (clamped into range, never an error). `after_index` returns the newer-direction window `[after_index, after_index + msg_limit)`. Precedence when combined: `before_index` > `after_index` > `anchor_index`. Anchored/after responses never answer `304` to `If-None-Match` — only the plain tail page participates in the ETag freshness check.
 
 **Response field names** — these are deserialized by name in mobile types; casing matters:
