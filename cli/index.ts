@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "./load-install-env";
 import { stdin } from "node:process";
 import { Command } from "commander";
 import {
