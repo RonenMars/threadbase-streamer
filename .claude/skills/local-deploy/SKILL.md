@@ -137,8 +137,9 @@ browse_root: /path/to/your/projects
 `{DB_BLOCK}` is empty for memory mode, or:
 ```xml
 <key>THREADBASE_DATABASE_URL</key><string>postgresql://…</string>
-<key>THREADBASE_INSTANCE_ID</key><string>{HOSTNAME}</string>
 ```
+
+No unit or task sets an instance ID: the streamer generates one and persists it on its own, and `THREADBASE_INSTANCE_ID` is only an override that wins over the persisted value.
 
 > **The `EnvironmentVariables` block with `PATH` is mandatory, not cosmetic.** launchd inherits only `/usr/bin:/bin:/usr/sbin:/sbin` by default. Without `/opt/homebrew/bin` and `/usr/local/bin` in `PATH`, `node-pty` cannot find `claude`, every session-start/resume returns 201 but exits in ~20 ms, and the mobile app shows a permanent blank `Idle 0s 0 prompts` terminal. See `docs/troubleshooting.md` ("Mobile app shows session as Idle 0s 0 prompts immediately after start/resume"). The deploy script's plist generator and on-update self-heal both write this block; only hand-edited or pre-2026-05-06 plists are at risk.
 
@@ -170,7 +171,6 @@ WantedBy=default.target
 `{DB_ENV_LINES}` is empty for memory mode, or:
 ```ini
 Environment=THREADBASE_DATABASE_URL=postgresql://…
-Environment=THREADBASE_INSTANCE_ID={HOSTNAME}
 ```
 
 Bootstrap:
@@ -197,14 +197,12 @@ $cmdPath    = "$installDir\launch.cmd"
 $vbsPath    = "$installDir\launch.vbs"
 
 # Read DB env vars back from the registry (User scope) and inline them into launch.cmd
-$dbUrl  = [Environment]::GetEnvironmentVariable('THREADBASE_DATABASE_URL', 'User')
-$instId = [Environment]::GetEnvironmentVariable('THREADBASE_INSTANCE_ID', 'User')
+$dbUrl = [Environment]::GetEnvironmentVariable('THREADBASE_DATABASE_URL', 'User')
 
 # Build launch.cmd. Quoted `set "K=V"` form preserves trailing spaces and special chars
 # in the connection string. The final node line uses cmd's >> redirection.
 $cmdLines = @('@echo off', "cd /d `"$installDir`"")
-if ($dbUrl)  { $cmdLines += "set `"THREADBASE_DATABASE_URL=$dbUrl`"" }
-if ($instId) { $cmdLines += "set `"THREADBASE_INSTANCE_ID=$instId`"" }
+if ($dbUrl) { $cmdLines += "set `"THREADBASE_DATABASE_URL=$dbUrl`"" }
 $cmdLines += "`"$nodePath`" `"$cliPath`" serve --port {PORT} --verbose >> `"$logOut`" 2>> `"$logErr`""
 Set-Content -Path $cmdPath -Value $cmdLines -Encoding Ascii
 
@@ -237,7 +235,6 @@ Start-ScheduledTask -TaskName 'Threadbase'
 ```powershell
 # Persist to registry (survives reboots, future sessions)
 [Environment]::SetEnvironmentVariable('THREADBASE_DATABASE_URL', 'postgresql://…', 'User')
-[Environment]::SetEnvironmentVariable('THREADBASE_INSTANCE_ID', $env:COMPUTERNAME, 'User')
 ```
 
 **Windows DB connectivity diagnosis:** if `%TEMP%\threadbase.err` shows `EACCES` on port 5432 (not `ECONNREFUSED`), the env var is missing from the task action — the server starts but crashes when it can't find the DB URI. Test reachability first with `Test-NetConnection -ComputerName <host> -Port 5432`; if that succeeds, the issue is the missing env var, not a Windows Firewall rule.
