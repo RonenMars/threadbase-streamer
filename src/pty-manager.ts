@@ -1641,6 +1641,13 @@ export class PTYManager implements SessionRunner {
       }
     }
 
+    this.log.info(`[pty.exit] ${sessionId.slice(0, 8)} code=${exitCode} (elapsed=${elapsedMs}ms)`, {
+      event: "pty.exit",
+      sessionId,
+      exitCode,
+      elapsedMs,
+      failureReason: session.failureReason,
+    });
     this.onStatusChange?.(toPublicSession(session));
     session.screen.dispose();
     this.sessions.delete(sessionId);
