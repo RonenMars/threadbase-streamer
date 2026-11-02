@@ -65,9 +65,42 @@ describe("Copilot PTY", () => {
     expect(proc().write).toHaveBeenCalledWith("\r");
     runner.sendInput(s.id, "hello");
     expect(runner.getInputHistory(s.id)[0].text).toBe("hello");
-    expect(proc().write).toHaveBeenCalledWith("hello\r");
+    expect(proc().write).toHaveBeenCalledWith("hello");
     runner.resize(s.id, 90, 30);
     expect(proc().resize).toHaveBeenCalledWith(90, 30);
+  });
+  // Copilot reads a write with a newline in it as a paste, and a `\r` in the same
+  // chunk is absorbed into the paste instead of submitting (Copilot CLI 1.0.104
+  // and 1.0.105: the prompt sat in the compose box with 0 AIC used, #1073).
+  // Cursor and Codex send the submit as its own write after the same 16ms.
+  it("submits with a carriage return of its own, after the prompt, never in the same write", async () => {
+    vi.useFakeTimers();
+    try {
+      const s = await runner.startFresh({ projectPath: "/tmp/project" });
+      runner.sendInput(s.id, "line one\nline two");
+      expect(proc().write).toHaveBeenCalledTimes(1);
+      expect(proc().write).toHaveBeenLastCalledWith("line one\nline two");
+      vi.advanceTimersByTime(15);
+      expect(proc().write).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1);
+      expect(proc().write).toHaveBeenCalledTimes(2);
+      expect(proc().write).toHaveBeenLastCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("drops the pending submit when the session ends first", async () => {
+    vi.useFakeTimers();
+    try {
+      const s = await runner.startFresh({ projectPath: "/tmp/project" });
+      const p = proc();
+      runner.sendInput(s.id, "hello");
+      runner.putOnHold(s.id);
+      vi.advanceTimersByTime(100);
+      expect(p.write).not.toHaveBeenCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("releases the PTY on hold and can resume again", async () => {
     const s = await runner.startFresh({ projectPath: "/tmp/project" });
