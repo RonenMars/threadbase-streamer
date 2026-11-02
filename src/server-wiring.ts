@@ -216,6 +216,10 @@ export function createConversationWatcherEvents(
     },
     onNewLines: (filePath, lines) => {
       // One transactional cache write for the whole batch instead of per line.
+      // Synchronous on purpose: it is not tracked by trackCacheWrite because
+      // close() cannot run between here and the write. Do not add an await
+      // before it; an async write belongs in trackCacheWrite (see
+      // inFlightCacheWrites in server.ts).
       deps.cache()?.updateFromLines(filePath, lines);
       let managed = false;
       for (const [sessionId, watchedPath] of deps.sessionFileMap) {
