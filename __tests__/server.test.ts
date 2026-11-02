@@ -3344,6 +3344,24 @@ describe("StreamerServer", () => {
     it("requires authentication", async () => {
       expect((await fetch(`${baseUrl}/api/diagnostics`)).status).toBe(401);
     });
+
+    // The sandboxed ~/.claude/projects exists, so only a check that follows
+    // CLAUDE_CONFIG_DIR to this missing dir can report it degraded.
+    it("checks the history directory under CLAUDE_CONFIG_DIR", async () => {
+      const orig = process.env.CLAUDE_CONFIG_DIR;
+      process.env.CLAUDE_CONFIG_DIR = join(tmpdir(), "tb-no-such-claude-config-dir");
+      try {
+        const res = await fetch(`${baseUrl}/api/diagnostics`, {
+          headers: { Authorization: `Bearer ${API_KEY}` },
+        });
+        const body = await res.json();
+        const fs = body.checks.find((c: { id: string }) => c.id === "filesystem");
+        expect(fs.status).toBe("degraded");
+      } finally {
+        if (orig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+        else process.env.CLAUDE_CONFIG_DIR = orig;
+      }
+    });
   });
 
   // Project ids cannot be reconstructed: a fresh scan invents new ones, breaking

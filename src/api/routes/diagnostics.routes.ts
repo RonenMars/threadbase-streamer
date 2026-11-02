@@ -1,5 +1,6 @@
 import { existsSync } from "fs";
 import { Hono } from "hono";
+import { defaultClaudeProjectsDir } from "../../claude-accounts/resolve";
 import { ProviderExecutableError } from "../../config/provider-executables";
 import { locateProviderExe } from "../../platform";
 import { PROVIDER_NAMES, type ProviderName } from "../../providers";
@@ -156,8 +157,7 @@ export const createDiagnosticsRoutes = (deps: ApiDeps) => {
           },
     );
 
-    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-    const claudeProjects = home ? `${home}/.claude/projects` : "";
+    const claudeProjects = defaultClaudeProjectsDir();
     checks.push(
       claudeProjects && existsSync(claudeProjects)
         ? {
