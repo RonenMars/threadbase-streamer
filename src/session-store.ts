@@ -468,6 +468,14 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
     completedAt: null,
     ptyAttached: false,
     pid: d.pid,
+    ...(d.turnState && {
+      externalTurn: {
+        state: d.turnState.state,
+        updatedAt: d.turnState.updatedAt.toISOString(),
+        source: "claude-registry" as const,
+        confidence: "inferred" as const,
+      },
+    }),
   };
 }
 
