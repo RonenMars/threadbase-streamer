@@ -1736,7 +1736,9 @@ export class SessionHandlers {
    *     present it must equal `options[optionIndex].label` or the answer is
    *     refused as unknown_option. Absent, the position alone is trusted
    *     (released clients).
-   *   - `contentKey` binds the answer to a specific gate. `isPermissionAnswer`
+   *   - `gateId` is required and pins the answer to one gate instance; an answer
+   *     without it is refused 400 `gate_id_required`. Optional `contentKey`
+   *     additionally binds the content. `isPermissionAnswer`
    *     matches structurally, and approval gates repeat constantly ("2. Yes /
    *     3. No" for every tool call), so without this a delayed answer to gate A
    *     could be written as gate B's answer — a user approving a bash command
@@ -1770,11 +1772,18 @@ export class SessionHandlers {
     ) {
       json(res, 400, {
         ok: false,
-        reason: "Expected { contentKey?: string, gateId?: string, optionIndex: number }",
+        reason: "Expected { gateId: string, contentKey?: string, optionIndex: number }",
       });
       return;
     }
-    if (gateId !== undefined && typeof gateId !== "string") {
+    if (gateId === undefined) {
+      // contentKey alone names a gate by its content, and approval gates repeat
+      // ("2. Yes / 3. No" for every tool call), so it cannot say WHICH instance
+      // the client saw. Refuse with a reason the client can act on.
+      json(res, 400, { ok: false, reason: "gate_id_required" });
+      return;
+    }
+    if (typeof gateId !== "string") {
       json(res, 400, { ok: false, reason: "Expected gateId to be a string" });
       return;
     }
@@ -1809,17 +1818,9 @@ export class SessionHandlers {
     // has since closed and reopened — possibly with identical content, which
     // contentKey alone would wave through. Refuse quietly, exactly like the
     // content mismatch below: the live gate is fine and must stay up.
-    if (gateId !== undefined && gateId !== gate.gateId) {
+    if (gateId !== gate.gateId) {
       json(res, 409, { ok: false, reason: "gate_mismatch" });
       return;
-    }
-    if (gateId === undefined) {
-      // Temporary compatibility path for clients that predate gateId. Logged
-      // (metadata only) so its use is measurable and the path can be retired.
-      this.log.info(`[permission.answer_legacy_identity] ${sessionId.slice(0, 8)}`, {
-        event: "permission.answer_legacy_identity",
-        sessionId,
-      });
     }
     // A DIFFERENT gate is open, and it is legitimately on screen. Refuse, but
     // broadcast nothing: permission_cancelled is session-wide, so it would
