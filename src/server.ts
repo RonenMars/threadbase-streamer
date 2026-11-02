@@ -160,6 +160,7 @@ import { IdleSessionNotifier, parseIdleNotifyConfig } from "./services/push/idle
 import { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import { LiveActivityRenewalScheduler } from "./services/push/liveActivityRenewal";
 import { LiveActivitySender } from "./services/push/liveActivitySender";
+import { startPushTokenRetention } from "./services/push/pushTokenRetention";
 import { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
 import { isLossyViewOf, questionContentKey } from "./services/questions/detectQuestionFromScreen";
 import {
@@ -519,6 +520,7 @@ export class StreamerServer {
   private cacheMonitor: CacheIntegrityMonitor | null = null;
   private hostPressureMonitor: HostPressureMonitor | null = null;
   private stopRuntimeDiagnostics: (() => void) | null = null;
+  private stopPushTokenRetention: (() => void) | null = null;
   private projectsRepo: ProjectsRepository | null = null;
   private conversationsRepo: ConversationsRepository | null = null;
   private sessionsRepo: SessionsRepository | null = null;
@@ -1906,6 +1908,7 @@ export class StreamerServer {
           }
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
           this.pushRepo = new PushRepository(db);
+          this.stopPushTokenRetention = startPushTokenRetention(this.pushRepo);
 
           this.initLiveActivityPush(this.pushRepo);
           this.initWaitingInputPush(this.pushRepo);
@@ -2312,6 +2315,8 @@ export class StreamerServer {
     this.idleSessionNotifier?.stop();
     this.stopRuntimeDiagnostics?.();
     this.stopRuntimeDiagnostics = null;
+    this.stopPushTokenRetention?.();
+    this.stopPushTokenRetention = null;
     this.hostPressureMonitor?.dispose();
     this.hostPressureMonitor = null;
     this.lastAgentChunkAt.clear();

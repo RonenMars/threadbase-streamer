@@ -36,8 +36,8 @@ Status of the APNs Live Activity delivery path in tb-streamer after PRs [#292](h
 ## Operational gaps
 
 - [ ] `APNS_KEY` reaches the server on **macOS only**, and not via the plist: `cli/launchd-entry.ts:175` discovers `AuthKey_<keyId>.p8` in the install dir and derives `APNS_KEY_ID` from the filename. Linux and Windows invoke `cli.js` directly and never run that loader, so prod boots with Live Activities silently off there. No install path on any platform creates the `.env` that supplies team and bundle id. Tracked in [#480](https://github.com/RonenMars/threadbase-streamer/issues/480) and [#481](https://github.com/RonenMars/threadbase-streamer/issues/481).
-- [ ] No metric or health surface for Live Activity delivery. `/api/push/health` reports per-token state, but there is no count of activities renewed, ended, or retired.
-- [ ] No cleanup for `push_tokens` rows. Expired and revoked rows are retained deliberately (so health can explain why delivery stopped) and nothing ever prunes them.
+- [x] Live Activity delivery metrics (#509). Each start, renew, end and retire is a structured log event, and `GET /api/push/health` carries an additive `liveActivityMetrics` object with the counts since process start.
+- [x] Cleanup for `push_tokens` rows (#509). A daily sweep deletes dead rows after a 7-day grace and rows unused for 90 days. Rules in [live-activity-push.md](guides/live-activity-push.md#metrics-and-token-retention).
 - [x] Decide whether `THREADBASE_INSTANCE_ID` is stable enough to be `serverId` ([#510](https://github.com/RonenMars/threadbase-streamer/issues/510)).
   Decision: no, a hostname is not an identity, so the id is now generated once and persisted in `<config dir>/instance-id`.
   An explicit `THREADBASE_INSTANCE_ID` still wins and is never persisted.

@@ -2,6 +2,7 @@ import type { PushRepository, PushTokenRow } from "../../db/repositories/push.re
 import { getLogger } from "../../logger";
 import type { SessionStore } from "../../session-store";
 import { toLiveActivityStatus, truncateLastOutput } from "./liveActivityContentState";
+import { countLiveActivity } from "./liveActivityMetrics";
 import { ACTIVITY_MAX_LIFETIME_MS, type LiveActivitySender } from "./liveActivitySender";
 
 /**
@@ -187,7 +188,7 @@ export class LiveActivityRenewalScheduler {
       // End the old activity, then hand mobile the state to start its
       // replacement with. The replacement's own update token arrives via
       // /api/push/register once iOS issues it.
-      await this.deps.sender.send({
+      const ended = await this.deps.sender.send({
         sessionId: session.id,
         event: "end",
         contentState: { ...contentState, lastOutput: truncateLastOutput(contentState.lastOutput) },
@@ -201,6 +202,8 @@ export class LiveActivityRenewalScheduler {
         now,
       });
 
+      // The sender swallows per-token errors, so "no throw" is not "delivered".
+      if (ended.succeeded > 0) countLiveActivity("renewed");
       log.info("live_activity.renewed", {
         event: "live_activity.renewed",
         sessionId: session.id,

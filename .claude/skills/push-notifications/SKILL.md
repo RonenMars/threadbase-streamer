@@ -39,6 +39,8 @@ Off by default. `IDLE_NOTIFY_ENABLED=1` turns on `IdleSessionNotifier` (`src/ser
 - **Watched sessions** — no suppression, same as WaitingInputNotifier: a subscribed desktop browser must not silence the phone.
 - **Bounds** — one unref'd `setInterval`, started in `initWaitingInputPush` and stopped in `close()`; the sweep never throws, does not overlap itself, and sends at most `MAX_IDLE_NOTIFY_PER_SWEEP` (10) per pass. Logged as `push.idle_notify` (session id, `idleMinutes`, `attempted`/`succeeded`/`retired`/`suppressed`; never a token).
 - **Not built** — the issue's Stop action on the notification. That is a client notification category that would call `POST /api/sessions/:id/stop`; the streamer sends no `categoryId` for `idle`.
+- **Token retention (#509)** — a daily sweep (`src/services/push/pushTokenRetention.ts`, also run at boot) deletes `push_tokens` rows only, never `devices`. Dead rows (revoked, or `last_failure_code` a dead APNs reason) go 7 days after the failure, so health can still explain them. Rows with no registration and no successful send for 90 days go too ("used" is `MAX(registered_at, last_success_at)`, no extra column). Logged as `push.tokens_pruned`.
+- **Live Activity events and counts (#509)** — `live_activity.started`, `.renewed`, `.ended` and `.retired` are logged per event, and `GET /api/push/health` returns the additive `liveActivityMetrics` `{ started, renewed, ended, retired, since }` (in memory, since process start). `/healthz` is unchanged. Detail: [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md#metrics-and-token-retention).
 
 ## iOS Live Activity push
 
