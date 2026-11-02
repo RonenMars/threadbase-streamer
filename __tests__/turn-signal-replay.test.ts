@@ -586,3 +586,36 @@ describe("Copilot: the turn is read off the rendered status row", () => {
     runner.dispose();
   }, 15_000);
 });
+
+// #1044 (session-states gap 17): Claude's title goes idle when a gate paints, so
+// the idle signal has already been seen for that turn. When the answer ends the
+// turn at once (a "No" that stops it), no busy title follows, the start grace
+// lapses and the session used to settle by `screen-marker`, which sends no
+// "finished". The end must stay signalled.
+describe("Claude: a gate answered into an immediate end", () => {
+  it("settles as turn-signal, so the finished push fires", async () => {
+    const changes: ManagedSession[] = [];
+    const mgr = new PTYManager({ onStatusChange: (s) => changes.push({ ...s }) });
+    const session = await mgr.startFresh({ projectPath: "/tmp", projectName: "proj" });
+    const proc = (mgr as any).sessions.get(session.id).process;
+    const submitIdx = CLAUDE_GATE.chunks.findIndex(([ms]) => ms >= CLAUDE_GATE.submitAt);
+    for (const [, d] of CLAUDE_GATE.chunks.slice(0, submitIdx)) proc._emit("data", d);
+    await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"));
+    changes.length = 0;
+
+    mgr.sendInput(session.id, "prompt");
+    await sleep(50);
+    for (const [, d] of CLAUDE_GATE.chunks.slice(submitIdx)) proc._emit("data", d);
+    await sleep(1_200); // past the quiet check: the turn is held on the gate
+    expect(changes.map((c) => c.status)).toEqual(["running"]);
+
+    // The user answers "No": the gate leaves the screen, the prompt box returns,
+    // and Claude paints no busy title.
+    proc._emit("data", "\x1b[2J\x1b[H⏺ Stopped.\r\n\r\n╭──────╮\r\n│ ❯ │\r\n╰──────╯");
+    await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), {
+      timeout: 6_000,
+    });
+    expect(changes.at(-1)?.statusSource).toBe("turn-signal");
+    mgr.dispose();
+  }, 20_000);
+});
