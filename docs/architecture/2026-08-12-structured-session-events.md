@@ -1,7 +1,7 @@
 # Structured Session Events
 
 **Date:** 2026-08-12
-**Status:** Proposed
+**Status:** Proposed; Codex pilot first slice implemented behind the `codexAppServer` flag (see "Codex pilot status")
 **Scope:** tb-streamer (session runtime, WS contract), tb-mobile (state derivation), tb-scanner (conversation model)
 
 ---
@@ -99,6 +99,45 @@ Both providers map onto this nearly mechanically, which is the evidence that it 
 ### Runners are interchangeable over a conversation
 
 This is what makes the migration incremental rather than a rewrite. Claude `--resume` appends to the same `<conversationId>.jsonl` and keeps the same `sessionId` field (verified against Claude Code v2.1.215, recorded in `CLAUDE.md`), and Codex threads behave equivalently. The conversation is the durable artifact; a runner is a way of advancing it. A session can therefore hand off between a PTY runner and a structured runner without losing history, and a provider can migrate one at a time.
+
+## Codex pilot status
+
+The first slice of `AppServerRunner` for Codex is implemented as `CodexAppServerRunner`, behind the `codexAppServer` feature flag, which is off by default.
+The PTY runner remains the Codex default and is untouched when the flag is off.
+
+### Protocol, as verified
+
+Verified against codex-cli 0.166.0 by driving a real `codex app-server` over stdio with an isolated `CODEX_HOME`, for a completed turn, a failed turn, an interrupted turn and a resumed thread.
+The handshake is `initialize`, an `initialized` notification, then `thread/start` or `thread/resume`, then `turn/start`.
+Three observations shaped the status model:
+
+- The `turn/start` response already says `inProgress`, so it is not an observation. The observation is the later `turn/started` notification.
+- `error` notifications with `willRetry: true` arrive repeatedly before a final `error` and a `turn/completed` with status `failed`. Only `turn/completed` ends a turn.
+- `thread/status/changed` to `idle` arrives before `turn/completed`, so it is not used as the turn end.
+
+Sanitized server lines from those captures are the test fixtures (`__tests__/fixtures/codex-app-server/0.166.0/`).
+
+### What the slice does
+
+- Spawns `codex app-server` and speaks line-framed JSON-RPC 2.0 (`src/codex-app-server-client.ts`).
+- Maps `turn/started` to `running` and `turn/completed` (completed, interrupted, failed) to `waiting_input`, both with `statusSource: "turn-signal"`.
+- Reports the idle state after the handshake as `waiting_input` with the new `statusSource: "thread-ready"`, which is observed and never triggers a "finished" push.
+- Emits normalized `SessionEvent`s (`turn_started`, `turn_completed`, `agent_message_delta`, `agent_message`, `error`) and broadcasts them as an additive WS frame `{ type: "session_event", sessionId, seq, event, at }` to that session's subscribers.
+- Declares honest capabilities when the flag is on: no permission gates and no multiple directories.
+
+### What is left
+
+- Permission and approval requests (`item/*/requestApproval`) are answered with a JSON-RPC error today, so a turn that needs approval is declined. They should become permission cards.
+- Reasoning deltas, tool-call items, command output deltas and token usage are not normalized yet.
+- Usage-limit and rate-limit handling (`UsageLimited`) is not mapped.
+- `additionalPaths` are refused, and fork answers 501.
+- `sendKeys`, `sendRawKeys`, `resize` and terminal replay are no-ops or empty, since there is no terminal.
+- The idle reaper's activity stamp is fed by `onOutput`, which this runner never calls.
+- The flag is not honoured under `ptyHost`, whose host process builds its own session manager.
+- The Codex rollout watcher binding and conversation line streaming were not exercised with this runner: the session id is the thread id, and the thread's rollout path is reported by the server but not yet used.
+- A second `turn/start` while a turn is running has not been probed.
+- tb-mobile does not consume `session_event` yet, and nothing was run against a live phone.
+- Session persistence and resume across a streamer restart for these sessions are untested.
 
 ## Costs
 

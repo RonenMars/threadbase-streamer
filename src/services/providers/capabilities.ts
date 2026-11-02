@@ -177,12 +177,23 @@ export const COPILOT_CAPABILITIES: ProviderCapabilities = {
   multiDirectory: false,
 };
 
-export function capabilitiesFor(provider: ProviderName): ProviderCapabilities {
+// The app-server runner (flag codexAppServer) has no screen to scrape and does not
+// implement approvals or --add-dir yet, so it must not claim them.
+const CODEX_APP_SERVER_CAPABILITIES: ProviderCapabilities = {
+  ...CODEX_CLI_CAPABILITIES,
+  permissionGates: false,
+  multiDirectory: false,
+};
+
+export function capabilitiesFor(
+  provider: ProviderName,
+  flags: { codexAppServer?: boolean } = {},
+): ProviderCapabilities {
   switch (canonicalizeProviderName(provider) ?? provider) {
     case CLAUDE_CODE_PROVIDER:
       return CLAUDE_CODE_CAPABILITIES;
     case CODEX_CLI_PROVIDER:
-      return CODEX_CLI_CAPABILITIES;
+      return flags.codexAppServer ? CODEX_APP_SERVER_CAPABILITIES : CODEX_CLI_CAPABILITIES;
     case COPILOT_PROVIDER:
       return COPILOT_CAPABILITIES;
     case CURSOR_PROVIDER:
