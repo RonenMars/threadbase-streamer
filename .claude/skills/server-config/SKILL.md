@@ -31,6 +31,9 @@ Moved out of the repo root `CLAUDE.md` so it loads on demand rather than in ever
 | `APNS_BUNDLE_ID` | App bundle id; the APNs topic is this plus `.push-type.liveactivity`. Required when `APNS_KEY` is set. |
 | `APNS_HOST` | APNs host. Defaults to sandbox (`api.sandbox.push.apple.com`) because the app's `aps-environment` is still `development`; set `api.push.apple.com` for production. |
 | `THREADBASE_EXPO_ACCESS_TOKEN` | Expo access token for the "your turn" push relay. Only needed if the Expo project has enhanced security enabled; unset is the normal case and sends go unauthenticated. Never logged. See [Waiting-for-input push] (see the push-notifications skill). |
+| `IDLE_NOTIFY_ENABLED` | Turns on the idle-session push (a session parked in `waiting_input` past the threshold gets one notification per wait). Default off; only `1/true/yes/on` enable it, anything else (including a typo) leaves it off. Plain name, not `THREADBASE_`-prefixed, as in the issue (#515). See [Idle-session push] (see the push-notifications skill). |
+| `IDLE_NOTIFY_THRESHOLD_MS` | How long a session must sit in `waiting_input` before the nudge. Default `1200000` (20 min). Must be a positive integer; anything else falls back to the default. |
+| `IDLE_NOTIFY_SWEEP_MS` | How often the idle sweep runs. Default `60000`. Must be an integer of at least `1000`; anything else falls back to the default. |
 
 ## CLI flags vs. `server.yaml`
 

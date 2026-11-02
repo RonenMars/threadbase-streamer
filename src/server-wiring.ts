@@ -32,6 +32,7 @@ import type {
 } from "./services/conversations/conversationWatcher";
 import type { HostPressureMonitor } from "./services/host-pressure/hostPressure";
 import type { PromptRegistry } from "./services/prompts/promptRegistry";
+import type { IdleSessionNotifier } from "./services/push/idleSessionNotifier";
 import type { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import { type AttentionFacts, describeGate } from "./services/push/notificationCopy";
 import {
@@ -359,6 +360,8 @@ export type LiveSessionWiringDeps = {
   managedSessionsRepo: () => ManagedSessionsRepository | null;
   liveActivityNotifier: () => LiveActivityNotifier | null;
   waitingInputNotifier: () => WaitingInputNotifier | null;
+  /** Optional so unit tests that stub these deps stay valid. */
+  idleSessionNotifier?: () => IdleSessionNotifier | null;
   ptyAttachedIds: () => Set<string>;
   cancelPendingQuestion: (sessionId: string) => void;
   rememberSelfPtyEnded: (conversationId: string) => void;
@@ -656,6 +659,8 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
       // And tell the phone its turn is up, if nobody is watching this session
       // already. Same funnel, same fire-and-forget contract as above.
       void deps.waitingInputNotifier()?.onStatusChange(session, previousStatus);
+      // Starts or ends the idle-nudge clock; a no-op unless IDLE_NOTIFY_ENABLED.
+      deps.idleSessionNotifier?.()?.onStatusChange(session, previousStatus);
       // The session object rides along: SessionStore's copy is a partial
       // merge that does not carry failureReason/failureCode, so a startup
       // handshake reading the store could not tell WHY a session went idle.

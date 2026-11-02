@@ -96,7 +96,7 @@ That is the whole payload for an app registered without notification features; s
 `sound` is what makes the push audible on iOS at all; Expo plays nothing when it is omitted, which it was until this change.
 `priority: "high"` delivers immediately on Android rather than in a batch.
 `threadId` stacks one session's pushes together on iOS, and `collapseId`/`tag` let the newer push replace the older banner, so a "needs your go-ahead" that has been answered gives way to "finished".
-`data.kind` (`turn_done`, `permission`, `question`, `failed`, `limited`) is additive; mobile routes on `sessionId` and ignores it today.
+`data.kind` (`turn_done`, `permission`, `question`, `failed`, `limited`, and `idle` when `IDLE_NOTIFY_ENABLED` is on) is additive; mobile routes on `sessionId` and ignores it today.
 
 Beyond which session and which agent, the copy carries only metadata the streamer measured or classified itself (`AttentionFacts`): the turn's length in minutes, what kind of action a gate asks for ("run a command", "edit a file" — our words, never the command), how many options a single question offers, the session's `failureCode`, and a usage limit's reset time.
 Naming the kind of action was a deliberate call: it is not a prompt, output or conversation content, though it does say what sort of thing the agent wants to do.

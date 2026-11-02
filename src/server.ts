@@ -156,6 +156,7 @@ import {
 } from "./services/push/apnsClient";
 import { ExpoPushSender } from "./services/push/expoPushSender";
 import { ExpoReceiptPoller } from "./services/push/expoReceiptPoller";
+import { IdleSessionNotifier, parseIdleNotifyConfig } from "./services/push/idleSessionNotifier";
 import { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import { LiveActivityRenewalScheduler } from "./services/push/liveActivityRenewal";
 import { LiveActivitySender } from "./services/push/liveActivitySender";
@@ -549,6 +550,7 @@ export class StreamerServer {
   // its own, so unlike the Live Activity path it is on wherever the cache DB
   // opened — with no registered device it simply sends nothing.
   private waitingInputNotifier: WaitingInputNotifier | null = null;
+  private idleSessionNotifier: IdleSessionNotifier | null = null;
   private expoPushSender: ExpoPushSender | null = null;
   private expoReceiptPoller: ExpoReceiptPoller | null = null;
   private discoveryCache: {
@@ -826,6 +828,7 @@ export class StreamerServer {
         managedSessionsRepo: () => this.managedSessionsRepo,
         liveActivityNotifier: () => this.liveActivityNotifier,
         waitingInputNotifier: () => this.waitingInputNotifier,
+        idleSessionNotifier: () => this.idleSessionNotifier,
         ptyAttachedIds: () => this.ptyAttachedIds(),
         cancelPendingQuestion: (sessionId) => this.cancelPendingQuestion(sessionId),
         rememberSelfPtyEnded: (conversationId) => this.rememberSelfPtyEnded(conversationId),
@@ -1290,6 +1293,14 @@ export class StreamerServer {
       accessToken: process.env.THREADBASE_EXPO_ACCESS_TOKEN,
     });
     this.expoReceiptPoller.start();
+    // Opt-in nudge for a session left parked at its prompt (#515). Its
+    // timer is unref'd and stopped in close(); disabled, it holds nothing.
+    this.idleSessionNotifier = new IdleSessionNotifier({
+      sender,
+      listSessions: () => this.sessionStore.listManaged(),
+      config: parseIdleNotifyConfig(),
+    });
+    this.idleSessionNotifier.start();
   }
 
   /** Whether any live socket is subscribed to this session — "someone is looking". */
@@ -2298,6 +2309,7 @@ export class StreamerServer {
       clearInterval(this.codexFormatCanaryTimer);
       this.codexFormatCanaryTimer = null;
     }
+    this.idleSessionNotifier?.stop();
     this.stopRuntimeDiagnostics?.();
     this.stopRuntimeDiagnostics = null;
     this.hostPressureMonitor?.dispose();

@@ -29,6 +29,17 @@ That transport choice is structural, not a preference. An APNs `.p8` signs only 
   A token's first push leaves it `never-delivered` until then, and `POST /api/push/test` answers `ok: true` with `state: "never-delivered"` right after the send; the response fields are unchanged.
   An ok ticket with no id falls back to the old immediate `recordSuccess`.
 
+## Idle-session push (#515)
+
+Off by default. `IDLE_NOTIFY_ENABLED=1` turns on `IdleSessionNotifier` (`src/services/push/idleSessionNotifier.ts`): a session that stays in `waiting_input` longer than `IDLE_NOTIFY_THRESHOLD_MS` (default 20 min) gets **one** push for that wait. `IDLE_NOTIFY_SWEEP_MS` (default 60 s, minimum 1000) is how often the sweep looks.
+
+- **Composition** — it adds no sender: it calls `ExpoPushSender.send(waitingInputMessage(session, "idle", { idleMinutes }), { event: "waitingInput" })`, so per-token preferences and quiet hours, `attention-v1` gating, per-token `serverId` and `DeviceNotRegistered` revocation behave exactly as for the "finished" push. The payload is the same shape: `data: { sessionId, kind: "idle", serverId? }`, `threadId`/`collapseId`/`tag` = sessionId. `kind: "idle"` is a new value of the already-additive `data.kind`; copy is metadata only (agent name + whole minutes), in en/he/ar/ru.
+- **State** — in memory, one `{ since, notified }` per session. The wait starts when `onStatusChange` (same funnel as the other notifiers, `server-wiring.ts`) sees `waiting_input` and is dropped when the session leaves it, so the next wait can notify again. A repeat `waiting_input` emit keeps the clock. A waiting session the funnel never reported starts its clock at the first sweep that sees it.
+- **No deliverable token** — a wait is marked notified only when a send was attempted (`outcome.attempted > 0`). With no token registered, or every device muted by preferences/quiet hours, the wait stays eligible and the next sweep retries, so a device that registers mid-wait still gets the nudge. A relay failure after an attempt does not retry: one push per wait.
+- **Watched sessions** — no suppression, same as WaitingInputNotifier: a subscribed desktop browser must not silence the phone.
+- **Bounds** — one unref'd `setInterval`, started in `initWaitingInputPush` and stopped in `close()`; the sweep never throws, does not overlap itself, and sends at most `MAX_IDLE_NOTIFY_PER_SWEEP` (10) per pass. Logged as `push.idle_notify` (session id, `idleMinutes`, `attempted`/`succeeded`/`retired`/`suppressed`; never a token).
+- **Not built** — the issue's Stop action on the notification. That is a client notification category that would call `POST /api/sessions/:id/stop`; the streamer sends no `categoryId` for `idle`.
+
 ## iOS Live Activity push
 
 Gated by the `liveActivityPush` [feature flag] (see the feature-flags skill), **off by default** — `APNS_KEY` alone no longer brings this up, and a box with credentials configured logs `live_activity.disabled` at boot until the flag is set.

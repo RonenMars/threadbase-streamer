@@ -1,4 +1,4 @@
-import { attentionTitle, describeGate } from "../src/services/push/notificationCopy";
+import { attentionText, attentionTitle, describeGate } from "../src/services/push/notificationCopy";
 
 describe("attentionTitle", () => {
   it("leaves a default branch out", () => {
@@ -79,5 +79,24 @@ describe("describeGate", () => {
     // Positive control: the gate does hold the command.
     expect(JSON.stringify(bashGate)).toContain("git push origin main");
     expect(JSON.stringify(describeGate(bashGate))).not.toContain("git push");
+  });
+});
+
+describe("idle copy", () => {
+  it("says how long in every language, from metadata only", () => {
+    for (const locale of ["en", "he", "ar", "ru"]) {
+      const withMinutes = attentionText("idle", "claude-cli" as never, locale, "ios", {
+        idleMinutes: 25,
+      });
+      expect(withMinutes.subtitle).toBeTruthy();
+      expect(withMinutes.body).toContain("25");
+      const without = attentionText("idle", "claude-cli" as never, locale, "ios", {});
+      expect(without.body).not.toContain("undefined");
+    }
+  });
+
+  it("leads the body with the event on Android, which has no subtitle", () => {
+    const t = attentionText("idle", "claude-cli" as never, "en", "android", { idleMinutes: 25 });
+    expect(t).toEqual({ body: "Claude is waiting for you. Idle for 25 min." });
   });
 });
