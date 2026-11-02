@@ -121,18 +121,23 @@ async function liveGate() {
   expect((mgr as any).permissionOpen.get(session.id)).toBeDefined();
 
   const contentKey = (opened[0] as any).contentKey as string;
+  const gateId = (opened[0] as any).gateId as string;
   broadcasts.length = 0;
   proc.write.mockClear();
 
-  return { mgr, handlers, sessionId: session.id, proc, broadcasts, contentKey, gate };
+  return { mgr, handlers, sessionId: session.id, proc, broadcasts, contentKey, gateId, gate };
 }
 
 describe("POST /permission/answer closes the gate it answered", () => {
   it("produces exactly one permission_cancelled — the close fires, and only once", async () => {
-    const { handlers, sessionId, broadcasts, contentKey } = await liveGate();
+    const { handlers, sessionId, broadcasts, contentKey, gateId } = await liveGate();
     const { res, status, body } = response();
 
-    await handlers.handlePermissionAnswer(sessionId, request({ contentKey, optionIndex: 0 }), res);
+    await handlers.handlePermissionAnswer(
+      sessionId,
+      request({ contentKey, gateId, optionIndex: 0 }),
+      res,
+    );
 
     expect(status()).toBe(200);
     expect(body()).toEqual({ ok: true });
@@ -144,10 +149,14 @@ describe("POST /permission/answer closes the gate it answered", () => {
   });
 
   it("writes the keys the gate's own option declares, through a real sendKeys", async () => {
-    const { handlers, sessionId, proc, contentKey, gate } = await liveGate();
+    const { handlers, sessionId, proc, contentKey, gateId, gate } = await liveGate();
     const { res } = response();
 
-    await handlers.handlePermissionAnswer(sessionId, request({ contentKey, optionIndex: 0 }), res);
+    await handlers.handlePermissionAnswer(
+      sessionId,
+      request({ contentKey, gateId, optionIndex: 0 }),
+      res,
+    );
 
     // Anchored to the option the gate painted, not to a literal: if either the
     // route's derivation or the gate's shape changes, this breaks loudly.
@@ -168,22 +177,26 @@ describe("POST /permission/answer closes the gate it answered", () => {
   });
 
   it("retires BOTH maps together, which is the invariant the close depends on", async () => {
-    const { mgr, handlers, sessionId, contentKey } = await liveGate();
+    const { mgr, handlers, sessionId, contentKey, gateId } = await liveGate();
     const { res } = response();
 
-    await handlers.handlePermissionAnswer(sessionId, request({ contentKey, optionIndex: 0 }), res);
+    await handlers.handlePermissionAnswer(
+      sessionId,
+      request({ contentKey, gateId, optionIndex: 0 }),
+      res,
+    );
 
     expect((mgr as any).permissionOpen.has(sessionId)).toBe(false);
     expect((handlers as any).deps.pendingPermission.has(sessionId)).toBe(false);
   });
 
   it("a refused answer reaches neither map nor the PTY", async () => {
-    const { mgr, handlers, sessionId, proc, broadcasts } = await liveGate();
+    const { mgr, handlers, sessionId, proc, broadcasts, gateId } = await liveGate();
     const { res, status, body } = response();
 
     await handlers.handlePermissionAnswer(
       sessionId,
-      request({ contentKey: "a key from some other gate", optionIndex: 0 }),
+      request({ contentKey: "a key from some other gate", gateId, optionIndex: 0 }),
       res,
     );
 

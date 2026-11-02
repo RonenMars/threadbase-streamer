@@ -77,6 +77,9 @@ interface Harness {
   keyOf(screen: string[]): string;
 }
 
+/** The open gate's instance id, or a placeholder when none is open (the answer is then refused as gate_closed). */
+const gid = (h: Harness): string => h.pendingPermission.get(SESSION)?.gateId ?? "no-gate";
+
 /**
  * @param pendingScreen  screen the detector saw when the gate opened (null: no gate ever opened)
  * @param liveScreen     what the PTY renders NOW, when the answer arrives
@@ -209,7 +212,7 @@ describe("POST /permission/answer — the gate is open and matches", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -223,7 +226,7 @@ describe("POST /permission/answer — the gate is open and matches", () => {
     const { res, status } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 1 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 1 }),
       res,
     );
 
@@ -236,7 +239,7 @@ describe("POST /permission/answer — the gate is open and matches", () => {
     const { res } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -250,7 +253,7 @@ describe("POST /permission/answer — gate_closed", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -264,7 +267,7 @@ describe("POST /permission/answer — gate_closed", () => {
     const { res } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -278,7 +281,7 @@ describe("POST /permission/answer — gate_closed", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -297,7 +300,7 @@ describe("POST /permission/answer — gate_closed", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -328,7 +331,7 @@ describe("POST /permission/answer — gate_mismatch", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -346,7 +349,7 @@ describe("POST /permission/answer — gate_mismatch", () => {
     const { res } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -362,7 +365,7 @@ describe("POST /permission/answer — unknown_option", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 2 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 2 }),
       res,
     );
 
@@ -376,7 +379,7 @@ describe("POST /permission/answer — unknown_option", () => {
     const { res } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 2 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 2 }),
       res,
     );
 
@@ -391,7 +394,7 @@ describe("POST /permission/answer — unknown_option", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: "::::::", optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: "::::::", optionIndex: 0 }),
       res,
     );
 
@@ -479,7 +482,7 @@ describe("POST /permission/answer — no PTY of ours to read", () => {
     const { res, status } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
+      request({ gateId: gid(h), contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0 }),
       res,
     );
 
@@ -513,7 +516,11 @@ function openGate(h: Harness, gate: Parameters<Harness["handlers"]["handlePermis
   h.handlers.handlePermissionChange(SESSION, gate);
   const frame = h.broadcasts.find((m) => m.type === "permission") as any;
   h.broadcasts.length = 0;
-  return frame as { contentKey: string; options: { index: number; label: string }[] };
+  return frame as {
+    gateId: string;
+    contentKey: string;
+    options: { index: number; label: string }[];
+  };
 }
 
 describe("POST /permission/answer — optionLabel binds the option", () => {
@@ -526,7 +533,12 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     // on-screen digit of "Yes" (1) is the position of "don't ask again"
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: frame.contentKey, optionIndex: yes.index, optionLabel: yes.label }),
+      request({
+        gateId: frame.gateId,
+        contentKey: frame.contentKey,
+        optionIndex: yes.index,
+        optionLabel: yes.label,
+      }),
       res,
     );
 
@@ -543,7 +555,12 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     const { res, status } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: frame.contentKey, optionIndex: 0, optionLabel: "Yes" }),
+      request({
+        gateId: frame.gateId,
+        contentKey: frame.contentKey,
+        optionIndex: 0,
+        optionLabel: "Yes",
+      }),
       res,
     );
 
@@ -557,7 +574,7 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     const { res, status } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: frame.contentKey, optionIndex: 1 }),
+      request({ gateId: frame.gateId, contentKey: frame.contentKey, optionIndex: 1 }),
       res,
     );
 
@@ -575,7 +592,12 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: frame.contentKey, optionIndex: no.index, optionLabel: no.label }),
+      request({
+        gateId: frame.gateId,
+        contentKey: frame.contentKey,
+        optionIndex: no.index,
+        optionLabel: no.label,
+      }),
       res,
     );
 
@@ -600,7 +622,12 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     const { res, status } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: frame.contentKey, optionIndex: 1, optionLabel: "No" }),
+      request({
+        gateId: frame.gateId,
+        contentKey: frame.contentKey,
+        optionIndex: 1,
+        optionLabel: "No",
+      }),
       res,
     );
 
@@ -613,7 +640,12 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     const { res, status } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: h.keyOf(GATE_A_SCREEN), optionIndex: 0, optionLabel: 7 }),
+      request({
+        gateId: gid(h),
+        contentKey: h.keyOf(GATE_A_SCREEN),
+        optionIndex: 0,
+        optionLabel: 7,
+      }),
       res,
     );
 

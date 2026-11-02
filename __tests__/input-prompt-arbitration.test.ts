@@ -882,7 +882,11 @@ describe("#954: shell-prompt gates and the freshness check", () => {
     const r = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: permissionGateKey(gate), optionIndex: 0 }),
+      request({
+        contentKey: permissionGateKey(gate),
+        gateId: h.pendingPermission.get(SESSION)?.gateId,
+        optionIndex: 0,
+      }),
       r.res,
     );
 
