@@ -1,3 +1,9 @@
+## [1.127.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.126.0...v1.127.0) (2026-11-02)
+
+### Features
+
+* **questions:** answer multi-select AskUserQuestion prompts with a toggle sequence ([#1168](https://github.com/RonenMars/threadbase-streamer/issues/1168)) ([78adb2d](https://github.com/RonenMars/threadbase-streamer/commit/78adb2d71be5408752fcc6e1c91ec2c5435ed387)), closes [#728](https://github.com/RonenMars/threadbase-streamer/issues/728) [#1167](https://github.com/RonenMars/threadbase-streamer/issues/1167)
+
 ## [1.126.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.125.2...v1.126.0) (2026-11-01)
 
 ### Features
