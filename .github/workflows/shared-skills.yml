@@ -9,7 +9,7 @@ name: Shared skills
 #
 # To adopt a newer plugin: check out the umbrella at the new commit, run
 #   scripts/sync-agents-skills.sh <this repo>/.agents/skills
-# commit the mirror, and move `UMBRELLA_SHA` and `EXPECTED_HASH` here in the same PR.
+# commit the mirror, and move `UMBRELLA_SHA` here in the same PR.
 
 on:
   pull_request:
