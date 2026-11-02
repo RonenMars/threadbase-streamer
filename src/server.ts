@@ -404,6 +404,12 @@ export class StreamerServer {
   // / reconcileDeletions) can never hit a cache.db that was already closed
   // ("database connection is not open"), which would otherwise leave the cache
   // empty. Register via trackCacheWrite(); each entry removes itself on settle.
+  // Convention: every un-awaited task that writes this.cache in an async
+  // continuation MUST go through trackCacheWrite — one that does not silently
+  // brings back the closed-database race, and nothing enforces it. The
+  // exception is a write made synchronously inside its caller (the watcher's
+  // onNewLines → updateFromLines in server-wiring.ts): close() cannot interleave
+  // with a run-to-completion block, so such a callback must stay synchronous.
   private inFlightCacheWrites = new Set<Promise<unknown>>();
   private closing: Promise<void> | null = null;
   // The boot reconcile → rehydrate → auto-resume → prune chain, so a
