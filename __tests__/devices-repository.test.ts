@@ -6,6 +6,7 @@ import {
   DevicesRepository,
   hashDeviceToken,
   parseCapabilities,
+  UNCONFIRMED_DEVICE_TTL_MS,
 } from "../src/db/repositories/devices.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
 
@@ -214,6 +215,79 @@ describe("listing", () => {
     repo.touch(deviceId, 1_700_000_000_000);
 
     expect(repo.get(deviceId)?.last_seen_at).toBe(1_700_000_000_000);
+  });
+});
+
+describe("touch throttle", () => {
+  // touch() is a synchronous SQLite write and the sealed REST path calls it on
+  // every request, so a stamp inside the interval is skipped.
+  it("skips a second stamp inside the interval and writes again after it", () => {
+    const { deviceId } = repo.register({ publicKey: "pk" });
+    repo.touch(deviceId, 1_000_000);
+    repo.touch(deviceId, 1_000_000 + 1_000);
+    expect(repo.get(deviceId)?.last_seen_at).toBe(1_000_000);
+    repo.touch(deviceId, 1_000_000 + 60_000);
+    expect(repo.get(deviceId)?.last_seen_at).toBe(1_060_000);
+  });
+
+  it("throttles per device, not globally", () => {
+    const a = repo.register({ publicKey: "a" }).deviceId;
+    const b = repo.register({ publicKey: "b" }).deviceId;
+    repo.touch(a, 5_000_000);
+    repo.touch(b, 5_000_001);
+    expect(repo.get(b)?.last_seen_at).toBe(5_000_001);
+  });
+});
+
+describe("revokeUnconfirmed (#744)", () => {
+  const T0 = 1_700_000_000_000;
+
+  it("revokes a never-seen row older than the TTL, keeping the row", () => {
+    const { deviceId } = repo.register({ publicKey: "pk", now: T0 });
+    const now = T0 + UNCONFIRMED_DEVICE_TTL_MS + 1;
+
+    expect(repo.revokeUnconfirmed(now)).toEqual([deviceId]);
+
+    expect(repo.get(deviceId)?.revoked_at).toBe(now);
+    expect(repo.list()).toHaveLength(1);
+  });
+
+  it("leaves a never-seen row that is still inside the TTL (in-flight pairing)", () => {
+    const { deviceId } = repo.register({ publicKey: "pk", now: T0 });
+
+    expect(repo.revokeUnconfirmed(T0 + UNCONFIRMED_DEVICE_TTL_MS)).toEqual([]);
+    expect(repo.revokeUnconfirmed(T0 + 1_000)).toEqual([]);
+    expect(repo.get(deviceId)?.revoked_at).toBeNull();
+  });
+
+  it("never revokes a device that was used, however old it is", () => {
+    const { deviceId } = repo.register({ publicKey: "pk", now: T0 });
+    repo.touch(deviceId, T0 + 5_000);
+
+    expect(repo.revokeUnconfirmed(T0 + UNCONFIRMED_DEVICE_TTL_MS * 30)).toEqual([]);
+    expect(repo.get(deviceId)?.revoked_at).toBeNull();
+  });
+
+  it("does not re-revoke or report an already revoked row", () => {
+    const { deviceId } = repo.register({ publicKey: "pk", now: T0 });
+    repo.revoke(deviceId, T0 + 10);
+
+    expect(repo.revokeUnconfirmed(T0 + UNCONFIRMED_DEVICE_TTL_MS * 2)).toEqual([]);
+    expect(repo.get(deviceId)?.revoked_at).toBe(T0 + 10);
+  });
+
+  it("only picks the stale unconfirmed rows out of a mix", () => {
+    const stale = repo.register({ publicKey: "stale", now: T0 }).deviceId;
+    const used = repo.register({ publicKey: "used", now: T0 }).deviceId;
+    const fresh = repo.register({
+      publicKey: "fresh",
+      now: T0 + UNCONFIRMED_DEVICE_TTL_MS,
+    }).deviceId;
+    repo.touch(used, T0 + 1);
+
+    expect(repo.revokeUnconfirmed(T0 + UNCONFIRMED_DEVICE_TTL_MS + 1)).toEqual([stale]);
+    expect(repo.get(used)?.revoked_at).toBeNull();
+    expect(repo.get(fresh)?.revoked_at).toBeNull();
   });
 });
 

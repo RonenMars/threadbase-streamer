@@ -16,6 +16,21 @@ import {
  * impersonate a device.
  */
 
+/**
+ * How long a registered device may go without a single authenticated request
+ * before it is treated as never confirmed (#744). A pairing whose msg2 is lost
+ * leaves a full-capability row the phone does not know about; this bounds it.
+ * Code, not config.
+ */
+export const UNCONFIRMED_DEVICE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `touch` is a synchronous SQLite write on the request path, so a device that
+ * was stamped this recently is not written again. `last_seen_at` is therefore
+ * accurate to a minute, which is far finer than anything that reads it.
+ */
+const TOUCH_MIN_INTERVAL_MS = 60_000;
+
 export interface DeviceRow {
   device_id: string;
   public_key: string;
@@ -120,6 +135,8 @@ export class DevicesRepository {
   private deleteRevokedStmt: Database.Statement;
   private byE2eeStaticPubStmt: Database.Statement;
   private repairStmt: Database.Statement;
+  private revokeUnconfirmedStmt: Database.Statement;
+  private lastTouchedAt = new Map<string, number>();
 
   constructor(db: Database.Database) {
     this.insertStmt = db.prepare(`
@@ -159,6 +176,11 @@ export class DevicesRepository {
     this.listStmt = db.prepare("SELECT * FROM devices ORDER BY created_at DESC");
     this.revokeStmt = db.prepare("UPDATE devices SET revoked_at = ? WHERE device_id = ?");
     this.touchStmt = db.prepare("UPDATE devices SET last_seen_at = ? WHERE device_id = ?");
+    this.revokeUnconfirmedStmt = db.prepare(
+      `UPDATE devices SET revoked_at = ?
+       WHERE last_seen_at IS NULL AND revoked_at IS NULL AND created_at < ?
+       RETURNING device_id`,
+    );
     this.deleteStmt = db.prepare("DELETE FROM devices WHERE device_id = ?");
     this.deleteRevokedStmt = db.prepare("DELETE FROM devices WHERE revoked_at IS NOT NULL");
   }
@@ -293,7 +315,26 @@ export class DevicesRepository {
     return this.deleteRevokedStmt.run().changes;
   }
 
+  /**
+   * Revoke every device that has never made an authenticated request and was
+   * registered more than `UNCONFIRMED_DEVICE_TTL_MS` ago (#744). Revokes rather
+   * than deletes, so `list()` keeps the audit trail. Returns the revoked ids.
+   *
+   * "Never made a request" is `last_seen_at IS NULL`: `touch` is the only
+   * writer, and every authenticated path (plaintext token, ticketed WebSocket,
+   * sealed REST) calls it.
+   */
+  revokeUnconfirmed(now: number = Date.now()): string[] {
+    const rows = this.revokeUnconfirmedStmt.all(now, now - UNCONFIRMED_DEVICE_TTL_MS) as {
+      device_id: string;
+    }[];
+    return rows.map((r) => r.device_id);
+  }
+
   touch(deviceId: string, now: number = Date.now()): void {
+    const last = this.lastTouchedAt.get(deviceId);
+    if (last !== undefined && now - last < TOUCH_MIN_INTERVAL_MS) return;
     this.touchStmt.run(now, deviceId);
+    this.lastTouchedAt.set(deviceId, now);
   }
 }

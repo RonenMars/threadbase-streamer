@@ -1313,6 +1313,33 @@ export class StreamerServer {
   }
 
   /**
+   * Revoke devices that registered but never made an authenticated request
+   * within UNCONFIRMED_DEVICE_TTL_MS (#744): a pairing whose msg2 was lost
+   * leaves a full-capability row the phone does not know about. Runs at boot
+   * and on the idle-reaper sweep. Never throws; a registry fault must not take
+   * the sweep down.
+   */
+  pruneUnconfirmedDevices(now: number = Date.now()): string[] {
+    try {
+      const ids = this.devicesRepo?.revokeUnconfirmed(now) ?? [];
+      if (ids.length > 0) {
+        this.log.info(
+          `Revoked ${ids.length} paired device${ids.length === 1 ? "" : "s"} never used within 24h`,
+          { event: "devices.unconfirmed_pruned", count: ids.length, deviceIds: ids },
+          "pino",
+        );
+      }
+      return ids;
+    } catch (err) {
+      this.log.warn("unconfirmed device prune failed", {
+        event: "devices.unconfirmed_prune_failed",
+        err,
+      });
+      return [];
+    }
+  }
+
+  /**
    * Release PTYs whose agent has been silent past IDLE_REAP_AFTER_MS.
    *
    * This is the bound that lets handleWsClose stop arming kill timers. The
@@ -1693,7 +1720,10 @@ export class StreamerServer {
     // unref() so an idle server with no other work can still exit — this timer
     // must never be the reason the process stays alive.
     if (!this.ptyManager.isRemote()) {
-      this.idleReaperTimer = setInterval(() => this.reapIdleSessions(), IDLE_REAP_SWEEP_MS);
+      this.idleReaperTimer = setInterval(() => {
+        this.reapIdleSessions();
+        this.pruneUnconfirmedDevices();
+      }, IDLE_REAP_SWEEP_MS);
       this.idleReaperTimer.unref?.();
     }
 
@@ -1755,6 +1785,7 @@ export class StreamerServer {
             { error: message, abiMismatch, path: this.runtimeDbPath, event: "runtime.open_failed" },
           );
         }
+        this.pruneUnconfirmedDevices();
         this.warnIfE2eeDisabled();
         void this.probeAccessGate();
         if (this.ptyManager.isRemote()) {
