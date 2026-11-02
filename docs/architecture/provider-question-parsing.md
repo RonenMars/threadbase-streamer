@@ -91,6 +91,13 @@ Three rules apply to every provider. **[code]**
 - A text `{input}` is refused with 409 `prompt_pending` while a permission or question card is open, so a typed message cannot land in a menu; literal `{keys}` are not arbitrated (`:1198`–`:1208`).
 - A raw `enter` resolves the open prompt record and a raw `escape` cancels it (`:1954`, `:1956`).
 
+The 409 body also carries `promptState` (#703), and `"answered"` is not reported for every provider. **[code]**
+`handleSendInput` derives it from the registry record being `resolved` while `pendingPermission` still holds the gate, a window that exists only where the runner leaves the entry standing until the card leaves the screen, which is Codex and Copilot (`runnerOwnsGates`).
+On scraped Claude the window never opens: `PTYManager.sendKeys` closes the gate in the same call that writes the answer (the `isPermissionAnswer` branch calls `onPermissionChange(sessionId, null)`), and `handlePermissionChange` with a null gate settles the record `resolved` and deletes `pendingPermission` together with the `permission_cancelled` broadcast.
+By the time a text `{input}` arrives after a successful answer there is no open prompt left, so it is not refused at all, and any `prompt_pending` 409 on Claude carries `"open"`.
+Mobile must not depend on seeing `"answered"` for Claude; it can rely on it only for the runners that own their gates.
+The `"answered"` cases in `__tests__/input-prompt-arbitration.test.ts` stub `ptyManager.sendKeys` with a bare write, so they model the Codex window, not Claude; `__tests__/prompt-answer-self-close.test.ts` and `__tests__/permission-answer-closes-gate.test.ts` run the real `sendKeys` and show the Claude close.
+
 A subscriber that connects late is sent the pending card again (`ws.replay_permission`, `ws.replay_question`, `src/server-wiring.ts:932`, `:949`). **[code]**
 
 ## 2. Claude Code
