@@ -29,9 +29,20 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // defensively and any shape it does not recognise is "no evidence", never an
 // error: discovery falls back to argv exactly as before.
 
+/** The `status` values seen in the registry; anything else is dropped. */
+export type ClaudeRegistryStatus = "idle" | "busy" | "shell";
+const REGISTRY_STATUSES: ReadonlySet<unknown> = new Set<ClaudeRegistryStatus>([
+  "idle",
+  "busy",
+  "shell",
+]);
+
 export interface ClaudeRegistryEntry {
   pid: number;
   sessionId: string;
+  /** Claude's own turn state; only present together with `statusUpdatedAt`. */
+  status?: ClaudeRegistryStatus;
+  statusUpdatedAt?: number;
   cwd?: string;
   name?: string;
   kind?: string;
@@ -90,9 +101,15 @@ export function parseClaudeRegistryEntry(
     return null;
   }
 
+  const hasStatus = REGISTRY_STATUSES.has(d.status) && Number.isFinite(d.statusUpdatedAt);
+
   return {
     pid,
     sessionId: d.sessionId,
+    ...(hasStatus && {
+      status: d.status as ClaudeRegistryStatus,
+      statusUpdatedAt: d.statusUpdatedAt as number,
+    }),
     ...(typeof d.cwd === "string" && d.cwd && { cwd: d.cwd }),
     ...(typeof d.name === "string" && d.name && { name: d.name }),
     ...(typeof d.kind === "string" && { kind: d.kind }),

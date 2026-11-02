@@ -244,6 +244,8 @@ export interface DiscoveredProcess {
   branch: string;
   conversationId: string | null; // JSONL UUID extracted from --resume arg
   startedAt: Date;
+  /** Claude's own turn state from its session registry; absent when it wrote none. */
+  turnState?: { state: "idle" | "busy" | "shell"; updatedAt: Date };
 }
 
 // ─── WebSocket Messages ────────────────────────────────────────────
@@ -643,6 +645,20 @@ export interface SessionResponse {
    * sessions we own — their `status` is the authoritative signal.
    */
   activity?: SessionActivity;
+  /** See `ExternalTurn`. Only for external Claude sessions whose registry reports a state. */
+  externalTurn?: ExternalTurn;
+}
+
+/**
+ * What an outside Claude process says about its own turn, read from its session
+ * registry. Always `inferred`: a `busy` was seen 6.7 h old, so a client must
+ * weigh `updatedAt` rather than trust it. Additive; `status` stays `idle`.
+ */
+export interface ExternalTurn {
+  state: "idle" | "busy" | "shell";
+  updatedAt: string; // ISO 8601
+  source: "claude-registry";
+  confidence: "inferred";
 }
 
 export type SessionOwnership = "managed" | "external" | "historical";
