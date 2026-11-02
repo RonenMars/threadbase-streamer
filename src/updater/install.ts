@@ -133,7 +133,15 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
   mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
   const tarballPath = downloadPath(targetVersion, artifact.filename);
-  await downloadAndVerify({ manifest, assets: target.assets, targetPath: tarballPath });
+  appendUpdateLog(
+    `[download-start] version=${targetVersion} file=${artifact.filename} size=${artifact.size}`,
+  );
+  const downloaded = await downloadAndVerify({
+    manifest,
+    assets: target.assets,
+    targetPath: tarballPath,
+  });
+  appendUpdateLog(`[download-end] version=${targetVersion} bytes=${downloaded.bytes}`);
 
   // Unique even when retrying or reactivating a retained release.
   const directoryVersion = `${targetVersion}+install.${randomUUID()}`;
@@ -162,11 +170,13 @@ export async function runInstall(opts: InstallOptions): Promise<InstallResult> {
   }
 
   swapCurrent(targetVersion, directoryVersion);
+  appendUpdateLog(`[swap] version=${targetVersion}`);
 
   let pruned: string[] = [];
 
   let restartMethod = "skipped";
   try {
+    appendUpdateLog(`[restart] attempt version=${targetVersion}`);
     const r = await restartService();
     restartMethod = r.method;
     if (r.method !== "none") {

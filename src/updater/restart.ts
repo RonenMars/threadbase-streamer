@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { appendUpdateLog } from "./update-log";
 
 const execFileP = promisify(execFile);
 
@@ -98,7 +99,10 @@ export async function restartService(opts: RestartOptions = {}): Promise<Restart
 
   if (process.platform === "win32") {
     const { stdout, stderr } = await execFileP("schtasks.exe", ["/End", "/TN", label]).catch(
-      (err) => ({ stdout: "", stderr: String(err) }),
+      (err) => {
+        appendUpdateLog("[restart] schtasks /End failed; continuing");
+        return { stdout: "", stderr: String(err) };
+      },
     );
     const startResult = await execFileP("schtasks.exe", ["/Run", "/TN", label]);
     return {
@@ -127,7 +131,10 @@ export async function stopService(opts: RestartOptions = {}): Promise<StopResult
     return { method: "none", stdout: "", stderr: "No service label resolved" };
   }
   const { stdout, stderr } = await execFileP("schtasks.exe", ["/End", "/TN", label]).catch(
-    (err) => ({ stdout: "", stderr: String(err) }),
+    (err) => {
+      appendUpdateLog("[stop] schtasks /End failed; continuing");
+      return { stdout: "", stderr: String(err) };
+    },
   );
   const listenerResult = await stopWindowsListener(opts.port ?? 8766);
   return {

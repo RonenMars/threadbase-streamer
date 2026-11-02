@@ -90,6 +90,10 @@ vi.mock("../src/updater/active-sessions", () => ({
   countActiveSessions: vi.fn(async () => ({ kind: "count", count: 0 })),
 }));
 
+vi.mock("../src/updater/update-log", () => ({
+  appendUpdateLog: vi.fn(),
+}));
+
 vi.mock("../src/updater/brew-detect", () => ({
   isBrewInstall: vi.fn(() => false),
 }));
@@ -102,6 +106,7 @@ import { restartService, stopService } from "../src/updater/restart";
 import { waitForRestartHealth } from "../src/updater/restart-health";
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "../src/updater/swap";
 import { unpackTarball } from "../src/updater/unpack";
+import { appendUpdateLog } from "../src/updater/update-log";
 
 describe("runInstall orchestration", () => {
   beforeEach(() => {
@@ -223,6 +228,43 @@ describe("runInstall orchestration", () => {
     expect(swapOrder).toBeLessThan(pruneOrder);
     expect(restartOrder).toBeLessThan(pruneOrder);
     expect(vi.mocked(waitForRestartHealth).mock.invocationCallOrder[0]).toBeLessThan(pruneOrder);
+  });
+
+  it("logs download start/end with byte count, swap and restart attempt in order", async () => {
+    vi.mocked(downloadAndVerify).mockResolvedValueOnce({ path: "/tmp/x.tgz", bytes: 1234 });
+    await runInstall({ currentVersion: "1.0.0", config: cfg });
+
+    const logged = vi.mocked(appendUpdateLog).mock.calls.map(([line]) => line);
+    const at = (prefix: string) => logged.findIndex((l) => l.startsWith(prefix));
+    const file = `threadbase-streamer-1.0.1-${platformKey()}.tgz`;
+
+    expect(logged).toContain(`[download-start] version=1.0.1 file=${file} size=1000`);
+    expect(logged).toContain("[download-end] version=1.0.1 bytes=1234");
+    expect(logged).toContain("[swap] version=1.0.1");
+    expect(logged).toContain("[restart] attempt version=1.0.1");
+
+    const order = ["[download-start]", "[download-end]", "[swap]", "[restart]", "[installed]"].map(
+      at,
+    );
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+
+    // Each event fires at its own milestone, not before/after the call it reports.
+    const callOrder = (m: { mock: { invocationCallOrder: number[] } }) =>
+      m.mock.invocationCallOrder[0];
+    const logOrder = (prefix: string) =>
+      vi.mocked(appendUpdateLog).mock.invocationCallOrder[at(prefix)];
+    expect(logOrder("[download-start]")).toBeLessThan(callOrder(vi.mocked(downloadAndVerify)));
+    expect(logOrder("[download-end]")).toBeGreaterThan(callOrder(vi.mocked(downloadAndVerify)));
+    expect(logOrder("[swap]")).toBeGreaterThan(callOrder(vi.mocked(swapCurrent)));
+    expect(logOrder("[restart]")).toBeLessThan(callOrder(vi.mocked(restartService)));
+  });
+
+  it("logs no URL in any event", async () => {
+    await runInstall({ currentVersion: "1.0.0", config: cfg });
+    for (const [line] of vi.mocked(appendUpdateLog).mock.calls) {
+      expect(line).not.toMatch(/https?:/);
+    }
   });
 
   it("returns installed result with a 'failed' restart method when restart throws", async () => {
