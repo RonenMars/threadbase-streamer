@@ -5,8 +5,8 @@ import {
   type FileStatEntry,
 } from "@threadbase-sh/scanner";
 import { readdirSync, statSync } from "fs";
-import { homedir } from "os";
 import { dirname, join } from "path";
+import { defaultClaudeProjectsDir } from "./claude-accounts/resolve";
 import type { ConversationCache } from "./conversation-cache";
 import type { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "./db/repositories/conversations.repository";
@@ -311,7 +311,7 @@ export class ScannerManager {
     if (profiles && profiles.length > 0) {
       return profiles.filter((p) => p.enabled).map((p) => join(p.configDir, "projects"));
     }
-    return [join(homedir(), ".claude", "projects")];
+    return [defaultClaudeProjectsDir()];
   }
 
   // ─── staleness ────────────────────────────────────────────────────

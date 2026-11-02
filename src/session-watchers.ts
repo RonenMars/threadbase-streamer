@@ -1,7 +1,7 @@
 import { type Conversation, parseCursorJsonlLine } from "@threadbase-sh/scanner";
 import { existsSync, watch as fsWatch, readdirSync, readFileSync, statSync } from "fs";
-import { homedir } from "os";
 import { basename, join } from "path";
+import { defaultClaudeProjectsDir } from "./claude-accounts/resolve";
 import type { ConversationCache } from "./conversation-cache";
 import { cursorAgentTranscriptsDir } from "./cursor-transcript-watch";
 import type { CacheMetadataRepository } from "./db/repositories/cacheMetadata.repository";
@@ -165,7 +165,7 @@ export class SessionWatchers {
   // was passed to Claude via --session-id so the filename matches from the start.
   watchForJsonl(sessionId: string, projectPath: string): void {
     const encoded = projectPath.replace(/[/\\:.]/g, "-");
-    const projectsDir = join(homedir(), ".claude", "projects", encoded);
+    const projectsDir = join(defaultClaudeProjectsDir(), encoded);
     const expectedFile = `${sessionId}.jsonl`;
     const filePath = join(projectsDir, expectedFile);
     const armedAt = Date.now();

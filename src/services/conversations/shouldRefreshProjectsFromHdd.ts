@@ -1,14 +1,12 @@
 import { readdirSync, statSync } from "fs";
-import { homedir } from "os";
 import { join } from "path";
+import { defaultClaudeProjectsDir } from "../../claude-accounts/resolve";
 import type { CacheMetadataRepository } from "../../db/repositories/cacheMetadata.repository";
 import type { ConversationsRepository } from "../../db/repositories/conversations.repository";
 import { getCacheMetadata } from "../cache/cacheMetadata";
 
-const DEFAULT_PROJECTS_DIR = join(homedir(), ".claude", "projects");
-
 export interface ShouldRefreshOptions {
-  /** Override the disk path checked for drift. Defaults to ~/.claude/projects. */
+  /** Override the disk path checked for drift. Defaults to `$CLAUDE_CONFIG_DIR/projects`, else ~/.claude/projects. */
   projectsDir?: string;
   /** Additional project roots (e.g. per-profile `configDir/projects`). */
   projectsDirs?: string[];
@@ -72,7 +70,7 @@ export function shouldRefreshProjectsFromHdd(
   if (opts.projectsDirs) {
     for (const d of opts.projectsDirs) dirs.add(d);
   }
-  dirs.add(opts.projectsDir ?? DEFAULT_PROJECTS_DIR);
+  dirs.add(opts.projectsDir ?? defaultClaudeProjectsDir());
 
   let newestMs: number | null = null;
   for (const dir of dirs) {
