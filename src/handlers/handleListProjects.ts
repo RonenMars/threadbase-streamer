@@ -1,7 +1,7 @@
 import { closeSync, openSync, readdirSync, readSync, statSync } from "fs";
 import type { ServerResponse } from "http";
-import { homedir } from "os";
 import { join } from "path";
+import { defaultClaudeProjectsDir } from "../claude-accounts/resolve";
 
 // How much of a conversation JSONL to read looking for `cwd`. The field is on
 // the first line in practice; a few KB of slack covers a long opening message.
@@ -63,7 +63,7 @@ export function handleListProjects(url: URL, res: ServerResponse): void {
   const limit = Math.max(1, parseInt(url.searchParams.get("limit") ?? "50", 10) || 50);
   const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
 
-  const projectsDir = join(homedir(), ".claude", "projects");
+  const projectsDir = defaultClaudeProjectsDir();
 
   let entries: Array<{ dirName: string; mtime: number }>;
   try {

@@ -1,6 +1,6 @@
 import { readFile } from "fs/promises";
-import { homedir } from "os";
 import { join } from "path";
+import { defaultClaudeConfigDir } from "../../claude-accounts/resolve";
 import { runLsof } from "./codexRolloutOwner";
 
 /**
@@ -46,11 +46,6 @@ export interface ClaudeRegistryEntry {
  * Claude records its start a little after exec.
  */
 export const CLAUDE_REGISTRY_START_SLACK_MS = 60_000;
-
-/** `CLAUDE_CONFIG_DIR` relocates everything Claude keeps under `~/.claude`. */
-export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
-}
 
 /**
  * Validate one registry file's contents for the process it is named after.
@@ -121,7 +116,7 @@ export async function readClaudeSessionRegistry(
   pid: number,
   options: ReadClaudeRegistryOptions = {},
 ): Promise<ClaudeRegistryEntry | null> {
-  const path = join(options.configDir ?? claudeConfigDir(), "sessions", `${pid}.json`);
+  const path = join(options.configDir ?? defaultClaudeConfigDir(), "sessions", `${pid}.json`);
   const read = options.read ?? ((p: string) => readFile(p, "utf-8"));
   let raw: string;
   try {
