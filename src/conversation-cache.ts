@@ -1229,6 +1229,17 @@ export class ConversationCache {
     this.fileIndexLoaded = true;
   }
 
+  /** Drop the fileIndex entry that maps some path to `id` (no-op until the index is loaded). */
+  private forgetFileIndexId(id: string): void {
+    if (!this.fileIndexLoaded) return;
+    for (const [fp, cid] of this.fileIndex) {
+      if (cid === id) {
+        this.fileIndex.delete(fp);
+        return;
+      }
+    }
+  }
+
   /** NULL stays visible until a completed parse proves emptiness. */
   isVisible(id: string): boolean {
     const meta = this.getMetaById(id);
@@ -1347,85 +1358,7 @@ export class ConversationCache {
   }
 
   updateFromLine(filePath: string, rawLine: string): void {
-    this.classifyAppendedLines(filePath, [rawLine]);
-    let line: JsonlLine;
-    try {
-      line = JSON.parse(rawLine);
-    } catch {
-      return;
-    }
-
-    if (this.filterAgentConversations && isAgentLine(line, this.agentEntrypoints)) {
-      this.deleteByFilePath(filePath);
-      this.onAgentFileDetected?.(filePath);
-      return;
-    }
-
-    const role = line.role ?? line.type;
-    const isMessage = role === "user" || role === "assistant";
-
-    this.ensureFileIndex();
-
-    // Canonicalize so a native-separator path (chokidar) keys the same cache row
-    // as the scanner's forward-slash file_path (P1.a).
-    const key = canonicalizeFilePath(filePath);
-
-    // Skip lines that carry neither a message nor project context — there's
-    // nothing for us to record.
-    if (!isMessage && !line.cwd && !line.slug) return;
-
-    let convId = this.fileIndex.get(key);
-    if (!convId) {
-      const pseudoId =
-        key
-          .split(/[/\\]/)
-          .pop()
-          ?.replace(/\.jsonl$/, "") ?? key;
-      this.stmts.insertSkeleton.run(pseudoId, key, 0);
-      this.fileIndex.set(key, pseudoId);
-      convId = pseudoId;
-    }
-
-    // Backfill project_path / project_name / title from cwd on any line that
-    // carries it. COALESCE inside the SQL ensures we never overwrite a
-    // scanner-populated value. Without this, the chokidar watcher leaves
-    // skeleton rows with NULL project context, which renders as blank cards
-    // on the mobile Recents tab.
-    if (line.cwd || line.slug) {
-      const projectPath = line.cwd ?? null;
-      const projectName = projectPath ? shortProjectName(projectPath) : null;
-      const title = line.slug ?? projectName ?? null;
-      this.stmts.backfillSkeletonProject.run({
-        id: convId,
-        project_path: projectPath,
-        project_name: projectName,
-        title,
-      });
-    }
-
-    if (!isMessage) return;
-
-    const timestamp = line.timestamp ?? new Date().toISOString();
-    const activityMs = new Date(timestamp).getTime();
-    if (Number.isNaN(activityMs)) return;
-
-    const contentBlocks = normalizeContent(line.message?.content ?? line.content);
-    const text = contentBlocks.find((b) => b.type === "text")?.text?.slice(0, 200) ?? "";
-    const lastMessage = JSON.stringify({ role, timestamp, text });
-    const seq = ++this.tailSeq;
-
-    const result = this.stmts.updateMeta.run(activityMs, lastMessage, seq, convId);
-    if (result.changes === 0) return;
-
-    const tailRow = this.stmts.getTail.get(convId) as TailRow | undefined;
-    const msgs: CachedTailMessage[] = tailRow
-      ? (JSON.parse(tailRow.messages_json) as CachedTailMessage[])
-      : [];
-
-    msgs.push({ role, timestamp, text, content: contentBlocks });
-    if (msgs.length > this.tailSize) msgs.splice(0, msgs.length - this.tailSize);
-
-    this.stmts.upsertTail.run(convId, JSON.stringify(msgs), msgs.length, seq);
+    this.ingestLines(filePath, [rawLine], true);
   }
 
   /**
@@ -1434,12 +1367,25 @@ export class ConversationCache {
    * one meta write, and one tail read/write — instead of 2-4 synchronous
    * writes per line. Semantics are identical to replaying each line through
    * updateFromLine in order: the agent filter short-circuits the whole batch,
-   * project context is backfilled last-wins, message_count increases by the
+   * project context is backfilled first-wins, message_count increases by the
    * number of surviving message lines, and last_activity/last_message reflect
    * the newest message line by timestamp (a monotonic guard keeps them from
    * moving backward when an interleaved writer appends an older line — P0.3).
+   * The one deliberate exception is updateFromLine, which keeps its unguarded,
+   * non-transactional write (see ingestLines).
    */
   updateFromLines(filePath: string, rawLines: string[]): void {
+    this.ingestLines(filePath, rawLines, false);
+  }
+
+  /**
+   * The single ingest implementation behind updateFromLine (`singleLine`) and
+   * updateFromLines. `singleLine` keeps the two behaviours the one-line entry
+   * point had before they were merged: last_activity/last_message are set
+   * unconditionally (no monotonic guard) and the writes are not wrapped in a
+   * transaction.
+   */
+  private ingestLines(filePath: string, rawLines: string[], singleLine: boolean): void {
     this.classifyAppendedLines(filePath, rawLines);
     // Classify all lines first (outside the transaction). A single watched
     // file maps to one conversation, so we accumulate into scalars.
@@ -1532,7 +1478,7 @@ export class ConversationCache {
     }
     const id = convId;
 
-    const apply = this.db.transaction(() => {
+    const apply = () => {
       if (sawProjectContext) {
         this.stmts.backfillSkeletonProject.run({
           id,
@@ -1545,13 +1491,15 @@ export class ConversationCache {
       if (msgCount === 0) return;
 
       const seq = ++this.tailSeq;
-      const result = this.stmts.updateMetaBatch.run({
-        inc: msgCount,
-        last_activity: lastActivityMs,
-        last_message: lastMessage,
-        updated_at: seq,
-        id,
-      });
+      const result = singleLine
+        ? this.stmts.updateMeta.run(lastActivityMs, lastMessage, seq, id)
+        : this.stmts.updateMetaBatch.run({
+            inc: msgCount,
+            last_activity: lastActivityMs,
+            last_message: lastMessage,
+            updated_at: seq,
+            id,
+          });
       if (result.changes === 0) return;
 
       const tailRow = this.stmts.getTail.get(id) as TailRow | undefined;
@@ -1562,8 +1510,9 @@ export class ConversationCache {
       if (msgs.length > this.tailSize) msgs.splice(0, msgs.length - this.tailSize);
 
       this.stmts.upsertTail.run(id, JSON.stringify(msgs), msgs.length, seq);
-    });
-    apply();
+    };
+    if (singleLine) apply();
+    else this.db.transaction(apply)();
   }
 
   // Returns the IDs of rows actually upserted (i.e. excluding any agent JSONLs
@@ -2017,14 +1966,7 @@ export class ConversationCache {
       if (meta) this.classifiers.delete(canonicalizeFilePath(meta.filePath));
       this.stmts.deleteTailById.run(id);
       this.stmts.deleteById.run(id);
-      if (this.fileIndexLoaded) {
-        for (const [fp, cid] of this.fileIndex) {
-          if (cid === id) {
-            this.fileIndex.delete(fp);
-            break;
-          }
-        }
-      }
+      this.forgetFileIndexId(id);
     } else {
       this.classifiers.clear();
       this.stmts.deleteTailAll.run();
@@ -2083,16 +2025,7 @@ export class ConversationCache {
     }
     if (ghosts.length > 0) {
       prune(ghosts);
-      if (this.fileIndexLoaded) {
-        for (const id of ghosts) {
-          for (const [fp, cid] of this.fileIndex) {
-            if (cid === id) {
-              this.fileIndex.delete(fp);
-              break;
-            }
-          }
-        }
-      }
+      for (const id of ghosts) this.forgetFileIndexId(id);
     }
     return ghosts;
   }
@@ -2148,16 +2081,7 @@ export class ConversationCache {
     }
     if (removed.length > 0) {
       drop(removed);
-      if (this.fileIndexLoaded) {
-        for (const id of removed) {
-          for (const [fp, cid] of this.fileIndex) {
-            if (cid === id) {
-              this.fileIndex.delete(fp);
-              break;
-            }
-          }
-        }
-      }
+      for (const id of removed) this.forgetFileIndexId(id);
     }
     return removed;
   }
@@ -2206,16 +2130,7 @@ export class ConversationCache {
       return n;
     });
     const dropped = drop(ids);
-    if (this.fileIndexLoaded) {
-      for (const id of ids) {
-        for (const [fp, cid] of this.fileIndex) {
-          if (cid === id) {
-            this.fileIndex.delete(fp);
-            break;
-          }
-        }
-      }
-    }
+    for (const id of ids) this.forgetFileIndexId(id);
     return dropped;
   }
 
