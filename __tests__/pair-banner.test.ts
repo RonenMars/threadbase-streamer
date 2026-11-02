@@ -66,6 +66,7 @@ async function printWith(
   info: unknown,
   fetchOpts?: { infoStatus?: number; infoThrows?: string },
   scheme?: "threadbase" | "threadbase-dev",
+  lanUrl: () => string | null = () => null,
 ) {
   const log = { info: vi.fn(), warn: vi.fn() };
   const identityKey = vi.fn(() => IDENTITY_KEY);
@@ -77,11 +78,16 @@ async function printWith(
       includeQr: true,
       scheme,
     },
-    { log, fetch: makeFetch(info, fetchOpts), identityKey },
+    { log, fetch: makeFetch(info, fetchOpts), identityKey, lanUrl },
   );
   const printed = log.info.mock.calls.map(([msg]) => String(msg));
   const pairUrlLine = printed.find((line) => line.startsWith("Pair URL: "));
-  return { log, identityKey, printed, payload: pairUrlLine?.slice("Pair URL: ".length) };
+  return {
+    log,
+    identityKey,
+    printed,
+    payload: pairUrlLine?.slice("Pair URL: ".length),
+  };
 }
 
 describe("pairing QR payload", () => {
@@ -117,7 +123,9 @@ describe("pairing QR payload", () => {
   });
 
   it("prints the TbDev scheme under --dev and keeps everything else byte-identical", async () => {
-    const info = { e2ee: { supported: false, enabled: false, version: 1, required: false } };
+    const info = {
+      e2ee: { supported: false, enabled: false, version: 1, required: false },
+    };
     const { payload } = await printWith(info, undefined, "threadbase-dev");
 
     expect(payload).toBe(LEGACY_PAYLOAD.replace("threadbase://", "threadbase-dev://"));
@@ -136,7 +144,10 @@ describe("pairing QR payload", () => {
   });
 
   it("omits spk and v against a server too old to report the capability", async () => {
-    const { payload, log } = await printWith({ version: "1.0.0", machineName: "old-box" });
+    const { payload, log } = await printWith({
+      version: "1.0.0",
+      machineName: "old-box",
+    });
 
     expect(payload).toBe(LEGACY_PAYLOAD);
     expect(payload).not.toContain("spk=");
@@ -166,6 +177,60 @@ describe("pairing QR payload", () => {
       expect.stringContaining("ECONNRESET"),
       expect.objectContaining({ event: "pair.e2ee_capability_unknown" }),
     );
+  });
+});
+
+describe("pairing QR lan parameter", () => {
+  const OFF = {
+    e2ee: { supported: false, enabled: false, version: 1, required: false },
+  };
+  const LAN = "http://192.0.2.7:8766";
+
+  it("adds lan= beside an unchanged url= when a public URL is configured", async () => {
+    const { payload } = await printWith(OFF, undefined, undefined, () => LAN);
+
+    // url= stays the public URL: released builds pair through it.
+    expect(payload).toBe(`${LEGACY_PAYLOAD}&lan=${encodeURIComponent(LAN)}`);
+  });
+
+  it("keeps lan= ahead of spk and v on the encrypted path", async () => {
+    const { payload } = await printWith(
+      { e2ee: { supported: true, enabled: true, version: 1, required: false } },
+      undefined,
+      undefined,
+      () => LAN,
+    );
+
+    expect(payload).toBe(
+      `${LEGACY_PAYLOAD}&lan=${encodeURIComponent(LAN)}&spk=${IDENTITY_KEY}&v=1`,
+    );
+  });
+
+  it("omits lan= when the machine has no LAN address", async () => {
+    const { payload } = await printWith(OFF, undefined, undefined, () => null);
+
+    expect(payload).toBe(LEGACY_PAYLOAD);
+  });
+
+  it("omits lan= with no public URL, where url= already is the LAN address", async () => {
+    const log = { info: vi.fn(), warn: vi.fn() };
+    const lanUrl = vi.fn(() => LAN);
+    await printServerBanner(
+      {
+        port: 8766,
+        apiKey: "tb_0123456789abcdef0123456789abcdef",
+        publicUrl: null,
+        includeQr: true,
+      },
+      { log, fetch: makeFetch(OFF), identityKey: () => IDENTITY_KEY, lanUrl },
+    );
+    const line = log.info.mock.calls
+      .map(([m]) => String(m))
+      .find((m) => m.startsWith("Pair URL: "));
+
+    // Positive control: a QR was printed, with the machine's own address as url=.
+    expect(line).toMatch(/^Pair URL: threadbase:\/\/pair\?url=http/);
+    expect(line).not.toContain("lan=");
   });
 });
 
@@ -267,7 +332,10 @@ describe("the capability probe against a real running server", () => {
       await fetch(`http://localhost:${port}/api/info`, {
         headers: { Authorization: `Bearer ${API_KEY}` },
       })
-    ).json()) as { serverIdentityKey?: string; e2ee?: { enabled?: boolean; supported?: boolean } };
+    ).json()) as {
+      serverIdentityKey?: string;
+      e2ee?: { enabled?: boolean; supported?: boolean };
+    };
     expect(info.e2ee).toBeDefined();
     expect(info.e2ee?.enabled).toBe(false);
     // Present and well-formed, so the only thing standing between this build
