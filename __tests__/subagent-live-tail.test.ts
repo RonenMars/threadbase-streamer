@@ -120,12 +120,19 @@ describe("sub-agent live tail from ?parent=", () => {
     return (await res.json()).conversations;
   }
 
+  // Transcript frames go only to subscribers of the child's id (#887).
+  async function subscribe(id: string): Promise<void> {
+    ws.send(JSON.stringify({ type: "subscribe_session", sessionId: id }));
+    expect(await waitFor(() => (server as any).sessionSubscribers.has(id))).toBe(true);
+  }
+
   it("tails an active child and pushes its new lines with no chokidar event", async () => {
     const children = await listChildren();
     const active = children.find((c) => c.filePath === canonicalizeFilePath(activePath));
     expect(active?.subagentActive).toBe(true);
     expect(tails().has(canonicalizeFilePath(activePath))).toBe(true);
     expect(tails().has(canonicalizeFilePath(finishedPath))).toBe(false);
+    await subscribe(active.id);
 
     // Silence the per-file watch too: only the poll can deliver now.
     const watched = (server as any).fileWatcher.files.get(canonicalizeFilePath(activePath));
@@ -157,7 +164,8 @@ describe("sub-agent live tail from ?parent=", () => {
 
   it("keeps the tail through a silent tool call, so later lines still stream", async () => {
     writeFileSync(activePath.replace(/\.jsonl$/, ".meta.json"), JSON.stringify({ agentType: "x" }));
-    await listChildren();
+    const children = await listChildren();
+    await subscribe(children.find((c) => c.filePath === canonicalizeFilePath(activePath)).id);
     const manager = (server as any).externalTailManager;
     manager.pollSubagentTails(Date.now() + SUBAGENT_ACTIVE_MS + 30_000);
     expect(tails().has(canonicalizeFilePath(activePath))).toBe(true);

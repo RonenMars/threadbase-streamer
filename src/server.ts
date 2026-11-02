@@ -3005,7 +3005,12 @@ export class StreamerServer {
     // keeps its message_index instead of losing every seq to one dropped line.
     const { lines: clientLines, seqs: clientSeqs } = toClientConversationLines(lines, seqs);
     if (clientLines.length === 0) return;
-    this.wsHub.broadcast({
+    // Scoped to the id's subscribers: a client is only handed the transcript
+    // lines of a conversation it subscribed to (#887). A managed session is
+    // keyed by its session id, an external tail by the conversation UUID, and
+    // both are subscribed with `subscribe_session`.
+    const subscribers = this.sessionSubscribers.get(sessionId) ?? [];
+    this.wsHub.broadcastToClients(subscribers, {
       type: "conversation_events",
       sessionId,
       lines: clientLines,
@@ -3014,7 +3019,7 @@ export class StreamerServer {
     // ...plus per-line conversation_event so older mobile clients,
     // which only know that shape, keep working byte-for-byte.
     for (const line of clientLines) {
-      this.wsHub.broadcast({ type: "conversation_event", sessionId, line });
+      this.wsHub.broadcastToClients(subscribers, { type: "conversation_event", sessionId, line });
     }
   }
 
