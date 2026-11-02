@@ -117,9 +117,9 @@ describe("cross-platform smoke", () => {
   // a literal pin cannot notice that on its own.
   //
   // macOS must track .nvmrc, since that is the leg that catches the sun_path
-  // class. Windows is deliberately held at 22 — Node 24 kills six vitest fork
-  // workers there — so it is asserted separately rather than left free, and
-  // raising it is then a visible edit here rather than a silent one.
+  // class. Windows runs 24 too since #530: the fork-worker crash it was held
+  // at 22 for did not reproduce on Node 24.22.1 (serial or parallel), and it is
+  // asserted separately so that moving it again is a visible edit here.
   it("runs the macOS leg on the Node major .nvmrc pins", () => {
     const smoke = WORKFLOW.slice(
       WORKFLOW.indexOf("  smoke:"),
@@ -132,7 +132,7 @@ describe("cross-platform smoke", () => {
 
     expect(nvmrcMajor).toMatch(/^\d+$/);
     expect(smoke).toMatch(new RegExp(`os:\\s*macos-latest\\s*\\n\\s*node:\\s*${nvmrcMajor}\\b`));
-    expect(smoke).toMatch(/os:\s*windows-latest\s*\n\s*node:\s*22\b/);
+    expect(smoke).toMatch(/os:\s*windows-latest\s*\n\s*node:\s*24\b/);
     // The step must read the matrix rather than reintroduce a single hardcode.
     expect(smoke).toMatch(/node-version:\s*\$\{\{\s*matrix\.node\s*\}\}/);
   });
@@ -305,17 +305,15 @@ describe("test discovery covers the nested suites", () => {
   });
 
   // Sequential files were the Windows smoke critical path (~8.5 min, 92% of
-  // it `npm test`). Parallelism stays on Linux and on Windows × Node 22. Two
-  // serial cases: Windows × Node 24 (fork workers die) and macOS (file
-  // parallelism after #894 made Smoke (macos-latest) fail ~28% of runs on
-  // paint-time / fs.watch waits). A hardcoded `false` would silently put the
-  // remaining 4-core runners back to one file at a time.
-  it("parallelizes test files except on macOS and Windows Node 24", () => {
+  // it `npm test`). Parallelism stays on Linux and Windows. The one serial
+  // case is macOS (file parallelism after #894 made Smoke (macos-latest) fail
+  // ~28% of runs on paint-time / fs.watch waits). A hardcoded `false` would
+  // silently put the remaining 4-core runners back to one file at a time.
+  it("parallelizes test files except on macOS", () => {
     expect(config).not.toMatch(/fileParallelism:\s*false/);
     expect(config).toMatch(/fileParallelism/);
-    expect(config).toMatch(/darwin/);
-    expect(config).toMatch(/win32/);
-    expect(config).toMatch(/nodeMajor >= 24/);
+    expect(config).toMatch(/const fileParallelism = process\.platform !== "darwin";/);
+    expect(config).not.toMatch(/nodeMajor/);
     expect(config).toMatch(/maxWorkers:\s*4/);
   });
 });
