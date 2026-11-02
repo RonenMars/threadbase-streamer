@@ -143,6 +143,13 @@ describe("external live tails", () => {
     rmSync(projectPath, { recursive: true, force: true });
   });
 
+  // Transcript frames are scoped to subscribers (#887), so a client must
+  // subscribe to the id first and the server must have registered it.
+  async function subscribe(id: string): Promise<void> {
+    ws.send(JSON.stringify({ type: "subscribe_session", sessionId: id }));
+    expect(await waitFor(() => (server as any).sessionSubscribers.has(id))).toBe(true);
+  }
+
   function externalTails(): Map<string, { conversationId: string; lastActivityAt: number }> {
     return (server as any).externalTails;
   }
@@ -153,6 +160,7 @@ describe("external live tails", () => {
 
     // Creating the file is what makes the directory watcher notice it; the tail
     // attaches at EOF, so it's the NEXT append that streams.
+    await subscribe(convId);
     writeFileSync(filePath, userLine(convId, "first", projectPath, "2026-07-21T10:00:00.000Z"));
     expect(await waitFor(() => externalTails().size === 1)).toBe(true);
 
@@ -246,6 +254,7 @@ describe("external live tails", () => {
       },
     })}\n`;
 
+    await subscribe(convId);
     writeFileSync(filePath, userLine(convId, "first", projectPath, "2026-07-21T12:00:00.000Z"));
     expect(await waitFor(() => externalTails().size === 1)).toBe(true);
 
@@ -366,6 +375,10 @@ describe("external live tails", () => {
     const parentPath = join(projectDir, `${parentId}.jsonl`);
     const subagentPath = join(subagentDir, `${agentId}.jsonl`);
 
+    // Subscribed to both before either file exists, so the "never" below can't
+    // pass merely because the fork's frames had no recipient.
+    await subscribe(parentId);
+    await subscribe(agentId);
     // Positive control: the parent streams over the very same mechanism, so a
     // silent watcher can't pass this test by pushing nothing at all.
     writeFileSync(

@@ -1344,6 +1344,13 @@ describe("StreamerServer", () => {
         }
       });
       await new Promise<void>((r) => ws.on("open", () => r()));
+      // Transcript frames go only to the id's subscribers (#887); the id is
+      // fixed here, so subscribe to it before the session starts.
+      ws.send(JSON.stringify({ type: "subscribe_session", sessionId: liveSessionId }));
+      for (let i = 0; i < 100 && !(boundServer as any).sessionSubscribers.has(liveSessionId); i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect((boundServer as any).sessionSubscribers.has(liveSessionId)).toBe(true);
 
       // Include a real user response_item — session_meta alone is filtered out
       // when normalizing Codex lines to the Claude shape mobile understands.
