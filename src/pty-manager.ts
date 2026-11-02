@@ -55,6 +55,11 @@ import { debounce } from "./utils/debounce";
 
 const OUTPUT_BUFFER_MAX = 65536;
 
+// Once the ring buffer is full every chunk trims it, so pty.buffer_trimmed is
+// logged at most once per this window per session, carrying the bytes dropped
+// since the last line.
+const BUFFER_TRIMMED_LOG_MS = 5_000;
+
 // Cap on recorded user messages per session (drop oldest). Bounds memory on a
 // long-lived session; replay only needs the recent tail for ownership.
 const INPUT_HISTORY_MAX = 50;
@@ -291,6 +296,10 @@ export class PTYManager implements SessionRunner {
   // to a given input or fell silent. Reset on dispose().
   private chunkIndex = new Map<string, number>();
   private lastChunkAt = new Map<string, number>();
+  // Per-session throttle state for pty.buffer_trimmed: when it last logged and
+  // the bytes dropped since. A tail dropped after the last log stays unreported
+  // until the next trim (ponytail: no trailing timer; add one if that matters).
+  private bufferTrim = new Map<string, { loggedAt: number; pending: number }>();
   // Per-session debounced "went quiet" checker, re-armed on every chunk. Fires
   // QUIET_DETECT_MS after the last chunk so ready/prompt detection doesn't
   // wait for another chunk that may never arrive (Claude blocked on input).
@@ -810,6 +819,7 @@ export class PTYManager implements SessionRunner {
     this.pendingReady.delete(sessionId);
     this.queuedInputs.delete(sessionId);
     this.firstChunkAt.delete(sessionId);
+    this.bufferTrim.delete(sessionId);
     this.permissionOpen.delete(sessionId);
     this.oscTail.delete(sessionId);
     this.turnOpen.delete(sessionId);
@@ -943,6 +953,7 @@ export class PTYManager implements SessionRunner {
     this.firstChunkAt.clear();
     this.chunkIndex.clear();
     this.lastChunkAt.clear();
+    this.bufferTrim.clear();
     for (const quiet of this.quietCheckers.values()) quiet.cancel();
     this.quietCheckers.clear();
     for (const timer of this.readyFallbackTimers.values()) clearTimeout(timer);
@@ -991,7 +1002,23 @@ export class PTYManager implements SessionRunner {
 
     session.outputBuffer = Buffer.concat([session.outputBuffer, chunk]);
 
+    const beforeTrim = session.outputBuffer.length;
     session.outputBuffer = trimOutputBuffer(session.outputBuffer, OUTPUT_BUFFER_MAX);
+    if (session.outputBuffer.length < beforeTrim) {
+      const droppedBytes = beforeTrim - session.outputBuffer.length;
+      const trim = this.bufferTrim.get(sessionId) ?? { loggedAt: -Infinity, pending: 0 };
+      trim.pending += droppedBytes;
+      if (now - trim.loggedAt >= BUFFER_TRIMMED_LOG_MS) {
+        this.log.info(`[pty.buffer_trimmed] ${sessionId.slice(0, 8)} dropped=${trim.pending}B`, {
+          event: "pty.buffer_trimmed",
+          sessionId,
+          droppedBytes: trim.pending,
+        });
+        trim.loggedAt = now;
+        trim.pending = 0;
+      }
+      this.bufferTrim.set(sessionId, trim);
+    }
 
     // Render into the headless screen so getOutputLines() can reproduce true
     // on-screen order. write() is async (parsed on a later tick) but we never
@@ -1619,6 +1646,7 @@ export class PTYManager implements SessionRunner {
     this.sessions.delete(sessionId);
     this.queuedInputs.delete(sessionId);
     this.firstChunkAt.delete(sessionId);
+    this.bufferTrim.delete(sessionId);
     this.permissionOpen.delete(sessionId);
     this.oscTail.delete(sessionId);
     this.turnOpen.delete(sessionId);
