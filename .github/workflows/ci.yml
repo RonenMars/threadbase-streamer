@@ -209,16 +209,11 @@ jobs:
     # catch that class. Verified by reintroducing #523 on this branch — five
     # EINVAL failures on macOS while all three ubuntu Test legs stayed green.
     #
-    # Windows stays on 22 because 24 kills six vitest fork workers there with
-    # "Worker exited unexpectedly" — deterministic, twice out of twice, on
-    # runs 011122a and 72a6272, and unrelated to any test assertion (0 failed,
-    # 6 unhandled errors). Almost certainly a native addon under Node 24's
-    # Windows ABI. Since `Smoke (windows-latest)` is a required check, pinning
-    # 22 here is what keeps that crash from blocking every PR in the repo.
-    #
-    # This is not a regression: Windows was never tested on 24. It is a known
-    # gap, recorded in docs/testing/cross-platform-ci.md. Raise Windows to 24
-    # once the worker crash is understood.
+    # Windows runs 24 as well. It was held at 22 because 24 killed six vitest
+    # fork workers there ("Worker exited unexpectedly", 0 failed tests, runs
+    # 011122a and 72a6272). On Node 24.22.1 the full suite passes on Windows
+    # both serial and with parallel forks (#530), so the pin is lifted; if the
+    # crash returns, the worker-death evidence is in docs/testing/cross-platform-ci.md.
     strategy:
       fail-fast: false
       matrix:
@@ -232,8 +227,8 @@ jobs:
         with:
           submodules: false
 
-      # Per-OS, see the matrix comment above. macOS 24 (the major .nvmrc pins),
-      # Windows 22. Measured on macos-latest (macOS 26.5.2 / 25F84) on
+      # Both legs run 24, the major .nvmrc pins. The EINVAL below was measured
+      # on macos-latest (macOS 26.5.2 / 25F84) on
       # 2026-08-11 by instrumenting the path in CI: an identical 114-byte
       # socket path raises EINVAL under v24.15.0 and binds cleanly under
       # v22.23.1.
@@ -318,31 +313,10 @@ jobs:
       # A test that genuinely cannot run on a platform guards itself in-file
       # with `describe.skipIf(process.platform === …)`, which is visible to
       # whoever writes it, rather than in a central list nobody remembers.
-      # DIAGNOSTIC (#530): verbose reporter names each file as it starts, so the
-      # last name before each "Worker exited unexpectedly" is the candidate.
-      # Not for merge.
       - name: Tests
         if: needs.gate.outputs.skip != 'true'
-        run: npx vitest run --reporter=verbose 2>&1 | tee vitest-verbose.log; exit ${PIPESTATUS[0]}
+        run: npm test
         shell: bash
-
-      - name: Diagnose worker deaths (#530)
-        if: always() && needs.gate.outputs.skip != 'true'
-        run: |
-          echo "node: $(node -v) abi: $(node -p process.versions.modules)"
-          grep -n -E "Worker exited unexpectedly|Worker forks emitted error|emitUnexpectedExit" vitest-verbose.log | head -20 || true
-          echo "--- 15 lines before each death ---"
-          grep -n -B15 -E "Worker exited unexpectedly" vitest-verbose.log | head -200 || true
-          echo "--- loaded native addons ---"
-          node -e "for (const m of ['node-pty','better-sqlite3']) { try { require(m); console.log(m, 'loads') } catch (e) { console.log(m, 'FAILS', e.message) } }"
-        shell: bash
-
-      - name: Upload verbose log (#530)
-        if: always() && needs.gate.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: vitest-verbose-${{ matrix.os }}-node${{ matrix.node }}
-          path: vitest-verbose.log
 
       # node-pty is the dependency most likely to break per-platform, and a
       # failure here is the one a Linux-only matrix can never catch.
