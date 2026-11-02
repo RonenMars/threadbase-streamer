@@ -27,7 +27,7 @@ Status of the APNs Live Activity delivery path in tb-streamer after PRs [#292](h
 - [ ] Decide and implement: should the server start a Live Activity for a session the app never foregrounded? Today the first activity can only be created in-app over WebSocket; the push path only updates and renews an activity that already exists.
 
 ### Host default is wrong for the shipping case
-- [ ] `APNS_HOST` defaults to **sandbox** (`src/services/push/apnsClient.ts:111`) because `aps-environment` was `development`. Every TestFlight/App Store build needs `api.push.apple.com`, and today each operator has to discover that and override it by hand — a wrong host does not error, the pushes simply never arrive. Tracked in [#480](https://github.com/RonenMars/threadbase-streamer/issues/480).
+- [x] `APNS_HOST` now defaults to **production** (`api.push.apple.com`); sandbox is an explicit `APNS_HOST` opt-in, and `APNS_TEAM_ID` / `APNS_BUNDLE_ID` default to the official app's. Setup: [guides/live-activity-push.md](guides/live-activity-push.md). Tracked in [#480](https://github.com/RonenMars/threadbase-streamer/issues/480).
 
 ### Renewal is untested in wall-clock time
 - [ ] Observe one real renewal fire across an actual ~7.5 hour window. All 14 renewal tests inject a fake clock; the boot re-arm, the chained one-hour timer hops, and drift across a laptop suspend have never run against the real timer.
@@ -73,6 +73,6 @@ Any change here needs a coordinated tb-mobile change — an ActivityKit decode f
 |----------|----------|---------|
 | `APNS_KEY` | Yes | — (p8 PEM **contents**, never a path; feature off when unset) |
 | `APNS_KEY_ID` | With `APNS_KEY` | derived from `AuthKey_<keyId>.p8` under launchd |
-| `APNS_TEAM_ID` | With `APNS_KEY` | — |
-| `APNS_BUNDLE_ID` | With `APNS_KEY` | — |
-| `APNS_HOST` | No | `api.sandbox.push.apple.com` |
+| `APNS_TEAM_ID` | No | the official app's team id |
+| `APNS_BUNDLE_ID` | No | `com.ronenmars.threadbase` |
+| `APNS_HOST` | No | `api.push.apple.com` (production) |

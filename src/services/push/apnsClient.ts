@@ -21,9 +21,19 @@ import { getLogger } from "../../logger";
 
 const log = getLogger("apns");
 
-/** Sandbox default: the app's `aps-environment` is still `development`. */
+/** Opt-in only (`APNS_HOST`): a development-signed build, `aps-environment: development`. */
 export const APNS_HOST_SANDBOX = "api.sandbox.push.apple.com";
+/** The default: every TestFlight and App Store build is production-signed. */
 export const APNS_HOST_PRODUCTION = "api.push.apple.com";
+
+/**
+ * The official app's Apple team and bundle id: the defaults when `APNS_TEAM_ID`
+ * and `APNS_BUNDLE_ID` are unset. Both are public (every signed binary carries
+ * them), not secrets. Only the holder of the matching signing key can push to
+ * this app; a self-hoster overrides both with their own app's.
+ */
+export const APNS_DEFAULT_TEAM_ID = "GUW6BN8X57";
+export const APNS_DEFAULT_BUNDLE_ID = "com.ronenmars.threadbase";
 
 /**
  * APNs rejects a payload over 4 KB.
@@ -87,13 +97,12 @@ function base64url(input: Buffer | string): string {
  * off" and skip sending — the server must not fail to boot because an optional
  * push credential is missing.
  *
- * Every identifier comes from the environment with no default. Baking one
- * deployment's Apple account into the source would make this package silently
- * sign for the wrong team when someone else deploys it, and the resulting APNs
- * rejection names none of that. Only the host has a default, because sandbox
- * versus production is a deployment choice rather than an account identity.
+ * The host defaults to production, and the team and bundle ids default to the
+ * official app's (`APNS_DEFAULT_TEAM_ID`, `APNS_DEFAULT_BUNDLE_ID`); each is
+ * overridable from the environment. The key id has no default: it belongs to
+ * the key, and a guess would sign with an id that does not match it.
  *
- * Returns null (rather than throwing) when the key is present but an identifier
+ * Returns null (rather than throwing) when the key is present but its key id
  * is missing, so a half-configured environment disables the feature instead of
  * taking the server down. `describeMissingApnsCredentials` explains which one.
  */
@@ -104,11 +113,11 @@ export function readApnsCredentialsFromEnv(
   if (!key || key.trim().length === 0) return null;
 
   const keyId = env.APNS_KEY_ID?.trim();
-  const teamId = env.APNS_TEAM_ID?.trim();
-  const bundleId = env.APNS_BUNDLE_ID?.trim();
-  if (!keyId || !teamId || !bundleId) return null;
+  if (!keyId) return null;
+  const teamId = env.APNS_TEAM_ID?.trim() || APNS_DEFAULT_TEAM_ID;
+  const bundleId = env.APNS_BUNDLE_ID?.trim() || APNS_DEFAULT_BUNDLE_ID;
 
-  const host = env.APNS_HOST ?? APNS_HOST_SANDBOX;
+  const host = env.APNS_HOST ?? APNS_HOST_PRODUCTION;
 
   return { key, keyId, teamId, bundleId, host };
 }
@@ -129,24 +138,13 @@ export function describeMissingApnsCredentials(
     );
   }
 
-  // A key with no identifiers is the harder case to diagnose: it looks
-  // configured, and APNs answers a mismatch with a bare InvalidProviderToken
-  // that names nothing. Say exactly which variable is absent.
-  const missing = (
-    [
-      ["APNS_KEY_ID", env.APNS_KEY_ID],
-      ["APNS_TEAM_ID", env.APNS_TEAM_ID],
-      ["APNS_BUNDLE_ID", env.APNS_BUNDLE_ID],
-    ] as const
-  )
-    .filter(([, value]) => !value || value.trim().length === 0)
-    .map(([name]) => name);
-
-  if (missing.length === 0) return null;
+  // A key with no key id is the harder case to diagnose: it looks configured,
+  // and APNs answers a mismatch with a bare InvalidProviderToken that names
+  // nothing. Say exactly which variable is absent.
+  if (env.APNS_KEY_ID && env.APNS_KEY_ID.trim().length > 0) return null;
   return (
-    `APNS_KEY is set but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not, ` +
-    "so Live Activity push is disabled. Under launchd, APNS_KEY_ID is derived from the " +
-    "AuthKey_<keyId>.p8 filename; the team and bundle ids must be set explicitly."
+    "APNS_KEY is set but APNS_KEY_ID is not, so Live Activity push is disabled. " +
+    "Under launchd, APNS_KEY_ID is derived from the AuthKey_<keyId>.p8 filename."
   );
 }
 
