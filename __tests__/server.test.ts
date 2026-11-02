@@ -988,10 +988,11 @@ describe("StreamerServer", () => {
       vi.restoreAllMocks();
     });
 
-    it("msg_limit on bound id slices the injection-filtered list (not scanner getConversationPage)", async () => {
+    it("msg_limit on bound id serves the injection-filtered list through a scanner page", async () => {
       // Regression: handleGetConversation used to call getConversationPage after
       // building `filtered`, which re-read the unfiltered LRU and dropped the
       // newest user turn while surfacing AGENTS.md — mobile always sends msg_limit=80.
+      // The page is now read first and filtered by the scanner with our predicate.
       const liveSessionId = "259fd3ce-ad78-4980-b441-1cfa05edaec9";
       const codexSessionId = "codex-persisted-id-msg-limit";
       const projectPath = realpathSync(join(browseRoot, "project"));
@@ -1068,36 +1069,19 @@ describe("StreamerServer", () => {
         `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`,
       );
 
-      const poisonPage = {
-        messages: [
-          {
-            role: "user",
-            text: "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nhide me",
-            timestamp: now.toISOString(),
-          },
-          {
-            role: "user",
-            text: "first user turn",
-            timestamp: now.toISOString(),
-          },
-          {
-            role: "assistant",
-            text: "first assistant reply",
-            timestamp: now.toISOString(),
-          },
-          // Deliberately omit the second turn — the old getConversationPage path
-          // could serve a stale/unfiltered window that looked like this.
-        ],
-        total: 7,
-        fromIndex: 0,
-      };
-
+      // The page is now read through the scanner (#505), so the guard is that it
+      // is asked for with the streamer's own injected-context check: the scanner's
+      // default would keep this server's argv prompt as a user turn.
       const scannerProto = (await import("@threadbase-sh/scanner")).ConversationScanner
         .prototype as unknown as {
-        getConversationPage?: (...args: unknown[]) => unknown;
+        getConversationPage: (...args: unknown[]) => unknown;
       };
       const originalGetPage = scannerProto.getConversationPage;
-      scannerProto.getConversationPage = async () => poisonPage;
+      const pageOptions: Array<{ isInjectedContext?: unknown }> = [];
+      scannerProto.getConversationPage = function (this: unknown, id: unknown, options: unknown) {
+        pageOptions.push(options as { isInjectedContext?: unknown });
+        return originalGetPage.call(this, id, options);
+      };
 
       const codexStartFreshSpy = vi
         .spyOn(CodexPtyRunner.prototype, "startFresh")
@@ -1144,6 +1128,8 @@ describe("StreamerServer", () => {
         expect(texts).toContain("second user turn");
         expect(texts).toContain("second assistant reply");
         expect(body.message_pagination?.total).toBe(4);
+        expect(pageOptions.length).toBeGreaterThan(0);
+        expect(typeof pageOptions[0].isInjectedContext).toBe("function");
       } finally {
         scannerProto.getConversationPage = originalGetPage;
         codexStartFreshSpy.mockRestore();
