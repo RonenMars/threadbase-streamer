@@ -17,14 +17,6 @@ import {
  */
 
 /**
- * How long a registered device may go without a single authenticated request
- * before it is treated as never confirmed (#744). A pairing whose msg2 is lost
- * leaves a full-capability row the phone does not know about; this bounds it.
- * Code, not config.
- */
-export const UNCONFIRMED_DEVICE_TTL_MS = 24 * 60 * 60 * 1000;
-
-/**
  * `touch` is a synchronous SQLite write on the request path, so a device that
  * was stamped this recently is not written again. `last_seen_at` is therefore
  * accurate to a minute, which is far finer than anything that reads it.
@@ -65,6 +57,13 @@ export interface DeviceView {
    * device.
    */
   e2ee: boolean;
+  /**
+   * Registered but never heard from: `last_seen_at` is null and the row is not
+   * revoked. A pairing whose final message never reached the phone looks like
+   * this forever, and so does a phone that just paired, so this is a label for
+   * a person to act on, never an expiry. Nothing revokes a pending row.
+   */
+  pending: boolean;
 }
 
 export interface RegisteredDevice {
@@ -121,6 +120,7 @@ export function toDeviceView(row: DeviceRow): DeviceView {
     // handshake is checked against, `e2ee_required` is whether plaintext is
     // refused — and it is the second one a user is asking about.
     e2ee: row.e2ee_required === 1,
+    pending: row.last_seen_at === null && row.revoked_at === null,
   };
 }
 
@@ -135,7 +135,6 @@ export class DevicesRepository {
   private deleteRevokedStmt: Database.Statement;
   private byE2eeStaticPubStmt: Database.Statement;
   private repairStmt: Database.Statement;
-  private revokeUnconfirmedStmt: Database.Statement;
   private lastTouchedAt = new Map<string, number>();
 
   constructor(db: Database.Database) {
@@ -176,11 +175,6 @@ export class DevicesRepository {
     this.listStmt = db.prepare("SELECT * FROM devices ORDER BY created_at DESC");
     this.revokeStmt = db.prepare("UPDATE devices SET revoked_at = ? WHERE device_id = ?");
     this.touchStmt = db.prepare("UPDATE devices SET last_seen_at = ? WHERE device_id = ?");
-    this.revokeUnconfirmedStmt = db.prepare(
-      `UPDATE devices SET revoked_at = ?
-       WHERE last_seen_at IS NULL AND revoked_at IS NULL AND created_at < ?
-       RETURNING device_id`,
-    );
     this.deleteStmt = db.prepare("DELETE FROM devices WHERE device_id = ?");
     this.deleteRevokedStmt = db.prepare("DELETE FROM devices WHERE revoked_at IS NOT NULL");
   }
@@ -313,22 +307,6 @@ export class DevicesRepository {
    */
   deleteRevoked(): number {
     return this.deleteRevokedStmt.run().changes;
-  }
-
-  /**
-   * Revoke every device that has never made an authenticated request and was
-   * registered more than `UNCONFIRMED_DEVICE_TTL_MS` ago (#744). Revokes rather
-   * than deletes, so `list()` keeps the audit trail. Returns the revoked ids.
-   *
-   * "Never made a request" is `last_seen_at IS NULL`: `touch` is the only
-   * writer, and every authenticated path (plaintext token, ticketed WebSocket,
-   * sealed REST) calls it.
-   */
-  revokeUnconfirmed(now: number = Date.now()): string[] {
-    const rows = this.revokeUnconfirmedStmt.all(now, now - UNCONFIRMED_DEVICE_TTL_MS) as {
-      device_id: string;
-    }[];
-    return rows.map((r) => r.device_id);
   }
 
   touch(deviceId: string, now: number = Date.now()): void {

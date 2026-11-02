@@ -6,7 +6,6 @@ import {
   DevicesRepository,
   hashDeviceToken,
   parseCapabilities,
-  UNCONFIRMED_DEVICE_TTL_MS,
 } from "../src/db/repositories/devices.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
 
@@ -216,6 +215,36 @@ describe("listing", () => {
 
     expect(repo.get(deviceId)?.last_seen_at).toBe(1_700_000_000_000);
   });
+
+  // `pending` is derived in one place (`toDeviceView`) so the REST list and the
+  // CLI cannot disagree. There is deliberately no expiry: a row stays pending
+  // until its first authenticated request or until someone revokes it.
+  it("marks a never-seen, unrevoked device pending", () => {
+    const { deviceId } = repo.register({ publicKey: "pk" });
+
+    expect(repo.list().find((d) => d.deviceId === deviceId)?.pending).toBe(true);
+  });
+
+  it("stays pending however old the row is", () => {
+    const { deviceId } = repo.register({ publicKey: "pk", now: 1_000 });
+
+    expect(repo.list().find((d) => d.deviceId === deviceId)?.pending).toBe(true);
+    expect(repo.get(deviceId)?.revoked_at).toBeNull();
+  });
+
+  it("is no longer pending once the device has been seen", () => {
+    const { deviceId } = repo.register({ publicKey: "pk" });
+    repo.touch(deviceId, 1_700_000_000_000);
+
+    expect(repo.list().find((d) => d.deviceId === deviceId)?.pending).toBe(false);
+  });
+
+  it("is not pending once revoked, even if never seen", () => {
+    const { deviceId } = repo.register({ publicKey: "pk" });
+    repo.revoke(deviceId);
+
+    expect(repo.list().find((d) => d.deviceId === deviceId)?.pending).toBe(false);
+  });
 });
 
 describe("touch throttle", () => {
@@ -236,58 +265,6 @@ describe("touch throttle", () => {
     repo.touch(a, 5_000_000);
     repo.touch(b, 5_000_001);
     expect(repo.get(b)?.last_seen_at).toBe(5_000_001);
-  });
-});
-
-describe("revokeUnconfirmed (#744)", () => {
-  const T0 = 1_700_000_000_000;
-
-  it("revokes a never-seen row older than the TTL, keeping the row", () => {
-    const { deviceId } = repo.register({ publicKey: "pk", now: T0 });
-    const now = T0 + UNCONFIRMED_DEVICE_TTL_MS + 1;
-
-    expect(repo.revokeUnconfirmed(now)).toEqual([deviceId]);
-
-    expect(repo.get(deviceId)?.revoked_at).toBe(now);
-    expect(repo.list()).toHaveLength(1);
-  });
-
-  it("leaves a never-seen row that is still inside the TTL (in-flight pairing)", () => {
-    const { deviceId } = repo.register({ publicKey: "pk", now: T0 });
-
-    expect(repo.revokeUnconfirmed(T0 + UNCONFIRMED_DEVICE_TTL_MS)).toEqual([]);
-    expect(repo.revokeUnconfirmed(T0 + 1_000)).toEqual([]);
-    expect(repo.get(deviceId)?.revoked_at).toBeNull();
-  });
-
-  it("never revokes a device that was used, however old it is", () => {
-    const { deviceId } = repo.register({ publicKey: "pk", now: T0 });
-    repo.touch(deviceId, T0 + 5_000);
-
-    expect(repo.revokeUnconfirmed(T0 + UNCONFIRMED_DEVICE_TTL_MS * 30)).toEqual([]);
-    expect(repo.get(deviceId)?.revoked_at).toBeNull();
-  });
-
-  it("does not re-revoke or report an already revoked row", () => {
-    const { deviceId } = repo.register({ publicKey: "pk", now: T0 });
-    repo.revoke(deviceId, T0 + 10);
-
-    expect(repo.revokeUnconfirmed(T0 + UNCONFIRMED_DEVICE_TTL_MS * 2)).toEqual([]);
-    expect(repo.get(deviceId)?.revoked_at).toBe(T0 + 10);
-  });
-
-  it("only picks the stale unconfirmed rows out of a mix", () => {
-    const stale = repo.register({ publicKey: "stale", now: T0 }).deviceId;
-    const used = repo.register({ publicKey: "used", now: T0 }).deviceId;
-    const fresh = repo.register({
-      publicKey: "fresh",
-      now: T0 + UNCONFIRMED_DEVICE_TTL_MS,
-    }).deviceId;
-    repo.touch(used, T0 + 1);
-
-    expect(repo.revokeUnconfirmed(T0 + UNCONFIRMED_DEVICE_TTL_MS + 1)).toEqual([stale]);
-    expect(repo.get(used)?.revoked_at).toBeNull();
-    expect(repo.get(fresh)?.revoked_at).toBeNull();
   });
 });
 
