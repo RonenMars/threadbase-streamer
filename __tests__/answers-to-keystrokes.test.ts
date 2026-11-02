@@ -9,6 +9,8 @@ import type { AskQuestion } from "../src/types";
 
 const DOWN = "\x1b[B";
 const ENTER = "\r";
+const SPACE = " ";
+const RIGHT = "\x1b[C";
 
 function q(question: string, labels: string[], multiSelect = false): AskQuestion {
   return {
@@ -56,9 +58,9 @@ describe("answersToKeystrokes — fails closed on shapes it cannot answer", () =
       UnsupportedPromptShapeError,
     );
   });
-  it("multi-select question → UnsupportedPromptShapeError, even with a valid label", () => {
-    // Used to answer with the first label as if single-select.
-    expect(() => answersToKeystrokes([q("Q?", ["A", "B"], true)], { "Q?": "A" })).toThrow(
+  it("multi-select question whose checkbox marker could not be read → UnsupportedPromptShapeError (#728)", () => {
+    const unverified = { ...q("Q?", ["A", "B"], true), multiSelectUnverified: true };
+    expect(() => answersToKeystrokes([unverified], { "Q?": ["A"] })).toThrow(
       UnsupportedPromptShapeError,
     );
   });
@@ -66,5 +68,40 @@ describe("answersToKeystrokes — fails closed on shapes it cannot answer", () =
     expect(() => answersToKeystrokes([q("Q?", ["A", "B"])], { "Q?": ["A", "B"] })).toThrow(
       UnsupportedPromptShapeError,
     );
+  });
+});
+
+// Verified on Claude Code 2.1.316: Space toggles the row under the cursor, Right
+// arrow opens "Review your answers", Enter on "Submit answers" submits. Enter on
+// an option row toggles it instead, so a multi-select answer never ends in a bare
+// Enter on the picker.
+describe("answersToKeystrokes — multi-select question", () => {
+  const four = [q("Q?", ["A", "B", "C", "D"], true)];
+
+  it("two of four: walk down, toggle each, Right, Enter", () => {
+    expect(answersToKeystrokes(four, { "Q?": ["B", "D"] })).toBe(
+      DOWN + SPACE + DOWN + DOWN + SPACE + RIGHT + ENTER,
+    );
+  });
+  it("one option", () => {
+    expect(answersToKeystrokes(four, { "Q?": ["A"] })).toBe(SPACE + RIGHT + ENTER);
+    expect(answersToKeystrokes(four, { "Q?": ["C"] })).toBe(DOWN + DOWN + SPACE + RIGHT + ENTER);
+  });
+  it("a single string is a one-item list", () => {
+    expect(answersToKeystrokes(four, { "Q?": "C" })).toBe(
+      answersToKeystrokes(four, { "Q?": ["C"] }),
+    );
+  });
+  it("answer order and duplicates do not change the keys", () => {
+    expect(answersToKeystrokes(four, { "Q?": ["D", "B", "D"] })).toBe(
+      answersToKeystrokes(four, { "Q?": ["B", "D"] }),
+    );
+  });
+  it("an unknown label → UnknownOptionError, even beside a valid one", () => {
+    expect(() => answersToKeystrokes(four, { "Q?": ["A", "Nope"] })).toThrow(UnknownOptionError);
+  });
+  it("no label → IncompleteAnswerError", () => {
+    expect(() => answersToKeystrokes(four, { "Q?": [] })).toThrow(IncompleteAnswerError);
+    expect(() => answersToKeystrokes(four, {})).toThrow(IncompleteAnswerError);
   });
 });

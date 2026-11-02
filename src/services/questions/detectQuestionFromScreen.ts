@@ -66,14 +66,14 @@ const UNKNOWN_STATE_MARKER_RE = /^(?:\[[^\]]{0,3}\]|\([^)]{0,3}\))\s*/;
 // in the payload both ships "[ ]" to clients as if it were part of the option
 // text and makes questionContentKey unstable, so merely ticking a box on screen
 // reads as a different question and mints a new prompt.
-function stripStateMarker(label: string): { label: string; marked: boolean } {
+function stripStateMarker(label: string): { label: string; marked: boolean; known: boolean } {
   if (KNOWN_STATE_MARKER_RE.test(label)) {
-    return { label: label.replace(KNOWN_STATE_MARKER_RE, ""), marked: true };
+    return { label: label.replace(KNOWN_STATE_MARKER_RE, ""), marked: true, known: true };
   }
   // Unrecognised: flag it, but leave the text alone — we do not know that the
   // token is a marker, only that we cannot rule it out.
-  if (UNKNOWN_STATE_MARKER_RE.test(label)) return { label, marked: true };
-  return { label, marked: false };
+  if (UNKNOWN_STATE_MARKER_RE.test(label)) return { label, marked: true, known: false };
+  return { label, marked: false, known: false };
 }
 
 // The final confirmation screen of a multi-question AskUserQuestion TUI:
@@ -141,6 +141,7 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
   const options: AskOption[] = [];
   let firstOptionIdx = -1;
   let sawStateMarker = false;
+  let sawKnownMarker = false;
   let pendingDescription: string[] = [];
   for (let i = footerIdx - 1; i >= 0; i--) {
     const line = lines[i];
@@ -159,8 +160,9 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
     if (m) {
       const rendered = m[2].trim();
       if (PERMISSION_LABEL_RE.test(rendered)) return null; // it's a permission gate
-      const { label, marked } = stripStateMarker(rendered);
+      const { label, marked, known } = stripStateMarker(rendered);
       if (marked) sawStateMarker = true;
+      if (known) sawKnownMarker = true;
       options.unshift({ label, description: pendingDescription.join(" ") });
       pendingDescription = [];
       firstOptionIdx = i;
@@ -205,13 +207,22 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
 
   // multiSelect carries two cases that must land in the same place: a picker we
   // positively recognised as multi-select, and one whose option markers we could
-  // not read. Both are unanswerable by the keystroke path — answersToKeystrokes
-  // throws UnsupportedPromptShapeError before building a keystroke, and the
-  // contract publishes inputMode "multi", which released clients already fail
-  // closed on. The contract has no third value for "shape unknown", and this is
-  // the bucket that writes zero bytes.
+  // not read. The contract publishes inputMode "multi" for both, and has no
+  // third value for "shape unknown". They differ in what the answer route may
+  // write: a readable checkbox is answered by toggling, an unreadable marker
+  // (`multiSelectUnverified`) makes answersToKeystrokes throw
+  // UnsupportedPromptShapeError before building a keystroke — the bucket that
+  // writes zero bytes.
   return {
-    questions: [{ question, header: "", multiSelect: sawStateMarker, options }],
+    questions: [
+      {
+        question,
+        header: "",
+        multiSelect: sawStateMarker,
+        ...(sawStateMarker && !sawKnownMarker ? { multiSelectUnverified: true } : {}),
+        options,
+      },
+    ],
   };
 }
 

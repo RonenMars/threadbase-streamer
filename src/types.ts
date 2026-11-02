@@ -258,6 +258,10 @@ export interface AskQuestion {
   question: string;
   header: string;
   multiSelect: boolean;
+  // Screen detection only: the picker showed a bracketed token we could not read
+  // as a checkbox, so `multiSelect` is a refusal bucket, not a verified shape.
+  // answersToKeystrokes writes nothing for it (#728).
+  multiSelectUnverified?: boolean;
   options: AskOption[];
 }
 

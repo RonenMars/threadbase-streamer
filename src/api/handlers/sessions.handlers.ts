@@ -2087,8 +2087,9 @@ export class SessionHandlers {
     const pending = this.pendingQuestions.get(sessionId);
     const resolution = resolveAnswer(pending, body);
     if (!resolution.ok) {
-      // Shapes this PTY path cannot answer (multi-question, multi-select, or an
-      // answer for a question that was never given) fail closed: nothing is
+      // Shapes this PTY path cannot answer (multi-question, an unreadable
+      // multi-select picker, or an answer for a question that was never given)
+      // fail closed: nothing is
       // written, and the client is told where the prompt can still be answered.
       const unanswerable =
         resolution.reason === "unsupported_prompt_shape" ||

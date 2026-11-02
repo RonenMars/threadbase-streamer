@@ -216,11 +216,14 @@ So a Claude question card starts with labels only and gains headers, description
 | Shell `[y/n]` | `y\r` or `n\r` | `detectShellPrompt.ts` (`YN_RE` branch) |
 | Shell "press enter" / "continue" | `\r` | same file |
 | `AskUserQuestion`, single question, single select | Down repeated by the option's position, then `\r` | `answersToKeystrokes`, `answersToKeystrokes.ts:43`, `:62` |
+| `AskUserQuestion`, single question, multi select | for each chosen option in on-screen order: Down by the distance from the cursor, then Space; then Right and `\r` | `answersToKeystrokes`, `multiSelectKeystrokes` |
 
 All **[code]**.
 
-- `answersToKeystrokes` assumes the cursor starts on the first option and supports exactly one single-select question with one chosen label.
-- A multi-question card, a multi-select card or more than one label throws `UnsupportedPromptShapeError`, surfaced as `unsupported_prompt_shape`; the legacy route answers 400 telling the user to answer in the terminal (`resolveAnswer.ts:21`, `handleSendAnswer`). **[code]**
+- `answersToKeystrokes` assumes the cursor starts on the first option and supports exactly one question: a single-select question with one chosen label, or a multi-select question with a list of labels (`string[]`; a single string counts as a one-item list; order and duplicates do not matter). **[code]**
+- On a multi-select picker Enter toggles the row under the cursor rather than submitting, so the answer is Space per chosen option, Right to the "Review your answers" screen, and Enter on its default "Submit answers". Verified on Claude Code 2.1.316 with two of four options chosen, stepwise and as one burst write. **[capture 2026-11-02]**
+- A multi-question card, more than one label for a single-select card, or a multi-select card whose checkbox marker the detector could not read (`multiSelectUnverified`, #728) throws `UnsupportedPromptShapeError`, surfaced as `unsupported_prompt_shape`; the legacy route answers 400 telling the user to answer in the terminal (`resolveAnswer.ts:21`, `handleSendAnswer`). **[code]**
+- A multi-select label that is not an option is refused whole as `unknown_option`, and nothing is written. On a screen-detected multi-select card the options include the `Type something` and `Chat about this` rows; Space on those is not verified, so clients should offer only the model's own options. **[code]**
 - A free-text answer has no encoding at all: text responses to a question are refused as `unsupported_prompt_shape` (`questionAnswerAdapter`, `:1534`). **[code]**
 - Before writing, the server re-scrapes the screen to confirm the gate or menu is still painted (`permissionGateStillOpen`, `:1784`; `isQuestionMenuOnScreen`, `detectQuestionFromScreen.ts:236`). **[code]**
 - Writing an exact permission answer closes the gate immediately, without waiting for the screen to change (`isPermissionAnswer`, `pty-manager.ts:549`). **[code]**
@@ -629,7 +632,7 @@ No such line for the session and time in question means the card was scraped on 
 Each item names the provider and the evidence.
 
 1. **Claude Code — option descriptions missing from screen cards.** `detectQuestionFromScreen.ts:160` emits `description: ""`; PR #1012 is open. **[code]**
-2. **Claude Code — multi-select, multi-question and free-text answers have no card path.** `answersToKeystrokes.ts:43` throws `UnsupportedPromptShapeError`; no producer emits `inputMode: "text"`. **[code]**
+2. **Claude Code — multi-question and free-text answers have no card path.** `answersToKeystrokes.ts` throws `UnsupportedPromptShapeError` for a multi-question form; no producer emits `inputMode: "text"`. A single multi-select question is answerable (#1167). **[code]**
 3. **Claude Code — multi-question screen cards show one tab.** `detectQuestionFromScreen.ts:206` always returns a single question with an empty header. **[code]**
 4. **Claude Code — usage-limit screens are not detected.** No detector found; screen shape **[unknown]**.
 5. **Claude Code — no raw fixture for the startup choice or the unboxed picker.** Both detectors rest on a measurement recorded only in comments. **[code]**

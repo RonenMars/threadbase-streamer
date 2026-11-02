@@ -55,9 +55,19 @@ describe("resolveAnswer", () => {
       reason: "unsupported_prompt_shape",
     });
   });
-  it("multi-select pending → unsupported_prompt_shape", () => {
+  it("multi-select pending → toggle keys, never a single-select answer", () => {
     const multiSelect = { toolUseId: "t1", questions: [question("Q?", true)] };
-    expect(resolveAnswer(multiSelect, { toolUseId: "t1", answers: { "Q?": "A" } })).toEqual({
+    expect(resolveAnswer(multiSelect, { toolUseId: "t1", answers: { "Q?": ["A", "B"] } })).toEqual({
+      ok: true,
+      keys: " \x1b[B \x1b[C\r",
+    });
+  });
+  it("multi-select pending with an unreadable marker → unsupported_prompt_shape", () => {
+    const unverified = {
+      toolUseId: "t1",
+      questions: [{ ...question("Q?", true), multiSelectUnverified: true }],
+    };
+    expect(resolveAnswer(unverified, { toolUseId: "t1", answers: { "Q?": ["A"] } })).toEqual({
       ok: false,
       reason: "unsupported_prompt_shape",
     });

@@ -128,12 +128,25 @@ describe("POST /answer fails closed with zero bytes written", () => {
     );
   });
 
-  it("multi-select question with a valid label → unsupported_prompt_shape", async () => {
+  it("multi-select question whose marker could not be read → unsupported_prompt_shape", async () => {
     await refused(
-      harness([multiSelect]),
-      { "Which language?": "TypeScript" },
+      harness([{ ...multiSelect, multiSelectUnverified: true }]),
+      { "Which language?": ["TypeScript"] },
       "unsupported_prompt_shape",
     );
+  });
+
+  it("multi-select question with an unknown label → unknown_option, zero bytes", async () => {
+    const h = harness([multiSelect]);
+    const { res, status, body } = response();
+    await h.handlers.handleSendAnswer(
+      SESSION,
+      request({ "Which language?": ["TypeScript", "Go"] }),
+      res,
+    );
+    expect(status()).toBe(400);
+    expect(body()).toMatchObject({ ok: false, reason: "unknown_option" });
+    expect(h.written).toEqual([]); // the valid label beside it is not sent either
   });
 
   it("two labels for a single-select question → unsupported_prompt_shape", async () => {
@@ -168,14 +181,34 @@ describe("POST /answer fails closed with zero bytes written", () => {
 // sendKeys in #700. These two start at the rendered screen and let the detector
 // classify it, which is what makes the zero-byte guarantee load-bearing.
 describe("POST /answer on shapes the screen detector really produces", () => {
-  it("the captured multi-select form is refused with zero bytes written", async () => {
+  it("the captured multi-select form is answered by toggling, never by a bare Enter", async () => {
     const detected = detectQuestionFromScreen(MULTI_SELECT_SCREEN);
     expect(detected).not.toBeNull();
     const questions = detected?.questions ?? [];
-    expect(questions[0].multiSelect).toBe(true); // the state the fix makes reachable
+    expect(questions[0].multiSelect).toBe(true);
+    expect(questions[0].multiSelectUnverified).toBeUndefined();
+    const [python, , other] = questions[0].options.map((o) => o.label);
+    const h = harness(questions, MULTI_SELECT_SCREEN);
+    const { res, status, body } = response();
+    await h.handlers.handleSendAnswer(
+      SESSION,
+      request({ [questions[0].question]: [python, other] }),
+      res,
+    );
+    expect(status()).toBe(200);
+    expect(body()).toEqual({ ok: true });
+    expect(h.written).toEqual([" \x1b[B\x1b[B \x1b[C\r"]);
+  });
+
+  it("a picker whose markers the detector cannot read is refused with zero bytes written", async () => {
+    const screen = ["Pick one?", "❯ 1. [?] Foo", "  2. ( ) Bar", "Enter to select · Esc to cancel"];
+    const detected = detectQuestionFromScreen(screen);
+    const questions = detected?.questions ?? [];
+    expect(questions[0].multiSelect).toBe(true);
+    expect(questions[0].multiSelectUnverified).toBe(true);
     await refused(
-      harness(questions, MULTI_SELECT_SCREEN),
-      { [questions[0].question]: questions[0].options[0].label },
+      harness(questions, screen),
+      { [questions[0].question]: [questions[0].options[0].label] },
       "unsupported_prompt_shape",
     );
   });
