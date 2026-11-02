@@ -53,7 +53,8 @@ $activeFile   = Join-Path $installDir 'cli.js'
 $taskName     = if ($env:THREADBASE_TASK_NAME) { $env:THREADBASE_TASK_NAME } else { 'Threadbase' }
 $port         = if ($env:THREADBASE_PORT) { $env:THREADBASE_PORT } else { '8766' }
 $healthUrl    = if ($env:THREADBASE_HEALTH_URL) { $env:THREADBASE_HEALTH_URL } else { 'http://localhost:8766/healthz' }
-$keepReleases = 5
+# Two builds: the active one plus one for `rollback` (#900).
+$keepReleases = 2
 
 # Leveled, timestamped logging. Every line carries an ISO-8601 local timestamp
 # and a level word so captured deploy output is self-describing and lines up
@@ -74,6 +75,9 @@ function Write-Err  { param($m) _LogLine 'ERROR' '✗' 'Red'    $m }
 
 # Dot-source the global-shim installer (Install-GlobalShim function).
 . (Join-Path $PSScriptRoot 'lib\install-shim.ps1')
+
+# Dot-source the build pruner (Invoke-PruneBuilds, Test-AutoUpdateEnabled).
+. (Join-Path $PSScriptRoot 'lib\prune-builds.ps1')
 
 # Forward CLI params into the env vars the helper reads, so the same code path
 # works for both interactive and non-interactive invocations.
@@ -650,11 +654,13 @@ function Invoke-Deploy {
 
     Invoke-Healthcheck -ExpectedVersion $versionLine
 
-    Write-Log "garbage-collecting old releases (keeping last $keepReleases)"
-    Get-ChildItem $releasesDir -Filter 'cli.*.cjs' |
-      Sort-Object LastWriteTime -Descending |
-      Select-Object -Skip $keepReleases |
-      Remove-Item -Force
+    Write-Log "pruning old builds (keeping $keepReleases) and the updater's current\ and releases\<semver>\"
+    try {
+      Invoke-PruneBuilds -Install $installDir -Keep $keepReleases
+    } catch {
+      Write-Warn "build pruning skipped (deploy itself is OK): $($_.Exception.Message)"
+    }
+    Test-AutoUpdateEnabled -Install $installDir
     # A bundle's .version sidecar goes with it; this also sweeps ones orphaned by earlier deploys (#871).
     Get-ChildItem $releasesDir -Filter 'cli.*.cjs.version' |
       Where-Object { -not (Test-Path -LiteralPath ($_.FullName -replace '\.version$', '')) } |

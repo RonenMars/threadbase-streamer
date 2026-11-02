@@ -27,6 +27,14 @@ cp docs/update.yaml.example ~/.threadbase/update.yaml
 Edit `github_repo:` if you publish to a fork. Without this file the `update`
 command exits with a no-op message; that is the intended "disabled" state.
 
+## One owner per machine
+
+Use the updater **or** the deploy scripts on a machine, not both (#900).
+A machine that deploys from source (`npm run deploy`, `deploy.sh`, `deploy.ps1`) must run with `auto_update: false` in `~/.threadbase/update.yaml`, otherwise the scheduled job installs `current` and `releases/<semver>/` trees next to the deploy artifacts and each layout keeps its own `node_modules`.
+The deploy scripts remove those updater trees and warn once if they still find `auto_update: true`; they never edit your `update.yaml`.
+Details, and what the prune protects: [deploy-internals.md](deploy-internals.md#one-owner-per-machine-and-build-pruning).
+The manual `threadbase-streamer update` stays available, but on a deploy-owned machine the next deploy removes what it installs.
+
 ## Commands
 
 - `threadbase-streamer update --check`
