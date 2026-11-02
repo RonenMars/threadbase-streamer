@@ -1352,6 +1352,7 @@ export class ConversationCache {
     try {
       line = JSON.parse(rawLine);
     } catch {
+      // Intentionally silent: per-line hot path; a torn or non-JSON line carries no state.
       return;
     }
 
@@ -1457,6 +1458,7 @@ export class ConversationCache {
       try {
         line = JSON.parse(rawLine);
       } catch {
+        // Intentionally silent: per-line hot path; skip a torn or non-JSON line.
         continue;
       }
 
@@ -1695,6 +1697,7 @@ export class ConversationCache {
       fileSize = statSync(filePath).size;
       fd = openSync(filePath, "r");
     } catch {
+      // Intentionally silent: documented false return; a missing file just has no tail to seed.
       return false;
     }
 
@@ -1731,6 +1734,7 @@ export class ConversationCache {
       try {
         parsed = JSON.parse(line);
       } catch {
+        // Intentionally silent: per-line hot path; skip a torn or non-JSON line.
         continue;
       }
       const role = parsed.role ?? parsed.type;

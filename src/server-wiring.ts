@@ -871,6 +871,11 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
         msg = JSON.parse(text);
       } catch {
         // malformed JSON, ignore. THIS catch covers the parse and nothing else.
+        // Size only: the parse error text quotes the payload, which can be a prompt.
+        deps.log().debug("[ws.malformed_message] dropped a frame that is not JSON", {
+          event: "ws.malformed_message",
+          bytes: text.length,
+        });
         return;
       }
 
