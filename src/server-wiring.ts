@@ -913,6 +913,13 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             return;
         }
         if (msg.type === "subscribe_session" && typeof msg.sessionId === "string") {
+          // Logged on receipt, before the capability check, so "did the client
+          // ever subscribe?" is answerable even for a refused frame. Ids only.
+          deps.log().debug("[ws] subscribe_session", {
+            event: "ws.subscribe_session",
+            sessionId: msg.sessionId,
+            clientId: deps.wsToClientId.get(ws),
+          });
           // Reading a session's stream is the same authority as reading its
           // history over HTTP. Checked per frame rather than inherited from the
           // upgrade, so this is the seam any future per-project scoping hangs
