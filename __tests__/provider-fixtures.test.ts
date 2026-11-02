@@ -116,8 +116,7 @@ describe("versioned provider fixtures", () => {
     });
   });
 
-  describe("claude-code 2.1.214", () => {
-    const VERSION = "2.1.214";
+  describe.each(["2.1.214", "2.1.247"])("claude-code %s", (VERSION) => {
     const lines = readLines("claude-code", VERSION, "conversation.jsonl");
 
     it("carries the version the directory claims", () => {
@@ -143,6 +142,13 @@ describe("versioned provider fixtures", () => {
       expect(raw).not.toMatch(/\/Users\/[a-z]/i);
       expect(raw).not.toMatch(/sk-ant-|ghp_|Bearer\s+\S/);
     });
+  });
+
+  // #710: 2.1.247 emits three transcript envelopes the 2.1.214 manifest never listed.
+  it("claude-code 2.1.247 manifest lists the envelopes added since 2.1.214", () => {
+    expect(readManifest("claude-code", "2.1.247").envelopeTypes).toEqual(
+      expect.arrayContaining(["queue-operation", "ai-title", "atis-latch"]),
+    );
   });
 
   describe("cursor 2026.1.0", () => {
