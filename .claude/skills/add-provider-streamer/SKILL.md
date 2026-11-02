@@ -1,13 +1,13 @@
 ---
-name: add-provider
-description: Add a new agent CLI as a live SessionRunner in threadbase-streamer (capabilities, PTY spawn, health, fixtures). Use when adding Cursor, Codex, Gemini, Amp, Aider, OpenCode, Goose, ClawCode, Hermes, cursor, a new provider name, /api/providers, or when the user says add a provider. Phone chips and history indexing are other repos — see Companions.
+name: add-provider-streamer
+description: The threadbase-streamer half of adding an agent CLI as a live SessionRunner (capabilities, PTY spawn, binary resolution, health, fixtures). Use together with the shared `threadbase-skills:add-provider` when adding Cursor, Codex, Gemini, Amp, Aider, OpenCode, Goose, ClawCode, Hermes, a new provider name, /api/providers, or when the user says add a provider. Phone chips and history indexing are other repos — see Companions.
 ---
 
 # Add a provider (streamer)
 
-This repo is the **live PTY** half. Scanner, streamer, and mobile each declare `ProviderName`. They are not linked. Shipping this repo never updates the phone or the history index.
+Read the shared `threadbase-skills:add-provider` first (install: [docs/agents/tooling.md](../../../docs/agents/tooling.md)). It holds the wire-name convention, the vendor intake table, the iron rules every repo shares and the land order across repos. This file holds only what is specific to this repo.
 
-Canonical wire name: kebab (`claude-code`, `codex-cli`, `cursor`, `aider`, `opencode`, `goose`). Product label is separate. Binary argv[0] may differ from both (Cursor CLI is `agent`, not `cursor`). The live-PTY alias `cursor-cli` is accepted and emitted as `cursor`.
+This repo is the **live PTY** half. Streamer-only is a server that accepts the name while the phone never sends it. Land **this PR before mobile**, and never mix an `@threadbase-sh/scanner` bump into the live-runner PR.
 
 Human procedure: [docs/compatibility/adding-a-provider.md](../../../docs/compatibility/adding-a-provider.md). Copy Codex (`src/codex-pty-runner.ts`), not Claude, unless the CLI is Claude-shaped.
 
@@ -15,27 +15,22 @@ Human procedure: [docs/compatibility/adding-a-provider.md](../../../docs/compati
 
 | Half | Repo | Skill |
 |---|---|---|
-| Live PTY | `threadbase-streamer` (this repo) | `.claude/skills/add-provider/` |
-| Phone chips | [`threadbase-mobile`](https://github.com/RonenMars/threadbase-mobile) | [`.claude/skills/add-provider/SKILL.md`](https://github.com/RonenMars/threadbase-mobile/blob/HEAD/.claude/skills/add-provider/SKILL.md) |
-| History index | [`threadbase-scanner`](https://github.com/RonenMars/threadbase-scanner) | [`.claude/skills/add-provider/SKILL.md`](https://github.com/RonenMars/threadbase-scanner/blob/HEAD/.claude/skills/add-provider/SKILL.md) |
+| Live PTY | `threadbase-streamer` (this repo) | `.claude/skills/add-provider-streamer/` |
+| Phone chips | [`threadbase-mobile`](https://github.com/RonenMars/threadbase-mobile) | `.claude/skills/add-provider/SKILL.md` in that repo |
+| History index | [`threadbase-scanner`](https://github.com/RonenMars/threadbase-scanner) | `.claude/skills/add-provider/SKILL.md` in that repo |
 
-**Keep companions in sync.** These three skills are one workflow. Changing this file (intake rules, wire-name convention, land order, companion links, or out-of-scope) means updating the other two in the same change set — PRs in `threadbase-streamer`, `threadbase-mobile`, and `threadbase-scanner`. Do not leave a companion on stale steps or a moved path.
-
-Streamer-only is a server that accepts the name while the phone never sends it. Land **this PR before mobile**. Do not mix an `@threadbase-sh/scanner` bump into the live-runner PR.
+Changing the shared core reaches every repo through the plugin. Changing **this** file's steps means checking the other two repos' skills in the same change set, so none is left on a stale step or a moved path.
 
 Worktrees are siblings: `git worktree add ../tb-streamer-worktrees/<slug> -b feat/<slug> origin/main`. Never nest under the repo root.
 
-## 0. Vendor intake — stop or continue
+## 0. Streamer additions to vendor intake
 
-Do this **before** adding a name. Paste answers in the PR; do not guess spawn flags.
+Paste the answers in the PR; do not guess spawn flags. Beyond the shared table:
 
 | Ask | If no |
 |---|---|
-| Is there a **spawnable interactive CLI** (PTY, not a VS Code sidebar)? | **History-only** (scanner skill) or skip. Do not fake a runner. |
-| Exact argv[0] on PATH (`aider`, `opencode`, `goose`, `agent`, …)? | Resolve it; never assume it equals the product name. |
 | Fresh start flags (workspace, trust, model)? | Honest `systemPrompt` / no extra flags. |
 | Native resume from an id? | `resume: "unsupported"`. Do not reuse Claude `--resume` or Codex `codex resume`. |
-| Documented transcript path? | Live still ships; skip the JSONL watcher and leave history to the scanner skill. |
 
 **Live v1 is valid** with raw PTY and no gates. Gates, scanner, and effort sliders are later slices.
 
@@ -43,14 +38,13 @@ Do this **before** adding a name. Paste answers in the PR; do not guess spawn fl
 
 Short binaries (`agent`, `code`) collide. Discovery must require distinctive argv (subcommand denylist *and* a positive flag or path), not exe name alone.
 
-## Iron rules
+## Streamer iron rules
 
-1. **Honest capabilities.** Unknown TUI → `structuredQuestions: false`, `permissionGates: false`, `liveControl: true`. Inventing gates is worse than a raw terminal.
+1. **Honest capabilities.** Unknown TUI → `structuredQuestions: false`, `permissionGates: false`, `liveControl: true`.
 2. **Do not watch another provider's JSONL.** Claude's watcher is Claude's layout.
 3. **Do not classify another provider's files.** `classifyConversationFile` knows Claude, Codex, and Cursor (`cursor` agent-transcripts). Unknown layouts stay unclassified until that parser is added there.
 4. **`PROVIDER_NAMES` must include the new id.** Replace leftover two-item lists with the array (`server.ts` log, `/api/providers`, diagnostics).
-5. **Do not install the vendor CLI** unless asked. Missing → `available: false` / `PROVIDER_NOT_INSTALLED`.
-6. **Do not invent terminal chrome filters** until the TUI is captured.
+5. A missing CLI → `available: false` / `PROVIDER_NOT_INSTALLED`.
 
 ## 1. Name
 
@@ -107,6 +101,6 @@ npx vitest run __tests__/provider-capabilities.test.ts \
 
 ## Out of scope here
 
-Bulk history — [scanner skill](https://github.com/RonenMars/threadbase-scanner/blob/HEAD/.claude/skills/add-provider/SKILL.md). Phone chips — [mobile skill](https://github.com/RonenMars/threadbase-mobile/blob/HEAD/.claude/skills/add-provider/SKILL.md). TUI scraping. Installing the vendor CLI. VS Code-only / protobuf agents.
+Bulk history — the scanner's `add-provider` skill. Phone chips — the mobile `add-provider` skill. TUI scraping. Installing the vendor CLI. VS Code-only / protobuf agents.
 
 Worked example: `cursor` live runner in PR #892 (shipped as `cursor-cli`; wire name is now `cursor`). History indexing is a **later** scanner + `@threadbase-sh/scanner` bump (`cursorRoots`, default `~/.cursor/projects`); do not mix that bump into the live-runner PR. Copy scanner import flags onto `conversation_meta` / list items (`isImportedFromClaude` / `isImportedFromCodex` / `isImportedFromCursor`). List/count accept `include=` and `isImportedFrom*=`.

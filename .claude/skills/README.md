@@ -13,6 +13,8 @@ just to make it visible; it already is.
 
 The same four operational skills are mirrored under `.agents/skills/` for Codex and other runtimes.
 
+`add-provider` and `integration-by-batches` are **shared** with the other Threadbase repos: they come from the `threadbase-skills` plugin (install in [docs/agents/tooling.md](../../docs/agents/tooling.md)) and are mirrored, byte for byte, into `.agents/skills/` by `scripts/sync-agents-skills.sh` from the umbrella repo. Never edit those mirrors by hand; `.github/workflows/shared-skills.yml` fails when they drift. The `-streamer` skills below hold only what is specific to this repo, and carry a different name so they never collide with the shared ones.
+
 ## What is here
 
 | Skill | Use it when |
@@ -21,8 +23,8 @@ The same four operational skills are mirrored under `.agents/skills/` for Codex 
 | [`deploy-menubar`](deploy-menubar/SKILL.md) | Updating the installed menubar app on macOS, or building and launching it from `vendor/menubar`, after the server is healthy |
 | [`setup-auto-updater`](setup-auto-updater/SKILL.md) | Walking a user through enabling the in-place auto-updater on a deployed streamer |
 | [`setup-cloudflare-tunnel`](setup-cloudflare-tunnel/SKILL.md) | Exposing a local streamer to tb-mobile through a Cloudflare quick-tunnel |
-| [`add-provider`](add-provider/SKILL.md) | Adding a new agent CLI as a live SessionRunner. Phone chips and history indexing live in mobile/scanner companion skills — edit all three together |
-| [`integration-by-batches`](integration-by-batches/SKILL.md) | Grouping open PRs into QA-gated batches: one local integration branch per batch, deploy it for QA (local or demo Fly), land one PR at a time after approval |
+| [`add-provider-streamer`](add-provider-streamer/SKILL.md) | The streamer half of adding a new agent CLI as a live SessionRunner, beside the shared `threadbase-skills:add-provider`. Phone chips and history indexing live in the mobile and scanner skills |
+| [`integration-by-batches-streamer`](integration-by-batches-streamer/SKILL.md) | The streamer's QA targets (local or demo Fly), gate commands and landing rules, beside the shared `threadbase-skills:integration-by-batches` |
 
 ## Adding one
 

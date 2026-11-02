@@ -1,0 +1,46 @@
+name: Shared skills
+
+# `.agents/skills/` mirrors the `threadbase-skills` plugin from the threadbase umbrella repo.
+# The mirror is only trustworthy while its content hash equals the plugin's at the pinned commit,
+# so a hand edit to a mirrored skill, or a half-applied sync, fails here instead of drifting.
+#
+# Unfiltered on purpose (no `paths:`): a path filter withholds the check from the PRs that would
+# break it and a skipped check reads as green.
+#
+# To adopt a newer plugin: check out the umbrella at the new commit, run
+#   scripts/sync-agents-skills.sh <this repo>/.agents/skills
+# commit the mirror, and move `UMBRELLA_SHA` here in the same PR.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Shared skills mirror
+    runs-on: ubuntu-latest
+    env:
+      UMBRELLA_SHA: fd78ac8ad601371d10c023f33bb5ebb2bf82324b
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
+
+      - uses: actions/checkout@v5
+        with:
+          repository: RonenMars/threadbase
+          ref: ${{ env.UMBRELLA_SHA }}
+          path: umbrella
+
+      - name: Mirror hash equals the plugin hash
+        run: |
+          sync=umbrella/scripts/sync-agents-skills.sh
+          want=$(sh "$sync" --hash)
+          have=$(sh "$sync" --hash .agents/skills)
+          echo "plugin @ ${UMBRELLA_SHA}: ${want}"
+          echo "mirror .agents/skills:   ${have}"
+          [ "$want" = "$have" ]
