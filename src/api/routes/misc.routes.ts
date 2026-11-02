@@ -16,6 +16,7 @@ import { getLogger } from "../../logger";
 import { NotificationPrefsSchema } from "../../schemas/notification-prefs.schema";
 import { serverIdentityPublicKey } from "../../server-identity";
 import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
+import { liveActivityMetricsSnapshot } from "../../services/push/liveActivityMetrics";
 import { testNotificationBody } from "../../services/push/notificationCopy";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
@@ -795,8 +796,10 @@ export const createMiscRoutes = (
       notifications: deps.expoPushEnabled(),
     });
     const repo = deps.pushRepo();
-    if (!repo) return c.json({ tokens: [], available: false, push });
-    return c.json({ tokens: repo.listHealth(), available: true, push });
+    // Additive: lifecycle counts since this process started (#509).
+    const liveActivityMetrics = liveActivityMetricsSnapshot();
+    if (!repo) return c.json({ tokens: [], available: false, push, liveActivityMetrics });
+    return c.json({ tokens: repo.listHealth(), available: true, push, liveActivityMetrics });
   });
 
   // Webhook for auto-update. Triggered by the release CI (or any caller that

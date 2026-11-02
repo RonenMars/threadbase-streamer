@@ -157,7 +157,7 @@ export class PushRepository {
   private expireStmt: Database.Statement;
   private expireSessionActivitiesStmt: Database.Statement;
 
-  constructor(db: Database.Database) {
+  constructor(private readonly db: Database.Database) {
     // Re-registering the same token updates rather than duplicating. Without
     // this, one device accumulates rows and receives the same notification
     // several times.
@@ -459,6 +459,37 @@ export class PushRepository {
    */
   deleteToken(token: string): boolean {
     return this.deleteByTokenStmt.run(token).changes > 0;
+  }
+
+  /**
+   * Retention sweep over `push_tokens` only (#509).
+   *
+   * - dead: revoked (Expo said `DeviceNotRegistered`) at or before `deadBefore`,
+   *   or last failed at or before it with one of `apnsDeadReasons` (APNs said
+   *   the token is permanently unusable; such a failure always expires the row).
+   * - unused: the later of `registered_at` and `last_success_at` is at or before
+   *   `unusedBefore`. Registration counts because the app re-registers on launch.
+   *
+   * Dead rows go first, so the two counts never overlap.
+   */
+  pruneTokens(args: { deadBefore: number; unusedBefore: number; apnsDeadReasons: string[] }): {
+    dead: number;
+    unused: number;
+  } {
+    const reasons = args.apnsDeadReasons.map(() => "?").join(", ");
+    const dead = this.db
+      .prepare(
+        `DELETE FROM push_tokens
+          WHERE (revoked_at IS NOT NULL AND revoked_at <= ?)
+             OR (last_failure_code IN (${reasons}) AND last_failure_at <= ?)`,
+      )
+      .run(args.deadBefore, ...args.apnsDeadReasons, args.deadBefore).changes;
+    const unused = this.db
+      .prepare(
+        "DELETE FROM push_tokens WHERE MAX(registered_at, COALESCE(last_success_at, 0)) <= ?",
+      )
+      .run(args.unusedBefore).changes;
+    return { dead, unused };
   }
 
   /**

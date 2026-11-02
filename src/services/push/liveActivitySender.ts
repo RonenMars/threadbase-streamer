@@ -2,6 +2,7 @@ import type { PushRepository, PushTokenRow } from "../../db/repositories/push.re
 import { getLogger } from "../../logger";
 import type { ApnsClient, ApnsSendResult } from "./apnsClient";
 import type { LiveActivityContentState } from "./liveActivityContentState";
+import { countLiveActivity } from "./liveActivityMetrics";
 
 /**
  * Live Activity push sender.
@@ -158,6 +159,13 @@ export class LiveActivitySender {
         // activity is gone.
         this.repo.expire(row.token, now);
         outcome.retired += 1;
+        countLiveActivity("retired");
+        log.info("live_activity.retired", {
+          event: "live_activity.retired",
+          sessionId: args.sessionId,
+          activityId: row.activity_id,
+          reason: result.reason,
+        });
       }
       log.warn("live_activity.send_rejected", {
         event: "live_activity.send_rejected",
