@@ -73,6 +73,8 @@ export interface ExpoPushOutcome {
 /** One entry of Expo's `data` array, positionally matched to the request. */
 interface ExpoPushTicket {
   status?: string;
+  /** Resolves to a delivery receipt later; see `ExpoReceiptPoller`. */
+  id?: string;
   message?: string;
   details?: { error?: string };
 }
@@ -83,7 +85,7 @@ interface ExpoPushTicket {
  * message too big, a relay hiccup) is transient and only counts toward the
  * repository's failure streak.
  */
-const DEAD_TOKEN_ERROR = "DeviceNotRegistered";
+export const DEAD_TOKEN_ERROR = "DeviceNotRegistered";
 
 /** A stored feature list; anything unreadable is no features, the safe default. */
 function storedFeatures(json: string | null): ReadonlySet<string> {
@@ -255,7 +257,11 @@ export class ExpoPushSender {
         return;
       }
       if (ticket.status === "ok") {
-        this.repo.recordSuccess(row.token, now);
+        // Accepted, not delivered. The ticket id is kept and `ExpoReceiptPoller`
+        // records the success (or the real failure) once Expo has the receipt.
+        // Without an id there is nothing to look up, so the old reading stands.
+        if (ticket.id) this.repo.saveTicket(ticket.id, row.token, now);
+        else this.repo.recordSuccess(row.token, now);
         outcome.succeeded += 1;
         return;
       }

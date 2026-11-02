@@ -1512,18 +1512,28 @@ sudo sysctl --system
 
 **When:** A send reports `{"attempted":1,"succeeded":1,"retired":0}`, the mobile Notification-health screen shows **Healthy / Recent deliveries succeeded** with a fresh `Last success` timestamp, and nothing arrives on the Lock Screen. Every layer the streamer can see says the push worked.
 
-**Cause.** Success means *Expo accepted the message*, not *iOS drew it*. `ExpoPushSender` records `recordSuccess` on an Expo ticket of `status: "ok"`, which is the relay confirming it took the message for delivery — everything past that point is APNs and the device, and none of it reports back on this path. So a phone with notifications denied for the app, a Focus mode filtering it, or a delivery APNs dropped is indistinguishable from a delivered notification.
+**Cause.** A ticket of `status: "ok"` means *Expo accepted the message*, not *iOS drew it*.
+Everything past the relay is APNs and the device, and none of it reports back on the send call.
+So a phone with notifications denied for the app, a Focus mode filtering it, or a delivery APNs dropped looks like a delivered notification at send time.
 
-Observed 2026-08-11: three consecutive sends returned `ok` and advanced `last_success_at` while the app's iOS notification permission was off. Granting the permission made the fourth one appear, with no change to the server.
+Observed 2026-08-11: three consecutive sends returned `ok` and advanced `last_success_at` while the app's iOS notification permission was off.
+Granting the permission made the fourth one appear, with no change to the server.
 
-**Fix.** Check, in this order:
+**What the streamer does now (#543).**
+The send call no longer advances `last_success_at`.
+It saves the ticket id in `push_receipts`, and about 15 minutes later `ExpoReceiptPoller` asks Expo for the receipt and records the real outcome through the same `recordSuccess` / `recordFailure` / `revoke` paths.
+So `healthy` and a fresh `Last success` now mean Expo reported the push delivered to APNs or FCM, and a token that died after acceptance shows `DeviceNotRegistered` and is evicted.
+Immediately after a send the token still reads `never-delivered` (or its previous state) for about 15 minutes; that is the receipt not being due yet, not a failure.
+The poller logs `push.receipts_polled` with counts only (`polled`, `delivered`, `failed`, `retired`, `pending`, `purged`), and `push.receipts_poll_failed` when a request fails, in which case the rows are kept for the next minute.
+
+**What a receipt still cannot tell you.**
+A receipt says the push reached APNs or FCM, not that the user saw it, so a notification suppressed on the device is still reported as delivered.
+Check, in this order:
 
 1. **iOS notification permission for the app** — Settings → Threadbase → Notifications. This is the one that produces a perfectly healthy server-side record with nothing on screen.
 2. **Focus / Do Not Disturb**, including a schedule that is active without being obvious. The app's own quiet-hours setting is separate and is reported on the health screen.
-3. **Token freshness after a permission change** — iOS can issue a different APNs device token once the permission state changes, so tap **Re-register** on the health screen and send again. A stale token usually fails loudly with `DeviceNotRegistered` rather than silently, but re-registering costs nothing and rules it out.
+3. **Token freshness after a permission change** — iOS can issue a different APNs device token once the permission state changes, so tap **Re-register** on the health screen and send again.
 4. **Build vs. Expo credentials** — a development build's token does not route through a production Expo project's credentials, or vice versa.
-
-**Why the server cannot tell you which.** Expo's tickets are receipts for *acceptance*; the delivery outcome lives behind a second call, `getPushNotificationReceiptsAsync`, which the streamer does not make today. Until it does, treat `healthy` as "handed to the relay" and debug the device side from the list above. Adding receipt polling would let `push_tokens.last_failure_code` carry the real reason (`DeviceNotRegistered`, `MessageRateExceeded`, an APNs rejection) instead of stopping at the relay boundary.
 
 ## A deploy runs green but ships a dependency a version behind `package.json`
 
