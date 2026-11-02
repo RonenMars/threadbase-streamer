@@ -757,6 +757,15 @@ export const e2eeEnvelopeMiddleware = (
     // they agree.
     c.set("principal", auth.principal);
 
+    // Best-effort liveness stamp, like the other two callers. Without it a
+    // device that only ever sends sealed REST never gets a `last_seen_at`, and
+    // the unconfirmed-device prune (#744) would revoke it while in use.
+    try {
+      deps.devicesRepo()?.touch(auth.principal.deviceId);
+    } catch {
+      // A liveness stamp must never deny a valid request.
+    }
+
     // ── Rung 13: authority, not just identity ───────────────────────
     //
     // A context AUTHENTICATES; it does not authorize. `authMiddleware` skips
