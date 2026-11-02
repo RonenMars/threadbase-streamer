@@ -609,6 +609,21 @@ describe("effort on the session frame", () => {
   });
 });
 
+describe("model on the session frame", () => {
+  it("is emitted when the session carries one", () => {
+    const store = new SessionStore();
+    store.addManaged(makeManagedSession({ model: "claude-sonnet-5" }));
+    expect(store.get(UUID_A, new Set([UUID_A]))?.model).toBe("claude-sonnet-5");
+  });
+
+  it("is absent rather than null when unset", () => {
+    const store = new SessionStore();
+    store.addManaged(makeManagedSession());
+    const resp = store.get(UUID_A, new Set([UUID_A]));
+    expect(resp && "model" in resp).toBe(false);
+  });
+});
+
 describe("SessionStore.ownsConversation", () => {
   // Discovery enumerates the streamer's own PTY children too. A Codex session
   // is keyed by a placeholder id while its process holds the real rollout, so

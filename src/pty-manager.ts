@@ -2,7 +2,12 @@ import { applyNameCandidate, resolveSessionName } from "@threadbase-sh/scanner";
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { basename } from "path";
-import { buildFlagArgs, buildSettingsJson, withAdditionalDirs } from "./claude-flags";
+import {
+  buildFlagArgs,
+  buildSettingsJson,
+  resolveEffectiveModelEffort,
+  withAdditionalDirs,
+} from "./claude-flags";
 import { getLogger, type Logger } from "./logger";
 import { clearClaudeExeCache, resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
@@ -368,6 +373,9 @@ export class PTYManager implements SessionRunner {
       ),
     );
 
+    // What Claude will really run with: extra args can override the flags above.
+    const effective = resolveEffectiveModelEffort(args);
+
     let proc: ReturnType<typeof nodePty.spawn>;
     try {
       proc = nodePty.spawn(resolveClaudeExe(), args, {
@@ -393,7 +401,8 @@ export class PTYManager implements SessionRunner {
       ...(options.additionalPaths?.length && { additionalPaths: options.additionalPaths }),
       projectName,
       branch: options.branch ?? "",
-      ...(options.effort != null && { effort: options.effort }),
+      ...(effective.model != null && { model: effective.model }),
+      ...(effective.effort != null && { effort: effective.effort }),
       status: "running",
       statusSource: "spawn",
       statusUpdatedAt: new Date(),
@@ -464,6 +473,9 @@ export class PTYManager implements SessionRunner {
       ),
     );
 
+    // What Claude will really run with: extra args can override the flags above.
+    const effective = resolveEffectiveModelEffort(args);
+
     let proc: ReturnType<typeof nodePty.spawn>;
     try {
       proc = nodePty.spawn(resolveClaudeExe(), args, {
@@ -486,7 +498,8 @@ export class PTYManager implements SessionRunner {
       ...(options.additionalPaths?.length && { additionalPaths: options.additionalPaths }),
       projectName,
       branch: options.branch ?? "",
-      ...(options.effort != null && { effort: options.effort }),
+      ...(effective.model != null && { model: effective.model }),
+      ...(effective.effort != null && { effort: effective.effort }),
       status: "running",
       statusSource: "spawn",
       statusUpdatedAt: new Date(),
@@ -1627,6 +1640,7 @@ function toPublicSession(s: InternalSession): ManagedSession {
     ...(s.statusUpdatedAt != null && { statusUpdatedAt: s.statusUpdatedAt }),
     ...(s.filePath != null && { filePath: s.filePath }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
+    ...(s.model != null && { model: s.model }),
     ...(s.effort != null && { effort: s.effort }),
     ...(s.firstMessageText != null && { firstMessageText: s.firstMessageText }),
     // Unconditional: this shape crosses the pty-host boundary, and a streamer

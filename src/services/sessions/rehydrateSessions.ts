@@ -140,6 +140,8 @@ export function rowToStubSession(row: ManagedSessionRow): ManagedSession {
     lastOutput: "",
     rehydrated: true,
     ...(row.session_name != null && { sessionName: row.session_name }),
+    ...(row.model != null && { model: row.model }),
+    ...(row.effort != null && { effort: row.effort }),
     ...(row.project_id != null && { projectId: row.project_id }),
     ...(row.bound_conversation_id != null && { boundConversationId: row.bound_conversation_id }),
     ...(row.resumed_from_conversation_id != null && {

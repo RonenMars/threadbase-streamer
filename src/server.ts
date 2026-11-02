@@ -54,6 +54,8 @@ import {
   isEffortLevel,
   isPermissionMode,
   type PermissionMode,
+  resolveEffectiveModelEffort,
+  tokenizeExtraArgs,
   validateFlagValues,
 } from "./claude-flags";
 import { ProviderExecutableError } from "./config/provider-executables";
@@ -2827,14 +2829,26 @@ export class StreamerServer {
     registry: typeof CLAUDE_FLAGS;
     values: ClaudeFlagValues;
     extraArgs: string | null;
+    overriddenByExtraArgs: { model?: string; effort?: string };
     persisted: boolean;
   } {
     return {
       registry: CLAUDE_FLAGS,
       values: this.claudeFlags,
       extraArgs: this.claudeExtraArgs ?? null,
+      overriddenByExtraArgs: this.extraArgsModelEffort(),
       persisted: this.claudeFlagsPersistable,
     };
+  }
+
+  /**
+   * The --model / --effort that `claudeExtraArgs` carries. Extra args land last
+   * on argv and Claude honours the last occurrence, so these shadow
+   * `values.model` / `values.effort`, which stay as configured.
+   */
+  private extraArgsModelEffort(): { model?: string; effort?: string } {
+    const { model, effort } = resolveEffectiveModelEffort(tokenizeExtraArgs(this.claudeExtraArgs));
+    return { ...(model != null && { model }), ...(effort != null && { effort }) };
   }
 
   /**
@@ -2851,7 +2865,12 @@ export class StreamerServer {
   private setClaudeFlagsConfig(
     values: ClaudeFlagValues,
     extraArgs: string | undefined,
-  ): { values: ClaudeFlagValues; extraArgs: string | null; persisted: boolean } {
+  ): {
+    values: ClaudeFlagValues;
+    extraArgs: string | null;
+    overriddenByExtraArgs: { model?: string; effort?: string };
+    persisted: boolean;
+  } {
     const safe = validateFlagValues(values);
     const previous = { values: this.claudeFlags, extraArgs: this.claudeExtraArgs };
 
@@ -2876,6 +2895,7 @@ export class StreamerServer {
     return {
       values: this.claudeFlags,
       extraArgs: this.claudeExtraArgs ?? null,
+      overriddenByExtraArgs: this.extraArgsModelEffort(),
       persisted: this.claudeFlagsPersistable,
     };
   }
@@ -3505,18 +3525,17 @@ export class StreamerServer {
       value,
     });
     // Record what we asked for and tell subscribers, so the WS carries the new
-    // value instead of leaving every client to re-GET the session. Only
-    // `effort` is stored: `model` is owned by the scanner, and overwriting it
-    // here with a spawn-time alias would clobber the resolved name.
+    // value instead of leaving every client to re-GET the session. Both are
+    // stored, so a later session_update frame does not put the
+    // spawn-time value back over the one just chosen.
     //
     // Optimistic by nature — 202 means the TUI has not applied it yet. The
     // status-line scrape on GET /api/sessions/:id stays authoritative and wins
     // if the two ever disagree.
-    if (setting === "effort") {
-      this.sessionStore.updateManaged(sessionId, { effort: value });
-      const updated = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-      if (updated) this.wsHub.broadcast({ type: "session_update", session: updated });
-    }
+    this.sessionStore.updateManaged(sessionId, { [setting]: value });
+    this.managedSessionsRepo?.recordSetting(sessionId, setting, value);
+    const updated = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+    if (updated) this.wsHub.broadcast({ type: "session_update", session: updated });
     json(res, 202, { id: sessionId, [setting]: value });
   }
 }
