@@ -3592,6 +3592,29 @@ describe("StreamerServer", () => {
     });
   });
 
+  describe("GET /api/projects (retired)", () => {
+    it("returns 410 Gone pointing at /api/projects/summary", async () => {
+      const res = await fetch(`${baseUrl}/api/projects`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(410);
+      const body = (await res.json()) as any;
+      expect(body.error).toContain("/api/projects/summary");
+    });
+
+    it("returns 410 with a query string too", async () => {
+      const res = await fetch(`${baseUrl}/api/projects?limit=5`, {
+        headers: { Authorization: `Bearer ${API_KEY}` },
+      });
+      expect(res.status).toBe(410);
+    });
+
+    it("still returns 401 without auth", async () => {
+      const res = await fetch(`${baseUrl}/api/projects`);
+      expect(res.status).toBe(401);
+    });
+  });
+
   describe("GET /api/projects/summary", () => {
     it("returns the paginated project aggregate", async () => {
       const res = await fetch(`${baseUrl}/api/projects/summary?limit=5`, {
