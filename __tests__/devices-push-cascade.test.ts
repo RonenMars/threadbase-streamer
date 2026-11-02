@@ -75,6 +75,19 @@ const pairTwo = () => {
   return { a, b };
 };
 
+describe("GET /api/devices", () => {
+  it("reports pending until the device's first authenticated contact", async () => {
+    const { a, b } = pairTwo();
+    devices.touch(a, 1_700_000_000_000);
+
+    const res = await makeApp().request("/api/devices");
+    const body = (await res.json()) as { devices: { deviceId: string; pending: boolean }[] };
+
+    expect(body.devices.find((d) => d.deviceId === a)?.pending).toBe(false);
+    expect(body.devices.find((d) => d.deviceId === b)?.pending).toBe(true);
+  });
+});
+
 describe("POST /api/devices/:id/revoke", () => {
   it("deletes the revoked device's tokens and leaves the other device's", async () => {
     const { a, b } = pairTwo();

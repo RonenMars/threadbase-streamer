@@ -758,8 +758,8 @@ export const e2eeEnvelopeMiddleware = (
     c.set("principal", auth.principal);
 
     // Best-effort liveness stamp, like the other two callers. Without it a
-    // device that only ever sends sealed REST never gets a `last_seen_at`, and
-    // the unconfirmed-device prune (#744) would revoke it while in use.
+    // device that only ever sends sealed REST never gets a `last_seen_at` and
+    // stays `pending` in the device list (#744) while in use.
     try {
       deps.devicesRepo()?.touch(auth.principal.deviceId);
     } catch {
