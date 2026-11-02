@@ -394,8 +394,9 @@ export class SessionWatchers {
         return;
       }
       // The turn is what creates the rollout, so the deadline runs from the
-      // turn. An abandoned session still stops polling 120s after the spawn,
-      // which is the only thing the deadline was ever bounding.
+      // turn. A session that has prompted and still produced no rollout stops
+      // polling 120s after that turn; one that never prompted stays armed
+      // until the PTY goes.
       // ponytail: promptCount moves only on POST /api/sessions/:id/input, so a
       // first prompt composed entirely of raw sendKeys keystrokes is not
       // covered — every first prompt in the log went through that endpoint.
@@ -406,6 +407,12 @@ export class SessionWatchers {
         deadline = Date.now() + TRANSCRIPT_WATCH_DEADLINE_MS;
       }
       if (Date.now() > deadline) {
+        // No turn yet, so no rollout can exist and the deadline has nothing to
+        // judge: stay armed, skip the scan, and let the first prompt re-arm it
+        // above. Costs one in-memory read per tick until the PTY goes.
+        // ponytail: 250ms tick kept for simplicity; back it off if idle Codex
+        // sessions ever show up in a profile.
+        if (seenPrompts === 0) return;
         this.log.warn(
           `[startFresh] gave up watching for the Codex rollout of ${sessionId}`,
           {

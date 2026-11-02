@@ -273,15 +273,46 @@ describe("transcript watch deadline", () => {
       );
     });
 
-    it("gives up polling for a session that never got a turn", async () => {
+    // Real 250ms ticks must cross the faked deadline while promptCount is
+    // still 0 — the old test jumped the clock and set the prompt before the
+    // first tick ran, so it never exercised a poll that ran across the deadline.
+    async function tickAcrossDeadline(): Promise<void> {
+      const before = tryWireProbes;
+      jumpClock(300_000);
+      await waitFor(() => (tryWireProbes >= before + 3 ? true : undefined), BIND_BUDGET_MS);
+    }
+
+    it("keeps a never-prompted session armed past the deadline and binds on its first turn", async () => {
       const dirDate = new Date();
       watchers.watchForCodexRollout(SESSION_ID, projectPath);
+      const expired = captureExpiry();
+
+      await tickAcrossDeadline();
+      // Nothing caused a rollout yet, so a poll that ran past the deadline
+      // must not have given up (#883).
+      expect(expired()).toBeUndefined();
+
+      managed.promptCount = 1;
+      writeRollout("codex-first-turn-after-deadline-id", dirDate);
+
+      expect(await waitFor(() => managed.boundConversationId, BIND_BUDGET_MS)).toBe(
+        "codex-first-turn-after-deadline-id",
+      );
+    });
+
+    it("still gives up once a turn has run and produced no rollout for the whole deadline", async () => {
+      const dirDate = new Date();
+      watchers.watchForCodexRollout(SESSION_ID, projectPath);
+      const expired = captureExpiry();
+      const armedProbes = tryWireProbes;
+      managed.promptCount = 1;
+      // Let a poll tick see the prompt, so the deadline is re-armed from the turn.
+      await waitFor(() => (tryWireProbes > armedProbes ? true : undefined), BIND_BUDGET_MS);
 
       jumpClock(300_000);
-      // promptCount stays 0: nothing caused a rollout, so the poll must stop
-      // rather than run for the life of the session.
-      writeRollout("codex-abandoned-rollout-id", dirDate);
+      expect(await waitFor(expired, BIND_BUDGET_MS)).toBe(SESSION_ID);
 
+      writeRollout("codex-after-expiry-id", dirDate);
       expect(await waitFor(() => managed.boundConversationId, 800)).toBeUndefined();
     });
   });
