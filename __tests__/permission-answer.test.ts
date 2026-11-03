@@ -636,7 +636,11 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: frame.contentKey, optionIndex: 0 }),
+      request({
+        gateId: h.pendingPermission.get(SESSION)?.gateId,
+        contentKey: frame.contentKey,
+        optionIndex: 0,
+      }),
       res,
     );
 
@@ -654,7 +658,11 @@ describe("POST /permission/answer — optionLabel binds the option", () => {
     const { res, status } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
-      request({ contentKey: frame.contentKey, optionIndex: 0 }),
+      request({
+        gateId: h.pendingPermission.get(SESSION)?.gateId,
+        contentKey: frame.contentKey,
+        optionIndex: 0,
+      }),
       res,
     );
 
