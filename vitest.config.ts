@@ -38,6 +38,7 @@ export default defineConfig({
   test: {
     globals: true,
     include: ["__tests__/**/*.test.ts"],
+    globalSetup: ["__tests__/setup/global-cache-open.ts"],
     setupFiles: [
       // FIRST: three src modules resolve homedir() once at module scope, so the
       // sandbox has to exist before any later setup file imports src/.
