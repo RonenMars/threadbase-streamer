@@ -55,6 +55,7 @@ import {
   scrapePermissionGate,
 } from "../../services/questions/detectPermissionGate";
 import {
+  isLossyViewOf,
   isQuestionMenuOnScreen,
   questionContentKey,
 } from "../../services/questions/detectQuestionFromScreen";
@@ -1384,6 +1385,19 @@ export class SessionHandlers {
     const toolUseId = `screen:${sessionId}:${key.length}`;
     const prior = this.pendingQuestions.get(sessionId);
     const priorPrompt = prior ? this.promptRegistry.get(prior.promptId) : null;
+    // The transcript prompt is authoritative: a scrape of the same form is a
+    // lossy view of it and must not replace it (#730). The key is recorded so
+    // repaints, and the menu still painted after an answer, dedupe above. A
+    // scrape of a DIFFERENT question is the TUI having moved on and still wins.
+    if (
+      prior &&
+      priorPrompt?.provenance.source === "transcript" &&
+      (priorPrompt.state === "open" || priorPrompt.state === "updated") &&
+      isLossyViewOf(questions, prior.questions)
+    ) {
+      this.pendingQuestionKey.set(sessionId, key);
+      return;
+    }
     if (priorPrompt?.state === "open" || priorPrompt?.state === "updated") {
       this.promptRegistry.transition(priorPrompt.promptId, "cancelled", "replaced");
     }

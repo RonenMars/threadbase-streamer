@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectQuestionFromScreen,
+  isLossyViewOf,
   isSubmitConfirmationScreen,
   questionContentKey,
 } from "../src/services/questions/detectQuestionFromScreen";
@@ -413,5 +414,31 @@ describe("multi-select shape classification (#721)", () => {
     expect(questionContentKey(after?.questions ?? [])).toBe(
       questionContentKey(before?.questions ?? []),
     );
+  });
+});
+
+describe("isLossyViewOf (#730)", () => {
+  const q = (question: string, labels: string[] = ["a", "b"]) => ({
+    question,
+    header: "H",
+    multiSelect: false,
+    options: labels.map((label) => ({ label, description: "" })),
+  });
+  const form = [q("Which language?"), q("Which runtime?")];
+
+  it("is true for one tab of the form, whatever options the scrape read", () => {
+    expect(isLossyViewOf([q("Which runtime?", ["x", "Type something"])], form)).toBe(true);
+  });
+
+  it("ignores wrapping whitespace in the question text", () => {
+    expect(isLossyViewOf([q("  Which   language?\n")], form)).toBe(true);
+  });
+
+  it("is false when any scraped question is not in the form", () => {
+    expect(isLossyViewOf([q("Which runtime?"), q("Deploy where?")], form)).toBe(false);
+  });
+
+  it("is false for an empty scrape, which says nothing about any form", () => {
+    expect(isLossyViewOf([], form)).toBe(false);
   });
 });
