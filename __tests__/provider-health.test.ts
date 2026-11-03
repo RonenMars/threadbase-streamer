@@ -95,6 +95,12 @@ describe("providerHealth", () => {
     expect(health.capabilities.resume).toBe("native");
   });
 
+  it("does not flag Claude Code 2.1.247 as unverified (#710)", async () => {
+    const health = await providerHealth("claude-code", found, async () => "2.1.247");
+
+    expect(health.warnings).toEqual([]);
+  });
+
   it("reports an unresolvable provider as unavailable", async () => {
     const health = await providerHealth("claude-code", missing);
 
