@@ -63,12 +63,12 @@ depends on them.
 ## What exists today (verified 2026-10-05)
 
 - `ScanProfile { id, label, configDir, enabled, emoji }` already exists
-  (`src/scanner-manager.ts:96`), along with `ServerConfig.scanProfiles` (`src/types.ts:688`).
-  `ScannerManager.projectsDirs()` (`src/scanner-manager.ts:302`) derives scan roots from
+  (`src/scanner-manager.ts:101`), along with `ServerConfig.scanProfiles` (`src/types.ts:722`).
+  `ScannerManager.projectsDirs()` (`src/scanner-manager.ts:309`) derives scan roots from
   enabled profiles, and the scanner package already accepts `profiles`. **No CLI flag or
   `server.yaml` key populates it.** It is reachable only programmatically, which makes it
   the natural seed for accounts.
-- `GET /api/profiles` is a stub that returns `[]` (`src/api/routes/misc.routes.ts:464`). It
+- `GET /api/profiles` is a stub that returns `[]` (`src/api/routes/misc.routes.ts:467`). It
   is mapped to `history:read` (`src/services/security/capabilities.ts`).
 - `buildSpawnEnv()` (`src/pty-manager.ts:176`) copies `process.env` and is used by both
   spawn sites (`:368` new, `:458` resume). It is the single injection point for
@@ -78,7 +78,7 @@ depends on them.
   - `src/session-watchers.ts:168`: `watchForJsonl`, which binds a live session to its JSONL.
   - `src/handlers/handleListProjects.ts:66`
   - `src/services/conversations/shouldRefreshProjectsFromHdd.ts:8` (default dir)
-  - `src/scanner-manager.ts:307` (no-profiles fallback)
+  - `src/scanner-manager.ts:314` (no-profiles fallback)
   - `src/api/routes/diagnostics.routes.ts:129`
   - `src/docker/seed-claude-config.ts` (seeds `$HOME/.claude.json`)
 
@@ -203,7 +203,8 @@ adding accounts multiplies the exposure. Phase 1 adds the per-root file count to
 - `POST /api/accounts`, `PATCH /api/accounts/:id` and `DELETE /api/accounts/:id`
   (`admin`). Delete refuses while a live session uses the account. It never touches the
   directory on disk.
-- `GET /api/profiles`: stop returning `[]` and return the accounts in `ScanProfile` shape,
+- `GET /api/profiles`: stop returning `[]` and return the accounts as `ScanProfile` without `configDir`:
+  `{ id, label, emoji, enabled }`; `configDir` is never sent on this route,
   since the route exists and is already capability-mapped. The one mobile caller,
   `hooks/useTBPair.ts:118` (checked 2026-10-11), uses it only to validate a long-lived API
   key during pairing: it reads `res.ok` and discards the JSON. So the route must keep
@@ -270,7 +271,8 @@ Against the pinned Claude Code version, on macOS and Linux, record results in th
   It never copies credentials, `.claude.json` or `projects/`. It warns when `settings.json`
   has an `env` block or MCP servers that carry tokens or headers.
 - Auth probe from phase 0, cached per account and refreshed on boot, on `GET /api/accounts`
-  when older than 60 s, and after a spawn lands on the login screen.
+  when older than 60 s, and after a spawn lands on the login screen. It is never refreshed
+  by `GET /api/profiles`, which stays free of I/O.
 - `GET /api/accounts` (read-only), `GET /api/profiles` populated, and the `/api/info`
   capability.
 - Tests: migration, the repository, yaml upsert idempotence, nested or duplicate dir
@@ -303,7 +305,7 @@ item 7).
 - Runtime migration: `devices.allowed_account_ids` (JSON text, nullable). Null means the
   device sees every account, so existing devices are unaffected.
 - Enforce it on the server in the places the `?accountId=` filter already applies:
-  conversation and session lists, search, `/api/accounts`, and session control.
+  conversation and session lists, search, `/api/accounts`, `/api/profiles`, and session control.
   Controlling a session whose account is hidden from the device returns **404**, not 403,
   so the device cannot learn that the session exists.
 - WebSocket: filter `session_list`, `session_update` and `terminal_output` per subscriber,

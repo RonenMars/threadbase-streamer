@@ -24,7 +24,7 @@
 | GET | `/api/projects` | **Retired.** Always 410 `{error}` pointing at `/api/projects/summary`; the query string is ignored |
 | GET | `/api/search?q=...` | Full-text search across conversations |
 | GET | `/api/browse` | Browse the file system |
-| GET | `/api/profiles` | List scan profiles |
+| GET | `/api/profiles` | List configured scan profiles as a bare array of `{ id, label, emoji, enabled }` in config order; `[]` when none are configured. Never includes `configDir`, under any capability |
 | GET | `/api/config/claude-flags` | Allowlisted Claude CLI flags: `{registry, values, extraArgs, persisted}` (admin) |
 | PUT | `/api/config/claude-flags` | Update those flags; 403 while `--local-no-auth` is active (admin) |
 | GET | `/api/config/feature-flags` | Server feature flags: `{registry, values, sources}`. `registry[].id` matches `FEATURE_FLAGS` keys (not env names). Read-only — flags resolve at boot (admin) |

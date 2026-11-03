@@ -987,6 +987,7 @@ export class StreamerServer {
       // construction-time reads they always were (realpath resolves later and
       // deliberately does not update these).
       apiKey: () => this.apiKey,
+      scanProfiles: this.scanProfiles,
       localNoAuth: this.localNoAuth,
       logMenubarRequests: this.logMenubarRequests,
       publicUrl: this.publicUrl,
