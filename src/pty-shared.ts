@@ -32,6 +32,16 @@ export const REPLAY_MAX_LINES = SCREEN_SCROLLBACK + PTY_ROWS;
 // `terminalMaxLines` (5000): more would reach the client only to be cut there.
 export const REPLAY_ARCHIVE_MAX_LINES = 4000;
 
+// Keeps the last `max` bytes of a runner's output ring without starting inside a
+// multi-byte UTF-8 character: a raw byte cut leaves orphaned continuation bytes
+// (10xxxxxx) at the front, which decode as garbage when the ring is replayed.
+export function trimOutputBuffer(buf: Buffer, max: number): Buffer {
+  if (buf.length <= max) return buf;
+  let start = buf.length - max;
+  while (start < buf.length && (buf[start] & 0xc0) === 0x80) start++;
+  return buf.subarray(start);
+}
+
 // Called right after `await loadPty()`: a dispose() that lands inside that await
 // (the first load is a real import) has already swept the runner, so a spawn
 // past this point leaves a child nothing will ever kill.
