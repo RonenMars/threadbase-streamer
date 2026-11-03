@@ -456,9 +456,9 @@ function supervisedCommands(name: string): Command {
       const lines = Number.parseInt(opts.lines, 10);
       const r = await runProdLogs({
         lines: Number.isFinite(lines) && lines > 0 ? lines : 50,
-        follow: opts.follow !== false,
-        errorsOnly: opts.errorsOnly === true,
-        clear: opts.clear === true,
+        follow: Boolean(opts.follow ?? true),
+        errorsOnly: Boolean(opts.errorsOnly),
+        clear: Boolean(opts.clear),
       });
       if (r.message) log.info(r.message, undefined, "console");
       if (!r.ok) process.exitCode = 1;
