@@ -202,6 +202,85 @@ describe("ExpoPushSender applies preferences per token", () => {
   });
 });
 
+describe("quiet hours in silent mode", () => {
+  const SILENT: NotificationPrefs = {
+    ...ALWAYS_QUIET,
+    quietHours: {
+      ...(ALWAYS_QUIET.quietHours as NonNullable<NotificationPrefs["quietHours"]>),
+      mode: "silent",
+    },
+  };
+  const loud = {
+    title: "p",
+    body: "b",
+    data: {},
+    sound: "default" as const,
+    priority: "high" as const,
+    interruptionLevel: "time-sensitive" as const,
+  };
+
+  it("still sends to an iOS token, without sound, at passive level and normal priority", async () => {
+    repo.register({ token: EXPO_A, platform: "ios", notificationPrefs: SILENT });
+    const calls = stubExpo();
+
+    const outcome = await new ExpoPushSender(repo).send(loud, { event: "waitingInput" });
+
+    const [m] = calls[0].body;
+    expect(m.sound).toBeUndefined();
+    expect(m.priority).toBe("normal");
+    expect(m.interruptionLevel).toBe("passive");
+    expect(outcome).toMatchObject({ attempted: 1, succeeded: 1, suppressed: 0 });
+  });
+
+  it("keeps drop for a token with no mode, and sends the loud message untouched outside the window", async () => {
+    repo.register({ token: EXPO_A, platform: "ios", notificationPrefs: ALWAYS_QUIET });
+    repo.register({ token: EXPO_B, platform: "ios", notificationPrefs: ON });
+    const calls = stubExpo();
+
+    const outcome = await new ExpoPushSender(repo).send(loud, { event: "waitingInput" });
+
+    expect(sentTo(calls)).toEqual([EXPO_B]);
+    expect(calls[0].body[0]).toMatchObject({ sound: "default", priority: "high" });
+    expect(outcome).toMatchObject({ attempted: 1, suppressed: 1 });
+  });
+
+  it("drops for an Android token, whose sound the message cannot turn off", async () => {
+    repo.register({ token: EXPO_A, platform: "android", notificationPrefs: SILENT });
+    const calls = stubExpo();
+
+    const outcome = await new ExpoPushSender(repo).send(loud, { event: "waitingInput" });
+
+    expect(calls).toHaveLength(0);
+    expect(outcome).toMatchObject({ attempted: 0, suppressed: 1 });
+  });
+
+  it("still honours the event toggle", async () => {
+    repo.register({
+      token: EXPO_A,
+      platform: "ios",
+      notificationPrefs: { ...SILENT, waitingInput: false },
+    });
+    const calls = stubExpo();
+
+    const outcome = await new ExpoPushSender(repo).send(loud, { event: "waitingInput" });
+
+    expect(calls).toHaveLength(0);
+    expect(outcome).toMatchObject({ attempted: 0, suppressed: 1 });
+  });
+
+  it("applies per token: a silent phone and a loud phone get different payloads", async () => {
+    repo.register({ token: EXPO_A, platform: "ios", notificationPrefs: SILENT });
+    repo.register({ token: EXPO_B, platform: "ios", notificationPrefs: ON });
+    const calls = stubExpo();
+
+    await new ExpoPushSender(repo).send(loud, { event: "waitingInput" });
+
+    const byTo = Object.fromEntries(calls[0].body.map((m) => [m.to, m]));
+    expect(byTo[EXPO_A].sound).toBeUndefined();
+    expect(byTo[EXPO_B].sound).toBe("default");
+  });
+});
+
 describe("WaitingInputNotifier gates on preferences and reports failures", () => {
   const waitingBody = (calls: ReturnType<typeof stubExpo>) => calls.map((c) => c.body[0].body);
 

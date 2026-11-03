@@ -148,10 +148,13 @@ Before this the toggles lived only in the app, so none of them changed what was 
 - **Storage.** `push_tokens.notification_prefs` (migration 026), one JSON blob validated by `NotificationPrefsSchema` (`src/schemas/notification-prefs.schema.ts`).
   `NULL` means the client never sent any, and that is read as everything on, so a released app keeps receiving exactly what it did.
   A stored blob that no longer parses is read the same way: failing open is deliberate, because a corrupt row must not silently mute the one push the user is waiting for.
-- **Shape.** `{ waitingInput, sessionFailed, quietHours?: { enabled, tz, default: {from, to}, days?: { mon..sun: {from, to} | null } } }`.
+- **Shape.** `{ waitingInput, sessionFailed, quietHours?: { enabled, mode?: "drop" | "silent", tz, default: {from, to}, days?: { mon..sun: {from, to} | null } } }`.
   `waitingInput` gates the "agent needs you" kinds (`turn_done`, `permission`, `question`, `limited`).
   `sessionFailed` gates the failure push.
-- **Quiet hours** drop the push; nothing is sent, and the token's delivery health is untouched.
+- **Quiet hours** drop the push by default; nothing is sent, and the token's delivery health is untouched.
+  `quietHours.mode: "silent"` sends it anyway on an **iOS** token, without `sound`, as `interruptionLevel: "passive"` and `priority: "normal"`, so it waits in the notification list.
+  A token with no `mode` keeps `drop`, and so does an Android token in `silent`: Expo's `sound` is iOS-only, Android's sound belongs to the channel the app created, and every channel today makes noise (a push naming a channel the app never created is not displayed).
+  A silent push counts in `attempted`, not `suppressed`.
   They are evaluated in `tz`, the phone's IANA zone, so "22:00" means the user's 22:00 and not the server's.
   A window that ends before it starts runs overnight and belongs to the day it *starts* on: Friday 22:00–08:00 covers Saturday until 08:00 and uses Friday's entry.
   A weekday in `days` replaces `default` for the window starting that day, and `null` means no quiet hours that day.
@@ -191,7 +194,7 @@ Tokens are batched 100 per request (Expo's cap) and `listDeliverable()` returns 
 
 ## What is not here
 
-- **No silent delivery.** Quiet hours drop a push rather than sending it without sound; that mode is tracked in RonenMars/threadbase-streamer#949.
+- **No silent delivery on Android.** It needs a quiet channel the app creates and a registered feature that names it, so the streamer can send to it only for builds that have it; tracked in RonenMars/threadbase-streamer#949.
 - **No "session completed", "diff ready" or badge count.** The streamer has no event for the first two, and a badge count cannot be kept right across devices and servers, so the mobile toggles for them were removed rather than left inert.
 - **No per-device targeting.** Every device paired with this streamer is notified; `expo` tokens carry no session scope, and the streamer has no model of which device is interested in which session.
 - **No kill switch.** With no registered token the sender makes no request at all, which is the off state for a streamer nobody has paired a phone to.
