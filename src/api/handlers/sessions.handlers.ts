@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import type { EventEmitter } from "events";
 import { existsSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
@@ -1381,7 +1381,7 @@ export class SessionHandlers {
     ) {
       return; // already shown
     }
-    const toolUseId = `screen:${sessionId}:${key.length}`;
+    const toolUseId = `screen:${sessionId}:${createHash("sha256").update(key).digest("hex").slice(0, 12)}`;
     const prior = this.pendingQuestions.get(sessionId);
     const priorPrompt = prior ? this.promptRegistry.get(prior.promptId) : null;
     if (priorPrompt?.state === "open" || priorPrompt?.state === "updated") {
