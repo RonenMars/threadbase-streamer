@@ -215,6 +215,57 @@ describe("listing", () => {
 
     expect(repo.get(deviceId)?.last_seen_at).toBe(1_700_000_000_000);
   });
+
+  // `pending` is derived in one place (`toDeviceView`) so the REST list and the
+  // CLI cannot disagree. There is deliberately no expiry: a row stays pending
+  // until its first authenticated request or until someone revokes it.
+  it("marks a never-seen, unrevoked device pending", () => {
+    const { deviceId } = repo.register({ publicKey: "pk" });
+
+    expect(repo.list().find((d) => d.deviceId === deviceId)?.pending).toBe(true);
+  });
+
+  it("stays pending however old the row is", () => {
+    const { deviceId } = repo.register({ publicKey: "pk", now: 1_000 });
+
+    expect(repo.list().find((d) => d.deviceId === deviceId)?.pending).toBe(true);
+    expect(repo.get(deviceId)?.revoked_at).toBeNull();
+  });
+
+  it("is no longer pending once the device has been seen", () => {
+    const { deviceId } = repo.register({ publicKey: "pk" });
+    repo.touch(deviceId, 1_700_000_000_000);
+
+    expect(repo.list().find((d) => d.deviceId === deviceId)?.pending).toBe(false);
+  });
+
+  it("is not pending once revoked, even if never seen", () => {
+    const { deviceId } = repo.register({ publicKey: "pk" });
+    repo.revoke(deviceId);
+
+    expect(repo.list().find((d) => d.deviceId === deviceId)?.pending).toBe(false);
+  });
+});
+
+describe("touch throttle", () => {
+  // touch() is a synchronous SQLite write and the sealed REST path calls it on
+  // every request, so a stamp inside the interval is skipped.
+  it("skips a second stamp inside the interval and writes again after it", () => {
+    const { deviceId } = repo.register({ publicKey: "pk" });
+    repo.touch(deviceId, 1_000_000);
+    repo.touch(deviceId, 1_000_000 + 1_000);
+    expect(repo.get(deviceId)?.last_seen_at).toBe(1_000_000);
+    repo.touch(deviceId, 1_000_000 + 60_000);
+    expect(repo.get(deviceId)?.last_seen_at).toBe(1_060_000);
+  });
+
+  it("throttles per device, not globally", () => {
+    const a = repo.register({ publicKey: "a" }).deviceId;
+    const b = repo.register({ publicKey: "b" }).deviceId;
+    repo.touch(a, 5_000_000);
+    repo.touch(b, 5_000_001);
+    expect(repo.get(b)?.last_seen_at).toBe(5_000_001);
+  });
 });
 
 describe("parseCapabilities", () => {
