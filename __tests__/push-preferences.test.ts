@@ -36,6 +36,9 @@ let cache: ConversationCache;
 let repo: PushRepository;
 
 beforeEach(() => {
+  // ALWAYS_QUIET ends at 23:59 (exclusive), so a real clock inside that minute made it not quiet.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-01-07T12:00:00Z"));
   dir = mkdtempSync(join(tmpdir(), "tb-prefs-"));
   cache = ConversationCache.open(join(dir, "cache.db"));
   repo = new PushRepository(cache.getDatabase());
@@ -45,6 +48,7 @@ afterEach(() => {
   cache.close();
   rmSync(dir, { recursive: true, force: true });
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const ON: NotificationPrefs = { waitingInput: true, sessionFailed: true };

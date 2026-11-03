@@ -12,7 +12,7 @@ import {
 import Database from "better-sqlite3";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, type Stats, statSync } from "fs";
 import { open as openAsync } from "fs/promises";
-import { dirname } from "path";
+import { basename, dirname } from "path";
 import { setImmediate as yieldToEventLoop } from "timers/promises";
 import { instrumentDatabase, labelStatements } from "./db/query-timing";
 import { runSqliteMigrations } from "./db/sqlite-migrate";
@@ -1101,6 +1101,9 @@ export class ConversationCache {
 
   private classifyAgentFile(filePath: string, mtimeMs: number, fileSize: number): boolean {
     if (this.agentEntrypoints.size === 0) return false;
+    // Codex rollouts carry no `entrypoint` field, so the probe could only ever
+    // read the whole file (tens of MB, synchronously) to answer false (#1108).
+    if (basename(filePath).startsWith("rollout-")) return false;
 
     const entrypointsKey = this.agentEntrypointsKey();
     const cached = this.stmts.getFileMetadata.get(filePath) as
