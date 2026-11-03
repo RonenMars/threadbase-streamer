@@ -112,7 +112,9 @@ _pb_protect_hosts() {
   local line pid files hit started events winner name rel f
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
-    pid="${line%%[[:space:]]*}"; pid="${pid#"${pid%%[![:space:]]*}"}"
+    # ps pads the pid on the left (procps does), so trim before cutting at the first blank.
+    line="${line#"${line%%[![:space:]]*}"}"
+    pid="${line%%[[:space:]]*}"
     files="$(_pb_host_files "$pid")"
     local ours=0
     if [[ "$line" == *"$install/"* || "$line" == *"$given/"* ]] || grep -Fq -- "$install/" <<<"$files"; then ours=1; fi
