@@ -168,6 +168,17 @@ describe("watchForJsonl — conversation_event wiring", () => {
     });
     await new Promise<void>((r) => ws.on("open", r));
 
+    // Transcript frames are scoped to subscribers (#887) and no client knows the
+    // new session id yet, so watch the scoped send itself: a frame sent to an
+    // empty audience still shows up here.
+    const sent: any[] = [];
+    const hub = (server as any).wsHub;
+    const realSend = hub.broadcastToClients.bind(hub);
+    hub.broadcastToClients = (clients: Iterable<WebSocket>, msg: unknown) => {
+      sent.push(msg);
+      return realSend(clients, msg);
+    };
+
     // Pre-create a FOREIGN conversation JSONL (different stem, and its first
     // line carries a different sessionId) touched < 5s ago. The old fallback
     // bound whichever JSONL was most recently modified, capturing this foreign
@@ -195,9 +206,9 @@ describe("watchForJsonl — conversation_event wiring", () => {
     await new Promise((r) => setTimeout(r, 300));
 
     expect((server as any).sessionFileMap.get(sessionId)).toBeUndefined();
-    expect(
-      (events as any[]).some((e) => e.type === "conversation_event" && e.sessionId === sessionId),
-    ).toBe(false);
+    expect(sent.some((e) => e.type === "conversation_event" && e.sessionId === sessionId)).toBe(
+      false,
+    );
 
     ws.close();
   });
