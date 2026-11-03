@@ -144,6 +144,7 @@ import {
   readApnsCredentialsFromEnv,
 } from "./services/push/apnsClient";
 import { ExpoPushSender } from "./services/push/expoPushSender";
+import { ExpoReceiptPoller } from "./services/push/expoReceiptPoller";
 import { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import { LiveActivityRenewalScheduler } from "./services/push/liveActivityRenewal";
 import { LiveActivitySender } from "./services/push/liveActivitySender";
@@ -518,6 +519,7 @@ export class StreamerServer {
   // opened — with no registered device it simply sends nothing.
   private waitingInputNotifier: WaitingInputNotifier | null = null;
   private expoPushSender: ExpoPushSender | null = null;
+  private expoReceiptPoller: ExpoReceiptPoller | null = null;
   private discoveryCache: {
     entries: DiscoveredProcess[];
     fetchedAt: number;
@@ -1244,6 +1246,10 @@ export class StreamerServer {
     const sender = new ExpoPushSender(pushRepo, process.env.THREADBASE_EXPO_ACCESS_TOKEN);
     this.expoPushSender = sender;
     this.waitingInputNotifier = new WaitingInputNotifier(sender);
+    this.expoReceiptPoller = new ExpoReceiptPoller(pushRepo, {
+      accessToken: process.env.THREADBASE_EXPO_ACCESS_TOKEN,
+    });
+    this.expoReceiptPoller.start();
   }
 
   /** Whether any live socket is subscribed to this session — "someone is looking". */
@@ -2222,6 +2228,7 @@ export class StreamerServer {
     // The APNs HTTP/2 session is long-lived by design, so it keeps the event
     // loop alive until closed explicitly.
     this.liveActivityRenewal?.stop();
+    this.expoReceiptPoller?.stop();
     this.apnsClient?.close();
     if (this.dbPool) {
       await this.dbPool.end();
