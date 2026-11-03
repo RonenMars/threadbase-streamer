@@ -928,6 +928,12 @@ export interface SessionRunner {
   cancel(sessionId: string): void;
   killPid(pid: number): void;
   putOnHold(sessionId: string, signal?: NodeJS.Signals): void;
+  /**
+   * New raw transcript lines for a session this runner owns. A runner whose
+   * transcript carries an end-of-turn line settles a still-`running` turn from
+   * it, as a supplement to its PTY signal. Optional: the others have no such line.
+   */
+  settleFromTranscript?(sessionId: string, lines: string[]): void;
   getOutput(sessionId: string): string;
   getOutputLines(sessionId: string, maxLines: number): Promise<string[]>;
   /**
