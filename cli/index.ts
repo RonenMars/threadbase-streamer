@@ -827,7 +827,7 @@ program
   )
   .requiredOption(
     "--socket <path>",
-    "Unix socket (POSIX) or named pipe (Windows) to listen on. Must match the streamer's THREADBASE_INSTANCE_ID-derived path.",
+    "Unix socket (POSIX) or named pipe (Windows) to listen on. Must match the path derived from the streamer's instance id.",
   )
   .action(async (opts) => {
     const { SessionHost } = await import("../src/pty-host/host");

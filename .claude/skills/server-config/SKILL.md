@@ -11,7 +11,7 @@ Moved out of the repo root `CLAUDE.md` so it loads on demand rather than in ever
 | Variable | Description |
 |----------|-------------|
 | `THREADBASE_DATABASE_URL` | PostgreSQL connection URI — enables DB persistence when set (also: `THREADBASE_DATABASE_SSL`, `THREADBASE_DATABASE_POOL_MAX`, `THREADBASE_DATABASE_STATEMENT_TIMEOUT_MS`) |
-| `THREADBASE_INSTANCE_ID` | Stable identifier for this server instance (defaults to `os.hostname()`); scopes DB-persisted sessions |
+| `THREADBASE_INSTANCE_ID` | Explicit identifier for this server instance; wins when non-empty and is never persisted. Unset, the id comes from `<config dir>/instance-id`, created on first boot from `os.hostname()` (random UUID if the hostname is blank) so a later rename changes nothing. One function, `getInstanceId()` in `src/instance-id.ts`, serves every reader: it scopes DB-persisted sessions, is the Live Activity `serverId`, and names the pty-host socket. See [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md). |
 | `THREADBASE_PUBLIC_URL` | Public HTTPS URL for QR pairing (overrides `public_url:` in server.yaml) |
 | `THREADBASE_INCLUDE_AGENTS` | Show non-interactive Claude runs (agent SDK, hook invocations) in `/api/conversations` + `/project-chats`. Default off. Toggling triggers a one-time prune-or-rescan on next restart. |
 | `THREADBASE_AGENT_ENTRYPOINTS` | JSONL `entrypoint` values treated as agent traffic. Default `sdk-cli,claude-vscode`. |
