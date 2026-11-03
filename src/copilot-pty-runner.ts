@@ -35,6 +35,12 @@ const OUTPUT_BUFFER_MAX = 65536;
 const INPUT_HISTORY_MAX = 50;
 const QUIET_DETECT_MS = 500;
 const COPILOT_SUBMIT_STALE_MS = 2_000;
+// Copilot reads a write that carries a newline as a paste and absorbs a `\r` in
+// the same chunk, so a multi-line prompt sat in the compose box unsubmitted
+// (verified on Copilot CLI 1.0.104 and 1.0.105; #1073). The `\r` goes in a write
+// of its own, 16ms later like Cursor and Codex; a gap of 0 was coalesced and
+// failed the same way.
+const COPILOT_SUBMIT_DELAY_MS = 16;
 // Copilot's turn signal (verified on Copilot CLI 1.0.92): while a turn runs the
 // bottom row reads `<spinner> Working ...`, repainted about every 90ms. The
 // terminal title only names the session. The row is painted with cursor moves,
@@ -296,7 +302,11 @@ export class CopilotPtyRunner implements SessionRunner {
 
   sendInput(id: string, input: string): number {
     const session = this.requireSession(id);
-    session.process.write(`${input}\r`);
+    session.process.write(input);
+    const submit = setTimeout(() => {
+      if (this.sessions.get(id) === session) session.process.write("\r");
+    }, COPILOT_SUBMIT_DELAY_MS);
+    submit.unref?.();
     if (session.status === "waiting_input") this.setRunning(session, "user-input");
     this.submittedAt.set(id, Date.now());
     this.clearSubmitWatch(id);
