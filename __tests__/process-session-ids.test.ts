@@ -47,6 +47,40 @@ describe("parseClaudeRegistryEntry", () => {
     });
   });
 
+  it("reads the registry's own turn state and when it was written", () => {
+    const at = Date.parse("2026-10-02T10:05:00Z");
+    expect(
+      parseClaudeRegistryEntry(registry({ status: "busy", statusUpdatedAt: at }), PID),
+    ).toMatchObject({ status: "busy", statusUpdatedAt: at });
+    expect(
+      parseClaudeRegistryEntry(registry({ status: "shell", statusUpdatedAt: at }), PID),
+    ).toMatchObject({
+      status: "shell",
+    });
+  });
+
+  it("drops a status it does not recognise, or one with no usable timestamp", () => {
+    const at = Date.parse("2026-10-02T10:05:00Z");
+    const unknown = parseClaudeRegistryEntry(
+      registry({ status: "thinking", statusUpdatedAt: at }),
+      PID,
+    );
+    expect(unknown).not.toHaveProperty("status");
+    expect(unknown).not.toHaveProperty("statusUpdatedAt");
+    // JSON.stringify turns Infinity into null, so spell 1e999 (parsed as Infinity) out by hand.
+    const infinite = registry({ status: "busy", statusUpdatedAt: "INF" }).replace('"INF"', "1e999");
+    const raws = [
+      registry({ status: "busy" }),
+      registry({ status: "busy", statusUpdatedAt: "1791347192588" }),
+      infinite,
+    ];
+    for (const raw of raws) {
+      const bad = parseClaudeRegistryEntry(raw, PID);
+      expect(bad).not.toHaveProperty("status");
+      expect(bad).not.toHaveProperty("statusUpdatedAt");
+    }
+  });
+
   it("rejects a file whose content names a different pid", () => {
     expect(parseClaudeRegistryEntry(registry({ pid: PID + 1 }), PID)).toBeNull();
   });
@@ -208,6 +242,36 @@ describe("resolveSessionIds", () => {
     );
     expect(out.conversationId).toBe(SESSION);
     expect(out.projectPath).toBe("/Users/someone/dev/foo");
+  });
+
+  it("carries the registry's turn state onto the discovered process", async () => {
+    const at = Date.parse("2026-10-02T10:05:00Z");
+    const [out] = await resolveSessionIds(
+      [proc({})],
+      new Map(),
+      resolvers({
+        claude: async () => ({ pid: PID, sessionId: SESSION, status: "busy", statusUpdatedAt: at }),
+      }),
+    );
+    expect(out.turnState).toEqual({ state: "busy", updatedAt: new Date(at) });
+  });
+
+  it("leaves turnState off when the registry's status has no timestamp", async () => {
+    const [out] = await resolveSessionIds(
+      [proc({})],
+      new Map(),
+      resolvers({ claude: async () => ({ pid: PID, sessionId: SESSION, status: "busy" }) }),
+    );
+    expect(out).not.toHaveProperty("turnState");
+  });
+
+  it("leaves turnState off when the registry carries none", async () => {
+    const [out] = await resolveSessionIds(
+      [proc({})],
+      new Map(),
+      resolvers({ claude: async () => ({ pid: PID, sessionId: SESSION }) }),
+    );
+    expect(out).not.toHaveProperty("turnState");
   });
 
   it("prefers the registry over a launch-time --resume id", async () => {

@@ -70,6 +70,10 @@ export async function resolveSessionIds(
           return {
             ...proc,
             conversationId: entry.sessionId,
+            ...(entry.status &&
+              entry.statusUpdatedAt != null && {
+                turnState: { state: entry.status, updatedAt: new Date(entry.statusUpdatedAt) },
+              }),
             ...(!proc.projectPath &&
               cwd && {
                 projectPath: cwd,
