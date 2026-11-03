@@ -17,21 +17,15 @@ function git(...args: string[]): string {
 const sha = git("rev-parse", "--short", "HEAD") || "unknown";
 const version = `${pkg.version}+${sha}-test`;
 const testTimeout = process.platform === "win32" ? 900_000 : 45_000;
-// Two serial cases, both measured:
-// - Windows Node 24 kills vitest fork workers ("Worker exited unexpectedly") —
-//   0 failures, 6 unhandled errors, measured on runs 011122a and 72a6272. CI
-//   pins Windows smoke to Node 22, so that job still parallelizes.
-// - macOS after #894: Smoke (macos-latest) failed 8 of 29 runs (28%) vs 2 of 66
-//   (3%) serial, always on paint-time / fs.watch waits (codex-active-writer,
-//   pty-live-question-close, pty-shell-prompt-detection, transcript-watch-
-//   deadline, codex-multi-choice-transport). Four workers plus thousands of
-//   watch handles recreate the BIND_BUDGET flakes.
+// One serial case, measured: macOS after #894 — Smoke (macos-latest) failed 8
+// of 29 runs (28%) vs 2 of 66 (3%) serial, always on paint-time / fs.watch
+// waits (codex-active-writer, pty-live-question-close, pty-shell-prompt-
+// detection, transcript-watch-deadline, codex-multi-choice-transport). Four
+// workers plus thousands of watch handles recreate the BIND_BUDGET flakes.
+// Windows × Node 24 used to be serial too (fork workers died with "Worker
+// exited unexpectedly"); on Node 24.22.1 it passes parallel, see #530.
 // See docs/testing/cross-platform-ci.md.
-const nodeMajor = Number.parseInt(process.versions.node, 10);
-const fileParallelism = !(
-  process.platform === "darwin" ||
-  (process.platform === "win32" && nodeMajor >= 24)
-);
+const fileParallelism = process.platform !== "darwin";
 
 export default defineConfig({
   define: { __VERSION__: JSON.stringify(version) },
