@@ -9,7 +9,7 @@ import {
   type SortOrder,
   search,
 } from "@threadbase-sh/scanner";
-import { createReadStream, existsSync, readdirSync } from "fs";
+import { createReadStream, existsSync, readdirSync, statSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { basename, join } from "path";
 import { createInterface } from "readline";
@@ -24,6 +24,7 @@ import {
   isProviderResumable,
 } from "../../providers";
 import type { ScannerManager, ScanProfile } from "../../scanner-manager";
+import { readClaudeBackgroundAgents } from "../../services/conversations/backgroundAgents";
 import { classifyConversationFile } from "../../services/conversations/classification";
 import {
   findSearchTarget,
@@ -1239,12 +1240,28 @@ export class ConversationHandlers {
     // that cannot change when the other half does. The prefix is immutable, so
     // its path and cut are enough — no source mtime needed.
     const external = await this.externalConversationIds(false);
+    // Opt-in: `?include=backgroundAgents` (comma-separated tokens). A completion
+    // is a queue-operation record, not a message, so it moves neither the
+    // message count nor the timestamp above — the file's own (mtime, size) is
+    // what tells the validator the answer may have changed. A stat, not a read.
+    const wantsBackgroundAgents = (url.searchParams.get("include") ?? "")
+      .split(",")
+      .includes("backgroundAgents");
+    let backgroundAgentsTag = "";
+    if (wantsBackgroundAgents) {
+      try {
+        const st = statSync(etagSource.filePath);
+        backgroundAgentsTag = `+bg:${st.mtimeMs}:${st.size}`;
+      } catch {
+        backgroundAgentsTag = "+bg";
+      }
+    }
     const etag = computeConversationEtag({
       filePath: `${
         inherited
           ? `${etagSource.filePath}+${inherited.sourceFilePath ?? inherited.sourceId}@${inherited.ordinalExclusive}`
           : etagSource.filePath
-      }${external.has(id) ? "+external" : ""}`,
+      }${external.has(id) ? "+external" : ""}${backgroundAgentsTag}`,
       messageCount: etagMessageCount + (inherited?.messages.length ?? 0),
       timestamp: etagSource.timestamp,
     });
@@ -1644,6 +1661,18 @@ export class ConversationHandlers {
       messages: messagesPayload,
     };
     if (messagePagination) body.message_pagination = messagePagination;
+    // Claude only; a failed read drops the field rather than the conversation.
+    if (wantsBackgroundAgents && convProvider === CLAUDE_CODE_PROVIDER && conv.filePath) {
+      try {
+        body.backgroundAgents = await readClaudeBackgroundAgents(conv.filePath);
+      } catch (err) {
+        this.log.warn("conversation.background_agents_failed", {
+          event: "conversation.background_agents_failed",
+          conversationId: id,
+          err,
+        });
+      }
+    }
     if (conv.turnDurations?.length) {
       body.turn_durations = conv.turnDurations.map((d: any) => ({
         duration_ms: d.durationMs,
