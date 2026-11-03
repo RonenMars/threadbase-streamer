@@ -171,9 +171,20 @@ async function get(id: string, query: string, ifNoneMatch?: string) {
     res,
     ifNoneMatch,
   );
-  // The temp dir is the only machine-specific part of a body. The project name
-  // is the tail of that path, in a shape that differs per OS, so it is masked.
-  const parsed = body ? JSON.parse(body.split(dir).join("<tmp>")) : null;
+  // The temp dir is the only machine-specific part of a body. It is masked on
+  // the parsed strings, not the raw body, because JSON escapes a Windows path's
+  // backslashes; the separators after it are then forward slashes on every OS.
+  // The project name is the tail of that path, in a shape that differs per OS,
+  // so it is masked too.
+  const mask = (v: unknown): unknown =>
+    typeof v === "string" && v.includes(dir)
+      ? v.split(dir).join("<tmp>").replaceAll("\\", "/")
+      : Array.isArray(v)
+        ? v.map(mask)
+        : v && typeof v === "object"
+          ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mask(x)]))
+          : v;
+  const parsed = body ? (mask(JSON.parse(body)) as any) : null;
   if (parsed?.meta) {
     for (const key of ["project_name", "projectName"]) parsed.meta[key] = "<project>";
   }
