@@ -13,6 +13,7 @@ import {
 import {
   type ClaudeRegistryEntry,
   codexRolloutIdForPid,
+  findTeammateSessionId,
   readClaudeSessionRegistry,
 } from "./services/sessions/processSessionIds";
 import type { DiscoveredProcess } from "./types";
@@ -37,11 +38,19 @@ export async function discoverClaudeProcesses(): Promise<DiscoveredProcess[]> {
 export interface SessionIdResolvers {
   claude: (pid: number, processStartedAt?: Date) => Promise<ClaudeRegistryEntry | null>;
   codex: (pid: number) => Promise<string | null>;
+  /** A Claude teammate has no registry entry; its own transcript names it. */
+  teammate: (proc: DiscoveredProcess, processStartedAt?: Date) => Promise<string | null>;
 }
 
 const defaultResolvers: SessionIdResolvers = {
   claude: (pid, processStartedAt) => readClaudeSessionRegistry(pid, { processStartedAt }),
   codex: (pid) => codexRolloutIdForPid(pid),
+  teammate: (proc, processStartedAt) =>
+    proc.teammate
+      ? findTeammateSessionId(proc.projectPath, proc.teammate.agentName, proc.teammate.teamName, {
+          processStartedAt,
+        })
+      : Promise.resolve(null),
 };
 
 /**
@@ -64,7 +73,11 @@ export async function resolveSessionIds(
       try {
         if (proc.provider === CLAUDE_CODE_PROVIDER) {
           const entry = await resolvers.claude(proc.pid, knownStarts.get(proc.pid));
-          if (!entry) return proc;
+          if (!entry) {
+            if (!proc.teammate || proc.conversationId) return proc;
+            const id = await resolvers.teammate(proc, knownStarts.get(proc.pid));
+            return id ? { ...proc, conversationId: id } : proc;
+          }
           // Windows exposes no process cwd; the registry carries Claude's own.
           const cwd = proc.projectPath || entry.cwd || "";
           return {
@@ -154,6 +167,31 @@ export function looksLikeClaudeProcess(commandLine: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * The agent and team name of a Claude teammate, or null for any other process.
+ * `--parent-session-id` is deliberately not read: it names the lead, not this
+ * process.
+ */
+export function teammateFromArgs(args: string): { agentName: string; teamName: string } | null {
+  const tokens = tokenizeCommandLine(args);
+  const value = (flag: string): string | null => {
+    const at = tokens.indexOf(flag);
+    const next = at === -1 ? undefined : tokens[at + 1];
+    return next && !next.startsWith("-") ? next : null;
+  };
+  const agentName = value("--agent-name");
+  const teamName = value("--team-name");
+  return agentName && teamName ? { agentName, teamName } : null;
+}
+
+function teammateField(
+  provider: ProviderName,
+  args: string,
+): { teammate: { agentName: string; teamName: string } } | Record<string, never> {
+  const teammate = provider === CLAUDE_CODE_PROVIDER ? teammateFromArgs(args) : null;
+  return teammate ? { teammate } : {};
 }
 
 /**
@@ -363,6 +401,7 @@ async function discoverUnix(knownStarts: Map<number, Date>): Promise<DiscoveredP
           branch: await readGitBranch(cwd),
           conversationId: extractConversationId(args, provider),
           startedAt,
+          ...teammateField(provider, args),
         } satisfies DiscoveredProcess;
       } catch (err) {
         // A swept agent we could not read vanishes from every list; say why.
@@ -406,6 +445,7 @@ async function discoverWindows(knownStarts: Map<number, Date>): Promise<Discover
           branch: await readGitBranch(info.cwd),
           conversationId: extractConversationId(info.args, provider),
           startedAt: info.startedAt,
+          ...teammateField(provider, info.args),
         } satisfies DiscoveredProcess;
       } catch {
         return null;

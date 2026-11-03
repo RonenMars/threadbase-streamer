@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { open, readdir, readFile, stat } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { runLsof } from "./codexRolloutOwner";
@@ -192,4 +192,86 @@ export async function codexRolloutIdForPid(
   }
   const ids = parseLsofRolloutIds(stdout);
   return ids.length === 1 ? ids[0] : null;
+}
+
+// ─── Claude teammates: the transcript that names the agent ──────────────────
+//
+// A teammate (`claude --agent-id … --agent-name … --team-name …`, spawned by a
+// lead session) writes no ~/.claude/sessions/<pid>.json, and its argv names no
+// session — `--parent-session-id` is the LEAD's. What it does write is its own
+// transcript, whose lines carry the agentName and teamName it was launched
+// with, so that is the exact evidence. The working directory only picks which
+// project folder to look in; it is never the identity.
+
+/** Transcript lines are read from the head: the agent fields sit on the first records. */
+const TEAMMATE_HEAD_BYTES = 64 * 1024;
+
+export interface FindTeammateOptions {
+  configDir?: string;
+  /** OS start time of the process; a transcript last written before it is someone else's. */
+  processStartedAt?: Date;
+}
+
+/** Claude names a project's folder by replacing every non-alphanumeric character. */
+function projectFolderName(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+async function headCarriesAgent(
+  file: string,
+  agentName: string,
+  teamName: string,
+): Promise<boolean> {
+  const handle = await open(file, "r");
+  try {
+    const buf = Buffer.alloc(TEAMMATE_HEAD_BYTES);
+    const { bytesRead } = await handle.read(buf, 0, TEAMMATE_HEAD_BYTES, 0);
+    // The last line may be cut off at the buffer edge; a failed parse is no evidence.
+    const lines = buf.toString("utf-8", 0, bytesRead).split("\n");
+    for (const line of lines) {
+      try {
+        const rec = JSON.parse(line) as { agentName?: unknown; teamName?: unknown };
+        if (rec.agentName === agentName && rec.teamName === teamName) return true;
+      } catch {
+        // Not a JSON line: no evidence either way.
+      }
+    }
+    return false;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * The session id of the teammate named `agentName` in `teamName`, or null.
+ * Exact or nothing: two transcripts claiming the same agent and team is
+ * ambiguous and answers null rather than a guess.
+ */
+export async function findTeammateSessionId(
+  cwd: string,
+  agentName: string,
+  teamName: string,
+  options: FindTeammateOptions = {},
+): Promise<string | null> {
+  const dir = join(options.configDir ?? claudeConfigDir(), "projects", projectFolderName(cwd));
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return null;
+  }
+  const since = options.processStartedAt?.getTime() ?? 0;
+  const matches: string[] = [];
+  for (const name of names) {
+    const id = name.endsWith(".jsonl") ? name.slice(0, -".jsonl".length) : null;
+    if (!id || !UUID.test(id)) continue;
+    try {
+      const file = join(dir, name);
+      if ((await stat(file)).mtimeMs < since) continue;
+      if (await headCarriesAgent(file, agentName, teamName)) matches.push(id);
+    } catch {
+      // Unreadable or vanished: skip it.
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
 }
