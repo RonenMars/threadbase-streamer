@@ -172,7 +172,10 @@ describe("session start with a provider that is not installed", () => {
 
 describe("errorMiddleware", () => {
   const respond = async (err: Error) => {
-    const c = { json: (body: unknown, status: number) => ({ body, status }) };
+    const c = {
+      req: { path: "/api/x", method: "GET" },
+      json: (body: unknown, status: number) => ({ body, status }),
+    };
     return errorMiddleware(err, c as never) as unknown as {
       body: Record<string, unknown>;
       status: number;
