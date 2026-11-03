@@ -96,6 +96,21 @@ export class SessionHost {
       },
       onStatusChange: (session) => {
         if (session.status === "idle") this.promptSnapshots.delete(session.id);
+        // One line per agent exit, whatever ended it: its own exit ("process-exit")
+        // or a stop the streamer asked for ("shutdown"). putOnHold drops the session
+        // before the child dies, so handleExit finds nothing and never reports it.
+        if (
+          session.status === "idle" &&
+          (session.statusSource === "process-exit" || session.statusSource === "shutdown")
+        ) {
+          this.log.info(`[pty-host] agent process exited for ${session.id}`, {
+            event: "pty_host.session_exit",
+            reason: session.statusSource,
+            sessionId: session.id,
+            ranMs: (session.completedAt ?? new Date()).getTime() - session.startedAt.getTime(),
+            ...(session.failureCode ? { failureCode: session.failureCode } : {}),
+          });
+        }
         this.emit({ type: "event", event: "status-change", session });
       },
       onReady: (session) => this.emit({ type: "event", event: "ready", session }),
