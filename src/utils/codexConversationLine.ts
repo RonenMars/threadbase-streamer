@@ -292,6 +292,28 @@ export function isLeadingInjectedContext(
   return index === 0 && role === "user" && typeof text === "string" && isCodexInjectedContext(text);
 }
 
+/**
+ * The scanner's line parser with the leading-turn bound applied: the message a
+ * line becomes at message_index `index`, or null when it is not counted.
+ * Shared by the offset index (conversation-cache) and the replay numbering
+ * below so both count the same file the same way.
+ */
+export function parseCodexMessageAt(text: string, index: number) {
+  const msg = parseCodexJsonlLine(text);
+  if (!msg) return null;
+  return isLeadingInjectedContext(index, msg.role, msg.text) ? null : msg;
+}
+
+/**
+ * message_index per line for a batch that starts at byte 0 of a rollout (a
+ * full-file replay), where the position is the count of counted lines before
+ * it. A batch that starts anywhere else must take its seqs from the index.
+ */
+export function codexReplaySeqs(lines: string[]): (number | null)[] {
+  let next = 0;
+  return lines.map((l) => (parseCodexMessageAt(l, next) ? next++ : null));
+}
+
 function hashPrefix(text: string): string {
   // Short non-crypto fingerprint for id uniqueness within a session.
   let h = 0;
