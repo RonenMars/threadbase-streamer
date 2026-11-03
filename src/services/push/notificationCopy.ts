@@ -18,7 +18,7 @@ import { CODEX_USAGE_LIMIT_RE, CODEX_USAGE_RESET_TIP_RE } from "../questions/cod
  * The non-English strings are machine-written and want a native review.
  */
 
-export type AttentionKind = "turn_done" | "permission" | "question" | "failed" | "limited";
+export type AttentionKind = "turn_done" | "permission" | "question" | "failed" | "limited" | "idle";
 
 /** What a permission gate asks for, as far as the gate's own chrome tells us. */
 export type GateAction = "command" | "edit";
@@ -38,6 +38,8 @@ export interface AttentionFacts {
   failureCode?: string;
   /** limited: when the limit resets, as the agent printed it (a clock time). */
   resetsAt?: string;
+  /** idle: whole minutes the session has sat at its prompt. */
+  idleMinutes?: number;
 }
 
 interface Line {
@@ -83,6 +85,10 @@ const COPY: Record<string, Copy> = {
       subtitle: `${a} hit its usage limit`,
       body: f.resetsAt ? `Resets at ${f.resetsAt}. Paused until then.` : "Paused until it resets.",
     }),
+    idle: () => ({
+      subtitle: `${a} is waiting for you`,
+      body: f.idleMinutes ? `Idle for ${f.idleMinutes} min.` : "Tap to open the session.",
+    }),
   }),
   he: (a, f) => ({
     turn_done: () => ({
@@ -116,6 +122,10 @@ const COPY: Record<string, Copy> = {
     limited: () => ({
       subtitle: `${a} הגיע למגבלת השימוש`,
       body: f.resetsAt ? `מתאפס ב-${f.resetsAt}. מושהה עד אז.` : "מושהה עד לאיפוס.",
+    }),
+    idle: () => ({
+      subtitle: `${a} ממתין לך`,
+      body: f.idleMinutes ? `במצב המתנה ${f.idleMinutes} דק׳.` : "הקישו כדי לפתוח את הסשן.",
     }),
   }),
   ar: (a, f) => ({
@@ -152,6 +162,10 @@ const COPY: Record<string, Copy> = {
       body: f.resetsAt
         ? `يُعاد الضبط عند ${f.resetsAt}. متوقف حتى ذلك الحين.`
         : "متوقف حتى إعادة الضبط.",
+    }),
+    idle: () => ({
+      subtitle: `${a} بانتظارك`,
+      body: f.idleMinutes ? `خامل منذ ${f.idleMinutes} د.` : "اضغط لفتح الجلسة.",
     }),
   }),
   ru: (a, f) => ({
@@ -191,6 +205,10 @@ const COPY: Record<string, Copy> = {
         ? `Сброс в ${f.resetsAt}. Пауза до этого времени.`
         : "Пауза до сброса лимита.",
     }),
+    idle: () => ({
+      subtitle: `${a} ждёт вас`,
+      body: f.idleMinutes ? `Простаивает ${f.idleMinutes} мин.` : "Нажмите, чтобы открыть сессию.",
+    }),
   }),
 };
 
@@ -201,6 +219,7 @@ const TITLE_MARK: Record<AttentionKind, string> = {
   question: "💬",
   failed: "❌",
   limited: "⏳",
+  idle: "💤",
 };
 
 /** Android's guideline for a title that is not cut off; the branch gives way first. */
