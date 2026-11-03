@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync } from "node:fs";
+import { dirname } from "node:path";
+import { ptyHostLogPath } from "../lifecycle/constants";
 import type { HostTransport } from "./protocol";
 import { connectToHost, hostSocketPath } from "./socket";
 
@@ -62,18 +65,36 @@ export async function connectOrSpawnHost(options: SpawnHostOptions): Promise<Hos
  *
  *  - `detached` puts it in its own process group, so a Ctrl-C or a group kill
  *    aimed at the streamer does not take the agents with it.
- *  - `stdio: "ignore"` means it holds none of our descriptors. A child that
- *    inherited our stdout keeps a pipe open that the parent's exit cannot
- *    close, and on POSIX would also receive our terminal's SIGHUP — which is
- *    precisely the hangup this whole feature exists to avoid.
+ *  - Its stdin is ignored and its stdout/stderr are a log file it opens itself,
+ *    so it holds none of our descriptors. A child that inherited our stdout
+ *    keeps a pipe open that the parent's exit cannot close, and on POSIX would
+ *    also receive our terminal's SIGHUP — which is precisely the hangup this
+ *    whole feature exists to avoid. A file is not a pipe: nothing waits on it.
  *  - `unref()` removes it from our event loop, so the streamer can exit while
  *    the host keeps running.
  */
 export function spawnDetachedHost(socketPath: string, entryPoint?: string): void {
-  const child = spawn(
-    process.execPath,
-    [entryPoint ?? process.argv[1], "pty-host", "--socket", socketPath],
-    { detached: true, stdio: "ignore" },
-  );
-  child.unref();
+  // Without a log the host cannot explain a reap or an exit. If the file cannot
+  // be opened, the host still starts, silent as before.
+  let logFd: number | undefined;
+  try {
+    const logPath = ptyHostLogPath();
+    mkdirSync(dirname(logPath), { recursive: true });
+    logFd = openSync(logPath, "a");
+  } catch {
+    logFd = undefined;
+  }
+  try {
+    const child = spawn(
+      process.execPath,
+      [entryPoint ?? process.argv[1], "pty-host", "--socket", socketPath],
+      {
+        detached: true,
+        stdio: logFd === undefined ? "ignore" : ["ignore", logFd, logFd],
+      },
+    );
+    child.unref();
+  } finally {
+    if (logFd !== undefined) closeSync(logFd);
+  }
 }

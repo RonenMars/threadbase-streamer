@@ -34,3 +34,12 @@ export function logPaths(): { stdout: string; stderr: string } {
   const dir = join(installDir(), "logs");
   return { stdout: join(dir, "stdout.log"), stderr: join(dir, "stderr.log") };
 }
+
+/**
+ * The pty-host's own log. `spawnDetachedHost` points the host's stdout/stderr
+ * here because it is started with no terminal and no supervisor, so otherwise
+ * a reap, an exit or a shutdown inside it leaves no trace anywhere.
+ */
+export function ptyHostLogPath(): string {
+  return join(installDir(), "logs", "pty-host.log");
+}

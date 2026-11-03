@@ -96,6 +96,14 @@ export class SessionHost {
       },
       onStatusChange: (session) => {
         if (session.status === "idle") this.promptSnapshots.delete(session.id);
+        if (session.status === "idle" && session.statusSource === "process-exit") {
+          this.log.info(`[pty-host] agent process exited for ${session.id}`, {
+            event: "pty_host.session_exit",
+            sessionId: session.id,
+            ranMs: (session.completedAt ?? new Date()).getTime() - session.startedAt.getTime(),
+            ...(session.failureCode ? { failureCode: session.failureCode } : {}),
+          });
+        }
         this.emit({ type: "event", event: "status-change", session });
       },
       onReady: (session) => this.emit({ type: "event", event: "ready", session }),
