@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -148,15 +148,16 @@ describe("getInstanceId", () => {
   });
 
   it("no source file reads THREADBASE_INSTANCE_ID or the hostname as an id outside the module", () => {
-    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
     const root = join(__dirname, "..");
-    const hits = execFileSync(
-      "/usr/bin/grep",
-      ["-rnE", "env\\.THREADBASE_INSTANCE_ID", "src", "cli", "--include=*.ts"],
-      { cwd: root, encoding: "utf8" },
-    )
-      .split("\n")
-      .filter((l) => l && !l.startsWith("src/instance-id.ts:"));
+    // Walked in Node, not grep: the Windows smoke job has no /usr/bin/grep.
+    const hits = ["src", "cli"]
+      .flatMap((d) =>
+        readdirSync(join(root, d), { recursive: true })
+          .map((f) => `${d}/${String(f).split(sep).join("/")}`)
+          .filter((f) => f.endsWith(".ts")),
+      )
+      .filter((f) => f !== "src/instance-id.ts")
+      .filter((f) => /env\.THREADBASE_INSTANCE_ID/.test(readFileSync(join(root, f), "utf8")));
     expect(hits).toEqual([]);
     for (const [file, needle] of [
       ["src/server.ts", /getInstanceId\(\)/g],
