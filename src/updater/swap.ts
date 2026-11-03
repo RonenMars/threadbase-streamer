@@ -100,6 +100,7 @@ function lstatSafeIsSymlink(path: string): boolean {
   try {
     return lstatSync(path).isSymbolicLink();
   } catch {
+    // Intentionally silent: ENOENT means no stale link, and any other error resurfaces at the symlinkSync that follows.
     return false;
   }
 }
