@@ -15,6 +15,7 @@ import { join } from "node:path";
 import semver from "semver";
 import { CURRENT_SYMLINK, RELEASES_DIR, releaseDir, THREADBASE_ROOT } from "./paths";
 import { versionStamp } from "./stamp-version";
+import { appendUpdateLog } from "./update-log";
 
 const KEEP_LAST_N = 2;
 
@@ -92,6 +93,7 @@ function publishVersionTxt(target: string, version: string): void {
     // No staged sidecar (a tarball unpacked without one). We still know the
     // version being activated, so stamp it directly rather than leaving
     // version.txt pointing at the release we just replaced.
+    appendUpdateLog(`[swap] version.txt sidecar missing; stamped version=${version}`);
     writeFileSync(dest, versionStamp(version));
   }
 }
@@ -99,7 +101,11 @@ function publishVersionTxt(target: string, version: string): void {
 function lstatSafeIsSymlink(path: string): boolean {
   try {
     return lstatSync(path).isSymbolicLink();
-  } catch {
+  } catch (err) {
+    // ENOENT is the normal answer (nothing stale to remove); anything else is
+    // an unreadable path we are about to symlink over, so leave a trace.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") appendUpdateLog(`[swap] lstat failed code=${code ?? "unknown"}`);
     return false;
   }
 }
