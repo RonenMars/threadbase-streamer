@@ -869,13 +869,18 @@ program
     // Signalled teardown kills the agents on the way out. When the host goes
     // away there is nothing left holding their fds, so leaving them running
     // would orphan them with no owner and no reaper.
-    const shutdown = () => {
+    const shutdown = (signal: string) => () => {
+      log.info(`pty-host stopping on ${signal}`, { event: "pty_host.signal", signal });
       host.dispose();
       server.close();
       process.exit(0);
     };
-    process.on("SIGTERM", shutdown);
-    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown("SIGTERM"));
+    process.on("SIGINT", shutdown("SIGINT"));
+    // Every way out ends here, so the log always records that the host is gone.
+    process.on("exit", (code) => {
+      log.info(`pty-host exiting with code ${code}`, { event: "pty_host.exit", code });
+    });
   });
 
 registerProdCommands(program);
