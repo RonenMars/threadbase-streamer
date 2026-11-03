@@ -664,6 +664,7 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
 export type ApiDepsWiring = {
   sessionGeometry: Map<string, { cols: number; rows: number }>;
   apiKey: () => string;
+  scanProfiles: ApiDeps["scanProfiles"];
   localNoAuth: boolean;
   logMenubarRequests: boolean;
   publicUrl: string | null;
@@ -740,6 +741,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     get apiKey() {
       return deps.apiKey();
     },
+    scanProfiles: deps.scanProfiles,
     localNoAuth: deps.localNoAuth,
     logMenubarRequests: deps.logMenubarRequests,
     rotateApiKey: () => deps.rotateApiKey(),

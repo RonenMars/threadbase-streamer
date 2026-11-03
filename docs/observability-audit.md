@@ -20,7 +20,7 @@
 |--------|------|-----------------------|-------------|
 | GET | `/healthz` | `api/routes/health.routes.ts` | Health check; returns `{ok, version}`. Public, no auth. |
 | GET | `/api/info` | `api/routes/misc.routes.ts` | Server metadata: version, hostname, platform, active session count, publicUrl |
-| GET | `/api/profiles` | `api/routes/misc.routes.ts` | Stub; always returns `[]` |
+| GET | `/api/profiles` | `api/routes/misc.routes.ts` | Returns configured scan profiles; `[]` until accounts exist (#1074) |
 | POST | `/api/push/register` | `api/routes/misc.routes.ts` | Push-registration stub; always returns `{ok:true}` |
 | POST | `/api/__update` | `api/routes/misc.routes.ts` | HMAC-authenticated webhook; spawns `update --force` subprocess |
 | POST | `/api/__client-log` | `api/routes/misc.routes.ts` | Receives structured log batches from mobile clients; forwards to pino component `client` |

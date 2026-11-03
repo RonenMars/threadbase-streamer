@@ -28,10 +28,12 @@ import type { ExpoPushSender } from "../../services/push/expoPushSender";
 import type { Principal } from "../../services/security/capabilities";
 import type { ReconcileVerdict } from "../../services/sessions/reconcileSessions";
 import type { SessionStore } from "../../session-store";
+import type { ServerConfig } from "../../types";
 import type { WSHub } from "../../ws-hub";
 
 export type ApiDeps = {
   apiKey: string;
+  scanProfiles: ServerConfig["scanProfiles"];
   localNoAuth: boolean;
   logMenubarRequests: boolean;
   rotateApiKey: () => { newKey: string; persisted: boolean };
