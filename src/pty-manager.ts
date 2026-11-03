@@ -239,6 +239,10 @@ export class PTYManager implements SessionRunner {
   private turnOpen = new Map<string, "submitted" | "working" | "ending" | "held">();
   // Submit time of a turn whose busy signal has not arrived yet.
   private awaitingStart = new Map<string, number>();
+  // Turns re-opened after a held gate: the idle signal was already seen, so a
+  // lapse with no busy title is a signalled end. State, not a timer argument,
+  // because the submit's own grace timer can fire for the re-opened turn first.
+  private endSignalled = new Set<string>();
   // Sessions whose Claude has emitted a turn signal at all — a CLI that never
   // does keeps the marker-only behaviour instead of waiting on a signal.
   private progressSeen = new Set<string>();
@@ -795,6 +799,7 @@ export class PTYManager implements SessionRunner {
     this.oscTail.delete(sessionId);
     this.turnOpen.delete(sessionId);
     this.awaitingStart.delete(sessionId);
+    this.endSignalled.delete(sessionId);
     this.progressSeen.delete(sessionId);
     this.progressTail.delete(sessionId);
     this.lastDetectAt.delete(sessionId);
@@ -931,6 +936,7 @@ export class PTYManager implements SessionRunner {
     this.oscTail.clear();
     this.turnOpen.clear();
     this.awaitingStart.clear();
+    this.endSignalled.clear();
     this.progressSeen.clear();
     this.progressTail.clear();
     this.lastDetectAt.clear();
@@ -1388,7 +1394,13 @@ export class PTYManager implements SessionRunner {
     this.onStatusChange?.(toPublicSession(session));
   }
 
-  private openTurnOnSubmit(sessionId: string): void {
+  /**
+   * `endSignalled`: Claude already painted its idle title for this turn (a held
+   * turn's gate), so a lapse with no busy title is the answer ending the turn,
+   * not a guess, and settles as `turn-signal`.
+   */
+  private openTurnOnSubmit(sessionId: string, endSignalled = false): void {
+    if (endSignalled) this.endSignalled.add(sessionId);
     this.awaitingStart.set(sessionId, Date.now());
     if (!this.progressSeen.has(sessionId)) return;
     const before = this.turnOpen.get(sessionId);
@@ -1398,7 +1410,7 @@ export class PTYManager implements SessionRunner {
       if (this.turnOpen.get(sessionId) !== "submitted") return;
       this.turnOpen.delete(sessionId);
       this.logTurn(sessionId, "lapsed", "submitted");
-      this.recheckReadyLogged(sessionId);
+      this.recheckReadyLogged(sessionId, this.endSignalled.delete(sessionId));
     }, TURN_START_GRACE_MS);
     timer.unref?.();
   }
@@ -1414,8 +1426,8 @@ export class PTYManager implements SessionRunner {
     });
   }
 
-  private recheckReadyLogged(sessionId: string): void {
-    this.recheckReadyFromScreen(sessionId).catch((err) => {
+  private recheckReadyLogged(sessionId: string, endSignalled = false): void {
+    this.recheckReadyFromScreen(sessionId, endSignalled).catch((err) => {
       this.log.warn("[pty.ready] screen recheck failed", {
         event: "pty.ready_recheck_failed",
         sessionId,
@@ -1429,7 +1441,7 @@ export class PTYManager implements SessionRunner {
   // fallback above covers the first prompt after spawn/resume. Scoped to a
   // full viewport (PTY_ROWS), not just the last few lines: "on screen" means
   // whatever a user attached to this PTY would currently see.
-  private async recheckReadyFromScreen(sessionId: string): Promise<void> {
+  private async recheckReadyFromScreen(sessionId: string, endSignalled = false): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session?.status !== "running") return;
     const lines = await this.getOutputLines(sessionId, PTY_ROWS);
@@ -1452,7 +1464,7 @@ export class PTYManager implements SessionRunner {
         return;
       }
       if (turn === "held") {
-        this.openTurnOnSubmit(sessionId);
+        this.openTurnOnSubmit(sessionId, true);
         return;
       }
       this.turnOpen.delete(sessionId);
@@ -1464,7 +1476,12 @@ export class PTYManager implements SessionRunner {
     }
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => lines.some((l) => l.includes(m)));
     if (matchedMarker && session.status === "running" && !this.turnOpen.has(sessionId)) {
-      this.markReady(sessionId, session, "screen-marker", `quiet:screen-marker:${matchedMarker}`);
+      this.markReady(
+        sessionId,
+        session,
+        endSignalled ? "turn-signal" : "screen-marker",
+        `quiet:screen-marker:${matchedMarker}`,
+      );
     }
   }
 
@@ -1595,6 +1612,7 @@ export class PTYManager implements SessionRunner {
     this.oscTail.delete(sessionId);
     this.turnOpen.delete(sessionId);
     this.awaitingStart.delete(sessionId);
+    this.endSignalled.delete(sessionId);
     this.progressSeen.delete(sessionId);
     this.progressTail.delete(sessionId);
     this.lastDetectAt.delete(sessionId);
