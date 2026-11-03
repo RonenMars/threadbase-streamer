@@ -26,6 +26,11 @@ const testTimeout = process.platform === "win32" ? 900_000 : 45_000;
 //   pty-live-question-close, pty-shell-prompt-detection, transcript-watch-
 //   deadline, codex-multi-choice-transport). Four workers plus thousands of
 //   watch handles recreate the BIND_BUDGET flakes.
+// - Not a free speed-up elsewhere: 10 forks on a 10-core box took 1144s vs
+//   1259s serial (-9%) but failed 45 tests vs 15, because most files boot a
+//   real StreamerServer (SQLite + chokidar) and starve each other
+//   (pair-endpoints: 860s, 9/9 failing, tests at 174s under a 15s timeout).
+//   If you want the suite faster, lower maxForks to 4-6; raising it is worse.
 // See docs/testing/cross-platform-ci.md.
 const nodeMajor = Number.parseInt(process.versions.node, 10);
 const fileParallelism = !(

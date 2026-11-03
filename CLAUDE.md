@@ -201,6 +201,8 @@ What enforces this (the `main protection` / `release tags` rulesets, and why the
 
 Tests mock `node-pty` and shell commands. Integration tests spin up the HTTP server on random ports. Run the full verification before committing: `npm run lint && npm test`
 
+Do not flip `fileParallelism` or raise `maxForks` to speed the suite up. Measured (10 cores, full suite): 10 forks took 1144s vs 1259s serial (-9%) but failed 45 tests vs 15, since most files boot a real `StreamerServer` and starve each other. macOS and Windows Node 24 run serial for their own reasons (see the comment in `vitest.config.ts`).
+
 Use the Node version in `.nvmrc` for local verification, especially for tests or code paths that load `better-sqlite3`. Running under a newer Homebrew/global Node can pick up native modules compiled for a different `NODE_MODULE_VERSION`, causing ABI errors or failed rebuilds unrelated to the product change.
 
 ## Backward compatibility with tb-mobile
