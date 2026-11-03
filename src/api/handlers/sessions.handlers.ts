@@ -1585,11 +1585,7 @@ export class SessionHandlers {
       }
       const option = gate.options[selectedIndex];
       if (!option) return { ok: false, code: "unknown_option" };
-      const provider = this.sessionStore.getManaged(sessionId)?.provider;
-      if (
-        !runnerOwnsGates(provider) &&
-        !(await this.permissionGateStillOpen(sessionId, permissionGateKey(gate)))
-      ) {
+      if (!(await this.permissionGateStillOpen(sessionId, permissionGateKey(gate)))) {
         // The terminal below settles the registry record, but nothing else
         // retires pendingPermission, so /input kept refusing text beside a
         // cancelled record until retention swept it (the legacy route's
@@ -1830,12 +1826,9 @@ export class SessionHandlers {
     // asking it refused every Codex answer as gate_closed. The Codex runner
     // clears the pending gate itself when the dialog leaves the screen, so for
     // Codex the map is the authority and gateId carries instance identity.
-    // Copilot's cards are raised and retired by its runner the same way.
-    const provider = this.sessionStore.getManaged(sessionId)?.provider;
-    if (
-      !runnerOwnsGates(provider) &&
-      !(await this.permissionGateStillOpen(sessionId, contentKey ?? permissionGateKey(gate)))
-    ) {
+    // Copilot's cards are raised and retired by its runner the same way; for
+    // those permissionGateStillOpen flushes the screen and re-reads the map.
+    if (!(await this.permissionGateStillOpen(sessionId, contentKey ?? permissionGateKey(gate)))) {
       gateClosed();
       return;
     }
@@ -1882,6 +1875,19 @@ export class SessionHandlers {
    */
   private async permissionGateStillOpen(sessionId: string, contentKey: string): Promise<boolean> {
     if (!this.ptyManager.hasSession(sessionId)) return true;
+    // A runner-owned card has no scraper to ask, so the pending map stays the
+    // authority. But a repaint that is queued in the screen and not yet parsed
+    // has not reached the map: flush the screen first, so the runner announces
+    // a changed or closed card before the answer's keys are written (#1085).
+    if (runnerOwnsGates(this.sessionStore.getManaged(sessionId)?.provider)) {
+      try {
+        await this.ptyManager.getOutputLines(sessionId, 1);
+      } catch {
+        return true;
+      }
+      const live = this.pendingPermission.get(sessionId);
+      return live !== undefined && permissionGateKey(live) === contentKey;
+    }
     try {
       const lines = await this.ptyManager.getOutputLines(sessionId, 60);
       // Both producers of a Claude-session gate, not just the box scraper: a
@@ -2015,7 +2021,6 @@ export class SessionHandlers {
       }
       if (
         focused?.kind === "permission" &&
-        !runnerOwnsGates(this.sessionStore.getManaged(sessionId)?.provider) &&
         !(await this.permissionGateStillOpen(sessionId, focused.contentKey))
       ) {
         const pending = this.pendingPermission.get(sessionId);
