@@ -88,6 +88,7 @@ import {
   type E2eeRequestError,
   parseE2eeRequest,
 } from "./e2ee/pair-request";
+import { own } from "./e2ee/protocol";
 import { type ExternalTailEntry, ExternalTailManager } from "./external-tails";
 import {
   describeFeatureFlags,
@@ -1085,7 +1086,7 @@ export class StreamerServer {
    * a full broadcast if no match exists (old clients, or no WS registered yet).
    */
   private broadcastOrUnicastSessionList(req: IncomingMessage): void {
-    const clientId = req.headers["x-client-id"];
+    const clientId = own(req.headers, "x-client-id");
     const ws = typeof clientId === "string" ? this.clientIdToWs.get(clientId) : undefined;
     const payload = this.sessionListPayload();
     if (ws) {
@@ -2249,7 +2250,7 @@ export class StreamerServer {
   // ─── Request Router ────────────────────────────────────────────
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const host = req.headers.host ?? "localhost";
+    const host = own(req.headers, "host") ?? "localhost";
     const webReq = new Request(`http://${host}${req.url ?? "/"}`, {
       method: req.method ?? "GET",
       headers: req.headers as Record<string, string>,
@@ -2275,7 +2276,7 @@ export class StreamerServer {
   }
 
   private async handlePairExchange(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const ct = req.headers["content-type"] ?? "";
+    const ct = own(req.headers, "content-type") ?? "";
     if (!String(ct).toLowerCase().includes("application/json")) {
       json(res, 415, { error: "Content-Type: application/json required" });
       return;
