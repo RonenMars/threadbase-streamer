@@ -135,6 +135,39 @@ describe("pty-host events reach the log", () => {
     );
   });
 
+  it("logs one session_exit with reason shutdown when the streamer stops the agent", async () => {
+    const { logger, lines } = capture();
+    const { runner } = await startHost({ logger });
+    await runner.start("held", { projectPath: tmpdir(), projectName: "p" });
+
+    runner.putOnHold("held");
+    // putOnHold drops the session before the child exits, so the late exit is
+    // the second report the host must not turn into a second line.
+    await vi.waitFor(() =>
+      expect(lines.filter((l) => l.fields?.event === "pty_host.session_exit")).toHaveLength(1),
+    );
+    (await lastProc())._emit("exit", { exitCode: 0 });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const exits = lines.filter((l) => l.fields?.event === "pty_host.session_exit");
+    expect(exits).toHaveLength(1);
+    expect(exits[0].fields).toMatchObject({ sessionId: "held", reason: "shutdown" });
+    expect(typeof exits[0].fields?.ranMs).toBe("number");
+  });
+
+  it("logs reason process-exit when the agent exits on its own", async () => {
+    const { logger, lines } = capture();
+    const { runner } = await startHost({ logger });
+    await runner.start("own", { projectPath: tmpdir(), projectName: "p" });
+    (await lastProc())._emit("exit", { exitCode: 0 });
+    await vi.waitFor(() =>
+      expect(lines.find((l) => l.fields?.event === "pty_host.session_exit")?.fields).toMatchObject({
+        sessionId: "own",
+        reason: "process-exit",
+      }),
+    );
+  });
+
   it("logs an idle reap", async () => {
     const { logger, lines } = capture();
     const { host, runner } = await startHost({ logger });
