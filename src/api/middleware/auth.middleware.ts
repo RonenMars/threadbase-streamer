@@ -23,6 +23,7 @@ import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
 
 const log = getLogger("e2ee");
+const authLog = getLogger("auth");
 
 /** The one path a WebSocket ticket authenticates. */
 const WS_PATH = "/ws";
@@ -99,6 +100,14 @@ export const authMiddleware =
     }
 
     const remoteAddr = c.env.incoming?.socket?.remoteAddress;
+    // The decision, logged by what the request is and never by what it carried:
+    // path (no query string), method and the socket address. Not a header, not
+    // `Cf-Connecting-Ip`, not the credential or `?key=`. A tunneled request
+    // therefore reads 127.0.0.1 here, same as `isLocal` below sees it.
+    const unauthorized = (body: { error: string; code?: string } = { error: "Unauthorized" }) => {
+      authLog.warn("[auth] request rejected", { event: "auth.rejected", path, method, remoteAddr });
+      return c.json(body, 401);
+    };
     // Loopback alone is not local: a request forwarded by a tunnel or proxy on
     // this machine arrives from 127.0.0.1 too, so it must also have been
     // addressed to loopback and carry no forwarding header.
@@ -130,7 +139,7 @@ export const authMiddleware =
     // request or not: the relay would hold a key that works on the direct path.
     // Refused outright rather than ignored, so a client that does it is told.
     if (viaRelay && (authorization !== undefined || queryKey !== undefined)) {
-      return c.json({ error: "Unauthorized", code: "RELAY_PLAINTEXT_CREDENTIAL" }, 401);
+      return unauthorized({ error: "Unauthorized", code: "RELAY_PLAINTEXT_CREDENTIAL" });
     }
 
     // ─── A ticketed WebSocket upgrade authenticates by its ticket ───────
@@ -185,14 +194,14 @@ export const authMiddleware =
         const spent = registry.consumeTicket(presented);
         if (spent) registry.destroy(spent);
       }
-      return c.json({ error: "Unauthorized" }, 401);
+      return unauthorized();
     }
     const ticket = presentedTickets[0] ?? (offered.includes(E2EE_WS_SUBPROTOCOL) ? "" : undefined);
     if (ticket !== undefined) {
       const registry = contextRegistry();
       const ctxId = registry.consumeTicket(ticket);
       const context = ctxId ? registry.get(ctxId) : null;
-      if (!context) return c.json({ error: "Unauthorized" }, 401);
+      if (!context) return unauthorized();
       // The shared tail, in `context.ts` because the REST unseal middleware
       // runs exactly the same decision off `X-TB-Ctx`: device row, per-request
       // `revoked_at`, credential-must-name-the-same-device, principal built
@@ -308,7 +317,7 @@ export const authMiddleware =
     }
 
     if (!presented && !loopbackOwner) {
-      return c.json({ error: "Unauthorized" }, 401);
+      return unauthorized();
     }
 
     // Resolve the caller to a principal (C5).
@@ -318,6 +327,9 @@ export const authMiddleware =
     // principal holding the full preset. Keeping the shared key working is what
     // lets this ship without breaking every already-paired device.
     let principal: Principal | null = null;
+    // Which branch served the request, for the debug line below.
+    let acceptedBy: "auth.bearer_ok" | "auth.key_param_ok" | "auth.local_bypass" =
+      bearer !== undefined ? "auth.bearer_ok" : "auth.key_param_ok";
 
     const device = presented ? (deps.devicesRepo()?.authenticate(presented) ?? null) : null;
     if (device) {
@@ -338,11 +350,18 @@ export const authMiddleware =
       // No credential needed from loopback under the flag — and a wrong one does
       // not demote it either, which is what the old unconditional bypass did.
       principal = legacyPrincipal();
+      acceptedBy = "auth.local_bypass";
     }
 
     if (!principal) {
-      return c.json({ error: "Unauthorized" }, 401);
+      return unauthorized();
     }
+    // "pino": the default dest would also console.log this on every request.
+    authLog.debug(
+      "[auth] request accepted",
+      { event: acceptedBy, path, method, remoteAddr },
+      "pino",
+    );
 
     // ─── Downgrade enforcement: 426, never 401 (design.md §6.3) ────────
     //
