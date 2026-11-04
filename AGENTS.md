@@ -30,6 +30,16 @@ Vitest globals are enabled. Every new feature requires tests under `__tests__/`.
 - Codex resume/fork readiness is authoritative. An active rollout writer returns HTTP 409 with `code: "CONVERSATION_BUSY"` and `reasonCode: "CODEX_SESSION_ACTIVE"`; `force` does not bypass it. Recovery is `POST /api/sessions/:id/fork`. See [docs/compatibility/codex-collision-and-fork.md](docs/compatibility/codex-collision-and-fork.md).
 - Under `MULTI_AGENT_FLOW=true`, start/input use the Temporal pipeline and PTY mode is unreachable. Preserve 429 `SESSION_BUSY` with `retryAfterMs` and 413 `SESSION_HISTORY_FULL`. See [docs/multi-agent-mode.md](docs/multi-agent-mode.md).
 
+## Session ownership terms
+
+- **External**: a session whose process the streamer discovered but did not spawn (`ownership: "external"`).
+  Clients show it read-only and never send input to it.
+  The only client actions are rename (`PATCH /api/sessions/:id/name`) and terminate (`POST /api/sessions/:id/terminate`, which SIGTERMs the owner and polls until the pid is gone).
+  Adopt (`POST /api/sessions/:id/adopt`) terminates the owner the same way and respawns the conversation under this streamer.
+- **Managed**: a session the streamer spawned as a PTY child (`ownership: "managed"`).
+  `SessionStore.ownsConversation()` keeps those out of the external list.
+- The user-facing word is "External", never "Observed".
+
 ## Configuration invariants
 
 - `server.yaml` is not complete runtime configuration. `port:` is ignored; services must pass `--port` explicitly (default `8766`).
