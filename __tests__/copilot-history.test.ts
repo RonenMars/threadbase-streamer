@@ -111,6 +111,34 @@ describe("Copilot history indexing", () => {
     });
     afterEach(() => cache.close());
 
+    it("keeps sessions apart although every Copilot file is named events.jsonl", async () => {
+      const other = "99999999-8888-4777-8666-555555555555";
+      mkdirSync(join(root, "session-state", other), { recursive: true });
+      const otherFile = join(root, "session-state", other, "events.jsonl");
+      writeFileSync(
+        otherFile,
+        `${[lines[0], event("user.message", { content: "second session" }, 1)].join("\n")}\n`,
+      );
+      cache
+        .getDatabase()
+        .prepare(
+          "INSERT INTO conversation_meta (id, file_path, provider, message_count, updated_at) VALUES (?, ?, 'copilot', 1, 1)",
+        )
+        .run(other, canonicalizeFilePath(otherFile));
+
+      await cache.backfillIndex(file);
+      await cache.backfillIndex(otherFile);
+
+      expect(cache.readMessageWindow(file, 0, 80)?.messages.map((m) => m.text)).toEqual([
+        "list files",
+        "",
+        "README.md and package.json",
+      ]);
+      expect(cache.readMessageWindow(otherFile, 0, 80)?.messages.map((m) => m.text)).toEqual([
+        "second session",
+      ]);
+    });
+
     it("indexes the messages the scanner serves, tool-only steps included", async () => {
       await cache.backfillIndex(file);
 

@@ -673,12 +673,12 @@ export class ConversationCache {
    * offset index keys on this so the window select and the cursor agree.
    */
   static conversationIdForFile(filePath: string): string {
-    return (
-      filePath
-        .split(/[/\\]/)
-        .pop()
-        ?.replace(/\.jsonl$/, "") ?? filePath
-    );
+    const parts = filePath.split(/[/\\]/);
+    const name = parts.pop() ?? filePath;
+    // Copilot names every session file `events.jsonl`; the session id is its
+    // directory. Keyed by file name, every Copilot session would share one id.
+    if (name === "events.jsonl" && parts.length > 0) return parts[parts.length - 1];
+    return name.replace(/\.jsonl$/, "");
   }
 
   /**
@@ -1370,11 +1370,7 @@ export class ConversationCache {
 
     let convId = this.fileIndex.get(key);
     if (!convId) {
-      const pseudoId =
-        key
-          .split(/[/\\]/)
-          .pop()
-          ?.replace(/\.jsonl$/, "") ?? key;
+      const pseudoId = ConversationCache.conversationIdForFile(key);
       this.stmts.insertSkeleton.run(pseudoId, key, 0);
       this.fileIndex.set(key, pseudoId);
       convId = pseudoId;
@@ -1515,11 +1511,7 @@ export class ConversationCache {
 
     let convId = this.fileIndex.get(key);
     if (!convId) {
-      const pseudoId =
-        key
-          .split(/[/\\]/)
-          .pop()
-          ?.replace(/\.jsonl$/, "") ?? key;
+      const pseudoId = ConversationCache.conversationIdForFile(key);
       this.stmts.insertSkeleton.run(pseudoId, key, 0);
       this.fileIndex.set(key, pseudoId);
       convId = pseudoId;
