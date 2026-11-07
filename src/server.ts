@@ -106,6 +106,7 @@ import {
   CLAUDE_CODE_PROVIDER,
   CODEX_CLI_PROVIDER,
   COPILOT_PROVIDER,
+  CURSOR_PROVIDER,
   coerceProviderForRunner,
   PROVIDER_NAMES,
   type ProviderName,
@@ -3053,9 +3054,10 @@ export class StreamerServer {
     const row = this.managedSessionsRepo?.get(sessionId) ?? null;
     const liveSession = this.sessionStore.getManaged(sessionId);
     const resumeId =
-      (row ? resumeIdForRow(row) : null) ??
-      (liveSession?.provider === CODEX_CLI_PROVIDER
-        ? (liveSession.boundConversationId ?? null)
+      (row ? resumeIdForRow(row, liveSession?.boundConversationId) : null) ??
+      (liveSession?.provider === CODEX_CLI_PROVIDER ||
+      coerceProviderForRunner(liveSession?.provider) === CURSOR_PROVIDER
+        ? (liveSession?.boundConversationId ?? null)
         : null);
     const historyId = resumeId ?? sessionId;
     if (await this.conversationHandlers.isExcludedSubagent(historyId)) {
