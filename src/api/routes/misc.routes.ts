@@ -19,7 +19,7 @@ import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
 import { testNotificationBody } from "../../services/push/notificationCopy";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
-import { readRawBody } from "../handlers/http-helpers";
+import { BodyTooLargeError, readRawBody } from "../handlers/http-helpers";
 import { createRateLimiter } from "../rate-limit";
 import type { ApiDeps } from "../types/api-deps";
 
@@ -48,7 +48,11 @@ function numberOrNull(value: unknown): number | null {
  */
 export const MAX_JSON_BODY_BYTES = 1024 * 1024; // 1 MiB
 
-export class BodyTooLargeError extends Error {}
+/** `.catch` for a body read that tolerates a bad body but not an oversized one. */
+const nullUnlessTooLarge = (err: unknown): null => {
+  if (err instanceof BodyTooLargeError) throw err;
+  return null;
+};
 
 export function readJsonBody(
   req: IncomingMessage,
@@ -494,7 +498,7 @@ export const createMiscRoutes = (
   app.post("/api/push/register", async (c) => {
     // Read the raw Node request like the sibling routes do — Hono's c.req.json()
     // does not see a body on this server's request plumbing.
-    const body = (await readJsonBody(c.env.incoming).catch(() => null)) as {
+    const body = (await readJsonBody(c.env.incoming).catch(nullUnlessTooLarge)) as {
       token?: unknown;
       platform?: unknown;
       deviceId?: unknown;
@@ -651,7 +655,7 @@ export const createMiscRoutes = (
    * 404 so this cannot be used to probe for tokens.
    */
   app.patch("/api/push/preferences", async (c) => {
-    const body = (await readJsonBody(c.env.incoming).catch(() => null)) as {
+    const body = (await readJsonBody(c.env.incoming).catch(nullUnlessTooLarge)) as {
       token?: unknown;
       prefs?: unknown;
     } | null;
@@ -686,7 +690,7 @@ export const createMiscRoutes = (
    * hours would answer "does delivery work?" with silence.
    */
   app.post("/api/push/test", async (c) => {
-    const body = (await readJsonBody(c.env.incoming).catch(() => null)) as {
+    const body = (await readJsonBody(c.env.incoming).catch(nullUnlessTooLarge)) as {
       token?: unknown;
     } | null;
     const token = body?.token;
@@ -758,7 +762,7 @@ export const createMiscRoutes = (
   app.delete("/api/push/register", async (c) => {
     // Raw Node request like the sibling routes — Hono's c.req.json() does not
     // see a body on this server's request plumbing.
-    const body = (await readJsonBody(c.env.incoming).catch(() => null)) as {
+    const body = (await readJsonBody(c.env.incoming).catch(nullUnlessTooLarge)) as {
       token?: unknown;
     } | null;
     const token = body?.token;
