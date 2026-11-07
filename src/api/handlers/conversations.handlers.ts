@@ -446,6 +446,7 @@ export class ConversationHandlers {
         model: c.model ?? undefined,
         provider: canonicalizeProviderName(c.provider) ?? c.provider ?? CLAUDE_CODE_PROVIDER,
         ...this.importFlags(c),
+        teamName: c.teamName,
         ...externalTag(external, c.id),
       }));
       json(res, 200, {
@@ -508,6 +509,7 @@ export class ConversationHandlers {
         model: c.model ?? undefined,
         provider: canonicalizeProviderName(c.provider) ?? c.provider ?? CLAUDE_CODE_PROVIDER,
         ...this.importFlags(c),
+        teamName: c.teamName ?? null,
         ...externalTag(external, id),
       };
     });
