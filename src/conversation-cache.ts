@@ -265,6 +265,13 @@ const cacheLog = getLogger("cache");
 // across sampled Claude transcripts; 8 is slack, and each extra row is one
 // byte-range read out of an index we already consulted.
 const PARSE_STATE_LOOKBACK = 8;
+// A compaction summary takes its trigger and token counts from the
+// compact_boundary row before it, which is not a message and so has no index
+// row. The window reads the non-message lines between the previous message and
+// the summary to pick it up; this bounds that read.
+// ponytail: a gap larger than this serves the summary flagged but without the
+// boundary numbers. Index boundary rows if that ever shows up in practice.
+const COMPACTION_GAP_MAX_BYTES = 4 * 1024 * 1024;
 
 export class ConversationCache {
   private classifiers = new Map<string, ConversationClassifier>();
@@ -1078,9 +1085,24 @@ export class ConversationCache {
       // table, and `applyTeamInfo` is not exported to us at all. No lookback
       // fixes that; it needs the table carried per conversation. Left as a
       // known gap rather than papered over — see offset-index-read.test.ts.
+      let prevEnd = rows[0].message_index === 0 ? 0 : -1;
       for (const row of rows) {
         const buf = Buffer.alloc(row.byte_length);
         readSync(fd, buf, 0, row.byte_length, row.byte_offset);
+        const gap = prevEnd < 0 ? 0 : row.byte_offset - prevEnd;
+        if (
+          parser.state &&
+          gap > 0 &&
+          gap <= COMPACTION_GAP_MAX_BYTES &&
+          buf.includes('"isCompactSummary":true')
+        ) {
+          const between = Buffer.alloc(gap);
+          readSync(fd, between, 0, gap, prevEnd);
+          for (const line of between.toString("utf-8").split("\n")) {
+            if (line.includes('"compact_boundary"')) parser.parse(line, row.message_index);
+          }
+        }
+        prevEnd = row.byte_offset + row.byte_length;
         // Rows already exclude anything the writer filtered, so this is the
         // post-filter index and re-applying the rule is a no-op on a current
         // index. It only bites on rows written before the filter existed —
