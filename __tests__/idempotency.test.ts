@@ -31,6 +31,16 @@ describe("IdempotencyStore", () => {
     expect(store.get("sess-1", "key-b")).toBeNull();
   });
 
+  it("forgets a single key and keeps the others", () => {
+    const store = new IdempotencyStore();
+    store.set("sess-1", "key-a", OK);
+    store.set("sess-1", "key-b", OK);
+    store.forget("sess-1", "key-a");
+
+    expect(store.get("sess-1", "key-a")).toBeNull();
+    expect(store.get("sess-1", "key-b")).toEqual(OK);
+  });
+
   // A key is only meaningful against the conversation it was minted for.
   // Matching across sessions would silently drop a genuinely different prompt.
   it("scopes keys per session", () => {

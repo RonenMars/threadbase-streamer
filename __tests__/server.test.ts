@@ -417,6 +417,134 @@ describe("StreamerServer", () => {
       startFreshSpy.mockRestore();
     });
 
+    describe("idempotencyKey", () => {
+      const startWith = (body: Record<string, unknown>) =>
+        fetch(`${baseUrl}/api/sessions/start`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ path: "project", ...body }),
+        });
+
+      // One mocked spawn per call, each with its own id, so a duplicate spawn
+      // shows up as a second id rather than as a hidden second call. The first
+      // spawn settles on `firstStatus` ("idle" fails it, null leaves it pending).
+      const mockSpawns = (firstStatus: string | null = "waiting_input") => {
+        let n = 0;
+        return vi.spyOn(PTYManager.prototype, "startFresh").mockImplementation(async () => {
+          const id = `0${++n}9fd3ce-ad78-4980-b441-1cfa05edaec7`;
+          const status = n === 1 ? firstStatus : "waiting_input";
+          setImmediate(() => {
+            if (status) (server as any).sessionStatusBus.emit(`status:${id}`, status);
+          });
+          return {
+            id,
+            provider: "claude-code",
+            projectPath: join(browseRoot, "project"),
+            projectName: "project",
+            branch: "",
+            status: "running",
+            startedAt: new Date(),
+            completedAt: null,
+            promptCount: 0,
+            lastOutput: "",
+          };
+        });
+      };
+
+      // The phone lost signal before the 200 arrived and the user tapped retry.
+      it("replays the first session when the same key is sent again", async () => {
+        const spy = mockSpawns();
+        const first = await startWith({ idempotencyKey: "tap-1" });
+        const { session } = await first.json();
+        // The replay reports the session as it is now, not as first answered.
+        (server as any).sessionStore.updateManaged(session.id, { promptCount: 3 });
+        const retry = await startWith({ idempotencyKey: "tap-1" });
+
+        expect(first.status).toBe(200);
+        expect(retry.status).toBe(200);
+        expect((await retry.json()).session).toMatchObject({ id: session.id, promptCount: 3 });
+        expect(spy).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
+      });
+
+      // Positive control for the test above: without a repeated key, two starts
+      // are two sessions, so a `toHaveBeenCalledTimes(1)` can actually go red.
+      it("starts a second session for a different key or no key", async () => {
+        const spy = mockSpawns();
+        await startWith({ idempotencyKey: "tap-1" });
+        await startWith({ idempotencyKey: "tap-2" });
+        await startWith({});
+        await startWith({});
+
+        expect(spy).toHaveBeenCalledTimes(4);
+        spy.mockRestore();
+      });
+
+      // The retry lands while the first start is still waiting for readiness.
+      it("replays a start that is still waiting for readiness", async () => {
+        const spy = mockSpawns(null);
+        const first = startWith({ idempotencyKey: "tap-inflight" });
+        await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+        const retry = await startWith({ idempotencyKey: "tap-inflight" });
+        const id = "019fd3ce-ad78-4980-b441-1cfa05edaec7";
+        (server as any).sessionStatusBus.emit(`status:${id}`, "waiting_input");
+
+        expect(retry.status).toBe(202);
+        expect(await retry.json()).toEqual({ id, status: "pending" });
+        expect((await first).status).toBe(200);
+        expect(spy).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
+      });
+
+      it("spawns again when the keyed start failed", async () => {
+        const spy = mockSpawns("idle");
+        const failed = await startWith({ idempotencyKey: "tap-failed" });
+        const retry = await startWith({ idempotencyKey: "tap-failed" });
+
+        expect(failed.status).toBe(502);
+        expect(retry.status).toBe(200);
+        expect(spy).toHaveBeenCalledTimes(2);
+        spy.mockRestore();
+      });
+
+      // Copilot answers 200 at spawn, with no readiness wait, so a retry must
+      // replay that 200 rather than the 202 placeholder recorded at spawn.
+      it("replays a Copilot start as the 200 it first answered", async () => {
+        const spy = vi.spyOn(CopilotPtyRunner.prototype, "startFresh").mockResolvedValue({
+          id: "copilot-idem",
+          provider: "copilot",
+          projectPath: join(browseRoot, "project"),
+          projectName: "project",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+        const first = await startWith({ provider: "copilot", idempotencyKey: "tap-copilot" });
+        const retry = await startWith({ provider: "copilot", idempotencyKey: "tap-copilot" });
+
+        expect(first.status).toBe(200);
+        expect(retry.status).toBe(200);
+        expect((await retry.json()).session.id).toBe("copilot-idem");
+        expect(spy).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
+      });
+
+      it("rejects a malformed key before starting a PTY", async () => {
+        const spy = mockSpawns();
+        const res = await startWith({ idempotencyKey: 42 });
+
+        expect(res.status).toBe(400);
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+      });
+    });
+
     it("rejects invalid providers before starting a PTY", async () => {
       const startFreshSpy = vi.spyOn(PTYManager.prototype, "startFresh");
 
