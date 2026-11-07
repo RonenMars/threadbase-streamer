@@ -1,0 +1,104 @@
+name: Update relay pin
+
+# Bumps the hosted relay's pinned public key in src/relay/hosted.ts and opens an
+# auto-merging PR against next. Fires when the relay repo publishes a release
+# (repository_dispatch type "relay-released", client_payload.tag = vX.Y.Z and
+# client_payload.public_key = the relay's X25519 public key, base64url), or run
+# manually.
+#
+# Unlike scanner and agent-types, the streamer does not depend on a relay
+# package: the only thing a relay release can change here is the key the
+# streamer pins (and the URL, which does not move). A release that keeps the
+# key finishes with "nothing to do".
+#
+# The PR targets next, not main: relay-by-default ships through the prerelease
+# channel first (see docs/guides/releasing.md).
+#
+# Setup required for the automatic trigger:
+#   1. The relay's notify-streamer workflow dispatches this event using a PAT
+#      stored there (the default GITHUB_TOKEN cannot dispatch across repos).
+#   2. Add a PAT secret RELAY_VER_BUMP_PAT here (fine-grained: Contents
+#      read/write + Pull requests read/write on this repo). PRs created with the
+#      default GITHUB_TOKEN do NOT trigger CI, so auto-merge would never see
+#      required checks pass.
+
+on:
+  repository_dispatch:
+    types: [relay-released]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "relay version, for the PR title only (e.g. v0.2.0)"
+        required: false
+      public_key:
+        description: "relay X25519 public key, base64url (43 characters)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Bump the pinned relay key
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: next
+          # Use the PAT so the resulting PR triggers CI and can auto-merge.
+          token: ${{ secrets.RELAY_VER_BUMP_PAT || github.token }}
+
+      - name: Validate the payload
+        id: in
+        env:
+          # client_payload is attacker-controllable; both values reach sed, git
+          # and gh, so each must match a strict shape first.
+          TAG: ${{ github.event.client_payload.tag || github.event.inputs.tag }}
+          KEY: ${{ github.event.client_payload.public_key || github.event.inputs.public_key }}
+        run: |
+          tag="${TAG#v}"
+          if [ -n "$tag" ] && ! printf '%s' "$tag" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::refusing non-semver tag '$tag'"; exit 1
+          fi
+          # 32 raw bytes, base64url without padding.
+          if ! printf '%s' "$KEY" | grep -Eq '^[A-Za-z0-9_-]{43}$'; then
+            echo "::error::public_key is not a 43-character base64url X25519 key"; exit 1
+          fi
+          echo "tag=${tag:-key-only}" >> "$GITHUB_OUTPUT"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite the pinned key
+        id: bump
+        env:
+          KEY: ${{ steps.in.outputs.key }}
+        run: |
+          sed -i -E "s|^(const HOSTED_RELAY_PUBLIC_KEY = \")[^\"]*(\";)|\1${KEY}\2|" src/relay/hosted.ts
+          if git diff --quiet -- src/relay/hosted.ts; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Pinned key already matches — nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open bump PR
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELAY_VER_BUMP_PAT || github.token }}
+          TAG: ${{ steps.in.outputs.tag }}
+        run: |
+          branch="chore/bump-relay-key-${TAG}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists — a bump PR is already open. Skipping."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add src/relay/hosted.ts
+          git commit -m "fix(relay): pin the hosted relay key published with ${TAG}"
+          git push -u origin "$branch"
+          gh pr create --base next --head "$branch" \
+            --title "fix(relay): pin the hosted relay key published with ${TAG}" \
+            --body "Automated bump of the hosted relay's pinned public key in \`src/relay/hosted.ts\`, triggered by a relay release. A streamer that ships without this key cannot open its tunnel to the relay. Merges automatically once CI is green."
+          gh pr merge --auto --squash "$branch"

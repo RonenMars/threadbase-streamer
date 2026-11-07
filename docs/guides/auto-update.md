@@ -184,10 +184,10 @@ drives `generateNotes` with the real `.releaserc.json` config and is what
 catches it — a preset bump that passes commit analysis and still cannot render
 turns that test red rather than shipping a release with empty notes.
 
-The `next` branch does not exist by default. Create it
-(`git switch -c next && git push -u origin next`) only when you want
-canarying — servers with `channel: next` in `update.yaml` will consume
-from it. To promote a prerelease to stable, merge `next` → `main`.
+The `next` branch exists and `.releaserc.json` publishes it as a prerelease
+channel; servers with `channel: next` in `update.yaml` consume from it. To
+promote a prerelease to stable, merge `next` → `main`. Full procedure:
+[releasing.md](releasing.md).
 
 `package.json` sits at `0.1.0` today, with no prior `vX.Y.Z` tag, so the
 first `release.yml` run on `main` computes its bump from the full commit
