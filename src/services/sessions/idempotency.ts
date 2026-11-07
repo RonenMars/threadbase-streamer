@@ -85,6 +85,17 @@ export class IdempotencyStore {
     this.bySession.set(sessionId, pruned.slice(-this.maxKeys));
   }
 
+  /** Drop one key, e.g. when the write it recorded turned out to have failed. */
+  forget(sessionId: string, key: string): void {
+    const entries = this.bySession.get(sessionId);
+    if (entries) {
+      this.bySession.set(
+        sessionId,
+        entries.filter((e) => e.key !== key),
+      );
+    }
+  }
+
   /** Drop everything for a session whose PTY is gone. */
   clear(sessionId: string): void {
     this.bySession.delete(sessionId);

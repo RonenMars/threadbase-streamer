@@ -121,6 +121,13 @@ const ADOPT_KILL_POLL_MS = 100;
 // Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
 const START_READY_TIMEOUT_MS = 10_000;
 
+/**
+ * Scope under which `/start` idempotency keys are remembered. The store is
+ * keyed per session, but a start has no session yet — one shared scope is
+ * enough because the key is a client-minted UUID, unique per tap.
+ */
+const START_IDEMPOTENCY_SCOPE = "session-start";
+
 const RawKeySchema = z.object({
   action: z.enum(["escape", "up", "down", "left", "right", "tab", "shift_tab", "enter"]),
   promptId: z.string().trim().min(1).max(200).optional(),
@@ -2931,6 +2938,14 @@ export class SessionHandlers {
     const body = await readBody(req);
     const { path: relativePath, provider: requestedProvider, systemPrompt: clientPrompt } = body;
 
+    let idempotencyKey: string | undefined;
+    try {
+      idempotencyKey = readIdempotencyKey(body as Record<string, unknown>);
+    } catch (err) {
+      json(res, 400, { error: err instanceof Error ? err.message : "Invalid idempotencyKey" });
+      return;
+    }
+
     if (requestedProvider !== undefined && !isProviderName(requestedProvider)) {
       json(res, 400, { error: "Invalid provider" });
       return;
@@ -2970,6 +2985,27 @@ export class SessionHandlers {
     }
     const additionalPaths = additional.paths;
 
+    // A retry of a start the client never saw the answer to (dropped
+    // connection) replays the session already created instead of spawning a
+    // second PTY. Only while the store still holds that session: a key whose
+    // session has since been dropped (an abandoned start, a discarded empty
+    // stop) is a fresh start.
+    if (idempotencyKey) {
+      const replayed = this.idempotency.get(START_IDEMPOTENCY_SCOPE, idempotencyKey);
+      const replayedBody = replayed?.body as { id?: string; session?: { id: string } } | undefined;
+      const replayedId = replayedBody?.session?.id ?? replayedBody?.id;
+      const live = replayedId
+        ? this.sessionStore.get(replayedId, this.deps.ptyAttachedIds())
+        : undefined;
+      if (replayed && live) {
+        this.log.info(`[start.replay] ${live.id.slice(0, 8)} duplicate idempotencyKey`, {
+          event: "session.start_idempotent_replay",
+        });
+        json(res, replayed.status, replayed.status === 200 ? { session: live } : replayed.body);
+        return;
+      }
+    }
+
     this.discoveryCache = null;
 
     const systemPromptParts = [
@@ -2999,14 +3035,27 @@ export class SessionHandlers {
 
       this.sessionStore.addManaged(session);
       this.registryBoot.recordSessionSpawn(session);
+      // Record at spawn, not at response: a retry landing during the startup
+      // wait below must find this session, not spawn another.
+      if (idempotencyKey) {
+        this.idempotency.set(START_IDEMPOTENCY_SCOPE, idempotencyKey, {
+          status: 202,
+          body: { id: session.id, status: "pending" },
+        });
+      }
 
       // Live-v1 Copilot has no verified TUI readiness detector. The PTY is
       // attachable now (including its trust prompt); do not strand mobile on
       // a pending screen waiting for a session_ready event we cannot emit.
       if (provider === COPILOT_PROVIDER) {
-        json(res, 200, {
-          session: this.sessionStore.get(session.id, this.deps.ptyAttachedIds()) ?? session,
-        });
+        const started = this.sessionStore.get(session.id, this.deps.ptyAttachedIds()) ?? session;
+        if (idempotencyKey) {
+          this.idempotency.set(START_IDEMPOTENCY_SCOPE, idempotencyKey, {
+            status: 200,
+            body: { session: started },
+          });
+        }
+        json(res, 200, { session: started });
         this.deps.broadcastOrUnicastSessionList(req);
         return;
       }
@@ -3023,8 +3072,16 @@ export class SessionHandlers {
       const current = this.sessionStore.get(session.id, this.deps.ptyAttachedIds());
 
       if (outcome === "ready" && current) {
+        if (idempotencyKey) {
+          this.idempotency.set(START_IDEMPOTENCY_SCOPE, idempotencyKey, {
+            status: 200,
+            body: { session: current },
+          });
+        }
         json(res, 200, { session: current });
       } else if (outcome === "failed" && current) {
+        // A failed start must stay retryable under the same key.
+        if (idempotencyKey) this.idempotency.forget(START_IDEMPOTENCY_SCOPE, idempotencyKey);
         // The diagnosed reason rides on the settled session, not on the store
         // copy — same as the Codex resume path below. Reading only the store
         // here is what turned "the Claude binary is not accessible" into a
