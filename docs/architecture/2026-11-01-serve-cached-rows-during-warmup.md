@@ -46,7 +46,7 @@ Nothing is repaired mid-scan; `cache_ready` is the refetch signal.
 | `GET /api/projects/summary` | **Serve**, labelled | pure cache read |
 | `GET /api/sessions`, `/api/sessions/count` | **Serve** (header; body field on `/count` and the paginated page) once boot recovery has rehydrated the registry; 503 before | built from the session registry and the cache, not from the scan; before rehydration the list would be missing live sessions |
 | `GET /api/sessions/:id` | **Serve** (header) when found, once boot recovery has settled; an unknown id stays **503** | a partial index cannot say 404 — the file may exist and not be scanned yet |
-| `GET /api/conversations/:id` | **503** | reads through the scanner, which would start a second scan |
+| `GET /api/conversations/:id` | **Serve** (header); a read that finds nothing answers **503**, never 404 (a soft-deleted id still 404s: `deletedAt` is in cache.db) | until the scan adopts its scanner, `findConversationByUuid` takes its cold single-file path: `locateJsonlPath` (live PTY, the verified cache row, then the Claude-layout walk) and `parseSingleFilePage` on that one file, so no scan starts. The body is parsed from the file, not from the stale index, so it carries no `warming` field. A miss proves nothing on a partial index: the scanner-index rungs are empty, and a Codex rollout with no cache row has no other rung that can name it. With `scanProfiles` set (tests only, the CLI never sets it) the cold path is off and a lookup would start a scan, so it stays 503 |
 | any endpoint while a `cache_reset` or `conversation_refresh` warm-up is active | **503** | rows are absent or being rebuilt |
 | any endpoint on a first boot (empty cache) | **503** | nothing to serve; also stops a first boot from serving rows its own scan inserted |
 | `POST` / mutating / start / resume / fork | unchanged | not behind this gate |
@@ -75,14 +75,14 @@ Seconds from process start to the first 200, three restarts:
 | `GET /api/conversations` | 5.8 – 6.2 s | 0.55 – 0.72 s |
 | `GET /api/conversations/count` | 5.8 – 6.2 s | 0.55 – 0.73 s |
 | `GET /api/sessions/count` | 5.8 – 6.2 s | 0.69 – 0.87 s |
-| `GET /api/conversations/:id` (still gated) | 5.8 – 6.2 s | 5.84 – 6.17 s |
+| `GET /api/conversations/:id` (still gated in that build) | 5.8 – 6.2 s | 5.84 – 6.17 s |
 
 "Before" is read off the still-gated detail endpoint, which opens when the scan ends, on the same binary.
 The first boot on an empty cache is unchanged: every endpoint answered 503 until 98 s (one run, machine under load), with no `warming` label.
 
 ## Not done, on purpose
 
-- `GET /api/conversations/:id` stays gated: serving it means a second scan racing the first.
+- An id the warm-up read cannot find costs the Claude-layout directory walk before its 503, where it used to be refused at once; a Codex conversation with no cache row answers 503 until the scan ends.
 - Unknown session ids keep 503 rather than 404 during the warm-up.
 - No tb-mobile change.
 - The tail-population loop of the scan is untouched (tracked in #1106).
