@@ -12,6 +12,8 @@
 // server.yaml and over the wire, so a future CLI rename is a one-line change
 // here instead of a config migration.
 
+import { turnHooksSettings } from "./claude-turn-hooks";
+
 /** Claude Code `--permission-mode` values, as accepted by CLI v2.1.x. */
 export const PERMISSION_MODES = [
   "acceptEdits",
@@ -320,10 +322,13 @@ export function resolveEffectiveModelEffort(args: readonly string[]): {
 // an empty screen. Probe-verified on Claude Code v2.1.218: with the key set the
 // session boots straight to a usable prompt. Only added for the modes that can
 // actually trigger the gate, so a normal session's settings blob is unchanged.
-export function buildSettingsJson(permissionMode: PermissionMode): string {
+// `hooksFile` (flag `claudeTurnHooks`) adds the turn hooks that report into it;
+// without it the blob is unchanged.
+export function buildSettingsJson(permissionMode: PermissionMode, hooksFile?: string): string {
   const settings: Record<string, unknown> = { spinnerTipsEnabled: false };
   if (isDangerousPermissionMode(permissionMode)) {
     settings.skipDangerousModePermissionPrompt = true;
   }
+  if (hooksFile) settings.hooks = turnHooksSettings(hooksFile);
   return JSON.stringify(settings);
 }

@@ -135,6 +135,15 @@ export const FEATURE_FLAGS = {
     default: false,
     env: "THREADBASE_FEATURE_CODEX_APP_SERVER",
   },
+  claudeTurnHooks: {
+    description:
+      "Give Claude sessions UserPromptSubmit/Stop/StopFailure hooks, so a turn starts and ends on " +
+      "Claude's own report instead of the screen and transcript guesses, and the turn is also sent " +
+      "as session_event frames. Off by default while it is a pilot; the PTY signals stay the " +
+      "backstop (an Esc interrupt sends no Stop). Not honoured under ptyHost.",
+    default: false,
+    env: "THREADBASE_FEATURE_CLAUDE_TURN_HOOKS",
+  },
   ptyHost: {
     description:
       "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +

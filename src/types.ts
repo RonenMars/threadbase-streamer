@@ -296,8 +296,8 @@ export interface UserMessage {
 
 /**
  * Provider-neutral events a structured runner (codex app-server) reads straight
- * off the provider's own event stream, with no screen scraping. Additive: a
- * PTY runner never emits them.
+ * off the provider's own event stream, with no screen scraping. Additive. The
+ * Claude PTY runner emits only the turn events, and only with `claudeTurnHooks`.
  */
 export type SessionEvent =
   | { type: "turn_started"; turnId: string }
@@ -876,7 +876,7 @@ export interface PTYManagerOptions {
    * session for the whole turn.
    */
   onPhaseChange?: (sessionId: string, phase: AgentPhase | null) => void;
-  /** Fired by a structured runner for each normalized provider event. Additive; PTY runners never call it. */
+  /** Fired by a structured runner for each normalized provider event, and by the Claude PTY runner for turn starts and ends under `claudeTurnHooks`. Additive. */
   onSessionEvent?: (sessionId: string, event: SessionEvent) => void;
   // Fired when the composer's dim next-prompt suggestion appears, changes or is
   // cleared (`null`). Change-guarded like onPhaseChange: the scrape runs per chunk.

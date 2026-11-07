@@ -41,10 +41,13 @@ export class LiveSessionManager {
   private options: PTYManagerOptions;
   private disposed = false;
 
-  constructor(options: PTYManagerOptions = {}, flags: { codexAppServer?: boolean } = {}) {
+  constructor(
+    options: PTYManagerOptions = {},
+    flags: { codexAppServer?: boolean; claudeTurnHooks?: boolean } = {},
+  ) {
     this.options = options;
     this.runners = new Map<ProviderName, SessionRunner>([
-      [CLAUDE_CODE_PROVIDER, new PTYManager(options)],
+      [CLAUDE_CODE_PROVIDER, new PTYManager(options, { claudeTurnHooks: flags.claudeTurnHooks })],
       [
         CODEX_CLI_PROVIDER,
         flags.codexAppServer ? new CodexAppServerRunner(options) : new CodexPtyRunner(options),
