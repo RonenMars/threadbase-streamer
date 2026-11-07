@@ -66,6 +66,8 @@ type Opts = {
   lookupId?: string;
   /** What the sessionFileMap holds for this session — null until wiring lands. */
   liveFilePath?: string | null;
+  /** A process discovered outside the streamer (e.g. a Claude bg spare), by id. */
+  external?: { id: string; projectPath: string; projectName: string; startedAt: Date };
 };
 
 function makeHandlers(opts: Opts) {
@@ -86,6 +88,10 @@ function makeHandlers(opts: Opts) {
     sessionStore: {
       getManaged: (sid: string) => (opts.session?.id === sid ? opts.session : null),
       listManaged: () => (opts.session ? [opts.session] : []),
+      get: (sid: string) =>
+        opts.external?.id === sid
+          ? { ...opts.external, ownership: "external", provider: "claude" }
+          : null,
     },
     ptyManager: { hasSession: () => false },
     cache: () => ({
@@ -124,6 +130,41 @@ describe("a session with no transcript yet", () => {
     expect(body.message_pagination.total).toBe(0);
     // Nothing to self-heal: there is no ghost row, only a session yet to speak.
     expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("answers 200 for a discovered external session that has not written a transcript", async () => {
+    // A Claude bg "spare" (daemon-spawned, never prompted) is listed from process
+    // discovery but is not managed here and has no <id>.jsonl, so the managed-only
+    // guard 404'd it and mobile showed "Couldn't load conversation".
+    const id = "a427fcfb-5aef-47d8-98a6-45eff38a9a27";
+    const { handlers } = makeHandlers({
+      external: {
+        id,
+        projectPath: "/tmp/port-new-cs-p0",
+        projectName: "port-new-cs-p0",
+        startedAt: new Date("2026-11-07T22:51:44.000Z"),
+      },
+    });
+    const res = makeRes();
+
+    await handlers.handleGetConversation(
+      id,
+      new URL(`http://localhost/api/conversations/${id}?msg_limit=80`),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.messages).toEqual([]);
+    expect(body.meta.id).toBe(id);
+    expect(body.meta.project_name).toBe("port-new-cs-p0");
+  });
+
+  it("still 404s an id that is neither managed nor discovered (control)", async () => {
+    const { handlers } = makeHandlers({});
+    const res = makeRes();
+    await handlers.handleGetConversation("nope", url, res);
+    expect(res.statusCode).toBe(404);
   });
 
   it("carries camelCase aliases matching the session response names", async () => {
