@@ -1658,6 +1658,20 @@ export class ConversationHandlers {
         is_tool_result: m.isToolResult ?? false,
         attachment: m.attachment ?? null,
         content,
+        // Only on a compaction summary row, so every other message's payload
+        // is byte-identical to what it was before these fields existed.
+        ...(m.isCompactSummary
+          ? {
+              is_compact_summary: true,
+              compaction: m.compaction
+                ? {
+                    trigger: m.compaction.trigger ?? null,
+                    pre_tokens: m.compaction.preTokens ?? null,
+                    post_tokens: m.compaction.postTokens ?? null,
+                  }
+                : null,
+            }
+          : {}),
       };
     });
 
