@@ -1,3 +1,4 @@
+import { createJsonlParseState, parseJsonlLine } from "@threadbase-sh/scanner";
 import { describe, expect, it } from "vitest";
 import { toolResultText } from "../src/utils/claudeShapedLine";
 import {
@@ -393,5 +394,56 @@ describe("toolResultText", () => {
 
   it("keeps any other result in its JSON form", () => {
     expect(toolResultText({ stdout: "ok", exitCode: 0 })).toBe('{"stdout":"ok","exitCode":0}');
+  });
+
+  // The scanner wraps a Claude tool_result whose content is a plain string as
+  // `{ text }`; the app must receive the string, not the wrapper.
+  const GH_RESULT = '{"mergeStateStatus":"BEHIND","state":"OPEN"}';
+
+  it("unwraps a Claude string result parsed by the scanner", () => {
+    const state = createJsonlParseState();
+    parseJsonlLine(
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a1",
+        timestamp: "2026-10-12T18:00:00.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "gh pr view" } }],
+        },
+      }),
+      state,
+    );
+    const message = parseJsonlLine(
+      JSON.stringify({
+        type: "user",
+        uuid: "u1",
+        timestamp: "2026-10-12T18:00:01.000Z",
+        toolUseResult: { stdout: GH_RESULT, stderr: "" },
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "t1", content: GH_RESULT }],
+        },
+      }),
+      state,
+    );
+    const result = message?.metadata?.toolResults?.[0];
+    expect(result).toBeDefined();
+    expect(toolResultText(result?.content)).toBe(GH_RESULT);
+  });
+
+  it("joins the text blocks of an MCP-style result", () => {
+    const blocks = [
+      { type: "text", text: "first" },
+      { type: "text", text: "second" },
+    ];
+    expect(toolResultText(blocks as unknown as Record<string, unknown>)).toBe("first\nsecond");
+  });
+
+  it("keeps a result with a non-text block in its JSON form", () => {
+    const blocks = [{ type: "image", source: { type: "base64", data: "AAAA" } }];
+    expect(toolResultText(blocks as unknown as Record<string, unknown>)).toBe(
+      JSON.stringify(blocks),
+    );
   });
 });

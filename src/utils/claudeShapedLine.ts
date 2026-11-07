@@ -37,9 +37,21 @@ export function toClaudeShapedLine(message: ConversationMessage, uuid: string): 
  * A scanner tool result's content as the string a client renders. Codex results
  * carry their program output as `content.output`: send that verbatim, the way a
  * live Claude tool_result carries its text, not a JSON object whose newlines
- * arrive escaped. Every other result keeps its JSON form.
+ * arrive escaped.
+ *
+ * Claude results unwrap too: the scanner wraps a plain-string result as
+ * `{ text }`, and an MCP-style result is an array of content blocks. Both reach
+ * the client as their text. Anything else (an image block, an unknown object)
+ * keeps its JSON form.
  */
-export function toolResultText(content: Record<string, unknown> | undefined): string {
-  const output = content?.output;
-  return typeof output === "string" ? output : JSON.stringify(content);
+export function toolResultText(content: unknown): string {
+  if (Array.isArray(content)) {
+    const texts = content.map((b) => (b?.type === "text" ? b.text : undefined));
+    if (content.length > 0 && texts.every((t) => typeof t === "string")) return texts.join("\n");
+  } else if (content && typeof content === "object") {
+    const { output, text } = content as Record<string, unknown>;
+    if (typeof output === "string") return output;
+    if (typeof text === "string" && Object.keys(content).length === 1) return text;
+  }
+  return JSON.stringify(content);
 }
