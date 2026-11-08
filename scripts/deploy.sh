@@ -1169,6 +1169,10 @@ cmd_deploy() {
       rm -rf -- "$obsolete"
     done || true
   ls -t "$RELEASES_DIR"/cli.*.cjs 2>/dev/null | tail -n +$((KEEP_RELEASES + 1)) | xargs -r rm -f || true
+  # A bundle's .version sidecar goes with it; this also sweeps ones orphaned by earlier deploys (#871).
+  for sidecar in "$RELEASES_DIR"/cli.*.cjs.version; do
+    [[ -e "${sidecar%.version}" ]] || rm -f -- "$sidecar"
+  done
 
   # Install (or refresh) the global `threadbase-streamer` shim. Non-fatal:
   # deploy is already healthy at this point; only the convenience shim is at stake.
