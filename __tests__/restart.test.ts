@@ -15,7 +15,10 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
+vi.mock("../src/updater/update-log", () => ({ appendUpdateLog: vi.fn() }));
+
 import { restartService, stopService } from "../src/updater/restart";
+import { appendUpdateLog } from "../src/updater/update-log";
 
 function spoofPlatform(platform: NodeJS.Platform): () => void {
   const original = Object.getOwnPropertyDescriptor(process, "platform");
@@ -91,6 +94,20 @@ describe("restartService", () => {
         "/TN",
         "Threadbase",
       ]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("on Windows logs the tolerated schtasks /End failure before the start", async () => {
+    const restore = spoofPlatform("win32");
+    try {
+      vi.mocked(appendUpdateLog).mockClear();
+      execFileMock
+        .mockRejectedValueOnce(new Error("task is not running"))
+        .mockResolvedValueOnce({ stdout: "", stderr: "" });
+      await restartService();
+      expect(appendUpdateLog).toHaveBeenCalledWith("[restart] schtasks /End failed; continuing");
     } finally {
       restore();
     }
@@ -284,6 +301,20 @@ describe("stopService", () => {
       const r = await stopService();
       expect(r.method).toBe("schtasks-end");
       expect(r.stderr).toMatch(/task is not running/);
+    } finally {
+      restore();
+    }
+  });
+
+  it("on Windows logs the tolerated schtasks /End failure without the error text", async () => {
+    const restore = spoofPlatform("win32");
+    try {
+      vi.mocked(appendUpdateLog).mockClear();
+      execFileMock
+        .mockRejectedValueOnce(new Error("task is not running"))
+        .mockResolvedValueOnce({ stdout: "", stderr: "" });
+      await stopService();
+      expect(appendUpdateLog).toHaveBeenCalledWith("[stop] schtasks /End failed; continuing");
     } finally {
       restore();
     }

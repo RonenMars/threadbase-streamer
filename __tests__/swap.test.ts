@@ -15,6 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let tmpRoot = "";
 
+// update-log resolves its path at import time, before tmpRoot is set.
+vi.mock("../src/updater/update-log", () => ({ appendUpdateLog: vi.fn() }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, lstatSync: vi.fn(actual.lstatSync) };
+});
+
 vi.mock("../src/updater/paths", () => {
   return {
     get THREADBASE_ROOT() {
@@ -39,6 +47,7 @@ vi.mock("../src/updater/paths", () => {
 });
 
 import { ensureReleasesDir, pruneOldReleases, swapCurrent } from "../src/updater/swap";
+import { appendUpdateLog } from "../src/updater/update-log";
 
 function makeRelease(version: string): void {
   const dir = join(tmpRoot, "releases", version);
@@ -113,6 +122,36 @@ describe("swap / prune (POSIX symlink path)", () => {
     swapCurrent("1.1.0");
     expect(readFileSync(join(tmpRoot, "version.txt"), "utf8")).toBe("1.1.0+update\n");
   });
+
+  it("logs when the release ships no sidecar and the version is stamped directly", () => {
+    vi.mocked(appendUpdateLog).mockClear();
+    makeStagedRelease("1.1.0", { sidecar: null });
+    swapCurrent("1.1.0");
+    expect(appendUpdateLog).toHaveBeenCalledWith(
+      "[swap] version.txt sidecar missing; stamped version=1.1.0",
+    );
+  });
+
+  it("does not log the sidecar fallback when the release ships one", () => {
+    vi.mocked(appendUpdateLog).mockClear();
+    makeStagedRelease("1.1.0");
+    swapCurrent("1.1.0");
+    expect(appendUpdateLog).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "logs an lstat failure other than ENOENT and carries on with the swap",
+    () => {
+      vi.mocked(appendUpdateLog).mockClear();
+      makeStagedRelease("1.1.0");
+      vi.mocked(lstatSync).mockImplementationOnce(() => {
+        throw Object.assign(new Error("denied"), { code: "EACCES" });
+      });
+      swapCurrent("1.1.0");
+      expect(appendUpdateLog).toHaveBeenCalledWith("[swap] lstat failed code=EACCES");
+      expect(readlinkSync(join(tmpRoot, "current"))).toBe(join(tmpRoot, "releases", "1.1.0"));
+    },
+  );
 
   it("keeps a sidecar shipped inside the tarball authoritative", () => {
     makeStagedRelease("1.1.0", { sidecar: "1.1.0+ci\n" });
