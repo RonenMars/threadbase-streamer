@@ -5,6 +5,7 @@ import {
   toLiveActivityStatus,
   truncateLastOutput,
 } from "./liveActivityContentState";
+import { countLiveActivity } from "./liveActivityMetrics";
 import type { LiveActivitySender } from "./liveActivitySender";
 
 /**
@@ -141,6 +142,13 @@ export class LiveActivityNotifier {
     });
     this.openActivity.set(session.id, { sessionNameSent: session.sessionName != null });
     if (outcome.attempted > 0) {
+      countLiveActivity("started");
+      log.info("live_activity.started", {
+        event: "live_activity.started",
+        sessionId: session.id,
+        status: contentState.status,
+        ...outcome,
+      });
       log.info("live_activity.updated", {
         event: "live_activity.updated",
         sessionId: session.id,
@@ -192,6 +200,7 @@ export class LiveActivityNotifier {
 
     const outcome = await this.sender.end({ sessionId: session.id, contentState });
     if (outcome.attempted > 0) {
+      countLiveActivity("ended");
       log.info("live_activity.ended", {
         event: "live_activity.ended",
         sessionId: session.id,

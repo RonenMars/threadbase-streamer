@@ -161,6 +161,32 @@ One rejected token never stops the others: a single dead device would otherwise 
 `GET /api/push/health` reports per-token state, including `expired` as distinct from `failing`.
 It never echoes a token back.
 
+## Metrics and token retention
+
+Each lifecycle step is logged as its own event, with the session id and never a token.
+
+| Event | When |
+|---|---|
+| `live_activity.started` | A turn opened and at least one activity was pushed to. |
+| `live_activity.renewed` | A renewal ended the old activity and at least one device accepted the end. |
+| `live_activity.ended` | A turn closed and the activity was told to end. |
+| `live_activity.retired` | APNs reported a token permanently dead (`reason` carries the APNs reason). |
+
+`GET /api/push/health` also returns `liveActivityMetrics`, an additive object of `{ started, renewed, ended, retired, since }`.
+The counts are in memory and start at zero on every server start, with `since` the epoch milliseconds they began.
+`started`, `renewed` and `ended` count session events, not devices.
+`/healthz` is unchanged.
+
+A daily sweep (and one at boot) deletes `push_tokens` rows, and only those.
+`devices` rows are never touched.
+
+- **Dead**: a row Expo reported `DeviceNotRegistered` (`revoked_at`), or APNs reported dead (`last_failure_code` is a dead-token reason), is deleted 7 days after the failure.
+  The grace is what lets `/api/push/health` still say why delivery stopped.
+- **Unused**: a row is deleted when the later of its last registration and its last successful send is 90 days old.
+  The app registers its Expo token on every launch, so a token silent for 90 days belongs to a phone that is not coming back.
+  This needed no migration: "last used" is `MAX(registered_at, last_success_at)`.
+- A sweep that deletes anything logs `push.tokens_pruned` with the `dead` and `unused` counts, and a failed sweep logs `push.tokens_prune_failed`.
+
 ## Renewal past the 8-hour cap
 
 iOS ends a Live Activity roughly 8 hours after it starts, so a long session loses its surface mid-session unless the activity is replaced.

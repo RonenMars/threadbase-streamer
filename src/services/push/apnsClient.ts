@@ -68,7 +68,7 @@ export interface ApnsSendResult {
  * Distinguished from transient failures (503, timeouts) because the two need
  * opposite handling: a dead token must be retired, a transient one must not be.
  */
-const DEAD_TOKEN_REASONS = new Set([
+export const DEAD_TOKEN_REASONS = new Set([
   "BadDeviceToken",
   "DeviceTokenNotForTopic",
   "Unregistered",
