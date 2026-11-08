@@ -3648,7 +3648,8 @@ export class StreamerServer {
     let parsed: { model?: unknown; effort?: unknown };
     try {
       parsed = await readBody(req);
-    } catch {
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) throw err;
       json(res, 400, { error: "Invalid JSON" });
       return;
     }

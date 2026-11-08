@@ -10,8 +10,9 @@ import {
   savedItemKey,
 } from "../../schemas/saved-items.schema";
 import type { AppEnv } from "../app";
+import { BodyTooLargeError } from "../handlers/http-helpers";
 import type { ApiDeps } from "../types/api-deps";
-import { BodyTooLargeError, readJsonBody } from "./misc.routes";
+import { readJsonBody } from "./misc.routes";
 
 /**
  * Saved (favorite) sessions and conversations, shared by every device paired

@@ -10,7 +10,7 @@ import {
 } from "../../services/backup/backup";
 import { getVersion } from "../../version";
 import type { AppEnv } from "../app";
-import { readBody } from "../handlers/http-helpers";
+import { BodyTooLargeError, readBody } from "../handlers/http-helpers";
 import type { ApiDeps } from "../types/api-deps";
 
 /**
@@ -68,7 +68,8 @@ export const createBackupRoutes = (deps: Pick<ApiDeps, "projectsRepo">) => {
     let body: { archive?: unknown; pathMap?: unknown; apply?: unknown };
     try {
       body = (await readBody(c.env.incoming)) as typeof body;
-    } catch {
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) throw err;
       return c.json({ error: "Invalid JSON body", code: "INVALID_BODY" }, 400);
     }
 

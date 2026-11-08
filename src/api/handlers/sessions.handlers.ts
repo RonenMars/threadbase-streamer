@@ -3113,7 +3113,8 @@ export class SessionHandlers {
     let parsed: { name?: string };
     try {
       parsed = await readBody(req);
-    } catch {
+    } catch (err) {
+      if (err instanceof BodyTooLargeError) throw err;
       json(res, 400, { error: "Invalid JSON" });
       return;
     }
