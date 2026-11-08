@@ -157,6 +157,14 @@ export class LiveSessionManager {
     }
   }
 
+  // Tolerates an unknown sessionId and a runner without the method, like
+  // putOnHold: a transcript line can outlive its session.
+  settleFromTranscript(sessionId: string, lines: string[]): void {
+    for (const runner of this.activeRunners()) {
+      if (runner.hasSession(sessionId)) runner.settleFromTranscript?.(sessionId, lines);
+    }
+  }
+
   getOutput(sessionId: string): string {
     return this.runnerFor(sessionId).getOutput(sessionId);
   }

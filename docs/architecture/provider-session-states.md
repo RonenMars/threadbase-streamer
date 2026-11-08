@@ -434,8 +434,8 @@ Its merge base is older than `main` at `58352e8d`, so it needs a rebase before i
 | 16 | Codex | Agent phase depends on a status-bar word a spinner-only build does not paint. | `src/services/questions/parseAgentPhase.ts:42` **[code, derived]** |
 | 17 | Claude | ~~A gate answered into an immediate end settles by `screen-marker`, so no "finished".~~ Fixed: it settles as `turn-signal`. | `endSignalled`, `src/pty-manager.ts` **[code]** |
 | 18 | Claude | No agent phase. | `src/services/questions/parseAgentPhase.ts:56` **[code]** |
-| 19 | All | Nothing bounds a turn that never signals its end; only the grace-defer cap or an exit ends `running`. | `src/server.ts:1272`, `:1321` **[code, derived]**; Cursor hang **[transcript, 2026-10-04]** |
-| 20 | All | Turn signals are pinned to specific CLI builds (Claude Code 2.1.280, Codex 0.156.1, Cursor 2026.09.23); behaviour on newer builds is unverified. | `__tests__/turn-signal-replay.test.ts:70`, `:92`, `:105` **[code]** |
+| 19 | All | Partly closed (#1048). A `running` turn silent for `TURN_SILENCE_CEILING_MS` (30 min, no output chunk or transcript line) logs `pty.turn_ceiling` once per turn and changes nothing, since a hard cutoff was rejected. Codex and Claude also settle from the transcript's own end-of-turn line (`transcriptTurnEndAt`, `settleFromTranscript`); Cursor and Copilot have none, so a hung turn there still ends only by exit or the grace-defer cap. | `warnTurnCeiling` in `src/server.ts` **[code]**; Cursor hang **[transcript, 2026-10-04]** |
+| 20 | All | PTY turn signals are pinned to specific CLI builds (Claude Code 2.1.280, Codex 0.156.1, Cursor 2026.09.23); behaviour on newer builds is unverified. The transcript lines are checked against real lines from Codex 0.160 rollouts and Claude Code 2.1.282 (`__tests__/fixtures/transcript-turn-end/`), which narrows the gap for those two but is not a PTY replay. | `describe("turn-signal fixtures (pins)")` in `__tests__/turn-signal-replay.test.ts`; `__tests__/transcript-turn-end.test.ts` **[code]** |
 
 ## Related documents
 
