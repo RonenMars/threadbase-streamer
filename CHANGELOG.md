@@ -1,3 +1,20 @@
+## [1.131.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.130.0...v1.131.0) (2026-11-08)
+
+### Features
+
+* **api:** retire GET /api/projects with a 410 pointing at /api/projects/summary ([#1166](https://github.com/RonenMars/threadbase-streamer/issues/1166)) ([5ae28c2](https://github.com/RonenMars/threadbase-streamer/commit/5ae28c2d366d14566c64b6189f96cb6e3e307497)), closes [RonenMars/threadbase-mobile#612](https://github.com/RonenMars/threadbase-mobile/issues/612)
+* **codex:** add a flagged app-server runner as the first slice of structured events ([#1161](https://github.com/RonenMars/threadbase-streamer/issues/1161)) ([a213266](https://github.com/RonenMars/threadbase-streamer/commit/a2132661f40aa3c293af6d98f17ec7833b529018)), closes [#535](https://github.com/RonenMars/threadbase-streamer/issues/535)
+* **config:** persist the instance id instead of reading the hostname each time ([#1160](https://github.com/RonenMars/threadbase-streamer/issues/1160)) ([c30708a](https://github.com/RonenMars/threadbase-streamer/commit/c30708ae26513867fecc7a261a287e9a2cdfc35a)), closes [#510](https://github.com/RonenMars/threadbase-streamer/issues/510)
+* **deploy:** prune old builds and updater trees from the deploy scripts, keep two ([#1162](https://github.com/RonenMars/threadbase-streamer/issues/1162)) ([d74e8e1](https://github.com/RonenMars/threadbase-streamer/commit/d74e8e1699bd5b7ac34aa08e8ed8d7260a648a1a)), closes [#19](https://github.com/RonenMars/threadbase-streamer/issues/19) [#900](https://github.com/RonenMars/threadbase-streamer/issues/900)
+* **push:** add an opt-in idle-session push for sessions parked at their prompt ([#1163](https://github.com/RonenMars/threadbase-streamer/issues/1163)) ([f4e9060](https://github.com/RonenMars/threadbase-streamer/commit/f4e9060692f826fc0802fa5aae67793706714d99)), closes [#515](https://github.com/RonenMars/threadbase-streamer/issues/515) [#515](https://github.com/RonenMars/threadbase-streamer/issues/515)
+* **push:** count Live Activity lifecycle events and prune dead and unused push tokens ([#1164](https://github.com/RonenMars/threadbase-streamer/issues/1164)) ([f603398](https://github.com/RonenMars/threadbase-streamer/commit/f603398e49da5db19310fa1d181528f162846961)), closes [#509](https://github.com/RonenMars/threadbase-streamer/issues/509) [#509](https://github.com/RonenMars/threadbase-streamer/issues/509)
+* **push:** default APNs to production and the official app ids ([#1171](https://github.com/RonenMars/threadbase-streamer/issues/1171)) ([3dab8d7](https://github.com/RonenMars/threadbase-streamer/commit/3dab8d7a8884b875ae5e36464d5b700f29d1417f)), closes [#528](https://github.com/RonenMars/threadbase-streamer/issues/528) [#636](https://github.com/RonenMars/threadbase-streamer/issues/636) [#480](https://github.com/RonenMars/threadbase-streamer/issues/480)
+
+### Bug Fixes
+
+* **permissions:** refuse permission answers that carry no gateId ([#1172](https://github.com/RonenMars/threadbase-streamer/issues/1172)) ([948e458](https://github.com/RonenMars/threadbase-streamer/commit/948e45887b670644caeac306d211adec866e9628)), closes [#704](https://github.com/RonenMars/threadbase-streamer/issues/704)
+* **progress:** sign the webhook timestamp and refuse replays ([#1170](https://github.com/RonenMars/threadbase-streamer/issues/1170)) ([841d599](https://github.com/RonenMars/threadbase-streamer/commit/841d599c47b53618d814d5bc04e239702a2c3a6a)), closes [#485](https://github.com/RonenMars/threadbase-streamer/issues/485)
+
 ## [1.130.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.129.0...v1.130.0) (2026-11-08)
 
 ### Features
