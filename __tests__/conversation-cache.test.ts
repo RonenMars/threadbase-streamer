@@ -1537,3 +1537,169 @@ describe("listProjectSummaries()", () => {
     expect(cache.listProjectSummaries({ limit: 10, offset: 0 }).projects[0].name).toBe("frontend");
   });
 });
+
+// Characterization (issue #558): the shared fileIndex reverse scan (id -> path)
+// that invalidate / pruneGhostFiles / reconcileDeletions / dropRowsById run.
+// Asserted on the private index itself: its only reader (the ingest path) is
+// healed by classifyAppendedLines, which re-mints the row and overwrites a stale
+// entry, so no public behaviour tells a cleaned index from a stale one.
+describe("fileIndex reverse scan — every caller forgets the removed id", () => {
+  const msg = JSON.stringify({
+    role: "user",
+    timestamp: "2024-01-01T10:05:00.000Z",
+    content: [{ type: "text", text: "load the index" }],
+  });
+  const indexedIds = () => [...((cache as any).fileIndex as Map<string, string>).values()];
+
+  function seed(n: number): void {
+    cache.upsertFromScannerMeta(
+      Array.from({ length: n }, (_, i) => ({
+        ...BASE_META,
+        id: `uuid-${i}`,
+        sessionId: `uuid-${i}`,
+        filePath: `/p/proj/stem-${i}.jsonl`,
+      })) as any,
+    );
+    // Loads the in-memory fileIndex (the scan is a no-op until it is loaded).
+    cache.updateFromLine("/p/proj/loader.jsonl", msg);
+    expect(indexedIds()).toEqual(expect.arrayContaining(["uuid-0", "uuid-1"].slice(0, n)));
+  }
+
+  it("invalidate(id) forgets only that id", () => {
+    seed(2);
+    cache.invalidate("uuid-0");
+    expect(indexedIds()).not.toContain("uuid-0");
+    expect(indexedIds()).toContain("uuid-1");
+  });
+
+  it("pruneGhostFiles() forgets every pruned id", () => {
+    seed(2);
+    expect(cache.pruneGhostFiles((fp) => fp.endsWith("loader.jsonl")).sort()).toEqual([
+      "uuid-0",
+      "uuid-1",
+    ]);
+    expect(indexedIds()).not.toContain("uuid-0");
+    expect(indexedIds()).not.toContain("uuid-1");
+    expect(indexedIds()).toContain("loader");
+  });
+
+  it("reconcileDeletions() forgets every removed id", () => {
+    seed(2);
+    const removed = cache.reconcileDeletions(new Set(["/p/proj/loader.jsonl"]), {
+      exists: () => false,
+    });
+    expect(removed.sort()).toEqual(["uuid-0", "uuid-1"]);
+    expect(indexedIds()).not.toContain("uuid-0");
+    expect(indexedIds()).not.toContain("uuid-1");
+    expect(indexedIds()).toContain("loader");
+  });
+
+  it("dropRowsById() forgets every dropped id", () => {
+    seed(2);
+    expect(cache.dropRowsById(["uuid-0", "uuid-1"])).toBe(2);
+    expect(indexedIds()).not.toContain("uuid-0");
+    expect(indexedIds()).not.toContain("uuid-1");
+    expect(indexedIds()).toContain("loader");
+  });
+
+  it("is a no-op before the index is loaded", () => {
+    cache.upsertFromScannerMeta([
+      { ...BASE_META, id: "uuid-0", sessionId: "uuid-0", filePath: "/p/proj/stem-0.jsonl" },
+    ] as any);
+    expect(() => cache.invalidate("uuid-0")).not.toThrow();
+    expect(cache.dropRowsById(["uuid-0"])).toBe(0);
+    expect(indexedIds()).toEqual([]);
+  });
+});
+
+// Characterization (issue #558): updateFromLine and updateFromLines grew apart.
+// These pin the places where a single-line ingest is NOT the same as a batch of
+// one, so the shared implementation has to keep both behaviours.
+describe("updateFromLine vs updateFromLines — pinned differences", () => {
+  const msgAt = (ts: string, text: string) =>
+    JSON.stringify({ role: "user", timestamp: ts, content: [{ type: "text", text }] });
+
+  beforeEach(() => {
+    cache.upsertFromScannerMeta([BASE_META as any]);
+  });
+
+  it("single line moves last_activity/last_message backward; a batch does not", () => {
+    cache.updateFromLine(BASE_META.filePath, msgAt("2024-01-01T12:00:00.000Z", "newer"));
+    cache.updateFromLine(BASE_META.filePath, msgAt("2024-01-01T09:00:00.000Z", "older"));
+    const single = cache.getMetaById("abc-123");
+    expect(single?.lastActivity).toBe("2024-01-01T09:00:00.000Z");
+    expect(single?.lastMessage).toContain("older");
+    expect(single?.messageCount).toBe(4);
+
+    cache.updateFromLines(BASE_META.filePath, [msgAt("2024-01-01T12:00:00.000Z", "newest")]);
+    cache.updateFromLines(BASE_META.filePath, [msgAt("2024-01-01T09:00:00.000Z", "oldest")]);
+    const batch = cache.getMetaById("abc-123");
+    expect(batch?.lastActivity).toBe("2024-01-01T12:00:00.000Z");
+    expect(batch?.lastMessage).toContain("newest");
+    expect(batch?.messageCount).toBe(6);
+  });
+
+  it("a message with an unparsable timestamp leaves the same bare skeleton row in both entry points", () => {
+    const bad = JSON.stringify({ role: "user", timestamp: "nonsense-date", content: [] });
+    cache.updateFromLine("/p/proj/single-bad.jsonl", bad);
+    cache.updateFromLines("/p/proj/batch-bad.jsonl", [bad]);
+    for (const id of ["single-bad", "batch-bad"]) {
+      expect(cache.hasConversation(id)).toBe(true);
+      expect(cache.getConversationTail(id)).toBeNull();
+      expect(cache.getMetaById(id)?.messageCount).toBe(1);
+    }
+  });
+
+  it("lines carrying neither a message nor project context mint nothing in either path", () => {
+    const noise = JSON.stringify({ type: "summary", summary: "x" });
+    cache.updateFromLine("/p/proj/single-noise.jsonl", noise);
+    cache.updateFromLines("/p/proj/batch-noise.jsonl", [noise]);
+    expect(cache.hasConversation("single-noise")).toBe(false);
+    expect(cache.hasConversation("batch-noise")).toBe(false);
+  });
+
+  it("a single line writes without a transaction; a batch is all-or-nothing", () => {
+    const db = (cache as any).db;
+    const seedTail = () =>
+      cache.updateFromLine(BASE_META.filePath, msgAt("2024-01-01T10:01:00.000Z", "seed"));
+    seedTail(); // count 3, valid tail
+    db.prepare("UPDATE conversation_tail SET messages_json = '{broken'").run();
+
+    expect(() =>
+      cache.updateFromLine(BASE_META.filePath, msgAt("2024-01-01T10:02:00.000Z", "x")),
+    ).toThrow();
+    expect(cache.getMetaById("abc-123")?.messageCount).toBe(4); // meta write stuck
+
+    expect(() =>
+      cache.updateFromLines(BASE_META.filePath, [msgAt("2024-01-01T10:03:00.000Z", "y")]),
+    ).toThrow();
+    expect(cache.getMetaById("abc-123")?.messageCount).toBe(4); // rolled back
+  });
+
+  it("an agent line deletes the file's row and fires onAgentFileDetected once, for both entry points", () => {
+    for (const batch of [false, true]) {
+      const seen: string[] = [];
+      const c = ConversationCache.open(join(dbDir, `agent-${batch}.db`), 3, undefined, {
+        filterAgentConversations: true,
+        onAgentFileDetected: (fp: string) => seen.push(fp),
+      });
+      try {
+        const file = "/p/proj/agent-row.jsonl";
+        const human = msgAt("2024-01-01T10:00:00.000Z", "hi");
+        const agent = JSON.stringify({
+          entrypoint: "sdk-cli",
+          role: "user",
+          timestamp: "2024-01-01T10:01:00.000Z",
+        });
+        c.updateFromLines(file, [human]);
+        expect(c.hasConversation("agent-row")).toBe(true);
+        if (batch) c.updateFromLines(file, [human, agent, human]);
+        else c.updateFromLine(file, agent);
+        expect(c.hasConversation("agent-row")).toBe(false);
+        expect(seen).toEqual([file]);
+      } finally {
+        c.close();
+      }
+    }
+  });
+});
