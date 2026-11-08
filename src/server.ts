@@ -124,6 +124,7 @@ import {
 } from "./providers";
 import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
 import { connectOrSpawnHost } from "./pty-host/spawn-host";
+import { PTY_ROWS } from "./pty-shared";
 import { relayClientUrl } from "./relay/address";
 import { RelayConnector, type RelayState } from "./relay/connector";
 import { isViaRelay, listenRelayIngress, rateLimitKey } from "./relay/ingress";
@@ -163,7 +164,11 @@ import { LiveActivityRenewalScheduler } from "./services/push/liveActivityRenewa
 import { LiveActivitySender } from "./services/push/liveActivitySender";
 import { startPushTokenRetention } from "./services/push/pushTokenRetention";
 import { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
-import { isLossyViewOf, questionContentKey } from "./services/questions/detectQuestionFromScreen";
+import {
+  isLossyViewOf,
+  isQuestionMenuOnScreen,
+  questionContentKey,
+} from "./services/questions/detectQuestionFromScreen";
 import {
   questionsFromLines,
   shouldBroadcastQuestion,
@@ -3488,12 +3493,7 @@ export class StreamerServer {
           ? "pty"
           : "jsonl";
       this.sessionHandlers.handleJsonlQuestion(sessionId, p.toolUseId, p.questions, origin);
-      const t = setTimeout(() => {
-        if (this.pendingQuestions.get(sessionId)?.toolUseId === p.toolUseId) {
-          this.cancelPendingQuestion(sessionId);
-        }
-      }, 60_000);
-      t.unref();
+      this.armPhantomQuestionCancel(sessionId, p.toolUseId);
     }
     // De-dupe vs the live-screen path: if the rendered detection already
     // broadcast this exact question (same content key), don't re-render —
@@ -3519,6 +3519,25 @@ export class StreamerServer {
       // subscriber gets it from the subscribe replay.
       if (broadcast) this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], m);
     }
+  }
+
+  // The #724 60-second phantom guard: a JSONL question nothing confirms is dropped.
+  // "Confirmed" includes the menu still being painted — a question the screen
+  // detector cannot parse (no card from the live path) is still a real prompt, and
+  // cancelling it left the session `running` with no card for hours. Re-arms while
+  // the menu is up; getOutputLines failing falls through to the cancel.
+  private armPhantomQuestionCancel(sessionId: string, toolUseId: string): void {
+    const t = setTimeout(async () => {
+      if (this.pendingQuestions.get(sessionId)?.toolUseId !== toolUseId) return;
+      const menuUp = await this.ptyManager
+        .getOutputLines(sessionId, PTY_ROWS)
+        .then(isQuestionMenuOnScreen)
+        .catch(() => false);
+      if (this.pendingQuestions.get(sessionId)?.toolUseId !== toolUseId) return;
+      if (menuUp) this.armPhantomQuestionCancel(sessionId, toolUseId);
+      else this.cancelPendingQuestion(sessionId);
+    }, 60_000);
+    t.unref();
   }
 
   private cancelPendingQuestion(sessionId: string): void {
