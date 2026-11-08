@@ -278,6 +278,40 @@ export function buildFlagArgs(values: ClaudeFlagValues | undefined, extraArgs?: 
   return args;
 }
 
+/**
+ * The model and effort Claude will actually run with, read off the final argv.
+ *
+ * Claude honours the LAST `--model` / `--effort` it is given, and the free-text
+ * extra args land after the spawn's own, so reading the argv (not the options
+ * that built it) is the only way to agree with the CLI. Both `--flag value` and
+ * `--flag=value` are understood; a flag with no value is ignored; a flag that
+ * never appears is `null` — nothing is guessed.
+ *
+ * ponytail: scans every token, so a value that is itself exactly `--model` (a
+ * system prompt, say) would be misread. Add flag-arity tracking if that ever bites.
+ */
+export function resolveEffectiveModelEffort(args: readonly string[]): {
+  model: string | null;
+  effort: string | null;
+} {
+  const found: Record<"--model" | "--effort", string | null> = {
+    "--model": null,
+    "--effort": null,
+  };
+  for (let i = 0; i < args.length; i++) {
+    for (const flag of ["--model", "--effort"] as const) {
+      const token = args[i];
+      if (token.startsWith(`${flag}=`)) {
+        found[flag] = token.slice(flag.length + 1) || found[flag];
+      } else if (token === flag) {
+        const next = args[i + 1];
+        if (next !== undefined && !next.startsWith("-")) found[flag] = next;
+      }
+    }
+  }
+  return { model: found["--model"], effort: found["--effort"] };
+}
+
 // The `--settings` JSON every PTY session is spawned with.
 //
 // `skipDangerousModePermissionPrompt` is the fix for the blocking

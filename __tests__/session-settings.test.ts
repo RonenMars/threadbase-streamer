@@ -72,6 +72,8 @@ type Internals = {
     sendKeys(id: string, keys: string): void;
   };
   sessionStore: { addManaged(s: Record<string, unknown>): void };
+  managedSessionsRepo: unknown;
+  wsHub: { broadcast(msg: unknown): void };
 };
 
 describe("PATCH /api/sessions/:id/{model,effort}", () => {
@@ -223,12 +225,54 @@ describe("PATCH /api/sessions/:id/{model,effort}", () => {
     expect(after.effort).toBe("xhigh");
   }, 30000);
 
-  it("does not persist a model, which the scanner owns", async () => {
+  // The spawn now seeds the effective model onto the session (issue #960), so a
+  // PATCH has to move it too, or every later session_update frame would put the
+  // spawn-time value back over the one the user just chose.
+  it("persists the model onto the session so session_update carries it", async () => {
     const id = await startSession();
     await waitForStatus(id, "waiting_input");
-    const before = (await get(id)).model;
+    expect((await get(id)).model).toBe("sonnet");
+    const broadcast = vi.spyOn(internals.wsHub, "broadcast");
     expect((await patch(id, "model", { model: "opus" })).status).toBe(202);
-    expect((await get(id)).model).toBe(before);
+    expect((await get(id)).model).toBe("opus");
+    expect(broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "session_update",
+        session: expect.objectContaining({ id, model: "opus" }),
+      }),
+    );
+  }, 30000);
+
+  // recordStatus never writes model/effort, so without its own write a held or
+  // rehydrated session would report the spawn-time value after a /model switch.
+  it("records the switched model and effort in the durable registry", async () => {
+    const recordSetting = vi.fn();
+    internals.managedSessionsRepo = { recordSetting, recordStatus: vi.fn(), recordSpawn: vi.fn() };
+    const id = await startSession();
+    await waitForStatus(id, "waiting_input");
+    // Separate sessions: the first PATCH leaves its session `running`, so a
+    // second one on it would answer 409 SESSION_BUSY.
+    const other = await startSession();
+    await waitForStatus(other, "waiting_input");
+    await patch(id, "model", { model: "opus" });
+    await patch(other, "effort", { effort: "max" });
+    expect(recordSetting).toHaveBeenCalledWith(id, "model", "opus");
+    expect(recordSetting).toHaveBeenCalledWith(other, "effort", "max");
+    internals.managedSessionsRepo = null;
+  }, 30000);
+
+  it("reports the model and effort claude_extra_args forces, not the ones passed first", async () => {
+    const session = await internals.ptyManager.startFresh({
+      projectPath: projectDir,
+      model: "sonnet",
+      effort: "low",
+      claudeExtraArgs: "--model claude-sonnet-5 --effort=high",
+    });
+    internals.sessionStore.addManaged(session as unknown as Record<string, unknown>);
+    await waitForStatus(session.id, "waiting_input");
+    const body = await get(session.id);
+    expect(body.model).toBe("claude-sonnet-5");
+    expect(body.effort).toBe("high");
   }, 30000);
 
   it("accepts a full model name, not just an alias", async () => {
@@ -368,6 +412,43 @@ describe("PATCH /api/sessions/:id/{model,effort}", () => {
       for (const flag of ["--model", "--effort", "--permission-mode"]) {
         expect(args.filter((a) => a === flag)).toHaveLength(1);
       }
+    }, 30000);
+
+    // claude_extra_args lands last on argv, so a --model/--effort in it beats the
+    // configured default. The configured values must stay as they are (released
+    // mobile builds render them), and the override is reported beside them.
+    it("qualifies values.model/effort when claude_extra_args overrides them", async () => {
+      const url = `http://localhost:${port}/api/config/claude-flags`;
+      const headers = { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" };
+      const put = await fetch(url, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          values: { model: "opus", effort: "high" },
+          extraArgs: "--model=sonnet --effort low",
+        }),
+      });
+      const putBody = (await put.json()) as Record<string, unknown>;
+      const get = (await (await fetch(url, { headers })).json()) as Record<string, unknown>;
+
+      for (const body of [putBody, get]) {
+        expect(body.values).toMatchObject({ model: "opus", effort: "high" });
+        expect(body.extraArgs).toBe("--model=sonnet --effort low");
+        expect(body.overriddenByExtraArgs).toEqual({ model: "sonnet", effort: "low" });
+      }
+
+      // Only the flag extra args actually carry is reported, and clearing them clears it.
+      await fetch(url, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ values: { model: "opus" }, extraArgs: "--effort max" }),
+      });
+      const partial = (await (await fetch(url, { headers })).json()) as Record<string, unknown>;
+      expect(partial.overriddenByExtraArgs).toEqual({ effort: "max" });
+
+      await fetch(url, { method: "PUT", headers, body: JSON.stringify({ values: {} }) });
+      const none = (await (await fetch(url, { headers })).json()) as Record<string, unknown>;
+      expect(none.overriddenByExtraArgs).toEqual({});
     }, 30000);
   });
 });
