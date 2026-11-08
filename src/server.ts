@@ -837,7 +837,10 @@ export class StreamerServer {
         rememberSelfPtyEnded: (conversationId) => this.rememberSelfPtyEnded(conversationId),
         maybeFireHoldWhenIdle: (session) => this.maybeFireHoldWhenIdle(session),
       }),
-      { codexAppServer: this.featureFlags.codexAppServer },
+      {
+        codexAppServer: this.featureFlags.codexAppServer,
+        claudeTurnHooks: this.featureFlags.claudeTurnHooks,
+      },
     );
 
     this.sessionWatchers = new SessionWatchers({

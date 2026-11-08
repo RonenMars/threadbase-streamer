@@ -1,7 +1,7 @@
 # Structured Session Events
 
 **Date:** 2026-08-12
-**Status:** Proposed; Codex pilot first slice implemented behind the `codexAppServer` flag (see "Codex pilot status")
+**Status:** Proposed; Codex pilot first slice implemented behind the `codexAppServer` flag (see "Codex pilot status"); Claude turn boundaries via hooks implemented behind the `claudeTurnHooks` flag (see "Claude hook turns status")
 **Scope:** tb-streamer (session runtime, WS contract), tb-mobile (state derivation), tb-scanner (conversation model)
 
 ---
@@ -138,6 +138,34 @@ Sanitized server lines from those captures are the test fixtures (`__tests__/fix
 - A second `turn/start` while a turn is running has not been probed.
 - tb-mobile does not consume `session_event` yet, and nothing was run against a live phone.
 - Session persistence and resume across a streamer restart for these sessions are untested.
+
+## Claude hook turns status
+
+Sequencing step 1 is implemented behind the `claudeTurnHooks` feature flag, which is off by default.
+
+### Hooks, as verified
+
+Captured from the interactive Claude Code 2.1.319 in a PTY, the way the streamer runs it (sanitized fixtures in `__tests__/fixtures/claude-hooks/2.1.319/`):
+
+- A completed turn fires `UserPromptSubmit`, then `Stop`.
+- A failed turn (a model that does not exist) fires `UserPromptSubmit`, then `StopFailure` with `error: "model_not_found"`.
+- An Esc interrupt fires `UserPromptSubmit` only. No `Stop` follows.
+- Every payload carries `prompt_id`, equal to the transcript's `promptId`, so a start and its end pair without inference.
+
+### What the slice does
+
+- `buildSettingsJson` adds the three hooks to the `--settings` blob, each appending its stdin payload to `<private temp dir>/<sessionId>.jsonl`. The hook prints nothing and always exits 0, since `UserPromptSubmit` stdout is added to Claude's context and a failing hook shows in the TUI.
+- `PTYManager` tails that file by stat polling and deletes it when the session ends.
+- `UserPromptSubmit` moves `waiting_input` to `running`, or confirms a `user-input` running as observed, with `statusSource: "turn-signal"`, and emits `turn_started { turnId: prompt_id }`.
+- `Stop` and `StopFailure` emit `turn_completed` (`completed`, or `failed` with the error), and settle the session to `waiting_input` as `turn-signal` only when it is still running on the turn that `prompt_id` opened. A late `Stop` therefore cannot end the next turn, and a turn that another signal already ended is not reopened.
+- The screen, title and transcript signals are unchanged, and the first signal to end a turn wins.
+
+### What is left
+
+- An interrupt has no hook, so no `turn_completed { status: "interrupted" }` is emitted; the existing signals end that turn. Live on 2.1.319 the screen-marker heuristic also ended a hook-opened turn mid-stream, before the Esc, so the next step is to let a hook-opened turn hold off the screen-marker guess while still letting the title and transcript signals end an interrupt.
+- `agent_message` and deltas are not emitted for Claude (that needs a headless runner, see "Known limits").
+- The flag is not honoured under `ptyHost`, whose host process builds its own session manager.
+- tb-mobile does not consume `session_event` yet.
 
 ## Costs
 

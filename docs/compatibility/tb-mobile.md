@@ -137,6 +137,8 @@ The pairing QR carries an additive, unauthenticated `lan=` parameter (the machin
 
 `GET /api/info` and `GET /api/push/health` carry an additive `push` object describing what the server can actually deliver: `{ liveActivity: boolean, notifications: boolean, liveActivityReason?: string, notificationsReason?: string }`. `liveActivity` is true only when APNs credentials resolved *and* the sender was wired — the same fact the boot log reports as `live_activity.enabled`. `notifications` is true when the "your turn" notifier (`WaitingInputNotifier` over Expo's relay) was wired, which needs only the push token store to have opened — no credential, flag or env var — so it is false only on a server whose SQLite cache failed to open; the two fields are independent. `liveActivityReason` is present only when `liveActivity` is false and names the missing environment variable, never its value; `notificationsReason` is present only when `notifications` is false. The object is absent on servers that predate it, which a client must read as "unknown" rather than "unavailable". Mobile should hide or disable the Live Activity affordance when `push.liveActivity` is false rather than registering tokens nothing will ever send to.
 
+`session_event` frames (`{ type: "session_event", sessionId, seq, event, at }`) are additive and flag-gated: the Codex app-server runner (`codexAppServer`) and, for turn starts and ends only, Claude PTY sessions under `claudeTurnHooks` send them alongside the unchanged `terminal_output` and `session_update` frames, whose `statusSource` stays `turn-signal`.
+
 ## Changes that need no check
 
 Mobile ignores what it doesn't know, so these cost nothing:

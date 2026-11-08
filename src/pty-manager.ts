@@ -1,13 +1,15 @@
 import { applyNameCandidate, resolveSessionName } from "@threadbase-sh/scanner";
 import { randomUUID } from "crypto";
-import { existsSync } from "fs";
-import { basename } from "path";
+import { existsSync, mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { basename, join } from "path";
 import {
   buildFlagArgs,
   buildSettingsJson,
   resolveEffectiveModelEffort,
   withAdditionalDirs,
 } from "./claude-flags";
+import { type ClaudeHookPayload, tailHookFile } from "./claude-turn-hooks";
 import { getLogger, type Logger } from "./logger";
 import { clearClaudeExeCache, resolveClaudeExe } from "./platform";
 import { CLAUDE_CODE_PROVIDER } from "./providers";
@@ -46,6 +48,7 @@ import type {
   AgentPhase,
   ManagedSession,
   PTYManagerOptions,
+  SessionEvent,
   SessionRunner,
   StartFreshSessionOptions,
   StartSessionOptions,
@@ -236,6 +239,14 @@ export class PTYManager implements SessionRunner {
   private onLiveQuestion: PTYManagerOptions["onLiveQuestion"];
   private onLiveQuestionGone: PTYManagerOptions["onLiveQuestionGone"];
   private onUserMessage: PTYManagerOptions["onUserMessage"];
+  private onSessionEvent: PTYManagerOptions["onSessionEvent"];
+  // Flag `claudeTurnHooks`: sessions report turn boundaries through hooks into
+  // `<hookDir>/<sessionId>.jsonl` (see claude-turn-hooks.ts).
+  private readonly turnHooks: boolean;
+  private hookDir: string | null = null;
+  private hookTails = new Map<string, () => void>();
+  // prompt_id of the last UserPromptSubmit read, per session.
+  private hookTurn = new Map<string, string>();
   // Per-session permission-gate state: the gate currently open on a session's
   // screen. Set between an OSC 777 / paint-time claim (gate open) and the next
   // prompt-ready without a fresh 777 (gate closed). Prevents re-broadcasting
@@ -313,7 +324,7 @@ export class PTYManager implements SessionRunner {
   private startPromises = new Map<string, Promise<ManagedSession>>();
   private disposed = false;
 
-  constructor(options: PTYManagerOptions = {}) {
+  constructor(options: PTYManagerOptions = {}, flags: { claudeTurnHooks?: boolean } = {}) {
     this.onOutput = options.onOutput;
     this.onStatusChange = options.onStatusChange;
     this.onReady = options.onReady;
@@ -323,6 +334,8 @@ export class PTYManager implements SessionRunner {
     this.onLiveQuestion = options.onLiveQuestion;
     this.onLiveQuestionGone = options.onLiveQuestionGone;
     this.onUserMessage = options.onUserMessage;
+    this.onSessionEvent = options.onSessionEvent;
+    this.turnHooks = flags.claudeTurnHooks === true;
     this.log = options.logger ?? getLogger("pty");
   }
 
@@ -372,7 +385,7 @@ export class PTYManager implements SessionRunner {
       "--permission-mode",
       permissionMode,
       "--settings",
-      buildSettingsJson(permissionMode),
+      buildSettingsJson(permissionMode, this.hookFile(sessionId)),
       "--model",
       options.model ?? "sonnet",
       "--effort",
@@ -433,6 +446,7 @@ export class PTYManager implements SessionRunner {
     };
 
     this.sessions.set(sessionId, session);
+    this.watchTurnHooks(sessionId);
     // Resume re-uses the same boot path as a fresh launch: --resume replays the
     // JSONL into Claude's TUI, which can take several seconds before the prompt
     // is reachable. Until then, raw pty.write() bytes land in the boot UI and
@@ -469,7 +483,7 @@ export class PTYManager implements SessionRunner {
       "--permission-mode",
       permissionMode,
       "--settings",
-      buildSettingsJson(permissionMode),
+      buildSettingsJson(permissionMode, this.hookFile(sessionId)),
       "--model",
       options.model ?? "sonnet",
       "--effort",
@@ -530,6 +544,7 @@ export class PTYManager implements SessionRunner {
     };
 
     this.sessions.set(sessionId, session);
+    this.watchTurnHooks(sessionId);
     this.pendingReady.add(sessionId);
     this.armReadyFallback(sessionId);
 
@@ -835,6 +850,7 @@ export class PTYManager implements SessionRunner {
     this.quietCheckers.get(sessionId)?.cancel();
     this.quietCheckers.delete(sessionId);
     this.clearReadyFallback(sessionId);
+    this.stopTurnHooks(sessionId);
     try {
       session.process.kill(signal);
     } catch {
@@ -970,6 +986,11 @@ export class PTYManager implements SessionRunner {
     this.lastScreenQuestionKey.clear();
     this.shellPromptOpen.clear();
     this.closedGateKey.clear();
+    for (const stop of this.hookTails.values()) stop();
+    this.hookTails.clear();
+    this.hookTurn.clear();
+    if (this.hookDir) rmSync(this.hookDir, { recursive: true, force: true });
+    this.hookDir = null;
   }
 
   private handleOutput(sessionId: string, data: string): void {
@@ -1593,6 +1614,82 @@ export class PTYManager implements SessionRunner {
     this.markReady(sessionId, session, "turn-signal", "transcript:turn_duration");
   }
 
+  // The `--settings` hooks file for a session, or undefined with the flag off.
+  private hookFile(sessionId: string): string | undefined {
+    if (!this.turnHooks) return undefined;
+    this.hookDir ??= mkdtempSync(join(tmpdir(), "tb-claude-hooks-"));
+    return join(this.hookDir, `${sessionId}.jsonl`);
+  }
+
+  private watchTurnHooks(sessionId: string): void {
+    const file = this.hookFile(sessionId);
+    if (!file) return;
+    this.hookTails.set(
+      sessionId,
+      tailHookFile(file, (payloads) => this.applyHookPayloads(sessionId, payloads)),
+    );
+  }
+
+  private stopTurnHooks(sessionId: string): void {
+    this.hookTails.get(sessionId)?.();
+    this.hookTails.delete(sessionId);
+    this.hookTurn.delete(sessionId);
+    const file = this.hookFile(sessionId);
+    if (file) rmSync(file, { force: true });
+  }
+
+  /**
+   * Claude's own turn report. UserPromptSubmit opens the turn (and confirms a
+   * running-by-construction input as observed); Stop / StopFailure ends it,
+   * but only the turn this report opened, and only while nothing else has
+   * already ended it. An interrupt sends no Stop, so the screen and transcript
+   * signals stay the backstop, and the first signal wins.
+   */
+  private applyHookPayloads(sessionId: string, payloads: ClaudeHookPayload[]): void {
+    payloads.forEach((p, i) => {
+      const turnId = p.prompt_id;
+      if (typeof turnId !== "string") return;
+      const emit = (event: SessionEvent) => this.onSessionEvent?.(sessionId, event);
+      const session = this.sessions.get(sessionId);
+      if (p.hook_event_name === "UserPromptSubmit") {
+        this.hookTurn.set(sessionId, turnId);
+        emit({ type: "turn_started", turnId });
+        // A turn read whole (lagging reader) has already ended: opening it now
+        // would reopen a session another signal settled.
+        const endedInBatch = payloads
+          .slice(i + 1)
+          .some((q) => q.prompt_id === turnId && q.hook_event_name !== "UserPromptSubmit");
+        if (!session || endedInBatch) return;
+        if (session.status === "running" && session.statusSource === "turn-signal") return;
+        if (session.status === "waiting_input") {
+          session.status = "running";
+          session.statusUpdatedAt = new Date();
+        }
+        session.statusSource = "turn-signal";
+        this.onStatusChange?.(toPublicSession(session));
+        return;
+      }
+      // Only UserPromptSubmit, Stop and StopFailure are registered.
+      const failed = p.hook_event_name === "StopFailure";
+      emit({
+        type: "turn_completed",
+        turnId,
+        status: failed ? "failed" : "completed",
+        ...(failed && typeof p.error === "string" && { error: p.error }),
+      });
+      if (
+        session?.status !== "running" ||
+        session.statusSource !== "turn-signal" ||
+        this.hookTurn.get(sessionId) !== turnId
+      ) {
+        return;
+      }
+      this.turnOpen.delete(sessionId);
+      this.awaitingStart.delete(sessionId);
+      this.markReady(sessionId, session, "turn-signal", `hook:${p.hook_event_name}`);
+    });
+  }
+
   private markReady(
     sessionId: string,
     session: InternalSession,
@@ -1686,6 +1783,7 @@ export class PTYManager implements SessionRunner {
     this.quietCheckers.get(sessionId)?.cancel();
     this.quietCheckers.delete(sessionId);
     this.clearReadyFallback(sessionId);
+    this.stopTurnHooks(sessionId);
   }
 }
 
