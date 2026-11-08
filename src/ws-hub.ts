@@ -330,7 +330,14 @@ export class WSHub {
       ws.send(frame);
       return true;
     } catch (err) {
-      if (context) this.closeForE2ee(ws, E2EE_SEAL_FAILED, "transport-send", err);
+      if (context) {
+        this.closeForE2ee(ws, E2EE_SEAL_FAILED, "transport-send", err);
+      } else if (this.clients.has(ws)) {
+        // Legacy plaintext client: the caller drops it next, so this fires once
+        // per client rather than once per frame. Never the frame itself.
+        const error = err instanceof Error ? err.message : String(err);
+        log.warn(`[ws.send_failed] ${error}`, { event: "ws.send_failed", error });
+      }
       return false;
     }
   }
@@ -479,7 +486,7 @@ export class WSHub {
         // next deploy.
         client.terminate();
       } catch {
-        // Already closed
+        // Intentionally silent: terminate() on an already-closed socket during shutdown.
       }
     }
     this.clients.clear();

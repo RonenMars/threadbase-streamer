@@ -139,8 +139,15 @@ export class SessionWatchers {
         this.deps.sessionFileMap.set(sessionId, conversation.filePath);
         this.deps.fileWatcher.watch(conversation.filePath);
       }
-    } catch {
+    } catch (err) {
       // Best-effort: if we can't find the JSONL file, raw terminal output still works
+      const error = err instanceof Error ? err.message : String(err);
+      this.log.warn(`[session] conversation file watch failed: ${error}`, {
+        event: "session.conversation_watch_failed",
+        sessionId,
+        historyId,
+        error,
+      });
     }
   }
 
