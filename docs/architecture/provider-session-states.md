@@ -159,7 +159,7 @@ Runner: `PTYManager` in `src/pty-manager.ts`.
 ### Known bugs/gaps
 
 - **Boot-queued prompt runs as `waiting_input`.** A prompt queued during boot is flushed after `markReady` set `waiting_input`, and the flush neither flips the status nor opens a turn (`:686`, `flushQueuedInputs`). The first turn is therefore reported as `waiting_input` throughout and sends no "finished". **[code, derived]**
-- **Gate answered into an immediate end sends no "finished".** After a `held` turn's gate closes, an end with no further busy signal lapses to `screen-marker`. **[code, derived]**
+- **Gate answered into an immediate end** (fixed, #1044). After a `held` turn's gate closes, an end with no further busy signal now lapses as `turn-signal`, because the idle title was already seen for that turn (`endSignalled` in `src/pty-manager.ts`). **[code]**
 - **`sendKeys` opens no turn.** A key sent while `waiting_input` flips to `running` with no start grace and no watch (`:515`); recovery depends on a later chunk carrying a marker. **[code, derived]**
 - **No agent phase.** `claudePhase` returns `null` (`src/services/questions/parseAgentPhase.ts:56`). **[code]**
 - **Nothing bounds a stuck turn.** A turn whose idle signal never arrives stays `running`; only the grace-defer cap or a process exit ends it. **[code, derived]**
@@ -432,7 +432,7 @@ Its merge base is older than `main` at `58352e8d`, so it needs a rebase before i
 | 14 | Codex | Boot fallback re-arms with no cap. | `src/codex-pty-runner.ts:370`, `:376` **[code]** |
 | 15 | Codex | Does the streamer's launch land on Codex 0.160.0's shared-daemon home screen, and what does readiness see there? | **[transcript, 2026-10-04]**, **[unknown]** |
 | 16 | Codex | Agent phase depends on a status-bar word a spinner-only build does not paint. | `src/services/questions/parseAgentPhase.ts:42` **[code, derived]** |
-| 17 | Claude | A gate answered into an immediate end settles by `screen-marker`, so no "finished". | `src/pty-manager.ts:1422`, `:1366` **[code, derived]** |
+| 17 | Claude | ~~A gate answered into an immediate end settles by `screen-marker`, so no "finished".~~ Fixed: it settles as `turn-signal`. | `endSignalled`, `src/pty-manager.ts` **[code]** |
 | 18 | Claude | No agent phase. | `src/services/questions/parseAgentPhase.ts:56` **[code]** |
 | 19 | All | Nothing bounds a turn that never signals its end; only the grace-defer cap or an exit ends `running`. | `src/server.ts:1272`, `:1321` **[code, derived]**; Cursor hang **[transcript, 2026-10-04]** |
 | 20 | All | Turn signals are pinned to specific CLI builds (Claude Code 2.1.280, Codex 0.156.1, Cursor 2026.09.23); behaviour on newer builds is unverified. | `__tests__/turn-signal-replay.test.ts:70`, `:92`, `:105` **[code]** |
