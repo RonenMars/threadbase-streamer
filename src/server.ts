@@ -158,7 +158,7 @@ import { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import { LiveActivityRenewalScheduler } from "./services/push/liveActivityRenewal";
 import { LiveActivitySender } from "./services/push/liveActivitySender";
 import { WaitingInputNotifier } from "./services/push/waitingInputNotifier";
-import { questionContentKey } from "./services/questions/detectQuestionFromScreen";
+import { isLossyViewOf, questionContentKey } from "./services/questions/detectQuestionFromScreen";
 import {
   questionsFromLines,
   shouldBroadcastQuestion,
@@ -3372,8 +3372,14 @@ export class StreamerServer {
     const contended = this.contendedSessions.has(sessionId);
     const priorPtyKey =
       priorPending?.origin === "pty" ? questionContentKey(priorPending.questions) : null;
+    // A transcript form of which the screen prompt is a lossy view is the same
+    // question, not a foreign one (#730).
+    const sameFormAsPty = (questions: AskQuestion[]): boolean =>
+      isLossyViewOf(priorPending?.questions ?? [], questions);
     const foreignVsPty = (questions: AskQuestion[]): boolean =>
-      priorPtyKey !== null && questionContentKey(questions) !== priorPtyKey;
+      priorPtyKey !== null &&
+      questionContentKey(questions) !== priorPtyKey &&
+      !sameFormAsPty(questions);
     // An ANSWERED question keeps its menu's key while nothing is pending — every
     // answer path keeps it until the menu leaves the screen (#724). A JSONL flush
     // of that same content landing after the answer is the answered question
@@ -3389,7 +3395,10 @@ export class StreamerServer {
       // Preserve a same-question re-sync's "pty" origin so a later foreign JSONL
       // question still can't clobber it.
       const origin: "pty" | "jsonl" =
-        priorPtyKey !== null && questionContentKey(p.questions) === priorPtyKey ? "pty" : "jsonl";
+        priorPtyKey !== null &&
+        (questionContentKey(p.questions) === priorPtyKey || sameFormAsPty(p.questions))
+          ? "pty"
+          : "jsonl";
       this.sessionHandlers.handleJsonlQuestion(sessionId, p.toolUseId, p.questions, origin);
       const t = setTimeout(() => {
         if (this.pendingQuestions.get(sessionId)?.toolUseId === p.toolUseId) {

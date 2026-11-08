@@ -266,3 +266,17 @@ export function questionContentKey(questions: AskQuestion[]): string {
     .map((q) => `${q.question} ${q.options.map((o) => o.label).join(",")}`)
     .join("::");
 }
+
+const normalizeQuestionText = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/**
+ * True when every question in `screen` is a question of `transcript`: the
+ * rendered menu is a (possibly lossy) view of that tool call. The scrape sees
+ * only the visible tab of a multi-question form and reads the TUI's own
+ * "Type something" / "Chat about this" rows as options, so neither the content
+ * key nor the option labels can be compared — only the question text survives.
+ */
+export function isLossyViewOf(screen: AskQuestion[], transcript: AskQuestion[]): boolean {
+  const known = new Set(transcript.map((q) => normalizeQuestionText(q.question)));
+  return screen.length > 0 && screen.every((q) => known.has(normalizeQuestionText(q.question)));
+}
