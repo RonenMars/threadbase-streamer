@@ -6,7 +6,11 @@ import type { AddressInfo } from "net";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createHonoApp } from "../src/api/app";
-import { OPEN_SOURCE_FAILURE_LIMIT, PAIR_EXCHANGE_LIMIT } from "../src/api/rate-limit";
+import {
+  OPEN_DEVICE_LIMIT,
+  OPEN_SOURCE_FAILURE_LIMIT,
+  PAIR_EXCHANGE_LIMIT,
+} from "../src/api/rate-limit";
 import { MAX_OPEN_BODY_BYTES as ROUTE_MAX_BODY } from "../src/api/routes/e2ee.routes";
 import type { ApiDeps } from "../src/api/types/api-deps";
 import { DevicesRepository } from "../src/db/repositories/devices.repository";
@@ -361,7 +365,7 @@ describe("failing closed (§9, §10)", () => {
     };
 
     const device = pairDevice();
-    for (let i = 0; i < PAIR_EXCHANGE_LIMIT; i++) {
+    for (let i = 0; i < OPEN_DEVICE_LIMIT; i++) {
       await post(message1(device.staticKeyPair, { v: 1, kind: "ws" }).body);
     }
     const perDevice = await post(message1(device.staticKeyPair, { v: 1, kind: "ws" }).body);
@@ -456,7 +460,7 @@ describe("failing closed (§9, §10)", () => {
     // devices out of the re-open storm §8 describes. Keyed on the static key,
     // one device exhausting its budget leaves every other device untouched.
     const noisy = pairDevice();
-    for (let i = 0; i < PAIR_EXCHANGE_LIMIT; i++) {
+    for (let i = 0; i < OPEN_DEVICE_LIMIT; i++) {
       expect((await post(message1(noisy.staticKeyPair, { v: 1, kind: "ws" }).body)).status).toBe(
         200,
       );
@@ -622,6 +626,18 @@ describe("failing closed (§9, §10)", () => {
     // are simultaneous. Every other header is compared exactly (#759).
     const withoutDate = (h: Headers) => JSON.stringify([...h].filter(([name]) => name !== "date"));
     expect(withoutDate(replay.headers)).toBe(withoutDate(other.headers));
+  });
+
+  it("lets a device reconnect three times in a minute — each reconnect is a ws and a rest open", async () => {
+    // Observed on a saturated host: three reconnects (six opens) inside 60 s hit
+    // the old shared budget of five, and the client's wait gate then failed
+    // every request. Six must pass; the pair-exchange number must not govern /open.
+    expect(OPEN_DEVICE_LIMIT).toBeGreaterThan(PAIR_EXCHANGE_LIMIT);
+    const device = pairDevice();
+    for (let reconnect = 0; reconnect < 3; reconnect++) {
+      expect((await open("ws", device)).res.status).toBe(200);
+      expect((await open("rest", device)).res.status).toBe(200);
+    }
   });
 
   it("lets a device open twice: two handshakes, two ephemerals — the positive control", async () => {

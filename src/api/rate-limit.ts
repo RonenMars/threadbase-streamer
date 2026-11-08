@@ -38,6 +38,22 @@ export const PAIR_EXCHANGE_LIMIT = 5;
 export const PAIR_EXCHANGE_WINDOW_MS = 60_000;
 
 /**
+ * Authenticated `/api/e2ee/open` handshakes per device per minute.
+ *
+ * **Split from `PAIR_EXCHANGE_LIMIT` because a reconnect costs two opens** (a
+ * socket and a REST context), so five a minute is two and a half reconnects.
+ * On a saturated host the phone's requests time out and it reconnects in a
+ * burst; the sixth open was refused and the client's wait gate then failed
+ * every request for the rest of the window (observed 2026-11-08: load 135 on
+ * 10 cores, one 429 on `/open`, "Too many connection attempts").
+ *
+ * Twenty is eight reconnects a minute. Allocation stays bounded regardless:
+ * `MAX_WS_CONTEXTS_PER_DEVICE` / `MAX_REST_CONTEXTS_PER_DEVICE` evict the
+ * oldest context, so the rate is not what stops a replayer.
+ */
+export const OPEN_DEVICE_LIMIT = 20;
+
+/**
  * Failed `/api/e2ee/open` handshakes tolerated per source address per minute.
  *
  * **Deliberately far above the per-device limit, because it bounds a different

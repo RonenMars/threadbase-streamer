@@ -53,8 +53,8 @@ import { getBuildInfo } from "../../version";
 import type { AppEnv } from "../app";
 import {
   createRateBudget,
+  OPEN_DEVICE_LIMIT,
   OPEN_SOURCE_FAILURE_LIMIT,
-  PAIR_EXCHANGE_LIMIT,
   PAIR_EXCHANGE_WINDOW_MS,
 } from "../rate-limit";
 import type { ApiDeps } from "../types/api-deps";
@@ -188,7 +188,7 @@ export const createE2eeRoutes = (
   // `perDevice` bounds ALLOCATION per authenticated device, after the
   // handshake has named one.
   const perDevice = createRateBudget({
-    limit: PAIR_EXCHANGE_LIMIT,
+    limit: OPEN_DEVICE_LIMIT,
     windowMs: PAIR_EXCHANGE_WINDOW_MS,
   });
   // `failures` bounds CPU per source address, before any Diffie-Hellman runs.
