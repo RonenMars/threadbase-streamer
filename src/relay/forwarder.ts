@@ -1,6 +1,7 @@
 import http from "http";
 import { connect } from "net";
 import { WebSocket } from "ws";
+import { own } from "../e2ee/protocol";
 import {
   createFlowReceiver,
   createFlowSender,
@@ -85,7 +86,8 @@ export function createForwarder(ingressPath: string, send: (frame: Buffer) => vo
   // relayed request: `authMiddleware` admits it only on a ticket, and whatever
   // it refuses goes back as the status it refused with.
   function openSocket(streamId: number, target: string, headers: Record<string, string>): void {
-    const offered = headers["sec-websocket-protocol"];
+    // `headers` is a `{}` literal, so an absent name would read through Object.prototype.
+    const offered = own(headers, "sec-websocket-protocol");
     delete headers["sec-websocket-protocol"];
     let local: WebSocket;
     try {
