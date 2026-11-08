@@ -1030,7 +1030,14 @@ export class ConversationHandlers {
    * working session with nothing to show, and neither is an error. There is no
    * `file_path` on purpose; the file does not exist yet.
    */
-  private emptyConversationPayload(id: string, session: ManagedSession) {
+  private emptyConversationPayload(
+    id: string,
+    session: Pick<
+      ManagedSession,
+      "provider" | "projectPath" | "projectName" | "account" | "sessionName" | "startedAt"
+    > &
+      Partial<Pick<ManagedSession, "lastActivityAt">>,
+  ) {
     const provider = coerceProviderForRunner(session.provider);
     const availability = classifyResumability(session.projectPath);
     return {
@@ -1298,6 +1305,28 @@ export class ConversationHandlers {
         Date.now() - activeAt.getTime() < TRANSCRIPT_WATCH_DEADLINE_MS;
       if (unusedStart && (unusedStart.promptCount === 0 || transcriptPending)) {
         json(res, 200, this.emptyConversationPayload(id, unusedStart));
+        return;
+      }
+
+      // A process discovered outside the streamer (a Claude bg "spare" the daemon
+      // pre-warmed, or a terminal session not yet prompted) is listed by process
+      // discovery but is neither managed nor transcribed, so the guard above
+      // misses it and it 404'd as "no longer available". Its history is not ours
+      // to read, so it is an empty conversation, same as an unprompted managed one.
+      const external = this.sessionStore.get(id, new Set());
+      if (external?.ownership === "external") {
+        json(
+          res,
+          200,
+          this.emptyConversationPayload(id, {
+            provider: external.provider,
+            projectPath: external.projectPath,
+            projectName: external.projectName,
+            account: undefined,
+            sessionName: undefined,
+            startedAt: new Date(external.startedAt),
+          }),
+        );
         return;
       }
 
