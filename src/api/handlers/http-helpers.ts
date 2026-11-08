@@ -234,6 +234,11 @@ export async function readBody(req: IncomingMessage, maxBytes?: number): Promise
   try {
     return raw ? JSON.parse(raw) : {};
   } catch {
-    throw new Error("Invalid JSON body");
+    // statusCode/code is the convention errorMiddleware answers with, so a
+    // handler that doesn't catch this still replies 400 instead of a bare 500.
+    throw Object.assign(new Error("Invalid JSON body"), {
+      statusCode: 400,
+      code: "INVALID_BODY",
+    });
   }
 }
