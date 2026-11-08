@@ -7,6 +7,7 @@
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { defaultClaudeConfigDir } from "../src/claude-accounts/resolve";
 import {
   resolveSessionIds,
   type SessionIdResolvers,
@@ -14,7 +15,6 @@ import {
 } from "../src/process-discovery";
 import {
   CLAUDE_REGISTRY_START_SLACK_MS,
-  claudeConfigDir,
   codexRolloutIdForPid,
   findTeammateSessionId,
   parseClaudeRegistryEntry,
@@ -126,9 +126,27 @@ describe("readClaudeSessionRegistry", () => {
     expect(entry).toBeNull();
   });
 
+  it("reads under CLAUDE_CONFIG_DIR when no configDir is given", async () => {
+    const orig = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = "/from-env";
+    const paths: string[] = [];
+    try {
+      await readClaudeSessionRegistry(PID, {
+        read: async (p) => {
+          paths.push(p);
+          throw new Error("ENOENT");
+        },
+      });
+    } finally {
+      if (orig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = orig;
+    }
+    expect(paths[0]).toBe(join("/from-env", "sessions", `${PID}.json`));
+  });
+
   it("honours CLAUDE_CONFIG_DIR", () => {
-    expect(claudeConfigDir({ CLAUDE_CONFIG_DIR: "/elsewhere" })).toBe("/elsewhere");
-    expect(claudeConfigDir({})).toMatch(/\.claude$/);
+    expect(defaultClaudeConfigDir({ CLAUDE_CONFIG_DIR: "/elsewhere" })).toBe("/elsewhere");
+    expect(defaultClaudeConfigDir({})).toMatch(/\.claude$/);
   });
 });
 
