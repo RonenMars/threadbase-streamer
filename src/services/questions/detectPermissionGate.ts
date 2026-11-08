@@ -323,3 +323,18 @@ export function detectPickerScreen(lines: string[]): PermissionGate | null {
   }
   return gate;
 }
+
+/**
+ * Is a gate-shaped option block still painted? Looser than detectGateScreen
+ * (no footer needed, so a mid-repaint tick still counts) but stricter than a
+ * bare scrape: at least 2 options, and no composer rule below the block — a
+ * live gate replaces the composer, so a rule below means the list is prose.
+ * Pure — no I/O.
+ */
+export function gateBlockStillPainted(lines: string[]): boolean {
+  const gate = scrapePermissionGate(lines);
+  if (!gate || gate.options.length < 2) return false;
+  let last = lines.length - 1;
+  while (last >= 0 && !OPTION_RE.test(stripGutter(lines[last]))) last--;
+  return !lines.slice(last + 1).some((l) => COMPOSER_RULE_RE.test(l));
+}

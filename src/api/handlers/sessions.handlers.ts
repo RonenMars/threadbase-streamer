@@ -50,6 +50,7 @@ import { capabilitiesFor } from "../../services/providers/capabilities";
 import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
 import {
   detectGateScreen,
+  gateBlockStillPainted,
   permissionContentKey,
   permissionGateKey,
   scrapePermissionGate,
@@ -1943,10 +1944,9 @@ export class SessionHandlers {
   /**
    * Is ANY Claude permission gate painted? Not permissionGateStillOpen's "is
    * THIS gate": an optionless entry has no content to compare against. The test
-   * is pty-manager's own "box is still painted" rule (either detector sees a
-   * gate), so this never retires an entry the detector would have kept — which
-   * also means a numbered list left in prose reads as painted and keeps
-   * refusing, the safe side. A shell prompt counts too: pty-manager raises it
+   * is "a gate detector sees one, or an option block is still painted with no
+   * composer rule below it" (gateBlockStillPainted), so a half-painted gate
+   * still counts but a numbered list in prose above the composer does not. A shell prompt counts too: pty-manager raises it
    * as a card, and composer text typed over a `[y/N]` answers it. Best-effort
    * in the direction opposite to the answer routes: this may only UNBLOCK
    * input, so a session with no PTY, or a read that fails, reports a gate.
@@ -1957,7 +1957,7 @@ export class SessionHandlers {
       const lines = await this.ptyManager.getOutputLines(sessionId, 60);
       return (
         detectGateScreen(lines) !== null ||
-        scrapePermissionGate(lines) !== null ||
+        gateBlockStillPainted(lines) ||
         detectShellPrompt(lines) !== null ||
         // The unnumbered startup choices (workspace trust) are a gate too, and
         // none of the scrapers above can see them — without this an answer to
