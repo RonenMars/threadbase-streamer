@@ -78,6 +78,8 @@ const INPUT_HISTORY_MAX = 50;
 // We treat either marker in a chunk as "ready". False-positives are harmless —
 // the worst case is flushing queued input slightly early, which Claude buffers.
 const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
+// Painted after an Esc or Ctrl+C interrupt (Claude Code 2.1.319).
+const CLAUDE_INTERRUPT_SCREEN = "Interrupted · What should Claude do instead?";
 
 // Claude's turn signal. Mid-conversation the `❯` input box stays painted for
 // the whole turn, so the marker alone flipped the session to waiting_input
@@ -1059,6 +1061,10 @@ export class PTYManager implements SessionRunner {
     const stripped = stripAnsi(data);
     session.lastOutput = stripped;
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => stripped.includes(m));
+    // Claude paints this on Esc or Ctrl+C, including keys typed outside the
+    // streamer. ponytail: per chunk only, so a stale line repainted in a later
+    // turn's full redraw releases that hold early (back to the marker guess).
+    if (stripped.includes(CLAUDE_INTERRUPT_SCREEN)) this.hookHold.delete(sessionId);
     // An idle signal is settled by the quiet checker below, not here: the gate
     // it may stand for is painted in a later chunk.
     this.trackProgress(sessionId, data);
@@ -1677,7 +1683,7 @@ export class PTYManager implements SessionRunner {
    * but only the turn this report opened, and only while nothing else has
    * already ended it. The open turn holds off the prompt-marker guess
    * (`hookHold`); an interrupt sends no Stop, so the transcript's interrupt line,
-   * a bare Esc, the title and `turn_duration` end it instead.
+   * a bare Esc, the on-screen interrupt line, the title and `turn_duration` end it instead.
    */
   private applyHookPayloads(sessionId: string, payloads: ClaudeHookPayload[]): void {
     payloads.forEach((p, i) => {

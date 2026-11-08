@@ -51,6 +51,10 @@ const [INTERRUPTED_UPS] = payloads("interrupted");
 const [INTERRUPT_LINE] = payloads("interrupted-transcript");
 const interruptLineFor = (turnId: string): string =>
   JSON.stringify({ ...JSON.parse(INTERRUPT_LINE), promptId: turnId });
+// The chunk Claude paints when Esc or Ctrl+C interrupts a streaming turn.
+const INTERRUPT_SCREEN: string = JSON.parse(
+  readFileSync(join(FIXTURES, "interrupted-screen.json"), "utf8"),
+).chunk;
 // A chunk that paints Claude's prompt marker, as the input box does mid-turn.
 const MARKER_CHUNK = "\r\n\u276f \r\n";
 const promptId = (line: string): string => JSON.parse(line).prompt_id;
@@ -403,6 +407,19 @@ describe("a hook-opened turn holds off the screen-marker guess", () => {
       mgr.dispose();
     },
   );
+
+  it("Claude's on-screen interrupt line releases the hold for an Esc typed outside the streamer", async () => {
+    const { mgr, id, hook, statuses } = await bootWaiting();
+    hook(INTERRUPTED_UPS);
+    await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    await sleep(500);
+    expect(statuses()).toEqual([["running", "turn-signal"]]);
+    proc(mgr, id)._emit("data", INTERRUPT_SCREEN);
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    await vi.waitFor(() => expect(statuses().at(-1)?.[0]).toBe("waiting_input"));
+    mgr.dispose();
+  });
 
   it("an arrow key, which also starts with Esc, keeps the hold", async () => {
     const { mgr, id, hook, statuses } = await bootWaiting();
