@@ -211,17 +211,20 @@ describe("D9: an answer to gate A cannot settle identical gate B", () => {
     expect(h.events).not.toContain("permission.answer_legacy_identity");
   });
 
-  it("legacy client without gateId still answers on contentKey, and is logged as legacy", async () => {
+  it("refuses a contentKey-only answer with a typed gate_id_required, writing nothing", async () => {
     const { h, b } = twoIdenticalGates();
-    const { res, status } = response();
+    const { res, status, body } = response();
     await h.handlers.handlePermissionAnswer(
       SESSION,
       request({ contentKey: b.contentKey, optionIndex: 0 }),
       res,
     );
-    expect(status()).toBe(200);
-    expect(h.written).toEqual(["2\r"]);
-    expect(h.events).toContain("permission.answer_legacy_identity");
+    expect(status()).toBe(400);
+    expect(body()).toEqual({ ok: false, reason: "gate_id_required" });
+    expect(h.written).toEqual([]);
+    expect(h.pendingPermission.get(SESSION)?.gateId).toBe(b.gateId);
+    expect(h.broadcasts.some((m) => m.type === "permission_cancelled")).toBe(false);
+    expect(h.events).not.toContain("permission.answer_legacy_identity");
   });
 
   it("rejects a non-string gateId before touching anything", async () => {
