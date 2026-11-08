@@ -1972,6 +1972,10 @@ export class StreamerServer {
               if (upsertedIds.has(id)) tailTargets.push({ id, filePath: m.filePath });
             }
             const BATCH = 50;
+            // A batch of 50 is only as short as its slowest call, so also yield once a
+            // slice has used its time budget (a huge rollout once cost 7 s per call).
+            const TAIL_SLICE_MS = 20;
+            let sliceStart = performance.now();
             let tailFailures = 0;
             for (let i = 0; i < tailTargets.length; i += BATCH) {
               const batch = tailTargets.slice(i, i + BATCH);
@@ -1997,8 +2001,13 @@ export class StreamerServer {
                     { id: t.id, event: "cache.warmup_tail_failed" },
                   );
                 }
+                if (performance.now() - sliceStart >= TAIL_SLICE_MS) {
+                  await new Promise<void>((r) => setImmediate(r));
+                  sliceStart = performance.now();
+                }
               }
               await new Promise<void>((r) => setImmediate(r));
+              sliceStart = performance.now();
             }
             if (tailFailures > 0) {
               this.log.warn(
