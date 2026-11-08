@@ -15,7 +15,6 @@ import { join, resolve } from "node:path";
 // `.version` sidecars. Each script's GC block is cut out of the real file and run
 // against a temp releases dir, never ~/.threadbase.
 const root = resolve(import.meta.dirname, "..");
-const KEEP = 5;
 const hasPwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"]).status === 0;
 
 /** 7 bundles (a..g, a oldest), each with a sidecar, plus two sidecars whose bundle is long gone. */
@@ -33,14 +32,16 @@ function makeReleases(): string {
   return dir;
 }
 
-const survivors = ["c", "d", "e", "f", "g"];
+// After #900 the bundle pruning moved into scripts/lib/prune-builds (covered by
+// deploy-prune-builds.test.ts); what stays in each deploy script is the orphan-sidecar sweep.
+const survivors = ["a", "b", "c", "d", "e", "f", "g"];
 const expectedFiles = survivors.flatMap((s) => [`cli.${s}.cjs`, `cli.${s}.cjs.version`]).sort();
 
 describe.each(["deploy.sh", "deploy-linux.sh"])("%s release GC", (scriptName) => {
-  it("collects a bundle's .version sidecar with it and keeps the paired ones", () => {
+  it("sweeps orphaned .version sidecars and keeps the paired ones", () => {
     if (process.platform === "win32") return;
     const script = readFileSync(join(root, "scripts", scriptName), "utf8");
-    const start = script.indexOf('  ls -td "$RELEASES_DIR"/cli.*/');
+    const start = script.indexOf("  # A bundle's .version sidecar");
     const end = script.indexOf("  # Install (or refresh)", start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
@@ -51,10 +52,8 @@ describe.each(["deploy.sh", "deploy-linux.sh"])("%s release GC", (scriptName) =>
         [
           "-c",
           `set -eu
-KEEP_RELEASES=${KEEP}
 RELEASES_DIR="$TEST_RELEASES"
 gc() {
-  local active_release="$RELEASES_DIR/cli.g.cjs"
 ${script.slice(start, end)}
 }
 gc`,
@@ -71,37 +70,33 @@ gc`,
 });
 
 describe("deploy.ps1 release GC", () => {
-  it.skipIf(!hasPwsh)(
-    "collects a bundle's .version sidecar with it and keeps the paired ones",
-    () => {
-      const script = readFileSync(join(root, "scripts", "deploy.ps1"), "utf8");
-      const start = script.indexOf('    Write-Log "garbage-collecting old releases');
-      const end = script.indexOf("    # Install (or refresh)", start);
-      expect(start).toBeGreaterThan(-1);
-      expect(end).toBeGreaterThan(start);
-      const releases = makeReleases();
-      const work = mkdtempSync(join(tmpdir(), "tb-gc-ps-"));
-      try {
-        const file = join(work, "gc.ps1");
-        writeFileSync(
-          file,
-          `function Write-Log($m) {}
+  it.skipIf(!hasPwsh)("sweeps orphaned .version sidecars and keeps the paired ones", () => {
+    const script = readFileSync(join(root, "scripts", "deploy.ps1"), "utf8");
+    const start = script.indexOf("    # A bundle's .version sidecar");
+    const end = script.indexOf("    # Install (or refresh)", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const releases = makeReleases();
+    const work = mkdtempSync(join(tmpdir(), "tb-gc-ps-"));
+    try {
+      const file = join(work, "gc.ps1");
+      writeFileSync(
+        file,
+        `function Write-Log($m) {}
 $releasesDir = $env:TEST_RELEASES
-$keepReleases = ${KEEP}
 ${script.slice(start, end)}`,
-        );
-        mkdirSync(releases, { recursive: true });
-        const result = spawnSync("pwsh", ["-NoProfile", "-File", file], {
-          env: { ...process.env, TEST_RELEASES: releases },
-          encoding: "utf8",
-        });
-        expect(result.status, result.stderr + result.stdout).toBe(0);
-        expect(readdirSync(releases).sort()).toEqual(expectedFiles);
-        expect(readFileSync(join(releases, "cli.c.cjs.version"), "utf8")).toBe("1.0.0+c\n");
-      } finally {
-        rmSync(releases, { recursive: true, force: true });
-        rmSync(work, { recursive: true, force: true });
-      }
-    },
-  );
+      );
+      mkdirSync(releases, { recursive: true });
+      const result = spawnSync("pwsh", ["-NoProfile", "-File", file], {
+        env: { ...process.env, TEST_RELEASES: releases },
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr + result.stdout).toBe(0);
+      expect(readdirSync(releases).sort()).toEqual(expectedFiles);
+      expect(readFileSync(join(releases, "cli.c.cjs.version"), "utf8")).toBe("1.0.0+c\n");
+    } finally {
+      rmSync(releases, { recursive: true, force: true });
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
 });
