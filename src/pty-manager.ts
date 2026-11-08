@@ -33,6 +33,7 @@ import {
   type PermissionGate,
   permissionContentKey,
   scrapePermissionGate,
+  scrapeUnansweredGate,
 } from "./services/questions/detectPermissionGate";
 import { readPromptSuggestion } from "./services/questions/detectPromptSuggestion";
 import {
@@ -1260,7 +1261,7 @@ export class PTYManager implements SessionRunner {
       // hasPromptMarker matches the box's own ╭/❯ glyphs — together those would
       // close a live gate. Require BOTH detectors to see nothing before closing;
       // the refresh below stays strict so prose is never broadcast as options.
-      const stillPainted = gate !== null || scrapePermissionGate(lines) !== null;
+      const stillPainted = gate !== null || scrapeUnansweredGate(lines) !== null;
       if (oscWaitingForInput || (!stillPainted && hasPromptMarker)) {
         this.permissionOpen.delete(sessionId);
         this.onPermissionChange?.(sessionId, null);
