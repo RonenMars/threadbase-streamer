@@ -20,6 +20,8 @@
 | GET | `/api/conversations` | Paginated conversation history |
 | GET | `/api/conversations/:id` | Full conversation with messages |
 | GET | `/project-chats` | Active sessions + historical conversations, combined |
+| GET | `/api/projects/summary` | Projects with at least one cached conversation, paginated (`limit`, `offset`) |
+| GET | `/api/projects` | **Retired.** Always 410 `{error}` pointing at `/api/projects/summary`; the query string is ignored |
 | GET | `/api/search?q=...` | Full-text search across conversations |
 | GET | `/api/browse` | Browse the file system |
 | GET | `/api/profiles` | List scan profiles |
