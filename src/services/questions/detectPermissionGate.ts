@@ -258,8 +258,10 @@ function scrapeDetail(lines: string[], promptLine: number): string | undefined {
 // prose from opening a card.
 
 // Gate footer ("Esc to cancel · Tab to amend · ctrl+e to explain"); "esc to
-// cancel" is the stable core across versions.
-const GATE_FOOTER_RE = /esc to cancel/i;
+// cancel" is the stable core across versions. It must be a whole `·`-separated
+// segment of the gutter-stripped row, so prose that merely quotes the footer
+// ("The footer reads: Esc to cancel · …") does not count.
+const GATE_FOOTER_RE = /(?:^|·)\s*esc to cancel\s*(?:·|$)/i;
 // AskUserQuestion footer — that path has priority (its footer also contains
 // "Esc to cancel", so this must be tested first).
 const ASK_MENU_FOOTER_RE = /Enter to select/i;
@@ -275,7 +277,7 @@ const YES_NO_LABEL_RE = /^(yes|no)\b/i;
  */
 export function detectGateScreen(lines: string[]): PermissionGate | null {
   if (lines.some((l) => ASK_MENU_FOOTER_RE.test(l))) return null;
-  if (!lines.some((l) => GATE_FOOTER_RE.test(l))) return null;
+  if (!lines.some((l) => GATE_FOOTER_RE.test(stripGutter(l).trim()))) return null;
   const gate = scrapePermissionGate(lines);
   if (!gate || gate.options.length < 2) return null;
   if (!gate.options.some((o) => YES_NO_LABEL_RE.test(o.label))) return null;
@@ -322,4 +324,19 @@ export function detectPickerScreen(lines: string[]): PermissionGate | null {
     if (COMPOSER_RULE_RE.test(lines[i]) || AGENT_OUTPUT_RE.test(lines[i])) return null;
   }
   return gate;
+}
+
+/**
+ * Is a gate-shaped option block still painted? Looser than detectGateScreen
+ * (no footer needed, so a mid-repaint tick still counts) but stricter than a
+ * bare scrape: at least 2 options, and no composer rule below the block — a
+ * live gate replaces the composer, so a rule below means the list is prose.
+ * Pure — no I/O.
+ */
+export function gateBlockStillPainted(lines: string[]): boolean {
+  const gate = scrapePermissionGate(lines);
+  if (!gate || gate.options.length < 2) return false;
+  let last = lines.length - 1;
+  while (last >= 0 && !OPTION_RE.test(stripGutter(lines[last]))) last--;
+  return !lines.slice(last + 1).some((l) => COMPOSER_RULE_RE.test(l));
 }

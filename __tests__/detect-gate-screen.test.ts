@@ -63,6 +63,27 @@ describe("detectGateScreen", () => {
     expect(detectGateScreen(askScreen)).toBeNull();
   });
 
+  it("claims an unboxed gate whose footer row starts with Esc to cancel (positive control)", () => {
+    const unboxed = [
+      "Do you want to proceed?",
+      "❯ 1. Yes",
+      "  2. No",
+      "",
+      "Esc to cancel · Tab to amend",
+    ];
+    expect(detectGateScreen(unboxed)?.options.map((o) => o.label)).toEqual(["Yes", "No"]);
+  });
+
+  it("stays silent when prose only quotes the gate footer", () => {
+    const quoted = [
+      "Two options:",
+      "1. Yes, proceed with the change",
+      "2. No, keep the current behaviour",
+      "The footer reads: Esc to cancel · Tab to amend",
+    ];
+    expect(detectGateScreen(quoted)).toBeNull();
+  });
+
   it("requires at least two options", () => {
     const oneOption = GATE_SCREEN.filter(
       (l) => !l.includes("2. Yes, and don't ask again") && !l.includes("3. No"),
