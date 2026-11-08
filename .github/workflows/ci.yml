@@ -215,16 +215,11 @@ jobs:
     # catch that class. Verified by reintroducing #523 on this branch — five
     # EINVAL failures on macOS while all three ubuntu Test legs stayed green.
     #
-    # Windows stays on 22 because 24 kills six vitest fork workers there with
-    # "Worker exited unexpectedly" — deterministic, twice out of twice, on
-    # runs 011122a and 72a6272, and unrelated to any test assertion (0 failed,
-    # 6 unhandled errors). Almost certainly a native addon under Node 24's
-    # Windows ABI. Since `Smoke (windows-latest)` is a required check, pinning
-    # 22 here is what keeps that crash from blocking every PR in the repo.
-    #
-    # This is not a regression: Windows was never tested on 24. It is a known
-    # gap, recorded in docs/testing/cross-platform-ci.md. Raise Windows to 24
-    # once the worker crash is understood.
+    # Windows runs 24 as well. It was held at 22 because 24 killed six vitest
+    # fork workers there ("Worker exited unexpectedly", 0 failed tests, runs
+    # 011122a and 72a6272). On Node 24.22.1 the full suite passes on Windows
+    # both serial and with parallel forks (#530), so the pin is lifted; if the
+    # crash returns, the worker-death evidence is in docs/testing/cross-platform-ci.md.
     strategy:
       fail-fast: false
       matrix:
@@ -232,14 +227,14 @@ jobs:
           - os: macos-latest
             node: 24
           - os: windows-latest
-            node: 22
+            node: 24
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: false
 
-      # Per-OS, see the matrix comment above. macOS 24 (the major .nvmrc pins),
-      # Windows 22. Measured on macos-latest (macOS 26.5.2 / 25F84) on
+      # Both legs run 24, the major .nvmrc pins. The EINVAL below was measured
+      # on macos-latest (macOS 26.5.2 / 25F84) on
       # 2026-08-11 by instrumenting the path in CI: an identical 114-byte
       # socket path raises EINVAL under v24.15.0 and binds cleanly under
       # v22.23.1.

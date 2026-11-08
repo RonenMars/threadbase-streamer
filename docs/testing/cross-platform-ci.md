@@ -25,7 +25,7 @@ A regression in any of those was invisible to a Linux-only matrix until a user h
 
 Step 1 used to install **with** scripts, on the reasoning that a native addon needs them to build or fetch its prebuild. That stopped being true and became actively harmful — see [Why the install skips scripts](#why-the-install-skips-scripts).
 
-Node version is pinned **per OS**: macOS on 24 (the major `.nvmrc` pins), Windows on 22. See [Node version, and why the two platforms differ](#node-version-and-why-the-two-platforms-differ).
+Both platforms run Node 24, the major `.nvmrc` pins. See [Node version, and why the two platforms differ](#node-version-and-why-the-two-platforms-differ).
 
 Step 3 is the one a Linux-only matrix can never catch: an ABI mismatch or a missing prebuild produces a server that starts fine and then fails the moment anyone opens a session.
 
@@ -75,7 +75,7 @@ Nothing here needs a compiler any more — `better-sqlite3` and `node-pty` both 
 
 **`release.yml` did not get this change until 2026-09-05, and it cost a release.** Its three `npm ci` calls rode npm's default, which is not stable: `Build win32-x64` installed clean at 21:15 and died in `node-gyp rebuild` at 01:22 (exit `3221226505`, crashing at the header fetch rather than reaching `gyp ERR! find VS`) with nothing in the repo changed. The publish job needs every build green, so the release for #781 never cut and a merged fix sat on `main` unpublished. All three installs now carry `--ignore-scripts`, each followed by `npx patch-package` — the publish job needs it too, because `npm publish` runs `prepublishOnly: npm run build` *before* `prepare`, so the qrcode-terminal patch has to be on disk already. `__tests__/ci-workflow.test.ts` reads both workflows and asserts it; it used to read only `ci.yml`, which is how the two drifted apart unnoticed.
 
-**Why `--ignore-scripts=false` was not the fix.** Whether scripts run by default depends on the npm major: npm 12 blocks package install scripts, npm 10 does not. The Windows runner is on Node 22, which bundles npm 10, so simply dropping the flag left the implicit gyp firing. The flag's presence or absence guarantees nothing; only `--ignore-scripts` does.
+**Why `--ignore-scripts=false` was not the fix.** Whether scripts run by default depends on the npm major: npm 12 blocks package install scripts, npm 10 does not. The Windows runner was on Node 22 at the time, which bundles npm 10, so simply dropping the flag left the implicit gyp firing. The flag's presence or absence guarantees nothing; only `--ignore-scripts` does.
 
 **What has to be re-run, and why.** `--ignore-scripts` skips the root package's lifecycle scripts too, and two of ours are load-bearing:
 
@@ -101,9 +101,7 @@ The reason is that `sun_path` enforcement is Node-version-dependent, not only OS
 
 libuv tightened the length check between the two. Because the Node-24 legs of `Test` are ubuntu-only, **macOS × Node 24 — the exact combination that reproduces #523 — was covered by nothing at all.** Two gaps, not one, and only fixing both makes the demonstration go red.
 
-**Windows is deliberately held at 22.** Raising it to 24 kills six vitest fork workers with `Worker exited unexpectedly` — 0 test failures, 6 unhandled errors, 190/199 files completing. Deterministic: twice out of twice, on `011122a` and `72a6272`. The cause is unidentified and looks like a native addon under Node 24's Windows ABI rather than anything in the test logic.
-
-Since `Smoke (windows-latest)` is a required check, pinning 22 there is what stops that crash blocking every PR in the repo. **This is a known gap, not a fix**: Windows is not exercised on the Node the project pins, and a Node-24-specific Windows defect would still be invisible. It is also not a regression — Windows was never on 24. Raise it once the worker crash is understood, and `__tests__/ci-workflow.test.ts` asserts the current pin so doing so is a visible edit.
+**Windows ran 22 until #530.** Node 24 there once killed six vitest fork workers with `Worker exited unexpectedly` — 0 test failures, 6 unhandled errors, 190/199 files completing, on `011122a` and `72a6272` (Node 24.15.0 era). It no longer reproduces: on Node 24.22.1 (ABI 137) the full suite passed on `windows-latest` twice, once serial (351 of 352 files) and once with parallel fork workers (351 files passed, 3788 tests passed, 0 worker deaths; the only failures were three `ci-workflow.test.ts` asserts that the diagnostic edits themselves broke). The cause was never named, so treat the pin as lifted on evidence, not on understanding. If the shape returns, run the Windows leg with `--reporter=verbose` and take the last test name before each `Worker exited unexpectedly` as the candidate.
 
 ### Flake exposure, stated up front
 
@@ -118,7 +116,7 @@ The repo's documented bar for promoting a cross-platform job to blocking was fiv
 
 The Windows miss was `__tests__/session-status-line.test.ts` answering `503` (`STORE_UNAVAILABLE`) instead of `200` on `GET /api/sessions/:id` — a store-readiness race on a loaded runner, not a portability defect. It passed on an immediate re-run.
 
-**File parallelism on macOS was reversed after #894.** Turning files parallel (`maxWorkers: 4`) dropped Windows smoke from ~8.5 min toward ~3–4 min and stayed green on Linux, but `Smoke (macos-latest)` went from 2 failures in 66 runs (3%) to 8 in 29 (28%). Every miss was a paint-time or `fs.watch` wait: `codex-active-writer` (`expected undefined to be 'idle'`), `pty-live-question-close`, `pty-shell-prompt-detection`, `transcript-watch-deadline`, `codex-multi-choice-transport`. macOS is serial again; Linux and Windows × Node 22 still parallelize. The tests that lost to a 0–10 ms sleep now poll with `vi.waitFor` so a loaded serial runner is not read as a broken detector.
+**File parallelism on macOS was reversed after #894.** Turning files parallel (`maxWorkers: 4`) dropped Windows smoke from ~8.5 min toward ~3–4 min and stayed green on Linux, but `Smoke (macos-latest)` went from 2 failures in 66 runs (3%) to 8 in 29 (28%). Every miss was a paint-time or `fs.watch` wait: `codex-active-writer` (`expected undefined to be 'idle'`), `pty-live-question-close`, `pty-shell-prompt-detection`, `transcript-watch-deadline`, `codex-multi-choice-transport`. macOS is serial again; Linux and Windows still parallelize. The tests that lost to a 0–10 ms sleep now poll with `vi.waitFor` so a loaded serial runner is not read as a broken detector.
 
 **Do not read that as harmless.** A flaky required check is the failure mode that teaches people to re-run without reading, which is how a true positive gets waved through. If Windows flakes again, fix the readiness race in the test rather than re-running past it; the standing rule is re-run once, and stop and report if the re-run also fails.
 
@@ -210,7 +208,7 @@ Stated plainly so this doc is not mistaken for a completeness claim:
 - **Migration validation.** There is no job that applies migrations to a database from an older release and asserts the result. Migrations are additive so far, which is why this has not bitten.
 - **WebSocket replay and runtime-restart tests.** Both exist as unit and integration tests; neither runs against a real long-lived server in CI.
 - **Windows production restart.** The smoke job qualifies real ConPTY host lifetime and named-pipe reconnect, but it does not launch Claude or Codex or invoke Task Scheduler.
-- **Windows on Node 24.** The Windows leg runs Node 22, so the Node the project pins in `.nvmrc` is never exercised on Windows. Node 24 there crashes six vitest workers outright; until that is understood, any Node-24-specific Windows defect is invisible. Detail above.
+- **Windows worker crash cause unknown.** Windows now runs Node 24 and passes, but the earlier `Worker exited unexpectedly` crash was never explained, only no longer observed.
 - **Performance regression.** Nothing tracks query timing or scan duration over time. `/api/search` now returns `tookMs`, which is the raw material for it.
 
 ## When a platform-specific failure appears
