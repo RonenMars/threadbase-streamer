@@ -388,8 +388,20 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
     const session = notifier && deps.sessionStore.get(sessionId, deps.ptyAttachedIds());
     if (session) void notifier.onPrompt(session, kind, open, facts, answers);
   };
+  const sessionEventSeq = new Map<string, number>();
   return {
     logger: getLogger("pty"),
+    onSessionEvent: (sessionId, event) => {
+      const seq = (sessionEventSeq.get(sessionId) ?? 0) + 1;
+      sessionEventSeq.set(sessionId, seq);
+      deps.wsHub.broadcastToClients(deps.sessionSubscribers.get(sessionId) ?? [], {
+        type: "session_event",
+        sessionId,
+        seq,
+        event,
+        at: new Date().toISOString(),
+      });
+    },
     onOutput: (sessionId, data) => {
       // Agent-activity stamp for the idle reaper. Fires for every provider
       // (both runners call onOutput), so the reaper needs no per-runner

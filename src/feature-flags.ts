@@ -127,6 +127,14 @@ export const FEATURE_FLAGS = {
     default: false,
     env: "THREADBASE_FEATURE_RELAY",
   },
+  codexAppServer: {
+    description:
+      "Run Codex sessions through `codex app-server` (structured JSON-RPC events) instead of a PTY. " +
+      "Off by default: this first slice has no permission cards, no additional directories and no " +
+      "terminal, so the PTY runner stays the Codex default.",
+    default: false,
+    env: "THREADBASE_FEATURE_CODEX_APP_SERVER",
+  },
   ptyHost: {
     description:
       "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +
