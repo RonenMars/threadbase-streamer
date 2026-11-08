@@ -377,6 +377,7 @@ export const createMiscRoutes = (
   deps: Pick<
     ApiDeps,
     | "publicUrl"
+    | "scanProfiles"
     | "relayUrl"
     | "sessionStore"
     | "ptyAttachedIds"
@@ -465,7 +466,17 @@ export const createMiscRoutes = (
     });
   });
 
-  app.get("/api/profiles", (c) => c.json([]));
+  // Never `configDir`: a local path reveals the OS user and layout (#511).
+  app.get("/api/profiles", (c) =>
+    c.json(
+      (deps.scanProfiles ?? []).map(({ id, label, emoji, enabled }) => ({
+        id,
+        label,
+        emoji,
+        enabled,
+      })),
+    ),
+  );
 
   app.post("/api/auth/rotate", (c) => {
     // Block rotation when localNoAuth is on — any localhost process could
