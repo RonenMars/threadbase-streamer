@@ -76,6 +76,40 @@ describe("detectPickerScreen", () => {
     expect(detectPickerScreen(screen)).toBeNull();
   });
 
+  // A message that opens with a numbered list is echoed as "❯ 1. …" plus indented
+  // rows, which is a picker's exact shape. The composer rule is not always in the
+  // window (an interrupt repaints mid-turn), so the agent's reply below the block
+  // is what says it is a transcript line and not a live menu.
+  describe("the user's own numbered message, echoed into the transcript", () => {
+    const ECHO = [
+      "❯ 1. Change the default mode to Chat, and set it settings to enabled",
+      "  2. Remove the “beta” from the Chat mode in settings",
+      "  3. Sessions with Cursor provider should always open in Terminal view by default (but be able to change the view to",
+      "  Chat as now), other providers should open in chat view",
+      "",
+    ];
+
+    it("does not claim it once the agent has replied below it", () => {
+      const screen = [
+        ...ECHO,
+        "⏺ Bash(grep -rn cursor types)",
+        "  ⎿  Interrupted · What should Claude do instead?",
+      ];
+      expect(detectPickerScreen(screen)).toBeNull();
+    });
+
+    it("does not claim it when only a tool-result line sits below", () => {
+      expect(
+        detectPickerScreen([...ECHO, "  ⎿  Interrupted · What should Claude do instead?"]),
+      ).toBeNull();
+    });
+
+    // Positive control: the same rows with nothing below are still a live picker.
+    it("still claims the same rows with nothing below them", () => {
+      expect(detectPickerScreen(ECHO)?.options).toHaveLength(3);
+    });
+  });
+
   // #821: a numbered list in prose carries no selection cursor.
   it("does not claim a numbered list in prose", () => {
     const screen = ["⏺ Here is the plan:", "  1. Update the parser", "  2. Add the tests", ""];

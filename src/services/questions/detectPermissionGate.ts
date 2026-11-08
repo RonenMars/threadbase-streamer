@@ -287,6 +287,12 @@ export function detectGateScreen(lines: string[]): PermissionGate | null {
 // the block is not a picker the user is being asked to answer.
 const COMPOSER_RULE_RE = /^\s*─{8,}\s*$/;
 
+// Agent output (reply `⏺`/`●`, tool result `⎿`) never paints under a live
+// picker, so one below the cursor row means the block is the user's own message
+// echoed into the transcript — a message that opens with "1. …" is picker-shaped
+// — even when the composer rule is out of the window.
+const AGENT_OUTPUT_RE = /^\s*[⏺●⎿]/;
+
 /**
  * Claim an unboxed numbered picker from rendered screen lines — one that prints
  * no gate footer, so detectGateScreen never sees it (Claude Code's first-run
@@ -313,7 +319,7 @@ export function detectPickerScreen(lines: string[]): PermissionGate | null {
   }
   if (cursorRow < 0 || /^\s*│/.test(lines[cursorRow])) return null;
   for (let i = cursorRow + 1; i < lines.length; i++) {
-    if (COMPOSER_RULE_RE.test(lines[i])) return null;
+    if (COMPOSER_RULE_RE.test(lines[i]) || AGENT_OUTPUT_RE.test(lines[i])) return null;
   }
   return gate;
 }
