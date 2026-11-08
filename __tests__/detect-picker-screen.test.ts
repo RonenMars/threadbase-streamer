@@ -1,4 +1,7 @@
-import { detectPickerScreen } from "../src/services/questions/detectPermissionGate";
+import {
+  detectPickerScreen,
+  scrapeUnansweredGate,
+} from "../src/services/questions/detectPermissionGate";
 
 // #863. Rendered by the RonenMars/threadbase-mobile#953 retest rig (Claude Code
 // 2.1.267, @xterm/headless at 120x40), from the picker's first line down.
@@ -125,5 +128,32 @@ describe("detectPickerScreen", () => {
       "╰──────────────────────────────╯",
     ];
     expect(detectPickerScreen(screen)).toBeNull();
+  });
+});
+
+describe("scrapeUnansweredGate", () => {
+  const RULE = "─".repeat(120);
+  const typed = ["  earlier prose", "❯ 1. change the default", "  2. remove the beta"];
+
+  it("sees no gate in a cursor-marked block with a composer rule below it", () => {
+    expect(scrapeUnansweredGate([...typed, RULE, "❯\u00a0", RULE])).toBeNull();
+  });
+
+  it("still sees the same block before the composer has painted", () => {
+    expect(scrapeUnansweredGate(typed)?.options).toHaveLength(2);
+  });
+
+  it("keeps a boxed gate painted even with a rule below it", () => {
+    const boxed = [
+      "│ Do you want to proceed?   │",
+      "│ ❯ 1. Yes                  │",
+      "│   2. No                   │",
+      RULE,
+    ];
+    expect(scrapeUnansweredGate(boxed)?.options).toHaveLength(2);
+  });
+
+  it("keeps a cursorless block painted even with a rule below it", () => {
+    expect(scrapeUnansweredGate(["  Pick one", "  1. a", "  2. b", RULE])?.options).toHaveLength(2);
   });
 });

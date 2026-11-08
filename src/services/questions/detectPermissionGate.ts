@@ -311,14 +311,7 @@ export function detectPickerScreen(lines: string[]): PermissionGate | null {
   if (lines.some((l) => ASK_MENU_FOOTER_RE.test(l))) return null;
   const gate = scrapePermissionGate(lines);
   if (!gate || gate.cursor === undefined || gate.options.length < 2) return null;
-  let cursorRow = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = OPTION_RE.exec(stripGutter(lines[i]));
-    if (m?.[1] && Number.parseInt(m[2], 10) === gate.cursor) {
-      cursorRow = i;
-      break;
-    }
-  }
+  const cursorRow = cursorRowOf(lines, gate.cursor);
   if (cursorRow < 0 || /^\s*│/.test(lines[cursorRow])) return null;
   for (let i = cursorRow + 1; i < lines.length; i++) {
     if (COMPOSER_RULE_RE.test(lines[i]) || AGENT_OUTPUT_RE.test(lines[i])) return null;
@@ -339,4 +332,36 @@ export function gateBlockStillPainted(lines: string[]): boolean {
   let last = lines.length - 1;
   while (last >= 0 && !OPTION_RE.test(stripGutter(lines[last]))) last--;
   return !lines.slice(last + 1).some((l) => COMPOSER_RULE_RE.test(l));
+}
+
+function cursorRowOf(lines: string[], cursor: number): number {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = OPTION_RE.exec(stripGutter(lines[i]));
+    if (m?.[1] && Number.parseInt(m[2], 10) === cursor) return i;
+  }
+  return -1;
+}
+
+function composerRuleBelow(lines: string[], row: number): boolean {
+  for (let i = row + 1; i < lines.length; i++) {
+    if (COMPOSER_RULE_RE.test(lines[i])) return true;
+  }
+  return false;
+}
+
+/**
+ * The "is a gate still painted?" test for CLOSING a card: scrapePermissionGate,
+ * minus a cursor-marked block with a composer rule below it. That block is
+ * typed or answered text above a live composer, never a gate (the rule
+ * detectPickerScreen opens by) — and without this the loose scrape kept a card
+ * that a half-painted resume had claimed open for good, since it matches the
+ * user's own "❯ 1. …" message in scrollback forever. A boxed gate (`│`) and a
+ * cursorless block stay as loose as before, so a mid-repaint tick that drops
+ * the footer still cannot close a live gate. Pure — no I/O.
+ */
+export function scrapeUnansweredGate(lines: string[]): PermissionGate | null {
+  const gate = scrapePermissionGate(lines);
+  if (gate?.cursor === undefined) return gate;
+  const row = cursorRowOf(lines, gate.cursor);
+  return row >= 0 && !/^\s*│/.test(lines[row]) && composerRuleBelow(lines, row) ? null : gate;
 }

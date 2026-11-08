@@ -409,4 +409,32 @@ describe("PTYManager — paint-time claim of an unboxed picker (#863)", () => {
     await waitForOptions(gates, 7);
     mgr.dispose();
   });
+
+  // A resume repaints the transcript top-down. The user's own earlier numbered
+  // message paints before the composer does, so for one tick it is a ❯ block
+  // with no rule below it — exactly a live picker. The composer then lands, and
+  // the card must close: the block is typed text above a live composer.
+  it("closes a picker claimed off a half-painted resume once the composer paints under it", async () => {
+    const gates: Gate[] = [];
+    const mgr = new PTYManager({ onPermissionChange: (_id, gate) => gates.push(gate) });
+    const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });
+    const proc = getMockProc(mgr, session.id);
+
+    proc._emit(
+      "data",
+      [
+        "  earlier prose",
+        "",
+        "❯ 1. change the default",
+        "  2. remove the beta",
+        "  Ran 1 shell command",
+      ].join("\r\n"),
+    );
+    await waitForOptions(gates, 2);
+
+    await new Promise((r) => setTimeout(r, 310));
+    proc._emit("data", ["", COMPOSER_RULE, "❯ ", COMPOSER_RULE].join("\r\n"));
+    await vi.waitFor(() => expect(gates[gates.length - 1]).toBeNull());
+    mgr.dispose();
+  });
 });
