@@ -258,8 +258,10 @@ function scrapeDetail(lines: string[], promptLine: number): string | undefined {
 // prose from opening a card.
 
 // Gate footer ("Esc to cancel · Tab to amend · ctrl+e to explain"); "esc to
-// cancel" is the stable core across versions.
-const GATE_FOOTER_RE = /esc to cancel/i;
+// cancel" is the stable core across versions. It must be a whole `·`-separated
+// segment of the gutter-stripped row, so prose that merely quotes the footer
+// ("The footer reads: Esc to cancel · …") does not count.
+const GATE_FOOTER_RE = /(?:^|·)\s*esc to cancel\s*(?:·|$)/i;
 // AskUserQuestion footer — that path has priority (its footer also contains
 // "Esc to cancel", so this must be tested first).
 const ASK_MENU_FOOTER_RE = /Enter to select/i;
@@ -275,7 +277,7 @@ const YES_NO_LABEL_RE = /^(yes|no)\b/i;
  */
 export function detectGateScreen(lines: string[]): PermissionGate | null {
   if (lines.some((l) => ASK_MENU_FOOTER_RE.test(l))) return null;
-  if (!lines.some((l) => GATE_FOOTER_RE.test(l))) return null;
+  if (!lines.some((l) => GATE_FOOTER_RE.test(stripGutter(l).trim()))) return null;
   const gate = scrapePermissionGate(lines);
   if (!gate || gate.options.length < 2) return null;
   if (!gate.options.some((o) => YES_NO_LABEL_RE.test(o.label))) return null;
