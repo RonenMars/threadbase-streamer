@@ -51,6 +51,27 @@ describe("session ownership fields", () => {
     expect(resp.pid).toBe(4321);
   });
 
+  it("exposes the registry turn state as an inferred, dated field without touching status", () => {
+    const store = new SessionStore();
+    const updatedAt = new Date("2026-10-02T10:05:00Z");
+    store.setDiscovered([{ ...discovered, turnState: { state: "busy", updatedAt } }]);
+    const [resp] = store.list(new Set());
+    expect(resp.status).toBe("idle");
+    expect(resp.externalTurn).toEqual({
+      state: "busy",
+      updatedAt: updatedAt.toISOString(),
+      source: "claude-registry",
+      confidence: "inferred",
+    });
+  });
+
+  it("emits no externalTurn when discovery found no registry state", () => {
+    const store = new SessionStore();
+    store.setDiscovered([discovered]);
+    const [resp] = store.list(new Set());
+    expect(resp).not.toHaveProperty("externalTurn");
+  });
+
   it("keeps status within the existing vocabulary so ?status= filtering is unaffected", () => {
     const store = new SessionStore();
     store.addManaged(managed);
