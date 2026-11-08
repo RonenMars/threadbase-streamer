@@ -4,7 +4,6 @@ import {
   createJsonlParseState,
   type FileStatEntry,
   type JsonlParseState,
-  parseCodexJsonlLine,
   parseCopilotJsonlLine,
   parseCursorJsonlLine,
   parseJsonlLine,
@@ -36,7 +35,7 @@ import {
   isAgentLine,
 } from "./services/conversations/isAgentConversation";
 import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
-import { isLeadingInjectedContext } from "./utils/codexConversationLine";
+import { parseCodexMessageAt } from "./utils/codexConversationLine";
 import { fileIdentity, type LineSpan, splitCompleteLines } from "./utils/fileIdentity";
 
 export interface ConversationCacheOptions {
@@ -750,11 +749,7 @@ export class ConversationCache {
       // mid-file. A closure counter would reset on resume and silently unbound
       // the filter.
       return {
-        parse: (text, index) => {
-          const msg = parseCodexJsonlLine(text);
-          if (!msg) return null;
-          return isLeadingInjectedContext(index, msg.role, msg.text) ? null : msg;
-        },
+        parse: parseCodexMessageAt,
         state: null,
       };
     }

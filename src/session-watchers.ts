@@ -15,6 +15,7 @@ import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER, CURSOR_PROVIDER } from "./pro
 import type { ScannerManager } from "./scanner-manager";
 import type { ConversationWatcher } from "./services/conversations/conversationWatcher";
 import type { SessionStore } from "./session-store";
+import { codexReplaySeqs } from "./utils/codexConversationLine";
 import type { WSHub } from "./ws-hub";
 
 /**
@@ -487,7 +488,9 @@ export class SessionWatchers {
           try {
             const existing = readFileSync(candidatePath, "utf8").split("\n").filter(Boolean);
             if (existing.length > 0) {
-              this.deps.broadcastConversationLines(sessionId, existing);
+              // The replay starts at byte 0, so it can number its own lines;
+              // without seqs the overlay filters injected context unbounded.
+              this.deps.broadcastConversationLines(sessionId, existing, codexReplaySeqs(existing));
             }
           } catch {
             /* ignore — file may not be readable yet; watcher will catch future writes */
