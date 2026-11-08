@@ -1,5 +1,5 @@
 import { ConversationScanner } from "@threadbase-sh/scanner";
-import { mkdtempSync } from "fs";
+import { cpSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
@@ -152,6 +152,23 @@ describe("serving cached rows during the startup warm-up", () => {
     expect(await res.json()).toMatchObject({ code: "SERVER_WARMING_UP", warmupState: "startup" });
   });
 
+  it("keeps a known conversation's detail gated while scan profiles turn the cold path off", async () => {
+    const { port, scanCalls } = await restartWithHungScan();
+    const list = (await (await get(port, "/api/conversations?limit=1")).json()) as {
+      conversations: Array<{ id: string }>;
+    };
+    // Served, this lookup would start a second scan and hang on it.
+    const res = await fetch(
+      `http://localhost:${port}/api/conversations/${list.conversations[0].id}`,
+      {
+        headers: auth,
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    expect(res.status).toBe(503);
+    expect(scanCalls()).toBe(1);
+  });
+
   it("does not start a second scan for refresh=1 while the startup scan runs", async () => {
     const { port, scanCalls } = await restartWithHungScan();
     await vi.waitFor(() => expect(scanCalls()).toBe(1));
@@ -233,6 +250,120 @@ describe("serving cached rows during the startup warm-up", () => {
     expect(await res.json()).toMatchObject({ warmupState: "cache_reset" });
     finish();
     await reset;
+  });
+});
+
+// The default config (no scanProfiles, as the CLI runs it): until the startup
+// scan adopts its scanner, the detail read parses the one file it can locate,
+// so it can answer without starting a scan of its own.
+describe("conversation detail during the startup warm-up", () => {
+  let home: string;
+  let cacheDir: string;
+  let runtimeDbPath: string;
+  let server: StreamerServer | undefined;
+  let release: (() => void) | undefined;
+
+  const makeDefaultServer = () =>
+    new StreamerServer({
+      port: 0,
+      apiKey: API_KEY,
+      localNoAuth: false,
+      verbose: false,
+      disableDb: true,
+      cacheDir,
+      runtimeDbPath,
+      codexRoots: [],
+      cursorRoots: [],
+      scannerPersistent: false,
+    });
+
+  beforeEach(async () => {
+    home = mkdtempSync(join(tmpdir(), "tb-warm-detail-home-"));
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    cpSync(
+      join(__dirname, "./fixtures/contract-projects/projects"),
+      join(home, ".claude", "projects"),
+      { recursive: true },
+    );
+    cacheDir = mkdtempSync(join(tmpdir(), "tb-warm-detail-cache-"));
+    runtimeDbPath = join(mkdtempSync(join(tmpdir(), "tb-warm-detail-rt-")), "runtime.db");
+    const first = makeDefaultServer();
+    await first.listen(0, { awaitReady: true });
+    await first.close();
+  }, 120_000);
+
+  afterEach(async () => {
+    release?.();
+    await server?.close();
+    server = undefined;
+    release = undefined;
+    vi.restoreAllMocks();
+  });
+
+  async function restartWithHungScan(): Promise<{ port: number; scanCalls: () => number }> {
+    let calls = 0;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(ConversationScanner.prototype, "scan").mockImplementation((async () => {
+      calls += 1;
+      await pending;
+    }) as never);
+    server = makeDefaultServer();
+    await server.listen(0);
+    return { port: server.port, scanCalls: () => calls };
+  }
+
+  const get = (port: number, path: string) =>
+    fetch(`http://localhost:${port}${path}`, {
+      headers: auth,
+      signal: AbortSignal.timeout(5_000),
+    });
+
+  const cacheOf = () =>
+    (
+      server as unknown as {
+        cache: { getMetaById: (id: string) => { filePath?: string } | null };
+      }
+    ).cache;
+
+  async function knownId(port: number): Promise<string> {
+    const list = (await (await get(port, "/api/conversations?limit=1")).json()) as {
+      conversations: Array<{ id: string }>;
+    };
+    return list.conversations[0].id;
+  }
+
+  it("serves a cached conversation's messages from its file, without a second scan", async () => {
+    const { port, scanCalls } = await restartWithHungScan();
+    const id = await knownId(port);
+    const res = await get(port, `/api/conversations/${id}?msg_limit=80`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get(WARMING_HEADER)).toBe("startup");
+    const body = (await res.json()) as { messages: unknown[] };
+    expect(body.messages.length).toBeGreaterThan(0);
+    expect(scanCalls()).toBe(1);
+  });
+
+  it("asks for a retry on an id it cannot find", async () => {
+    const { port } = await restartWithHungScan();
+    const res = await get(port, "/api/conversations/not-yet-indexed?msg_limit=80");
+    expect(res.status).toBe(503);
+    expect(res.headers.get(WARMING_HEADER)).toBeNull();
+    expect(await res.json()).toMatchObject({ code: "SERVER_WARMING_UP", warmupState: "startup" });
+  });
+
+  it("does not 404 or drop the row of a cached conversation whose file it cannot find", async () => {
+    const { port } = await restartWithHungScan();
+    const id = await knownId(port);
+    const filePath = cacheOf().getMetaById(id)?.filePath;
+    expect(filePath).toBeTruthy();
+    rmSync(filePath as string);
+    // before_index skips the cache-tail fallback, so the read reaches not-found.
+    const res = await get(port, `/api/conversations/${id}?before_index=1`);
+    expect(res.status).toBe(503);
+    expect(cacheOf().getMetaById(id)).not.toBeNull();
   });
 });
 

@@ -1119,7 +1119,10 @@ export class ConversationHandlers {
     res: ServerResponse,
     ifNoneMatch?: string,
   ): Promise<void> {
-    if (this.deps.rejectIfWarmingUp(res)) return;
+    // Servable during the startup scan: until it adopts its scanner,
+    // findConversationByUuid parses the one located file and starts no scan.
+    // With scanProfiles that cold path is off and a lookup would scan.
+    if (this.deps.rejectIfWarmingUp(res, this.scanProfiles ? undefined : "conversations")) return;
 
     // No sub-agent gate here: the list serves a parent's children (?parent=), so
     // opening one by id must work. The gate stays on session controls.
@@ -1306,6 +1309,9 @@ export class ConversationHandlers {
       // lost the same row as its own fallback — both endpoints 404ing forever on
       // a conversation still sitting on disk. Invalidate `lookupId`, since that
       // is the id the row is keyed by; `id` may be a Codex placeholder.
+      // A partial index cannot say "not found" (nor prove a row a ghost): the
+      // scanner-index rungs are empty until the startup scan ends. Retry instead.
+      if (this.deps.warmupState?.() && this.deps.rejectIfWarmingUp(res)) return;
       const lookupId = this.deps.resolveConversationLookupId(id);
       const rowPath = this.cache?.getMetaById(lookupId)?.filePath;
       if (rowPath && !existsSync(rowPath)) this.cache?.invalidate(lookupId);
