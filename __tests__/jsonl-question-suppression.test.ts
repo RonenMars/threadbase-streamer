@@ -100,6 +100,25 @@ describe("processJsonlQuestions — P0.2 suppression + anti-clobber", () => {
     expect((server as any).pendingQuestions.has(SID)).toBe(false);
   });
 
+  it("keeps the 60s phantom-cancel from dropping a question whose menu is still on screen", async () => {
+    const SID = "menu-up-sess";
+    const menu = ["Pick one?", "❯ 1. a", "  2. b", "Enter to select · Esc to cancel"];
+    let screen = menu;
+    vi.spyOn((server as any).ptyManager, "getOutputLines").mockImplementation(async () => screen);
+    vi.useFakeTimers();
+    try {
+      (server as any).processJsonlQuestions(SID, [qLine("Pick one", ["a", "b"], "toolu_up")]);
+      await vi.advanceTimersByTimeAsync(130_000);
+      expect((server as any).pendingQuestions.get(SID)?.toolUseId).toBe("toolu_up");
+
+      screen = ["back at the prompt"];
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect((server as any).pendingQuestions.has(SID)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("broadcasts and stores a JSONL question when the session is NOT contended", () => {
     const SID = "normal-sess";
 

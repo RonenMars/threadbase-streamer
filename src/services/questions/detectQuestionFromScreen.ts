@@ -26,6 +26,10 @@ import type { AskOption, AskQuestion } from "../../types";
 // positive signal that this block IS a structured picker (vs a permission gate,
 // which uses a different footer and y/n phrasing).
 const ASK_FOOTER_RE = /Enter to select/i;
+const ASK_FOOTER_ROW_RE = /^\s*Enter to select/i;
+// Generous bound on rows between a menu's first option and its footer
+// (options + wrapped descriptions + borders).
+const MENU_WINDOW_ROWS = 30;
 const ESC_FOOTER_RE = /Esc to cancel|to navigate/i;
 
 // An option row: optional `❯` cursor + "N. label". Tolerates the box indent.
@@ -33,6 +37,7 @@ const OPTION_RE = /^\s*(?:❯)?\s*(\d+)\.\s+(.+?)\s*$/;
 
 // A question header ends with "?" (AskUserQuestion questions are interrogative).
 const QUESTION_RE = /\?\s*$/;
+const MID_QUESTION_RE = /\?\s/;
 
 const BOX_ONLY_RE = /^[\s│─┌┐└┘├┤┬┴┼╭╮╰╯╱╲=_-]+$/;
 
@@ -187,8 +192,14 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
     const trimmed = raw.trim();
     if (trimmed.length === 0) continue;
     if (BOX_ONLY_RE.test(lines[i].trim())) continue;
-    if (QUESTION_RE.test(trimmed)) {
-      question = joinWrappedQuestion(lines, i, trimmed);
+    // The last row of a multi-sentence question can end in "." with the "?" mid-text
+    // ("...shows? It would be a small change in `x.ts`, with tests."), so a wrapped
+    // block that asks anywhere counts, not only a "?"-terminated last row.
+    const joined = joinWrappedQuestion(lines, i, trimmed);
+    const asks =
+      QUESTION_RE.test(trimmed) || (!HEADER_CHIP_RE.test(trimmed) && MID_QUESTION_RE.test(joined));
+    if (asks) {
+      question = joined;
       break;
     }
     if (!skippedHeader) {
@@ -253,7 +264,20 @@ export function isSubmitConfirmationScreen(lines: string[]): boolean {
  * present. Used to reject an answer for a menu that already closed. Pure.
  */
 export function isQuestionMenuOnScreen(lines: string[]): boolean {
-  return lines.some((line) => ASK_FOOTER_RE.test(line));
+  // The footer must START its row (after any box gutter) and sit under at least two
+  // option rows. A bare substring test also matched prose that quotes the footer,
+  // which held a finished turn open as `running` for as long as the text stayed on
+  // screen. ponytail: a quoted footer at a row start under a numbered list still
+  // matches; fine until it is seen.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!ASK_FOOTER_ROW_RE.test(stripBoxGutter(lines[i]))) continue;
+    let optionRows = 0;
+    for (let j = i - 1; j >= Math.max(0, i - MENU_WINDOW_ROWS); j--) {
+      if (OPTION_RE.test(stripBoxGutter(lines[j]))) optionRows++;
+    }
+    return optionRows >= 2;
+  }
+  return false;
 }
 
 /**

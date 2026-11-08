@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectQuestionFromScreen,
   isLossyViewOf,
+  isQuestionMenuOnScreen,
   isSubmitConfirmationScreen,
   questionContentKey,
 } from "../src/services/questions/detectQuestionFromScreen";
@@ -440,5 +441,65 @@ describe("isLossyViewOf (#730)", () => {
 
   it("is false for an empty scrape, which says nothing about any form", () => {
     expect(isLossyViewOf([], form)).toBe(false);
+  });
+});
+
+// A multi-sentence question wraps over two rows; the "?" sits mid-text and the
+// last row ends in "." — observed on a live session (152e53ba), where the
+// "?"-suffix test returned null and the session sat in `running` with no card.
+const WRAPPED_MID_QUESTION_MENU = [
+  "────────────────────────────────────────────────",
+  " ☐ Error debounce",
+  "Should I add a delay before the server error banner shows? It would be a small change in",
+  "`stores/serverFetchStatus.ts`, with tests.",
+  "❯ 1. Delay 3s, cancel on success (Recommended)",
+  "     recordFailure stays pending for 3s.",
+  "  2. Two failures in a row",
+  "     The banner shows only after 2 consecutive failures.",
+  "  3. Don't change anything",
+  "     I only wanted to know whether it exists.",
+  "  4. Type something.",
+  "────────────────────────────────────────────────",
+  "  5. Chat about this",
+  "Enter to select · ↑/↓ to navigate · Esc to cancel",
+];
+
+describe("a question whose last row does not end in '?'", () => {
+  it("is detected when a '?' sits earlier in the wrapped question", () => {
+    const detected = detectQuestionFromScreen(WRAPPED_MID_QUESTION_MENU);
+    expect(detected?.questions[0].question).toBe(
+      "Should I add a delay before the server error banner shows? It would be a small change in `stores/serverFetchStatus.ts`, with tests.",
+    );
+    expect(detected?.questions[0].options).toHaveLength(5);
+  });
+});
+
+describe("isQuestionMenuOnScreen", () => {
+  it("is true for a real menu", () => {
+    expect(isQuestionMenuOnScreen(WRAPPED_MID_QUESTION_MENU)).toBe(true);
+    expect(isQuestionMenuOnScreen(MENU)).toBe(true);
+  });
+
+  it("is false when prose merely quotes the footer phrase", () => {
+    expect(
+      isQuestionMenuOnScreen([
+        "The `Enter to select` footer held the turn open.",
+        "Enter to select · ↑/↓ to navigate · Esc to cancel is what the TUI paints.",
+      ]),
+    ).toBe(false);
+  });
+
+  it("is false when the quoted footer sits mid-row under a numbered list", () => {
+    expect(
+      isQuestionMenuOnScreen([
+        "  1. first finding",
+        "  2. second finding",
+        "Both come from the `Enter to select` footer test.",
+      ]),
+    ).toBe(false);
+  });
+
+  it("is false for a footer line with no option rows above it", () => {
+    expect(isQuestionMenuOnScreen(["some output", "Enter to select · Esc to cancel"])).toBe(false);
   });
 });

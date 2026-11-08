@@ -37,6 +37,7 @@ import {
 import { readPromptSuggestion } from "./services/questions/detectPromptSuggestion";
 import {
   detectQuestionFromScreen,
+  isQuestionMenuOnScreen,
   questionContentKey,
 } from "./services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "./services/questions/detectShellPrompt";
@@ -1214,7 +1215,7 @@ export class PTYManager implements SessionRunner {
     // · ctrl+e to explain". When this is on screen the prompt IS an
     // AskUserQuestion — even if an OSC-777 notify also fired — so it must take
     // priority over the permission path (Claude emits OSC 777 for BOTH).
-    const askFooterOnScreen = lines.some((l) => /Enter to select/i.test(l));
+    const askFooterOnScreen = isQuestionMenuOnScreen(lines);
 
     // Diagnostic: detector verdicts when a trigger fires. Metadata only — no
     // rendered lines, no scraped prompt/question text — so it stays safe at any
@@ -1532,7 +1533,7 @@ export class PTYManager implements SessionRunner {
       // and the start grace decides whether Claude went on or the answer ended it.
       const gate =
         this.permissionOpen.has(sessionId) ||
-        lines.some((l) => /Enter to select/i.test(l)) ||
+        isQuestionMenuOnScreen(lines) ||
         (detectGateScreen(lines) ?? detectPickerScreen(lines) ?? detectStartupChoiceGate(lines)) !==
           null;
       if (gate) {
