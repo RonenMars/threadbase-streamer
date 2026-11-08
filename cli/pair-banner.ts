@@ -1,6 +1,6 @@
 import qrcode from "qrcode-terminal";
 import type { E2eeCapability } from "../src/api/routes/misc.routes";
-import { resolveServerUrl } from "../src/lan-url";
+import { resolveLanUrl, resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { serverIdentityFingerprint, serverIdentityPublicKey } from "../src/server-identity";
 
@@ -19,6 +19,8 @@ export interface PairBannerDeps {
   fetch?: typeof globalThis.fetch;
   /** Overridable for tests; defaults to the real on-disk identity key. */
   identityKey?: () => string;
+  /** Overridable for tests; defaults to this machine's LAN address. */
+  lanUrl?: (port: number) => string | null;
 }
 
 const defaultLog: PairBannerLog = {
@@ -149,6 +151,7 @@ export async function printServerBanner(
   const fetchFn = deps.fetch ?? globalThis.fetch;
   const identityKey = deps.identityKey ?? serverIdentityPublicKey;
   const url = resolveServerUrl({ publicUrl, port });
+  const lanUrl = deps.lanUrl ?? resolveLanUrl;
 
   if (!includeQr) {
     log.info(printUrlBanner({ url }));
@@ -195,6 +198,11 @@ export async function printServerBanner(
   // so the phone and the computer show the same grouped hex.
   let fingerprint: string | undefined;
   let payload = `${scheme}://pair?url=${encodeURIComponent(url)}&token=${token}&exp=${expSeconds}`;
+  // With a public URL `url=` is that address, so a phone would never learn the
+  // LAN one. `lan=` carries it beside `url=`, which stays as released builds
+  // pair through it. Without a public URL `url=` already is the LAN address.
+  const lan = publicUrl ? lanUrl(port) : null;
+  if (lan) payload += `&lan=${encodeURIComponent(lan)}`;
   if (e2eeOffered) {
     const spk = identityKey();
     payload += `&spk=${spk}&v=1`;
