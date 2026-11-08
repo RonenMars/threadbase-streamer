@@ -156,6 +156,11 @@ export class PushRepository {
   private claimRenewalStmt: Database.Statement;
   private expireStmt: Database.Statement;
   private expireSessionActivitiesStmt: Database.Statement;
+  private saveTicketStmt: Database.Statement;
+  private listDueReceiptsStmt: Database.Statement;
+  private deleteReceiptStmt: Database.Statement;
+  private touchReceiptStmt: Database.Statement;
+  private purgeReceiptsStmt: Database.Statement;
 
   constructor(db: Database.Database) {
     // Re-registering the same token updates rather than duplicating. Without
@@ -301,6 +306,50 @@ export class PushRepository {
     this.markDeliveredStmt = db.prepare(
       "UPDATE push_events SET delivered_at = ? WHERE event_id = ?",
     );
+
+    this.saveTicketStmt = db.prepare(
+      "INSERT OR IGNORE INTO push_receipts (ticket_id, token, sent_at) VALUES (@ticket_id, @token, @at)",
+    );
+    // Least recently asked first: an id Expo keeps not answering moves behind
+    // the ones never asked about, so it cannot hold the whole batch.
+    this.listDueReceiptsStmt = db.prepare(`
+      SELECT ticket_id, token FROM push_receipts
+       WHERE sent_at <= @sent_before
+       ORDER BY COALESCE(last_polled_at, 0) ASC, sent_at ASC
+       LIMIT @limit
+    `);
+    this.deleteReceiptStmt = db.prepare("DELETE FROM push_receipts WHERE ticket_id = ?");
+    this.touchReceiptStmt = db.prepare(
+      "UPDATE push_receipts SET last_polled_at = @at WHERE ticket_id = @ticket_id",
+    );
+    this.purgeReceiptsStmt = db.prepare("DELETE FROM push_receipts WHERE sent_at < ?");
+  }
+
+  /** Remember an accepted Expo ticket until its delivery receipt can be read. */
+  saveTicket(ticketId: string, token: string, now: number = Date.now()): void {
+    this.saveTicketStmt.run({ ticket_id: ticketId, token, at: now });
+  }
+
+  /** Tickets sent at or before `sentBefore`, at most `limit`, least recently polled first. */
+  listDueReceipts(sentBefore: number, limit: number): Array<{ ticket_id: string; token: string }> {
+    return this.listDueReceiptsStmt.all({ sent_before: sentBefore, limit }) as Array<{
+      ticket_id: string;
+      token: string;
+    }>;
+  }
+
+  resolveReceipt(ticketId: string): void {
+    this.deleteReceiptStmt.run(ticketId);
+  }
+
+  /** Note that Expo was asked about these ids and returned no receipt for them. */
+  markReceiptsPolled(ticketIds: string[], now: number = Date.now()): void {
+    for (const ticket_id of ticketIds) this.touchReceiptStmt.run({ ticket_id, at: now });
+  }
+
+  /** Drop tickets sent before `sentBefore`; returns how many. */
+  purgeReceipts(sentBefore: number): number {
+    return this.purgeReceiptsStmt.run(sentBefore).changes;
   }
 
   /**
