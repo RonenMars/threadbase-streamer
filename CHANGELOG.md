@@ -1,3 +1,24 @@
+## [1.129.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.128.0...v1.129.0) (2026-11-08)
+
+### Features
+
+* **conversations:** list a Claude conversation's background agents on opt-in ([#1123](https://github.com/RonenMars/threadbase-streamer/issues/1123)) ([0b4560f](https://github.com/RonenMars/threadbase-streamer/commit/0b4560f9e9c0e60c246ee5d4b8c8855e85f7af00)), closes [#1072](https://github.com/RonenMars/threadbase-streamer/issues/1072) [#1072](https://github.com/RonenMars/threadbase-streamer/issues/1072)
+* **pairing:** carry the LAN address in the QR when a public URL is configured ([#1127](https://github.com/RonenMars/threadbase-streamer/issues/1127)) ([91163b0](https://github.com/RonenMars/threadbase-streamer/commit/91163b041f1972e72062bf98a3a1e227f25cb556)), closes [#966](https://github.com/RonenMars/threadbase-streamer/issues/966)
+* **push:** deliver iOS pushes silently during quiet hours when the token opts in ([#1128](https://github.com/RonenMars/threadbase-streamer/issues/1128)) ([9a812ef](https://github.com/RonenMars/threadbase-streamer/commit/9a812ef036e31e92438aaa481aacb59975f972c9)), closes [#949](https://github.com/RonenMars/threadbase-streamer/issues/949) [#949](https://github.com/RonenMars/threadbase-streamer/issues/949)
+* **sessions:** expose the Claude registry turn state on external sessions ([#1124](https://github.com/RonenMars/threadbase-streamer/issues/1124)) ([ac337b9](https://github.com/RonenMars/threadbase-streamer/commit/ac337b9f30e454ddbaa3ea1d5197721aac2da23c)), closes [#1052](https://github.com/RonenMars/threadbase-streamer/issues/1052) [#1052](https://github.com/RonenMars/threadbase-streamer/issues/1052)
+
+### Bug Fixes
+
+* **claude:** resolve Claude's config dir in one place so CLAUDE_CONFIG_DIR is honoured everywhere ([#1121](https://github.com/RonenMars/threadbase-streamer/issues/1121)) ([b470f80](https://github.com/RonenMars/threadbase-streamer/commit/b470f80e5c1cf15d241d66a2e644f1ce6fc05d98)), closes [#1074](https://github.com/RonenMars/threadbase-streamer/issues/1074) [#1074](https://github.com/RonenMars/threadbase-streamer/issues/1074)
+* **copilot:** submit a prompt with a separate carriage return write ([#1122](https://github.com/RonenMars/threadbase-streamer/issues/1122)) ([8b0b5e1](https://github.com/RonenMars/threadbase-streamer/commit/8b0b5e193881229aa2146fc3ff16318c56128f42)), closes [#1073](https://github.com/RonenMars/threadbase-streamer/issues/1073) [#1073](https://github.com/RonenMars/threadbase-streamer/issues/1073)
+* **cursor:** carry the busy hint across chunk boundaries ([#1125](https://github.com/RonenMars/threadbase-streamer/issues/1125)) ([4d8a195](https://github.com/RonenMars/threadbase-streamer/commit/4d8a1958cce020c8ed892eeccec94e6d15505304)), closes [#1046](https://github.com/RonenMars/threadbase-streamer/issues/1046) [#1046](https://github.com/RonenMars/threadbase-streamer/issues/1046) [#1046](https://github.com/RonenMars/threadbase-streamer/issues/1046)
+* **pty:** settle a gate answered into an immediate end as a turn signal ([#1126](https://github.com/RonenMars/threadbase-streamer/issues/1126)) ([8adc7f2](https://github.com/RonenMars/threadbase-streamer/commit/8adc7f24142a613eb6be41cf5851b5b679aa96d0)), closes [#1044](https://github.com/RonenMars/threadbase-streamer/issues/1044) [#1044](https://github.com/RonenMars/threadbase-streamer/issues/1044)
+* **ws:** send conversation transcript lines only to the conversation's subscribers ([#1129](https://github.com/RonenMars/threadbase-streamer/issues/1129)) ([ff929c7](https://github.com/RonenMars/threadbase-streamer/commit/ff929c743e5a26ea5cdfe8bcf043f2416cf7705f)), closes [#887](https://github.com/RonenMars/threadbase-streamer/issues/887)
+
+### Performance Improvements
+
+* **cache:** skip the agent-entrypoint probe for Codex rollouts ([#1120](https://github.com/RonenMars/threadbase-streamer/issues/1120)) ([b305843](https://github.com/RonenMars/threadbase-streamer/commit/b305843ec785699048419d090fc153f216f4cb8a)), closes [#368](https://github.com/RonenMars/threadbase-streamer/issues/368) [#1108](https://github.com/RonenMars/threadbase-streamer/issues/1108) [#1108](https://github.com/RonenMars/threadbase-streamer/issues/1108)
+
 ## [1.128.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.127.0...v1.128.0) (2026-11-08)
 
 ### Features
