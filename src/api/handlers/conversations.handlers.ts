@@ -50,7 +50,10 @@ import { TRANSCRIPT_WATCH_DEADLINE_MS } from "../../session-watchers";
 import type { ManagedSession, ServerWarmupState } from "../../types";
 import { canonicalizeProjectPath } from "../../utils/canonicalizeProjectPath";
 import { toolResultText } from "../../utils/claudeShapedLine";
-import { isLeadingInjectedContext } from "../../utils/codexConversationLine";
+import {
+  isCodexInjectedContext,
+  isLeadingInjectedContext,
+} from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
 import { createScanProgressThrottle } from "../../utils/scanProgressThrottle";
 import type { WSHub } from "../../ws-hub";
@@ -959,6 +962,63 @@ export class ConversationHandlers {
   }
 
   /**
+   * A bounded page of a conversation, for a paged tail or backward request
+   * (#505). Reads `msg_limit` messages through the scanner instead of parsing
+   * the whole conversation into memory to slice it, and carries the meta the
+   * response needs, so no full read happens at all.
+   *
+   * Returns null — and the caller takes the full-read path — whenever the
+   * bounded read is not the right answer: a cold scanner (the warm-up scan has
+   * not adopted one yet), a sub-agent transcript (parsed whole on purpose), a
+   * request that needs the total before it can place its window
+   * (`after_index`, `anchor_index`), or an id the scanner does not know.
+   *
+   * The injected-context check is the streamer's own union, so the page counts
+   * in the same space `servableFilter` produces for the full read.
+   */
+  private async readBoundedPage(id: string, url: URL) {
+    const scanner = this.scannerManager.current;
+    if (!scanner) return null;
+    const paged =
+      url.searchParams.has("msg_limit") ||
+      url.searchParams.has("before_index") ||
+      url.searchParams.has("max_bytes");
+    if (!paged || url.searchParams.has("anchor_index") || url.searchParams.has("after_index")) {
+      return null;
+    }
+    const lookupId = this.deps.resolveConversationLookupId(id);
+    const row = this.cache?.getMetaById(lookupId);
+    if (row?.isSubagent) return null;
+    // The row names the conversation's own file; an id alone can resolve to a
+    // sub-agent child that carries its parent's sessionId.
+    const target = row?.filePath ?? lookupId;
+    const limit = Math.min(Math.max(intParam(url, "msg_limit", 80), 1), 500);
+    const requested = url.searchParams.has("before_index")
+      ? intParam(url, "before_index", 0)
+      : undefined;
+    try {
+      const read = (beforeIndex?: number) =>
+        scanner.getConversationPage(target, {
+          limit,
+          beforeIndex,
+          isInjectedContext: isCodexInjectedContext,
+        });
+      const page = await read(requested);
+      // The scanner does not clamp a cursor past the end; the full-read path
+      // does, so land on the same window.
+      if (page && requested != null && requested > page.total) return await read(page.total);
+      return page;
+    } catch (err) {
+      this.log.warn("conversation.bounded_page_failed", {
+        event: "conversation.bounded_page_failed",
+        conversationId: lookupId,
+        err,
+      });
+      return null;
+    }
+  }
+
+  /**
    * The 200 body for a session that exists but has written no transcript yet.
    *
    * Same shape as the cache-tail fallback in handleGetConversation, with an
@@ -1099,7 +1159,25 @@ export class ConversationHandlers {
           })
         : null;
 
-    let conversation = await this.findConversationByUuid(id);
+    // A fork's history spans two files, which one scanner page cannot cover.
+    const boundedPage = inherited ? null : await this.readBoundedPage(id, url);
+    let conversation: Conversation | null = boundedPage
+      ? {
+          id,
+          filePath: boundedPage.meta.filePath,
+          projectPath: boundedPage.meta.projectPath,
+          projectName: boundedPage.meta.projectName,
+          sessionId: boundedPage.meta.sessionId,
+          sessionName: boundedPage.meta.sessionName,
+          account: boundedPage.meta.account,
+          timestamp: boundedPage.meta.timestamp,
+          lastPrompt: boundedPage.meta.lastPrompt,
+          turnDurations: boundedPage.turnDurations,
+          messages: boundedPage.messages,
+          messageCount: boundedPage.total,
+          fullText: "",
+        }
+      : await this.findConversationByUuid(id);
 
     // A fork with no turns of its own has no transcript to find, but it is not
     // an empty conversation — its history is the prefix. Stand in a shell for
@@ -1353,8 +1431,11 @@ export class ConversationHandlers {
     // assigned, so counting the prefix beforehand puts the divider in the wrong
     // place by however many lines the filter removed.
     const inheritedFiltered = inherited ? inherited.messages.filter(servableFilter()) : [];
-    const filtered = [...inheritedFiltered, ...conversation.messages.filter(servableFilter())];
-    const total = filtered.length;
+    // A bounded page is already in the served space and holds only its window.
+    const filtered = boundedPage
+      ? []
+      : [...inheritedFiltered, ...conversation.messages.filter(servableFilter())];
+    const total = boundedPage ? boundedPage.total : filtered.length;
 
     const hasAnchor = url.searchParams.has("anchor_index");
     const hasAfter = url.searchParams.has("after_index");
@@ -1434,7 +1515,7 @@ export class ConversationHandlers {
       // is the split-window read that docs/plans/2026-09-07-inherited-conversation
       // -history.md records as dropped.
       const servesInheritedPrefix = !!inherited;
-      if (isTailRequest && !servesInheritedPrefix && indexFilePath && this.cache) {
+      if (isTailRequest && !servesInheritedPrefix && !boundedPage && indexFilePath && this.cache) {
         const indexed = this.cache.getIndexedMessageCount(
           ConversationCache.conversationIdForFile(indexFilePath),
         );
@@ -1451,10 +1532,27 @@ export class ConversationHandlers {
       // wrong. Only for the linear paging windows (before/after/tail); the
       // anchored-search window keeps using the scanner's reader.
       const indexWindow =
-        scanLimit > 0 && !hasAnchor && !servesInheritedPrefix && indexFilePath && this.cache
+        scanLimit > 0 &&
+        !hasAnchor &&
+        !servesInheritedPrefix &&
+        !boundedPage &&
+        indexFilePath &&
+        this.cache
           ? this.cache.readMessageWindow(indexFilePath, windowStart, beforeIndex)
           : null;
-      if (!indexWindow && !servesInheritedPrefix && indexFilePath && this.cache && !hasAnchor) {
+      // A bounded read never consults the index window, so its "miss" is the
+      // index lagging the scanner's total — the backfill still has to run.
+      if (
+        !servesInheritedPrefix &&
+        indexFilePath &&
+        this.cache &&
+        !hasAnchor &&
+        (boundedPage
+          ? this.cache.getIndexedMessageCount(
+              ConversationCache.conversationIdForFile(indexFilePath),
+            ) < total
+          : !indexWindow)
+      ) {
         // The one line that separates a fast fetch from a slow one. A miss
         // means this request falls through to the scanner and re-parses the
         // whole file, which is the entire difference between the 34 ms and
@@ -1492,15 +1590,16 @@ export class ConversationHandlers {
       // skipStaleRescan: this is the same single-conversation detail path, whose
       // refreshFile already reconciled the one file we page here, so a sibling
       // file's stale flag must not stall this read behind a full-tree rescan.
-      // Prefer the offset-index window when warm (Claude). Otherwise slice the
-      // in-memory `filtered` list — do NOT call getConversationPage here.
-      // That helper re-reads the scanner LRU (unfiltered, often stale for live
-      // Codex) and would bypass isCodexInjectedContext, which is exactly how
-      // mobile's ?msg_limit=80 path lost real user turns / showed PTY-only UI.
+      // A bounded scanner page (#505) already is this window. It is read with
+      // the streamer's own injected-context check, so it counts in the served
+      // space; the scanner's DEFAULT check would not drop the argv prompt, and
+      // that is how mobile's ?msg_limit=80 once lost real user turns.
+      // Otherwise prefer the offset-index window when warm (Claude), then slice
+      // the in-memory `filtered` list.
       const page = indexWindow;
       if (indexWindow) indexTotal = indexWindow.total;
       const start = page?.fromIndex ?? windowStart;
-      slice = page?.messages ?? filtered.slice(start, beforeIndex);
+      slice = page?.messages ?? boundedPage?.messages ?? filtered.slice(start, beforeIndex);
       fromIdx = start;
       const effectiveTotal = page?.total ?? total;
       messagePagination = {
