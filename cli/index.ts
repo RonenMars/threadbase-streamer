@@ -541,7 +541,7 @@ program
           return;
         }
         for (const d of devices) {
-          const state = d.revokedAt ? "revoked" : "active";
+          const state = d.revokedAt ? "revoked" : d.pending ? "pending" : "active";
           const seen = d.lastSeenAt ? new Date(d.lastSeenAt).toISOString() : "never";
           log.info(
             `${d.deviceId}  ${state.padEnd(7)}  ${d.name ?? "(unnamed)"}  last seen ${seen}  [${d.capabilities.join(", ")}]`,

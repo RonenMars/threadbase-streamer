@@ -1053,6 +1053,46 @@ describe("REST envelope: the principal comes from the context (§13(b))", () => 
     expect(unsealResponse(ctx, "GET", target, 0n, res)).toBe("[]");
   });
 
+  it("stamps last_seen_at on a sealed request that authenticates (#744)", async () => {
+    // A sealed REST request is how an E2EE-pinned device talks, and it used to
+    // be the one authenticated path that never touched `last_seen_at`. A device
+    // that only ever sealed would read as `pending` in the device list for as
+    // long as it was in use.
+    const ctx = await openRestContext();
+    expect(repo.get(ctx.deviceId)?.last_seen_at).toBeNull();
+    const res = await sealedCall(ctx, { method: "GET", target: "/api/profiles", counter: 0n });
+    expect(res.status).toBe(200);
+    expect(repo.get(ctx.deviceId)?.last_seen_at).not.toBeNull();
+  });
+
+  it("NEGATIVE CONTROL — a sealed request refused for a mismatched credential does not stamp", async () => {
+    const ctx = await openRestContext();
+    pairDevice();
+    const res = await sealedCall(ctx, {
+      method: "GET",
+      target: "/api/profiles",
+      counter: 0n,
+      extraHeaders: { authorization: `Bearer ${lastRegistered.deviceToken}` },
+    });
+    expect(res.status).toBe(401);
+    expect(repo.get(ctx.deviceId)?.last_seen_at).toBeNull();
+  });
+
+  it("a failing stamp never denies a valid sealed request", async () => {
+    const ctx = await openRestContext();
+    devicesRepoOverride = () =>
+      new Proxy(repo, {
+        get: (t, k) =>
+          k === "touch"
+            ? () => {
+                throw new Error("disk full");
+              }
+            : (t as never as Record<string | symbol, unknown>)[k],
+      }) as DevicesRepository;
+    const res = await sealedCall(ctx, { method: "GET", target: "/api/profiles", counter: 0n });
+    expect(res.status).toBe(200);
+  });
+
   it("resolves principal.deviceId from the context, and the capability check still sees it", async () => {
     const ctx = await openRestContext();
     const target = WHOAMI_PATH;

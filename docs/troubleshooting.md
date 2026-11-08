@@ -516,6 +516,20 @@ Deploy-script healthchecks hit `http://localhost:8766/healthz` directly and are 
 
 ---
 
+### A paired device shows as `pending` and never becomes active
+
+**When:** `GET /api/devices` or `tb-streamer devices list` shows a device with `pending: true` (listed as `pending`, last seen `never`).
+
+**Cause:** The row is registered but has never made an authenticated request.
+Usually the phone just paired and has not connected yet.
+If the last pairing message never reached the phone, the row exists on the streamer and the phone does not know about it.
+
+**Fix:** Nothing expires a pending device, so it stays listed until you act.
+If the phone is in use and still pending, check that it is connecting to this streamer.
+If it is a pairing that did not complete, revoke it with `tb-streamer devices revoke <deviceId>` and pair again.
+
+---
+
 ### Paired devices cannot pair or connect through a hostname protected by Access
 
 **When:** A phone pairs fine over the LAN but fails against the tunnel hostname, reporting *"This server offered an encrypted pairing and then did not finish it."* The streamer log shows **no** `POST /api/pair/exchange` at all.

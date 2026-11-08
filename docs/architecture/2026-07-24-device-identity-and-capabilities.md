@@ -121,11 +121,17 @@ Existing security-relevant log events gain `deviceId`. Never the token, never it
 
 ```
 POST /api/pair/exchange   → additionally returns { deviceId, deviceToken, capabilities }
-GET  /api/devices         → [{ deviceId, name, capabilities, createdAt, lastSeenAt, revokedAt }]
+GET  /api/devices         → [{ deviceId, name, capabilities, createdAt, lastSeenAt, revokedAt, e2ee, pending }]
 POST /api/devices/:id/revoke
 ```
 
 The exchange response keeps its existing fields, so an old client ignores the additions and continues using the sealed API key.
+
+`pending` is true when `lastSeenAt` is null and the device is not revoked, which is a device that has registered but has not yet made a single authenticated request.
+It is derived in one place, `toDeviceView`, and `tb-streamer devices list` shows the same state.
+A pairing whose last message never reached the phone stays pending forever, so the flag is a label for a person to act on.
+Nothing expires or revokes a pending device automatically.
+`lastSeenAt` is stamped by every authenticated path (device token, ticketed WebSocket, sealed REST) and written at most once a minute per device.
 
 No device listing ever includes a token or hash. Requires the API-contract lock before `contracts/*.schema.json`.
 

@@ -16,6 +16,13 @@ import {
  * impersonate a device.
  */
 
+/**
+ * `touch` is a synchronous SQLite write on the request path, so a device that
+ * was stamped this recently is not written again. `last_seen_at` is therefore
+ * accurate to a minute, which is far finer than anything that reads it.
+ */
+const TOUCH_MIN_INTERVAL_MS = 60_000;
+
 export interface DeviceRow {
   device_id: string;
   public_key: string;
@@ -50,6 +57,13 @@ export interface DeviceView {
    * device.
    */
   e2ee: boolean;
+  /**
+   * Registered but never heard from: `last_seen_at` is null and the row is not
+   * revoked. A pairing whose final message never reached the phone looks like
+   * this forever, and so does a phone that just paired, so this is a label for
+   * a person to act on, never an expiry. Nothing revokes a pending row.
+   */
+  pending: boolean;
 }
 
 export interface RegisteredDevice {
@@ -106,6 +120,7 @@ export function toDeviceView(row: DeviceRow): DeviceView {
     // handshake is checked against, `e2ee_required` is whether plaintext is
     // refused — and it is the second one a user is asking about.
     e2ee: row.e2ee_required === 1,
+    pending: row.last_seen_at === null && row.revoked_at === null,
   };
 }
 
@@ -120,6 +135,7 @@ export class DevicesRepository {
   private deleteRevokedStmt: Database.Statement;
   private byE2eeStaticPubStmt: Database.Statement;
   private repairStmt: Database.Statement;
+  private lastTouchedAt = new Map<string, number>();
 
   constructor(db: Database.Database) {
     this.insertStmt = db.prepare(`
@@ -294,6 +310,9 @@ export class DevicesRepository {
   }
 
   touch(deviceId: string, now: number = Date.now()): void {
+    const last = this.lastTouchedAt.get(deviceId);
+    if (last !== undefined && now - last < TOUCH_MIN_INTERVAL_MS) return;
     this.touchStmt.run(now, deviceId);
+    this.lastTouchedAt.set(deviceId, now);
   }
 }
