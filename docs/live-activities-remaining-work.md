@@ -38,7 +38,14 @@ Status of the APNs Live Activity delivery path in tb-streamer after PRs [#292](h
 - [ ] `APNS_KEY` reaches the server on **macOS only**, and not via the plist: `cli/launchd-entry.ts:175` discovers `AuthKey_<keyId>.p8` in the install dir and derives `APNS_KEY_ID` from the filename. Linux and Windows invoke `cli.js` directly and never run that loader, so prod boots with Live Activities silently off there. No install path on any platform creates the `.env` that supplies team and bundle id. Tracked in [#480](https://github.com/RonenMars/threadbase-streamer/issues/480) and [#481](https://github.com/RonenMars/threadbase-streamer/issues/481).
 - [ ] No metric or health surface for Live Activity delivery. `/api/push/health` reports per-token state, but there is no count of activities renewed, ended, or retired.
 - [ ] No cleanup for `push_tokens` rows. Expired and revoked rows are retained deliberately (so health can explain why delivery stopped) and nothing ever prunes them.
-- [ ] Decide whether `THREADBASE_INSTANCE_ID` is stable enough to be `serverId`. It defaults to `os.hostname()`, so a hostname change makes mobile treat it as a different server.
+- [x] Decide whether `THREADBASE_INSTANCE_ID` is stable enough to be `serverId` ([#510](https://github.com/RonenMars/threadbase-streamer/issues/510)).
+  Decision: no, a hostname is not an identity, so the id is now generated once and persisted in `<config dir>/instance-id`.
+  An explicit `THREADBASE_INSTANCE_ID` still wins and is never persisted.
+  The file is seeded on first boot with `os.hostname()`, the value every reader used before, so existing paired clients, DB-scoped sessions and a running pty-host (whose socket name embeds the id) keep matching with no migration step.
+  A random id is minted only when the hostname is blank; minting one for brand-new installs would orphan nothing but would add a second code path for no gain.
+  Every reader (`serverId`, the DB scope, the pty-host socket, `prod doctor`) goes through `getInstanceId()` in `src/instance-id.ts`.
+  The wire shape of `serverId` is unchanged.
+  Machines whose service unit exports `THREADBASE_INSTANCE_ID` stay pinned by that variable.
 
 ## Deliberately not done — confirm these are the wanted calls
 

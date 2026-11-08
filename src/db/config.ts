@@ -1,3 +1,5 @@
+import { getInstanceId } from "../instance-id";
+
 export interface DbConfig {
   connectionString: string;
   max: number;
@@ -9,10 +11,6 @@ export interface DbConfig {
 export function isDbEnabled(): boolean {
   const url = process.env.THREADBASE_DATABASE_URL;
   return typeof url === "string" && url.length > 0;
-}
-
-export function getInstanceId(): string {
-  return process.env.THREADBASE_INSTANCE_ID || require("os").hostname();
 }
 
 export function getDbConfig(): DbConfig | null {
