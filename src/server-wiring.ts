@@ -808,6 +808,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleGetConversation: (id, url, res, ifNoneMatch) =>
       deps.conversationHandlers.handleGetConversation(id, url, res, ifNoneMatch),
     handleSearch: (url, res) => deps.conversationHandlers.handleSearch(url, res),
+    handleSearchQuery: (req, res) => deps.conversationHandlers.handleSearchQuery(req, res),
     handleSearchTarget: (id, req, res) =>
       deps.conversationHandlers.handleSearchTarget(id, req, res),
     handleListProjects: (url, res) => handleListProjects(url, res),
