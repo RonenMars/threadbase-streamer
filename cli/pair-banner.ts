@@ -1,6 +1,6 @@
 import qrcode from "qrcode-terminal";
 import type { E2eeCapability } from "../src/api/routes/misc.routes";
-import { resolveLanUrl, resolveServerUrl } from "../src/lan-url";
+import { detectRoutedAddress, resolveLanUrl, resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { serverIdentityFingerprint, serverIdentityPublicKey } from "../src/server-identity";
 
@@ -150,6 +150,7 @@ export async function printServerBanner(
   const log = deps.log ?? defaultLog;
   const fetchFn = deps.fetch ?? globalThis.fetch;
   const identityKey = deps.identityKey ?? serverIdentityPublicKey;
+  await detectRoutedAddress();
   const url = resolveServerUrl({ publicUrl, port });
   const lanUrl = deps.lanUrl ?? resolveLanUrl;
 
