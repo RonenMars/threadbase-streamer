@@ -1975,6 +1975,7 @@ export class StreamerServer {
           ...this.scannerManager.codexScanOpts(),
           ...(warmupStatCache ? { statCache: warmupStatCache } : {}),
         };
+        const warmupScanStartedAt = Date.now();
         warmupScanner
           .scan({
             ...scanOpts,
@@ -1985,6 +1986,17 @@ export class StreamerServer {
             },
           })
           .then(async () => {
+            // "stat-cache" = seeded from the persisted rows (unchanged files
+            // skip the parse); "cold" = no persisted rows, every JSONL parsed.
+            const mode = warmupStatCache ? "stat-cache" : "cold";
+            const durationMs = Date.now() - warmupScanStartedAt;
+            this.log.info(`Warm-up scan finished in ${durationMs}ms (${mode})`, {
+              mode,
+              statCacheEntries: warmupStatCache?.size ?? 0,
+              durationMs,
+              metas: warmupScanner.getMetadataCache().size,
+              event: "cache.warmup_scan_done",
+            });
             // Adopt the warm-up scan as the live scanner so the first real
             // request reuses it instead of paying for a second full scan.
             // Success path only — adopting a scanner whose scan rejected would
