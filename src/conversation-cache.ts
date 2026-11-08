@@ -74,6 +74,8 @@ export interface ConversationListItem {
   isImportedFromClaude: boolean;
   isImportedFromCodex: boolean;
   isImportedFromCursor: boolean;
+  /** Team a Claude teammate transcript belongs to; null for a lead or any plain session. */
+  teamName: string | null;
   /** ISO timestamp if soft-deleted from the cache, else null. The JSONL is untouched. */
   deletedAt: string | null;
 }
@@ -148,6 +150,7 @@ export interface ScannerMeta {
   isImportedFromClaude?: boolean;
   isImportedFromCodex?: boolean;
   isImportedFromCursor?: boolean;
+  teamName?: string | null;
 }
 
 interface MetaRow {
@@ -175,6 +178,7 @@ interface MetaRow {
   is_imported_from_claude: number;
   is_imported_from_codex: number;
   is_imported_from_cursor: number;
+  team_name: string | null;
   deleted_at: number | null;
 }
 
@@ -395,7 +399,7 @@ export class ConversationCache {
     // getFullById deliberately keeps `SELECT *`: it is a single row by primary
     // key and its callers want every column.
     const LIST_COLUMNS =
-      "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor";
+      "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name";
     const visible = "has_messages IS NOT 0 AND deleted_at IS NULL AND is_subagent IS NOT 1";
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
@@ -438,12 +442,12 @@ export class ConversationCache {
           (id, file_path, project_path, project_name, title, model, account, branch,
            message_count, last_activity, first_message, last_message, preview, updated_at,
            mtime_ms, file_size, provider, scanner_meta_json,
-           is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor)
+           is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name)
         VALUES
           (@id, @file_path, @project_path, @project_name, @title, @model, @account, @branch,
            @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at,
            @mtime_ms, @file_size, @provider, @scanner_meta_json,
-           @is_imported_from_claude, @is_imported_from_codex, @is_imported_from_cursor)
+           @is_imported_from_claude, @is_imported_from_codex, @is_imported_from_cursor, @team_name)
         ON CONFLICT(id) DO UPDATE SET
           file_path     = excluded.file_path,
           project_path  = excluded.project_path,
@@ -467,7 +471,8 @@ export class ConversationCache {
           scanner_meta_json = excluded.scanner_meta_json,
           is_imported_from_claude = excluded.is_imported_from_claude,
           is_imported_from_codex = excluded.is_imported_from_codex,
-          is_imported_from_cursor = excluded.is_imported_from_cursor
+          is_imported_from_cursor = excluded.is_imported_from_cursor,
+          team_name = excluded.team_name
         WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
@@ -1622,6 +1627,7 @@ export class ConversationCache {
           is_imported_from_claude: m.isImportedFromClaude ? 1 : 0,
           is_imported_from_codex: m.isImportedFromCodex ? 1 : 0,
           is_imported_from_cursor: m.isImportedFromCursor ? 1 : 0,
+          team_name: m.teamName ?? null,
         });
         this.stmts.updateScannerCache.run(mtimeMs, fileSize, scannerMetaJson, id);
         if (classification) {
@@ -1803,6 +1809,7 @@ export class ConversationCache {
         isImportedFromClaude: r.is_imported_from_claude === 1,
         isImportedFromCodex: r.is_imported_from_codex === 1,
         isImportedFromCursor: r.is_imported_from_cursor === 1,
+        teamName: r.team_name,
         // The WHERE clause below already excludes deleted rows.
         deletedAt: null,
       })),
@@ -1810,7 +1817,7 @@ export class ConversationCache {
   }
 
   private get listColumns(): string {
-    return "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor";
+    return "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name";
   }
 
   private conversationListWhere(opts: ConversationListFilters): {
@@ -1931,6 +1938,7 @@ export class ConversationCache {
       isImportedFromClaude: row.is_imported_from_claude === 1,
       isImportedFromCodex: row.is_imported_from_codex === 1,
       isImportedFromCursor: row.is_imported_from_cursor === 1,
+      teamName: row.team_name,
       deletedAt: row.deleted_at ? new Date(row.deleted_at).toISOString() : null,
     };
   }
