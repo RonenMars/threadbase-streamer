@@ -151,6 +151,8 @@ Captured from the interactive Claude Code 2.1.319 in a PTY, the way the streamer
 - A failed turn (a model that does not exist) fires `UserPromptSubmit`, then `StopFailure` with `error: "model_not_found"`.
 - An Esc interrupt fires `UserPromptSubmit` only. No `Stop` follows.
 - Every payload carries `prompt_id`, equal to the transcript's `promptId`, so a start and its end pair without inference.
+- On an Esc interrupt the transcript gets a `user` line whose text is `[Request interrupted by user]`, carrying the interrupted turn's `promptId`, and no `turn_duration` follows (`interrupted-transcript.jsonl`).
+- On Esc or Ctrl+C the screen gets `⎿  Interrupted · What should Claude do instead?`, painted in one output chunk (`interrupted-screen.json`).
 
 ### What the slice does
 
@@ -158,11 +160,13 @@ Captured from the interactive Claude Code 2.1.319 in a PTY, the way the streamer
 - `PTYManager` tails that file by stat polling and deletes it when the session ends.
 - `UserPromptSubmit` moves `waiting_input` to `running`, or confirms a `user-input` running as observed, with `statusSource: "turn-signal"`, and emits `turn_started { turnId: prompt_id }`.
 - `Stop` and `StopFailure` emit `turn_completed` (`completed`, or `failed` with the error), and settle the session to `waiting_input` as `turn-signal` only when it is still running on the turn that `prompt_id` opened. A late `Stop` therefore cannot end the next turn, and a turn that another signal already ended is not reopened.
-- The screen, title and transcript signals are unchanged, and the first signal to end a turn wins.
+- While a turn `UserPromptSubmit` opened is running, the prompt marker does not settle it. The `❯` box stays painted for the whole turn, and live on 2.1.319 the marker guess ended a hook-opened turn mid-stream, 3 s before the Esc. The turn ends on `Stop`/`StopFailure`, the title's idle signal, the transcript's `turn_duration`, or the interrupt below.
+- The transcript's interrupt line for the open `prompt_id` emits `turn_completed { status: "interrupted" }` and settles the session as `turn-signal` (`transcript:interrupted`). A bare Esc sent through the streamer also releases the hold, so the marker settles the turn when the transcript line is late or missed.
+- Claude's on-screen interrupt line releases the hold too, which covers an Esc or Ctrl+C typed into a terminal attached outside the streamer. Live on 2.1.319 with no transcript feed, that turn settled 0.6 s after the key and stayed `running` without this. Only the chunk is checked, not the viewport, so an older interrupt line repainted in a later turn's full redraw would release that turn's hold early, back to the marker guess.
+- The first signal to end a turn wins.
 
 ### What is left
 
-- An interrupt has no hook, so no `turn_completed { status: "interrupted" }` is emitted; the existing signals end that turn. Live on 2.1.319 the screen-marker heuristic also ended a hook-opened turn mid-stream, before the Esc, so the next step is to let a hook-opened turn hold off the screen-marker guess while still letting the title and transcript signals end an interrupt.
 - `agent_message` and deltas are not emitted for Claude (that needs a headless runner, see "Known limits").
 - The flag is not honoured under `ptyHost`, whose host process builds its own session manager.
 - tb-mobile does not consume `session_event` yet.

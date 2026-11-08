@@ -36,3 +36,30 @@ export function transcriptTurnEndAt(provider: ProviderName, lines: string[]): nu
   }
   return latest;
 }
+
+const CLAUDE_INTERRUPT = "[Request interrupted by user";
+
+/**
+ * Whether these Claude transcript lines hold the interrupt marker for
+ * `promptId`: on Esc, Claude Code (verified on 2.1.319) writes a `user` line
+ * whose text starts `[Request interrupted by user`, carrying the interrupted
+ * turn's `promptId`, and no `turn_duration` follows.
+ */
+export function claudeTurnInterrupted(lines: string[], promptId: string): boolean {
+  return lines.some((line) => {
+    if (!line.includes(CLAUDE_INTERRUPT)) return false;
+    let o: any;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      return false;
+    }
+    const text = o?.message?.content?.[0]?.text;
+    return (
+      o?.type === "user" &&
+      o.promptId === promptId &&
+      typeof text === "string" &&
+      text.startsWith(CLAUDE_INTERRUPT)
+    );
+  });
+}

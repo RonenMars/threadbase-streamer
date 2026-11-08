@@ -1,0 +1,4 @@
+{
+  "note": "Claude Code 2.1.319: the PTY chunk painted after Esc (and Ctrl+C) interrupted a streaming turn, captured raw from a live PTYManager run",
+  "chunk": "y-eight\u001b[19Gis\u001b[22Gtwelve\r\u001b[1B\u001b[38;5;246m  ⎿  Interrupted · What should Claude do instead?\u001b[39m\u001b[40;1H\u001b[37;3H\u001b[?25h"
+}

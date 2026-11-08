@@ -19,6 +19,7 @@ import { FEATURE_FLAGS } from "../src/feature-flags";
 import { LiveSessionManager } from "../src/live-session-manager";
 import { PTYManager } from "../src/pty-manager";
 import { StreamerServer } from "../src/server";
+import { claudeTurnInterrupted } from "../src/services/sessions/transcriptTurnEnd";
 import type { ManagedSession, SessionEvent } from "../src/types";
 
 vi.mock("node-pty", () => {
@@ -45,6 +46,17 @@ const payloads = (name: string): string[] =>
 const [UPS, STOP] = payloads("completed");
 const [FAIL_UPS, STOP_FAILURE] = payloads("failed");
 const [INTERRUPTED_UPS] = payloads("interrupted");
+// The transcript line Claude writes when Esc interrupts a turn, from a separate
+// 2.1.319 live run (so its promptId is that run's; tests pair it explicitly).
+const [INTERRUPT_LINE] = payloads("interrupted-transcript");
+const interruptLineFor = (turnId: string): string =>
+  JSON.stringify({ ...JSON.parse(INTERRUPT_LINE), promptId: turnId });
+// The chunk Claude paints when Esc or Ctrl+C interrupts a streaming turn.
+const INTERRUPT_SCREEN: string = JSON.parse(
+  readFileSync(join(FIXTURES, "interrupted-screen.json"), "utf8"),
+).chunk;
+// A chunk that paints Claude's prompt marker, as the input box does mid-turn.
+const MARKER_CHUNK = "\r\n\u276f \r\n";
 const promptId = (line: string): string => JSON.parse(line).prompt_id;
 
 const CAP: { submitAt: number; chunks: [number, string][] } = JSON.parse(
@@ -333,5 +345,135 @@ describe("Claude turn boundaries from hooks", () => {
     expect(existsSync(dirname(file))).toBe(true);
     mgr.dispose();
     expect(existsSync(dirname(file))).toBe(false);
+  });
+});
+
+describe("a hook-opened turn holds off the screen-marker guess", () => {
+  const proc = (mgr: PTYManager, id: string) => (mgr as any).sessions.get(id).process;
+
+  it("a prompt marker painted mid-turn does not settle it; Stop does", async () => {
+    const { mgr, id, hook, statuses } = await bootWaiting();
+    hook(UPS);
+    await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    await sleep(1_000); // past the quiet recheck
+    expect(statuses()).toEqual([["running", "turn-signal"]]);
+    hook(STOP);
+    await vi.waitFor(() => expect(statuses().at(-1)).toEqual(["waiting_input", "turn-signal"]));
+    expect((mgr as any).hookHold.has(id)).toBe(false);
+    mgr.dispose();
+  });
+
+  it("the transcript's interrupt line ends the turn as interrupted", async () => {
+    const { mgr, id, events, hook, statuses } = await bootWaiting();
+    hook(INTERRUPTED_UPS);
+    await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    const line = interruptLineFor(promptId(INTERRUPTED_UPS));
+    mgr.settleFromTranscript(id, [line]);
+    mgr.settleFromTranscript(id, [line]); // a re-read reports it once
+    expect(statuses()).toEqual([
+      ["running", "turn-signal"],
+      ["waiting_input", "turn-signal"],
+    ]);
+    expect(events).toEqual([
+      { type: "turn_started", turnId: promptId(INTERRUPTED_UPS) },
+      { type: "turn_completed", turnId: promptId(INTERRUPTED_UPS), status: "interrupted" },
+    ]);
+    mgr.dispose();
+  });
+
+  it("an interrupt line for another prompt changes nothing", async () => {
+    const { mgr, id, events, hook, statuses } = await bootWaiting();
+    hook(INTERRUPTED_UPS);
+    await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+    mgr.settleFromTranscript(id, [INTERRUPT_LINE]);
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    await sleep(1_000);
+    expect(statuses()).toEqual([["running", "turn-signal"]]);
+    expect(events).toHaveLength(1);
+    mgr.dispose();
+  });
+
+  it.each(["sendKeys", "sendRawKeys"] as const)(
+    "a bare Esc through %s releases the hold, so the marker settles again",
+    async (send) => {
+      const { mgr, id, hook, statuses } = await bootWaiting();
+      hook(INTERRUPTED_UPS);
+      await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+      mgr[send](id, "\x1b");
+      proc(mgr, id)._emit("data", MARKER_CHUNK);
+      await vi.waitFor(() => expect(statuses().at(-1)?.[0]).toBe("waiting_input"));
+      mgr.dispose();
+    },
+  );
+
+  it("Claude's on-screen interrupt line releases the hold for an Esc typed outside the streamer", async () => {
+    const { mgr, id, hook, statuses } = await bootWaiting();
+    hook(INTERRUPTED_UPS);
+    await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    await sleep(500);
+    expect(statuses()).toEqual([["running", "turn-signal"]]);
+    proc(mgr, id)._emit("data", INTERRUPT_SCREEN);
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    await vi.waitFor(() => expect(statuses().at(-1)?.[0]).toBe("waiting_input"));
+    mgr.dispose();
+  });
+
+  it("an arrow key, which also starts with Esc, keeps the hold", async () => {
+    const { mgr, id, hook, statuses } = await bootWaiting();
+    hook(INTERRUPTED_UPS);
+    await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+    mgr.sendRawKeys(id, "\x1b[B");
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    await sleep(1_000);
+    expect(statuses()).toEqual([["running", "turn-signal"]]);
+    mgr.dispose();
+  });
+
+  it("a session that ends drops its hold, so a resume's boot marker is not held", async () => {
+    const { mgr, id, hook, statuses } = await bootWaiting();
+    hook(INTERRUPTED_UPS);
+    await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+    mgr.putOnHold(id);
+    expect((mgr as any).hookHold.has(id)).toBe(false);
+    mgr.dispose();
+  });
+
+  it("only Claude's own interrupt line for that prompt counts", () => {
+    const id = JSON.parse(INTERRUPT_LINE).promptId;
+    const withText = (type: string, text: string) => {
+      const o = JSON.parse(INTERRUPT_LINE);
+      o.type = type;
+      o.message.content[0].text = text;
+      return JSON.stringify(o);
+    };
+    expect(claudeTurnInterrupted([INTERRUPT_LINE], id)).toBe(true);
+    expect(claudeTurnInterrupted([INTERRUPT_LINE], "another-prompt")).toBe(false);
+    expect(
+      claudeTurnInterrupted([withText("assistant", "[Request interrupted by user]")], id),
+    ).toBe(false);
+    expect(
+      claudeTurnInterrupted([withText("user", "why [Request interrupted by user]?")], id),
+    ).toBe(false);
+  });
+
+  it("after Esc settled the screen, the late interrupt line only reports the end", async () => {
+    const { mgr, id, events, hook, statuses } = await bootWaiting();
+    hook(INTERRUPTED_UPS);
+    await vi.waitFor(() => expect(statuses()).toEqual([["running", "turn-signal"]]));
+    mgr.sendKeys(id, "\x1b");
+    proc(mgr, id)._emit("data", MARKER_CHUNK);
+    await vi.waitFor(() => expect(statuses().at(-1)).toEqual(["waiting_input", "prompt-marker"]));
+    const settled = statuses().length;
+    mgr.settleFromTranscript(id, [interruptLineFor(promptId(INTERRUPTED_UPS))]);
+    expect(statuses()).toHaveLength(settled);
+    expect(events.at(-1)).toEqual({
+      type: "turn_completed",
+      turnId: promptId(INTERRUPTED_UPS),
+      status: "interrupted",
+    });
+    mgr.dispose();
   });
 });

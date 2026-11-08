@@ -43,7 +43,7 @@ import { detectShellPrompt } from "./services/questions/detectShellPrompt";
 import { detectStartupChoiceGate } from "./services/questions/detectStartupChoiceGate";
 import { parseAgentPhase } from "./services/questions/parseAgentPhase";
 import { isPermissionAnswer } from "./services/questions/permissionAnswerKeys";
-import { transcriptTurnEndAt } from "./services/sessions/transcriptTurnEnd";
+import { claudeTurnInterrupted, transcriptTurnEndAt } from "./services/sessions/transcriptTurnEnd";
 import type {
   AgentPhase,
   ManagedSession,
@@ -78,6 +78,8 @@ const INPUT_HISTORY_MAX = 50;
 // We treat either marker in a chunk as "ready". False-positives are harmless —
 // the worst case is flushing queued input slightly early, which Claude buffers.
 const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
+// Painted after an Esc or Ctrl+C interrupt (Claude Code 2.1.319).
+const CLAUDE_INTERRUPT_SCREEN = "Interrupted · What should Claude do instead?";
 
 // Claude's turn signal. Mid-conversation the `❯` input box stays painted for
 // the whole turn, so the marker alone flipped the session to waiting_input
@@ -247,6 +249,10 @@ export class PTYManager implements SessionRunner {
   private hookTails = new Map<string, () => void>();
   // prompt_id of the last UserPromptSubmit read, per session.
   private hookTurn = new Map<string, string>();
+  // Sessions running a turn UserPromptSubmit opened and nothing has ended yet.
+  // The prompt marker stays painted for the whole turn, so while held only a
+  // real end (Stop, the title, the transcript) settles it, not the marker.
+  private hookHold = new Set<string>();
   // Per-session permission-gate state: the gate currently open on a session's
   // screen. Set between an OSC 777 / paint-time claim (gate open) and the next
   // prompt-ready without a fresh 777 (gate closed). Prevents re-broadcasting
@@ -568,6 +574,8 @@ export class PTYManager implements SessionRunner {
     if (session.status === "idle") {
       throw new Error(`Session is idle (no active PTY): ${sessionId}`);
     }
+    // An Esc may interrupt, and an interrupt sends no Stop.
+    if (keys === "\x1b") this.hookHold.delete(sessionId);
     if (session.status === "waiting_input") {
       session.status = "running";
       // Observed by construction: we are the ones writing the input.
@@ -620,6 +628,7 @@ export class PTYManager implements SessionRunner {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
     if (session.status === "idle") throw new Error(`Session is idle (no active PTY): ${sessionId}`);
+    if (keys === "\x1b") this.hookHold.delete(sessionId); // see sendKeys
     this.log.info(`[pty.raw_keys.write] ${sessionId.slice(0, 8)} bytes=${keys.length}`, {
       event: "pty.raw_keys_write",
       sessionId,
@@ -989,6 +998,7 @@ export class PTYManager implements SessionRunner {
     for (const stop of this.hookTails.values()) stop();
     this.hookTails.clear();
     this.hookTurn.clear();
+    this.hookHold.clear();
     if (this.hookDir) rmSync(this.hookDir, { recursive: true, force: true });
     this.hookDir = null;
   }
@@ -1051,11 +1061,20 @@ export class PTYManager implements SessionRunner {
     const stripped = stripAnsi(data);
     session.lastOutput = stripped;
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => stripped.includes(m));
+    // Claude paints this on Esc or Ctrl+C, including keys typed outside the
+    // streamer. ponytail: per chunk only, so a stale line repainted in a later
+    // turn's full redraw releases that hold early (back to the marker guess).
+    if (stripped.includes(CLAUDE_INTERRUPT_SCREEN)) this.hookHold.delete(sessionId);
     // An idle signal is settled by the quiet checker below, not here: the gate
     // it may stand for is painted in a later chunk.
     this.trackProgress(sessionId, data);
 
-    if (session.status === "running" && matchedMarker && !this.turnOpen.has(sessionId)) {
+    if (
+      session.status === "running" &&
+      matchedMarker &&
+      !this.turnOpen.has(sessionId) &&
+      !this.hookHold.has(sessionId)
+    ) {
       this.markReady(sessionId, session, "prompt-marker", `marker:${matchedMarker}`);
     }
     // The no-marker backstop lives in armReadyFallback() rather than here: this
@@ -1535,7 +1554,12 @@ export class PTYManager implements SessionRunner {
       return;
     }
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => lines.some((l) => l.includes(m)));
-    if (matchedMarker && session.status === "running" && !this.turnOpen.has(sessionId)) {
+    if (
+      matchedMarker &&
+      session.status === "running" &&
+      !this.turnOpen.has(sessionId) &&
+      !this.hookHold.has(sessionId)
+    ) {
       this.markReady(
         sessionId,
         session,
@@ -1606,6 +1630,20 @@ export class PTYManager implements SessionRunner {
    */
   settleFromTranscript(sessionId: string, lines: string[]): void {
     const session = this.sessions.get(sessionId);
+    // Esc wrote `[Request interrupted by user]` for the hook-opened turn: the
+    // end its Stop never sends. Status may be anything by now (an Esc through
+    // sendKeys on a settled screen reopens it as user-input).
+    const turnId = this.hookTurn.get(sessionId);
+    if (turnId !== undefined && claudeTurnInterrupted(lines, turnId)) {
+      this.hookTurn.delete(sessionId);
+      this.onSessionEvent?.(sessionId, { type: "turn_completed", turnId, status: "interrupted" });
+      if (session?.status === "running") {
+        this.turnOpen.delete(sessionId);
+        this.awaitingStart.delete(sessionId);
+        this.markReady(sessionId, session, "turn-signal", "transcript:interrupted");
+      }
+      return;
+    }
     if (session?.status !== "running" || session.statusUpdatedAt == null) return;
     const endedAt = transcriptTurnEndAt("claude-code", lines);
     if (endedAt === null || endedAt < session.statusUpdatedAt.getTime()) return;
@@ -1634,6 +1672,7 @@ export class PTYManager implements SessionRunner {
     this.hookTails.get(sessionId)?.();
     this.hookTails.delete(sessionId);
     this.hookTurn.delete(sessionId);
+    this.hookHold.delete(sessionId);
     const file = this.hookFile(sessionId);
     if (file) rmSync(file, { force: true });
   }
@@ -1642,8 +1681,9 @@ export class PTYManager implements SessionRunner {
    * Claude's own turn report. UserPromptSubmit opens the turn (and confirms a
    * running-by-construction input as observed); Stop / StopFailure ends it,
    * but only the turn this report opened, and only while nothing else has
-   * already ended it. An interrupt sends no Stop, so the screen and transcript
-   * signals stay the backstop, and the first signal wins.
+   * already ended it. The open turn holds off the prompt-marker guess
+   * (`hookHold`); an interrupt sends no Stop, so the transcript's interrupt line,
+   * a bare Esc, the on-screen interrupt line, the title and `turn_duration` end it instead.
    */
   private applyHookPayloads(sessionId: string, payloads: ClaudeHookPayload[]): void {
     payloads.forEach((p, i) => {
@@ -1660,6 +1700,7 @@ export class PTYManager implements SessionRunner {
           .slice(i + 1)
           .some((q) => q.prompt_id === turnId && q.hook_event_name !== "UserPromptSubmit");
         if (!session || endedInBatch) return;
+        this.hookHold.add(sessionId);
         if (session.status === "running" && session.statusSource === "turn-signal") return;
         if (session.status === "waiting_input") {
           session.status = "running";
@@ -1697,6 +1738,7 @@ export class PTYManager implements SessionRunner {
     reason: string,
   ): void {
     this.clearReadyFallback(sessionId);
+    this.hookHold.delete(sessionId);
     session.lastActivityAt = new Date();
     session.status = "waiting_input";
     // C3: record HOW we concluded this, not just that we did. A
