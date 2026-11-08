@@ -1,3 +1,22 @@
+## [1.132.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.131.0...v1.132.0) (2026-11-08)
+
+### Features
+
+* **api:** list configured scan profiles on GET /api/profiles ([#1175](https://github.com/RonenMars/threadbase-streamer/issues/1175)) ([068ef70](https://github.com/RonenMars/threadbase-streamer/commit/068ef709e68add596398730abb389564e31bce30)), closes [#511](https://github.com/RonenMars/threadbase-streamer/issues/511) [#1165](https://github.com/RonenMars/threadbase-streamer/issues/1165) [#1074](https://github.com/RonenMars/threadbase-streamer/issues/1074)
+* **conversations:** expose the scanner's teamName on list rows ([#1194](https://github.com/RonenMars/threadbase-streamer/issues/1194)) ([e43542d](https://github.com/RonenMars/threadbase-streamer/commit/e43542d4cad2b49070e3f927f653f6a1e3c6a21f))
+* **conversations:** read paged conversation requests as a bounded scanner page ([#1173](https://github.com/RonenMars/threadbase-streamer/issues/1173)) ([7302687](https://github.com/RonenMars/threadbase-streamer/commit/730268772bce076900c2879a4196c836bcefd9b7)), closes [#505](https://github.com/RonenMars/threadbase-streamer/issues/505)
+* **pty-host:** write the host's output to logs/pty-host.log ([#1174](https://github.com/RonenMars/threadbase-streamer/issues/1174)) ([cfc83be](https://github.com/RonenMars/threadbase-streamer/commit/cfc83bef4783e833632f6cfc97476c72351d2f52)), closes [#512](https://github.com/RonenMars/threadbase-streamer/issues/512) [#512](https://github.com/RonenMars/threadbase-streamer/issues/512)
+* **warmup:** serve a conversation's detail during the startup scan ([#1197](https://github.com/RonenMars/threadbase-streamer/issues/1197)) ([b969848](https://github.com/RonenMars/threadbase-streamer/commit/b9698488514bc1bd30dc43da7721c4d3a8ff12ec)), closes [#1114](https://github.com/RonenMars/threadbase-streamer/issues/1114)
+
+### Bug Fixes
+
+* **conversations:** expose compaction summary flag and token stats on rows ([#1190](https://github.com/RonenMars/threadbase-streamer/issues/1190)) ([92cf262](https://github.com/RonenMars/threadbase-streamer/commit/92cf262e381c7d92ddbebdb22bd342d105bb2028))
+* **relay:** read the websocket protocol header as an own property ([#1188](https://github.com/RonenMars/threadbase-streamer/issues/1188)) ([239cdbb](https://github.com/RonenMars/threadbase-streamer/commit/239cdbb4c938074b9620f9074cc93e8f376ebaf7))
+* **search:** unwrap text blocks in tool results ([#1189](https://github.com/RonenMars/threadbase-streamer/issues/1189)) ([5ca199e](https://github.com/RonenMars/threadbase-streamer/commit/5ca199e6ceb197ce62be6c83414044b86aa8cb4c))
+* **server:** answer 413 for oversized bodies ([#1191](https://github.com/RonenMars/threadbase-streamer/issues/1191)) ([1595726](https://github.com/RonenMars/threadbase-streamer/commit/1595726c0462a1402e5b309157f80281502d7828))
+* **sessions:** add idempotency keys to session start ([#1192](https://github.com/RonenMars/threadbase-streamer/issues/1192)) ([a3fdd22](https://github.com/RonenMars/threadbase-streamer/commit/a3fdd22b0aee7c21df8b95eda86a50b0e253e45f))
+* **sessions:** resume cursor sessions with the bound conversation id ([#1193](https://github.com/RonenMars/threadbase-streamer/issues/1193)) ([3b8609f](https://github.com/RonenMars/threadbase-streamer/commit/3b8609f289a4055669f7706850f6c78d22898545))
+
 ## [1.131.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.130.0...v1.131.0) (2026-11-08)
 
 ### Features
