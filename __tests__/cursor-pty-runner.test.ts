@@ -276,4 +276,30 @@ describe("CursorPtyRunner — status sources", () => {
       vi.useRealTimers();
     }
   });
+
+  // 1 and 13 are the extremes: all but one character of the hint on either side.
+  it.each([1, 9, 13])(
+    "sees a busy hint cut after %i characters, and ends the turn when it leaves",
+    async (cut) => {
+      vi.useFakeTimers();
+      try {
+        const { runner, session, proc } = await booted();
+        runner.sendKeys(session.id, "\r");
+        // The PTY splits the hint mid-word; neither chunk holds it whole.
+        proc._emit("data", `Working\r\n${BUSY.slice(0, cut)}`);
+        proc._emit("data", `${BUSY.slice(cut)}\r\n`);
+        await vi.advanceTimersByTimeAsync(2_500);
+        expect(runner.getSession(session.id)?.status).toBe("running");
+        expect(runner.getSession(session.id)?.statusSource).not.toBe("submit-stale");
+
+        // The hint leaves the screen: the turn ends as any other.
+        proc._emit("data", "\x1b[2J\x1b[H\x1b[?2004h");
+        await vi.advanceTimersByTimeAsync(1_200);
+        expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+        expect(runner.getSession(session.id)?.statusSource).toBe("turn-signal");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 });
