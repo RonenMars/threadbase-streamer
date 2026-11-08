@@ -1,6 +1,10 @@
 # Design note — idle-session Expo notifications (Part 2)
 
-**Status:** proposed, not implemented. Separate PR/milestone from the grace-timer fix.
+**Status:** implemented (#515), off by default.
+The sweep, the per-wait notify-state and the payload are in `src/services/push/idleSessionNotifier.ts`.
+It is enabled with `IDLE_NOTIFY_ENABLED`, with the threshold in `IDLE_NOTIFY_THRESHOLD_MS` (default 20 minutes) and the sweep interval in `IDLE_NOTIFY_SWEEP_MS` (default 60 seconds).
+Pieces 1 and 2 below already existed (`push_tokens`, `ExpoPushSender`), and piece 6 plus the Stop action are still client work in tb-mobile.
+The note below is kept as the original design; where it differs (10 minute default, 5 minute sweep), the code and the push-notifications skill are authoritative.
 
 ## Goal
 
