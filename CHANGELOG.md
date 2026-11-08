@@ -1,3 +1,24 @@
+## [1.128.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.127.0...v1.128.0) (2026-11-08)
+
+### Features
+
+* **warmup:** serve cached rows during the startup scan ([#1114](https://github.com/RonenMars/threadbase-streamer/issues/1114)) ([f23db4a](https://github.com/RonenMars/threadbase-streamer/commit/f23db4a0c1d60960e068fb243c048951379da951))
+
+### Bug Fixes
+
+* **cache:** bound the cost of each warm-up tail populate ([#1107](https://github.com/RonenMars/threadbase-streamer/issues/1107)) ([742426a](https://github.com/RonenMars/threadbase-streamer/commit/742426a3ad70d92b0186169522ee81b8ea427253)), closes [#368](https://github.com/RonenMars/threadbase-streamer/issues/368) [#1106](https://github.com/RonenMars/threadbase-streamer/issues/1106)
+* **headers:** read raw request headers without falling through to the prototype ([#1109](https://github.com/RonenMars/threadbase-streamer/issues/1109)) ([e8c9105](https://github.com/RonenMars/threadbase-streamer/commit/e8c9105f38bc667bf6328fa71503361054068390)), closes [#747](https://github.com/RonenMars/threadbase-streamer/issues/747)
+* **http:** answer 400 when a request body is not valid JSON ([#1112](https://github.com/RonenMars/threadbase-streamer/issues/1112)) ([ae7f406](https://github.com/RonenMars/threadbase-streamer/commit/ae7f4067cb70c95292956555e0c762ee36dbe633)), closes [#677](https://github.com/RonenMars/threadbase-streamer/issues/677)
+* **pty:** trim the output ring on a utf-8 character boundary ([#1110](https://github.com/RonenMars/threadbase-streamer/issues/1110)) ([4f7f18f](https://github.com/RonenMars/threadbase-streamer/commit/4f7f18f25a12eb57ea40edbd22b15ca037f346ea)), closes [#774](https://github.com/RonenMars/threadbase-streamer/issues/774)
+* **sessions:** list Claude teammate agents by resolving their id from their own transcript ([#1117](https://github.com/RonenMars/threadbase-streamer/issues/1117)) ([9134f1b](https://github.com/RonenMars/threadbase-streamer/commit/9134f1b1be39e27c0cdca14cefcf8d07a07044d9)), closes [#1115](https://github.com/RonenMars/threadbase-streamer/issues/1115) [#1052](https://github.com/RonenMars/threadbase-streamer/issues/1052) [#1072](https://github.com/RonenMars/threadbase-streamer/issues/1072)
+* **sessions:** re-validate runner-owned permission gates before delivering an answer ([#1119](https://github.com/RonenMars/threadbase-streamer/issues/1119)) ([2063c4d](https://github.com/RonenMars/threadbase-streamer/commit/2063c4d49808761e2326317e3e67f0449d9ed6bf)), closes [#1085](https://github.com/RonenMars/threadbase-streamer/issues/1085)
+* **sessions:** stop process discovery matching the Claude desktop app and its helpers ([#1118](https://github.com/RonenMars/threadbase-streamer/issues/1118)) ([bbbc194](https://github.com/RonenMars/threadbase-streamer/commit/bbbc194b6dd8e6cd6c9b9dcb44a560c31c3b83fb)), closes [#1116](https://github.com/RonenMars/threadbase-streamer/issues/1116)
+* **updater:** delete the release tarball after it is unpacked ([#1111](https://github.com/RonenMars/threadbase-streamer/issues/1111)) ([41d19e0](https://github.com/RonenMars/threadbase-streamer/commit/41d19e0b22cfc1d6a5e3a8de9f00dc9a9a734ea8)), closes [#872](https://github.com/RonenMars/threadbase-streamer/issues/872)
+
+### Performance Improvements
+
+* **server:** size the warm-up upsert batches to the slice budget ([#1113](https://github.com/RonenMars/threadbase-streamer/issues/1113)) ([786c01d](https://github.com/RonenMars/threadbase-streamer/commit/786c01d0418ed00bf92729028c776c9368bfb3e1)), closes [#1108](https://github.com/RonenMars/threadbase-streamer/issues/1108)
+
 ## [1.127.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.126.0...v1.127.0) (2026-11-02)
 
 ### Features
