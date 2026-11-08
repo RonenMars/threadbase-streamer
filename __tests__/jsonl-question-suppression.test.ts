@@ -137,6 +137,23 @@ describe("processJsonlQuestions — P0.2 suppression + anti-clobber", () => {
     expect(broadcasts.some((b) => b.toolUseId === "toolu_foreign")).toBe(false);
   });
 
+  // #727: the synthesized id used to carry only the content key's LENGTH, so two
+  // different questions of equal length shared one id.
+  it("screen toolUseId tells same-length, different-content questions apart and is stable", () => {
+    const SID = "same-length-sess";
+    const handlers = (server as any).sessionHandlers;
+    const idOf = (questions: AskQuestion[]): string => {
+      handlers.handleLiveQuestion(SID, questions);
+      return (server as any).pendingQuestions.get(SID).toolUseId;
+    };
+    const first = qParsed("Pick one", ["aa", "bb"]);
+    const second = qParsed("Pick one", ["cc", "dd"]);
+    const a = idOf(first);
+    const b = idOf(second);
+    expect(b).not.toBe(a);
+    expect(idOf(first)).toBe(a);
+  });
+
   it("re-sync: the SAME question's JSONL flush updates the toolUseId, origin stays pty", () => {
     const SID = "resync-sess";
     (server as any).sessionHandlers.handleLiveQuestion(
