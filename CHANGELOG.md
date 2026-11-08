@@ -1,3 +1,19 @@
+## [1.133.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.132.0...v1.133.0) (2026-11-08)
+
+### Features
+
+* **sessions:** observe claude turn boundaries through hooks behind a flag ([#1198](https://github.com/RonenMars/threadbase-streamer/issues/1198)) ([e8f90c0](https://github.com/RonenMars/threadbase-streamer/commit/e8f90c0c4ef0b8f8affe1b54d5b33cc44a51353e)), closes [#1161](https://github.com/RonenMars/threadbase-streamer/issues/1161)
+
+### Bug Fixes
+
+* **conversations:** answer an empty conversation for an unprompted external session ([#1199](https://github.com/RonenMars/threadbase-streamer/issues/1199)) ([5253445](https://github.com/RonenMars/threadbase-streamer/commit/5253445b97afd9a8a462da65b0f705846cc06e30))
+* **e2ee:** give /open its own per-device budget of 20 a minute ([#1202](https://github.com/RonenMars/threadbase-streamer/issues/1202)) ([bd850a7](https://github.com/RonenMars/threadbase-streamer/commit/bd850a7fa78fb40e306d53088b84db6916d94155))
+* **pty:** close a picker card claimed off a half-painted resume screen ([#1206](https://github.com/RonenMars/threadbase-streamer/issues/1206)) ([29a6e66](https://github.com/RonenMars/threadbase-streamer/commit/29a6e660bc50921021ef2f15ba9220457bc29193))
+* **pty:** stop a quoted or unparsed AskUserQuestion menu pinning a session in running ([#1205](https://github.com/RonenMars/threadbase-streamer/issues/1205)) ([e4eebdc](https://github.com/RonenMars/threadbase-streamer/commit/e4eebdc9296129ba2d64899b5131d3cccfef4c5b))
+* **questions:** do not claim a user's echoed numbered message as a picker ([#1204](https://github.com/RonenMars/threadbase-streamer/issues/1204)) ([b791162](https://github.com/RonenMars/threadbase-streamer/commit/b7911620e81fa1fe86b7523b06b33fae4a6c2243))
+* **questions:** ignore prose numbered lists and quoted footers when detecting a permission gate ([#1207](https://github.com/RonenMars/threadbase-streamer/issues/1207)) ([17dd866](https://github.com/RonenMars/threadbase-streamer/commit/17dd866666afdf559085a1307aa9381eba0a5b05)), closes [#1205](https://github.com/RonenMars/threadbase-streamer/issues/1205) [#1206](https://github.com/RonenMars/threadbase-streamer/issues/1206)
+* **sessions:** hold off the screen-marker guess while a hook-opened turn runs ([#1200](https://github.com/RonenMars/threadbase-streamer/issues/1200)) ([1d27a7b](https://github.com/RonenMars/threadbase-streamer/commit/1d27a7bee28da8229313107ef5d59ad0070db023)), closes [#1198](https://github.com/RonenMars/threadbase-streamer/issues/1198) [#1159](https://github.com/RonenMars/threadbase-streamer/issues/1159)
+
 ## [1.132.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.131.0...v1.132.0) (2026-11-08)
 
 ### Features
