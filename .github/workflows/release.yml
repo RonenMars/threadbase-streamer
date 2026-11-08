@@ -10,6 +10,12 @@ on:
         type: boolean
         default: false
 
+# A newer run of the same ref replaces an older one that is still queued or running,
+# so a burst of merges to main queues one CI run, not one per merge.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Quick (~30s) sanity check before we burn the matrix. Runs semantic-release
   # in dry-run mode to decide whether a release would happen at all. If not,

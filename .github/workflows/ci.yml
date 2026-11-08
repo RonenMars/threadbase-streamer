@@ -22,6 +22,12 @@ on:
   # from duplicating the run a PR already performs.
   pull_request:
 
+# A newer run of the same ref replaces an older one that is still queued or running,
+# so a burst of merges to main queues one CI run, not one per merge.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Decide whether to skip the heavy CI work. The required status checks
   # (Lint, Test (Node 22), Test (Node 24)) are enforced by branch protection,
