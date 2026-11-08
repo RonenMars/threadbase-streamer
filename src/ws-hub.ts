@@ -176,8 +176,14 @@ export class WSHub {
     this.firstFrameMs = own(options, "firstFrameMs") ?? WS_FIRST_FRAME_DEADLINE_MS;
   }
 
+  /** Counts only: no socket identity, key or query string ever reaches this line. */
+  private logClientChange(): void {
+    log.info("ws client change", { event: "ws.client_change", count: this.clients.size });
+  }
+
   addClient(ws: WebSocket, context?: E2eeContext): void {
     this.clients.add(ws);
+    this.logClientChange();
     if (context) {
       this.contexts.set(ws, context);
       // Set HERE, at attach — not on the first successful seal. Whoever holds
@@ -218,7 +224,7 @@ export class WSHub {
         clearTimeout(t);
         this.pongTimers.delete(ws);
       }
-      this.clients.delete(ws);
+      if (this.clients.delete(ws)) this.logClientChange();
       this.forgetContext(ws);
     });
 
@@ -228,7 +234,7 @@ export class WSHub {
         clearTimeout(t);
         this.pongTimers.delete(ws);
       }
-      this.clients.delete(ws);
+      if (this.clients.delete(ws)) this.logClientChange();
       this.forgetContext(ws);
     });
 
