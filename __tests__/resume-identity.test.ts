@@ -29,6 +29,29 @@ function mkRow(over: Partial<ManagedSessionRow> = {}): ManagedSessionRow {
 }
 
 describe("resumeIdForRow", () => {
+  it.each(["cursor", "cursor-cli"])("returns the bound transcript id for a %s row", (provider) => {
+    expect(
+      resumeIdForRow(
+        mkRow({ provider, session_id: "placeholder-uuid", bound_conversation_id: "cursor-run" }),
+      ),
+    ).toBe("cursor-run");
+  });
+
+  it("uses a historical Cursor session's own id when there is no separate binding", () => {
+    expect(resumeIdForRow(mkRow({ provider: "cursor", session_id: "cursor-run" }))).toBe(
+      "cursor-run",
+    );
+  });
+
+  it("orders a Cursor row's ids as row binding, then live binding, then row id", () => {
+    const row = mkRow({ provider: "cursor", session_id: "placeholder-uuid" });
+    expect(resumeIdForRow({ ...row, bound_conversation_id: "row-run" }, "live-run")).toBe(
+      "row-run",
+    );
+    expect(resumeIdForRow(row, "live-run")).toBe("live-run");
+    expect(resumeIdForRow(row, null)).toBe("placeholder-uuid");
+  });
+
   it("returns the session id for a Claude row", () => {
     expect(resumeIdForRow(mkRow())).toBe("sess-1");
   });
