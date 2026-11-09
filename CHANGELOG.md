@@ -1,3 +1,9 @@
+## [1.134.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.0...v1.134.1) (2026-11-09)
+
+### Bug Fixes
+
+* **pty:** add an ascii composer marker and hold boot readiness on the trust gate ([#1223](https://github.com/RonenMars/threadbase-streamer/issues/1223)) ([8bcc831](https://github.com/RonenMars/threadbase-streamer/commit/8bcc831370fad804814732fc1aa83bdd706cbd56))
+
 ## [1.134.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.133.1...v1.134.0) (2026-11-09)
 
 ### Features
