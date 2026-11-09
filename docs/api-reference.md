@@ -1,5 +1,7 @@
 # REST API Reference
 
+The read-only MCP server that wraps part of this API is documented in [docs/agents/tooling.md](agents/tooling.md#threadbase-mcp-server).
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/healthz` | Health check |
