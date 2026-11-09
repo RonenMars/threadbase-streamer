@@ -2,10 +2,11 @@
 // Cursor replays it starts at byte 0, so it numbers its own lines: the
 // message_index the offset index and REST use. Without seqs the client cannot
 // match the replay against its history copies (#867).
+
+import { createJsonlParseState, parseJsonlLine } from "@threadbase-sh/scanner";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { createJsonlParseState, parseJsonlLine } from "@threadbase-sh/scanner";
 import { SessionWatchers, type SessionWatchersDeps } from "../src/session-watchers";
 
 const SESSION_ID = "b3b3b3b3-0000-4000-8000-000000000003";
