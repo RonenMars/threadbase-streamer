@@ -491,8 +491,11 @@ export class WSHub {
         // ACKs, which is what stalled shutdown and caused EADDRINUSE on the
         // next deploy.
         client.terminate();
-      } catch {
-        // Intentionally silent: terminate() on an already-closed socket during shutdown.
+      } catch (err) {
+        // terminate() on an already-closed socket during shutdown is expected;
+        // logged so a real failure is still visible.
+        const error = err instanceof Error ? err.message : String(err);
+        log.warn(`[ws.terminate_failed] ${error}`, { event: "ws.terminate_failed", error });
       }
     }
     this.clients.clear();

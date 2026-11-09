@@ -130,3 +130,26 @@ describe("handleWsMessage malformed JSON", () => {
     expect(JSON.stringify(h.calls)).not.toContain("SECRET-PROMPT");
   });
 });
+
+describe("ws-hub dispose terminate failure", () => {
+  it("logs ws.terminate_failed when a client refuses to terminate", () => {
+    const hub = new WSHub();
+    const emitter = new EventEmitter();
+    const ws = Object.assign(emitter, {
+      readyState: 1,
+      OPEN: 1,
+      send: () => {},
+      terminate: () => {
+        throw new Error("already gone");
+      },
+    });
+    hub.addClient(ws as any);
+    hub.dispose();
+
+    const lines = eventsOf("ws.terminate_failed");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].level).toBe("warn");
+    expect(lines[0].fields.error).toBe("already gone");
+    expect(hub.connectionCount).toBe(0);
+  });
+});
