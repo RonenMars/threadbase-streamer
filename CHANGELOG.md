@@ -1,3 +1,13 @@
+## [1.133.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.133.0...v1.133.1) (2026-11-09)
+
+### Bug Fixes
+
+* **history:** derive copilot session ids from the session directory ([#1212](https://github.com/RonenMars/threadbase-streamer/issues/1212)) ([ada6170](https://github.com/RonenMars/threadbase-streamer/commit/ada6170d0fc4462a39c9af36d907179fa5dd7bc8))
+
+### Reverts
+
+* **deps-dev:** bump conventional-changelog-conventionalcommits back to 9.3.1 ([#1213](https://github.com/RonenMars/threadbase-streamer/issues/1213)) ([a7f6caf](https://github.com/RonenMars/threadbase-streamer/commit/a7f6caf1dfab86797b0cb461a2279f9f6a4a9d22))
+
 ## [1.133.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.132.0...v1.133.0) (2026-11-08)
 
 ### Features
