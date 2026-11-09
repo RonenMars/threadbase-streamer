@@ -1,3 +1,9 @@
+## [1.134.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.1...v1.134.2) (2026-11-09)
+
+### Bug Fixes
+
+* **ws:** log terminate failures during hub dispose ([#1218](https://github.com/RonenMars/threadbase-streamer/issues/1218)) ([c3641c2](https://github.com/RonenMars/threadbase-streamer/commit/c3641c2c08e760cb41ce6938d4503f115b3c7b7a))
+
 ## [1.134.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.0...v1.134.1) (2026-11-09)
 
 ### Bug Fixes
