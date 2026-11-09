@@ -1,6 +1,7 @@
 # Streamer state model — server, session and agent state
 
 This document reorganizes the Threadbase mobile doc *"Threadbase Mobile — Server, Session & Agent State Model"* (dated 2026-09-24) around the streamer: what it sends, what it stores, what it decides and what it guarantees.
+Since 2026-11-04 the user-facing tier is named External (was Observed).
 It is a rearrangement only.
 Every fact and rule from the original is kept with its original meaning; nothing is added or removed.
 Facts that concern only the mobile app are kept under [Client-side context](#5-client-side-context).
@@ -316,7 +317,7 @@ These facts concern only the mobile app. They are kept verbatim in meaning, with
   | 2 | `status: on_hold` | on_hold | no | waiting | cancel only | Resumable |
   | 3 | `lifecycle` completed / failed | completed | no | completed / failed | none | Resumable / Can't resume |
   | 4 | `status` completed / failed | completed | no | completed / failed | none | Resumable / Can't resume |
-  | 5 | external and alive | external_live | **yes** (external) | completed | observe only | Observed |
+  | 5 | external and alive | external_live | **yes** (external) | completed | observe only | External |
   | 6 | external and `processLiveness: gone` | stale | no | idle | observe only | Resumable |
   | 7 | `lifecycle: resumable`, or `ownership: historical`, or external not alive | historical | no | idle | observe + resume | Resumable |
   | 8 | `status` running / waiting_input | managed_live, or resumed if `resumedFromConversationId` is set | **yes** | running / waiting | send + cancel | Working / Needs you |
@@ -334,14 +335,14 @@ These facts concern only the mobile app. They are kept verbatim in meaning, with
   | --- | --- | --- |
   | `kind` | 10 values (classification table) | Routing and detail copy |
   | `statusLabel` | 15 values (running, waiting, interrupted, onHold, stale, unavailablePath…) | Filter sheets and longer copy |
-  | `tier` | Needs you, Working, Resumable, Can't resume, Observed | The one word a list row or badge shows |
+  | `tier` | Needs you, Working, Resumable, Can't resume, External | The one word a list row or badge shows |
   | `live` | boolean | Pulsing dot, "Live control" chip, gating `subStatus` |
   | `colorToken` | running, waiting, completed, idle, failed | Badge color |
   | `capabilities` | canSendInput, canCancel, canOvertake, canResume, isObserveOnly | Which actions the UI offers. `canOvertake` is never true today |
   | `confidence` | process, jsonl, status, unknown | How the verdict was reached, from strongest to weakest evidence |
   | `subStatus` | an agent phase or null | Set only when `live`. A phase value the app doesn't recognize becomes null |
 
-- **F-559** Tier comes from the verdict in its own order: observed if external-live; can't resume if unavailable or failed; if live, Needs you when waiting, otherwise Working; Working while starting; otherwise Resumable. In the screenshot, "Needs you" is tier `needsYou`: a live managed session in `waiting_input`. "Live control" is shown because `live` is true and the session isn't observe-only. `L3/Verdict`
+- **F-559** Tier comes from the verdict in its own order: external if external-live; can't resume if unavailable or failed; if live, Needs you when waiting, otherwise Working; Working while starting; otherwise Resumable. In the screenshot, "Needs you" is tier `needsYou`: a live managed session in `waiting_input`. "Live control" is shown because `live` is true and the session isn't observe-only. `L3/Verdict`
   > **Streamer (verified 2026-09-25):** A permission gate held open during a turn keeps `status: running` (F-164), so this tier reads Working; only the open prompt shows the wait. Use `hasOpenPrompt` (F-164) as well as `waiting_input`.
 - **F-560** Conversations have their own, smaller check (`deriveConversationPresentation`). `resumable: false` with an `unavailableReason` yields kind `unavailable` and tier Can't resume. `L3/Verdict`
 
