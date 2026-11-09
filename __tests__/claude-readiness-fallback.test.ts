@@ -109,11 +109,15 @@ describe("PTYManager — Claude readiness without the Unicode glyphs (#959)", ()
     expect((mgr as any).queuedInputs.get(id)).toEqual(["hello"]);
     expect((mgr as any).readyFallbackTimers.has(id)).toBe(true);
 
-    // Answered: the composer paints and the queue flushes.
+    // Answered: the composer paints, the boot settles on the marker and the
+    // queue flushes. The flushed prompt is a submit, so the session is `running`
+    // again by the time this returns; the settle shows in pendingReady and the
+    // flushed write, not in the status.
     emit(mgr, id, "\x1b[2J\x1b[H");
     emit(mgr, id, COMPOSER_CHUNK);
-    expect(internal(mgr, id).status).toBe("waiting_input");
+    expect((mgr as any).pendingReady.has(id)).toBe(false);
     expect((mgr as any).queuedInputs.has(id)).toBe(false);
+    expect(internal(mgr, id).process.write).toHaveBeenCalledWith(expect.stringContaining("hello"));
     mgr.dispose();
   });
 
