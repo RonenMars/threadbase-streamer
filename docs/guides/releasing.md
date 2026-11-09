@@ -45,3 +45,27 @@ stable version with everything `next` carried.
 
 **Roll back.** There is no automation. See *Rollback* in
 [auto-update.md](auto-update.md#releases).
+
+## Pinning the hosted relay key
+
+A streamer pins the public key of the hosted relay (`HOSTED_RELAY_PUBLIC_KEY` in
+`src/relay/hosted.ts`), so a relay key rotation needs a streamer release. That
+part is automatic. The relay repo's `docs/releasing.md` covers its side.
+
+1. Tagging `v*` in `RonenMars/threadbase-relay` runs `notify-streamer.yml`, which
+   sends `repository_dispatch` `relay-released` here with `tag` and `public_key`.
+2. `.github/workflows/update-relay.yml` checks the key is 43 base64url characters,
+   rewrites the constant with `scripts/pin-relay-key.mjs`, and opens a
+   PR against `main` for review; a key pin is never auto-merged. A key that is already pinned opens nothing.
+3. The merge is a `fix:`, so semantic-release cuts a stable release.
+
+Run it by hand from the Actions tab (`workflow_dispatch`, inputs `public_key` and
+an optional `tag`) when a dispatch was missed.
+
+Setup, once:
+
+| Where | Name | What |
+| ----- | ---- | ---- |
+| this repo, secret | `RELAY_VER_BUMP_PAT` | fine-grained PAT, Contents and Pull requests read/write on this repo, so the bump PR runs CI |
+| relay repo, secret | `STREAMER_DISPATCH_PAT` | fine-grained PAT, Contents read/write on this repo, to send the dispatch |
+| relay repo, variable | `RELAY_PUBLIC_KEY` | public key of the deployed `RELAY_STATIC_KEY` |
