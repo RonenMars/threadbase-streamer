@@ -1,3 +1,10 @@
+## [1.134.0-next.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.133.1...v1.134.0-next.1) (2026-11-09)
+
+### Features
+
+* **relay:** ask before using the relay and add relay enable/disable ([b8af41f](https://github.com/RonenMars/threadbase-streamer/commit/b8af41fcab66ad0de5065112fea37825cfcaca59))
+* **relay:** use the hosted relay by default ([#1067](https://github.com/RonenMars/threadbase-streamer/issues/1067)) ([3aaa311](https://github.com/RonenMars/threadbase-streamer/commit/3aaa311862f4dabe1103ccf215e51296d411de98)), closes [#1056](https://github.com/RonenMars/threadbase-streamer/issues/1056)
+
 ## [1.133.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.133.0...v1.133.1) (2026-11-09)
 
 ### Bug Fixes
