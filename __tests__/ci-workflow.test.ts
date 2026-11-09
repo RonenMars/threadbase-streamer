@@ -12,7 +12,11 @@ import { describe, expect, it } from "vitest";
  * appears to.
  */
 
-const WORKFLOW = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+// Windows checkouts get CRLF; anchors below assume LF.
+const WORKFLOW = readFileSync(
+  join(__dirname, "..", ".github", "workflows", "ci.yml"),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const RELEASE_WORKFLOW = readFileSync(
   join(__dirname, "..", ".github", "workflows", "release.yml"),
   "utf8",
