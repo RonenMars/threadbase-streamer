@@ -458,8 +458,10 @@ export class WSHub {
       // 1008 policy violation. The REASON is the frozen §9 code, so the client
       // can tell a policy close from a network drop and from each other.
       ws.close(1008, code);
-    } catch {
-      // Already gone.
+    } catch (err) {
+      // Already gone is expected; logged so a real failure is still visible.
+      const error = err instanceof Error ? err.message : String(err);
+      log.warn(`[ws.close_failed] ${error}`, { event: "ws.close_failed", error });
     }
     this.forgetContext(ws);
   }
