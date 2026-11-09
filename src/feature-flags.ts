@@ -120,10 +120,11 @@ export const FEATURE_FLAGS = {
   },
   relay: {
     description:
-      "Keep an outbound tunnel open to a Threadbase relay (relay_url and relay_public_key in " +
-      "server.yaml), so a paired phone can reach this server without a tunnel of your own. The " +
-      "relay forwards end-to-end-encrypted traffic only and cannot read it. Off by default while " +
-      "the relay is in development.",
+      "Keep an outbound tunnel open to a Threadbase relay, so a paired phone can reach this " +
+      "server without a tunnel of your own. The relay forwards end-to-end-encrypted traffic only " +
+      "and cannot read it. Off until the user says yes: the CLI asks on first run, or use " +
+      "`tb-streamer relay enable`. The hosted relay is used unless relay_url and " +
+      "relay_public_key in server.yaml name another.",
     default: false,
     env: "THREADBASE_FEATURE_RELAY",
   },

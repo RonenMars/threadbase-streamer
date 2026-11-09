@@ -6,11 +6,17 @@ import {
   loadAutoResumeOnBoot,
   loadBrowseRoot,
   loadDefaultPermissionMode,
+  loadFeatureFlags,
   loadOrCreateApiKey,
   loadPtyGracePeriodMs,
   loadPublicUrl,
+  loadRelayConsent,
+  loadRelayPublicKey,
+  loadRelayUrl,
   setAutoResumeOnBoot,
   setDefaultPermissionMode,
+  setRelayConsent,
+  setRelayEnabled,
 } from "../src/auth";
 import {
   CLAUDE_FLAGS,
@@ -30,9 +36,12 @@ import {
   FEATURE_FLAG_IDS,
   type FeatureFlagValues,
   parseFeatureFlagArgs,
+  resolveFeatureFlags,
 } from "../src/feature-flags";
 import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
+import { decideRelay } from "../src/relay/consent";
+import { relaySettings } from "../src/relay/hosted";
 import { StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
@@ -42,6 +51,7 @@ import { logApiKeyLine } from "./boot-log";
 import { applyNoE2ee } from "./no-e2ee";
 import { printServerBanner, printUrlBanner } from "./pair-banner";
 import { registerProdCommands } from "./prod";
+import { registerRelayCommands } from "./relay";
 
 const log = getLogger("cli");
 
@@ -352,6 +362,37 @@ program
       );
     }
 
+    // The relay runs only on a recorded yes. See decideRelay.
+    const hostedRelay = relaySettings(loadRelayUrl(), loadRelayPublicKey());
+    let relay: Partial<typeof hostedRelay> = {};
+    if (hostedRelay.relayUrl && hostedRelay.relayPublicKey) {
+      const { values, sources } = resolveFeatureFlags({
+        cli: featureFlags,
+        yaml: loadFeatureFlags(),
+      });
+      const prompts = await import("../src/lifecycle/prompt");
+      const relayOn = await decideRelay({
+        enabled: values.relay,
+        source: sources.relay,
+        endpoint: hostedRelay.relayUrl,
+        consent: loadRelayConsent(),
+        interactive: stdin.isTTY === true && !isProdInvocation,
+        askFirstRun: prompts.interactiveRelayPrompt,
+        confirmEnabled: prompts.interactiveRelayConfirm,
+        approve: (endpoint) => {
+          setRelayEnabled(true);
+          setRelayConsent(endpoint);
+        },
+        decline: () => {
+          setRelayEnabled(false);
+          setRelayConsent(undefined);
+        },
+        clearConsent: () => setRelayConsent(undefined),
+        warn: (message) => log.warn(message, undefined, "console"),
+      });
+      if (relayOn) relay = hostedRelay;
+    }
+
     const server = new StreamerServer({
       port: resolvedPort,
       host: opts.host,
@@ -370,6 +411,7 @@ program
       claudeFlags,
       featureFlags,
       claudeExtraArgs: opts.claudeExtraArgs,
+      ...relay,
     });
 
     await server.listen(resolvedPort);
@@ -885,5 +927,6 @@ program
   });
 
 registerProdCommands(program);
+registerRelayCommands(program);
 
 program.parse();

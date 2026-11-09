@@ -98,3 +98,54 @@ export const interactiveAutoResumePrompt: AutoResumePromptFn = async () => {
     rl.close();
   }
 };
+
+/** What the relay is and what it can see; shared by the prompts and `relay enable`. */
+export function relayExplanation(endpoint: string): string {
+  return (
+    `  The relay is a server run by Threadbase at ${endpoint}.\n` +
+    "  This streamer keeps an outbound connection open to it, so a paired phone can reach\n" +
+    "  you from any network without a tunnel of your own.\n\n" +
+    "  It cannot read your sessions or files: traffic is end-to-end encrypted between the\n" +
+    "  phone and this streamer. It does see that you are connected: your IP address, the\n" +
+    "  paths requested, sizes and timing.\n\n" +
+    "  Without it, the phone reaches you only on your own network or through a tunnel you set up.\n" +
+    "  Change your mind any time with `tb-streamer relay disable`.\n"
+  );
+}
+
+export type RelayPromptFn = (endpoint: string) => Promise<boolean>;
+
+/** First run: nothing has said anything about the relay. Empty line means no. */
+export const interactiveRelayPrompt: RelayPromptFn = async (endpoint) => {
+  const rl = createInterface({ input: stdin, output: stdout });
+  try {
+    stdout.write(
+      `\nUse the Threadbase relay for access from outside your network?\n${relayExplanation(endpoint)}\n`,
+    );
+    const ans = (await rl.question("Use the relay? [y/N]: ")).trim().toLowerCase();
+    return ans === "y" || ans === "yes";
+  } finally {
+    rl.close();
+  }
+};
+
+export type RelayConfirmFn = (endpoint: string, source: string) => Promise<boolean>;
+
+/** The relay was switched on by something other than this prompt. Empty line means without. */
+export const interactiveRelayConfirm: RelayConfirmFn = async (endpoint, source) => {
+  const rl = createInterface({ input: stdin, output: stdout });
+  try {
+    const bar = "!".repeat(72);
+    stdout.write(
+      `\n${bar}\n` +
+        "!!  THE THREADBASE RELAY IS TURNED ON\n" +
+        `!!  It was enabled by: ${source}. You have not confirmed it.\n` +
+        `${bar}\n\n${relayExplanation(endpoint)}\n` +
+        '  Choosing "without" turns it off in server.yaml and starts without it.\n\n',
+    );
+    const ans = (await rl.question("Start [w]ith the relay or [W]ithout it? [w/W]: ")).trim();
+    return ans === "w";
+  } finally {
+    rl.close();
+  }
+};
