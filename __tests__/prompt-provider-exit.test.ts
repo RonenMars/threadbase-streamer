@@ -57,7 +57,10 @@ describe("provider exit with a prompt open (#714)", () => {
         runners: Map<
           string,
           {
-            startFresh: (o: { projectPath: string; projectName: string }) => Promise<{ id: string }>;
+            startFresh: (o: {
+              projectPath: string;
+              projectName: string;
+            }) => Promise<{ id: string }>;
             sessions: Map<string, { process: { _emit: (e: string, d?: unknown) => void } }>;
           }
         >;
