@@ -1,3 +1,9 @@
+## [1.134.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.2...v1.134.3) (2026-11-09)
+
+### Bug Fixes
+
+* **prompts:** settle open prompts as cancelled on provider exit ([#1220](https://github.com/RonenMars/threadbase-streamer/issues/1220)) ([3d38ac2](https://github.com/RonenMars/threadbase-streamer/commit/3d38ac2d4b1d134d3145339cb6d0e399193cd83f))
+
 ## [1.134.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.1...v1.134.2) (2026-11-09)
 
 ### Bug Fixes
