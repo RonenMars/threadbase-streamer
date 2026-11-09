@@ -79,7 +79,25 @@ const INPUT_HISTORY_MAX = 50;
 //   - Connector/MCP-status splash: no box at all; shows ❯ as the prompt arrow
 // We treat either marker in a chunk as "ready". False-positives are harmless —
 // the worst case is flushing queued input slightly early, which Claude buffers.
-const CLAUDE_PROMPT_MARKERS = ["╭", "❯"] as const;
+//
+// `>` + U+00A0 is the ASCII fallback (#959). Claude paints its Unicode chrome as
+// ASCII when it believes the terminal cannot render it, and then the composer
+// shows `>` and neither glyph above ever appears. A bare `>` cannot be the
+// marker: every past user turn is echoed with a `>` prefix. What tells the two
+// apart is the byte after the glyph. In the raw 2.1.280 captures
+// (__tests__/fixtures/turn-signals/claude-2.1.280-*.json) the composer is
+// always `❯` + NBSP, the transcript echo is `❯` + a plain space, and a gate's
+// selection cursor is `❯` + a cursor move. Unverified: that the ASCII
+// rendering keeps the NBSP. If it does not, this entry never matches and the
+// session falls back to the 8s boot backstop and the transcript turn end, as it
+// did before.
+const CLAUDE_PROMPT_MARKERS = ["╭", "❯", ">\u00a0"] as const;
+// The startup choice gate's footer ("Enter to confirm · Esc to cancel", the
+// workspace-trust gate). A boot chunk that carries it is that gate's paint, so
+// its `❯` is the selection cursor, not a composer prompt (#959). Whitespace is
+// optional because Claude spaces words with cursor moves, which stripAnsi drops
+// (the raw 2.1.280 permission gate strips to "Doyouwanttoproceed?").
+const STARTUP_GATE_FOOTER_RE = /enter\s*to\s*confirm/i;
 // Painted after an Esc or Ctrl+C interrupt (Claude Code 2.1.319).
 const CLAUDE_INTERRUPT_SCREEN = "Interrupted · What should Claude do instead?";
 
@@ -326,6 +344,9 @@ export class PTYManager implements SessionRunner {
   private quietCheckers = new Map<string, ReturnType<typeof debounce>>();
   // Per-session flat backstop from the first chunk (CLAUDE_READY_FALLBACK_MS).
   private readyFallbackTimers = new Map<string, NodeJS.Timeout>();
+  // Booting sessions whose last screen recheck saw a startup choice gate
+  // (workspace trust). The backstop waits while one is up: see fireReadyFallback.
+  private startupGateShown = new Set<string>();
   // In-flight start()/startFresh() calls keyed by sessionId. A second
   // concurrent resume for the same session (double-tap, client retry) awaits
   // the first call's promise instead of spawning a duplicate PTY (CRITICAL #3).
@@ -986,6 +1007,7 @@ export class PTYManager implements SessionRunner {
     this.quietCheckers.clear();
     for (const timer of this.readyFallbackTimers.values()) clearTimeout(timer);
     this.readyFallbackTimers.clear();
+    this.startupGateShown.clear();
     this.permissionOpen.clear();
     this.oscTail.clear();
     this.turnOpen.clear();
@@ -1075,7 +1097,10 @@ export class PTYManager implements SessionRunner {
       session.status === "running" &&
       matchedMarker &&
       !this.turnOpen.has(sessionId) &&
-      !this.hookHold.has(sessionId)
+      !this.hookHold.has(sessionId) &&
+      // A startup gate's own cursor is not a composer (#959): leave it to the
+      // screen recheck, which can tell the two apart.
+      !(this.pendingReady.has(sessionId) && STARTUP_GATE_FOOTER_RE.test(stripped))
     ) {
       this.markReady(sessionId, session, "prompt-marker", `marker:${matchedMarker}`);
     }
@@ -1555,6 +1580,18 @@ export class PTYManager implements SessionRunner {
       }
       return;
     }
+    if (this.pendingReady.has(sessionId)) {
+      // The workspace-trust gate paints `❯` on its selected option, which the
+      // marker test reads as a composer prompt: the session reported
+      // `waiting_input` while blocked on the gate, and the input queue flushed
+      // into it (#959). While it is up the session stays `running`, the way any
+      // gate holds a turn; raising the gate card is the permission scrape's job.
+      if (detectStartupChoiceGate(lines) !== null) {
+        this.startupGateShown.add(sessionId);
+        return;
+      }
+      this.startupGateShown.delete(sessionId);
+    }
     const matchedMarker = CLAUDE_PROMPT_MARKERS.find((m) => lines.some((l) => l.includes(m)));
     if (
       matchedMarker &&
@@ -1578,21 +1615,31 @@ export class PTYManager implements SessionRunner {
   // variant whose marker we cannot see still recovers, just 8s later instead of
   // 500ms sooner and wrong. unref() so it never holds the process open.
   private armReadyFallback(sessionId: string): void {
-    const timer = setTimeout(() => {
-      this.readyFallbackTimers.delete(sessionId);
-      const session = this.sessions.get(sessionId);
-      if (session?.status === "running" && this.pendingReady.has(sessionId)) {
-        this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
-      }
-    }, CLAUDE_READY_FALLBACK_MS);
+    const timer = setTimeout(() => this.fireReadyFallback(sessionId), CLAUDE_READY_FALLBACK_MS);
     timer.unref?.();
     this.readyFallbackTimers.set(sessionId, timer);
+  }
+
+  private fireReadyFallback(sessionId: string): void {
+    this.readyFallbackTimers.delete(sessionId);
+    const session = this.sessions.get(sessionId);
+    if (session?.status !== "running" || !this.pendingReady.has(sessionId)) return;
+    // A startup gate waits on the user, so it is not the deadlock this breaks,
+    // and settling now would flush queued input into the gate, whose `\r`
+    // confirms the selected option. Look again a window later instead, so a
+    // boot that never paints a marker after the answer is still rescued.
+    if (this.startupGateShown.has(sessionId)) {
+      this.armReadyFallback(sessionId);
+      return;
+    }
+    this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
   }
 
   private clearReadyFallback(sessionId: string): void {
     const timer = this.readyFallbackTimers.get(sessionId);
     if (timer) clearTimeout(timer);
     this.readyFallbackTimers.delete(sessionId);
+    this.startupGateShown.delete(sessionId);
   }
 
   // Transition a session from "running" to "waiting_input", clear pendingReady,
