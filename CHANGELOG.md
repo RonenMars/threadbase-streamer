@@ -1,3 +1,9 @@
+## [1.135.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.4...v1.135.0) (2026-11-09)
+
+### Features
+
+* **mcp:** add the read-only tb-streamer mcp stdio server ([#1232](https://github.com/RonenMars/threadbase-streamer/issues/1232)) ([6431b91](https://github.com/RonenMars/threadbase-streamer/commit/6431b91050c1ad5e614e66f90091d50565fa6a45)), closes [#1178](https://github.com/RonenMars/threadbase-streamer/issues/1178) [#1179](https://github.com/RonenMars/threadbase-streamer/issues/1179) [#1177](https://github.com/RonenMars/threadbase-streamer/issues/1177)
+
 ## [1.134.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.3...v1.134.4) (2026-11-09)
 
 ### Bug Fixes
