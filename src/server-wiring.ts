@@ -637,7 +637,7 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         // A gone PTY can never have an open gate; clear silently.
         deps.pendingPermission.delete(session.id);
         deps.pendingPermissionKey.delete(session.id);
-        deps.promptRegistry.invalidateSession(session.id, "session_ended");
+        deps.promptRegistry.invalidateSession(session.id, "provider_exit", "cancelled");
         deps.contendedSessions.delete(session.id);
         // Remember that WE owned this conversation up to now, so a resume that
         // follows a hold isn't mistaken for a collision with someone else

@@ -316,11 +316,15 @@ export class PromptRegistry {
     }
   }
 
-  invalidateSession(sessionId: string, reason = "session_ended"): Prompt[] {
+  invalidateSession(
+    sessionId: string,
+    reason = "session_ended",
+    state: "unavailable" | "cancelled" = "unavailable",
+  ): Prompt[] {
     const transitioned: Prompt[] = [];
     for (const entry of this.bySession.get(sessionId)?.values() ?? []) {
       if (entry.prompt.state === "open" || entry.prompt.state === "updated") {
-        transitioned.push(this.transition(entry.prompt.promptId, "unavailable", reason));
+        transitioned.push(this.transition(entry.prompt.promptId, state, reason));
       }
     }
     return transitioned;
