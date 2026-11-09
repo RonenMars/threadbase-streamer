@@ -1,3 +1,9 @@
+## [1.134.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.3...v1.134.4) (2026-11-09)
+
+### Bug Fixes
+
+* **watchers:** carry seqs on the Claude replay ([#1221](https://github.com/RonenMars/threadbase-streamer/issues/1221)) ([b4c1792](https://github.com/RonenMars/threadbase-streamer/commit/b4c1792eab38fb50e604f1bde86cc87b5631dd43))
+
 ## [1.134.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.2...v1.134.3) (2026-11-09)
 
 ### Bug Fixes
