@@ -142,6 +142,13 @@ jobs:
           node-version: 22
           command: build
 
+      # The e2e harness spawns the dist/cli.cjs just built; `npm test` elsewhere
+      # skips it when dist/ is absent. It runs here because Build is a required
+      # check and this job's node_modules is the node-22 cache `setup` rebuilt.
+      - name: Run the e2e harness against dist/cli.cjs
+        if: needs.gate.outputs.skip != 'true'
+        run: npm run test:e2e
+
       - if: needs.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v6
         with:

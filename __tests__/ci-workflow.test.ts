@@ -45,6 +45,21 @@ describe("built-CLI boot job", () => {
   });
 });
 
+describe("build job", () => {
+  const job = WORKFLOW.slice(WORKFLOW.indexOf("\n  build:\n"), WORKFLOW.indexOf("  boot-dist:"));
+
+  // The mcp e2e harness only runs where dist/ exists and the check is required:
+  // after the build, before the artifact leaves the job.
+  it("runs the e2e harness against the dist it just built, before uploading it", () => {
+    const build = job.indexOf("command: build");
+    const e2e = job.indexOf("run: npm run test:e2e");
+    const upload = job.indexOf("actions/upload-artifact");
+    expect(build).toBeGreaterThan(-1);
+    expect(e2e).toBeGreaterThan(build);
+    expect(upload).toBeGreaterThan(e2e);
+  });
+});
+
 describe("CI triggers", () => {
   // `pull_request.branches` filters on the BASE branch, so the only thing it can
   // ever do is withhold CI from a PR. That produced the same silent failure
