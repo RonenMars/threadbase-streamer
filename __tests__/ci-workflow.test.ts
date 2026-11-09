@@ -12,7 +12,11 @@ import { describe, expect, it } from "vitest";
  * appears to.
  */
 
-const WORKFLOW = readFileSync(join(__dirname, "..", ".github", "workflows", "ci.yml"), "utf8");
+// Windows checkouts get CRLF; anchors below assume LF.
+const WORKFLOW = readFileSync(
+  join(__dirname, "..", ".github", "workflows", "ci.yml"),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const RELEASE_WORKFLOW = readFileSync(
   join(__dirname, "..", ".github", "workflows", "release.yml"),
   "utf8",
@@ -42,6 +46,21 @@ describe("built-CLI boot job", () => {
   // mistaken for it; ruleset 17561930 requires `Smoke (<os>)` by name.
   it("does not borrow a required check name", () => {
     expect(job).not.toMatch(/name:\s*Smoke/);
+  });
+});
+
+describe("build job", () => {
+  const job = WORKFLOW.slice(WORKFLOW.indexOf("\n  build:\n"), WORKFLOW.indexOf("  boot-dist:"));
+
+  // The mcp e2e harness only runs where dist/ exists and the check is required:
+  // after the build, before the artifact leaves the job.
+  it("runs the e2e harness against the dist it just built, before uploading it", () => {
+    const build = job.indexOf("command: build");
+    const e2e = job.indexOf("run: npm run test:e2e");
+    const upload = job.indexOf("actions/upload-artifact");
+    expect(build).toBeGreaterThan(-1);
+    expect(e2e).toBeGreaterThan(build);
+    expect(upload).toBeGreaterThan(e2e);
   });
 });
 

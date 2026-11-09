@@ -57,6 +57,21 @@ export function loadOrCreateApiKey(): string {
   return key;
 }
 
+/**
+ * Read the API key without ever creating one. For a client of the streamer
+ * (the `mcp` shim) rather than the streamer itself: a key minted here would be
+ * one the running server has never seen, so a missing key is an error to report,
+ * not a gap to fill. Same line match as `loadOrCreateApiKey` above.
+ */
+export function loadApiKey(): string | undefined {
+  try {
+    const match = readFileSync(configFile(), "utf-8").match(/api_key:\s*(.+)/);
+    return match?.[1]?.trim();
+  } catch {
+    return undefined;
+  }
+}
+
 export function loadBrowseRoot(): string | undefined {
   try {
     const content = readFileSync(configFile(), "utf-8");

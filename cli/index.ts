@@ -3,6 +3,7 @@ import "./load-install-env";
 import { stdin } from "node:process";
 import { Command } from "commander";
 import {
+  loadApiKey,
   loadAutoResumeOnBoot,
   loadBrowseRoot,
   loadDefaultPermissionMode,
@@ -728,6 +729,27 @@ program
       { fetchFn: fetch, connect: connectSocket, io: createTerminalIO() },
     );
     process.exit(code);
+  });
+
+program
+  .command("mcp")
+  .description(
+    "Run the Threadbase MCP server over stdio against the streamer on this machine (read-only)",
+  )
+  .option(
+    "-p, --port <number>",
+    "Port the streamer listens on (default: $THREADBASE_PORT, then 8766)",
+  )
+  .option("--host <address>", "Loopback address the streamer listens on", "127.0.0.1")
+  .action(async (opts) => {
+    const { resolvePort, runMcp } = await import("./mcp");
+    try {
+      const port = resolvePort(opts.port, process.env.THREADBASE_PORT);
+      await runMcp({ host: opts.host, port, apiKey: loadApiKey() });
+    } catch (err) {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    }
   });
 
 program

@@ -1,17 +1,26 @@
 import pino, { type Logger as PinoLogger } from "pino";
 
+// `tb-streamer mcp` speaks JSON-RPC on stdout, so there every line goes to
+// stderr as pino, explicit `dest` included. argv is final before any import
+// runs, which covers the import-time loaders (install-env). argv[2] is safe
+// because the root program takes only --version, so no flag precedes `mcp`.
+const MCP_STDIO = process.argv[2] === "mcp";
+
 export type LogDest = "console" | "pino" | "both";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
-const baseLogger: PinoLogger = pino({
-  level: process.env.LOG_LEVEL ?? "info",
-  base: { service: "tb-streamer" },
-  timestamp: pino.stdTimeFunctions.isoTime,
-  redact: {
-    paths: ["req.headers.authorization", "req.headers.cookie", 'req.headers["x-api-key"]'],
-    censor: "[redacted]",
+const baseLogger: PinoLogger = pino(
+  {
+    level: process.env.LOG_LEVEL ?? "info",
+    base: { service: "tb-streamer" },
+    timestamp: pino.stdTimeFunctions.isoTime,
+    redact: {
+      paths: ["req.headers.authorization", "req.headers.cookie", 'req.headers["x-api-key"]'],
+      censor: "[redacted]",
+    },
   },
-});
+  MCP_STDIO ? pino.destination(2) : undefined,
+);
 
 export interface Logger {
   debug(msg: string, fields?: Record<string, unknown>, dest?: LogDest): void;
@@ -59,12 +68,13 @@ function emit(
 }
 
 function build(pinoChild: PinoLogger): Logger {
+  const pick = (d?: LogDest): LogDest => (MCP_STDIO ? "pino" : (d ?? defaultDest()));
   return {
-    debug: (m, f, d = defaultDest()) => emit(pinoChild, "debug", m, f, d),
-    info: (m, f, d = defaultDest()) => emit(pinoChild, "info", m, f, d),
-    warn: (m, f, d = defaultDest()) => emit(pinoChild, "warn", m, f, d),
-    error: (m, f, d = defaultDest()) => emit(pinoChild, "error", m, f, d),
-    log: (lvl, m, f, d = defaultDest()) => emit(pinoChild, lvl, m, f, d),
+    debug: (m, f, d) => emit(pinoChild, "debug", m, f, pick(d)),
+    info: (m, f, d) => emit(pinoChild, "info", m, f, pick(d)),
+    warn: (m, f, d) => emit(pinoChild, "warn", m, f, pick(d)),
+    error: (m, f, d) => emit(pinoChild, "error", m, f, pick(d)),
+    log: (lvl, m, f, d) => emit(pinoChild, lvl, m, f, pick(d)),
     pino: pinoChild,
   };
 }
