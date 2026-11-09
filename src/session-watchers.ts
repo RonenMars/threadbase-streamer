@@ -1,4 +1,9 @@
-import { type Conversation, parseCursorJsonlLine } from "@threadbase-sh/scanner";
+import {
+  type Conversation,
+  createJsonlParseState,
+  parseCursorJsonlLine,
+  parseJsonlLine,
+} from "@threadbase-sh/scanner";
 import { existsSync, watch as fsWatch, readdirSync, readFileSync, statSync } from "fs";
 import { basename, join } from "path";
 import { defaultClaudeProjectsDir } from "./claude-accounts/resolve";
@@ -291,7 +296,14 @@ export class SessionWatchers {
       try {
         const existing = readFileSync(resolvedFilePath, "utf8").split("\n").filter(Boolean);
         if (existing.length > 0) {
-          this.deps.broadcastConversationLines(sessionId, existing);
+          // The replay starts at byte 0, so it numbers its own lines with the
+          // same reducer the offset index uses (message_index, null for a
+          // non-message line); without seqs the client cannot match the replay
+          // against its history copies.
+          const state = createJsonlParseState();
+          let next = 0;
+          const seqs = existing.map((l) => (parseJsonlLine(l, state) ? next++ : null));
+          this.deps.broadcastConversationLines(sessionId, existing, seqs);
         }
       } catch {
         /* ignore — file may not be readable yet; watcher will catch future writes */
