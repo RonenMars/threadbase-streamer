@@ -78,6 +78,26 @@ describe("PTY prompt normalization", () => {
     ]);
   });
 
+  // A screen-scraped prompt cannot tell whether it carries a secret, so every
+  // question it produces must say "unknown". A true would make the host treat a
+  // visible picker as sensitive input (#716). Checked per question, across both
+  // builders and a multi-question list.
+  it("pins secret as unknown for every PTY-sourced question", () => {
+    const gate = detectGateScreen(GATE_SCREEN);
+    const twoQuestions: AskQuestion[] = [
+      ...QUESTIONS,
+      { ...QUESTIONS[0], question: "Second?", header: "" },
+    ];
+
+    const secrets = [
+      ...permissionPromptDraft(SESSION, gate).questions,
+      ...questionPromptDraft(SESSION, twoQuestions, "screen").questions,
+      ...questionPromptDraft(SESSION, twoQuestions, "transcript").questions,
+    ].map((question) => question.secret);
+
+    expect(secrets).toEqual(["unknown", "unknown", "unknown", "unknown", "unknown"]);
+  });
+
   // oversight: expiresAt is "a nullable absolute timestamp from authoritative
   // provider behavior", and a scraped prompt has no such authority — Claude
   // Code never tells us the gate has a lifetime.
