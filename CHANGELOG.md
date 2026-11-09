@@ -1,3 +1,9 @@
+## [1.134.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.133.1...v1.134.0) (2026-11-09)
+
+### Features
+
+* **relay:** use the hosted relay by default, behind an opt-in prompt ([#1215](https://github.com/RonenMars/threadbase-streamer/issues/1215)) ([f419491](https://github.com/RonenMars/threadbase-streamer/commit/f4194913bde2e093122dba1ad3aed5ca0852f6cb))
+
 ## [1.133.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.133.0...v1.133.1) (2026-11-09)
 
 ### Bug Fixes
