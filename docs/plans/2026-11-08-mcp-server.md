@@ -26,6 +26,11 @@ Rules that never bend: read-only tools only, the key is never created or printed
 - The official MCP TypeScript SDK is the only new runtime dependency.
 - Tests are end to end: a real in-process streamer on fixture data, the built shim spawned as a child process, the SDK's stdio client driving it.
   They run under `npm run test:e2e` next to `__tests__/e2e/api-e2e.test.ts`, and assert on tool results only.
+- The phase 1 tool shapes must work unchanged over the relay in phase 3; only the transport changes.
+  So no tool input or output carries a port, a loopback URL or anything else local-only, and `client.ts` is the only file that knows it is talking HTTP to loopback.
+- The missing-key error names `set-key`; the unreachable error tells the user to start the streamer.
+- Status values pass through as the REST API emits them (`running`, `waiting_input`, `idle`, `on_hold`); the shim does not invent an `ended` value, and the tool description documents the vocabulary.
+- Docs call sessions not started by Threadbase "External" and the no-live-control capability "View only", matching the session ownership terms in `CLAUDE.md`.
 
 ## Facts the workers need (verified 2026-11-08)
 
@@ -35,6 +40,9 @@ Rules that never bend: read-only tools only, the key is never created or printed
 - `tsup.config.ts:45` bundles everything but `node-pty` and `better-sqlite3` into `dist/cli.cjs`, so the SDK ships inside the deployed `cli.js` with no `node_modules`.
   The repo pins `zod ^4.4.3` (`package.json:122`); the SDK must accept zod 4 or be pinned to a version that does, never a second zod.
 - `cli/index.ts:661` is the `codex` subcommand: lazy `import()` in the action, `--port` default `8766`, that is the shape `mcp` copies.
+  The port env var is `THREADBASE_PORT`, the name the menubar already honours; precedence is flag, then env, then `8766`.
+- Test prior art the spec points at: `createTestServer(fixtureDir, overrides)` in `__tests__/contracts/test-helpers.ts:30` boots a real streamer on a fixture project; `__tests__/smoke-isolated-script.test.ts` spawns the built `dist/cli.cjs`; `__tests__/server.test.ts` builds sessions with `ownership: "external"`, the External fixture M2 needs.
+- `docs/api-reference.md` is the API reference that #1181 links to the MCP docs.
 - `GET /api/info` (`src/api/routes/misc.routes.ts:393`) carries `version`, `platform`, `activeSessions`, `featureFlags`, and no update-availability field.
   `streamer_info` reports `updateAvailable` only if an existing route exposes it; otherwise it omits the field and #1177's PR says so, because the spec forbids new logic in the shim.
   Enabled providers come from `GET /api/providers`.
@@ -123,5 +131,6 @@ Escalation: a worker that reports a blocker it cannot resolve is re-dispatched o
 ## Input for the phase 2 spec (not part of this plan)
 
 A write surface was drafted before #1176 was read and is kept here as material for the phase 2 spec, which #1176 says comes separately.
-Write tools as passthroughs with an `idempotencyKey` per call: `start_session`, `resume_session`, `fork_session`, `send_input`, `send_key`, `answer_prompt` (from `PromptAnswerSchema`), `answer_permission` (`gateId` + `optionIndex`), `cancel_turn`, `stop_session`, `terminate_session`, `rename_session`, `set_model`, `set_effort`.
+#1176 names three phase 2 tools (`send_input`, `start_session`, `terminate_session`), each blocking on a phone approval that reuses the needs-you notification path, with terminate mapping to the terminate route for External sessions and the stop route for owned ones.
+Candidates beyond those three, as passthroughs with an `idempotencyKey` per call: `resume_session`, `fork_session`, `send_key`, `answer_prompt` (from `PromptAnswerSchema`), `answer_permission` (`gateId` + `optionIndex`), `cancel_turn`, `stop_session`, `rename_session`, `set_model`, `set_effort`.
 One read-only convenience, `wait_for_turn`, that polls `GET /api/sessions/:id` at 1 s until `waiting_input`, `idle` or `hasOpenPrompt`, is also deferred because #1181 locks phase 1 to exactly four tools.
