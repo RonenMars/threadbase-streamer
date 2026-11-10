@@ -13,7 +13,7 @@
  * #1179 read_conversation, #1180 tail_terminal) and reuse `startShim`.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -232,6 +232,7 @@ describe.skipIf(!existsSync(CLI))("tb-streamer mcp (e2e)", () => {
           "streamer_info",
           "read_conversation",
           "list_sessions",
+          "tail_terminal",
         ]);
         const info = tools.find((t) => t.name === "streamer_info");
         expect(info).toBeDefined();
@@ -609,6 +610,138 @@ describe.skipIf(!existsSync(CLI))("tb-streamer mcp (e2e)", () => {
     it("rejects on_hold as an error instead of mapping it to another status", async () => {
       const { isError } = await callText(shim.client, "list_sessions", { status: "on_hold" });
       expect(isError).toBe(true);
+    });
+  });
+  // The stand-in CLI is a shebang script, so the PTY block cannot run on Windows.
+  describe.skipIf(process.platform === "win32")("tail_terminal", () => {
+    // A real PTY running a stand-in for the Claude CLI that paints coloured and
+    // private-mode output, so the tool is exercised against the real output route.
+    // Own server: starting a session needs `browseRoot`, which the shared one lacks.
+    let tail: Awaited<ReturnType<typeof createTestServer>>;
+    let liveId: string;
+    let workDir: string;
+    let tcfg: string;
+    let tailCache: string;
+
+    beforeAll(async () => {
+      workDir = realpathSync(mkdtempSync(join(tmpdir(), "tb-mcp-tail-")));
+      tailCache = mkdtempSync(join(tmpdir(), "tb-mcp-tail-cache-"));
+      tail = await createTestServer(FIXTURE_DIR, { browseRoot: workDir, cacheDir: tailCache });
+      const fake = join(workDir, "fake-claude.sh");
+      writeFileSync(
+        fake,
+        [
+          "#!/bin/sh",
+          "printf '\\033[?1049h\\033[?25l\\033]0;title\\007\\033]777;notify;t;b\\033\\\\'",
+          "i=1; while [ $i -le 120 ]; do printf '\\033[1;32mline %s\\033[0m\\r\\n' $i; i=$((i+1)); done",
+          "printf '\\033[?2004hDONE\\033[?25h\\r\\n'",
+          "sleep 60",
+        ].join("\n"),
+      );
+      chmodSync(fake, 0o755);
+      tcfg = mkdtempSync(join(tmpdir(), "tb-mcp-tail-cfg-"));
+      writeFileSync(join(tcfg, "server.yaml"), `claude_executable: ${fake}\n`);
+      const prev = process.env.THREADBASE_CONFIG_DIR;
+      process.env.THREADBASE_CONFIG_DIR = tcfg;
+      try {
+        const res = await fetch(`${tail.baseUrl}/api/sessions/start`, {
+          method: "POST",
+          headers: { ...tail.headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ path: "." }),
+        });
+        const started = (await res.json()) as { id?: string; session?: { id: string } };
+        liveId = (started.session?.id ?? started.id) as string;
+      } finally {
+        if (prev === undefined) delete process.env.THREADBASE_CONFIG_DIR;
+        else process.env.THREADBASE_CONFIG_DIR = prev;
+      }
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        const out = await get(tail.baseUrl, `/api/sessions/${liveId}/output`, tail.headers);
+        if (String(out.body.output).includes("DONE")) break;
+        if (Date.now() > deadline)
+          throw new Error(`never DONE: ${JSON.stringify(out.body).slice(0, 300)}`);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }, 30_000);
+
+    afterAll(async () => {
+      await tail.server.close();
+      for (const d of [workDir, tcfg, tailCache]) rmSync(d, { recursive: true, force: true });
+    });
+
+    it("returns a bounded, readable tail with every control sequence stripped", async () => {
+      const shim = await startShim(["--port", String(tail.port)], childEnv(cfgOk));
+      try {
+        const { isError, text } = await callText(shim.client, "tail_terminal", {
+          sessionId: liveId,
+          lines: 5,
+        });
+        expect(isError, text).toBe(false);
+        const lines = text.split("\n");
+        expect(lines).toHaveLength(5);
+        expect(lines.at(-1)).toBe("DONE");
+        expect(lines.at(-2)).toBe("line 120");
+        // Nothing but plain text: no ESC, BEL or CR survives.
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
+        expect(text).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/);
+        expect(text).not.toMatch(/\[\?\d+[hl]|777;notify|title/);
+        expect(text).not.toContain(String(tail.port));
+        expect(text).not.toMatch(/127\.0\.0\.1|localhost/);
+        expectNoKey(text);
+      } finally {
+        await shim.close();
+      }
+    });
+
+    it("defaults to a bounded number of lines", async () => {
+      const shim = await startShim(["--port", String(tail.port)], childEnv(cfgOk));
+      try {
+        const { text } = await callText(shim.client, "tail_terminal", { sessionId: liveId });
+        expect(text.split("\n").length).toBeLessThanOrEqual(50);
+        const over = await callText(shim.client, "tail_terminal", {
+          sessionId: liveId,
+          lines: 100_000,
+        });
+        expect(over.isError).toBe(true);
+        // The bounds are exact: 0 would slice(-0) to everything, 501 is one past the max.
+        for (const lines of [0, 501]) {
+          const bad = await callText(shim.client, "tail_terminal", { sessionId: liveId, lines });
+          expect(bad.isError, `lines=${lines}`).toBe(true);
+        }
+      } finally {
+        await shim.close();
+      }
+    });
+
+    it("says a session with no live terminal is not live, without an error", async () => {
+      // A fixture conversation has a resumable shape (`on_hold`) and no PTY.
+      const list = await get(tail.baseUrl, "/api/conversations?limit=1", tail.headers);
+      const id: string = list.body.conversations[0].id;
+      const shim = await startShim(["--port", String(tail.port)], childEnv(cfgOk));
+      try {
+        const { isError, text } = await callText(shim.client, "tail_terminal", { sessionId: id });
+        expect(isError, text).toBe(false);
+        expect(text).toMatch(/not live/i);
+        expect(text.split("\n")).toHaveLength(1);
+      } finally {
+        await shim.close();
+      }
+    });
+
+    it("answers an unknown session id with a one-line tool error", async () => {
+      const shim = await startShim(["--port", String(tail.port)], childEnv(cfgOk));
+      try {
+        const { isError, text } = await callText(shim.client, "tail_terminal", {
+          sessionId: "no-such-session",
+        });
+        expect(isError).toBe(true);
+        expect(text).toMatch(/not found/i);
+        expect(text.split("\n")).toHaveLength(1);
+        expectNoKey(text);
+      } finally {
+        await shim.close();
+      }
     });
   });
 });

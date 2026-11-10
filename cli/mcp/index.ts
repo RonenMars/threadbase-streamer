@@ -14,11 +14,13 @@ import { StreamerClient, type StreamerClientOptions, type StreamerTool } from ".
 import { listSessionsTools } from "./list-sessions";
 import { readConversationTools } from "./read-conversation";
 import { streamerInfoTools } from "./streamer-info";
+import { tailTerminalTools } from "./tail-terminal";
 
 const TOOLS: StreamerTool[] = [
   ...streamerInfoTools,
   ...readConversationTools,
   ...listSessionsTools,
+  ...tailTerminalTools,
 ];
 
 export function createMcpServer(opts: StreamerClientOptions): McpServer {
