@@ -29,7 +29,8 @@ Rules that never bend: read-only tools only, the key is never created or printed
 - The phase 1 tool shapes must work unchanged over the relay in phase 3; only the transport changes.
   So no tool input or output carries a port, a loopback URL or anything else local-only, and `client.ts` is the only file that knows it is talking HTTP to loopback.
 - The missing-key error names `set-key`; the unreachable error tells the user to start the streamer.
-- Status values pass through as the REST API emits them (`running`, `waiting_input`, `idle`, `on_hold`); the shim does not invent an `ended` value, and the tool description documents the vocabulary.
+- Status values pass through as `GET /api/sessions` emits them (`running`, `waiting_input`, `idle`); `on_hold` marks a resumable conversation, which that route never lists, so `list_sessions` neither returns nor filters on it.
+  The shim does not invent an `ended` value, and the tool description documents the vocabulary.
 - Docs call sessions not started by Threadbase "External" and the no-live-control capability "View only", matching the session ownership terms in `CLAUDE.md`.
 
 ## Facts the workers need (verified 2026-11-08)
@@ -48,7 +49,8 @@ Rules that never bend: read-only tools only, the key is never created or printed
   Enabled providers come from `GET /api/providers`.
 - Sessions carry `ownership?: "external" | "managed"` (`src/types.ts:637`) and `hasOpenPrompt` (`src/types.ts:605`); those are the spec's ownership and needs-you fields.
 - `GET /api/conversations/:id` pages with `msg_limit` and `before_index` and answers `next_before_index`; that is the `read_conversation` cursor, verbatim.
-- `GET /api/sessions/:id/output` is the rendered screen tail for `tail_terminal`; a session with no live PTY is the "not live" case.
+- `GET /api/sessions/:id/output` answers the raw 64 KB ring buffer, escape sequences and redraws included, so `tail_terminal` cannot read it as is.
+  #1180 adds an additive `?lines=N` mode that answers the rendered headless screen as `{ lines }`, and that is what the tool reads; a session with no live PTY is the "not live" case.
 - `docs/agents/tooling.md:11` currently says this repo declares no MCP servers; #1181 replaces that line.
 
 ## Files

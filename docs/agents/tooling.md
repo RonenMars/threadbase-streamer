@@ -67,13 +67,31 @@ To pass it, add `--port <n>` after `mcp`, or set the variable in the client's `e
 
 ### Tools
 
-- `streamer_info`: the streamer's version and each provider's availability and version.
-- `list_sessions`: sessions with provider, project, status, whether one needs you, and ownership.
-  Filters by project, provider, status and needs-you; paginated.
-- `read_conversation`: one session's messages as plain text with roles, newest first, paged backwards with a cursor.
-- `tail_terminal`: the recent terminal output of a live session with control codes stripped, bounded by a line or byte limit.
+Every result is one text block.
+The first three tools return JSON; `tail_terminal` returns the terminal lines as plain text.
 
-Only `streamer_info` has shipped; the other three are landing in #1178 to #1180 and may differ in detail until they do (see #1176).
+- `streamer_info`: no inputs.
+  Returns `{ reachable: true, version, providers: [{ name, available, version }] }`, where `available` means that provider's CLI is installed and `version` is null when it is not known.
+- `list_sessions`: the sessions the streamer knows about, Threadbase-owned and External alike, newest started first.
+  - Inputs, all optional and combined with AND: `project` (string, matches the project name or path), `provider` (`claude-code`, `codex-cli`, `cursor`, `copilot`), `status` (`running`, `waiting_input`, `idle`), `needsYou` (boolean), `limit` (integer 1-100, default 20) and `cursor` (string).
+  - Returns `{ sessions, nextCursor }`.
+    Pass `nextCursor` back as `cursor` for the next page; it is null when there is none, and a page can be short or empty while it is still set.
+  - Each session is `{ id, name, provider, projectName, projectPath, status, needsYou, ownership, lastActivityAt }`.
+    `name` and `lastActivityAt` (ISO time) can be null, `needsYou` means a question or permission prompt is waiting on the user, and `ownership` is `threadbase` or `external`.
+  - `on_hold` never appears: it marks a resumable conversation, which the sessions route does not list.
+- `read_conversation`: one session's messages, newest first.
+  - Inputs: `id` (string, required), `limit` (integer 1-100, default 20) and `before_index` (integer, 0 or more).
+  - Returns `{ messages: [{ role, text }], next_before_index }`.
+    Pass `next_before_index` back as `before_index` for the next older page; it is null when there is nothing older.
+  - Tool calls, tool results and messages with no text are dropped after the page is cut, so a page can be short or empty while `next_before_index` is non-null; keep paging until it is null.
+  - An unknown id is the error `Session not found: <id>.`
+- `tail_terminal`: the last rendered lines of a live session's terminal, as they appear on screen.
+  - Inputs: `sessionId` (string, required) and `lines` (integer 1-500, default 50).
+  - Returns the lines joined with newlines, or `(the terminal has produced no output yet)`.
+  - An External session, or one that is not `running` or `waiting_input`, returns `Session is not live: it has no running terminal to tail.` as a normal result.
+    An unknown id is the error `Session not found.`
+  - It reads `GET /api/sessions/:id/output?lines=N`.
+    That `lines` mode is additive: without it the route still returns the raw `{ output }` buffer, unchanged.
 
 ### Notes
 
@@ -83,4 +101,4 @@ Only `streamer_info` has shipped; the other three are landing in #1178 to #1180 
 - The shim reads the key from the existing local config and never creates one; if it is missing, run `tb-streamer set-key`.
 - Sessions Threadbase did not start are "External".
 - A provider with no live control is "View only".
-- Errors (streamer not running, key missing or rejected, unknown session, session not live) come back as one-line tool errors.
+- Errors (streamer not running, key missing or rejected, unknown session) come back as one-line tool errors; a session that is not live is a normal `tail_terminal` result.
