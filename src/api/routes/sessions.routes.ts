@@ -60,8 +60,8 @@ export const createSessionRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
-  app.get("/:id/output", (c) => {
-    deps.handleGetOutput(c.req.param("id"), c.env.outgoing);
+  app.get("/:id/output", async (c) => {
+    await deps.handleGetOutput(c.req.param("id"), c.env.outgoing, c.req.query("lines"));
     return alreadyHandled();
   });
 
