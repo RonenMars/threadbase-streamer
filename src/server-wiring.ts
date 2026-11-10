@@ -803,7 +803,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
       deps.conversationHandlers.handleGetRecentSessions(url, res),
     handleGetSessionNames: (res) => deps.sessionHandlers.handleGetSessionNames(res),
     handleGetSession: (id, res) => deps.sessionHandlers.handleGetSession(id, res),
-    handleGetOutput: (id, res) => deps.sessionHandlers.handleGetOutput(id, res),
+    handleGetOutput: (id, res, lines) => deps.sessionHandlers.handleGetOutput(id, res, lines),
     handleSendInput: (id, req, res) => deps.sessionHandlers.handleSendInput(id, req, res),
     handleRawKey: (id, req, res) => deps.sessionHandlers.handleRawKey(id, req, res),
     handleSendAnswer: (id, req, res) => deps.sessionHandlers.handleSendAnswer(id, req, res),

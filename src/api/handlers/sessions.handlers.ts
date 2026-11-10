@@ -87,6 +87,7 @@ import type {
 } from "../../types";
 import { saveUploadFile } from "../../uploads";
 import type { WSHub } from "../../ws-hub";
+import { MAX_OUTPUT_LINES } from "../output-lines";
 import {
   BodyTooLargeError,
   classifyResumability,
@@ -2294,7 +2295,22 @@ export class SessionHandlers {
     }
   }
 
-  handleGetOutput(sessionId: string, res: ServerResponse): void {
+  async handleGetOutput(sessionId: string, res: ServerResponse, lines?: string): Promise<void> {
+    // `?lines=N` answers the rendered screen's last N rows (the headless grid, so
+    // cursor-move repaints read as lines); without it, the raw ring buffer as before.
+    if (lines !== undefined) {
+      const n = /^\d+$/.test(lines) ? Number(lines) : Number.NaN;
+      if (!Number.isInteger(n) || n < 1 || n > MAX_OUTPUT_LINES) {
+        json(res, 400, { error: `lines must be an integer from 1 to ${MAX_OUTPUT_LINES}` });
+        return;
+      }
+      try {
+        json(res, 200, { lines: await this.ptyManager.getOutputLines(sessionId, n) });
+      } catch {
+        json(res, 200, { lines: [] });
+      }
+      return;
+    }
     // Return PTY ring buffer if a PTY is attached; otherwise return empty
     // so clients render "no buffered output" instead of an error.
     try {

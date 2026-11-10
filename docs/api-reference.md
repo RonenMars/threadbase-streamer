@@ -15,7 +15,7 @@
 | POST | `/api/sessions/:id/fork` | Fork a Codex conversation into an independent session (`codex fork`). 201/202, 409 `CONVERSATION_BUSY`, 501 `UNSUPPORTED_PROVIDER` |
 | PATCH | `/api/sessions/:id/model` | Switch a LIVE session's model: `{model}` → 202. 409 `SESSION_BUSY` mid-turn, 409 `SESSION_IDLE` with no PTY, 501 `UNSUPPORTED_PROVIDER` for Codex |
 | PATCH | `/api/sessions/:id/effort` | Switch a LIVE session's effort: `{effort}` (`low`…`max`) → 202. Same error codes |
-| GET | `/api/sessions/:id/output` | Get terminal output buffer |
+| GET | `/api/sessions/:id/output` | Get terminal output buffer → `{output}`. With `?lines=N` (integer 1–500) it answers the last N rows of the rendered screen instead → `{ lines: string[] }`; a malformed or out-of-range N is 400. An unknown id returns an empty 200 in both shapes (`{output: ""}` / `{lines: []}`) |
 | POST | `/api/sessions/:id/files` | Upload a file attachment |
 | GET | `/api/conversations` | Paginated conversation history |
 | GET | `/api/conversations/:id` | Full conversation with messages |
