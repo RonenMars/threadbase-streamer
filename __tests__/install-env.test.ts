@@ -97,6 +97,42 @@ describe("CLI startup path", () => {
     }
   });
 
+  // The original defect (#481): systemd and Task Scheduler start `cli.js` in a
+  // working directory that is not the install dir, so a `.env` or key looked up
+  // from the cwd is never found. Every other test passes the dir in explicitly
+  // or stubs THREADBASE_INSTALL_DIR, so none of them would notice the loader
+  // reading from `process.cwd()` instead. Here the cwd holds a decoy `.env` and
+  // no key; the real config is only in the install dir.
+  it("reads the install dir, not the working directory, when they differ", async () => {
+    const installDir = mkdtempSync(join(tmpdir(), "install-env-real-"));
+    const cwdDir = mkdtempSync(join(tmpdir(), "install-env-cwd-"));
+    writeFileSync(join(installDir, ".env"), "APNS_BUNDLE_ID=com.example.install\n");
+    writeFileSync(join(installDir, "AuthKey_ABC123DEFG.p8"), PEM);
+    writeFileSync(join(cwdDir, ".env"), "APNS_BUNDLE_ID=com.example.cwd\nAPNS_TEAM_ID=FROMCWD\n");
+    const startCwd = process.cwd();
+    vi.stubEnv("THREADBASE_INSTALL_DIR", installDir);
+    for (const k of ["APNS_BUNDLE_ID", "APNS_TEAM_ID", "APNS_KEY", "APNS_KEY_ID"]) {
+      delete process.env[k];
+    }
+    try {
+      process.chdir(cwdDir);
+      vi.resetModules();
+      await import("../cli/load-install-env");
+      expect(process.env.APNS_BUNDLE_ID).toBe("com.example.install");
+      expect(process.env.APNS_TEAM_ID).toBeUndefined();
+      expect(process.env.APNS_KEY).toBe(PEM);
+      expect(process.env.APNS_KEY_ID).toBe("ABC123DEFG");
+    } finally {
+      process.chdir(startCwd);
+      for (const k of ["APNS_BUNDLE_ID", "APNS_TEAM_ID", "APNS_KEY", "APNS_KEY_ID"]) {
+        delete process.env[k];
+      }
+      vi.unstubAllEnvs();
+      rmSync(installDir, { recursive: true, force: true });
+      rmSync(cwdDir, { recursive: true, force: true });
+    }
+  });
+
   it("cli/index.ts imports it right after dotenv, before anything that could read APNS_*", () => {
     const imports = [...indexSrc.matchAll(/^import\s+(?:[^"']*from\s+)?["']([^"']+)["'];?$/gm)].map(
       (m) => m[1],
