@@ -218,7 +218,7 @@ describe.skipIf(!existsSync(CLI))("tb-streamer mcp (e2e)", () => {
       try {
         const { tools } = await shim.client.listTools();
         // #1178-#1180 each extend this list; #1181 locks it at four.
-        expect(tools.map((t) => t.name)).toEqual(["streamer_info"]);
+        expect(tools.map((t) => t.name)).toEqual(["streamer_info", "read_conversation"]);
         const info = tools.find((t) => t.name === "streamer_info");
         expect(info).toBeDefined();
         expect(info?.description).toMatch(/\S/);
@@ -326,6 +326,79 @@ describe.skipIf(!existsSync(CLI))("tb-streamer mcp (e2e)", () => {
       } finally {
         await shim.close();
       }
+    });
+  });
+
+  describe("read_conversation", () => {
+    // contract-tool-use.jsonl: 6 messages, index 0..5, with tool_use / tool_result blocks.
+    const ID = "sess-contract-tools";
+    const read = async (args: Record<string, unknown>) => {
+      const shim = await startShim(["--port", String(port)], childEnv(cfgOk));
+      try {
+        const { isError, text } = await callText(shim.client, "read_conversation", args);
+        return { isError, text, stderr: shim.stderr() };
+      } finally {
+        await shim.close();
+      }
+    };
+
+    it("returns the newest messages first, bounded by the page size", async () => {
+      const { isError, text } = await read({ id: ID, limit: 2 });
+      expect(isError).toBe(false);
+      const body = JSON.parse(text) as {
+        messages: Array<{ role: string; text: string }>;
+        next_before_index: number | null;
+      };
+      // Index 5 is the closing assistant text; index 4 is a bare tool result, dropped.
+      expect(body.messages).toEqual([
+        { role: "assistant", text: "Done! The semicolon has been added." },
+      ]);
+      expect(body.next_before_index).toBe(4);
+    });
+
+    it("pages back to older messages with the returned cursor", async () => {
+      const first = JSON.parse((await read({ id: ID, limit: 2 })).text) as {
+        next_before_index: number;
+      };
+      const older = JSON.parse(
+        (await read({ id: ID, limit: 2, before_index: first.next_before_index })).text,
+      ) as { messages: Array<{ role: string; text: string }>; next_before_index: number | null };
+      expect(older.messages).toEqual([{ role: "assistant", text: "I'll fix the issue." }]);
+      expect(older.next_before_index).toBe(2);
+      const oldest = JSON.parse((await read({ id: ID, limit: 10, before_index: 2 })).text) as {
+        messages: Array<{ role: string; text: string }>;
+        next_before_index: number | null;
+      };
+      expect(oldest.messages.map((m) => m.text)).toEqual([
+        "I'll read the file first.",
+        "Read and fix main.ts",
+      ]);
+      expect(oldest.next_before_index).toBeNull();
+    });
+
+    it("leaks no provider format, port, URL or key", async () => {
+      const { text, stderr } = await read({ id: ID, limit: 10 });
+      for (const leak of [
+        "tool_use",
+        "tool_result",
+        "tu-read-1",
+        "file_path",
+        "tool_calls",
+        "uuid",
+      ]) {
+        expect(text).not.toContain(leak);
+      }
+      expect(text).not.toContain(String(port));
+      expect(text).not.toMatch(/https?:\/\/|localhost|127\.0\.0\.1/);
+      expectNoKey(text);
+      expectNoKey(stderr);
+    });
+
+    it("answers an unknown id with a one-line tool error", async () => {
+      const { isError, text } = await read({ id: "no-such-session" });
+      expect(isError).toBe(true);
+      expect(text).toBe("Session not found: no-such-session.");
+      expectNoKey(text);
     });
   });
 });
