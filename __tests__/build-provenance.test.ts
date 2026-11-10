@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readBuildInfo } from "../scripts/build-provenance";
@@ -31,5 +31,30 @@ it("includes the build configuration's local imports in the Docker builder", () 
         .split("\n")
         .some((line) => line.startsWith("COPY ") && line.includes(`${match[1]}.ts`)),
     ).toBe(true);
+  }
+});
+
+// `git status --porcelain` counts untracked files, so an untracked HANDOFF.md
+// marked every build dirty and /healthz reported `build.dirty: true` for a
+// clean deploy. Dirty means the same thing the deploy gate means: a tracked
+// file differs from HEAD.
+it("ignores untracked files and reports only tracked changes as dirty", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tb-build-"));
+  const git = process.platform === "darwin" ? "/opt/homebrew/bin/git" : "git";
+  const run = (...args: string[]) =>
+    execFileSync(git, ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+      cwd: dir,
+    });
+  try {
+    run("init", "-q");
+    writeFileSync(join(dir, "tracked.txt"), "a\n");
+    run("add", "tracked.txt");
+    run("commit", "-q", "-m", "init");
+    writeFileSync(join(dir, "HANDOFF.md"), "notes\n");
+    expect(readBuildInfo(dir)?.dirty).toBe(false);
+    writeFileSync(join(dir, "tracked.txt"), "b\n");
+    expect(readBuildInfo(dir)?.dirty).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
