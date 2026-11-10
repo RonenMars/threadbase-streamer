@@ -69,8 +69,10 @@ QA is the batch build running as the server a phone talks to. **Ask which target
 - **Demo builds the `demo` Docker stage** (stub + seed). It cannot show Claude/Codex/Cursor/Copilot screen behaviour — a PTY/turn/gate PR must be QA'd on this machine with the real CLI; say which CLI version, and record unverified providers as unverified.
 - **Fly deploys what is in the worktree** (`fly deploy --remote-only`), so run it from the batch worktree, on a clean tree (the script refuses a dirty one; don't reach for `--force`). The demo app is shared: a deploy replaces whatever the last one put there, so say so if someone else may be using it. It sleeps when idle, so the first request cold-starts.
 - **Local deploy checklist (`local-deploy` skill):** count live sessions and tell the user before deploying; say the batch's migrations will run against real data; after the batch is approved and landed, redeploy `main` so prod is not left on an integration build.
+- **A QA deploy is a plain deploy from a clean tree.** `--force`, `--skip-tests` or a `/healthz` reporting `dirty: true` means the build is not what will merge (shared hard rule 10); fix the tree, then deploy. Never `--clear-logs`: the logs are the QA evidence. After a deploy, confirm the launchd service is loaded and the sessions that were live came back.
+- **QA is not development.** A defect found in QA becomes its own PR for a later batch (shared Step 6); this batch's scope stays as frozen. One QA run in October grew four new PRs and six redeploys before its first merge.
 - **Reaching the phone:** local goes through the user's usual tunnel/LAN, demo through its Fly URL. Don't print hostnames, API keys or device tokens into the report — say "the usual tunnel" / "the demo app". Demo secrets are covered in `docs/guides/fly.md`; never print them.
-- **Pin the build to the batch** in the log: target, tip SHA, deployed version (`/healthz` `version`), deploy time, worktree.
+- **Pin the build to the batch** in the log: target, tip SHA, deployed version (`/healthz` `version`), deploy time, worktree, and one `qa_head` line per PR (shared Step 5). Answer "what is deployed?" from `/healthz` and that log row, not from memory.
 
 ### Pairing with a mobile bulk
 
@@ -88,21 +90,26 @@ Run Step 0 on both repos, then cut streamer and mobile batches so every pair (ma
 
 ## Step 7 — landing here
 
-`main` is protected with strict status checks, and a `feat:`/`fix:` merge moves the trunk twice (the squash plus `chore(release)`). Per PR, in plan order, one at a time:
+`main` is protected with strict status checks, and a `feat:`/`fix:` merge moves the trunk twice (the squash plus `chore(release)`). Land each PR with the shared `land-pr.sh`, one at a time in plan order, from the PR's worktree, on the Node in `.nvmrc`:
 
-1. **Wait for the previous merge's `chore(release): x.y.z [skip ci]` commit** on `origin/main` (1–3 min; poll `git fetch` + `git log origin/main -3`) — rebasing before it lands burns a second CI cycle. Commit dates must be current (`rebase --ignore-date`) and a pushed PR branch needs the user's confirm.
-2. **`core.hooksPath=scripts/git-hooks` rebases onto `origin/main` on push**, so SHAs come back different. Verify content with `git diff <base> <head> | git patch-id --stable`, not SHA equality. A branch stacked on another PR needs `git rebase --onto origin/main <old-base-sha>` once its base has squash-merged.
-3. **The expected check matrix** for the wait-and-merge loop: Gate, Setup, Lint, Build, Test ×3, both Smoke.
-4. **`gh pr merge` can print `failed to run git` and have merged anyway, or not.** Read `state`/`mergedAt`.
-5. **Branch delete:** the repo auto-deletes merged heads, so `--delete-branch` errors afterwards (harmless). Gate any manual delete on `gh pr view <n> --json state` = `MERGED`; check for PRs based on the branch first.
-6. **Issue status updates.** Each landed PR traceable to an issue ends with the issue closed or commented (`CLAUDE.md` "Issue status updates"). `Closes #N` in a body is a closing keyword even when negated ("does not close #N" still closes it) — use a bare reference when it must stay open.
-7. After the last PR: verify `main` is green and redeploy `main` to whichever QA target ran the batch.
+```bash
+LAND_REBASE_ARGS=--ignore-date <skill-dir>/land-pr.sh <pr> --log <log> \
+  --min-checks 9 --after <previous PR's squash sha> --test "npm ci && npm run lint && npm test"
+```
 
-The dependabot trap applies: compare head, net changed lines and version strings after `main` moves; **hold** on any difference.
+- `--min-checks 9` is the matrix: Gate, Setup, Lint, Build, Test ×3, both Smoke. A `DIRTY` PR reports Snyk alone, which the count refuses.
+- `--after` waits for the release commit that the previous `feat:`/`fix:` squash triggers (1–3 min). Rebasing before it lands burns a second CI cycle.
+- `--ignore-date` keeps commit dates current.
+- `core.hooksPath=scripts/git-hooks` rebases again on push, so the SHA GitHub holds differs from the local one. The script reads GitHub's head and compares patches, not SHAs.
+- Stacked PRs (`gh stack`): retarget children before the parent lands (the script refuses with `CHILDREN`). A child whose base already squash-merged needs `git rebase --onto origin/main <old-base-sha>` first.
+- **Issue status updates.** Each landed PR traceable to an issue ends with the issue closed or commented (`CLAUDE.md` "Issue status updates"). `Closes #N` in a body is a closing keyword even when negated ("does not close #N" still closes it); use a bare reference when it must stay open.
+- After the last PR: verify `main` is green, then redeploy `main` to whichever QA target ran the batch. This is part of landing, not an optional extra.
+
+The dependabot trap applies, and `land-pr.sh` returns `HELD` on it. In October a deploy carried grpc 1.14.6 while its PR had moved to 1.14.7, and it merged anyway. That kind of mismatch is a hold.
 
 ## Step 9 — cleanup
 
-Most of `../tb-streamer-worktrees/` belongs to other sessions; remove only what this run created. Also verify neither the local service nor the demo app is left running an integration build.
+Most of `../tb-streamer-worktrees/` belongs to other sessions; remove only what this run created. Also verify neither the local service nor the demo app is left running an integration build: `/healthz` `version` is a release and `dirty` is false.
 
 ## Traps that recurred
 
@@ -114,3 +121,5 @@ Most of `../tb-streamer-worktrees/` belongs to other sessions; remove only what 
 | Local QA deploy replaces prod and kills live sessions | count, tell the user, redeploy `main` after |
 | Demo Fly used to QA provider behaviour | it is stub + seed; use the local deploy |
 | `npm run deploy:fly -- --prod` for QA | never |
+| A 1Password SSH signer waiting overnight stalled landing for ~11 h | `land-pr.sh --preflight` before leaving a landing run |
+| Windows Smoke red on `main` for a day, unreported | the shared CI-red line in every status |

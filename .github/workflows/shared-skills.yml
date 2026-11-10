@@ -24,7 +24,7 @@ jobs:
     name: Shared skills mirror
     runs-on: ubuntu-latest
     env:
-      UMBRELLA_SHA: fd78ac8ad601371d10c023f33bb5ebb2bf82324b
+      UMBRELLA_SHA: eeb8972de9599ac50aecf18ca79b77e2f153c766
     steps:
       - uses: actions/checkout@v5
         with:
