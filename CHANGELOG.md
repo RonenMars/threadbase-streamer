@@ -1,3 +1,9 @@
+## [1.136.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.135.0...v1.136.0) (2026-11-10)
+
+### Features
+
+* **mcp:** add the read_conversation tool ([#1234](https://github.com/RonenMars/threadbase-streamer/issues/1234)) ([9a303df](https://github.com/RonenMars/threadbase-streamer/commit/9a303df66b46a7ab141372a5ad2a9fd8b32c86af)), closes [#1176](https://github.com/RonenMars/threadbase-streamer/issues/1176) [#1179](https://github.com/RonenMars/threadbase-streamer/issues/1179)
+
 ## [1.135.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.134.4...v1.135.0) (2026-11-09)
 
 ### Features
