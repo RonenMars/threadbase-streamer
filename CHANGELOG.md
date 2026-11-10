@@ -1,3 +1,9 @@
+## [1.138.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.137.0...v1.138.0) (2026-11-10)
+
+### Features
+
+* **mcp:** add the tail_terminal tool ([#1236](https://github.com/RonenMars/threadbase-streamer/issues/1236)) ([b200c69](https://github.com/RonenMars/threadbase-streamer/commit/b200c693a21ac962051167efdbec8289553254c9)), closes [#1176](https://github.com/RonenMars/threadbase-streamer/issues/1176) [#1180](https://github.com/RonenMars/threadbase-streamer/issues/1180)
+
 ## [1.137.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.136.0...v1.137.0) (2026-11-10)
 
 ### Features
