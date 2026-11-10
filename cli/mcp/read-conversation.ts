@@ -1,16 +1,10 @@
 import { z } from "zod";
 import { StreamerHttpError, type StreamerTool, textResult } from "./client";
 
-interface Block {
-  type?: string;
-  text?: string;
-}
-
 interface ApiMessage {
   role: string;
   text?: string;
   is_tool_result?: boolean;
-  content?: Block[];
 }
 
 interface ConversationResponse {
@@ -21,13 +15,7 @@ interface ConversationResponse {
 /** Role plus plain text; tool results and messages with no text are dropped. */
 export function flattenMessage(m: ApiMessage): { role: string; text: string } | null {
   if (m.is_tool_result) return null;
-  const text =
-    m.text ||
-    (m.content ?? [])
-      .filter((b) => b.type === "text" && b.text)
-      .map((b) => b.text)
-      .join("\n");
-  return text ? { role: m.role, text } : null;
+  return m.text ? { role: m.role, text: m.text } : null;
 }
 
 export const readConversationTools: StreamerTool[] = [
@@ -36,7 +24,8 @@ export const readConversationTools: StreamerTool[] = [
     description:
       "Read a session's messages as role plus plain text, newest first. " +
       "`limit` bounds the page; pass the returned `next_before_index` as `before_index` to fetch the next older page " +
-      "(null means there is nothing older). Tool calls and results are not included. " +
+      "(null means there is nothing older). A page can be short or even empty while `next_before_index` is non-null, " +
+      "because tool results are dropped after the page is cut; keep paging until it is null. Tool calls and results are not included. " +
       "Fails with a one-line error when the session is unknown.",
     inputSchema: {
       id: z.string().min(1).describe("The session id."),

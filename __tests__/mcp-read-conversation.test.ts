@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { type StreamerClient, StreamerHttpError } from "../cli/mcp/client";
 import { flattenMessage, readConversationTools } from "../cli/mcp/read-conversation";
 
@@ -9,40 +10,29 @@ function fakeClient(get: (path: string) => unknown): StreamerClient {
 
 describe("flattenMessage", () => {
   it("uses the plain text and the role", () => {
-    expect(flattenMessage({ role: "assistant", text: "hi", content: [] })).toEqual({
+    expect(flattenMessage({ role: "assistant", text: "hi" })).toEqual({
       role: "assistant",
       text: "hi",
     });
   });
 
-  it("falls back to the text blocks of content, dropping tool_use and tool_result", () => {
-    const m = flattenMessage({
-      role: "assistant",
-      text: "",
-      content: [
-        { type: "text", text: "one" },
-        { type: "tool_use", id: "t1", name: "Read", input: { file_path: "a" } },
-        { type: "text", text: "two" },
-        { type: "tool_result", tool_use_id: "t1", content: "secret blob" },
-      ],
-    });
-    expect(m).toEqual({ role: "assistant", text: "one\ntwo" });
-  });
-
   it("returns null for a tool-result message even when it carries text", () => {
     expect(
-      flattenMessage({ role: "user", text: "file contents", is_tool_result: true, content: [] }),
+      flattenMessage({ role: "user", text: "file contents", is_tool_result: true }),
     ).toBeNull();
   });
 
-  it("returns null for a message with no text (a bare tool result)", () => {
-    expect(
-      flattenMessage({
-        role: "user",
-        text: "",
-        content: [{ type: "tool_result", tool_use_id: "t1", content: "x" }],
-      }),
-    ).toBeNull();
+  it("returns null for a message with no text", () => {
+    expect(flattenMessage({ role: "user", text: "" })).toBeNull();
+  });
+});
+
+describe("read_conversation input", () => {
+  const schema = z.object(tool.inputSchema as z.ZodRawShape);
+
+  it("accepts limit 100 and rejects limit 101", () => {
+    expect(schema.safeParse({ id: "s1", limit: 100 }).success).toBe(true);
+    expect(schema.safeParse({ id: "s1", limit: 101 }).success).toBe(false);
   });
 });
 
