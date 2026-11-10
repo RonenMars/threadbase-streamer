@@ -11,10 +11,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getVersion } from "../../src/version";
 import { StreamerClient, type StreamerClientOptions, type StreamerTool } from "./client";
+import { listSessionsTools } from "./list-sessions";
 import { readConversationTools } from "./read-conversation";
 import { streamerInfoTools } from "./streamer-info";
 
-const TOOLS: StreamerTool[] = [...streamerInfoTools, ...readConversationTools];
+const TOOLS: StreamerTool[] = [
+  ...streamerInfoTools,
+  ...readConversationTools,
+  ...listSessionsTools,
+];
 
 export function createMcpServer(opts: StreamerClientOptions): McpServer {
   const client = new StreamerClient(opts);

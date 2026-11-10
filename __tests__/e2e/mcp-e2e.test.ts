@@ -20,11 +20,21 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { StreamerServer } from "../../src/server";
+import type { DiscoveredProcess } from "../../src/types";
 import { createTestServer, FIXTURES_DIR, get, TEST_API_KEY } from "../contracts/test-helpers";
 
 const FIXTURE_DIR = join(FIXTURES_DIR, "contract-projects");
 const CLI = join(__dirname, "../../dist/cli.cjs");
 const WRONG_KEY = "tb_wrong_key_for_the_mcp_e2e_suite";
+
+// Process discovery runs in this process (the streamer is in-process), so the
+// real one would list whatever agents this host is running. It lists exactly
+// the External fixture instead.
+const discovered: DiscoveredProcess[] = [];
+vi.mock("../../src/process-discovery", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/process-discovery")>()),
+  discoverClaudeProcesses: async () => discovered,
+}));
 
 // ─── Harness ──────────────────────────────────────────────────────
 
@@ -218,12 +228,17 @@ describe.skipIf(!existsSync(CLI))("tb-streamer mcp (e2e)", () => {
       try {
         const { tools } = await shim.client.listTools();
         // #1178-#1180 each extend this list; #1181 locks it at four.
-        expect(tools.map((t) => t.name)).toEqual(["streamer_info", "read_conversation"]);
+        expect(tools.map((t) => t.name)).toEqual([
+          "streamer_info",
+          "read_conversation",
+          "list_sessions",
+        ]);
         const info = tools.find((t) => t.name === "streamer_info");
         expect(info).toBeDefined();
         expect(info?.description).toMatch(/\S/);
         // Phase 1 is read-only: every tool must say so to the host.
         for (const tool of tools) {
+          expect(tool.description, tool.name).toMatch(/\S/);
           expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
         }
       } finally {
@@ -399,6 +414,201 @@ describe.skipIf(!existsSync(CLI))("tb-streamer mcp (e2e)", () => {
       expect(isError).toBe(true);
       expect(text).toBe("Session not found: no-such-session.");
       expectNoKey(text);
+    });
+  });
+  describe("list_sessions", () => {
+    const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const EXT_ID = uuid(99);
+    const NEEDS_YOU_ID = uuid(4);
+    // Named sessions, one property each that a filter keys on.
+    const NAMED = [
+      { id: uuid(1), provider: "claude-code", project: "alpha", status: "running" },
+      { id: uuid(2), provider: "codex-cli", project: "alpha", status: "waiting_input" },
+      { id: uuid(3), provider: "claude-code", project: "beta", status: "idle" },
+      { id: NEEDS_YOU_ID, provider: "claude-code", project: "beta", status: "running" },
+      { id: uuid(5), provider: "codex-cli", project: "gamma", status: "waiting_input" },
+    ] as const;
+    // Filler so the unfiltered list is longer than the default page.
+    const FILLER = Array.from({ length: 20 }, (_, i) => uuid(100 + i));
+    const ALL_IDS = [...NAMED.map((s) => s.id), ...FILLER, EXT_ID];
+    const projectPath = (name: string) => join(tmpdir(), "tb-mcp-e2e-projects", name);
+
+    interface Item {
+      id: string;
+      name: string | null;
+      provider: string;
+      projectName: string;
+      projectPath: string;
+      status: string;
+      needsYou: boolean;
+      ownership: string;
+      lastActivityAt: string | null;
+    }
+    interface Page {
+      sessions: Item[];
+      nextCursor: string | null;
+    }
+
+    let shim: Shim;
+
+    async function list(args: Record<string, unknown> = {}): Promise<Page> {
+      const { isError, text } = await callText(shim.client, "list_sessions", args);
+      expect(isError, text).toBe(false);
+      expect(text).not.toContain(String(port));
+      expect(text).not.toMatch(/127\.0\.0\.1|localhost/);
+      expectNoKey(text);
+      return JSON.parse(text) as Page;
+    }
+
+    const ids = (page: Page) => page.sessions.map((s) => s.id).sort();
+
+    beforeAll(async () => {
+      const store = (server as any).sessionStore;
+      const started = (i: number) => new Date(Date.UTC(2026, 10, 1, 0, i));
+      for (const [i, s] of NAMED.entries()) {
+        store.addManaged({
+          id: s.id,
+          provider: s.provider,
+          status: s.status,
+          projectPath: projectPath(s.project),
+          projectName: s.project,
+          sessionName: `named ${i + 1}`,
+          branch: "",
+          promptCount: 1,
+          startedAt: started(i),
+          completedAt: null,
+          lastOutput: "",
+        });
+      }
+      for (const [i, id] of FILLER.entries()) {
+        store.addManaged({
+          id,
+          provider: "claude-code",
+          status: "idle",
+          projectPath: projectPath("filler"),
+          projectName: "filler",
+          branch: "",
+          promptCount: 0,
+          startedAt: started(10 + i),
+          completedAt: null,
+          lastOutput: "",
+        });
+      }
+      discovered.push({
+        pid: 999_999,
+        provider: "claude-code",
+        projectPath: projectPath("beta"),
+        projectName: "beta",
+        branch: "",
+        conversationId: EXT_ID,
+        startedAt: started(50),
+      });
+      // Earlier describes share this server and may have cached an empty discovery.
+      (server as any).discoveryCache = null;
+      vi.spyOn((server as any).promptRegistry, "hasOpen").mockImplementation(
+        (id: unknown) => id === NEEDS_YOU_ID,
+      );
+      shim = await startShim(["--port", String(port)], childEnv(cfgOk));
+    });
+
+    afterAll(async () => {
+      await shim.close();
+      vi.restoreAllMocks();
+    });
+
+    it("returns a bounded first page and a cursor with no input", async () => {
+      const page = await list();
+      expect(page.sessions).toHaveLength(20);
+      expect(page.nextCursor).toEqual(expect.any(String));
+      // Newest started first: the External one, then the fillers newest to oldest.
+      expect(page.sessions.slice(0, 3).map((s) => s.id)).toEqual([EXT_ID, FILLER[19], FILLER[18]]);
+    });
+
+    it("returns each item in the documented compact shape", async () => {
+      const page = await list({ project: "alpha" });
+      // Fields an agent needs, nothing local-only (asserted in `list`).
+      expect(page.sessions.find((s) => s.id === uuid(1))).toEqual({
+        id: uuid(1),
+        name: "named 1",
+        provider: "claude-code",
+        projectName: "alpha",
+        projectPath: projectPath("alpha"),
+        status: "running",
+        needsYou: false,
+        ownership: "threadbase",
+        lastActivityAt: null,
+      });
+      expect(page.nextCursor).toBeNull();
+    });
+
+    it("walks every session through the cursor with no duplicates", async () => {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const page: Page = await list({ limit: 7, ...(cursor ? { cursor } : {}) });
+        expect(page.sessions.length).toBeLessThanOrEqual(7);
+        seen.push(...page.sessions.map((s) => s.id));
+        cursor = page.nextCursor;
+        pages++;
+      } while (cursor && pages < 10);
+      expect(cursor).toBeNull();
+      expect(new Set(seen).size).toBe(seen.length);
+      expect(seen.sort()).toEqual([...ALL_IDS].sort());
+    });
+
+    it("filters by project name or path", async () => {
+      expect(ids(await list({ project: "alpha" }))).toEqual([uuid(1), uuid(2)]);
+      expect(ids(await list({ project: projectPath("beta") }))).toEqual(
+        [uuid(3), NEEDS_YOU_ID, EXT_ID].sort(),
+      );
+      expect(ids(await list({ project: `${projectPath("alpha")}/` }))).toEqual([uuid(1), uuid(2)]);
+    });
+
+    it("filters by provider", async () => {
+      expect(ids(await list({ provider: "codex-cli" }))).toEqual([uuid(2), uuid(5)]);
+    });
+
+    it("filters by status", async () => {
+      expect(ids(await list({ status: "waiting_input" }))).toEqual([uuid(2), uuid(5)]);
+      expect(ids(await list({ status: "running" }))).toEqual([uuid(1), NEEDS_YOU_ID]);
+    });
+
+    it("filters by needs-you", async () => {
+      const page = await list({ needsYou: true });
+      expect(ids(page)).toEqual([NEEDS_YOU_ID]);
+      expect(page.sessions[0].needsYou).toBe(true);
+      const notYou = ids(await list({ needsYou: false, project: "beta" }));
+      expect(notYou).toEqual([uuid(3), EXT_ID].sort());
+    });
+
+    it("pages a filtered list without losing or repeating a match", async () => {
+      const first = await list({ provider: "claude-code", project: "beta", limit: 2 });
+      expect(first.sessions).toHaveLength(2);
+      expect(first.nextCursor).toEqual(expect.any(String));
+      const rest = await list({
+        provider: "claude-code",
+        project: "beta",
+        limit: 2,
+        cursor: first.nextCursor,
+      });
+      expect([...ids(first), ...ids(rest)].sort()).toEqual([uuid(3), NEEDS_YOU_ID, EXT_ID].sort());
+    });
+
+    it("lists a session Threadbase did not start as External", async () => {
+      const page = await list({ project: "beta" });
+      const ext = page.sessions.find((s) => s.id === EXT_ID);
+      expect(ext?.ownership).toBe("external");
+      expect(ext?.provider).toBe("claude-code");
+      expect(page.sessions.filter((s) => s.id !== EXT_ID).map((s) => s.ownership)).toEqual([
+        "threadbase",
+        "threadbase",
+      ]);
+    });
+
+    it("rejects on_hold as an error instead of mapping it to another status", async () => {
+      const { isError } = await callText(shim.client, "list_sessions", { status: "on_hold" });
+      expect(isError).toBe(true);
     });
   });
 });
