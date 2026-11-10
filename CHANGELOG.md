@@ -1,3 +1,9 @@
+## [1.137.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.136.0...v1.137.0) (2026-11-10)
+
+### Features
+
+* **mcp:** add the list_sessions tool ([#1235](https://github.com/RonenMars/threadbase-streamer/issues/1235)) ([8234b31](https://github.com/RonenMars/threadbase-streamer/commit/8234b31225f55dc69a2c01db033c5d25333905a5)), closes [#1176](https://github.com/RonenMars/threadbase-streamer/issues/1176) [#1178](https://github.com/RonenMars/threadbase-streamer/issues/1178)
+
 ## [1.136.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.135.0...v1.136.0) (2026-11-10)
 
 ### Features
