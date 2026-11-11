@@ -1,3 +1,9 @@
+## [1.138.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.1...v1.138.2) (2026-11-11)
+
+### Bug Fixes
+
+* **sessions:** report an external session's real last activity ([#1240](https://github.com/RonenMars/threadbase-streamer/issues/1240)) ([5bb6dfb](https://github.com/RonenMars/threadbase-streamer/commit/5bb6dfb863cc21cd23563d20eadec0876e35ce1e))
+
 ## [1.138.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.0...v1.138.1) (2026-11-11)
 
 ### Bug Fixes
