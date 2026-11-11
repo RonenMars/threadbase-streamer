@@ -125,7 +125,8 @@ export class ExternalTailManager {
     // stem is only a placeholder until then.
     this.externalTails.set(key, {
       conversationId: ConversationCache.conversationIdForFile(key),
-      lastActivityAt: now,
+      // The last real write, not the attach time: `lastEventAt` is read from it.
+      lastActivityAt: Math.min(mtimeMs, now),
     });
     this.deps.fileWatcher.watch(filePath);
     this.log.debug?.(`External tail attached: ${filePath}`, {

@@ -137,6 +137,20 @@ describe("conversations tagged with the outside process running them", () => {
     release();
   });
 
+  it("serves a discovered session with the cache row's last activity, not now", async () => {
+    const list = (await get("/api/conversations?limit=50")) as any;
+    const row = list.conversations.find((c: any) => c.id.includes(SESSION_ID));
+    // control: the fixture's last write is months old, so "now" would be wrong
+    expect(Date.now() - Date.parse(row.lastActivity)).toBeGreaterThan(3_600_000);
+    await discoverOutside(row.id, row.projectPath);
+    const sessions = (await get("/api/sessions")) as any;
+    const listed = (sessions.sessions ?? sessions).find((s: any) => s.id === row.id);
+    expect(listed.ownership).toBe("external");
+    expect(listed.lastActivityAt).toBe(row.lastActivity);
+    const one = (await get(`/api/sessions/${row.id}`)) as any;
+    expect((one.session ?? one).lastActivityAt).toBe(row.lastActivity);
+  });
+
   it("treats a negative limit or offset as the floor, not as unbounded", async () => {
     const res = (await get("/api/conversations?limit=-1&offset=-5")) as any;
     expect(res.offset).toBe(0);

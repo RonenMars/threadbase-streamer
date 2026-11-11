@@ -57,6 +57,9 @@ The server side is gated by the `sessionRehydration` feature flag (default on; y
 The unchanged `terminal_replay` event is sourced from the host's preserved terminal screen, and a host-owned id replaces rather than accompanies any historical rehydration stub.
 Host supervision adds version checks, heartbeats, and shutdown control only to the private streamer-to-host protocol; the mobile HTTP and WebSocket contracts are unchanged.
 The flag defaults off (`--feature ptyHost=true` or `THREADBASE_FEATURE_PTY_HOST=1` enables it), no endpoint, response field, status, or event name changes, and a machine reboot still follows the existing registry-rehydration path because the host is gone too.
+- Session — **behaviour note (external sessions):** a discovered external session (`ownership: "external"`) now carries `lastActivityAt`, the conversation cache row's last transcript write, and omits it when there is no row.
+Its `elapsedMs` ends at `lastActivityAt` (or `startedAt` when absent) instead of counting to now, so `startedAt + elapsedMs` no longer reads as activity "now".
+`activity.lastEventAt` on an external tail starts at the file's mtime, not the time the tail attached.
 - Session — new optional field (plan Phase 5): `interruptedStatus` (`"running"` | `"waiting_input"`). Present only on a rehydrated session whose registry row recorded `status_source: "shutdown"` — i.e. one the streamer itself stopped, as opposed to one the agent finished or a crash froze.
 A recovered session's `status` has to report `idle` (it holds no PTY, and a novel `SessionStatus` value would be dropped by `?status=` filtering on already-shipped clients), which erases whether the agent was mid-answer when we stopped it.
 This field carries that one bit separately, so a client can say "interrupted mid-response" instead of "idle".
