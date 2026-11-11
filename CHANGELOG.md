@@ -1,3 +1,9 @@
+## [1.138.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.0...v1.138.1) (2026-11-11)
+
+### Bug Fixes
+
+* **deploy:** correct dirty metadata and release version discovery ([#1239](https://github.com/RonenMars/threadbase-streamer/issues/1239)) ([6418fc2](https://github.com/RonenMars/threadbase-streamer/commit/6418fc29b321a76db83e06d75eee9510a501f750))
+
 ## [1.138.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.137.0...v1.138.0) (2026-11-10)
 
 ### Features
