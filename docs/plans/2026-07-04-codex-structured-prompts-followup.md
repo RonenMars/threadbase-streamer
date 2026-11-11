@@ -40,8 +40,11 @@ both confirmed to contain every referenced file at the time of writing.
   regex hint) gate an expensive rendered-screen read (`getOutputLines`),
   then three detectors run in priority order: permission gate >
   AskUserQuestion menu > unstructured shell prompt. Each open prompt's
-  *closure* is detected by watching for `CLAUDE_PROMPT_MARKERS` (`╭`, `❯`)
+  *closure* is detected by watching for `CLAUDE_PROMPT_MARKERS` (`╭`, `❯` at the pinned revision)
   to reappear on screen.
+  Since #1223, the current marker list also includes `>\u00a0` (`>` followed
+  by a non-breaking space); a bare `>` is not a marker because transcript
+  echoes use it too (`src/pty-manager.ts`, `CLAUDE_PROMPT_MARKERS`).
   **Not directly reusable** — the closure signal is Claude-specific. Codex's
   own readiness signal is the literal string `"Ready"` in its status bar,
   already captured as `CODEX_PROMPT_READY_TEXT` in

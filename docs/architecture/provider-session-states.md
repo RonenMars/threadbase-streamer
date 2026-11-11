@@ -16,6 +16,8 @@ Line numbers were read on 2026-10-06 against these trees:
 | Copilot branch (unmerged) | `abe0f7d4` | Copilot CLI only |
 | `fix/provider-turn-state` (unmerged) | `d99041e4` | Pending changes, always labelled as pending |
 
+Claude marker and boot trust-gate claims below were refreshed on 2026-11-10 against `main` at `28919258` (#1223).
+
 Each claim carries an evidence tag:
 
 - **[code]** — read in the source at the cited line.
@@ -93,7 +95,8 @@ Runner: `PTYManager` in `src/pty-manager.ts`.
 
 ### Boot/readiness signal
 
-- A prompt marker in a chunk, `╭` or `❯`, settles boot as `prompt-marker` (`:64`, `CLAUDE_PROMPT_MARKERS`; `:960`). **[code]**
+- A prompt marker in a chunk, `╭`, `❯` or `>\u00a0` (`>` followed by a non-breaking space), settles boot as `prompt-marker`, unless the chunk carries the startup gate's `Enter to confirm` footer (`:94`, `CLAUDE_PROMPT_MARKERS`; `:1096`–`:1105`, `STARTUP_GATE_FOOTER_RE`). **[code]**
+- The ASCII marker excludes a bare `>` because transcript echoes also use that prefix; whether Claude's ASCII rendering preserves the non-breaking space is still unverified (`:83`–`:93`). **[code]**
 - On quiet, the rendered screen is re-read for the same markers and settles as `screen-marker` (`:1400`, `recheckReadyFromScreen`; `:1435`). **[code]**
 - Silence alone never settles boot, because `--resume` replays the transcript and can sit quiet for seconds before the TUI reads stdin (`:1270`, `pendingReady.has`). **[code]**
 
@@ -117,7 +120,7 @@ Runner: `PTYManager` in `src/pty-manager.ts`.
 | Constant | Value | Role | Cite |
 |---|---|---|---|
 | `QUIET_DETECT_MS` | 500 ms | Re-run readiness and prompt detection after the last chunk | `:101` |
-| `CLAUDE_READY_FALLBACK_MS` | 8 000 ms | Flat boot backstop, armed at spawn; settles as `timeout-fallback` | `:130`, `:1445` |
+| `CLAUDE_READY_FALLBACK_MS` | 8 000 ms | Boot backstop, armed at spawn; re-arms while a startup gate is shown, otherwise settles as `timeout-fallback` | `:168`, `:1617`–`:1635` |
 | `TURN_START_GRACE_MS` | 3 000 ms | How long a `submitted` turn waits for a busy signal before lapsing | `:85`, `:1365` |
 | `LATE_TURN_START_MS` | 30 000 ms | Window in which a busy signal after a guessed end reopens the turn | `:92`, `:1349` |
 | `SCRAPE_THROTTLE_MS` | 300 ms | Ceiling on unsolicited screen scrapes for gate detection | `:118` |
@@ -134,7 +137,8 @@ Runner: `PTYManager` in `src/pty-manager.ts`.
 - At the quiet check, an `ending` turn with a gate, picker, startup-choice gate or `Enter to select` footer on screen becomes `held`, and the session stays `running` (`:1410`–`:1420`; `__tests__/turn-signal-replay.test.ts:172`). **[code]**
 - When the gate leaves the screen, a `held` turn re-enters the start grace through `openTurnOnSubmit` (`:1422`). **[code]**
 - A busy signal re-opens a `held` turn as `working` (`:1333`). **[code]**
-- A startup gate (workspace trust) paints its own `❯`, so boot settles to `waiting_input` with the gate still on screen; the quiet path rescans once so the card is still broadcast (`:1247`–`:1266`). **[code]**
+- A startup gate (workspace trust) paints its own `❯`; while `detectStartupChoiceGate` finds it during boot, the quiet screen recheck keeps the session `running` and records `startupGateShown` (`:1583`–`:1593`). **[code]**
+- The 8 s boot fallback re-arms while `startupGateShown` is set, so it cannot settle readiness and flush queued input into the gate (`:1623`–`:1635`, `fireReadyFallback`; #1223). **[code]**
 - A card answered through `sendKeys` closes the card at once, without waiting for the screen (`:548`, `isPermissionAnswer`). **[code]**
 
 ### Submit mechanics that affect state
@@ -381,12 +385,12 @@ Values are for `main`, except the Copilot column, which is the unmerged branch.
 
 | | Claude Code | Codex | Cursor | Copilot CLI (unmerged) |
 |---|---|---|---|---|
-| **Boot/readiness signal** | `╭` or `❯` in a chunk or on the screen | `Ready` in the status bar | `ESC[?2004h` seen, then 500 ms quiet | None; stays `running` |
+| **Boot/readiness signal** | `╭`, `❯` or `>\u00a0` (`>` + non-breaking space) in a chunk or on the screen; startup gate holds readiness | `Ready` in the status bar | `ESC[?2004h` seen, then 500 ms quiet | None; stays `running` |
 | **Boot source recorded** | `prompt-marker` / `screen-marker` | `prompt-marker` | `quiet-fallback` (inferred) | `spawn` forever |
 | **Turn-start signal** | Title spinner `◐◓◑◒`, or OSC 9;4 busy | Title braille spinner, or `Working` in the bar | `ctrl+c to stop` in a chunk | None |
 | **Turn-end signal** | Title `✳` or OSC 9;4;0, settled on the next quiet check | Title spinner gone (or `Ready` back), same pass | Hint gone from screen, on quiet | None |
 | **Optimistic turn open** | `submitted`, 3 s grace | `user-input`, 2 s submit-stale | `user-input`, 2 s submit-stale | n/a |
-| **Boot fallback** | 8 s flat, `timeout-fallback` | 8 s, re-arms while busy, uncapped | 8 s, re-arms until marker, capped at 60 s | None |
+| **Boot fallback** | 8 s, re-arms while a startup gate is shown; otherwise `timeout-fallback` | 8 s, re-arms while busy, uncapped | 8 s, re-arms until marker, capped at 60 s | None |
 | **Submit-never-started recovery** | Grace lapses → `screen-marker` | `submit-stale` → `quiet-fallback` (reads screen) | `submit-stale` → `quiet-fallback` (timer only) | None |
 | **Late-start recovery (30 s)** | Yes | Yes | No (pending) | No |
 | **Gate/question open** | Turn `held`; stays `running` | Card blocks the end; stays `running`; usage limit settles to `waiting_input` | No detection | No detection |
