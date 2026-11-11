@@ -111,6 +111,27 @@ describe("SessionStore", () => {
       expect(resp?.status).toBe("idle");
     });
 
+    it("serves a discovered session's last activity from the lookup", () => {
+      const at = new Date(Date.now() - 3 * 3_600_000);
+      store = new SessionStore(undefined, undefined, (id) => (id === UUID_B ? at : undefined));
+      const d = makeDiscoveredProcess({ startedAt: new Date(at.getTime() - 60_000) });
+      store.setDiscovered([d]);
+
+      expect(store.get(UUID_B, noPty)?.lastActivityAt).toBe(at.toISOString());
+      expect(store.list(noPty)[0]?.lastActivityAt).toBe(at.toISOString());
+      expect(store.get(UUID_B, noPty)?.elapsedMs).toBe(60_000);
+    });
+
+    it("omits lastActivityAt with no cache row, and elapsedMs stops counting", async () => {
+      store.setDiscovered([makeDiscoveredProcess()]);
+      const first = store.get(UUID_B, noPty);
+      expect(first).not.toBeNull();
+      expect(first).not.toHaveProperty("lastActivityAt");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(store.get(UUID_B, noPty)?.elapsedMs).toBe(first?.elapsedMs);
+      expect(store.list(noPty)[0]).not.toHaveProperty("lastActivityAt");
+    });
+
     // The response used to hardcode claude-code, so a discovered Codex session
     // was reported as Claude — and adopting it respawned it as Claude against a
     // Codex rollout id.

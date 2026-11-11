@@ -136,6 +136,7 @@ A `Session` carries two independent axes, plus detail fields. `status` says whos
   > **Streamer (verified 2026-09-25):** Live changes travel on their own `prompt_suggestion` frame to the session's subscribers, not as `session_update` (see F-134).
 - **F-141** `elapsedMs`, `promptCount`: numbers. `L2/Detail`
   > **Streamer (verified 2026-09-25):** Managed: `elapsedMs = (completedAt ?? now) − startedAt` and `promptCount` rises once per text send (`src/session-store.ts`, `managedToResponse`).
+  > External (discovered): `elapsedMs = (lastActivityAt ?? startedAt) − startedAt`, with `lastActivityAt` from the cache row and omitted without one (`src/session-store.ts`, `discoveredToResponse`).
   > The historical `on_hold` and `/recents` shapes put the conversation's message count in `promptCount` (`src/api/handlers/http-helpers.ts`, `promptCount: c.messageCount,`).
 - **F-142** `resumedFromConversationId`: id or null — the session was started via resume. `L2/Detail`
   > **Streamer (verified 2026-09-25):** Set only by the resume path's best-effort enrichment, and its value equals the session's own id (`src/server.ts`, `resumedFromConversationId: sessionId,`).

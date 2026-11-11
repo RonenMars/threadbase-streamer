@@ -740,6 +740,10 @@ export class StreamerServer {
         (this.featureFlags.subagentSessions || session?.isSubagent !== true) &&
         (this.cache?.isVisible(id) ?? true),
       (id) => this.promptRegistry.hasOpen(id),
+      (id) => {
+        const at = Date.parse(this.cache?.getMetaById(id)?.lastActivity ?? "");
+        return at > 0 ? new Date(at) : undefined;
+      },
     );
     this.wsHub = new WSHub();
     this.promptRegistry = new PromptRegistry({

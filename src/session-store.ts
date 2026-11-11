@@ -16,6 +16,9 @@ export class SessionStore {
   constructor(
     private readonly visibility: (id: string, session?: ManagedSession) => boolean = () => true,
     private readonly hasOpenPrompt: (id: string) => boolean = () => false,
+    // Last transcript write for a conversation, from the cache. Discovery only
+    // knows the process start time, which is not when the session was active.
+    private readonly lastActivityFor: (id: string) => Date | undefined = () => undefined,
   ) {}
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();
@@ -155,7 +158,9 @@ export class SessionStore {
       if (!d.conversationId) continue;
       if (!this.visibility(d.conversationId)) continue;
       if (seenIds.has(d.conversationId) || this.ownsConversation(d.conversationId)) continue;
-      results.push(discoveredToResponse(d, d.conversationId));
+      results.push(
+        discoveredToResponse(d, d.conversationId, this.lastActivityFor(d.conversationId)),
+      );
       seenIds.add(d.conversationId);
     }
 
@@ -177,7 +182,9 @@ export class SessionStore {
 
     if (this.ownsConversation(sessionId)) return null;
     for (const d of this.discovered.values()) {
-      if (d.conversationId === sessionId) return discoveredToResponse(d, sessionId);
+      if (d.conversationId === sessionId) {
+        return discoveredToResponse(d, sessionId, this.lastActivityFor(sessionId));
+      }
     }
 
     return null;
@@ -432,7 +439,11 @@ function managedToResponse(
   };
 }
 
-function discoveredToResponse(d: DiscoveredProcess, conversationId: string): SessionResponse {
+function discoveredToResponse(
+  d: DiscoveredProcess,
+  conversationId: string,
+  lastActivityAt: Date | undefined,
+): SessionResponse {
   return {
     id: conversationId,
     conversationId,
@@ -462,12 +473,15 @@ function discoveredToResponse(d: DiscoveredProcess, conversationId: string): Ses
     projectName: d.projectName,
     branch: d.branch,
     lastOutput: "",
-    elapsedMs: Date.now() - d.startedAt.getTime(),
+    // Not counted to now: clients read `startedAt + elapsedMs` as the last
+    // activity, so a quiet external session would read as active "now".
+    elapsedMs: (lastActivityAt ?? d.startedAt).getTime() - d.startedAt.getTime(),
     promptCount: 0,
     startedAt: d.startedAt.toISOString(),
     completedAt: null,
     ptyAttached: false,
     pid: d.pid,
+    ...(lastActivityAt && { lastActivityAt: lastActivityAt.toISOString() }),
     ...(d.turnState && {
       externalTurn: {
         state: d.turnState.state,
