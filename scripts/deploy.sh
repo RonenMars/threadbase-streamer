@@ -1080,7 +1080,7 @@ cmd_deploy() {
 
   local sha
   sha="$(git rev-parse --short HEAD)"
-  [[ "$force" == "--force" ]] && [[ -n "$(git status --porcelain)" ]] && sha="${sha}-dirty-$(date -u +%Y%m%d%H%M%S)"
+  [[ "$force" == "--force" ]] && [[ -n "$(git diff --name-only HEAD)" ]] && sha="${sha}-dirty-$(date -u +%Y%m%d%H%M%S)"
   mkdir -p "$RELEASES_DIR"
   # Never overwrite a running build or its loaded native dependencies.
   local release_dir

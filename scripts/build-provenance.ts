@@ -7,7 +7,9 @@ export function readBuildInfo(cwd = process.cwd()): { commit: string; branch: st
     return {
       commit: read(["rev-parse", "HEAD"]),
       branch: process.env.GITHUB_REF_NAME ?? read(["rev-parse", "--abbrev-ref", "HEAD"]),
-      dirty: Boolean(read(["status", "--porcelain"])),
+      // Tracked changes only, the same question scripts/deploy.sh asks: an untracked
+      // HANDOFF.md must not label a clean build dirty.
+      dirty: Boolean(read(["diff", "--name-only", "HEAD"])),
     };
   } catch {
     // Docker and source archives may have no Git history. Unknown is explicit.

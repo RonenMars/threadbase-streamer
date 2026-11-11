@@ -72,6 +72,17 @@ describe("POSIX deploy script", () => {
     });
   });
 
+  // The forced-deploy stamp used `git status --porcelain`, which also counts
+  // untracked files, so a tree the gate had passed as clean (an untracked
+  // HANDOFF.md) still produced a `<sha>-dirty-<ts>` release. The stamp must
+  // ask the same question as the gate.
+  it("stamps a forced release dirty by the same test the gate uses", () => {
+    const stamp = deployScript.slice(deployScript.indexOf('[[ "$force" == "--force" ]] && [[ -n'));
+    const line = stamp.slice(0, stamp.indexOf("\n"));
+    expect(line).toContain("git diff --name-only HEAD");
+    expect(line).not.toContain("status --porcelain");
+  });
+
   describe("menubar submodule sync", () => {
     // A `git pull` that bumps the pointer leaves the checkout behind it, which
     // git reports as a modified tree: the deploy refused it as dirty, or under

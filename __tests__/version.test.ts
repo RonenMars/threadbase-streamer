@@ -99,6 +99,27 @@ describe("getVersion", () => {
     },
   );
 
+  it.skipIf(!canSymlink)(
+    "resolves version.txt when the release lives in its own directory under releases/",
+    () => {
+      // scripts/deploy.sh stages each release as releases/cli.<sha>.XXXXXX/cli.cjs,
+      // one level deeper than the layout above, so version.txt is two levels up.
+      const installDir = join(tmp, "install");
+      const releaseDir = join(installDir, "releases", "cli.abc1234.Qx9Zk1");
+      const shimDir = join(tmp, "shim");
+      mkdirSync(releaseDir, { recursive: true });
+      mkdirSync(shimDir);
+      writeFileSync(join(installDir, "version.txt"), "1.2.3+deep\n");
+      const realCli = join(releaseDir, "cli.cjs");
+      writeFileSync(realCli, "");
+      const shimPath = join(shimDir, "tb-streamer");
+      symlinkSync(realCli, shimPath);
+      process.argv[1] = shimPath;
+
+      expect(getVersion()).toBe("1.2.3+deep");
+    },
+  );
+
   it("memoizes the result across calls", () => {
     const distDir = join(tmp, "dist");
     mkdirSync(distDir);

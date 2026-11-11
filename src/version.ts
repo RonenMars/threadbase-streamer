@@ -42,15 +42,13 @@ function resolveVersion(): string {
   try {
     realHere = dirname(realpathSync(scriptPath));
   } catch {}
-  // Deduplicate: if realHere === here we don't want to check the same dirs twice.
-  const searchDirs =
-    realHere === here
-      ? [here, join(here, "..")]
-      : [here, join(here, ".."), realHere, join(realHere, "..")];
-  // Check both the script directory and its parent — the installer places
+  // Check the script directory and two parents: the installer places
   // version.txt in $INSTALL_DIR (~/.threadbase/) but the built CLI is a
-  // symlink whose realpath resolves into $INSTALL_DIR/releases/, so `here`
-  // ends up one level too deep.
+  // symlink whose realpath resolves into $INSTALL_DIR/releases/cli.<sha>.XXXXXX/,
+  // so `here` ends up two levels too deep.
+  const up = (dir: string) => [dir, join(dir, ".."), join(dir, "..", "..")];
+  // Deduplicate: if realHere === here we don't want to check the same dirs twice.
+  const searchDirs = realHere === here ? up(here) : [...up(here), ...up(realHere)];
   for (const dir of searchDirs) {
     try {
       const v = readFileSync(join(dir, "version.txt"), "utf8").trim();
