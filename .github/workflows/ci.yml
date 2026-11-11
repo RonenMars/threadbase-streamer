@@ -35,42 +35,33 @@ jobs:
   # job-level `if:` reports "skipped", which does NOT satisfy a required check
   # and would leave the PR un-mergeable forever. Instead each job checks out
   # (cheap, and required so the local composite action exists) and then runs a
-  # single guarded `run-ci` step. When the bracketed tag `[skip-ci]` is present
-  # in the latest commit message or the PR title, that one step is skipped, the
-  # job still succeeds, and the check context goes green in seconds.
+  # single guarded `run-ci` step. When the gate says skip, that one step is
+  # skipped, the job still succeeds, and the check context goes green in seconds.
   #
-  # The PR *body* is deliberately NOT searched. Bracketing alone was assumed to
-  # stop prose from tripping the skip; it does not. PR #522 changed cli/index.ts
-  # and src/claude-flags.ts, carried no tag in its title or commit, and still
-  # skipped every test — its body happened to say "…since it is docs-only and
-  # `[skip-ci]`" while describing a *different* PR. All 12 checks reported green
-  # in 39 seconds with lint, tests and both smoke jobs skipped, and nothing
-  # distinguished that from a real pass. See issue #563.
+  # The decision comes from the DIFF, never from text. CI skips only when every
+  # changed file matches `.github/ci-skip-paths.txt` (scripts/ci-skip-gate.sh);
+  # anything unlisted runs the full matrix. It used to skip on a `[skip-ci]` tag
+  # in the commit message or PR title, which trusted the author's claim and
+  # could be tripped by prose: PR #522 changed cli/index.ts and
+  # src/claude-flags.ts and skipped every test because its body quoted the tag
+  # (issue #563). A tag in a title or commit now does nothing.
   #
-  # Title-and-commit-only also matches the documented convention: CLAUDE.md says
-  # "Put the suffix in the title, not the body."
+  # pull_request runs check out the merge ref, whose first parent is the base
+  # tip, so `HEAD^1` is exactly what the PR changes. Push runs diff `before`.
   gate:
     name: Gate
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.decide.outputs.skip }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: false
       - id: decide
         env:
-          # On pull_request, github.event.head_commit is null, so fall back to
-          # the PR title. On push to main, the PR fields are empty and we use
-          # the head commit message.
-          HEAD_COMMIT_MSG: ${{ github.event.head_commit.message }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          haystack="${HEAD_COMMIT_MSG}
-          ${PR_TITLE}"
-          if printf '%s' "$haystack" | grep -qF -- '[skip-ci]'; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=CI skipped::'[skip-ci]' found in commit message / PR title — run-ci step skipped, check reported green."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
+        run: bash scripts/ci-skip-gate.sh "$BASE"
 
   setup:
     name: Setup
