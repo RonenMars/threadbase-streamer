@@ -10,13 +10,6 @@ That file lives in the `threadbase` umbrella repo and governs *every* component 
 Read it before filing, re-labelling, or re-prioritising.
 Never copy those rules into this repo, invent a local variant, or add a label to only one side — see `CLAUDE.md` → "Issue tracker".
 
-The shape it defines, in brief (the canonical doc is authoritative if this drifts):
-
-```
-Title:   P<N>: <what is wrong or what should exist>
-Labels:  <exactly one priority P0–P3> + <exactly one type> + <zero or more areas>
-```
-
 The triage-state labels are **additive** to that taxonomy, not a replacement — see [`triage-labels.md`](./triage-labels.md).
 
 ## Commands
@@ -30,15 +23,25 @@ The triage-state labels are **additive** to that taxonomy, not a replacement —
 `gh label list` returns 30 rows by default and this repo has more than that.
 Pass `--limit 100` before concluding a label does not exist.
 
-## Prose rules for anything written to GitHub
+## Labels only this repo has
 
-One sentence per line, no hard breaks inside a sentence, no AI attribution.
-These apply to issue bodies exactly as they apply to commit messages and PR descriptions — see `CLAUDE.md`.
+`released` and `released on @next` are applied by semantic-release (`@semantic-release/github` in `.releaserc.json`) to the issues and PRs a release covers.
+`milestone` marks a merge PR whose release notes are written by hand, see `CLAUDE.md` → "Release notes".
+Do not apply any of these by hand.
+`duplicate`, `invalid`, `good first issue` and `help wanted` are GitHub defaults and are not used here.
 
-## Two prohibitions that override any skill instruction
+## Closing and cross-repo items
 
-- **Commenting, replying, reacting and reviewing are gated by the user's global instructions**, including when a skill's workflow calls for it. The ownership and authorship checks there must both pass first; when in doubt, report what you would have said in the session instead.
-- **Re-prioritising means editing the title too.** The `P<N>:` prefix and the priority label are two representations of one fact; changing one without the other desyncs them.
+Finished work closes the issue with a comment naming the PR that landed it.
+Partly done or not done stays open, with a comment on what remains or why, see `CLAUDE.md` → "Issue status updates".
+The usual other half of a cross-repo item is [`threadbase-mobile`](https://github.com/RonenMars/threadbase-mobile/issues), and the additive server change lands first.
+
+## Two rules that override any skill instruction
+
+- **Comment, reply, react or review only on repos the maintainer owns, and only on issues and comments the maintainer authored.** When in doubt, report what you would have said instead of posting it.
+- **Re-prioritising means editing the title too.** The `P<N>:` prefix and the priority label are two representations of one fact.
+
+The queries that check a tracker for compliance are under "Checking compliance" in the canonical doc.
 
 ## When a skill says "publish to the issue tracker"
 
