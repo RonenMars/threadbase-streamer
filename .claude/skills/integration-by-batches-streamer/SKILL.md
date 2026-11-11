@@ -38,7 +38,7 @@ Subsystem seams that held in this repo: PTY/turn detection per provider (`pty-ma
 
 - **Provider runners are the dangerous overlap.** `pty-manager.ts` and the Codex/Cursor/Copilot runners deliberately duplicate helpers; a PR touching one often needs the sibling. Check before splitting.
 - **Two storage PRs in one bulk:** runtime-store migrations are numbered files tracked by *filename*, so either order works, but the second to merge needs a rebase of `__tests__/runtime-store.test.ts`. Never add device columns to `011`.
-- **Docs-only PR titles carry `[skip-ci]`.**
+- **Docs-only PRs skip CI by their diff** (`.github/ci-skip-paths.txt`); no title tag is needed or read.
 - **`@types/*` bumps that rename imported types and test-runner majors get their own batch,** alone and last (`docs/troubleshooting.md`). Dependabot lockfile-only bumps can share one.
 - **Does anything change behaviour a phone or the menubar can see?** If not, CI only — no mobile QA.
 

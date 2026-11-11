@@ -1,0 +1,10 @@
+# Paths whose changes cannot affect the build, lint or test results.
+# Read by scripts/ci-skip-gate.sh in ci.yml's Gate job: CI skips only when EVERY
+# changed file matches a line here. Anything unlisted runs the full matrix, so a
+# new directory or config file is safe by default.
+#
+# One extended regex per line, matched against the repo-relative path.
+# Blank lines and #-comments are ignored. Anchor each pattern with ^.
+^docs/
+^[^/]+\.md$
+^\.(claude|agents|codex|cursor)/.*\.md$
