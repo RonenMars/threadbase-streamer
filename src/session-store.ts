@@ -19,6 +19,9 @@ export class SessionStore {
     // Last transcript write for a conversation, from the cache. Discovery only
     // knows the process start time, which is not when the session was active.
     private readonly lastActivityFor: (id: string) => Date | undefined = () => undefined,
+    // The resolved session name for a conversation, from the cache. Discovery
+    // sees a process, not its transcript, so a rename or title is invisible to it.
+    private readonly nameFor: (id: string) => string | undefined = () => undefined,
   ) {}
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();
@@ -159,7 +162,12 @@ export class SessionStore {
       if (!this.visibility(d.conversationId)) continue;
       if (seenIds.has(d.conversationId) || this.ownsConversation(d.conversationId)) continue;
       results.push(
-        discoveredToResponse(d, d.conversationId, this.lastActivityFor(d.conversationId)),
+        discoveredToResponse(
+          d,
+          d.conversationId,
+          this.lastActivityFor(d.conversationId),
+          this.nameFor(d.conversationId),
+        ),
       );
       seenIds.add(d.conversationId);
     }
@@ -183,7 +191,12 @@ export class SessionStore {
     if (this.ownsConversation(sessionId)) return null;
     for (const d of this.discovered.values()) {
       if (d.conversationId === sessionId) {
-        return discoveredToResponse(d, sessionId, this.lastActivityFor(sessionId));
+        return discoveredToResponse(
+          d,
+          sessionId,
+          this.lastActivityFor(sessionId),
+          this.nameFor(sessionId),
+        );
       }
     }
 
@@ -443,6 +456,7 @@ function discoveredToResponse(
   d: DiscoveredProcess,
   conversationId: string,
   lastActivityAt: Date | undefined,
+  sessionName: string | undefined,
 ): SessionResponse {
   return {
     id: conversationId,
@@ -482,6 +496,7 @@ function discoveredToResponse(
     ptyAttached: false,
     pid: d.pid,
     ...(lastActivityAt && { lastActivityAt: lastActivityAt.toISOString() }),
+    ...(sessionName && { sessionName }),
     ...(d.turnState && {
       externalTurn: {
         state: d.turnState.state,

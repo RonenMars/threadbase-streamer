@@ -744,6 +744,7 @@ export class StreamerServer {
         const at = Date.parse(this.cache?.getMetaById(id)?.lastActivity ?? "");
         return at > 0 ? new Date(at) : undefined;
       },
+      (id) => this.cache?.getMetaById(id)?.title ?? undefined,
     );
     this.wsHub = new WSHub();
     this.promptRegistry = new PromptRegistry({
