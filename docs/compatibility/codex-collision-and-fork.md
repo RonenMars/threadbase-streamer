@@ -101,7 +101,7 @@ The probe would also be actively misleading. In every sample the transcript *did
 After excluding our own pid the result is always null; without that exclusion, or with a second streamer instance on the box (dev alongside prod), the only thing the probe can ever detect is a Threadbase process, which says nothing about Claude ownership.
 
 Claude has no writer lock either, so there is nothing authoritative behind the heuristic to escalate to — two `claude --resume` processes on one conversation both append and neither complains.
-The Claude collision contract therefore stays as it is: `jsonl_mtime` + `process_argv` + `process_cwd`, `canForce: true`.
+The Claude collision contract therefore stays as it is: `jsonl_mtime` + `process_argv`, `canForce: true`. (`process_cwd` was removed: a same-folder process says nothing about which conversation it has open.)
 
 ## Still unverified
 

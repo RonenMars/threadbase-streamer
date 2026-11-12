@@ -1063,12 +1063,22 @@ export class SessionHandlers {
       // The id another owner's argv would actually carry — for a placeholder
       // that is the bound rollout id, not the one the client asked for.
       conversationId: historyId,
-      projectPath,
       jsonlPath,
       discovered,
       windowMs: resolveResumeBusyWindowMs(),
       selfPtyEndedAt: this.selfPtyEndedAt.get(sessionId) ?? null,
     });
+    // The 409 body reaches the client but nothing recorded why it was answered,
+    // so a false positive could only be found by reproducing it.
+    if (busy.busy) {
+      this.log.info(`[resume] busy ${sessionId.slice(0, 8)} (${busy.detectedBy.join(",")})`, {
+        sessionId,
+        detectedBy: busy.detectedBy,
+        likelyOwner: busy.likelyOwner,
+        lastActivityMs: busy.lastActivityMs,
+        forced: opts.force === true,
+      });
+    }
     if (busy.busy && opts.force !== true) {
       return {
         ok: false,
