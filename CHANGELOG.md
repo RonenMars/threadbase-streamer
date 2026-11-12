@@ -1,3 +1,9 @@
+## [1.138.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.2...v1.138.3) (2026-11-12)
+
+### Bug Fixes
+
+* **sessions:** stop a same-folder process from blocking resume ([#1242](https://github.com/RonenMars/threadbase-streamer/issues/1242)) ([82f5121](https://github.com/RonenMars/threadbase-streamer/commit/82f51211b51318a7e5ea82b35f02829d7a5d5e11))
+
 ## [1.138.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.1...v1.138.2) (2026-11-11)
 
 ### Bug Fixes
