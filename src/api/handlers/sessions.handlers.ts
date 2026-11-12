@@ -604,6 +604,23 @@ export class SessionHandlers {
   }
 
   /**
+   * Agent processes on the machine minus this streamer's own PTY children.
+   * Ownership is by pid, not conversation id: a child can report an id other than
+   * the one it was spawned under (its registry follows the process, e.g. after
+   * `EnterWorktree`), and id matching alone then lists our own session a second
+   * time under an id no conversation has — it opens as "conversation not found".
+   */
+  private async discoverExternalProcesses(): Promise<DiscoveredProcess[]> {
+    const discovered = await discoverClaudeProcesses();
+    const ownedPids = new Set<number>();
+    for (const s of this.ptyManager.listSessions()) {
+      const pid = this.ptyManager.getPid(s.id);
+      if (pid != null) ownedPids.add(pid);
+    }
+    return discovered.filter((d) => !ownedPids.has(d.pid));
+  }
+
+  /**
    * Refresh the discovered-process list, sharing one in-flight enumeration
    * across concurrent callers and honouring the 15s TTL cache.
    */
@@ -619,7 +636,7 @@ export class SessionHandlers {
     let flight!: Promise<DiscoveredProcess[]>;
     flight = (async (): Promise<DiscoveredProcess[]> => {
       try {
-        const discovered = await discoverClaudeProcesses();
+        const discovered = await this.discoverExternalProcesses();
         this.sessionStore.setDiscovered(discovered);
         this.discoveryCache = { entries: discovered, fetchedAt: Date.now() };
         return discovered;
@@ -2563,7 +2580,7 @@ export class SessionHandlers {
     sessionId: string,
     action: ExternalAction,
   ): Promise<OwnerResolution> {
-    const discovered = await discoverClaudeProcesses();
+    const discovered = await this.discoverExternalProcesses();
     this.sessionStore.setDiscovered(discovered);
     this.discoveryCache = null;
 
