@@ -700,6 +700,14 @@ Use the expanded absolute home path in a launchd plist; `~` and `$HOME` are not 
 
 ---
 
+### Resuming an old, idle conversation answers 409 `CONVERSATION_BUSY` {#resume-409-same-folder}
+
+**When:** Resume returns 409 for a conversation weeks old with no process on it, but only in a project where some terminal is open (the mobile "Resume this conversation?" dialog).
+**Cause:** The busy probe had a third signal, `process_cwd`: any discovered process whose working directory equalled the conversation's project path. It matches the folder, not the conversation, so one open `claude` made every conversation in that folder busy. Reproduced against prod: conversations 32 days old in `tb-streamer` and `tb-mobile` answered 409 with `detectedBy: ["process_cwd"]`, while 33- and 67-day-old ones in folders with no terminal resumed with 201.
+**Fix:** The signal is gone; only a fresh JSONL write or a process whose argv names the same id answers 409. The server logs `[resume] busy <id> (<signals>)` with `detectedBy`, `likelyOwner` and `lastActivityMs` for every verdict, so a future false positive shows in the log. `{ force: true }` still bypasses.
+
+---
+
 ## Discovered sessions / PTY not attached
 
 ### Session shows `Idle · 0 prompts` with blank terminal and `PTY_ATTACHED: false`

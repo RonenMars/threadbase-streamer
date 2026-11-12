@@ -1,6 +1,5 @@
 import { statSync } from "fs";
 import type { DiscoveredProcess } from "../../types";
-import { canonicalizeProjectPath } from "../../utils/canonicalizeProjectPath";
 
 // A conversation's JSONL touched within this window is treated as actively
 // owned. This is the PRIMARY collision signal — it is the only one that catches
@@ -21,7 +20,7 @@ export function resolveResumeBusyWindowMs(env: NodeJS.ProcessEnv = process.env):
 // codexRolloutOwner.ts, not by conversationBusy() — another process holds the
 // exact rollout JSONL open. Listed here so the wire vocabulary of `detectedBy`
 // stays in one place.
-export type BusySignal = "jsonl_mtime" | "process_argv" | "process_cwd" | "file_handle";
+export type BusySignal = "jsonl_mtime" | "process_argv" | "file_handle";
 
 // Allowance for a JSONL write that lands just AFTER we observe our own PTY go
 // idle — Claude flushes the tail of a turn as it exits, so the file's mtime can
@@ -30,12 +29,10 @@ const SELF_ACTIVITY_SKEW_MS = 5_000;
 
 export interface ConversationBusyInput {
   conversationId: string;
-  projectPath: string | null;
   jsonlPath: string | null;
   discovered: DiscoveredProcess[];
   now?: number;
   windowMs?: number;
-  platform?: NodeJS.Platform;
   /**
    * When this streamer's own PTY for this conversation last went idle (ms epoch),
    * or null/undefined if it never owned one in this process's lifetime.
@@ -65,7 +62,6 @@ export interface ConversationBusyResult {
 export function conversationBusy(input: ConversationBusyInput): ConversationBusyResult {
   const now = input.now ?? Date.now();
   const windowMs = input.windowMs ?? RESUME_BUSY_WINDOW_MS;
-  const platform = input.platform ?? process.platform;
   const detectedBy: BusySignal[] = [];
   let lastActivityMs: number | null = null;
 
@@ -94,16 +90,10 @@ export function conversationBusy(input: ConversationBusyInput): ConversationBusy
   const argvMatch = input.discovered.some((p) => p.conversationId === input.conversationId);
   if (argvMatch) detectedBy.push("process_argv");
 
-  // Signal 3: a discovered process is running in this conversation's project
-  // directory. POSIX only — a process cwd is not available on win32.
-  let cwdMatch = false;
-  if (platform !== "win32" && input.projectPath) {
-    const target = canonicalizeProjectPath(input.projectPath);
-    cwdMatch = input.discovered.some(
-      (p) => !!p.projectPath && canonicalizeProjectPath(p.projectPath) === target,
-    );
-    if (cwdMatch) detectedBy.push("process_cwd");
-  }
+  // There is deliberately no "a process runs in the same project dir" signal. A
+  // working directory says nothing about WHICH conversation a process has open,
+  // so any claude in the folder (a terminal, another session) made every idle
+  // conversation there answer 409, whatever its age.
 
   return {
     busy: detectedBy.length > 0,
@@ -111,6 +101,6 @@ export function conversationBusy(input: ConversationBusyInput): ConversationBusy
     lastActivityMs,
     // A matched process is a concrete external owner; a lone mtime hit could be
     // an editor, a crashed process, or a process we could not enumerate.
-    likelyOwner: argvMatch || cwdMatch ? "external" : "unknown",
+    likelyOwner: argvMatch ? "external" : "unknown",
   };
 }

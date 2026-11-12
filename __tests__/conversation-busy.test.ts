@@ -40,7 +40,6 @@ describe("conversationBusy", () => {
   it("reports busy via jsonl_mtime when the JSONL was written within the window", () => {
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath,
       discovered: [],
     });
@@ -57,7 +56,6 @@ describe("conversationBusy", () => {
     utimesSync(jsonlPath, old, old);
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath,
       discovered: [],
     });
@@ -70,7 +68,6 @@ describe("conversationBusy", () => {
   it("is NOT busy when there is no JSONL and no matching process", () => {
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath: join(dir, "does-not-exist.jsonl"),
       discovered: [proc()],
     });
@@ -84,44 +81,26 @@ describe("conversationBusy", () => {
     utimesSync(jsonlPath, old, old); // ensure only the argv signal fires
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath,
       discovered: [proc({ conversationId: CONV })],
-      platform: "linux",
     });
     expect(r.busy).toBe(true);
     expect(r.detectedBy).toContain("process_argv");
     expect(r.likelyOwner).toBe("external");
   });
 
-  it("reports busy via process_cwd on POSIX when a process runs in the project dir", () => {
+  it("is not busy when only an unrelated process shares the project dir", () => {
+    // Regression: any claude in the same folder (a terminal, this very session)
+    // used to 409 every old conversation in that folder via a cwd match.
     const old = new Date(Date.now() - (RESUME_BUSY_WINDOW_MS + 60_000));
     utimesSync(jsonlPath, old, old);
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath,
-      // A different conversation, but same project dir (launched without --resume).
       discovered: [proc({ projectPath: `${PROJECT}/`, conversationId: "other-conv" })],
-      platform: "linux",
     });
-    expect(r.busy).toBe(true);
-    expect(r.detectedBy).toEqual(["process_cwd"]);
-    expect(r.likelyOwner).toBe("external");
-  });
-
-  it("skips the process_cwd signal on win32 (cwd unavailable)", () => {
-    const old = new Date(Date.now() - (RESUME_BUSY_WINDOW_MS + 60_000));
-    utimesSync(jsonlPath, old, old);
-    const r = conversationBusy({
-      conversationId: CONV,
-      projectPath: PROJECT,
-      jsonlPath,
-      discovered: [proc({ projectPath: PROJECT, conversationId: "other-conv" })],
-      platform: "win32",
-    });
-    expect(r.detectedBy).not.toContain("process_cwd");
     expect(r.busy).toBe(false);
+    expect(r.detectedBy).toEqual([]);
   });
 
   it("honors an explicit windowMs override", () => {
@@ -129,15 +108,11 @@ describe("conversationBusy", () => {
     const old = new Date(Date.now() - ageMs);
     utimesSync(jsonlPath, old, old);
     // Default window: too old → not busy.
-    expect(
-      conversationBusy({ conversationId: CONV, projectPath: PROJECT, jsonlPath, discovered: [] })
-        .busy,
-    ).toBe(false);
+    expect(conversationBusy({ conversationId: CONV, jsonlPath, discovered: [] }).busy).toBe(false);
     // Wider override that includes this age → busy.
     expect(
       conversationBusy({
         conversationId: CONV,
-        projectPath: PROJECT,
         jsonlPath,
         discovered: [],
         windowMs: ageMs + 60_000,
@@ -166,7 +141,6 @@ describe("conversationBusy — self-echo attribution", () => {
   it("does NOT report busy when the recent write predates our own PTY ending", () => {
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath,
       discovered: [],
       selfPtyEndedAt: Date.now(),
@@ -181,7 +155,6 @@ describe("conversationBusy — self-echo attribution", () => {
     // Our PTY ended well before the file's current mtime.
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath,
       discovered: [],
       selfPtyEndedAt: Date.now() - 60_000,
@@ -193,7 +166,6 @@ describe("conversationBusy — self-echo attribution", () => {
   it("still reports busy on a process match even when the write is our own echo", () => {
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath,
       discovered: [proc({ conversationId: CONV })],
       selfPtyEndedAt: Date.now(),
@@ -207,7 +179,6 @@ describe("conversationBusy — self-echo attribution", () => {
     // File mtime is 'now'; our PTY was seen ending 2s ago — inside the skew.
     const r = conversationBusy({
       conversationId: CONV,
-      projectPath: PROJECT,
       jsonlPath,
       discovered: [],
       selfPtyEndedAt: Date.now() - 2_000,
