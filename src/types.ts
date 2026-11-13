@@ -126,6 +126,8 @@ export interface ManagedSession {
   firstMessageAt?: Date;
   lastMessageText?: string;
   lastMessageAt?: Date;
+  /** Who wrote `lastMessageText`; set from the same transcript line. */
+  lastMessageRole?: "user" | "assistant";
   lastActivityAt?: Date;
   /**
    * How `status` was derived, and when (C3). Confidence is derived from the
@@ -652,6 +654,11 @@ export interface SessionResponse {
   firstMessageAt?: string;
   lastMessageText?: string;
   lastMessageAt?: string;
+  /**
+   * Who wrote `lastMessageText`. Set on live (managed) rows only, refreshed from
+   * transcript lines as they arrive. Additive; older clients ignore it.
+   */
+  lastMessageRole?: "user" | "assistant";
   lastActivityAt?: string;
   filePath?: string;
   resumedFromConversationId?: string;

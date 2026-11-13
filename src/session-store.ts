@@ -440,6 +440,7 @@ function managedToResponse(
     ...(s.firstMessageAt != null && { firstMessageAt: s.firstMessageAt.toISOString() }),
     ...(s.lastMessageText != null && { lastMessageText: s.lastMessageText }),
     ...(s.lastMessageAt != null && { lastMessageAt: s.lastMessageAt.toISOString() }),
+    ...(s.lastMessageRole != null && { lastMessageRole: s.lastMessageRole }),
     ...(s.lastActivityAt != null && { lastActivityAt: s.lastActivityAt.toISOString() }),
     // C3: how the status was derived, and how far to trust it. Confidence is
     // derived from the source rather than stored, so the two cannot disagree.
