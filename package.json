@@ -100,7 +100,7 @@
     "@modelcontextprotocol/sdk": "1.32.2",
     "@temporalio/client": "^1.18.1",
     "@threadbase-sh/agent-types": "^1.0.0",
-    "@threadbase-sh/scanner": "^0.24.1",
+    "@threadbase-sh/scanner": "^0.24.4",
     "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
