@@ -112,6 +112,24 @@ function spawnArgs(): string[] {
   return calls[calls.length - 1][1] as string[];
 }
 
+function bootFixture(name: string): string {
+  return JSON.parse(
+    readFileSync(join(__dirname, "fixtures", "providers", "codex-cli", "0.168.0", name), "utf8"),
+  ).output;
+}
+
+// Render a raw capture the way the runner does, so the screen helpers see lines.
+async function renderLines(raw: string): Promise<string[]> {
+  const { Terminal } = await import("@xterm/headless");
+  const term = new Terminal({ cols: 120, rows: 40, allowProposedApi: true });
+  await new Promise<void>((resolve) => term.write(raw, resolve));
+  const buf = term.buffer.active;
+  return Array.from(
+    { length: buf.length },
+    (_, i) => buf.getLine(i)?.translateToString(true) ?? "",
+  );
+}
+
 describe("CodexPtyRunner — screen helpers", () => {
   it("blocks composer during Starting / MCP boot / gates, not after incomplete", () => {
     expect(codexScreenBlocksComposer(["› ", "gpt · Starting"])).toBe(true);
@@ -159,6 +177,33 @@ describe("CodexPtyRunner — screen helpers", () => {
         "first line of a longer prompt\nsecond",
       ),
     ).toBe(true);
+  });
+
+  it("blocks the composer while the header shows a bare `loading` line (captured 0.168.0)", async () => {
+    const loading = await renderLines(bootFixture("silent-boot-loading.json"));
+    // Positive control: this paint has a compose box and no busy word anywhere,
+    // which is exactly why nothing else on the screen blocks it.
+    expect(loading.some((l) => l.startsWith("›"))).toBe(true);
+    expect(loading.join("\n")).not.toMatch(/Starting|Working|MCP/);
+    expect(codexScreenBlocksComposer(loading)).toBe(true);
+    expect(codexScreenLooksIdle(loading)).toBe(false);
+  });
+
+  it("does not block on the finished boot screen, nor on `loading` in a reply (captured 0.168.0)", async () => {
+    const ready = await renderLines(bootFixture("silent-boot-ready.json"));
+    expect(codexScreenBlocksComposer(ready)).toBe(false);
+    expect(codexScreenLooksIdle(ready)).toBe(true);
+    expect(
+      codexScreenBlocksComposer([
+        "  >_ OpenAI Codex (v0.168.0)",
+        "     ~/proj",
+        "",
+        "• loading",
+        "› ",
+      ]),
+    ).toBe(false);
+    // `loading` with no header above it is just text.
+    expect(codexScreenBlocksComposer(["loading", "› "])).toBe(false);
   });
 
   // #539: `\b` matches at a path separator, so a cwd segment named Working or
@@ -632,16 +677,43 @@ describe("CodexPtyRunner — ready fallbacks", () => {
     }
   });
 
-  it("marks ready via the flat 8s fallback when the PTY never produces output", async () => {
+  it("does NOT settle at 8s on a boot whose header still says `loading`, then settles once it paints", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runner, ready } = gateRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+
+      proc._emit("data", bootFixture("silent-boot-loading.json"));
+      await vi.advanceTimersByTimeAsync(0);
+      // The extra 50 ms lets the fallback's async screen read finish.
+      await vi.advanceTimersByTimeAsync(8_050);
+      expect(ready).toHaveLength(0);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      proc._emit("data", bootFixture("silent-boot-ready.json"));
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(8_050);
+      expect(ready).toHaveLength(1);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds a silent boot past 8s and settles it at the 60s cap", async () => {
     vi.useFakeTimers();
     try {
       const { runner, ready } = gateRunner();
       const session = await spawnFresh(runner);
 
-      await vi.advanceTimersByTimeAsync(7_999);
+      await vi.advanceTimersByTimeAsync(8_000);
       expect(ready).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(48_000); // 56s
+      expect(ready).toHaveLength(0);
+      expect(runner.getSession(session.id)?.status).toBe("running");
 
-      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(8_000); // 64s
       expect(ready).toHaveLength(1);
       expect(runner.getSession(session.id)?.status).toBe("waiting_input");
     } finally {

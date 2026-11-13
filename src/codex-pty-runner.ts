@@ -79,6 +79,12 @@ const QUIET_DETECT_MS = 500;
 // re-arm so a slow MCP boot cannot be mistaken for Ready.
 const CODEX_READY_FALLBACK_MS = 8_000;
 
+// A boot with no PTY output at all is held, not settled, at the flat fallback:
+// a loaded host can leave Codex unpainted for 20 s+, and settling then flushes
+// the first prompt into a TUI that is not up yet (it lands as cooked-mode echo
+// and the Enter is not a submit). Past this cap from spawn it settles as before.
+const CODEX_SILENT_BOOT_CAP_MS = 60_000;
+
 const SUBMIT_BYTES = "\r";
 
 // Delay between the input write and the submit \r, and the PTY-quiet window
@@ -384,10 +390,13 @@ export class CodexPtyRunner implements SessionRunner {
     const session = this.sessions.get(sessionId);
     if (session?.status !== "running" || !this.pendingReady.has(sessionId)) return;
 
-    // No PTY output at all — nothing busy to inspect; settle so start() can
-    // resolve and queued input is not held forever (same role as Claude's
-    // flat fallback on a silent boot).
+    // No PTY output at all — nothing to inspect. Hold until the cap, then
+    // settle so start() can resolve and queued input is not held forever.
     if (session.outputBuffer.length === 0) {
+      if (Date.now() - session.startedAt.getTime() < CODEX_SILENT_BOOT_CAP_MS) {
+        this.armReadyFallback(sessionId);
+        return;
+      }
       this.markReady(sessionId, session, "timeout-fallback", "fallback:timeout");
       return;
     }
