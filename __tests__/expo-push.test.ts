@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
 import { EXPO_PUSH_ENDPOINT, ExpoPushSender } from "../src/services/push/expoPushSender";
+import type { AttentionKind } from "../src/services/push/notificationCopy";
 import {
   TURN_DONE_SETTLE_MS,
   WaitingInputNotifier,
+  waitingInputMessage,
 } from "../src/services/push/waitingInputNotifier";
 import type { ManagedSession } from "../src/types";
 
@@ -242,7 +244,7 @@ describe("WaitingInputNotifier", () => {
       // iOS is silent without a sound; the rest group and replace per session.
       sound: "default",
       priority: "high",
-      threadId: "sess-1",
+      threadId: "updates",
       collapseId: "sess-1",
       tag: "sess-1",
     });
@@ -353,6 +355,65 @@ describe("WaitingInputNotifier", () => {
       subtitle: "Codex hit its usage limit",
       body: "Resets at 3:45 PM. Paused until then.",
       data: { sessionId: "sess-1", kind: "limited" },
+    });
+  });
+
+  // iOS stacks pushes that share a thread id. One id per session made every
+  // session a stack of one; two ids make "needs you" a stack of its own, apart
+  // from the finished banners. The ids are literals on purpose: a test that read
+  // them from the code's own constant would move with a mutation of it.
+  describe("iOS thread", () => {
+    const messageFor = (
+      kind: AttentionKind,
+      s: ManagedSession = session(),
+      features: ReadonlySet<string> = new Set(),
+    ) => {
+      const content = waitingInputMessage(s, kind);
+      if (typeof content !== "function") throw new Error("expected a per-token message");
+      return content("en", "ios", features);
+    };
+
+    it.each(["permission", "question"] as const)("puts %s in the needs-you thread", (kind) => {
+      expect(messageFor(kind).threadId).toBe("needs-you");
+    });
+
+    it.each(["turn_done", "failed", "limited", "idle"] as const)(
+      "puts %s in the updates thread",
+      (kind) => {
+        expect(messageFor(kind).threadId).toBe("updates");
+      },
+    );
+
+    it("gives two sessions of one kind one thread but their own collapse id", () => {
+      const a = messageFor("turn_done", session({ id: "sess-a" }));
+      const b = messageFor("turn_done", session({ id: "sess-b" }));
+
+      expect(a.threadId).toBe("updates");
+      expect(b.threadId).toBe("updates");
+      expect(a.collapseId).toBe("sess-a");
+      expect(b.collapseId).toBe("sess-b");
+      expect(a.tag).toBe("sess-a");
+    });
+
+    it("sets the thread for an app without attention-v1, which still gets no channel", () => {
+      const old = messageFor("permission");
+      expect(old.threadId).toBe("needs-you");
+      expect(old).not.toHaveProperty("channelId");
+
+      // Positive control: the same call for an app that has the feature does
+      // set a channel, so the absence above is the gate and not a typo.
+      const current = messageFor("permission", session(), new Set(["attention-v1"]));
+      expect(current.channelId).toBe("needs-you");
+      expect(current.threadId).toBe("needs-you");
+    });
+
+    it("sends the same thread through the real send path", async () => {
+      const { notifier: n, calls } = notifier();
+
+      await n.onPrompt(session(), "permission", true);
+      await runTurn(n, session({ id: "sess-2" }));
+
+      expect(calls.map((c) => bodyOf(c)[0].threadId)).toEqual(["needs-you", "updates"]);
     });
   });
 

@@ -139,22 +139,25 @@ export function waitingInputMessage(
   answers?: GateAnswers,
 ): ExpoPushContent {
   return (locale, platform, features) => {
+    const needsYou = kind === "permission" || kind === "question";
     const base: ExpoPushMessage = {
       title: attentionTitle(kind, session.projectName, session.branch),
       ...attentionText(kind, session.provider, locale, platform, facts),
       data: { sessionId: session.id, kind },
       sound: "default",
       priority: "high",
-      // One stack per session, and the newest state replaces the older banner:
-      // "needs your go-ahead" is stale the moment the turn finishes.
-      threadId: session.id,
+      // iOS stacks pushes that share a thread: two stacks, not one per session.
+      // `needs-you` (a gate or a question) is kept apart so a blocked agent is
+      // never buried under finished banners; everything else is `updates`.
+      threadId: needsYou ? "needs-you" : "updates",
+      // The newest state still replaces the older banner of the same session,
+      // across threads: "needs your go-ahead" is stale the moment the turn ends.
       collapseId: session.id,
       tag: session.id,
     };
     // Everything below names something the app must have set up (a channel,
     // an action category), so an app that has not said it did gets none of it.
     if (!features.has(ATTENTION_V1)) return base;
-    const needsYou = kind === "permission" || kind === "question";
     return {
       ...base,
       channelId: needsYou ? "needs-you" : "updates",

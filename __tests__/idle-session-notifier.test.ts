@@ -226,7 +226,7 @@ describe("IdleSessionNotifier", () => {
       data: { sessionId: "sess-1", kind: "idle" },
       sound: "default",
       priority: "high",
-      threadId: "sess-1",
+      threadId: "updates",
       collapseId: "sess-1",
       tag: "sess-1",
     });

@@ -86,7 +86,7 @@ This is a privacy decision, not a formatting one.
   "data": { "sessionId": "...", "kind": "turn_done", "serverId": "..." },   // serverId omitted for tokens registered without one
   "sound": "default",
   "priority": "high",
-  "threadId": "<sessionId>",
+  "threadId": "needs-you" | "updates",
   "collapseId": "<sessionId>",
   "tag": "<sessionId>"
 }
@@ -95,7 +95,9 @@ This is a privacy decision, not a formatting one.
 That is the whole payload for an app registered without notification features; see below for what `attention-v1` adds.
 `sound` is what makes the push audible on iOS at all; Expo plays nothing when it is omitted, which it was until this change.
 `priority: "high"` delivers immediately on Android rather than in a batch.
-`threadId` stacks one session's pushes together on iOS, and `collapseId`/`tag` let the newer push replace the older banner, so a "needs your go-ahead" that has been answered gives way to "finished".
+`threadId` is one of two iOS stacks: `needs-you` for `permission` and `question`, `updates` for `turn_done`, `failed`, `limited` and `idle`. It is the same predicate as the Android `channelId`, and it is kept apart so a blocked agent is not buried under finished banners. It is iOS only and ungated, so a token without `attention-v1` gets it too.
+`collapseId`/`tag` stay per session and let the newer push replace the older banner, even across the two threads, so a "needs your go-ahead" that has been answered gives way to "finished", which lands in `updates`.
+A banner already delivered keeps the thread it had; only new pushes group.
 `data.kind` (`turn_done`, `permission`, `question`, `failed`, `limited`, and `idle` when `IDLE_NOTIFY_ENABLED` is on) is additive; mobile routes on `sessionId` and ignores it today.
 
 Beyond which session and which agent, the copy carries only metadata the streamer measured or classified itself (`AttentionFacts`): the turn's length in minutes, what kind of action a gate asks for ("run a command", "edit a file" — our words, never the command), how many options a single question offers, the session's `failureCode`, and a usage limit's reset time.

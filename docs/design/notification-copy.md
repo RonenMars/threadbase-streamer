@@ -74,7 +74,7 @@ Research across agent tools, their issue trackers and platform guidelines. Every
 | Body | The detail: Tier 0 metadata, or Tier 1 content | What to do about it. Key point in the first 40 chars. |
 
 Keep the emoji marks: they are what makes a stack scannable, in every locale.
-Keep the current `threadId` / `collapseId` / `tag` per session: a newer state replacing the older banner is exactly the "don't notify twice" rule.
+Keep `collapseId` / `tag` per session: a newer state replacing the older banner is exactly the "don't notify twice" rule. `threadId` is not per session: it is `needs-you` or `updates`, so the lock screen stacks by urgency.
 
 ## Per kind
 
