@@ -173,6 +173,7 @@ export class SessionStore {
           d.conversationId,
           this.lastActivityFor(d.conversationId),
           this.nameFor(d.conversationId),
+          this.projectIdFor,
         ),
       );
       seenIds.add(d.conversationId);
@@ -203,6 +204,7 @@ export class SessionStore {
           sessionId,
           this.lastActivityFor(sessionId),
           this.nameFor(sessionId),
+          this.projectIdFor,
         );
       }
     }
@@ -467,7 +469,9 @@ function discoveredToResponse(
   conversationId: string,
   lastActivityAt: Date | undefined,
   sessionName: string | undefined,
+  projectIdFor: (projectPath: string) => string | undefined,
 ): SessionResponse {
+  const projectId = projectIdFor(d.projectPath);
   return {
     id: conversationId,
     conversationId,
@@ -506,6 +510,7 @@ function discoveredToResponse(
     ptyAttached: false,
     pid: d.pid,
     ...(lastActivityAt && { lastActivityAt: lastActivityAt.toISOString() }),
+    ...(projectId != null && { projectId }),
     ...(sessionName && { sessionName }),
     ...(d.turnState && {
       externalTurn: {
