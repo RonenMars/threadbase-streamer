@@ -92,7 +92,13 @@ describe("managed session projectId", () => {
     if (!internals.projectsRepo || !internals.managedSessionsRepo) {
       throw new Error("test server opened without projectsRepo / managedSessionsRepo");
     }
-    return { server, port: server.port, internals };
+    return {
+      server,
+      port: server.port,
+      internals,
+      projectsRepo: internals.projectsRepo,
+      managedSessionsRepo: internals.managedSessionsRepo,
+    };
   }
 
   async function listById(port: number): Promise<Map<string, Record<string, unknown>>> {
@@ -171,6 +177,58 @@ describe("managed session projectId", () => {
     }
   }, 30_000);
 
+  // An external session is a discovered process, built by a different function
+  // than the managed ones above; it must resolve the same way.
+  it("external sessions report their path's project, and agree with managed ones", async () => {
+    const { server, internals } = await makeServer();
+    try {
+      const repo = internals.projectsRepo;
+      if (!repo) throw new Error("no projectsRepo");
+      const project = repo.upsertProjectByPath(projectDir);
+      const proc = (pid: number, conversationId: string, projectPath: string) => ({
+        pid,
+        provider: "claude-code" as const,
+        projectPath,
+        projectName: "proj",
+        branch: "main",
+        conversationId,
+        startedAt: new Date("2026-11-13T10:00:00.000Z"),
+      });
+      internals.sessionStore.addManaged(mkSession("managed", projectDir));
+      (
+        internals.sessionStore as unknown as {
+          setDiscovered(p: ReturnType<typeof proc>[]): void;
+        }
+      ).setDiscovered([
+        proc(9001, "ext-hit", projectDir),
+        // Same folder spelled with a trailing slash: canonicalization must match it.
+        proc(9002, "ext-slashed", `${projectDir}/`),
+        // A folder with no project row.
+        proc(9003, "ext-orphan", otherDir),
+      ]);
+      const before = repo.listProjects().length;
+
+      // The store directly: the list handler re-runs discovery and would
+      // replace the processes set above.
+      const store = internals.sessionStore as unknown as {
+        list(attached: Set<string>): Record<string, unknown>[];
+        get(id: string, attached: Set<string>): Record<string, unknown> | null;
+      };
+      const rows = new Map(store.list(new Set()).map((r) => [r.id as string, r]));
+      expect(rows.get("ext-hit")?.ownership).toBe("external");
+      expect(rows.get("ext-hit")?.projectId).toBe(project.id);
+      expect(rows.get("ext-slashed")?.projectId).toBe(project.id);
+      expect(rows.get("ext-hit")?.projectId).toBe(rows.get("managed")?.projectId);
+      expect(rows.get("ext-orphan")).toBeDefined();
+      expect(rows.get("ext-orphan")?.projectId).toBeUndefined();
+      expect(store.get("ext-hit", new Set())?.projectId).toBe(project.id);
+      expect(repo.listProjects().length).toBe(before);
+      expect(repo.getProjectByPath(otherDir)).toBeNull();
+    } finally {
+      await server.close();
+    }
+  }, 30_000);
+
   it("linking a session to its project persists project_id, so a restart rehydrates it", async () => {
     const { server, internals } = await makeServer();
     try {
@@ -195,6 +253,39 @@ describe("managed session projectId", () => {
       await server.close();
     }
   }, 30_000);
+
+  it("boot backfills project_id on rows that predate the fix", async () => {
+    const first = await makeServer();
+    let project: { id: string };
+    try {
+      project = first.projectsRepo.upsertProjectByPath(projectDir);
+      // Rows as an older streamer left them: project_id null.
+      for (const [id, path] of [
+        ["old-hit", projectDir],
+        ["old-miss", otherDir],
+      ] as const) {
+        first.managedSessionsRepo.recordSpawn({
+          session: mkSession(id, path),
+          pid: null,
+          cmdline: "claude",
+          streamerInstanceId: "test",
+        });
+      }
+    } finally {
+      await first.server.close();
+    }
+
+    const second = await makeServer();
+    try {
+      const repo = second.managedSessionsRepo;
+      expect(repo.get("old-hit")?.project_id).toBe(project.id);
+      expect(repo.get("old-miss")?.project_id).toBeNull();
+      // A backfill resolves; it never creates a project.
+      expect(second.projectsRepo.getProjectByPath(otherDir)).toBeNull();
+    } finally {
+      await second.server.close();
+    }
+  }, 60_000);
 
   it("resume enrichment persists project_id", async () => {
     const { server, internals } = await makeServer();
@@ -250,5 +341,44 @@ describe("ManagedSessionsRepository.recordProjectId", () => {
 
     expect(repo.get("s1")?.project_id).toBe("proj-1");
     expect(rowToStubSession(repo.get("s1")!).projectId).toBe("proj-1");
+  });
+});
+
+describe("ManagedSessionsRepository.backfillProjectIds", () => {
+  let dir: string;
+  let store: RuntimeStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "tb-msp-backfill-"));
+    store = RuntimeStore.open(join(dir, "runtime.db"));
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function spawn(repo: ManagedSessionsRepository, id: string, path: string, projectId?: string) {
+    repo.recordSpawn({
+      session: mkSession(id, path, projectId ? { projectId } : {}),
+      pid: 1,
+      cmdline: "claude",
+      streamerInstanceId: "test",
+    });
+  }
+
+  it("fills a null project_id from the lookup, leaves a miss null, never overwrites", () => {
+    const repo = new ManagedSessionsRepository(store.getDatabase());
+    spawn(repo, "hit", "/repo/a");
+    spawn(repo, "miss", "/repo/none");
+    spawn(repo, "set", "/repo/a", "already");
+    const lookup = (path: string) => (path === "/repo/a" ? "proj-a" : undefined);
+
+    expect(repo.backfillProjectIds(lookup)).toBe(1);
+    expect(repo.get("hit")?.project_id).toBe("proj-a");
+    expect(repo.get("miss")?.project_id).toBeNull();
+    expect(repo.get("set")?.project_id).toBe("already");
+    // Idempotent: a second pass has nothing left to fill.
+    expect(repo.backfillProjectIds(lookup)).toBe(0);
   });
 });

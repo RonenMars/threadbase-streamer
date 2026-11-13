@@ -1933,6 +1933,25 @@ export class StreamerServer {
               err,
             });
           }
+          // Rows an older streamer left with project_id null. Before rehydrate, so
+          // a recovered session carries it. Resolves only; never creates a project.
+          try {
+            const projects = this.projectsRepo;
+            const filled = this.managedSessionsRepo?.backfillProjectIds(
+              (projectPath) => projects.getProjectByPath(projectPath)?.id,
+            );
+            if (filled) {
+              this.log.info(`Backfilled project_id on ${filled} managed session row(s)`, {
+                filled,
+                event: "runtime.project_id_backfill",
+              });
+            }
+          } catch (err) {
+            this.log.warn("[registry] project_id backfill failed", {
+              event: "runtime.project_id_backfill_failed",
+              err,
+            });
+          }
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
           this.pushRepo = new PushRepository(db);
           this.stopPushTokenRetention = startPushTokenRetention(this.pushRepo);
