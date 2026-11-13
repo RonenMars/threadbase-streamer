@@ -359,6 +359,25 @@ export function codexScreenLooksIdle(lines: string[]): boolean {
   return lines.some((l) => /^\s*[›>]\s/.test(l) || l.includes("›"));
 }
 
+/**
+ * True when the live compose box still holds `text`: Codex took the submit
+ * `\r` as a newline, so the prompt is sitting there unsent. The compose box is
+ * the last `›` line on screen; earlier `›` lines are the history echo of past
+ * prompts, and a submitted prompt leaves the placeholder behind. Matched on the
+ * first line's opening, since a long prompt wraps.
+ */
+export function codexComposeHoldsText(lines: string[], text: string): boolean {
+  const probe = text.split("\n")[0].trim().slice(0, 20);
+  if (!probe) return false;
+  const compose = [...lines].reverse().find((l) => /^\s*[›>]\s/.test(l));
+  return (
+    compose
+      ?.replace(/^\s*[›>]\s/, "")
+      .trimStart()
+      .startsWith(probe) ?? false
+  );
+}
+
 // Build the question card for a gate, broadcast over the existing `permission`
 // WS transport (mobile already renders these as tappable cards). Real options
 // keep their literal on-screen digits; the synthetic "remember" variants

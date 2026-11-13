@@ -28,6 +28,7 @@ import {
   CODEX_PROMPT_READY_TEXT,
   CODEX_TRUST_GATE_REGEX,
   type CodexBlockingPrompt,
+  codexComposeHoldsText,
   codexScreenBlocksComposer,
   codexScreenLooksIdle,
   codexScreenShowsReady,
@@ -80,11 +81,16 @@ const CODEX_READY_FALLBACK_MS = 8_000;
 
 const SUBMIT_BYTES = "\r";
 
-// Delay between the input write and the submit \r. Same value as Claude's
-// SUBMIT_DELAY_MS (pty-manager.ts) — no bracketed-paste wrap needed for
-// Codex (Phase 0: plain keystrokes are accepted directly into the compose
-// box), but we still wait for PTY quiescence before Enter (see writeSubmit).
-const CODEX_SUBMIT_DELAY_MS = 16;
+// Delay between the input write and the submit \r, and the PTY-quiet window
+// writeSubmit waits for first. No bracketed-paste wrap is needed for Codex
+// (Phase 0: plain keystrokes are accepted directly into the compose box), but
+// Codex reads text and an Enter that land close together as one paste and
+// turns that Enter into a compose newline. Measured on codex-cli 0.168.0: a
+// gap under ~5ms always loses the Enter, 16ms passed 14 of 14 idle and loaded
+// runs but sat one scheduling hiccup from the cutoff, and a stuck session lost
+// it at 16ms twice. 100ms is well clear; the retry in retrySwallowedEnter
+// covers what a delay cannot.
+const CODEX_SUBMIT_DELAY_MS = 100;
 
 // Cap on how long writeSubmit will wait for the PTY to go quiet before
 // forcing \r — mirrors pty-manager.ts SUBMIT_MAX_WAIT_MS.
@@ -152,6 +158,9 @@ export class CodexPtyRunner implements SessionRunner {
   private readyFallbackTimers = new Map<string, NodeJS.Timeout>();
   // After a user submit: if Working never appears, recover from stuck `running`.
   private submitWatchTimers = new Map<string, NodeJS.Timeout>();
+  // The text a typed submit sent, kept until its stale watch has looked at the
+  // compose box once (retrySwallowedEnter). Never set for sendKeys.
+  private submitText = new Map<string, string>();
   // Wall-clock of the last PTY chunk per session — writeSubmit waits until
   // this hasn't advanced for CODEX_SUBMIT_DELAY_MS before writing \r.
   private lastChunkAt = new Map<string, number>();
@@ -432,6 +441,7 @@ export class CodexPtyRunner implements SessionRunner {
       // submit shows the title spinner in time, or late enough for the late start.
       this.turnBusy.delete(sessionId);
       this.awaitingStart.set(sessionId, Date.now());
+      this.submitText.delete(sessionId);
       this.armSubmitWatch(sessionId);
     }
     const gate = this.openGate.get(sessionId);
@@ -602,6 +612,7 @@ export class CodexPtyRunner implements SessionRunner {
         },
       );
       current.process.write(SUBMIT_BYTES);
+      this.submitText.set(sessionId, input);
       this.armSubmitWatch(sessionId);
     };
     setTimeout(trySubmit, CODEX_SUBMIT_DELAY_MS);
@@ -621,6 +632,31 @@ export class CodexPtyRunner implements SessionRunner {
     this.submitWatchTimers.set(sessionId, timer);
   }
 
+  // Codex took the \r as a compose newline, so the prompt sits in the compose
+  // box and no turn started. One more Enter submits it. Once per submit: an
+  // Enter that is absorbed twice still ends in submit-stale. The stale clock
+  // restarts so the repaint the Enter causes cannot settle the turn first.
+  private retrySwallowedEnter(
+    sessionId: string,
+    session: InternalSession,
+    lines: string[],
+  ): boolean {
+    const sent = this.submitText.get(sessionId);
+    this.submitText.delete(sessionId);
+    if (sent === undefined || !codexComposeHoldsText(lines, sent)) return false;
+    this.log.warn(
+      `[codex.submit_retry] ${sessionId.slice(0, 8)} Enter left the prompt in compose`,
+      {
+        event: "codex.submit_retry",
+        sessionId,
+      },
+    );
+    session.statusUpdatedAt = new Date();
+    session.process.write(SUBMIT_BYTES);
+    this.armSubmitWatch(sessionId);
+    return true;
+  }
+
   private async trySubmitStaleRecovery(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session?.status !== "running") return;
@@ -635,6 +671,7 @@ export class CodexPtyRunner implements SessionRunner {
         this.armSubmitWatch(sessionId);
         return;
       }
+      if (this.retrySwallowedEnter(sessionId, session, lines)) return;
       this.log.info(`[codex.submit_stale] ${sessionId.slice(0, 8)} recovering`, {
         event: "codex.submit_stale",
         sessionId,
@@ -769,6 +806,7 @@ export class CodexPtyRunner implements SessionRunner {
     const submitWatch = this.submitWatchTimers.get(sessionId);
     if (submitWatch) clearTimeout(submitWatch);
     this.submitWatchTimers.delete(sessionId);
+    this.submitText.delete(sessionId);
     this.lastChunkAt.delete(sessionId);
     if (this.openGate.delete(sessionId)) {
       this.onPermissionChange?.(sessionId, null);
@@ -882,6 +920,7 @@ export class CodexPtyRunner implements SessionRunner {
       clearTimeout(timer);
     }
     this.submitWatchTimers.clear();
+    this.submitText.clear();
     this.lastChunkAt.clear();
     this.turnBusy.clear();
     this.titleBusy.clear();
@@ -1165,6 +1204,7 @@ export class CodexPtyRunner implements SessionRunner {
         // Submit never started a turn (Enter absorbed, no Ready on screen,
         // etc.) — recover so the session is not stuck "running" forever.
         // Does not require Ready: fallback boots often never paint it.
+        if (this.retrySwallowedEnter(sessionId, session, lines)) return;
         this.markReady(sessionId, session, "quiet-fallback", "submit-stale");
       }
     }
