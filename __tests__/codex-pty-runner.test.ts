@@ -114,7 +114,7 @@ function spawnArgs(): string[] {
 
 function bootFixture(name: string): string {
   return JSON.parse(
-    readFileSync(join(__dirname, "fixtures", "providers", "codex-cli", "0.168.0", name), "utf8"),
+    readFileSync(join(__dirname, "fixtures", "turn-signals", `codex-0.168.0-${name}`), "utf8"),
   ).output;
 }
 
