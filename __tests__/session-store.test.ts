@@ -122,6 +122,25 @@ describe("SessionStore", () => {
       expect(store.get(UUID_B, noPty)?.elapsedMs).toBe(60_000);
     });
 
+    // Discovery sees a process, not its transcript, so the name (a `custom-title`
+    // line the scanner resolves into the cache) has to come from the lookup;
+    // without it mobile falls back to "<project> · <branch>".
+    it("serves a discovered session's name from the lookup", () => {
+      store = new SessionStore(undefined, undefined, undefined, (id) =>
+        id === UUID_B ? "trees-research" : undefined,
+      );
+      store.setDiscovered([makeDiscoveredProcess()]);
+
+      expect(store.get(UUID_B, noPty)?.sessionName).toBe("trees-research");
+      expect(store.list(noPty)[0]?.sessionName).toBe("trees-research");
+    });
+
+    it("omits sessionName when the lookup has no name", () => {
+      store.setDiscovered([makeDiscoveredProcess()]);
+
+      expect(store.get(UUID_B, noPty)).not.toHaveProperty("sessionName");
+    });
+
     it("omits lastActivityAt with no cache row, and elapsedMs stops counting", async () => {
       store.setDiscovered([makeDiscoveredProcess()]);
       const first = store.get(UUID_B, noPty);
