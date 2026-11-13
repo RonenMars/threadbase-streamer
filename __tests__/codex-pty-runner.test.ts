@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { CodexPtyRunner } from "../src/codex-pty-runner";
 import {
+  codexComposeHoldsText,
   codexScreenBlocksComposer,
   codexScreenLooksIdle,
   codexScreenShowsReady,
@@ -132,6 +133,32 @@ describe("CodexPtyRunner — screen helpers", () => {
       true,
     );
     expect(codexScreenLooksIdle(["gpt-5.6-sol default · ~/proj"])).toBe(false);
+  });
+
+  it("codexComposeHoldsText: only the live compose line (the last `›`) counts", () => {
+    const bar = "gpt · Ready · Wo…";
+    // Absorbed Enter: the prompt is still in the compose box.
+    expect(codexComposeHoldsText(["› Where's the file?", "", bar], "Where's the file?")).toBe(true);
+    // Submitted: the echo is history, the compose box is the placeholder again.
+    expect(
+      codexComposeHoldsText(
+        ["› Where's the file?", "• Working", "› Ask Codex to do anything", bar],
+        "Where's the file?",
+      ),
+    ).toBe(false);
+    // Some other draft, an empty prompt, no compose line at all.
+    expect(codexComposeHoldsText(["› something else", bar], "Where's the file?")).toBe(false);
+    // A draft that merely mentions the prompt is not the prompt.
+    expect(codexComposeHoldsText(["› a draft that mentions hello", bar], "hello")).toBe(false);
+    expect(codexComposeHoldsText(["› ", bar], "   ")).toBe(false);
+    expect(codexComposeHoldsText([bar], "hello")).toBe(false);
+    // A long or multi-line prompt is matched by its first line's opening.
+    expect(
+      codexComposeHoldsText(
+        ["› first line of a longer prom", bar],
+        "first line of a longer prompt\nsecond",
+      ),
+    ).toBe(true);
   });
 
   // #539: `\b` matches at a path separator, so a cwd segment named Working or
@@ -693,7 +720,7 @@ describe("CodexPtyRunner — mid-session Ready", () => {
 
       runner.sendInput(session.id, "Hi, scan the directory and look for bugs");
       expect(runner.getSession(session.id)?.status).toBe("running");
-      await vi.advanceTimersByTimeAsync(60); // \r + arm submit watch
+      await vi.advanceTimersByTimeAsync(110); // \r + arm submit watch
 
       // No Working, no Ready repaint, no further chunks — timer recovers.
       await vi.advanceTimersByTimeAsync(2_000);
@@ -796,8 +823,8 @@ describe("CodexPtyRunner — input queueing", () => {
       // First input's raw text lands immediately; its \r is deferred.
       expect(proc.write.mock.calls[0][0]).toBe("first");
 
-      // Timeline: 0=first, 16ms=\r(first), 32ms=second, 48ms=\r(second).
-      await vi.advanceTimersByTimeAsync(60);
+      // Timeline: 0=first, 100ms=\r(first), 200ms=second, 300ms=\r(second).
+      await vi.advanceTimersByTimeAsync(320);
 
       const writes = proc.write.mock.calls.map((c: any[]) => c[0]);
       expect(writes).toContain("first");
@@ -824,8 +851,137 @@ describe("CodexPtyRunner — input queueing", () => {
       expect(proc.write).toHaveBeenCalledWith("hello");
       expect(proc.write).not.toHaveBeenCalledWith("\r");
 
+      // Codex reads text and Enter arriving within ~5ms as one paste, and turns
+      // that Enter into a newline; 16ms was one scheduling hiccup from it.
       await vi.advanceTimersByTimeAsync(20);
+      expect(proc.write).not.toHaveBeenCalledWith("\r");
+
+      await vi.advanceTimersByTimeAsync(90);
       expect(proc.write).toHaveBeenCalledWith("\r");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("CodexPtyRunner — Enter absorbed as a compose newline", () => {
+  // The compose box still holds the prompt: Codex made the \r a newline.
+  const swallowed = (text: string) => `\x1b[2J\x1b[H\u203a ${text}\r\n\r\n${READY_STATUS_BAR}`;
+  const enters = (proc: any) => proc.write.mock.calls.filter((c: any[]) => c[0] === "\r").length;
+
+  it("sends one more Enter when the stale watch finds the prompt still in the compose box", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendInput(session.id, "Where's the file?");
+      proc._emit("data", swallowed("Where's the file?"));
+      await vi.advanceTimersByTimeAsync(2_200);
+
+      expect(enters(proc)).toBe(2);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      // Retried once only: if that Enter is absorbed too, recover as before.
+      await vi.advanceTimersByTimeAsync(2_200);
+      expect(enters(proc)).toBe(2);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries from the chunk-driven stale path too", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendInput(session.id, "Where's the file?");
+      await vi.advanceTimersByTimeAsync(2_050); // stale age reached, Enter at 100ms
+      proc._emit("data", swallowed("Where's the file?"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(enters(proc)).toBe(2);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+
+      // The repaint that Enter causes must not settle the turn before it starts.
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not carry a finished submit's text into a later key press", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendInput(session.id, "hello");
+      await vi.advanceTimersByTimeAsync(110);
+      proc._emit("data", "gpt-5.5 medium · /path · Working\r\n");
+      await vi.advanceTimersByTimeAsync(0);
+      proc._emit("data", `\x1b[2J\x1b[H${READY_STATUS_BAR}`);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+
+      runner.sendKeys(session.id, "hello");
+      proc._emit("data", swallowed("hello"));
+      await vi.advanceTimersByTimeAsync(2_200);
+
+      expect(enters(proc)).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry when the compose box is empty", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendInput(session.id, "hello");
+      proc._emit("data", swallowed("Ask Codex to do anything"));
+      await vi.advanceTimersByTimeAsync(2_200);
+
+      expect(enters(proc)).toBe(1);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never sends Enter for a key press that left text in the compose box", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = new CodexPtyRunner();
+      const session = await spawnFresh(runner);
+      const proc = getMockProc(runner, session.id);
+      proc._emit("data", READY_STATUS_BAR);
+      await vi.advanceTimersByTimeAsync(0);
+
+      runner.sendKeys(session.id, "hello");
+      proc._emit("data", swallowed("hello"));
+      await vi.advanceTimersByTimeAsync(2_200);
+
+      expect(enters(proc)).toBe(0);
+      expect(runner.getSession(session.id)?.status).toBe("waiting_input");
     } finally {
       vi.useRealTimers();
     }
