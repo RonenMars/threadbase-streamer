@@ -92,7 +92,13 @@ describe("managed session projectId", () => {
     if (!internals.projectsRepo || !internals.managedSessionsRepo) {
       throw new Error("test server opened without projectsRepo / managedSessionsRepo");
     }
-    return { server, port: server.port, internals };
+    return {
+      server,
+      port: server.port,
+      internals,
+      projectsRepo: internals.projectsRepo,
+      managedSessionsRepo: internals.managedSessionsRepo,
+    };
   }
 
   async function listById(port: number): Promise<Map<string, Record<string, unknown>>> {
@@ -248,6 +254,39 @@ describe("managed session projectId", () => {
     }
   }, 30_000);
 
+  it("boot backfills project_id on rows that predate the fix", async () => {
+    const first = await makeServer();
+    let project: { id: string };
+    try {
+      project = first.projectsRepo.upsertProjectByPath(projectDir);
+      // Rows as an older streamer left them: project_id null.
+      for (const [id, path] of [
+        ["old-hit", projectDir],
+        ["old-miss", otherDir],
+      ] as const) {
+        first.managedSessionsRepo.recordSpawn({
+          session: mkSession(id, path),
+          pid: null,
+          cmdline: "claude",
+          streamerInstanceId: "test",
+        });
+      }
+    } finally {
+      await first.server.close();
+    }
+
+    const second = await makeServer();
+    try {
+      const repo = second.managedSessionsRepo;
+      expect(repo.get("old-hit")?.project_id).toBe(project.id);
+      expect(repo.get("old-miss")?.project_id).toBeNull();
+      // A backfill resolves; it never creates a project.
+      expect(second.projectsRepo.getProjectByPath(otherDir)).toBeNull();
+    } finally {
+      await second.server.close();
+    }
+  }, 60_000);
+
   it("resume enrichment persists project_id", async () => {
     const { server, internals } = await makeServer();
     try {
@@ -302,5 +341,44 @@ describe("ManagedSessionsRepository.recordProjectId", () => {
 
     expect(repo.get("s1")?.project_id).toBe("proj-1");
     expect(rowToStubSession(repo.get("s1")!).projectId).toBe("proj-1");
+  });
+});
+
+describe("ManagedSessionsRepository.backfillProjectIds", () => {
+  let dir: string;
+  let store: RuntimeStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "tb-msp-backfill-"));
+    store = RuntimeStore.open(join(dir, "runtime.db"));
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function spawn(repo: ManagedSessionsRepository, id: string, path: string, projectId?: string) {
+    repo.recordSpawn({
+      session: mkSession(id, path, projectId ? { projectId } : {}),
+      pid: 1,
+      cmdline: "claude",
+      streamerInstanceId: "test",
+    });
+  }
+
+  it("fills a null project_id from the lookup, leaves a miss null, never overwrites", () => {
+    const repo = new ManagedSessionsRepository(store.getDatabase());
+    spawn(repo, "hit", "/repo/a");
+    spawn(repo, "miss", "/repo/none");
+    spawn(repo, "set", "/repo/a", "already");
+    const lookup = (path: string) => (path === "/repo/a" ? "proj-a" : undefined);
+
+    expect(repo.backfillProjectIds(lookup)).toBe(1);
+    expect(repo.get("hit")?.project_id).toBe("proj-a");
+    expect(repo.get("miss")?.project_id).toBeNull();
+    expect(repo.get("set")?.project_id).toBe("already");
+    // Idempotent: a second pass has nothing left to fill.
+    expect(repo.backfillProjectIds(lookup)).toBe(0);
   });
 });

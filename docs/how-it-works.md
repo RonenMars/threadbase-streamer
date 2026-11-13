@@ -74,7 +74,8 @@ src/
     projects/                              ensureProjectsForConversations, upsertProjectByPath
     conversations/                         conversationWatcher, refreshConversationCache, freshness check,
                                            isAgentConversation + pruneAgentConversations (agent-JSONL filtering)
-    sessions/                              Link sessions to projects, backfill projectId
+    sessions/                              Boot reconcile / rehydrate / auto-resume of managed sessions, resume busy probe,
+                                           process → session-id lookups (linking a session to its project: session-watchers.ts)
     cache/                                 cache_metadata key/value helpers
   db/
     config.ts                              Env var parsing (isDbEnabled, getDbConfig)

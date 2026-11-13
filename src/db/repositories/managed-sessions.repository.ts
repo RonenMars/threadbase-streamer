@@ -82,6 +82,7 @@ export class ManagedSessionsRepository {
   private updateStatusStmt: Database.Statement;
   private bindStmt: Database.Statement;
   private projectIdStmt: Database.Statement;
+  private nullProjectStmt: Database.Statement;
   private settingStmts: Record<"model" | "effort", Database.Statement>;
   private getStmt: Database.Statement;
   private listNonTerminalStmt: Database.Statement;
@@ -166,6 +167,9 @@ export class ManagedSessionsRepository {
 
     this.projectIdStmt = db.prepare(
       "UPDATE managed_sessions SET project_id = ? WHERE session_id = ?",
+    );
+    this.nullProjectStmt = db.prepare(
+      "SELECT session_id, project_path FROM managed_sessions WHERE project_id IS NULL",
     );
 
     this.settingStmts = {
@@ -335,6 +339,23 @@ export class ManagedSessionsRepository {
    */
   recordProjectId(sessionId: string, projectId: string): void {
     this.projectIdStmt.run(projectId, sessionId);
+  }
+
+  /**
+   * Fills project_id on rows an older streamer left null, from a path lookup
+   * (the projects table). A miss stays null and an existing id is never
+   * touched. Idempotent, so it is safe on every boot.
+   */
+  backfillProjectIds(projectIdFor: (projectPath: string) => string | undefined): number {
+    const rows = this.nullProjectStmt.all() as { session_id: string; project_path: string }[];
+    let filled = 0;
+    for (const row of rows) {
+      const projectId = projectIdFor(row.project_path);
+      if (projectId == null) continue;
+      this.projectIdStmt.run(projectId, row.session_id);
+      filled += 1;
+    }
+    return filled;
   }
 
   /** A live `/model` or `/effort` switch; `recordStatus` never touches these columns. */
