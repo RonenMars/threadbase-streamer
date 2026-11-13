@@ -674,6 +674,15 @@ Use the expanded absolute home path in a launchd plist; `~` and `$HOME` are not 
 
 ---
 
+### A Codex session sits on "Needs you" with the prompt unsent in its compose box {#codex-enter-swallowed}
+
+**When:** A Codex session shows `waiting_input` (mobile: "Needs you", no loader, 0 messages) and the terminal's last line is `› <your prompt>`. The log has `codex.input.submit … waitedMs=16` and then `codex.submit_stale` 2 s later. One more Enter from `POST /api/sessions/:id/input` with `{"keys":"\r"}` submits it and Codex answers normally.
+**Cause:** Codex reads text and an Enter that arrive close together as one paste, and inserts that Enter as a newline instead of submitting. The compose box then holds the prompt and the cursor sits on a second line under it. Measured on codex-cli 0.168.0 through the API: an Enter written 0–5 ms after the text was lost 8 of 8 times, and 16 ms or more submitted every time on a fresh session. A long-lived session still lost the Enter at 16 ms twice, which was not reproduced, so the delay alone is not a guarantee.
+**Fix:** `writeSubmit` waits 100 ms (`CODEX_SUBMIT_DELAY_MS`) before the `\r`. If the 2 s stale watch still finds the submitted prompt in the compose box (`codexComposeHoldsText`: the last `›` line starts with it), `retrySwallowedEnter` writes one more `\r`, once per submit, on both the timer and the chunk-driven stale path. A key press (`sendKeys`) never gets the retry, so a draft typed by hand is not submitted. An Enter absorbed twice still ends in `submit-stale`.
+**Not this bug:** A session that is `waiting_input` before Codex has booted is the silent-boot case, where the prompt is typed before the TUI is in raw mode.
+
+---
+
 ### "Failed to start session — File not found:" via public URL
 
 **When:** Session start works fine from `localhost` but the mobile app shows "Failed to start session — File not found:" (or similar) when connecting through `https://tb.example.com`.
