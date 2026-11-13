@@ -236,6 +236,21 @@ describe("quiet hours in silent mode", () => {
     expect(outcome).toMatchObject({ attempted: 1, succeeded: 1, suppressed: 0 });
   });
 
+  it("keeps the iOS thread on the quiet variant", async () => {
+    repo.register({ token: EXPO_A, platform: "ios", notificationPrefs: SILENT });
+    const calls = stubExpo();
+
+    await new ExpoPushSender(repo).send(
+      { ...loud, threadId: "needs-you", collapseId: "sess-1" },
+      { event: "waitingInput" },
+    );
+
+    const [m] = calls[0].body;
+    expect(m.interruptionLevel).toBe("passive");
+    expect(m.threadId).toBe("needs-you");
+    expect(m.collapseId).toBe("sess-1");
+  });
+
   it("keeps drop for a token with no mode, and sends the loud message untouched outside the window", async () => {
     repo.register({ token: EXPO_A, platform: "ios", notificationPrefs: ALWAYS_QUIET });
     repo.register({ token: EXPO_B, platform: "ios", notificationPrefs: ON });
