@@ -1,3 +1,17 @@
+## [1.139.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.5...v1.139.0) (2026-11-13)
+
+### Features
+
+* **push:** group ios notifications into needs-you and updates threads ([#1245](https://github.com/RonenMars/threadbase-streamer/issues/1245)) ([72f87d0](https://github.com/RonenMars/threadbase-streamer/commit/72f87d0ae56a8a503eea84de188c949a144dcf1d))
+* **sessions:** keep a live session's last message current ([#1253](https://github.com/RonenMars/threadbase-streamer/issues/1253)) ([b7e4f65](https://github.com/RonenMars/threadbase-streamer/commit/b7e4f65f1cd4392ed7ee67d12ef202b646ca7cb3))
+
+### Bug Fixes
+
+* **codex:** hold a silent or `loading` boot before settling ready ([#1254](https://github.com/RonenMars/threadbase-streamer/issues/1254)) ([8d0748b](https://github.com/RonenMars/threadbase-streamer/commit/8d0748bb05c9df5c462820bbc11e907d4fb02837))
+* **codex:** keep the submit Enter from becoming a compose newline ([#1256](https://github.com/RonenMars/threadbase-streamer/issues/1256)) ([cd45bdb](https://github.com/RonenMars/threadbase-streamer/commit/cd45bdb6bd31fb2cd964cb7d625ed96987a5d905))
+* **sessions:** report an external session's projectId and backfill managed rows ([#1255](https://github.com/RonenMars/threadbase-streamer/issues/1255)) ([c6f84ab](https://github.com/RonenMars/threadbase-streamer/commit/c6f84ab4316ee8d74ee03c6d3faedbe04cc1dce0)), closes [#1252](https://github.com/RonenMars/threadbase-streamer/issues/1252) [#1252](https://github.com/RonenMars/threadbase-streamer/issues/1252)
+* **sessions:** report and persist a managed session's projectId ([#1252](https://github.com/RonenMars/threadbase-streamer/issues/1252)) ([896d478](https://github.com/RonenMars/threadbase-streamer/commit/896d478684fed9b893552e60c65089b6c1cc8b28))
+
 ## [1.138.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.4...v1.138.5) (2026-11-13)
 
 ### Bug Fixes
