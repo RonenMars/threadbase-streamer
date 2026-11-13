@@ -194,6 +194,7 @@ import type {
 import { canonicalizeFilePath, toNativeFilePath } from "./utils/canonicalizeFilePath";
 import { toClientConversationLines } from "./utils/codexConversationLine";
 import { parseIsoDateOrNull } from "./utils/dates";
+import { lastTextMessage } from "./utils/lastTextMessage";
 import { createScanProgressThrottle } from "./utils/scanProgressThrottle";
 import { getVersion } from "./version";
 import { WSHub } from "./ws-hub";
@@ -796,6 +797,7 @@ export class StreamerServer {
           // A transcript line is agent activity (reaper and ceiling read this),
           // and may carry the provider's own end-of-turn signal.
           this.lastAgentChunkAt.set(sessionId, Date.now());
+          this.noteLastMessage(sessionId, lines);
           this.ptyManager.settleFromTranscript(sessionId, lines);
         },
         broadcastConversationLines: (sessionId, lines, seqs) =>
@@ -3185,6 +3187,29 @@ export class StreamerServer {
   }
 
   /**
+   * Refresh a live session's last message from its transcript. Without this the
+   * value was set once, when the JSONL was linked, and went stale from the first
+   * turn on. A running session gets no session_update for it: the turn's own
+   * settle sends one that already carries the value. Once settled, a late reply
+   * line (the PTY can settle before the transcript lands) is pushed on its own.
+   */
+  private noteLastMessage(sessionId: string, lines: string[]): void {
+    const last = lastTextMessage(lines);
+    if (!last) return;
+    const current = this.sessionStore.getManaged(sessionId);
+    if (!current) return;
+    if (current.lastMessageText === last.text && current.lastMessageRole === last.role) return;
+    this.sessionStore.updateManaged(sessionId, {
+      lastMessageText: last.text,
+      lastMessageRole: last.role,
+      lastMessageAt: parseIsoDateOrNull(last.timestamp) ?? undefined,
+    });
+    if (current.status === "running") return;
+    const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+    if (session) this.wsHub.broadcast({ type: "session_update", session });
+  }
+
+  /**
    * Broadcast conversation JSONL lines to WS clients. Codex rollout and Cursor
    * transcript lines are normalized to the Claude `type:user|assistant` shape
    * mobile understands; Claude lines pass through unchanged.
@@ -3438,6 +3463,8 @@ export class StreamerServer {
           firstMessageAt: parseIsoDateOrNull(first?.timestamp) ?? undefined,
           lastMessageText: last?.text ?? undefined,
           lastMessageAt: parseIsoDateOrNull(last?.timestamp) ?? undefined,
+          lastMessageRole:
+            last?.role === "user" || last?.role === "assistant" ? last.role : undefined,
         });
       }
 
