@@ -42,6 +42,20 @@ export const CODEX_WORKING_STATUS_RE = /\bWorking\b/;
 // `running` with a spinning send affordance.
 export const CODEX_MCP_BOOT_RE = /Booting MCP|Starting MCP servers/i;
 
+// Codex 0.168.0 paints its header over a bare `loading` line until the thread
+// is configured, and shows the compose box (and no status bar) the whole time.
+// Keys typed then are echoed by the PTY and the Enter is not taken as submit.
+// Only the line right under the header counts, so a reply containing the word
+// "loading" cannot match.
+const CODEX_HEADER_RE = /^\s*>_ OpenAI Codex \(v[^)]*\)\s*$/;
+
+function codexHeaderLoading(lines: string[]): boolean {
+  const i = lines.findIndex((l) => CODEX_HEADER_RE.test(l));
+  if (i < 0) return false;
+  const next = lines.slice(i + 1).find((l) => l.trim() !== "");
+  return next?.trim() === "loading";
+}
+
 // Phase 0: a brand-new `--cd <dir>` shows a blocking directory-trust gate on
 // first-ever launch — a rendered screen containing this text, with options
 // "1. Yes, continue" / "2. No, quit" and a "Press enter to continue" footer.
@@ -316,8 +330,8 @@ export function codexStatusBarWords(lines: string[]): string {
 
 /**
  * True while the screen shows something that precedes a turn rather than being
- * one: a blocking gate dialog, or MCP boot progress. Both keep the composer
- * shut, but neither is the agent doing work — the status-bar half of
+ * one: a blocking gate dialog, MCP boot progress, or the header's `loading`.
+ * All keep the composer shut, but none is the agent doing work — the status-bar half of
  * codexScreenBlocksComposer cannot tell them apart on its own, and reading
  * only that half is how the agent phase reported "working" during boot.
  */
@@ -326,7 +340,7 @@ export function codexScreenPreTurn(lines: string[]): boolean {
   if (CODEX_HOOKS_GATE_REGEX.test(screenText) || CODEX_TRUST_GATE_REGEX.test(screenText)) {
     return true;
   }
-  return CODEX_MCP_BOOT_RE.test(screenText);
+  return CODEX_MCP_BOOT_RE.test(screenText) || codexHeaderLoading(lines);
 }
 
 /**
