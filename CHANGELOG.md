@@ -1,3 +1,9 @@
+## [1.138.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.3...v1.138.4) (2026-11-13)
+
+### Bug Fixes
+
+* **sessions:** drop a managed child from the external list by pid ([#1244](https://github.com/RonenMars/threadbase-streamer/issues/1244)) ([f934d6f](https://github.com/RonenMars/threadbase-streamer/commit/f934d6fb28d13bc26064cbc13556cefa6996eaea))
+
 ## [1.138.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.2...v1.138.3) (2026-11-12)
 
 ### Bug Fixes
