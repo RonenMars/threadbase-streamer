@@ -745,6 +745,7 @@ export class StreamerServer {
         return at > 0 ? new Date(at) : undefined;
       },
       (id) => this.cache?.getMetaById(id)?.title ?? undefined,
+      (projectPath) => this.projectsRepo?.getProjectByPath(projectPath)?.id,
     );
     this.wsHub = new WSHub();
     this.promptRegistry = new PromptRegistry({
@@ -3455,6 +3456,7 @@ export class StreamerServer {
           projectId: resolvedProjectId,
           resumedFromConversationId: sessionId,
         });
+        this.managedSessionsRepo?.recordProjectId(sessionId, resolvedProjectId);
       }
     } catch (err) {
       // ponytail: log but don't crash; session is already live and usable
