@@ -1,3 +1,9 @@
+## [1.138.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.4...v1.138.5) (2026-11-13)
+
+### Bug Fixes
+
+* **sessions:** serve an external session's name from the cache ([#1243](https://github.com/RonenMars/threadbase-streamer/issues/1243)) ([24d16af](https://github.com/RonenMars/threadbase-streamer/commit/24d16aff4faed49c2934cc79ef87a4663abe4137))
+
 ## [1.138.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.3...v1.138.4) (2026-11-13)
 
 ### Bug Fixes
