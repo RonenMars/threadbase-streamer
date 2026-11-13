@@ -116,6 +116,7 @@ export class SessionWatchers {
         sessionId,
         projectId: project.id,
       });
+      this.deps.managedSessionsRepo()?.recordProjectId(sessionId, project.id);
       const cacheMetadataRepo = this.deps.cacheMetadataRepo();
       if (cacheMetadataRepo) {
         cacheMetadataRepo.setCacheMetadata("last_conversation_id", sessionId);

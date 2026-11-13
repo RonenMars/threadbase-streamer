@@ -22,6 +22,10 @@ export class SessionStore {
     // The resolved session name for a conversation, from the cache. Discovery
     // sees a process, not its transcript, so a rename or title is invisible to it.
     private readonly nameFor: (id: string) => string | undefined = () => undefined,
+    // The project row for a folder, for a managed session nothing has linked
+    // yet (no prompt, adopt, an unbound rollout, a restart). A lookup only: a
+    // read never creates a project, since sessions are not project discovery.
+    private readonly projectIdFor: (projectPath: string) => string | undefined = () => undefined,
   ) {}
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();
@@ -153,7 +157,9 @@ export class SessionStore {
       if (!this.visibility(s.boundConversationId ?? s.id, s)) continue;
       // The outside process replaces the stub's historical row.
       if (isProcessless(s) && this.hasDiscovered(s.boundConversationId ?? s.id)) continue;
-      results.push(managedToResponse(s, ptyAttachedIds.has(s.id), this.hasOpenPrompt(s.id)));
+      results.push(
+        managedToResponse(s, ptyAttachedIds.has(s.id), this.hasOpenPrompt(s.id), this.projectIdFor),
+      );
       seenIds.add(s.id);
     }
 
@@ -185,6 +191,7 @@ export class SessionStore {
         managed,
         ptyAttachedIds.has(sessionId),
         this.hasOpenPrompt(sessionId),
+        this.projectIdFor,
       );
     }
 
@@ -340,7 +347,9 @@ function managedToResponse(
   s: ManagedSession,
   ptyAttached: boolean,
   hasOpenPrompt: boolean,
+  projectIdFor: (projectPath: string) => string | undefined,
 ): SessionResponse {
+  const projectId = s.projectId ?? projectIdFor(s.projectPath);
   return {
     isSubagent: s.isSubagent ?? false,
     parentConversationId: s.parentConversationId ?? null,
@@ -420,7 +429,7 @@ function managedToResponse(
     promptSuggestion: s.promptSuggestion ?? null,
     hasOpenPrompt,
     ptyAttached,
-    ...(s.projectId != null && { projectId: s.projectId }),
+    ...(projectId != null && { projectId }),
     ...(s.sessionName != null && { sessionName: s.sessionName }),
     ...(s.model != null && { model: s.model }),
     ...(s.effort != null && { effort: s.effort }),

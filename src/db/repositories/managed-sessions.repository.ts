@@ -81,6 +81,7 @@ export class ManagedSessionsRepository {
   private upsertStmt: Database.Statement;
   private updateStatusStmt: Database.Statement;
   private bindStmt: Database.Statement;
+  private projectIdStmt: Database.Statement;
   private settingStmts: Record<"model" | "effort", Database.Statement>;
   private getStmt: Database.Statement;
   private listNonTerminalStmt: Database.Statement;
@@ -162,6 +163,10 @@ export class ManagedSessionsRepository {
          SET bound_conversation_id = @bound_conversation_id
        WHERE session_id = @session_id
     `);
+
+    this.projectIdStmt = db.prepare(
+      "UPDATE managed_sessions SET project_id = ? WHERE session_id = ?",
+    );
 
     this.settingStmts = {
       model: db.prepare("UPDATE managed_sessions SET model = ? WHERE session_id = ?"),
@@ -321,6 +326,15 @@ export class ManagedSessionsRepository {
       session_id: sessionId,
       bound_conversation_id: boundConversationId,
     });
+  }
+
+  /**
+   * The project a session was linked to. recordSpawn runs before any path
+   * knows it (a transcript binds, or resume enrichment resolves it, later), so
+   * without this the column stayed null and a rehydrated session lost it.
+   */
+  recordProjectId(sessionId: string, projectId: string): void {
+    this.projectIdStmt.run(projectId, sessionId);
   }
 
   /** A live `/model` or `/effort` switch; `recordStatus` never touches these columns. */
