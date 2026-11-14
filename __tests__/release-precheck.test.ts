@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // Validates scripts/release-precheck.mjs: it must reproduce semantic-release's
-// commit-analysis decision (fix→patch, feat→minor, breaking→major, chore/docs→none)
+// commit-analysis decision (fix/chore→patch, feat→minor, breaking→major, docs→none)
 // using .releaserc.json's rules, WITHOUT any npm token in the environment.
 
 const SCRIPT = join(__dirname, "..", "scripts", "release-precheck.mjs");
@@ -110,8 +110,14 @@ it("breaking change → major release (2.0.0)", () => {
   expect(outputs.next_version).toBe("2.0.0");
 });
 
-it("chore/docs only → no release", () => {
+it("chore: commit → patch release (1.0.1)", () => {
   commit("chore: tidy");
+  const { outputs } = runPrecheck();
+  expect(outputs.should_release).toBe("true");
+  expect(outputs.next_version).toBe("1.0.1");
+});
+
+it("docs only → no release", () => {
   commit("docs: readme");
   const { outputs } = runPrecheck();
   expect(outputs.should_release).toBe("false");
