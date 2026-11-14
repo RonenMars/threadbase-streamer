@@ -158,6 +158,7 @@ import {
 } from "./services/push/apnsClient";
 import { ExpoPushSender } from "./services/push/expoPushSender";
 import { ExpoReceiptPoller } from "./services/push/expoReceiptPoller";
+import { ExternalTurnNotifier } from "./services/push/externalTurnNotifier";
 import { IdleSessionNotifier, parseIdleNotifyConfig } from "./services/push/idleSessionNotifier";
 import { LiveActivityNotifier } from "./services/push/liveActivityNotifier";
 import { LiveActivityRenewalScheduler } from "./services/push/liveActivityRenewal";
@@ -559,6 +560,7 @@ export class StreamerServer {
   // its own, so unlike the Live Activity path it is on wherever the cache DB
   // opened — with no registered device it simply sends nothing.
   private waitingInputNotifier: WaitingInputNotifier | null = null;
+  private externalTurnNotifier: ExternalTurnNotifier | null = null;
   private idleSessionNotifier: IdleSessionNotifier | null = null;
   private expoPushSender: ExpoPushSender | null = null;
   private expoReceiptPoller: ExpoReceiptPoller | null = null;
@@ -817,6 +819,12 @@ export class StreamerServer {
       cacheMonitor: () => this.cacheMonitor,
       broadcastConversationLines: (sessionId, lines, seqs) =>
         this.broadcastConversationLines(sessionId, lines, seqs),
+      // Turn-end pushes for subscribed external sessions (#1265). Thunks: the
+      // repo and notifier appear in listen(), after this is built.
+      onTurnLines: (conversationId, lines) => {
+        void this.externalTurnNotifier?.onLines(conversationId, lines);
+      },
+      hasSubscribers: (conversationId) => this.pushRepo?.hasSubscribers(conversationId) ?? false,
     });
 
     this.ptyManager = new LiveSessionManager(
@@ -1311,6 +1319,11 @@ export class StreamerServer {
     const sender = new ExpoPushSender(pushRepo, process.env.THREADBASE_EXPO_ACCESS_TOKEN);
     this.expoPushSender = sender;
     this.waitingInputNotifier = new WaitingInputNotifier(sender);
+    this.externalTurnNotifier = new ExternalTurnNotifier({
+      sender,
+      repo: pushRepo,
+      meta: (id) => this.cache?.getMetaById(id) ?? null,
+    });
     this.expoReceiptPoller = new ExpoReceiptPoller(pushRepo, {
       accessToken: process.env.THREADBASE_EXPO_ACCESS_TOKEN,
     });

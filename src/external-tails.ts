@@ -34,6 +34,11 @@ export const EXTERNAL_TAIL_MAX = 32;
 // if it starts writing again.
 export const EXTERNAL_TAIL_IDLE_MS = 300_000; // 5 minutes
 
+// A tail a device subscribed to (#1265) outlives that: the watcher starts at
+// EOF, so the write that re-attaches a detached tail is skipped, and a turn end
+// that is the first write after a detach would never be seen.
+export const SUBSCRIBED_TAIL_IDLE_MS = 3_600_000; // 60 minutes
+
 // A JSONL that grew within this window reads as "active_writing"; older reads as
 // "quiet". Deliberately short — this is an inferred hint, not a status.
 export const EXTERNAL_ACTIVE_WRITING_MS = 30_000;
@@ -67,6 +72,9 @@ export type ExternalTailManagerDeps = {
     lines: string[],
     seqs?: (number | null)[] | null,
   ) => void;
+  /** Turn-end push hook (#1265); a thunk's target may not exist yet when this is built. */
+  onTurnLines?: (conversationId: string, lines: string[]) => void;
+  hasSubscribers?: (conversationId: string) => boolean;
 };
 
 /**
@@ -277,7 +285,10 @@ export class ExternalTailManager {
         this.externalTails.delete(key);
         continue;
       }
-      if (now - entry.lastActivityAt > EXTERNAL_TAIL_IDLE_MS) this.detachExternalTail(key);
+      const subscribed =
+        !!entry.conversationId && !!this.deps.hasSubscribers?.(entry.conversationId);
+      const limit = subscribed ? SUBSCRIBED_TAIL_IDLE_MS : EXTERNAL_TAIL_IDLE_MS;
+      if (now - entry.lastActivityAt > limit) this.detachExternalTail(key);
     }
   }
 
@@ -318,6 +329,7 @@ export class ExternalTailManager {
     if (this.deps.cache()?.isExcludedSubagent(conversationId)) return;
 
     this.deps.broadcastConversationLines(conversationId, lines, seqs);
+    this.deps.onTurnLines?.(conversationId, lines);
 
     // List-row refresh hint so clients don't have to poll ?refresh=1 to notice
     // an external conversation advancing.

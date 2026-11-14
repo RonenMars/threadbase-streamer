@@ -23,6 +23,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const UNUSED_TOKEN_MS = 90 * DAY_MS;
 export const DEAD_TOKEN_GRACE_MS = 7 * DAY_MS;
 export const PUSH_RETENTION_SWEEP_MS = DAY_MS;
+/** An external-session subscription (#1265) neither pushed nor re-subscribed this long is stale. */
+export const SUBSCRIPTION_UNUSED_MS = 14 * DAY_MS;
 
 export function sweepPushTokens(
   repo: PushRepository,
@@ -35,6 +37,10 @@ export function sweepPushTokens(
   });
   if (result.dead > 0 || result.unused > 0) {
     log.info("push.tokens_pruned", { event: "push.tokens_pruned", ...result });
+  }
+  const subscriptions = repo.pruneSubscriptions(now - SUBSCRIPTION_UNUSED_MS);
+  if (subscriptions > 0) {
+    log.info("push.subscriptions_pruned", { event: "push.subscriptions_pruned", subscriptions });
   }
   return result;
 }

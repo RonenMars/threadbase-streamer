@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { IncomingMessage } from "http";
 import { hostname } from "os";
 import { loadUpdateConfig } from "../../config/update-config";
@@ -809,6 +809,52 @@ export const createMiscRoutes = (
     }
     return c.body(null, 204);
   });
+
+  /**
+   * Subscribe a registered token to turn-end pushes for one external session
+   * (#1265), or drop that subscription.
+   *
+   * `conversationId` is the external session row's `id`. Both verbs are
+   * idempotent (204): a repeat PUT refreshes the retention clock, a DELETE of
+   * nothing is already the state asked for. A token this server does not know,
+   * or one another device owns, answers 404 on PUT so the client learns the
+   * subscription was NOT stored (same rule as PATCH /api/push/preferences);
+   * the shared api key names no device and may use any token.
+   */
+  const subscriptionRoute = (store: boolean) => async (c: Context<AppEnv>) => {
+    const body = (await readJsonBody(c.env.incoming).catch(nullUnlessTooLarge)) as {
+      token?: unknown;
+      conversationId?: unknown;
+    } | null;
+    const { token, conversationId } = body ?? {};
+    if (typeof token !== "string" || token.length === 0) {
+      return c.json({ error: "Missing token" }, 400);
+    }
+    if (typeof conversationId !== "string" || !/^[\w.-]{1,128}$/.test(conversationId)) {
+      return c.json({ error: "Missing or invalid conversationId" }, 400);
+    }
+    const repo = deps.pushRepo();
+    if (!repo) {
+      return c.json({ error: "Push registration is unavailable", code: "STORE_UNAVAILABLE" }, 503);
+    }
+    const principal = c.get("principal");
+    const row = repo.get(token);
+    const ownedElsewhere =
+      principal?.kind === "device" &&
+      principal.deviceId &&
+      row?.device_id != null &&
+      row.device_id !== principal.deviceId;
+    if (!store) {
+      if (row && !ownedElsewhere) repo.unsubscribe(token, conversationId);
+      return c.body(null, 204);
+    }
+    if (!row || ownedElsewhere || !repo.subscribe(token, conversationId)) {
+      return c.json({ error: "Unknown token", code: "TOKEN_NOT_FOUND" }, 404);
+    }
+    return c.body(null, 204);
+  };
+  app.put("/api/push/subscriptions", subscriptionRoute(true));
+  app.delete("/api/push/subscriptions", subscriptionRoute(false));
 
   // Delivery health for every registered token. Never echoes a token back — it
   // is a delivery credential, and this endpoint exists to explain state, not to

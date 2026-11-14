@@ -42,6 +42,14 @@ Off by default. `IDLE_NOTIFY_ENABLED=1` turns on `IdleSessionNotifier` (`src/ser
 - **Token retention (#509)** — a daily sweep (`src/services/push/pushTokenRetention.ts`, also run at boot) deletes `push_tokens` rows only, never `devices`. Dead rows (revoked, or `last_failure_code` a dead APNs reason) go 7 days after the failure, so health can still explain them. Rows with no registration and no successful send for 90 days go too ("used" is `MAX(registered_at, last_success_at)`, no extra column). Logged as `push.tokens_pruned`.
 - **Live Activity events and counts (#509)** — `live_activity.started`, `.renewed`, `.ended` and `.retired` are logged per event, and `GET /api/push/health` returns the additive `liveActivityMetrics` `{ started, renewed, ended, retired, since }` (in memory, since process start). `/healthz` is unchanged. Detail: [docs/guides/live-activity-push.md](docs/guides/live-activity-push.md#metrics-and-token-retention).
 
+## External-session turn-end push (#1265)
+
+A device subscribes to one external session (`PUT`/`DELETE /api/push/subscriptions`, body `{ token, conversationId }`, 204) and gets one `turn_done` push when its transcript shows a turn end. Full detail: [docs/guides/waiting-input-push.md](docs/guides/waiting-input-push.md#external-sessions-subscribe-to-a-turn-end-1265).
+
+- **Where** — `ExternalTurnNotifier` (`src/services/push/externalTurnNotifier.ts`), called from `ExternalTailManager.broadcastExternalTailLines`. Not `WaitingInputNotifier`: an external session never reaches `onStatusChange`.
+- **Targeting** — `ExpoPushSender.send(..., { only: Set<token> })`; an empty set sends nothing, never everyone. Table `external_session_subscriptions` (cache.db, migration 029) cascades from `push_tokens`.
+- **Guards** — turn end older than 120 s is a replay; dedupe by end timestamp; a subscribed tail idles 60 min (`SUBSCRIBED_TAIL_IDLE_MS`), not 5; subscriptions untouched 14 days are pruned by the daily token sweep.
+
 ## iOS Live Activity push
 
 Gated by the `liveActivityPush` [feature flag] (see the feature-flags skill), **off by default** — `APNS_KEY` alone no longer brings this up, and a box with credentials configured logs `live_activity.disabled` at boot until the flag is set.
