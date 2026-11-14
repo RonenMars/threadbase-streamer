@@ -47,6 +47,7 @@ Off by default. `IDLE_NOTIFY_ENABLED=1` turns on `IdleSessionNotifier` (`src/ser
 A device subscribes to one external session (`PUT`/`DELETE /api/push/subscriptions`, body `{ token, conversationId }`, 204) and gets one `turn_done` push when its transcript shows a turn end. Full detail: [docs/guides/waiting-input-push.md](docs/guides/waiting-input-push.md#external-sessions-subscribe-to-a-turn-end-1265).
 
 - **Where** — `ExternalTurnNotifier` (`src/services/push/externalTurnNotifier.ts`), called from `ExternalTailManager.broadcastExternalTailLines`. Not `WaitingInputNotifier`: an external session never reaches `onStatusChange`.
+- **Capability** — `push.subscriptions` on `/api/info` (follows `notifications`); an older server has no flag and answers the `PUT` with a bare 404.
 - **Targeting** — `ExpoPushSender.send(..., { only: Set<token> })`; an empty set sends nothing, never everyone. Table `external_session_subscriptions` (cache.db, migration 029) cascades from `push_tokens`.
 - **Guards** — turn end older than 120 s is a replay; dedupe by end timestamp; a subscribed tail idles 60 min (`SUBSCRIBED_TAIL_IDLE_MS`), not 5; subscriptions untouched 14 days are pruned by the daily token sweep.
 

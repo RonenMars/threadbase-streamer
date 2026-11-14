@@ -131,6 +131,8 @@ export interface PushCapability {
    * server, which is how a client tells "not supported" from "turned off".
    */
   preferences: boolean;
+  /** The server accepts external-session turn-end subscriptions (`PUT`/`DELETE /api/push/subscriptions`, #1265). Absent on an older server. */
+  subscriptions: boolean;
   /** Why `liveActivity` is false; absent when it is true. Names env vars, never values. */
   liveActivityReason?: string;
   /** Why `notifications` is false; absent when it is true. */
@@ -152,6 +154,7 @@ export function describePushCapability(
     liveActivity: wired.liveActivity,
     notifications: wired.notifications,
     preferences: wired.notifications,
+    subscriptions: wired.notifications,
   };
   if (!wired.liveActivity) {
     // describeMissingApnsCredentials only explains a *credential* gap and
