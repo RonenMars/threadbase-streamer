@@ -13,6 +13,7 @@ import {
 import { E2EE_PROTOCOL_VERSION, own } from "../../e2ee/protocol";
 import type { FeatureFlagSource } from "../../feature-flags";
 import { readHandoffConfig } from "../../handoff/config";
+import { installedTerminal } from "../../handoff/terminal";
 import { getLogger } from "../../logger";
 import { NotificationPrefsSchema } from "../../schemas/notification-prefs.schema";
 import { serverIdentityPublicKey } from "../../server-identity";
@@ -399,6 +400,8 @@ export const createMiscRoutes = (
 
   app.get("/api/info", (c) => {
     const ptyIds = deps.ptyAttachedIds();
+    const handoff = readHandoffConfig();
+    const terminalApp = handoff && installedTerminal(handoff.terminal);
     return c.json({
       version: getVersion(),
       machineName: hostname(),
@@ -470,8 +473,13 @@ export const createMiscRoutes = (
       promptContract: { schemaVersion: 1, atomicAnswer: true },
       // POST /api/sessions/:id/handoff works here: macOS, `tb-streamer handoff
       // setup` enabled it, and its tmux still exists. Absent otherwise, so
-      // mobile hides "Hand off to Terminal". openTerminal is Phase 2.
-      ...(readHandoffConfig() && { handoff: { openTerminal: false } }),
+      // mobile hides "Hand off to Terminal". openTerminal: the configured
+      // terminal app is still on disk, so `{ openTerminal: true }` can open it.
+      ...(handoff && {
+        handoff: terminalApp
+          ? { openTerminal: true, terminalName: terminalApp.name }
+          : { openTerminal: false },
+      }),
     });
   });
 

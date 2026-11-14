@@ -18,6 +18,7 @@ import { MAX_UPLOAD_RECORD_BYTES } from "../../e2ee/record";
 import type { ExternalTailManager } from "../../external-tails";
 import { handoffArgv } from "../../handoff/command";
 import { readHandoffConfig } from "../../handoff/config";
+import { installedTerminal, launchTerminal, tmuxHasClient } from "../../handoff/terminal";
 import { HANDOFF_ATTACH_COMMAND, HANDOFF_TMUX_SESSION, openTmuxWindow } from "../../handoff/tmux";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { Logger } from "../../logger";
@@ -37,6 +38,7 @@ import { buildSpawnEnv } from "../../pty-manager";
 import { PTY_ROWS } from "../../pty-shared";
 import { rateLimitKey } from "../../relay/ingress";
 import type { ScannerManager } from "../../scanner-manager";
+import { HandoffSessionSchema } from "../../schemas/handoffSession.schema";
 import { type Prompt, PromptAnswerSchema } from "../../schemas/prompt.schema";
 import { AdditionalPathsSchema, MAX_ADDITIONAL_PATHS } from "../../schemas/sessionStart.schema";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
@@ -2385,7 +2387,16 @@ export class SessionHandlers {
    * `threadbase` tmux session on this host. Everything up to putOnHold is
    * synchronous, so a double tap's second request finds the session gone.
    */
-  async handleHandoffSession(sessionId: string, res: ServerResponse): Promise<void> {
+  async handleHandoffSession(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = HandoffSessionSchema.safeParse(await readBody(req));
+    if (!body.success) {
+      json(res, 400, { error: "Invalid handoff body", code: "INVALID_BODY" });
+      return;
+    }
     const config = readHandoffConfig();
     if (!config) {
       json(res, 409, {
@@ -2485,11 +2496,32 @@ export class SessionHandlers {
       event: "session.handoff",
       sessionId,
     });
+    let terminalOpened: boolean | undefined;
+    if (body.data.openTerminal) {
+      terminalOpened = false;
+      if (config.terminal !== "none" && installedTerminal(config.terminal)) {
+        try {
+          // An attached client already shows the new window: new-window makes it current.
+          if (!(await tmuxHasClient(config.tmuxPath))) {
+            await launchTerminal(config.terminal, config.tmuxPath);
+          }
+          terminalOpened = true;
+        } catch (err) {
+          // The tmux window is live either way; the app says the terminal didn't open.
+          this.log.warn("handoff: terminal launch failed", {
+            event: "handoff.terminal_failed",
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
     json(res, 200, {
       status: "handed_off",
       tmuxSession: HANDOFF_TMUX_SESSION,
       window,
       attachCommand: HANDOFF_ATTACH_COMMAND,
+      terminalOpened,
     });
   }
 
