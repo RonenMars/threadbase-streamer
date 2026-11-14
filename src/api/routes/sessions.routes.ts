@@ -149,7 +149,7 @@ export const createSessionRoutes = (deps: ApiDeps) => {
   });
 
   app.post("/:id/handoff", async (c) => {
-    await deps.handleHandoffSession(c.req.param("id"), c.env.outgoing);
+    await deps.handleHandoffSession(c.req.param("id"), c.env.incoming, c.env.outgoing);
     return alreadyHandled();
   });
 

@@ -2,11 +2,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 
+export const HANDOFF_TERMINALS = ["none", "ghostty", "terminal"] as const;
+export type HandoffTerminal = (typeof HANDOFF_TERMINALS)[number];
+
 /** `~/.threadbase/handoff.json`, written by `tb-streamer handoff setup`. */
 export interface HandoffConfig {
   enabled: boolean;
   /** Absolute path resolved by setup from the user's shell PATH; launchd's PATH differs. */
   tmuxPath: string;
+  /** App a handoff may open on the tmux session. Missing or unknown reads as "none". */
+  terminal: HandoffTerminal;
 }
 
 // Resolved per call like server-identity.ts, so tests redirect it with THREADBASE_CONFIG_DIR.
@@ -37,7 +42,8 @@ export function readHandoffConfig(
   if (c?.enabled !== true || typeof c.tmuxPath !== "string" || !existsSync(c.tmuxPath)) {
     return null;
   }
-  return { enabled: true, tmuxPath: c.tmuxPath };
+  const terminal = HANDOFF_TERMINALS.find((t) => t === c.terminal) ?? "none";
+  return { enabled: true, tmuxPath: c.tmuxPath, terminal };
 }
 
 export function writeHandoffConfig(config: HandoffConfig): void {

@@ -22,6 +22,12 @@ vi.mock("../src/handoff/tmux", async (orig) => ({
   ...(await orig<typeof import("../src/handoff/tmux")>()),
   openTmuxWindow: vi.fn(),
 }));
+vi.mock("../src/handoff/terminal", async (orig) => ({
+  ...(await orig<typeof import("../src/handoff/terminal")>()),
+  installedTerminal: vi.fn(),
+  tmuxHasClient: vi.fn(),
+  launchTerminal: vi.fn(),
+}));
 vi.mock("../src/platform", async (orig) => ({
   ...(await orig<typeof import("../src/platform")>()),
   locateProviderExe: vi.fn(),
@@ -29,6 +35,7 @@ vi.mock("../src/platform", async (orig) => ({
 
 import { HANDOFF_TIMING } from "../src/api/handlers/sessions.handlers";
 import { readHandoffConfig } from "../src/handoff/config";
+import { installedTerminal, launchTerminal, tmuxHasClient } from "../src/handoff/terminal";
 import { openTmuxWindow } from "../src/handoff/tmux";
 import { LiveSessionManager } from "../src/live-session-manager";
 import { locateProviderExe } from "../src/platform";
@@ -52,7 +59,14 @@ describe.skipIf(process.platform === "win32")("POST /api/sessions/:id/handoff", 
   beforeEach(async () => {
     Object.assign(HANDOFF_TIMING, { graceMs: 300, killMs: 500, settleMs: 0 });
     held = false;
-    vi.mocked(readHandoffConfig).mockReturnValue({ enabled: true, tmuxPath: TMUX });
+    vi.mocked(readHandoffConfig).mockReturnValue({
+      enabled: true,
+      tmuxPath: TMUX,
+      terminal: "none",
+    });
+    vi.mocked(installedTerminal).mockReturnValue(null);
+    vi.mocked(tmuxHasClient).mockReset().mockResolvedValue(false);
+    vi.mocked(launchTerminal).mockReset().mockResolvedValue();
     vi.mocked(openTmuxWindow).mockReset().mockResolvedValue("%1");
     vi.mocked(locateProviderExe).mockReturnValue("/usr/local/bin/claude");
     tmpBase = mkdtempSync(join(tmpdir(), "threadbase-handoff-"));
@@ -125,10 +139,12 @@ describe.skipIf(process.platform === "win32")("POST /api/sessions/:id/handoff", 
     return { session, hold };
   }
 
-  const handoff = () =>
+  // No body by default; Phase 1 clients send `{}`.
+  const handoff = (body?: string) =>
     fetch(`${baseUrl}/api/sessions/${SID}/handoff`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${API_KEY}` },
+      headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+      body,
     });
 
   it("stops the session and opens it in tmux with the resume argv and spawn env", async () => {
@@ -322,12 +338,108 @@ describe.skipIf(process.platform === "win32")("POST /api/sessions/:id/handoff", 
     expect(openTmuxWindow).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["a wrong type", JSON.stringify({ openTerminal: "yes" })],
+    ["a non-object", "[]"],
+    ["invalid JSON", "{nope"],
+  ])("400 on a body with %s, before stopping", async (_name, body) => {
+    const { hold } = await liveSession();
+    const res = await handoff(body);
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("INVALID_BODY");
+    expect(hold).not.toHaveBeenCalled();
+    expect(openTmuxWindow).not.toHaveBeenCalled();
+  });
+
+  describe("openTerminal", () => {
+    const GHOSTTY = { name: "Ghostty", appPath: "/Applications/Ghostty.app" } as const;
+    beforeEach(() => {
+      vi.mocked(readHandoffConfig).mockReturnValue({
+        enabled: true,
+        tmuxPath: TMUX,
+        terminal: "ghostty",
+      });
+      vi.mocked(installedTerminal).mockReturnValue(GHOSTTY);
+    });
+    const body = JSON.stringify({ openTerminal: true });
+
+    it("`{}` hands off without a terminal and leaves terminalOpened out", async () => {
+      await liveSession();
+      const res = await handoff("{}");
+      expect(res.status).toBe(200);
+      expect(await res.json()).not.toHaveProperty("terminalOpened");
+      expect(tmuxHasClient).not.toHaveBeenCalled();
+      expect(launchTerminal).not.toHaveBeenCalled();
+    });
+
+    it("opens the configured app after the tmux window when no client is attached", async () => {
+      await liveSession();
+      vi.mocked(launchTerminal).mockImplementation(async () => {
+        expect(openTmuxWindow).toHaveBeenCalledTimes(1);
+      });
+      const res = await handoff(body);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ status: "handed_off", terminalOpened: true });
+      expect(installedTerminal).toHaveBeenCalledWith("ghostty");
+      expect(tmuxHasClient).toHaveBeenCalledWith(TMUX);
+      expect(launchTerminal).toHaveBeenCalledWith("ghostty", TMUX);
+    });
+
+    it("skips the launch when a client is already attached, and reports it open", async () => {
+      await liveSession();
+      vi.mocked(tmuxHasClient).mockResolvedValue(true);
+      const res = await handoff(body);
+      expect(res.status).toBe(200);
+      expect((await res.json()).terminalOpened).toBe(true);
+      expect(launchTerminal).not.toHaveBeenCalled();
+    });
+
+    it("a launch timeout still answers 200, with terminalOpened false", async () => {
+      await liveSession();
+      vi.mocked(launchTerminal).mockRejectedValue(
+        Object.assign(new Error("Command failed: osascript"), { killed: true, signal: "SIGTERM" }),
+      );
+      const res = await handoff(body);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ status: "handed_off", terminalOpened: false });
+    });
+
+    it("terminalOpened false when no terminal app is configured or installed", async () => {
+      await liveSession();
+      vi.mocked(installedTerminal).mockReturnValue(null);
+      const res = await handoff(body);
+      expect(res.status).toBe(200);
+      expect((await res.json()).terminalOpened).toBe(false);
+      expect(tmuxHasClient).not.toHaveBeenCalled();
+      expect(launchTerminal).not.toHaveBeenCalled();
+    });
+
+    it("never opens a terminal when tmux failed", async () => {
+      await liveSession();
+      vi.mocked(openTmuxWindow).mockRejectedValue(new Error("pane gone"));
+      const res = await handoff(body);
+      expect(res.status).toBe(500);
+      expect(launchTerminal).not.toHaveBeenCalled();
+    });
+  });
+
   it("/api/info advertises handoff only when the config reader allows it", async () => {
     const info = async () =>
       (
         await fetch(`${baseUrl}/api/info`, { headers: { Authorization: `Bearer ${API_KEY}` } })
       ).json();
     expect((await info()).handoff).toEqual({ openTerminal: false });
+    vi.mocked(installedTerminal).mockReturnValue({
+      name: "Ghostty",
+      appPath: "/Applications/Ghostty.app",
+    });
+    vi.mocked(readHandoffConfig).mockReturnValue({
+      enabled: true,
+      tmuxPath: TMUX,
+      terminal: "ghostty",
+    });
+    expect((await info()).handoff).toEqual({ openTerminal: true, terminalName: "Ghostty" });
+    expect(installedTerminal).toHaveBeenLastCalledWith("ghostty");
     vi.mocked(readHandoffConfig).mockReturnValue(null);
     expect((await info()).handoff).toBeUndefined();
   });

@@ -19,13 +19,33 @@ describe("handoff config", () => {
   // Any existing file stands in for tmux.
   const tmux = process.execPath;
 
-  it("round-trips an enabled config on darwin", () => {
-    writeHandoffConfig({ enabled: true, tmuxPath: tmux });
-    expect(readHandoffConfig("darwin")).toEqual({ enabled: true, tmuxPath: tmux });
+  it("round-trips an enabled config on darwin, terminal included", () => {
+    writeHandoffConfig({ enabled: true, tmuxPath: tmux, terminal: "ghostty" });
+    expect(readHandoffConfig("darwin")).toEqual({
+      enabled: true,
+      tmuxPath: tmux,
+      terminal: "ghostty",
+    });
+    writeHandoffConfig({ enabled: true, tmuxPath: tmux, terminal: "terminal" });
+    expect(readHandoffConfig("darwin")?.terminal).toBe("terminal");
+  });
+
+  it("reads a missing or unknown terminal as none, so a Phase 1 file keeps working", () => {
+    writeFileSync(handoffConfigPath(), JSON.stringify({ enabled: true, tmuxPath: tmux }));
+    expect(readHandoffConfig("darwin")).toEqual({
+      enabled: true,
+      tmuxPath: tmux,
+      terminal: "none",
+    });
+    writeFileSync(
+      handoffConfigPath(),
+      JSON.stringify({ enabled: true, tmuxPath: tmux, terminal: "iterm2" }),
+    );
+    expect(readHandoffConfig("darwin")?.terminal).toBe("none");
   });
 
   it("is off on anything but darwin", () => {
-    writeHandoffConfig({ enabled: true, tmuxPath: tmux });
+    writeHandoffConfig({ enabled: true, tmuxPath: tmux, terminal: "none" });
     expect(readHandoffConfig("linux")).toBeNull();
   });
 
@@ -33,9 +53,9 @@ describe("handoff config", () => {
     expect(readHandoffConfig("darwin")).toBeNull();
     writeFileSync(handoffConfigPath(), "{not json");
     expect(readHandoffConfig("darwin")).toBeNull();
-    writeHandoffConfig({ enabled: false, tmuxPath: tmux });
+    writeHandoffConfig({ enabled: false, tmuxPath: tmux, terminal: "none" });
     expect(readHandoffConfig("darwin")).toBeNull();
-    writeHandoffConfig({ enabled: true, tmuxPath: join(dir, "no-tmux") });
+    writeHandoffConfig({ enabled: true, tmuxPath: join(dir, "no-tmux"), terminal: "none" });
     expect(readHandoffConfig("darwin")).toBeNull();
   });
 });

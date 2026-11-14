@@ -132,7 +132,11 @@ export type ApiDeps = {
     res: ServerResponse,
     opts?: { delete?: boolean },
   ) => Promise<void>;
-  handleHandoffSession: (sessionId: string, res: ServerResponse) => Promise<void>;
+  handleHandoffSession: (
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => Promise<void>;
   handleSetSessionName: (
     sessionId: string,
     req: IncomingMessage,
