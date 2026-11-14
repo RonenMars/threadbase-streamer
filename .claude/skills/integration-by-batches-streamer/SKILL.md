@@ -54,7 +54,7 @@ Subsystem seams that held in this repo: PTY/turn detection per provider (`pty-ma
 
 `npm run lint && npm test` on the baseline and on the batch; compare the **delta**. Add `npm run build` for anything touching `src/db/migrations`, `runtime-migrations` or tsup externals, and `npm run check` for the wider gate. A docs/tooling batch is validated by CI plus one local run of its own tooling (e.g. the link checker).
 
-Open the plan with the decisions the user must answer: drafts, which phone/mobile build to QA with, which QA target, and whether replacing the local prod service is acceptable (Step 5).
+Open the plan with the decisions the user must answer: which phone/mobile build to QA with, which QA target, and whether replacing the local prod service is acceptable (Step 5).
 
 ## Step 5 — deploy to QA, then STOP
 
