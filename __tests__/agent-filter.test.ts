@@ -188,8 +188,8 @@ describe("isAgentFile", () => {
     expect(isAgentFile(fp)).toBe(false);
   });
 
-  it("finds marker past 2 MB (deep observer-session files)", () => {
-    // The previous 2 MB ceiling missed real observer-session JSONLs where the
+  it("finds marker past 2 MB (deep agent-authored files)", () => {
+    // The previous 2 MB ceiling missed real agent-authored JSONLs where the
     // first entrypoint sits at ~2.3 MB after long housekeeping prefixes.
     // Build ~2.5 MB of housekeeping noise (no entrypoint field) before the
     // agent line.
@@ -198,7 +198,7 @@ describe("isAgentFile", () => {
       idx: i,
       junk: "x".repeat(100),
     }));
-    const fp = writeJsonl("deep-observer.jsonl", [...filler, AGENT_LINE]);
+    const fp = writeJsonl("deep-agent.jsonl", [...filler, AGENT_LINE]);
     expect(isAgentFile(fp)).toBe(true);
   });
 });
