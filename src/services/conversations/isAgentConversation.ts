@@ -6,7 +6,7 @@ import { closeSync, openSync, readSync, statSync } from "fs";
 //   - sdk-cli      → Claude Agent SDK (TypeScript), claude-mem, hook-spawned
 //                     automation
 //   - sdk-py       → Claude Agent SDK (Python), same automation, different
-//                     binding — observed on hook-spawned review agents
+//                     binding — seen on hook-spawned review agents
 //   - claude-vscode → VS Code extension when invoked headlessly (memory
 //                     summarizers, etc.). Real interactive VS Code sessions
 //                     also use this value, so toggling via env var lets users
@@ -25,7 +25,7 @@ export const DEFAULT_AGENT_ENTRYPOINTS: ReadonlySet<string> = new Set([
 // The entrypoint is fixed per-conversation, so the first occurrence is
 // authoritative. This keeps both agent and human files fast (typical first
 // hit is within the first chunk), while still tolerating long housekeeping
-// prefixes (observed agent markers as deep as 2.3 MB in 4.5 MB observer files).
+// prefixes (agent markers seen as deep as 2.3 MB in 4.5 MB agent-authored files).
 const CHUNK_BYTES = 64 * 1024;
 const ENTRYPOINT_PROBE = `"entrypoint":`;
 // Overlap consecutive chunks so a marker that straddles the boundary is still
