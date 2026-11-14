@@ -12,6 +12,7 @@ import {
 } from "../../db/repositories/push.repository";
 import { E2EE_PROTOCOL_VERSION, own } from "../../e2ee/protocol";
 import type { FeatureFlagSource } from "../../feature-flags";
+import { readHandoffConfig } from "../../handoff/config";
 import { getLogger } from "../../logger";
 import { NotificationPrefsSchema } from "../../schemas/notification-prefs.schema";
 import { serverIdentityPublicKey } from "../../server-identity";
@@ -467,6 +468,10 @@ export const createMiscRoutes = (
       // not on presence — and an answer retry after that retention window is
       // answered 404 prompt_not_found rather than the recorded outcome.
       promptContract: { schemaVersion: 1, atomicAnswer: true },
+      // POST /api/sessions/:id/handoff works here: macOS, `tb-streamer handoff
+      // setup` enabled it, and its tmux still exists. Absent otherwise, so
+      // mobile hides "Hand off to Terminal". openTerminal is Phase 2.
+      ...(readHandoffConfig() && { handoff: { openTerminal: false } }),
     });
   });
 

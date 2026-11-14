@@ -784,6 +784,22 @@ program
   });
 
 program
+  .command("handoff")
+  .description("Configure Hand off to Terminal (move app sessions into tmux)")
+  .command("setup")
+  .description("Enable or disable Hand off to Terminal; re-run any time to change it")
+  .action(async () => {
+    const { runHandoffSetup } = await import("./handoffSetup");
+    const code = await runHandoffSetup({
+      log: {
+        info: (msg) => console.log(msg),
+        error: (msg) => console.error(msg),
+      },
+    });
+    process.exit(code);
+  });
+
+program
   .command("update")
   .description("Check for streamer updates from GitHub Releases and install them")
   .option("--check", "Check only; do not install", false)
