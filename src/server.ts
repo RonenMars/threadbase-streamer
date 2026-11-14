@@ -988,6 +988,7 @@ export class StreamerServer {
       checkSessionInputRateLimit: (sessionId) => this.checkSessionInputRateLimit(sessionId),
       spawnFlagOverrides: () => this.spawnFlagOverrides(),
       resolveConversationTarget: (sessionId) => this.resolveConversationTarget(sessionId),
+      resolveResumeId: (sessionId) => this.resolveResumeId(sessionId),
       waitForStartupOutcome: (sessionId, timeoutMs) =>
         this.waitForStartupOutcome(sessionId, timeoutMs),
       forgetSession: (sessionId) => this.forgetSession(sessionId),
@@ -3271,6 +3272,24 @@ export class StreamerServer {
    * be a local placeholder, and only the registry knows the rollout id behind
    * it.
    */
+  /**
+   * The provider-side id to resume, or null when the row/live session has none
+   * of its own (Claude then resumes by the session id; an unbound Codex or
+   * Cursor session has nothing to resume yet). Synchronous on purpose: the
+   * handoff calls it between its live check and putOnHold with no await.
+   */
+  private resolveResumeId(sessionId: string): string | null {
+    const row = this.managedSessionsRepo?.get(sessionId) ?? null;
+    const liveSession = this.sessionStore.getManaged(sessionId);
+    return (
+      (row ? resumeIdForRow(row, liveSession?.boundConversationId) : null) ??
+      (liveSession?.provider === CODEX_CLI_PROVIDER ||
+      coerceProviderForRunner(liveSession?.provider) === CURSOR_PROVIDER
+        ? (liveSession?.boundConversationId ?? null)
+        : null)
+    );
+  }
+
   private async resolveConversationTarget(sessionId: string): Promise<
     | ResumeFailure
     | {
@@ -3295,12 +3314,7 @@ export class StreamerServer {
     // the client navigated to; only argv and history lookups use the bound id.
     const row = this.managedSessionsRepo?.get(sessionId) ?? null;
     const liveSession = this.sessionStore.getManaged(sessionId);
-    const resumeId =
-      (row ? resumeIdForRow(row, liveSession?.boundConversationId) : null) ??
-      (liveSession?.provider === CODEX_CLI_PROVIDER ||
-      coerceProviderForRunner(liveSession?.provider) === CURSOR_PROVIDER
-        ? (liveSession?.boundConversationId ?? null)
-        : null);
+    const resumeId = this.resolveResumeId(sessionId);
     const historyId = resumeId ?? sessionId;
     if (await this.conversationHandlers.isExcludedSubagent(historyId)) {
       return { ok: false, reason: "history_file_missing" };

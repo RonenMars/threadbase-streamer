@@ -16,8 +16,12 @@ import type { createPool } from "../../db";
 import { recordUpload } from "../../db/upload-records";
 import { MAX_UPLOAD_RECORD_BYTES } from "../../e2ee/record";
 import type { ExternalTailManager } from "../../external-tails";
+import { handoffArgv } from "../../handoff/command";
+import { readHandoffConfig } from "../../handoff/config";
+import { HANDOFF_ATTACH_COMMAND, HANDOFF_TMUX_SESSION, openTmuxWindow } from "../../handoff/tmux";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { Logger } from "../../logger";
+import { locateProviderExe } from "../../platform";
 import { discoverClaudeProcesses } from "../../process-discovery";
 import {
   CLAUDE_CODE_PROVIDER,
@@ -25,9 +29,11 @@ import {
   COPILOT_PROVIDER,
   CURSOR_PROVIDER,
   canonicalizeProviderName,
+  coerceProviderForRunner,
   isProviderName,
   type ProviderName,
 } from "../../providers";
+import { buildSpawnEnv } from "../../pty-manager";
 import { PTY_ROWS } from "../../pty-shared";
 import { rateLimitKey } from "../../relay/ingress";
 import type { ScannerManager } from "../../scanner-manager";
@@ -117,6 +123,10 @@ const DISCOVERY_TTL_MS = 15_000;
 
 export const ADOPT_KILL_TIMEOUT_MS = 5_000;
 const ADOPT_KILL_POLL_MS = 100;
+
+// Hand off to Terminal: SIGINT grace, then the wait after SIGKILL, then how
+// long the new tmux pane must survive. Mutable only so tests can shorten them.
+export const HANDOFF_TIMING = { graceMs: 5_000, killMs: 2_000, settleMs: 1_000 };
 
 // Session start blocks for the PTY to reach waiting_input/idle before
 // responding; past this we fall back to the async 202 shape. Must stay BELOW
@@ -360,6 +370,7 @@ export type SessionHandlersDeps = {
     model: string;
     effort: EffortLevel;
   };
+  resolveResumeId: (sessionId: string) => string | null;
   resolveConversationTarget: (sessionId: string) => Promise<
     | ResumeFailure
     | {
@@ -2366,6 +2377,109 @@ export class SessionHandlers {
     opts: { delete?: boolean } = {},
   ): Promise<void> {
     await this.handleStopSession(sessionId, res, { signal: "SIGKILL", delete: opts.delete });
+  }
+
+  /**
+   * Hand off to Terminal: stop the streamer's copy of a live session, then
+   * resume the same conversation with the agent's own CLI in a window of the
+   * `threadbase` tmux session on this host. Everything up to putOnHold is
+   * synchronous, so a double tap's second request finds the session gone.
+   */
+  async handleHandoffSession(sessionId: string, res: ServerResponse): Promise<void> {
+    const config = readHandoffConfig();
+    if (!config) {
+      json(res, 409, {
+        error: "Hand off to Terminal is not set up on this computer",
+        code: "HANDOFF_NOT_CONFIGURED",
+      });
+      return;
+    }
+    const session = this.ptyManager.getSession(sessionId);
+    if (!session) {
+      json(res, 404, { error: "Session not found" });
+      return;
+    }
+    if (session.status === "idle") {
+      json(res, 409, { error: "Session is not running here", code: "NOT_LIVE" });
+      return;
+    }
+    const resumeId = this.shouldForgetEmptySession(session)
+      ? null
+      : (this.deps.resolveResumeId(sessionId) ??
+        (coerceProviderForRunner(session.provider) === CLAUDE_CODE_PROVIDER ? sessionId : null));
+    if (!resumeId) {
+      json(res, 409, { error: "Nothing to resume yet", code: "NOTHING_TO_RESUME" });
+      return;
+    }
+    const pid = this.ptyManager.getPid(sessionId);
+    if (pid == null) {
+      json(res, 409, { error: "Session has no process id", code: "NO_PID" });
+      return;
+    }
+    const exe = locateProviderExe(coerceProviderForRunner(session.provider));
+    if (!exe) {
+      json(res, 409, { error: "Agent CLI not found on this computer", code: "AGENT_NOT_FOUND" });
+      return;
+    }
+    const argv = [exe, ...handoffArgv(session, resumeId, this.claudeFlags)];
+    const cwd = session.projectPath;
+    const window = `${basename(cwd)}-${sessionId.slice(0, 6)}`;
+
+    this.ptyManager.putOnHold(sessionId, "SIGINT");
+
+    if (!(await waitForProcessExit(pid, HANDOFF_TIMING.graceMs))) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // exited between the check and the kill
+      }
+      if (!(await waitForProcessExit(pid, HANDOFF_TIMING.killMs))) {
+        this.log.warn("handoff: process survived SIGKILL; not starting a second agent", {
+          event: "handoff.kill_timeout",
+          sessionId,
+          pid,
+        });
+        json(res, 409, {
+          error: "The session did not stop, so it was not moved",
+          code: "HANDOFF_KILL_TIMEOUT",
+          pid,
+        });
+        return;
+      }
+    }
+
+    try {
+      await openTmuxWindow(config.tmuxPath, {
+        name: window,
+        cwd,
+        argv,
+        env: buildSpawnEnv(),
+        settleMs: HANDOFF_TIMING.settleMs,
+      });
+    } catch (err) {
+      this.log.warn("handoff: tmux launch failed", {
+        event: "handoff.launch_failed",
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      json(res, 500, {
+        error: "Stopped here, but tmux did not start; resume it from the app",
+        code: "HANDOFF_LAUNCH_FAILED",
+      });
+      return;
+    }
+    // putOnHold doesn't clear it; the tmux agent should show up as external promptly.
+    this.discoveryCache = null;
+    this.log.info(`[handoff] session ${sessionId.slice(0, 8)} moved to tmux window ${window}`, {
+      event: "session.handoff",
+      sessionId,
+    });
+    json(res, 200, {
+      status: "handed_off",
+      tmuxSession: HANDOFF_TMUX_SESSION,
+      window,
+      attachCommand: HANDOFF_ATTACH_COMMAND,
+    });
   }
 
   async handleStopSession(

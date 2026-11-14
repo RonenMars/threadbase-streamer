@@ -211,7 +211,7 @@ const SUBMIT_MAX_WAIT_MS = 500;
 // (the Fly secret) is mapped to ANTHROPIC_MODEL's sibling, ANTHROPIC_API_KEY,
 // which the CLI reads. If CLAUDE_API_KEY is unset, nothing is added and the CLI
 // falls back to its own auth (e.g. an interactive login).
-function buildSpawnEnv(): Record<string, string> {
+export function buildSpawnEnv(): Record<string, string> {
   const env = { ...process.env } as Record<string, string>;
   if (env.CLAUDE_API_KEY) {
     env.ANTHROPIC_API_KEY = env.CLAUDE_API_KEY;
