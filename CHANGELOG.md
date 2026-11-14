@@ -1,3 +1,9 @@
+## [1.141.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.140.0...v1.141.0) (2026-11-14)
+
+### Features
+
+* **sessions:** open a terminal app on handoff ([#1266](https://github.com/RonenMars/threadbase-streamer/issues/1266)) ([53aa543](https://github.com/RonenMars/threadbase-streamer/commit/53aa54323941441eced132d81bc344e4e99726d6))
+
 ## [1.140.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.139.1...v1.140.0) (2026-11-14)
 
 ### Features
