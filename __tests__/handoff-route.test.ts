@@ -414,6 +414,15 @@ describe.skipIf(process.platform === "win32")("POST /api/sessions/:id/handoff", 
       expect(launchTerminal).not.toHaveBeenCalled();
     });
 
+    it("terminalOpened false when tmux cannot say whether a client is attached", async () => {
+      await liveSession();
+      vi.mocked(tmuxHasClient).mockRejectedValue(new Error("no server running"));
+      const res = await handoff(body);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ status: "handed_off", terminalOpened: false });
+      expect(launchTerminal).not.toHaveBeenCalled();
+    });
+
     it("never opens a terminal when tmux failed", async () => {
       await liveSession();
       vi.mocked(openTmuxWindow).mockRejectedValue(new Error("pane gone"));
@@ -440,6 +449,18 @@ describe.skipIf(process.platform === "win32")("POST /api/sessions/:id/handoff", 
     });
     expect((await info()).handoff).toEqual({ openTerminal: true, terminalName: "Ghostty" });
     expect(installedTerminal).toHaveBeenLastCalledWith("ghostty");
+    vi.mocked(installedTerminal).mockImplementation((t) =>
+      t === "terminal"
+        ? { name: "Terminal", appPath: "/System/Applications/Utilities/Terminal.app" }
+        : null,
+    );
+    vi.mocked(readHandoffConfig).mockReturnValue({
+      enabled: true,
+      tmuxPath: TMUX,
+      terminal: "terminal",
+    });
+    expect((await info()).handoff).toEqual({ openTerminal: true, terminalName: "Terminal" });
+    expect(installedTerminal).toHaveBeenLastCalledWith("terminal");
     vi.mocked(readHandoffConfig).mockReturnValue(null);
     expect((await info()).handoff).toBeUndefined();
   });
