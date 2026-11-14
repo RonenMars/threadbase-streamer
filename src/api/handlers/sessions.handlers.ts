@@ -2403,11 +2403,20 @@ export class SessionHandlers {
       json(res, 409, { error: "Session is not running here", code: "NOT_LIVE" });
       return;
     }
-    const resumeId = this.shouldForgetEmptySession(session)
+    const provider = coerceProviderForRunner(session.provider);
+    const resolved = this.shouldForgetEmptySession(session)
       ? null
       : (this.deps.resolveResumeId(sessionId) ??
-        // Every runner but Codex starts its CLI under the session id, so it resumes by it.
-        (coerceProviderForRunner(session.provider) === CODEX_CLI_PROVIDER ? null : sessionId));
+        (provider === CODEX_CLI_PROVIDER ? null : sessionId));
+    // A fresh Cursor session runs under a chat id Cursor minted itself until the
+    // transcript watcher binds it, so its session id counts only once the cache
+    // knows it (a resumed historical chat).
+    const resumeId =
+      provider === CURSOR_PROVIDER &&
+      resolved === sessionId &&
+      !this.cache?.hasConversation(sessionId)
+        ? null
+        : resolved;
     if (!resumeId) {
       json(res, 409, { error: "Nothing to resume yet", code: "NOTHING_TO_RESUME" });
       return;
@@ -2417,7 +2426,7 @@ export class SessionHandlers {
       json(res, 409, { error: "Session has no process id", code: "NO_PID" });
       return;
     }
-    const exe = locateProviderExe(coerceProviderForRunner(session.provider));
+    const exe = locateProviderExe(provider);
     if (!exe) {
       json(res, 409, { error: "Agent CLI not found on this computer", code: "AGENT_NOT_FOUND" });
       return;

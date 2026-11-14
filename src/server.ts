@@ -3265,8 +3265,9 @@ export class StreamerServer {
   /**
    * The provider-side id to resume, or null when the row/live session has none
    * of its own. The session id is then the target, except for an unbound Codex
-   * session, whose placeholder id `codex resume` can't use. Synchronous on
-   * purpose: the handoff calls it between its live check and putOnHold.
+   * session or a fresh Cursor one, whose placeholder id their CLI can't resume
+   * (the handoff refuses both). Synchronous on purpose: the handoff calls it
+   * between its live check and putOnHold.
    */
   private resolveResumeId(sessionId: string): string | null {
     const row = this.managedSessionsRepo?.get(sessionId) ?? null;

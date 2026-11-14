@@ -133,8 +133,14 @@ describe("POST /api/sessions/:id/handoff", () => {
     process.env.CLAUDECODE = "1";
     try {
       const { hold } = await liveSession();
+      // A discovery during the stop wait caches a list without the tmux agent.
+      vi.mocked(openTmuxWindow).mockImplementation(async () => {
+        (server as any).discoveryCache = { entries: [], fetchedAt: Date.now() };
+        return "%1";
+      });
       const res = await handoff();
       expect(res.status).toBe(200);
+      expect((server as any).discoveryCache).toBeNull();
       expect(await res.json()).toEqual({
         status: "handed_off",
         tmuxSession: "threadbase",
@@ -247,22 +253,62 @@ describe("POST /api/sessions/:id/handoff", () => {
     ]);
   });
 
-  it.each([
-    ["copilot", "/usr/local/bin/copilot", ["-C", "/work/my-app", `--resume=${SID}`]],
-    [
-      "cursor",
-      "/usr/local/bin/agent",
-      ["--workspace", "/work/my-app", "--trust", `--resume=${SID}`],
-    ],
-  ])("a %s session with no registry row resumes by its session id", async (provider, exe, args) => {
-    await liveSession({ provider });
-    vi.mocked(locateProviderExe).mockReturnValue(exe);
+  it("a copilot session with no registry row resumes by its session id", async () => {
+    await liveSession({ provider: "copilot" });
+    vi.mocked(locateProviderExe).mockReturnValue("/usr/local/bin/copilot");
     const res = await handoff();
     expect(res.status).toBe(200);
-    expect(vi.mocked(openTmuxWindow).mock.calls[0][1].argv.slice(0, 1 + args.length)).toEqual([
-      exe,
-      ...args,
+    expect(vi.mocked(openTmuxWindow).mock.calls[0][1].argv.slice(0, 4)).toEqual([
+      "/usr/local/bin/copilot",
+      "-C",
+      "/work/my-app",
+      `--resume=${SID}`,
     ]);
+  });
+
+  describe("cursor", () => {
+    const cursorRow = { session_id: SID, provider: "cursor", bound_conversation_id: null };
+    const cursorArgv = () => vi.mocked(openTmuxWindow).mock.calls[0][1].argv;
+    beforeEach(() => vi.mocked(locateProviderExe).mockReturnValue("/usr/local/bin/agent"));
+    afterEach(() => {
+      (server as any).managedSessionsRepo = null;
+      (server as any).cache = null;
+    });
+
+    it.each([
+      ["without", null],
+      ["with", cursorRow],
+    ])("a fresh unbound session %s a registry row is refused before the stop", async (_w, row) => {
+      const { hold } = await liveSession({ provider: "cursor" });
+      (server as any).managedSessionsRepo = { get: () => row };
+      const res = await handoff();
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("NOTHING_TO_RESUME");
+      expect(hold).not.toHaveBeenCalled();
+      expect(openTmuxWindow).not.toHaveBeenCalled();
+    });
+
+    it("a live-bound session resumes by its bound chat id", async () => {
+      await liveSession({ provider: "cursor" });
+      vi.spyOn((server as any).sessionStore, "getManaged").mockReturnValue({
+        id: SID,
+        provider: "cursor",
+        boundConversationId: "chat-9",
+        promptCount: 1,
+      });
+      expect((await handoff()).status).toBe(200);
+      expect(cursorArgv()).toContain("--resume=chat-9");
+    });
+
+    it("a resumed historical chat the cache knows resumes by its session id", async () => {
+      await liveSession({ provider: "cursor" });
+      (server as any).cache = {
+        hasConversation: (id: string) => id === SID,
+        getMetaById: () => null,
+      };
+      expect((await handoff()).status).toBe(200);
+      expect(cursorArgv()).toContain(`--resume=${SID}`);
+    });
   });
 
   it("a concurrent second request does not stop the session twice", async () => {
