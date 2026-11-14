@@ -1,3 +1,9 @@
+## [1.140.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.139.1...v1.140.0) (2026-11-14)
+
+### Features
+
+* **sessions:** add hand off to terminal ([#1263](https://github.com/RonenMars/threadbase-streamer/issues/1263)) ([967e968](https://github.com/RonenMars/threadbase-streamer/commit/967e968035078c634b571573f7a5991efdc7754c))
+
 ## [1.139.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.139.0...v1.139.1) (2026-11-14)
 
 ## [1.139.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.138.5...v1.139.0) (2026-11-13)
