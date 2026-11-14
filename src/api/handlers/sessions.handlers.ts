@@ -2406,7 +2406,8 @@ export class SessionHandlers {
     const resumeId = this.shouldForgetEmptySession(session)
       ? null
       : (this.deps.resolveResumeId(sessionId) ??
-        (coerceProviderForRunner(session.provider) === CLAUDE_CODE_PROVIDER ? sessionId : null));
+        // Every runner but Codex starts its CLI under the session id, so it resumes by it.
+        (coerceProviderForRunner(session.provider) === CODEX_CLI_PROVIDER ? null : sessionId));
     if (!resumeId) {
       json(res, 409, { error: "Nothing to resume yet", code: "NOTHING_TO_RESUME" });
       return;
@@ -2426,6 +2427,7 @@ export class SessionHandlers {
     const window = `${basename(cwd)}-${sessionId.slice(0, 6)}`;
 
     this.ptyManager.putOnHold(sessionId, "SIGINT");
+    this.discoveryCache = null;
 
     if (!(await waitForProcessExit(pid, HANDOFF_TIMING.graceMs))) {
       try {
@@ -2468,7 +2470,7 @@ export class SessionHandlers {
       });
       return;
     }
-    // putOnHold doesn't clear it; the tmux agent should show up as external promptly.
+    // Again: a discovery during the stop wait cached a list without the tmux agent.
     this.discoveryCache = null;
     this.log.info(`[handoff] session ${sessionId.slice(0, 8)} moved to tmux window ${window}`, {
       event: "session.handoff",

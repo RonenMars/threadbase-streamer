@@ -78,14 +78,35 @@ describe("openTmuxWindow", () => {
     ]);
   });
 
-  it("rejects when the pane is gone or dead after settling", async () => {
-    scriptTmux({
-      "new-window": { stdout: "%9\n" },
-      "display-message": { err: new Error("can't find pane") },
-    });
-    await expect(openTmuxWindow("/opt/tmux", opts)).rejects.toThrow();
+  it("rejects when the pane is gone, dead, or the server died after settling", async () => {
+    // Real tmux: a gone pane prints nothing and exits 0 while the server lives.
+    scriptTmux({ "new-window": { stdout: "%9\n" }, "display-message": { stdout: "" } });
+    await expect(openTmuxWindow("/opt/tmux", opts)).rejects.toThrow(/exited/);
+    // remain-on-exit keeps the pane and reports it dead.
     scriptTmux({ "new-window": { stdout: "%9\n" }, "display-message": { stdout: "1\n" } });
     await expect(openTmuxWindow("/opt/tmux", opts)).rejects.toThrow(/exited/);
+    // The last window closing takes a fresh server with it.
+    scriptTmux({
+      "has-session": { err: new Error("no session") },
+      "new-session": { stdout: "%9\n" },
+      "display-message": { err: new Error("no server running") },
+    });
+    await expect(openTmuxWindow("/opt/tmux", opts)).rejects.toThrow(/no server/);
+  });
+
+  it("checks the pane only after settleMs", async () => {
+    vi.useFakeTimers();
+    try {
+      scriptTmux({ "new-window": { stdout: "%5\n" }, "display-message": { stdout: "0\n" } });
+      const done = openTmuxWindow("/opt/tmux", { ...opts, settleMs: 1000 });
+      await vi.advanceTimersByTimeAsync(999);
+      expect(calls.map((c) => c[0])).not.toContain("display-message");
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(done).resolves.toBe("%5");
+      expect(calls.at(-1)?.[0]).toBe("display-message");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects when tmux itself fails", async () => {

@@ -3263,20 +3263,10 @@ export class StreamerServer {
   }
 
   /**
-   * Resolve a client-supplied session/conversation id into everything needed to
-   * launch against it: the id the PROVIDER filed the history under, that
-   * history's path, the project cwd, and which CLI owns it.
-   *
-   * Shared by resume and fork so the two can never disagree about identity —
-   * which for Codex is the whole difficulty: the id a client navigated to may
-   * be a local placeholder, and only the registry knows the rollout id behind
-   * it.
-   */
-  /**
    * The provider-side id to resume, or null when the row/live session has none
-   * of its own (Claude then resumes by the session id; an unbound Codex or
-   * Cursor session has nothing to resume yet). Synchronous on purpose: the
-   * handoff calls it between its live check and putOnHold with no await.
+   * of its own. The session id is then the target, except for an unbound Codex
+   * session, whose placeholder id `codex resume` can't use. Synchronous on
+   * purpose: the handoff calls it between its live check and putOnHold.
    */
   private resolveResumeId(sessionId: string): string | null {
     const row = this.managedSessionsRepo?.get(sessionId) ?? null;
@@ -3290,6 +3280,16 @@ export class StreamerServer {
     );
   }
 
+  /**
+   * Resolve a client-supplied session/conversation id into everything needed to
+   * launch against it: the id the PROVIDER filed the history under, that
+   * history's path, the project cwd, and which CLI owns it.
+   *
+   * Shared by resume and fork so the two can never disagree about identity —
+   * which for Codex is the whole difficulty: the id a client navigated to may
+   * be a local placeholder, and only the registry knows the rollout id behind
+   * it.
+   */
   private async resolveConversationTarget(sessionId: string): Promise<
     | ResumeFailure
     | {

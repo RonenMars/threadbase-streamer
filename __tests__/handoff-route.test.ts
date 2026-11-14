@@ -182,12 +182,14 @@ describe("POST /api/sessions/:id/handoff", () => {
     expect(openTmuxWindow).not.toHaveBeenCalled();
   });
 
-  it("500 HANDOFF_LAUNCH_FAILED when tmux fails", async () => {
+  it("500 HANDOFF_LAUNCH_FAILED when tmux fails; the stop still drops the discovery cache", async () => {
     await liveSession();
+    (server as any).discoveryCache = { entries: [], fetchedAt: Date.now() };
     vi.mocked(openTmuxWindow).mockRejectedValue(new Error("pane gone"));
     const res = await handoff();
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({ code: "HANDOFF_LAUNCH_FAILED" });
+    expect((server as any).discoveryCache).toBeNull();
   });
 
   describe("refuses before stopping", () => {
@@ -242,6 +244,24 @@ describe("POST /api/sessions/:id/handoff", () => {
       "/usr/local/bin/codex",
       "resume",
       "rollout-42",
+    ]);
+  });
+
+  it.each([
+    ["copilot", "/usr/local/bin/copilot", ["-C", "/work/my-app", `--resume=${SID}`]],
+    [
+      "cursor",
+      "/usr/local/bin/agent",
+      ["--workspace", "/work/my-app", "--trust", `--resume=${SID}`],
+    ],
+  ])("a %s session with no registry row resumes by its session id", async (provider, exe, args) => {
+    await liveSession({ provider });
+    vi.mocked(locateProviderExe).mockReturnValue(exe);
+    const res = await handoff();
+    expect(res.status).toBe(200);
+    expect(vi.mocked(openTmuxWindow).mock.calls[0][1].argv.slice(0, 1 + args.length)).toEqual([
+      exe,
+      ...args,
     ]);
   });
 

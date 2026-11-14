@@ -37,8 +37,9 @@ export async function openTmuxWindow(
   // ponytail: settleMs catches an agent that dies at once (bad id, bad flag),
   // not one that fails later; a later failure shows in the tmux window itself.
   await new Promise((resolve) => setTimeout(resolve, opts.settleMs));
-  // A gone pane errors ("can't find pane"); with remain-on-exit it reports dead.
+  // Only "0" is alive: a gone pane prints nothing (exit 0) while the server
+  // lives, remain-on-exit prints "1", and a server that died with it errors.
   const { stdout: dead } = await exec(["display-message", "-p", "-t", paneId, "#{pane_dead}"]);
-  if (dead.trim() === "1") throw new Error(`tmux pane ${paneId} exited`);
+  if (dead.trim() !== "0") throw new Error(`tmux pane ${paneId} exited`);
   return paneId;
 }

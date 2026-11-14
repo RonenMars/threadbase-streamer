@@ -37,6 +37,9 @@ describe("tb-streamer handoff setup", () => {
     expect(readHandoffConfig("darwin")).not.toBeNull();
     expect(await run("2")).toBe(0);
     expect(readHandoffConfig("darwin")).toBeNull();
+    // ...in both directions.
+    expect(await run("")).toBe(0);
+    expect(readHandoffConfig("darwin")).toBeNull();
   });
 
   it("refuses off macOS, without tmux, and on an unknown choice", async () => {
