@@ -38,7 +38,10 @@ const API_KEY = "tb_test_key_handoff_route";
 const SID = "7e1d2c3b-4a59-4e6f-8a7b-9c0d1e2f3a4b";
 const TMUX = "/opt/fake/tmux";
 
-describe("POST /api/sessions/:id/handoff", () => {
+// Handoff is macOS-only (the config reader refuses other platforms). On Windows
+// a SIGINT always terminates, so the SIGKILL path can't be reached, and open
+// files make the tmp-dir cleanup fail with EPERM.
+describe.skipIf(process.platform === "win32")("POST /api/sessions/:id/handoff", () => {
   let server: StreamerServer;
   let baseUrl: string;
   let tmpBase: string;
