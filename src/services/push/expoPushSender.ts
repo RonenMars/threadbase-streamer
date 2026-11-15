@@ -125,14 +125,19 @@ export class ExpoPushSender {
    *
    * `event` names what the push is about so the right toggle applies; leaving
    * it out sends to every deliverable token regardless of preferences.
+   *
+   * `only` narrows the recipients to those tokens (a per-session subscription).
+   * An empty set sends to nobody; it is never read as "no filter". Tokens it
+   * leaves out are neither attempted nor counted as suppressed.
    */
   async send(
     message: ExpoPushContent,
-    opts: { event?: PushEvent; now?: number } = {},
+    opts: { event?: PushEvent; now?: number; only?: ReadonlySet<string> } = {},
   ): Promise<ExpoPushOutcome> {
     const now = opts.now ?? Date.now();
-    const deliverable = this.repo.listDeliverable();
-    const { event } = opts;
+    const { event, only } = opts;
+    const all = this.repo.listDeliverable();
+    const deliverable = only ? all.filter((row) => only.has(row.token)) : all;
     const silent = new Set<PushTokenRow>();
     const rows = event
       ? deliverable.filter((row) => {

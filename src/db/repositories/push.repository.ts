@@ -161,8 +161,32 @@ export class PushRepository {
   private deleteReceiptStmt: Database.Statement;
   private touchReceiptStmt: Database.Statement;
   private purgeReceiptsStmt: Database.Statement;
+  private subscribeStmt: Database.Statement;
+  private unsubscribeStmt: Database.Statement;
+  private subscribedTokensStmt: Database.Statement;
+  private touchSubscriptionsStmt: Database.Statement;
+  private pruneSubscriptionsStmt: Database.Statement;
 
   constructor(private readonly db: Database.Database) {
+    // INSERT ... SELECT so an unregistered token inserts nothing, rather than
+    // relying on the foreign key being enforced on this connection.
+    this.subscribeStmt = db.prepare(`
+      INSERT INTO external_session_subscriptions (token, conversation_id, created_at, touched_at)
+      SELECT token, @conversation_id, @now, @now FROM push_tokens WHERE token = @token
+      ON CONFLICT(token, conversation_id) DO UPDATE SET touched_at = excluded.touched_at
+    `);
+    this.unsubscribeStmt = db.prepare(
+      "DELETE FROM external_session_subscriptions WHERE token = ? AND conversation_id = ?",
+    );
+    this.subscribedTokensStmt = db.prepare(
+      "SELECT token FROM external_session_subscriptions WHERE conversation_id = ?",
+    );
+    this.touchSubscriptionsStmt = db.prepare(
+      "UPDATE external_session_subscriptions SET touched_at = ? WHERE conversation_id = ?",
+    );
+    this.pruneSubscriptionsStmt = db.prepare(
+      "DELETE FROM external_session_subscriptions WHERE touched_at < ?",
+    );
     // Re-registering the same token updates rather than duplicating. Without
     // this, one device accumulates rows and receives the same notification
     // several times.
@@ -508,6 +532,39 @@ export class PushRepository {
    */
   deleteToken(token: string): boolean {
     return this.deleteByTokenStmt.run(token).changes > 0;
+  }
+
+  /**
+   * Subscribe a registered token to turn-end pushes for one external
+   * conversation (#1265). Idempotent: a repeat only refreshes `touched_at`.
+   * Returns false, storing nothing, for a token that is not registered.
+   */
+  subscribe(token: string, conversationId: string, now: number = Date.now()): boolean {
+    return this.subscribeStmt.run({ token, conversation_id: conversationId, now }).changes > 0;
+  }
+
+  unsubscribe(token: string, conversationId: string): boolean {
+    return this.unsubscribeStmt.run(token, conversationId).changes > 0;
+  }
+
+  /** Tokens subscribed to a conversation. Not filtered for delivery: the sender does that. */
+  subscribedTokens(conversationId: string): Set<string> {
+    const rows = this.subscribedTokensStmt.all(conversationId) as Array<{ token: string }>;
+    return new Set(rows.map((r) => r.token));
+  }
+
+  hasSubscribers(conversationId: string): boolean {
+    return this.subscribedTokensStmt.get(conversationId) !== undefined;
+  }
+
+  /** Mark a conversation's subscriptions as in use, so retention keeps them. */
+  touchSubscriptions(conversationId: string, now: number = Date.now()): void {
+    this.touchSubscriptionsStmt.run(now, conversationId);
+  }
+
+  /** Delete subscriptions not touched since `touchedBefore`. Returns how many went. */
+  pruneSubscriptions(touchedBefore: number): number {
+    return this.pruneSubscriptionsStmt.run(touchedBefore).changes;
   }
 
   /**

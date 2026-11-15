@@ -178,6 +178,27 @@ The text never carries `failureReason`, which embeds project paths; that is why 
 It fires only on a session's first idle after it was never ready: a Codex session that hit a usage limit keeps its `failureReason` and goes idle when closed much later, and that is not a failed start.
 Codex usage-limit screens arrive as a `limited` push instead.
 
+## External sessions: subscribe to a turn end (#1265)
+
+An external session is a process the streamer discovered but did not spawn, so it never passes through `onStatusChange` and gets no push.
+A device can opt in to one session at a time, and is then sent one `turn_done` push when that session's turn ends.
+
+- **API.** `PUT /api/push/subscriptions` and `DELETE /api/push/subscriptions`, body `{ "token": "<push token>", "conversationId": "<external session id>" }`, both `204` and idempotent.
+  `conversationId` is the external session row's `id`.
+  A `PUT` for a token this server does not know, or one another device owns, is `404 TOKEN_NOT_FOUND` so the client learns nothing was stored; the shared api key may use any token.
+  The path sits under `/api/push`, so it needs the existing `notifications` capability.
+- **Capability.** `push.subscriptions` on `GET /api/info` and `/api/push/health` is true when the server accepts these routes (it follows `notifications`), so a client can tell an older server, whose `PUT` is a bare 404, from `TOKEN_NOT_FOUND`.
+- **Storage.** `external_session_subscriptions` in cache.db (migration 029), keyed `(token, conversation_id)` with `ON DELETE CASCADE` from `push_tokens`.
+  A device is a push token here because the shared api key names no `deviceId`.
+  `conversation_id` is not a foreign key: the conversation may not be cached yet.
+- **Signal.** `ExternalTailManager.broadcastExternalTailLines` hands each batch to `ExternalTurnNotifier`, which reads `transcriptTurnEndAt` (the same parser as the managed runners' transcript signal).
+  It ignores a turn end older than 120 s (a replay), dedupes by the end line's timestamp, and sends with `ExpoPushSender.send(msg, { event: "waitingInput", only })`, so preferences and quiet hours still apply and nobody else is notified.
+  Copy and payload are the managed `turn_done` push: `data: { sessionId, kind: "turn_done" }`.
+- **Tail lifetime.** A tail with a subscriber stays attached while idle for 60 min instead of 5, because the watcher starts at EOF and a turn end that is the first write after a re-attach would be skipped.
+- **Retention.** A subscription neither pushed nor re-subscribed for 14 days is deleted by the daily token sweep (`push.subscriptions_pruned`); a push refreshes it.
+- **Not built.** Permission and question pushes (their prompt is on a screen the streamer cannot read), a global "all external sessions" toggle, a `subscribed` field on session rows, and a list endpoint.
+  When an external session is adopted into a managed one, the managed push already reaches every device and the subscription is simply unused.
+
 ## Failure handling
 
 Expo returns one ticket per message, positionally matched to the request array, so a batch is not all-or-nothing.
@@ -198,5 +219,5 @@ Tokens are batched 100 per request (Expo's cap) and `listDeliverable()` returns 
 
 - **No silent delivery on Android.** It needs a quiet channel the app creates and a registered feature that names it, so the streamer can send to it only for builds that have it; tracked in RonenMars/threadbase-streamer#949.
 - **No "session completed", "diff ready" or badge count.** The streamer has no event for the first two, and a badge count cannot be kept right across devices and servers, so the mobile toggles for them were removed rather than left inert.
-- **No per-device targeting.** Every device paired with this streamer is notified; `expo` tokens carry no session scope, and the streamer has no model of which device is interested in which session.
+- **No per-device targeting for managed sessions.** Every device paired with this streamer is notified; `expo` tokens carry no session scope. The one exception is an external session a device subscribed to, below.
 - **No kill switch.** With no registered token the sender makes no request at all, which is the off state for a streamer nobody has paired a phone to.
