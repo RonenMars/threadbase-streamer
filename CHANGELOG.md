@@ -1,3 +1,5 @@
+## [1.142.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.142.0...v1.142.1) (2026-11-15)
+
 ## [1.142.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.141.0...v1.142.0) (2026-11-15)
 
 ### Features
