@@ -143,6 +143,7 @@ export class ScannerManager {
   private allScanners = new Set<ConversationScanner>();
   private stalePaths = new Set<string>();
   private reconcileInFlight: Promise<void> | null = null;
+  private explicitReconcileInFlight: Promise<void> | null = null;
   private lastAutoFullReconcileAt = 0;
   // reconcileMode() returns "full" on every poll while a permanent drift
   // condition holds (e.g. an orphan row) — without a cooldown each poll
@@ -696,6 +697,20 @@ export class ScannerManager {
         { event: "conversations.reconcile_failed" },
       );
     }
+  }
+
+  // The awaited reconcile behind ?refresh=1. A client that reconnects retries it,
+  // so five of them overlapped on prod (2026-11-15: 92-152 s each, against 8 s
+  // alone) and starved the event loop until the phone's E2EE context broke.
+  // Callers arriving while one runs share its result; its progress frames go to
+  // every client through the WS broadcast, so a joiner's callback is not needed.
+  reconcileExplicit(onProgress?: (scanned: number, total: number) => void): Promise<void> {
+    if (!this.explicitReconcileInFlight) {
+      this.explicitReconcileInFlight = this.reconcileFromDisk(onProgress).finally(() => {
+        this.explicitReconcileInFlight = null;
+      });
+    }
+    return this.explicitReconcileInFlight;
   }
 
   // The background reconcile's write set: transcripts with no cached row, or
