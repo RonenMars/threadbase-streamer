@@ -17,7 +17,12 @@ import { CopilotPtyRunner } from "../src/copilot-pty-runner";
 import { FEATURE_FLAG_LIST } from "../src/feature-flags";
 import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "../src/providers";
 import { PTYManager } from "../src/pty-manager";
-import { GRACE_MAX_DEFERS, IDLE_REAP_AFTER_MS, StreamerServer } from "../src/server";
+import {
+  GRACE_MAX_DEFERS,
+  IDLE_REAP_AFTER_MS,
+  resolveIdleReapAfterMs,
+  StreamerServer,
+} from "../src/server";
 
 // The ScannerManager StreamerServer owns (src/scanner-manager.ts). These suites
 // drive scanner staleness directly rather than waiting on chokidar, so they
@@ -2420,6 +2425,30 @@ describe("StreamerServer", () => {
 
       expect(holdSpy).not.toHaveBeenCalled();
       expect(reaped).toEqual([]);
+    });
+
+    it("never reaps when THREADBASE_IDLE_REAP_AFTER_MS is 0", () => {
+      vi.spyOn(PTYManager.prototype, "listSessions").mockReturnValue([mkSession()]);
+      const holdSpy = vi.spyOn(PTYManager.prototype, "putOnHold").mockImplementation(() => {});
+      (server as any).idleReapAfterMs = 0;
+
+      const reaped = (server as any).reapIdleSessions(IDLE_REAP_AFTER_MS * 100);
+
+      expect(holdSpy).not.toHaveBeenCalled();
+      expect(reaped).toEqual([]);
+      (server as any).idleReapAfterMs = IDLE_REAP_AFTER_MS;
+    });
+
+    it("resolves the threshold from the env var, falling back on invalid values", () => {
+      expect(resolveIdleReapAfterMs({})).toBe(IDLE_REAP_AFTER_MS);
+      expect(resolveIdleReapAfterMs({ THREADBASE_IDLE_REAP_AFTER_MS: "60000" })).toBe(60000);
+      expect(resolveIdleReapAfterMs({ THREADBASE_IDLE_REAP_AFTER_MS: "0" })).toBe(0);
+      expect(resolveIdleReapAfterMs({ THREADBASE_IDLE_REAP_AFTER_MS: "-5" })).toBe(
+        IDLE_REAP_AFTER_MS,
+      );
+      expect(resolveIdleReapAfterMs({ THREADBASE_IDLE_REAP_AFTER_MS: "abc" })).toBe(
+        IDLE_REAP_AFTER_MS,
+      );
     });
 
     // Agent output — not user input — is what keeps a session alive. An agent
