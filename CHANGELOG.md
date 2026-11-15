@@ -1,3 +1,9 @@
+## [1.142.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.141.0...v1.142.0) (2026-11-15)
+
+### Features
+
+* **push:** notify a subscribed device when an external session's turn ends ([#1267](https://github.com/RonenMars/threadbase-streamer/issues/1267)) ([6176719](https://github.com/RonenMars/threadbase-streamer/commit/617671970494eb6ecc49034ea53910e87bf70e5f))
+
 ## [1.141.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.140.0...v1.141.0) (2026-11-14)
 
 ### Features
