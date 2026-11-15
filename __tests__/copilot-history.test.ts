@@ -132,6 +132,7 @@ describe("Copilot history indexing", () => {
       expect(cache.readMessageWindow(file, 0, 80)?.messages.map((m) => m.text)).toEqual([
         "list files",
         "",
+        "",
         "README.md and package.json",
       ]);
       expect(cache.readMessageWindow(otherFile, 0, 80)?.messages.map((m) => m.text)).toEqual([
@@ -139,7 +140,7 @@ describe("Copilot history indexing", () => {
       ]);
     });
 
-    it("indexes the messages the scanner serves, tool-only steps included", async () => {
+    it("indexes the messages the scanner serves, tool-only steps and tool results included", async () => {
       await cache.backfillIndex(file);
 
       const window = cache.readMessageWindow(file, 0, 80);
@@ -151,9 +152,10 @@ describe("Copilot history indexing", () => {
       const served = await scanner.getConversation(SESSION);
       // The index and the detail view must number the same file the same way.
       expect(window?.messages.map((m) => m.uuid)).toEqual(served?.messages.map((m) => m.uuid));
-      expect(window?.total).toBe(3);
+      expect(window?.total).toBe(4);
       expect(window?.messages.map((m) => m.text)).toEqual([
         "list files",
+        "",
         "",
         "README.md and package.json",
       ]);
