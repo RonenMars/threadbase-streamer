@@ -144,6 +144,12 @@ export class ScannerManager {
   private stalePaths = new Set<string>();
   private reconcileInFlight: Promise<void> | null = null;
   private explicitReconcileInFlight: Promise<void> | null = null;
+  // The scanner the last (re)scan built. Each one owns a full FlexSearch index
+  // plus every transcript's text, about 230 MB on prod, and `allScanners` is only
+  // there so close() can tear them down, so a superseded generation has to leave
+  // it or every rescan stays reachable until the process dies (18 generations
+  // were in the 2026-11-13 heap snapshot, at the 4.2 GB limit).
+  private lastBuiltScanner: ConversationScanner | null = null;
   private lastAutoFullReconcileAt = 0;
   // reconcileMode() returns "full" on every poll while a permanent drift
   // condition holds (e.g. an orphan row) — without a cooldown each poll
@@ -234,6 +240,12 @@ export class ScannerManager {
   /** Persistent indexes are disabled for the rest of this process's life. */
   disablePersistence(): void {
     this.persistenceDisabled = true;
+  }
+
+  private registerBuilt(scanner: ConversationScanner): void {
+    if (this.lastBuiltScanner) this.allScanners.delete(this.lastBuiltScanner);
+    this.lastBuiltScanner = scanner;
+    this.allScanners.add(scanner);
   }
 
   /** Track a scanner the server built itself so close() still tears it down. */
@@ -574,7 +586,7 @@ export class ScannerManager {
     // no-statCache case fall through to the persistent default made an empty
     // cache import rows for files deleted long ago (#876).
     this.scanner = this.newScanner({ persistent: false });
-    this.allScanners.add(this.scanner);
+    this.registerBuilt(this.scanner);
     this.scannerReady = this.scanner.scan({
       ...(this.deps.scanProfiles ? { profiles: this.deps.scanProfiles } : {}),
       ...this.codexScanOpts(),
@@ -623,7 +635,7 @@ export class ScannerManager {
     const previous = this.scanner;
     const statCache = this.buildStatCache(previous);
     const shadow = this.newScanner({ persistent: false });
-    this.allScanners.add(shadow);
+    this.registerBuilt(shadow);
     this.scannerReady = shadow.scan({
       ...(this.deps.scanProfiles ? { profiles: this.deps.scanProfiles } : {}),
       ...this.codexScanOpts(),
