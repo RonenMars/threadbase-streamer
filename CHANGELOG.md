@@ -1,3 +1,9 @@
+## [1.143.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.2...v1.143.3) (2026-11-17)
+
+### Bug Fixes
+
+* **sessions:** recover interrupted sessions after a reboot or pty-host loss ([#1273](https://github.com/RonenMars/threadbase-streamer/issues/1273)) ([22c0e23](https://github.com/RonenMars/threadbase-streamer/commit/22c0e233727b6cef03d55a0b9c24d309f8d49df8))
+
 ## [1.143.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.1...v1.143.2) (2026-11-17)
 
 ### Bug Fixes
