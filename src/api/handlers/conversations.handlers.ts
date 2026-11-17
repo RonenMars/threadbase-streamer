@@ -353,7 +353,7 @@ export class ConversationHandlers {
         // silent (no onProgress) so normal-use polls never flicker a bar.
         const shouldEmitProgress = createScanProgressThrottle();
         const rescan = () =>
-          this.scannerManager.reconcileFromDisk((scanned, total) => {
+          this.scannerManager.reconcileExplicit((scanned, total) => {
             if (shouldEmitProgress(scanned, total)) {
               this.wsHub.broadcast({ type: "scan_progress", scanned, total });
             }
