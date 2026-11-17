@@ -85,6 +85,12 @@ export class RemoteSessionRunner implements SessionRunner {
   /** Fixed for a session's lifetime, so only spawn and status carry it. */
   private pids = new Map<string, number | null>();
   private closed = false;
+  /**
+   * Called once, with the sessions the host was holding, when the connection
+   * drops without `dispose()` having asked for it: the host process is gone and
+   * its agents with it. Without this the mirror kept listing them as live.
+   */
+  onConnectionLost: ((lost: ManagedSession[]) => void) | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatInFlight = false;
 
@@ -174,6 +180,9 @@ export class RemoteSessionRunner implements SessionRunner {
       waiter.reject(err);
     }
     this.pending.clear();
+    const lost = [...this.sessions.values()];
+    this.sessions = new Map();
+    this.onConnectionLost?.(lost);
   }
 
   private request(body: HostRequestBody, timeoutMs?: number): Promise<unknown> {
@@ -493,6 +502,8 @@ export class RemoteSessionRunner implements SessionRunner {
    * them down here would spend the feature to implement a method name.
    */
   dispose(): void {
+    // A connection we drop on purpose is not a loss.
+    this.onConnectionLost = null;
     this.handleClose();
     this.transport.close();
   }

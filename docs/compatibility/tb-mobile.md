@@ -61,7 +61,7 @@ The flag defaults off (`--feature ptyHost=true` or `THREADBASE_FEATURE_PTY_HOST=
 - Session — **behaviour note (external sessions):** a discovered external session (`ownership: "external"`) now carries `lastActivityAt`, the conversation cache row's last transcript write, and omits it when there is no row.
 Its `elapsedMs` ends at `lastActivityAt` (or `startedAt` when absent) instead of counting to now, so `startedAt + elapsedMs` no longer reads as activity "now".
 `activity.lastEventAt` on an external tail starts at the file's mtime, not the time the tail attached.
-- Session — new optional field (plan Phase 5): `interruptedStatus` (`"running"` | `"waiting_input"`). Present only on a rehydrated session whose registry row recorded `status_source: "shutdown"` — i.e. one the streamer itself stopped, as opposed to one the agent finished or a crash froze.
+- Session — new optional field (plan Phase 5): `interruptedStatus` (`"running"` | `"waiting_input"`). Present on a rehydrated session whose registry row last read `running` or `waiting_input` — one the streamer stopped, or one a reboot or pty-host loss took away. It is the last status the streamer saw, not proof of a clean stop; `statusSource` is set only for the `shutdown` case.
 A recovered session's `status` has to report `idle` (it holds no PTY, and a novel `SessionStatus` value would be dropped by `?status=` filtering on already-shipped clients), which erases whether the agent was mid-answer when we stopped it.
 This field carries that one bit separately, so a client can say "interrupted mid-response" instead of "idle".
 Purely additive and safe to ignore: nothing keys off it server-side, and a client that never reads it behaves exactly as it does today.

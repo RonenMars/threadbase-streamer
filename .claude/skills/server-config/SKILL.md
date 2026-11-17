@@ -78,6 +78,10 @@ All three clauses must hold for `serve` to ask: the key is absent, `THREADBASE_S
 
 A `--prod`-only machine never sees a TTY, so the key would stay absent forever and the operator would have no way to learn the setting exists. One boot-time info line covers that, emitted only when the key is absent *and* the prompt did not run.
 
+**What triggers it.** A row is eligible when the streamer stopped it (`status_source: "shutdown"`) **or the machine rebooted** since the row was written (the row's `boot_token` differs from `currentBootToken()`). The reboot rule is what makes it work under `ptyHost`, where nothing writes a `shutdown` row. A pty-host that dies while the machine stays up is **not** a trigger: the cause is unknown, so those sessions become resumable stubs (with `interruptedStatus`) and the user resumes them. Skip reason: `not_restart_or_reboot`.
+
+**The user is told either way.** After auto-resume has had its turn, boot recovery reports `sessions.recovery_summary` (`interrupted`, `resumed`, `left`, `reason`) and sends one push, "N interrupted, M waiting for you". It runs with the preference off too, since that is when everything waits. It counts only rows whose last status change is within `AUTO_RESUME_WINDOW_MS` (15 min), so an old frozen `running` row is not re-announced on every boot. The push reuses the `sessionFailed` toggle, and its text is English only.
+
 The `sessionRehydration` feature flag only controls whether historical stubs appear in the session list; turning it off does not disable `auto_resume_on_boot`.
 Set `auto_resume_on_boot: false` to prevent unattended agent starts at boot.
 

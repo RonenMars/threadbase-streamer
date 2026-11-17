@@ -200,14 +200,21 @@ describe("rowToStubSession", () => {
     }
   });
 
-  it("sets no interruptedStatus for a crash or a genuinely idle shutdown", () => {
-    // A crashed row's `running` is a frozen value nobody confirmed — reporting
-    // it as an interrupted turn would be an observation we never made.
-    const crashed = rowToStubSession(mkRow({ status: "running", status_source: "transition" }));
-    expect(crashed.interruptedStatus).toBeUndefined();
+  it("carries the last known status of a session lost without a shutdown write", () => {
+    // Host loss and reboot write no `shutdown` row. The status is the last one
+    // the streamer saw, not an observation made at boot, so the source stays unset.
+    for (const status of ["running", "waiting_input"] as const) {
+      const lost = rowToStubSession(mkRow({ status, status_source: "transition" }));
+      expect(lost.interruptedStatus).toBe(status);
+      expect(lost.statusSource).toBeUndefined();
+    }
+  });
 
+  it("sets no interruptedStatus for a genuinely idle session", () => {
     const wasIdle = rowToStubSession(mkRow({ status: "idle", status_source: "shutdown" }));
     expect(wasIdle.interruptedStatus).toBeUndefined();
+    const idleTransition = rowToStubSession(mkRow({ status: "idle", status_source: "transition" }));
+    expect(idleTransition.interruptedStatus).toBeUndefined();
   });
 });
 

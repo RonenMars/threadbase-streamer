@@ -478,6 +478,69 @@ describe("pty-host reconnect on boot", () => {
     });
   });
 
+  it("turns sessions into resumable stubs when the host dies under a live streamer, then reattaches", async () => {
+    const lostId = "33333333-4444-4555-8666-777777777777";
+    const lostSession: ManagedSession = {
+      id: lostId,
+      provider: "claude-code",
+      projectPath: projectDir,
+      projectName: "project",
+      branch: "",
+      status: "waiting_input",
+      startedAt: new Date(),
+      completedAt: null,
+      promptCount: 1,
+      lastOutput: "",
+    };
+    seedRegistry([lostSession]);
+    const dying = statusTransport({
+      protocolVersion: PTY_HOST_PROTOCOL_VERSION,
+      sessions: [{ pid: 45680, session: lostSession }],
+    });
+    const replacement = statusTransport({
+      protocolVersion: PTY_HOST_PROTOCOL_VERSION,
+      sessions: [],
+    });
+    const connect = vi
+      .spyOn(hostSpawner, "connectOrSpawnHost")
+      .mockResolvedValueOnce(dying)
+      .mockResolvedValueOnce(replacement);
+
+    server = await startStreamer({ ptyHost: true });
+    expect((await listSessions(server)).find((row) => row.id === lostId)).toMatchObject({
+      ptyAttached: true,
+      lifecycle: "attached",
+    });
+
+    const notify = vi.spyOn(
+      server as unknown as { notifyBootRecovery: (s: unknown) => void },
+      "notifyBootRecovery",
+    );
+
+    // The host process is gone: its agents died with it, the streamer did not.
+    dying.close();
+
+    await vi.waitFor(async () => {
+      const row = (await listSessions(server as StreamerServer)).find((r) => r.id === lostId) as
+        | (SessionResponse & { interruptedStatus?: string })
+        | undefined;
+      expect(row).toMatchObject({
+        ptyAttached: false,
+        lifecycle: "resumable",
+        interruptedStatus: "waiting_input",
+      });
+    });
+    // The user is told, and a crash with the machine up is left for them to resume.
+    expect(notify).toHaveBeenCalledWith({ interrupted: 1, resumed: 0, left: 1, reason: "restart" });
+    // A fresh host is attached so a resume has somewhere to spawn.
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2));
+
+    // Closing the streamer drops its connection on purpose; that is not a loss.
+    await server.close();
+    server = null;
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
+
   it("reports a known empty registry so the disconnected host can reap", async () => {
     await startHost();
     server = await startStreamer({ ptyHost: true, sessionRehydration: false });
