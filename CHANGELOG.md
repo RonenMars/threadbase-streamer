@@ -1,3 +1,9 @@
+## [1.143.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.0...v1.143.1) (2026-11-17)
+
+### Bug Fixes
+
+* **conversations:** share one rescan between concurrent refresh=1 requests ([#1270](https://github.com/RonenMars/threadbase-streamer/issues/1270)) ([0927e75](https://github.com/RonenMars/threadbase-streamer/commit/0927e7595057a579c18a7ac863285a7a064b979e))
+
 ## [1.143.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.142.1...v1.143.0) (2026-11-17)
 
 ### Features
