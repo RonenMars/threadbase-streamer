@@ -1,3 +1,9 @@
+## [1.143.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.1...v1.143.2) (2026-11-17)
+
+### Bug Fixes
+
+* **scanner:** release the previous scanner generation after a rescan ([#1271](https://github.com/RonenMars/threadbase-streamer/issues/1271)) ([213a4ce](https://github.com/RonenMars/threadbase-streamer/commit/213a4ceb453df1751629f66c389c58a19c10fa62))
+
 ## [1.143.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.0...v1.143.1) (2026-11-17)
 
 ### Bug Fixes
