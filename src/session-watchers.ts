@@ -362,6 +362,7 @@ export class SessionWatchers {
   watchForCodexRollout(sessionId: string, projectPath: string): void {
     let deadline = Date.now() + TRANSCRIPT_WATCH_DEADLINE_MS;
     let seenPrompts = 0;
+    let expiredAtPrompts = 0;
     const now = new Date();
     const dateDir = join(
       String(now.getFullYear()),
@@ -416,8 +417,8 @@ export class SessionWatchers {
       }
       // The turn is what creates the rollout, so the deadline runs from the
       // turn. A session that has prompted and still produced no rollout stops
-      // polling 120s after that turn; one that never prompted stays armed
-      // until the PTY goes.
+      // scanning 120s after that prompt and waits for the next one; one that
+      // never prompted stays armed until the PTY goes.
       // ponytail: promptCount moves only on POST /api/sessions/:id/input, so a
       // first prompt composed entirely of raw sendKeys keystrokes is not
       // covered — every first prompt in the log went through that endpoint.
@@ -434,8 +435,14 @@ export class SessionWatchers {
         // ponytail: 250ms tick kept for simplicity; back it off if idle Codex
         // sessions ever show up in a profile.
         if (seenPrompts === 0) return;
+        // A prompt can fail to start a turn (a swallowed Enter leaves it in the
+        // compose box), and then the rollout comes with the *next* prompt. So
+        // this stops scanning, not watching: closing the poll here left that
+        // later conversation unbound for good, which Codex cannot recover from.
+        if (expiredAtPrompts === seenPrompts) return;
+        expiredAtPrompts = seenPrompts;
         this.log.warn(
-          `[startFresh] gave up watching for the Codex rollout of ${sessionId}`,
+          `[startFresh] gave up watching for the Codex rollout of ${sessionId} until its next prompt`,
           {
             event: "session.transcript_watch_expired",
             sessionId,
@@ -445,7 +452,6 @@ export class SessionWatchers {
           },
           "pino",
         );
-        cleanup();
         return;
       }
 

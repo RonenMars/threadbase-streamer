@@ -3,7 +3,7 @@
 // the only consumer, and exist so the contract is settled before PR 7's daemon
 // depends on it.
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   encodeMessage,
   type HostEvent,
@@ -535,6 +535,80 @@ describe("RemoteSessionRunner — async reads", () => {
     expect(runner.getInputHistory("sess-1")).toEqual([]);
     expect(await runner.hydrateInputHistory("sess-1")).toEqual([{ text: "earlier", ts: 5 }]);
     expect(runner.getInputHistory("sess-1")).toEqual([{ text: "earlier", ts: 5 }]);
+  });
+});
+
+describe("RemoteSessionRunner — a host left over from another build", () => {
+  // Production, 2026-11-14 11:29Z: the first release carrying the Codex submit
+  // fix re-adopted the previous release's host, which held 0 sessions, and kept
+  // it. The protocol number had not moved, so nothing said the host was old, and
+  // every session after that ran the old submit path until a prompt was lost.
+  beforeEach(() => {
+    vi.stubGlobal("__TB_BUILD_INFO__", { commit: "aaaaaaa", branch: "main", dirty: false });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("shuts down a host on another build that holds no sessions", async () => {
+    let host: ReturnType<typeof mkHost>;
+    host = mkHost({
+      // No `build` at all: a host from before the field existed.
+      status: () => statusOf(),
+      ...({
+        "shutdown-host": () => {
+          queueMicrotask(host.drop);
+          return {};
+        },
+      } as Partial<Record<HostRequest["type"], (req: HostRequest) => unknown>>),
+    });
+
+    await expect(RemoteSessionRunner.connect(host.transport)).rejects.toThrow(
+      "pty-host build unknown is not streamer build aaaaaaa",
+    );
+    expect(host.sent.map((request) => request.type)).toEqual(["status", "shutdown-host"]);
+    expect(host.transport.close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a host on another build that holds sessions, and says so", async () => {
+    const warn = vi.fn();
+    const { host } = await connect(
+      { status: () => ({ ...statusOf({ session: mkSession(), pid: 1 }), build: "bbbbbbb" }) },
+      { logger: { warn } as never },
+    );
+
+    expect(host.sent.map((request) => request.type)).not.toContain("shutdown-host");
+    expect(host.transport.close).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.any(String), {
+      event: "pty_host.build_mismatch",
+      hostBuild: "bbbbbbb",
+      streamerBuild: "aaaaaaa",
+      sessions: 1,
+    });
+  });
+
+  it("leaves every host alone when its own build is unknown", async () => {
+    // A source run has no build to compare, and must not end a deployed host.
+    vi.stubGlobal("__TB_BUILD_INFO__", null);
+    const warn = vi.fn();
+    const { host } = await connect(
+      { status: () => ({ ...statusOf(), build: "bbbbbbb" }) },
+      { logger: { warn } as never },
+    );
+
+    expect(host.sent.map((request) => request.type)).not.toContain("shutdown-host");
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("attaches quietly to a host on its own build", async () => {
+    const warn = vi.fn();
+    const { host } = await connect(
+      { status: () => ({ ...statusOf(), build: "aaaaaaa" }) },
+      { logger: { warn } as never },
+    );
+
+    expect(host.sent.map((request) => request.type)).not.toContain("shutdown-host");
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

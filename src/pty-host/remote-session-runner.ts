@@ -8,6 +8,7 @@ import type {
   StartSessionOptions,
   UserMessage,
 } from "../types";
+import { getBuildId } from "../version";
 import {
   encodeMessage,
   type HostEvent,
@@ -36,6 +37,17 @@ export class PtyHostProtocolMismatchError extends Error {
       `pty-host protocol ${hostVersion} is incompatible with streamer protocol ${streamerVersion}`,
     );
     this.name = "PtyHostProtocolMismatchError";
+  }
+}
+
+/** An idle host from another build was shut down; the caller starts its own. */
+export class PtyHostStaleBuildError extends Error {
+  constructor(
+    readonly hostBuild: string | null,
+    readonly streamerBuild: string,
+  ) {
+    super(`pty-host build ${hostBuild ?? "unknown"} is not streamer build ${streamerBuild}`);
+    this.name = "PtyHostStaleBuildError";
   }
 }
 
@@ -106,7 +118,15 @@ export class RemoteSessionRunner implements SessionRunner {
   ): Promise<RemoteSessionRunner> {
     const runner = new RemoteSessionRunner(transport, options);
     const status = await runner.readStatus();
-    if (status.protocolVersion !== PTY_HOST_PROTOCOL_VERSION) {
+    // The runners (submit timing, turn detection) live in the host, and a host
+    // outlives every deploy, so one from another build keeps running the code a
+    // release replaced. An unknown streamer build (a source run) compares nothing.
+    const streamerBuild = getBuildId();
+    const hostBuild = status.build ?? null;
+    const otherBuild = streamerBuild !== null && hostBuild !== streamerBuild;
+    const incompatible = status.protocolVersion !== PTY_HOST_PROTOCOL_VERSION;
+    // Replacing a host ends its sessions, so only an idle one goes.
+    if (incompatible || (otherBuild && status.sessions.length === 0)) {
       try {
         await runner.request({ type: "shutdown-host" }, HOST_SHUTDOWN_REQUEST_TIMEOUT_MS);
       } catch (err) {
@@ -117,7 +137,19 @@ export class RemoteSessionRunner implements SessionRunner {
       } finally {
         runner.dispose();
       }
+      if (!incompatible) throw new PtyHostStaleBuildError(hostBuild, streamerBuild as string);
       throw new PtyHostProtocolMismatchError(status.protocolVersion, PTY_HOST_PROTOCOL_VERSION);
+    }
+    if (otherBuild) {
+      options.logger?.warn(
+        `[pty-host] attached to a host from another build (${hostBuild ?? "unknown"}); its ${status.sessions.length} session(s) keep running that build's code until they end`,
+        {
+          event: "pty_host.build_mismatch",
+          hostBuild,
+          streamerBuild,
+          sessions: status.sessions.length,
+        },
+      );
     }
     const subscribed = (await runner.request({ type: "subscribe" })) as SubscribeResult;
     runner.refreshMirror(status);

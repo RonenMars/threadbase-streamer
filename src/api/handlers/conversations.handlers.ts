@@ -51,7 +51,9 @@ import type { ManagedSession, ServerWarmupState } from "../../types";
 import { canonicalizeProjectPath } from "../../utils/canonicalizeProjectPath";
 import { toolResultText } from "../../utils/claudeShapedLine";
 import {
+  classifyCodexLine,
   isCodexInjectedContext,
+  isCodexRolloutLine,
   isLeadingInjectedContext,
 } from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
@@ -99,6 +101,29 @@ interface SnakeConversationMeta {
  * client can read one field set from either endpoint.
  */
 /** `ownership`/`processLiveness` for a conversation an outside process is running; nothing otherwise. */
+/**
+ * True for a Codex rollout on disk that has no chat message yet (only
+ * session_meta, instructions and injected context). Stops at the first message,
+ * so a long rollout costs one read of its head. Classifies at index 0 because
+ * "no message counted yet" is exactly the scanner's leading-turn bound.
+ */
+async function codexRolloutHasNoMessageYet(filePath: string): Promise<boolean> {
+  if (!existsSync(filePath)) return false;
+  const rl = createInterface({ input: createReadStream(filePath, "utf8"), crlfDelay: Infinity });
+  let seen = 0;
+  try {
+    for await (const line of rl) {
+      if (!line) continue;
+      if (seen === 0 && !isCodexRolloutLine(line)) return false;
+      if (classifyCodexLine(line, 0).kind === "message") return false;
+      seen++;
+    }
+    return seen > 0;
+  } finally {
+    rl.close();
+  }
+}
+
 function externalTag(external: Set<string>, id: string) {
   return external.has(id)
     ? { ownership: "external" as const, processLiveness: "alive" as const }
@@ -1297,12 +1322,17 @@ export class ConversationHandlers {
       // production; anchoring on the spawn would leave the hole open for anyone
       // slow to type. Past the watcher's own deadline with nothing on disk it
       // 404s again: that is data loss, and it must not be dressed up as empty.
+      //
+      // A bound Codex rollout counts as in flight too while it holds no chat
+      // message: Codex binds the file when it creates it, and the first chat line
+      // lands 0.4-2s later. A bound file that does hold a message and still
+      // failed to resolve stays a 404 — that is a reader fault, not a pause.
       const bound = this.deps.findLiveSessionFilePath(id);
       const activeAt = unusedStart?.lastActivityAt ?? unusedStart?.startedAt;
       const transcriptPending =
-        !bound &&
         activeAt != null &&
-        Date.now() - activeAt.getTime() < TRANSCRIPT_WATCH_DEADLINE_MS;
+        Date.now() - activeAt.getTime() < TRANSCRIPT_WATCH_DEADLINE_MS &&
+        (!bound || (await codexRolloutHasNoMessageYet(bound)));
       if (unusedStart && (unusedStart.promptCount === 0 || transcriptPending)) {
         json(res, 200, this.emptyConversationPayload(id, unusedStart));
         return;

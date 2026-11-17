@@ -102,7 +102,7 @@ export type HostRequest =
   | { id: number; type: "kill"; sessionId: string; hold: true }
   | { id: number; type: "kill"; pid: number; hold?: false }
   | ({ id: number; type: "heartbeat" } & HostHeartbeatState)
-  /** Stop this host after acknowledging the request. Used only on version skew. */
+  /** Stop this host after acknowledging the request. Sent on version skew, and to an idle host left by another build. */
   | { id: number; type: "shutdown-host" }
   /** Every session the host owns. Seeds the streamer's mirror on connect. */
   | { id: number; type: "status" };
@@ -200,6 +200,12 @@ export interface HostSession {
 /** Result shapes, named so both ends agree on what a given request answers. */
 export interface StatusResult {
   protocolVersion: number;
+  /**
+   * The host's own build (`getBuildId()`), absent from a host that predates the
+   * field. The protocol number only moves when the wire format does, so it
+   * cannot say that a host is still running last week's submit path.
+   */
+  build?: string | null;
   sessions: HostSession[];
   promptSnapshots?: HostPromptSnapshot[];
 }

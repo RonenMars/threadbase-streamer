@@ -262,12 +262,15 @@ describe("a session with no transcript yet", () => {
   });
 
   it("still 404s when the transcript IS bound and resolution failed anyway", async () => {
-    // Positive control for the `!bound` half. A wired transcript means the file
-    // exists, so failing to resolve the conversation is a real miss, not a
-    // session waiting to speak — even though it was prompted moments ago.
+    // Positive control for the bound half. The wired file exists and already
+    // holds a chat message, so failing to resolve the conversation is a real
+    // miss, not a session waiting to speak — even though it was prompted moments
+    // ago. (A scanner that cannot read the file must surface, not look empty.)
+    const wired = join(dir, "already-wired.jsonl");
+    writeFileSync(wired, [...codexSetupLines(), codexUserLine("hello")].join("\n") + "\n");
     const { handlers } = makeHandlers({
       session: managedSession({ promptCount: 1, lastActivityAt: new Date() }),
-      liveFilePath: "/tmp/already-wired.jsonl",
+      liveFilePath: wired,
     });
     const res = makeRes();
 
@@ -275,7 +278,63 @@ describe("a session with no transcript yet", () => {
 
     expect(res.statusCode).toBe(404);
   });
+
+  it("answers 200 while a bound Codex rollout holds only its setup lines", async () => {
+    // Codex binds the rollout as soon as it creates it, but the first chat line
+    // lands 0.4-2 s later: until then the file holds session_meta, developer
+    // instructions and the injected AGENTS.md turn. Leg 2 of the simulator run:
+    //   01:01:37.282  session.codex_rollout_bound
+    //   01:01:37.418  GET /api/conversations/<bound id> -> 404   <- reconnect overlay
+    //   01:01:39.983  GET -> 200
+    const rollout = join(dir, "rollout-setup-only.jsonl");
+    writeFileSync(rollout, codexSetupLines().join("\n") + "\n");
+    const { handlers, invalidate } = makeHandlers({
+      session: managedSession({ promptCount: 1, lastActivityAt: new Date() }),
+      liveFilePath: rollout,
+    });
+    const res = makeRes();
+
+    await handlers.handleGetConversation("sess-1", url, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).messages).toEqual([]);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
 });
+
+function codexSetupLines(): string[] {
+  const ts = "2026-11-16T01:01:37.100Z";
+  return [
+    { timestamp: ts, type: "session_meta", payload: { id: "sess-1", cwd: "/tmp" } },
+    { timestamp: ts, type: "event_msg", payload: { type: "task_started" } },
+    {
+      timestamp: ts,
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "be helpful" }],
+      },
+    },
+    {
+      timestamp: ts,
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "# AGENTS.md instructions for /tmp" }],
+      },
+    },
+  ].map((o) => JSON.stringify(o));
+}
+
+function codexUserLine(text: string): string {
+  return JSON.stringify({
+    timestamp: "2026-11-16T01:01:37.500Z",
+    type: "response_item",
+    payload: { type: "message", role: "user", content: [{ type: "input_text", text }] },
+  });
+}
 
 describe("the 404 self-heal", () => {
   it("does not delete the cache row on an unexplained miss", async () => {

@@ -59,6 +59,31 @@ export async function connectOrSpawnHost(options: SpawnHostOptions): Promise<Hos
 }
 
 /**
+ * Wait until nothing answers on this instance's socket.
+ *
+ * A host acknowledges `shutdown-host` before it closes its listener, so a
+ * reconnect sent straight after the acknowledgement reaches the host that is on
+ * its way out and is dropped (measured: 40 of 40 at 0.05–0.2 ms, none at 1 ms).
+ * Each probe is closed at once, because the host only exits when its last
+ * connection ends. Gives up quietly: the caller's connect then fails as before.
+ */
+export async function waitForHostToStop(
+  instanceId: string,
+  timeoutMs = HOST_READY_TIMEOUT_MS,
+): Promise<void> {
+  const socketPath = hostSocketPath(instanceId);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      (await connectToHost(socketPath)).close();
+    } catch {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, HOST_POLL_INTERVAL_MS));
+  }
+}
+
+/**
  * Spawn the host so it survives this process.
  *
  * Three properties, each load-bearing:

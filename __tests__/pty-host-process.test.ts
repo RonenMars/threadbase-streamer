@@ -117,6 +117,20 @@ describe("SessionHost over a real socket", () => {
     expect(runner.listSessions()).toEqual([]);
   });
 
+  it("reports its build, so a streamer from the same build keeps an idle host", async () => {
+    // Without the build in `status` the host reads as one from before the
+    // field existed, and connect() shuts an idle one down.
+    vi.stubGlobal("__TB_BUILD_INFO__", { commit: "aaaaaaa", branch: "main", dirty: false });
+    try {
+      const { socketPath } = await startHost();
+      const runner = await connectRunner(socketPath);
+
+      expect(runner.listSessions()).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("probes host liveness and status without adopting it", async () => {
     const { socketPath } = await startHost();
     const runner = await connectRunner(socketPath);
