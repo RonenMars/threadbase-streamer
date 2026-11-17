@@ -155,7 +155,7 @@ The streamer also reports CLIs it discovered but doesn't own, and shapes rebuilt
   > **Streamer (verified 2026-09-25):** Only `alive` is ever sent (`src/session-store.ts`, `discoveredToResponse`, `processLiveness: "alive",`); a vanished process simply stops being listed.
   > So mobile's `pid` fallback (F-557) cannot trigger against this streamer.
 - **F-153** `activity`: `active_writing` or `quiet`, plus `lastEventAt`, source `jsonl` — inferred from the conversation log growing. Explicitly not authoritative. `L2/External`
-- **F-154** `interruptedStatus`: `running`, `waiting_input` — what a stub was doing when the streamer's own shutdown stopped it. Label only. `L2/External`
+- **F-154** `interruptedStatus`: `running`, `waiting_input` — what a stub was last seen doing when the streamer's shutdown, a reboot or a pty-host loss stopped it. Label only. `L2/External`
   > **Streamer (verified 2026-09-25):** Set only on registry rows whose status source is `shutdown`, which a clean `close()` records (`src/server.ts`, `if (!this.ptyManager.isRemote()) this.registryBoot.recordShutdownState();`).
   > A crash never sets it, and pty-host mode skips it.
 - **F-155** `pid`: number — present for discovered external processes. `L2/External`

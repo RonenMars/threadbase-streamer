@@ -16,9 +16,11 @@ import type { ResumeOutcome } from "./server";
 import {
   AUTO_RESUME_CONCURRENCY,
   AUTO_RESUME_STAGGER_MS,
+  AUTO_RESUME_WINDOW_MS,
   type AutoResumeSkipReason,
   autoResumeSkipReason,
   planAutoResume,
+  recordedBeforeThisBoot,
 } from "./services/sessions/autoResumeOnBoot";
 import {
   PRE_BOOT_REASON,
@@ -42,6 +44,13 @@ import { currentBootToken } from "./utils/bootToken";
  * `resumeSession` on the server instance) — the same reason ScannerManagerDeps
  * passes `cache: () => ConversationCache | null`.
  */
+export type BootRecoverySummary = {
+  interrupted: number;
+  resumed: number;
+  left: number;
+  reason: "reboot" | "restart";
+};
+
 export type SessionRegistryBootDeps = {
   log: () => Logger;
   ptyManager: () => LiveSessionManager;
@@ -61,6 +70,9 @@ export type SessionRegistryBootDeps = {
   }) => Promise<ResumeOutcome>;
   watchConversationFile: (sessionId: string, historyId?: string) => Promise<void>;
   broadcastSessionList: () => void;
+  // One report per boot, after auto-resume has had its turn: what was
+  // interrupted, what came back, what is waiting for the user.
+  notifyBootRecovery: (summary: BootRecoverySummary) => void;
   // True once close() has begun: boot recovery stops rather than write to the
   // registry or spawn into a server that is tearing down.
   closing: () => boolean;
@@ -327,17 +339,51 @@ export class SessionRegistryBoot {
     }
   }
 
-  /** Resume only the recent sessions the user explicitly allowed us to start at boot. */
+  /**
+   * Boot recovery for sessions a restart, host loss or reboot interrupted:
+   * resume the recent ones the user allowed us to start (`auto_resume_on_boot`),
+   * then tell the user how many were interrupted and how many are still waiting
+   * for them. The report runs with the preference off too, since that is when
+   * the user has to resume everything by hand.
+   */
   async autoResumePreviousSessions(rows: ManagedSessionRow[]): Promise<void> {
-    if (!this.autoResumeOnBoot) return;
+    const now = Date.now();
+    const bootToken = currentBootToken();
+    // Counted before any resume, while the sessions are still not live. Bounded
+    // by the auto-resume window: a `running` row nobody ever closed stays in the
+    // registry for days, and announcing it on every boot would be noise.
+    const interrupted = rows.filter(
+      (row) =>
+        (row.status === "running" || row.status === "waiting_input") &&
+        // Rehydration deletes a never-prompted row, so there is nothing to resume or
+        // announce. A resumed session starts its counter at 0 but names its source.
+        (row.prompt_count > 0 || row.resumed_from_conversation_id != null) &&
+        now - row.status_updated_at <= AUTO_RESUME_WINDOW_MS &&
+        !this.ptyManager.hasSession(row.session_id),
+    );
+    const resumed = this.autoResumeOnBoot ? await this.resumeEligible(rows, now, bootToken) : 0;
+    if (interrupted.length === 0) return;
+    this.deps.notifyBootRecovery({
+      interrupted: interrupted.length,
+      resumed,
+      left: Math.max(0, interrupted.length - resumed),
+      reason: interrupted.some((row) => recordedBeforeThisBoot(row, bootToken))
+        ? "reboot"
+        : "restart",
+    });
+  }
 
+  private async resumeEligible(
+    rows: ManagedSessionRow[],
+    now: number,
+    bootToken: string,
+  ): Promise<number> {
     // Preflight each otherwise-eligible row for a provider history before
     // planning. A session whose JSONL/rollout is gone can never resume, and
     // spending one of the AUTO_RESUME_MAX slots on it starves a session that
     // could (#483). Rows already skippable for a cheaper reason are marked
     // ineligible without a probe, so this costs nothing for them.
-    const now = Date.now();
-    const baseOptions = { now, projectExists: existsSync, historyExists: () => true };
+    const baseOptions = { now, bootToken, projectExists: existsSync, historyExists: () => true };
     const historyExists = new Map<string, boolean>();
     const preflights = new Set<Promise<void>>();
     for (const row of rows) {
@@ -462,6 +508,7 @@ export class SessionRegistryBoot {
       ineligible: plan.skipped.length,
       overflow: plan.overflow.length,
     });
+    return resumed;
   }
 
   /**

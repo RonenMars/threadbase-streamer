@@ -40,6 +40,7 @@ export class LiveSessionManager {
   private remoteRunner: RemoteSessionRunner | null = null;
   private options: PTYManagerOptions;
   private disposed = false;
+  private remoteLostHandler: ((lost: ManagedSession[]) => void) | null = null;
 
   constructor(
     options: PTYManagerOptions = {},
@@ -59,12 +60,18 @@ export class LiveSessionManager {
 
   async useRemoteRunner(transport: HostTransport): Promise<ManagedSession[]> {
     const remote = await RemoteSessionRunner.connect(transport, this.options);
+    remote.onConnectionLost = this.remoteLostHandler;
     await Promise.all(
       remote.listSessions().map((session) => remote.hydrateInputHistory(session.id)),
     );
     for (const runner of this.runners.values()) runner.dispose();
     this.remoteRunner = remote;
     return remote.listSessions();
+  }
+
+  /** Called when the pty-host dies under a live streamer; set before `useRemoteRunner`. */
+  onRemoteLost(handler: (lost: ManagedSession[]) => void): void {
+    this.remoteLostHandler = handler;
   }
 
   isRemote(): boolean {

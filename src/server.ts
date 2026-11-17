@@ -180,7 +180,7 @@ import { type BusySignal, resolveResumeBusyWindowMs } from "./services/sessions/
 import { IdempotencyStore } from "./services/sessions/idempotency";
 import type { ReconcileVerdict } from "./services/sessions/reconcileSessions";
 import { resumeIdForRow } from "./services/sessions/resumeIdentity";
-import { SessionRegistryBoot } from "./session-registry-boot";
+import { type BootRecoverySummary, SessionRegistryBoot } from "./session-registry-boot";
 import { SessionStore } from "./session-store";
 import { SessionWatchers } from "./session-watchers";
 import type {
@@ -705,6 +705,7 @@ export class StreamerServer {
       watchConversationFile: (sessionId, historyId) =>
         this.sessionWatchers.watchConversationFile(sessionId, historyId),
       broadcastSessionList: () => this.wsHub.broadcast(this.sessionListPayload()),
+      notifyBootRecovery: (summary) => this.notifyBootRecovery(summary),
       resolveConversationTarget: (sessionId) => this.resolveConversationTarget(sessionId),
       closing: () => this.closing !== null,
     });
@@ -1707,6 +1708,93 @@ export class StreamerServer {
     }
   }
 
+  /**
+   * Connect to the pty-host (spawning it if absent) and hand the runner to the
+   * manager. A host speaking another protocol is replaced once. Used at boot and
+   * again after a host loss.
+   */
+  private async connectPtyHost(): Promise<ManagedSession[]> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const transport = await connectOrSpawnHost({ instanceId: getInstanceId() });
+      try {
+        return await this.ptyManager.useRemoteRunner(transport);
+      } catch (err) {
+        if (!(err instanceof PtyHostProtocolMismatchError) || attempt > 0) throw err;
+        this.log.info(`[pty-host] replaced incompatible protocol ${err.hostVersion}`, {
+          event: "pty_host.protocol_replaced",
+          hostVersion: err.hostVersion,
+          streamerVersion: err.streamerVersion,
+        });
+      }
+    }
+    throw new Error("pty-host replacement did not produce a compatible host");
+  }
+
+  /**
+   * The host died under a running streamer (crash, kill): its agents died with
+   * it. Drop them from the live store, show them as resumable stubs carrying
+   * their last status, report them, and attach a fresh host so a resume has
+   * somewhere to spawn. Not an auto-resume trigger: the machine is up and the
+   * cause is unknown, so the user decides.
+   */
+  private async handlePtyHostLost(lost: ManagedSession[]): Promise<void> {
+    if (this.closing) return;
+    this.log.error(`[pty-host] connection lost; ${lost.length} live session(s) are gone`, {
+      event: "pty_host.connection_lost",
+      sessions: lost.length,
+    });
+    for (const session of lost) this.sessionStore.removeManaged(session.id);
+    try {
+      const rows = this.registryBoot.rehydratePreviousSessions([]);
+      this.wsHub.broadcast(this.sessionListPayload());
+      await this.registryBoot.autoResumePreviousSessions(rows);
+    } catch (err) {
+      this.log.error("[pty-host] recovery after host loss failed", {
+        event: "pty_host.loss_recovery_failed",
+        err,
+      });
+    }
+    if (this.closing) return;
+    try {
+      await this.connectPtyHost();
+    } catch (err) {
+      this.log.error("[pty-host] could not reattach after host loss", {
+        event: "pty_host.reattach_failed",
+        err,
+      });
+    }
+  }
+
+  /** One push per boot recovery: what was interrupted and what is waiting for the user. */
+  private notifyBootRecovery(summary: BootRecoverySummary): void {
+    this.log.info("[recovery] sessions were interrupted", {
+      event: "sessions.recovery_summary",
+      ...summary,
+    });
+    const sender = this.expoPushSender;
+    if (!sender) return;
+    const { interrupted, left, reason } = summary;
+    const cause = reason === "reboot" ? "A reboot" : "A restart";
+    const body =
+      left === 0
+        ? `${cause} interrupted ${interrupted} session(s); all are back.`
+        : `${cause} interrupted ${interrupted} session(s); ${left} waiting for you to resume.`;
+    void sender
+      .send(
+        {
+          title: "Sessions interrupted",
+          body,
+          data: { type: "recovery" },
+          sound: "default",
+          collapseId: "recovery",
+        },
+        { event: "sessionFailed" },
+      )
+      .catch((err) =>
+        this.log.warn("[recovery] push failed", { event: "sessions.recovery_push_failed", err }),
+      );
+  }
+
   async listen(port: number, opts?: { awaitReady?: boolean }): Promise<void> {
     if (this.featureFlags.ptyHost) {
       // Degrade to in-process runners rather than refusing to boot.
@@ -1722,24 +1810,8 @@ export class StreamerServer {
       // runners *after* a successful connect, so on this path they are still
       // the live ones and nothing has been adopted.
       try {
-        let sessions: ManagedSession[] | null = null;
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          const transport = await connectOrSpawnHost({
-            instanceId: getInstanceId(),
-          });
-          try {
-            sessions = await this.ptyManager.useRemoteRunner(transport);
-            break;
-          } catch (err) {
-            if (!(err instanceof PtyHostProtocolMismatchError) || attempt > 0) throw err;
-            this.log.info(`[pty-host] replaced incompatible protocol ${err.hostVersion}`, {
-              event: "pty_host.protocol_replaced",
-              hostVersion: err.hostVersion,
-              streamerVersion: err.streamerVersion,
-            });
-          }
-        }
-        if (!sessions) throw new Error("pty-host replacement did not produce a compatible host");
+        this.ptyManager.onRemoteLost((lost) => void this.handlePtyHostLost(lost));
+        const sessions = await this.connectPtyHost();
         for (const session of sessions) {
           this.sessionStore.addManaged({ ...session, reconciled: true });
         }

@@ -1719,3 +1719,11 @@ rm ~/.config/threadbase-scanner/index.db ~/.config/threadbase-scanner/index.db-w
 **Why the index accumulates test data.** Before [#837](https://github.com/RonenMars/threadbase-streamer/pull/837) the suite had no HOME sandbox and no scanner-index isolation, so any test building a `ConversationScanner` without pinning `persistent.dbPath` indexed its fixtures into the developer's real index — measured on this machine 2026-09-12: 674 of 2,563 rows were fixtures, and 914 of 1,046 `scanned_dirs` rows pointed at `__tests__/fixtures/…` under various worktrees.
 `__tests__/setup/sandbox-home.ts` and `__tests__/setup/isolate-scanner-index.ts` closed that; the newest fixture row on this machine predates them.
 So a developer seeing test conversations in `threadbase-scanner` CLI output is looking at history, not a live leak — but the rows persist until the index is cleared, because a vanished fixture directory only marks a row deleted rather than removing it.
+
+## Sessions still listed as live after the pty-host was killed
+
+**Symptom:** with `ptyHost` on, the pty-host process dies (crash, `kill`) while the streamer keeps running. Sessions stay `waiting_input` / attached for minutes, there is no log line, and input goes nowhere.
+
+**Cause:** the runner's mirror of the host's sessions was never cleared on a dropped connection, and nobody was told.
+
+**Fix:** the runner now reports the loss. The streamer logs `pty_host.connection_lost`, drops the sessions from the live store, shows them as resumable stubs carrying `interruptedStatus`, sends the recovery push, and attaches a fresh host. It does not auto-resume them: the machine is up and the cause is unknown, so the user resumes. After a **reboot**, `auto_resume_on_boot` does resume them (the boot token changed), up to `AUTO_RESUME_MAX` (5) within the 15-minute window; the rest are listed and counted in the push.

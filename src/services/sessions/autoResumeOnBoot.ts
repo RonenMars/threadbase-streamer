@@ -14,7 +14,7 @@ export const AUTO_RESUME_CONCURRENCY = 2;
 export const AUTO_RESUME_STAGGER_MS = 500;
 
 export type AutoResumeSkipReason =
-  | "not_shutdown"
+  | "not_restart_or_reboot"
   | "not_interrupted"
   | "too_old"
   | "project_missing"
@@ -25,6 +25,13 @@ export interface AutoResumeOptions {
   now: number;
   projectExists: (projectPath: string) => boolean;
   historyExists: (row: ManagedSessionRow) => boolean;
+  /** This machine boot; with it, a row recorded under another boot counts as a reboot. */
+  bootToken?: string;
+}
+
+/** The row was written under a different machine boot than the current one. */
+export function recordedBeforeThisBoot(row: ManagedSessionRow, bootToken?: string): boolean {
+  return bootToken != null && row.boot_token != null && row.boot_token !== bootToken;
 }
 
 /** Why a persisted row must remain a user-driven resume, or null when eligible. */
@@ -32,7 +39,12 @@ export function autoResumeSkipReason(
   row: ManagedSessionRow,
   opts: AutoResumeOptions,
 ): AutoResumeSkipReason | null {
-  if (row.status_source !== "shutdown") return "not_shutdown";
+  // Two events are certain and not the user's doing: we stopped it (`shutdown`),
+  // or the machine rebooted. Under ptyHost nothing writes `shutdown`, so the boot
+  // token is the only trigger there. A host crash with the machine up stays manual.
+  if (row.status_source !== "shutdown" && !recordedBeforeThisBoot(row, opts.bootToken)) {
+    return "not_restart_or_reboot";
+  }
   if (row.status !== "running" && row.status !== "waiting_input") return "not_interrupted";
   if (opts.now - row.status_updated_at > AUTO_RESUME_WINDOW_MS) return "too_old";
   if (!opts.projectExists(row.project_path)) return "project_missing";

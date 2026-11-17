@@ -157,14 +157,15 @@ export function rowToStubSession(row: ManagedSessionRow): ManagedSession {
     ...(row.status_source === "shutdown" && {
       statusSource: "shutdown" satisfies StatusSource,
       statusUpdatedAt: new Date(row.status_updated_at),
-      // `status` above had to flatten to `idle`, which erases whether the agent
-      // was mid-answer when we stopped it. Carried separately so a client can
-      // say "interrupted mid-response" without a novel SessionStatus value.
-      // Gated on the same `shutdown` source: a crashed row's `running` is a
-      // frozen value nobody confirmed, not an observation.
-      ...((row.status === "running" || row.status === "waiting_input") && {
-        interruptedStatus: row.status,
-      }),
+    }),
+    // `status` above had to flatten to `idle`, which erases whether the agent
+    // was mid-answer when it stopped. Carried separately so a client can say
+    // "was Working / Needs you" without a novel SessionStatus value. Not gated
+    // on `shutdown`: a host loss or reboot writes no such row, and the last
+    // status the streamer saw is exactly what the user wants to know. It is
+    // "last known", so `statusSource` above stays unset for those rows.
+    ...((row.status === "running" || row.status === "waiting_input") && {
+      interruptedStatus: row.status,
     }),
   };
 }

@@ -66,14 +66,41 @@ describe("auto-resume eligibility", () => {
   const exists = () => true;
   const historyExists = () => true;
 
-  it("requires a shutdown status source", () => {
+  it("leaves a crashed row on the same machine boot for the user", () => {
+    // A host crash with the machine up: the agent may have been running with
+    // bypassed permissions, so starting it again unattended is the user's call.
     expect(
-      autoResumeSkipReason(mkRow({ status_source: "transition" }), {
+      autoResumeSkipReason(mkRow({ status_source: "transition", boot_token: "boot-now" }), {
         now: NOW,
         projectExists: exists,
         historyExists,
+        bootToken: "boot-now",
       }),
-    ).toBe("not_shutdown");
+    ).toBe("not_restart_or_reboot");
+  });
+
+  it("resumes a row recorded before this machine boot, whatever its status source", () => {
+    // Under ptyHost nothing writes `shutdown`, so a reboot is the one event that
+    // is both certain and not the user's doing.
+    expect(
+      autoResumeSkipReason(mkRow({ status_source: "transition", boot_token: "boot-before" }), {
+        now: NOW,
+        projectExists: exists,
+        historyExists,
+        bootToken: "boot-now",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not read a missing boot token as a reboot", () => {
+    expect(
+      autoResumeSkipReason(mkRow({ status_source: "transition", boot_token: null }), {
+        now: NOW,
+        projectExists: exists,
+        historyExists,
+        bootToken: "boot-now",
+      }),
+    ).toBe("not_restart_or_reboot");
   });
 
   it("requires a running or waiting_input status at shutdown", () => {
@@ -180,6 +207,8 @@ type AutoResumeInternals = {
   // Stays on StreamerServer: SessionRegistryBoot reaches it through a
   // late-binding dep thunk, so stubbing it here is still observed.
   resolveConversationTarget: ReturnType<typeof vi.fn>;
+  // Same late-binding thunk: the server owns delivery (push), the boot code only reports.
+  notifyBootRecovery: ReturnType<typeof vi.fn>;
   log: {
     debug: ReturnType<typeof vi.fn>;
     info: ReturnType<typeof vi.fn>;
@@ -207,6 +236,7 @@ function makePolicyServer(enabled: boolean, cacheDir: string): AutoResumeInterna
     error: vi.fn(),
   };
   server.resolveConversationTarget = vi.fn().mockResolvedValue({ ok: true });
+  server.notifyBootRecovery = vi.fn();
   return server;
 }
 
@@ -259,10 +289,10 @@ describe("auto-resume orchestration", () => {
     expect(infoLogs).toHaveLength(1);
     expect(infoLogs[0][1]).toMatchObject({
       skipped: 2,
-      skippedBy: { not_interrupted: 1, not_shutdown: 1 },
+      skippedBy: { not_interrupted: 1, not_restart_or_reboot: 1 },
     });
     expect(server.log.debug.mock.calls.map(([, fields]) => fields?.reason)).toEqual(
-      expect.arrayContaining(["not_interrupted", "not_shutdown"]),
+      expect.arrayContaining(["not_interrupted", "not_restart_or_reboot"]),
     );
   });
 
@@ -322,6 +352,111 @@ describe("auto-resume orchestration", () => {
           fields?.event === "sessions.auto_resume_skipped" && fields?.reason === "ceiling_reached",
       ),
     ).toBe(true);
+  });
+
+  it("tells the user how many sessions a reboot interrupted and how many are left", async () => {
+    vi.useFakeTimers();
+    const server = makePolicyServer(true, cacheDir);
+    server.sessionHandlers.resumeSession = vi
+      .fn()
+      .mockResolvedValue({ ok: true, alreadyRunning: false, session: null, response: null });
+    const rows = Array.from({ length: AUTO_RESUME_MAX + 2 }, (_, i) =>
+      mkRow({
+        session_id: `aaaaaaaa-1111-4222-8333-${String(i).padStart(12, "0")}`,
+        project_path: projectDir,
+        status_source: "transition",
+        boot_token: "boot-before",
+        status_updated_at: Date.now(),
+      }),
+    );
+
+    const run = server.registryBoot.autoResumePreviousSessions(rows);
+    await vi.advanceTimersByTimeAsync(AUTO_RESUME_STAGGER_MS * (AUTO_RESUME_MAX + 2));
+    await run;
+
+    expect(server.notifyBootRecovery).toHaveBeenCalledTimes(1);
+    expect(server.notifyBootRecovery).toHaveBeenCalledWith({
+      interrupted: AUTO_RESUME_MAX + 2,
+      resumed: AUTO_RESUME_MAX,
+      left: 2,
+      reason: "reboot",
+    });
+  });
+
+  it("reports interrupted sessions even when auto-resume is off", async () => {
+    const server = makePolicyServer(false, cacheDir);
+    server.sessionHandlers.resumeSession = vi.fn();
+
+    await server.registryBoot.autoResumePreviousSessions([
+      mkRow({
+        project_path: projectDir,
+        status_source: "transition",
+        boot_token: "boot-before",
+        status_updated_at: Date.now(),
+      }),
+    ]);
+
+    expect(server.sessionHandlers.resumeSession).not.toHaveBeenCalled();
+    expect(server.notifyBootRecovery).toHaveBeenCalledWith({
+      interrupted: 1,
+      resumed: 0,
+      left: 1,
+      reason: "reboot",
+    });
+  });
+
+  it("does not count a session that never took a prompt", async () => {
+    const server = makePolicyServer(false, cacheDir);
+
+    await server.registryBoot.autoResumePreviousSessions([
+      // Rehydration deletes this row: there is nothing to resume, so nothing to announce.
+      mkRow({
+        project_path: projectDir,
+        status_source: "transition",
+        boot_token: "boot-before",
+        prompt_count: 0,
+        status_updated_at: Date.now(),
+      }),
+    ]);
+
+    expect(server.notifyBootRecovery).not.toHaveBeenCalled();
+  });
+
+  it("counts a resumed session whose prompt counter restarted at zero", async () => {
+    const server = makePolicyServer(false, cacheDir);
+
+    await server.registryBoot.autoResumePreviousSessions([
+      mkRow({
+        project_path: projectDir,
+        status_source: "transition",
+        boot_token: "boot-before",
+        prompt_count: 0,
+        resumed_from_conversation_id: "bbbbbbbb-1111-4222-8333-444444444444",
+        status_updated_at: Date.now(),
+      }),
+    ]);
+
+    expect(server.notifyBootRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ interrupted: 1 }),
+    );
+  });
+
+  it("stays silent when nothing was interrupted recently", async () => {
+    const server = makePolicyServer(true, cacheDir);
+    server.sessionHandlers.resumeSession = vi.fn();
+
+    await server.registryBoot.autoResumePreviousSessions([
+      mkRow({ project_path: projectDir, status: "idle", status_updated_at: Date.now() }),
+      // A frozen `running` row from days ago: re-announcing it every boot is spam.
+      mkRow({
+        session_id: "aaaaaaaa-1111-4222-8333-555555555555",
+        project_path: projectDir,
+        status_source: "transition",
+        status_updated_at: Date.now() - AUTO_RESUME_WINDOW_MS - 1,
+      }),
+    ]);
+
+    expect(server.notifyBootRecovery).not.toHaveBeenCalled();
   });
 
   it("logs a busy conversation as skipped instead of forcing it", async () => {
