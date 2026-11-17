@@ -28,7 +28,7 @@ describe("transcript watch deadline", () => {
   let codexRoot: string;
   let sessionFileMap: Map<string, string>;
   let managed: { startedAt: Date; promptCount: number; boundConversationId?: string };
-  let hasSession: boolean;
+  let session: { alive: boolean };
   let watchers: SessionWatchers;
   let tryWireProbes: number;
 
@@ -37,11 +37,14 @@ describe("transcript watch deadline", () => {
     codexRoot = mkdtempSync(join(tmpdir(), "tb-watch-deadline-codex-"));
     sessionFileMap = new Map();
     managed = { startedAt: new Date(), promptCount: 0 };
-    hasSession = true;
+    // Per test, not a shared flag: a watch that stays armed until its session
+    // ends must see *its* session end, or it keeps polling into the next test.
+    const live = { alive: true };
+    session = live;
     tryWireProbes = 0;
 
     watchers = new SessionWatchers({
-      ptyManager: { hasSession: () => hasSession },
+      ptyManager: { hasSession: () => live.alive },
       sessionStore: {
         getManaged: () => {
           tryWireProbes += 1;
@@ -71,7 +74,7 @@ describe("transcript watch deadline", () => {
   });
 
   afterEach(() => {
-    hasSession = false;
+    session.alive = false;
     vi.useRealTimers();
     rmSync(claudeProjectsDir(projectPath), { recursive: true, force: true });
     rmSync(projectPath, { recursive: true, force: true });
@@ -215,7 +218,7 @@ describe("transcript watch deadline", () => {
     it("still refuses to wire once the PTY is gone, however late the file lands", async () => {
       watchers.watchForJsonl(SESSION_ID, projectPath);
       const jsonlPath = join(claudeProjectsDir(projectPath), `${SESSION_ID}.jsonl`);
-      hasSession = false;
+      session.alive = false;
 
       jumpClock(300_000);
       writeFileSync(
@@ -314,6 +317,32 @@ describe("transcript watch deadline", () => {
 
       writeRollout("codex-after-expiry-id", dirDate);
       expect(await waitFor(() => managed.boundConversationId, 800)).toBeUndefined();
+    });
+
+    // A prompt whose Enter was swallowed produces no rollout, so the watch
+    // gives up. The next prompt is the one that creates the rollout: with the
+    // poll gone for good that conversation was never bound, so it 404'd and
+    // could not be resumed or forked.
+    it("re-arms on the next prompt after giving up, and binds that turn's rollout", async () => {
+      const dirDate = new Date();
+      watchers.watchForCodexRollout(SESSION_ID, projectPath);
+      const expired = captureExpiry();
+      const armedProbes = tryWireProbes;
+      managed.promptCount = 1;
+      await waitFor(() => (tryWireProbes > armedProbes ? true : undefined), BIND_BUDGET_MS);
+      jumpClock(300_000);
+      expect(await waitFor(expired, BIND_BUDGET_MS)).toBe(SESSION_ID);
+      // The poll keeps ticking while it waits, so it must not report again.
+      const warn = vi.spyOn((watchers as unknown as { log: { warn: () => void } }).log, "warn");
+      await new Promise((r) => setTimeout(r, 800));
+      expect(warn).not.toHaveBeenCalled();
+
+      managed.promptCount = 2;
+      writeRollout("codex-second-prompt-id", dirDate);
+
+      expect(await waitFor(() => managed.boundConversationId, BIND_BUDGET_MS)).toBe(
+        "codex-second-prompt-id",
+      );
     });
   });
 });
