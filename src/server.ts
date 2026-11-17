@@ -224,6 +224,18 @@ export const GRACE_MAX_DEFERS = 4;
 // PTY is never reaped no matter how long it has been running, because a long
 // silent turn is exactly the work this runtime exists to protect.
 export const IDLE_REAP_AFTER_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Resolve the idle-reap threshold from `THREADBASE_IDLE_REAP_AFTER_MS`.
+ * `0` disables reaping entirely (unlike `ptyGracePeriodMs`, where 0 means "hold
+ * now"); a missing or invalid value falls back to {@link IDLE_REAP_AFTER_MS}.
+ */
+export function resolveIdleReapAfterMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.THREADBASE_IDLE_REAP_AFTER_MS;
+  if (raw === undefined) return IDLE_REAP_AFTER_MS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : IDLE_REAP_AFTER_MS;
+}
 // How often the sweep runs. Coarse on purpose — reaping 5 minutes late costs
 // nothing, and a frequent timer on an idle server does not earn its wakeups.
 export const IDLE_REAP_SWEEP_MS = 5 * 60 * 1000;
@@ -464,6 +476,8 @@ export class StreamerServer {
   private sessionStartAttempts = new Map<string, number[]>();
   private sessionInputAttempts = new Map<string, number[]>();
   private ptyGracePeriodMs: number;
+  // Resolved once at boot; 0 = the idle reaper never holds a session.
+  private idleReapAfterMs = resolveIdleReapAfterMs();
   private defaultSystemPrompt: string;
   // Resolved once at boot; see src/feature-flags.ts. Total map — every registry
   // id is present, so indexing it never yields undefined.
@@ -1402,6 +1416,8 @@ export class StreamerServer {
         continue;
       }
 
+      if (this.idleReapAfterMs === 0) continue;
+
       // Fall back to startedAt so a session that never produced a chunk is
       // still eligible eventually — otherwise a PTY that failed to emit
       // anything would be immortal.
@@ -1410,7 +1426,7 @@ export class StreamerServer {
         session.lastActivityAt?.getTime() ??
         session.startedAt.getTime();
 
-      if (now - lastActive < IDLE_REAP_AFTER_MS) continue;
+      if (now - lastActive < this.idleReapAfterMs) continue;
 
       this.log.info(
         `[reap] releasing idle PTY for ${session.id} (idle ${Math.round((now - lastActive) / 60_000)}m)`,
