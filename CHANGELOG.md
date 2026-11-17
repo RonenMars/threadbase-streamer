@@ -1,3 +1,9 @@
+## [1.143.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.3...v1.143.4) (2026-11-17)
+
+### Bug Fixes
+
+* **codex:** bind the transcript when a stale host or late rollout used to lose it ([#1274](https://github.com/RonenMars/threadbase-streamer/issues/1274)) ([8adaf38](https://github.com/RonenMars/threadbase-streamer/commit/8adaf387ab9342faf66c22943014b6647621aa4f))
+
 ## [1.143.3](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.2...v1.143.3) (2026-11-17)
 
 ### Bug Fixes
