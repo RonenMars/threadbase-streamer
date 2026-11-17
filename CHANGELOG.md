@@ -1,3 +1,9 @@
+## [1.143.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.142.1...v1.143.0) (2026-11-17)
+
+### Features
+
+* **sessions:** add THREADBASE_IDLE_REAP_AFTER_MS to tune or disable the idle reaper ([#1268](https://github.com/RonenMars/threadbase-streamer/issues/1268)) ([67a46a8](https://github.com/RonenMars/threadbase-streamer/commit/67a46a83d7c694ec7bde5271fbc710d52c3b0474))
+
 ## [1.142.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.142.0...v1.142.1) (2026-11-15)
 
 ## [1.142.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.141.0...v1.142.0) (2026-11-15)
