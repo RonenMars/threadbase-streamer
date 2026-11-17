@@ -335,6 +335,24 @@ describe("SessionHost idle reaper", () => {
     await vi.waitFor(() => expect(runner.hasSession("stale")).toBe(false));
   });
 
+  it("never releases a settled session when the threshold is Infinity (reaper off)", async () => {
+    // The pty-host command maps THREADBASE_IDLE_REAP_AFTER_MS=0 to Infinity.
+    const host = new SessionHost({ idleSweepMs: 1_000_000, idleAfterMs: Number.POSITIVE_INFINITY });
+    cleanups.push(() => host.dispose());
+    host.accept({ send() {}, onLine() {}, onClose() {}, close() {} });
+
+    await (host as any).runner.start("quiet", { projectPath: tmpdir(), projectName: "p" });
+    const pty = await import("node-pty");
+    const proc = (pty.spawn as any).mock.results.at(-1)?.value;
+    proc._emit("data", "╭\n");
+    await vi.waitFor(() =>
+      expect((host as any).runner.getSession("quiet")?.status).toBe("waiting_input"),
+    );
+
+    expect(host.reapIdle(Date.now() + 365 * 24 * 60 * 60 * 1000)).toEqual([]);
+    expect(host.sessionCount()).toBe(1);
+  });
+
   it("never touches a running session, however long the turn", async () => {
     const host = new SessionHost({ idleSweepMs: 1_000_000, idleAfterMs: 0 });
     cleanups.push(() => host.dispose());
