@@ -122,8 +122,11 @@ import {
   PROVIDER_NAMES,
   type ProviderName,
 } from "./providers";
-import { PtyHostProtocolMismatchError } from "./pty-host/remote-session-runner";
-import { connectOrSpawnHost } from "./pty-host/spawn-host";
+import {
+  PtyHostProtocolMismatchError,
+  PtyHostStaleBuildError,
+} from "./pty-host/remote-session-runner";
+import { connectOrSpawnHost, waitForHostToStop } from "./pty-host/spawn-host";
 import { PTY_ROWS } from "./pty-shared";
 import { relayClientUrl } from "./relay/address";
 import { RelayConnector, type RelayState } from "./relay/connector";
@@ -1710,16 +1713,29 @@ export class StreamerServer {
 
   /**
    * Connect to the pty-host (spawning it if absent) and hand the runner to the
-   * manager. A host speaking another protocol is replaced once. Used at boot and
-   * again after a host loss.
+   * manager. A host speaking another protocol, or an idle one left by another
+   * build, is replaced once. Used at boot and again after a host loss.
    */
   private async connectPtyHost(): Promise<ManagedSession[]> {
+    const instanceId = getInstanceId();
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const transport = await connectOrSpawnHost({ instanceId: getInstanceId() });
+      // A second pass means a host was just told to stop. It is still
+      // listening when it says so, and connecting now would reach it.
+      if (attempt > 0) await waitForHostToStop(instanceId);
+      const transport = await connectOrSpawnHost({ instanceId });
       try {
         return await this.ptyManager.useRemoteRunner(transport);
       } catch (err) {
-        if (!(err instanceof PtyHostProtocolMismatchError) || attempt > 0) throw err;
+        if (attempt > 0) throw err;
+        if (err instanceof PtyHostStaleBuildError) {
+          this.log.info(`[pty-host] replaced idle host from build ${err.hostBuild}`, {
+            event: "pty_host.build_replaced",
+            hostBuild: err.hostBuild,
+            streamerBuild: err.streamerBuild,
+          });
+          continue;
+        }
+        if (!(err instanceof PtyHostProtocolMismatchError)) throw err;
         this.log.info(`[pty-host] replaced incompatible protocol ${err.hostVersion}`, {
           event: "pty_host.protocol_replaced",
           hostVersion: err.hostVersion,

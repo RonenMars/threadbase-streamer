@@ -3,9 +3,9 @@
 
 import { EventEmitter, once } from "events";
 import { mkdirSync, mkdtempSync, rmSync } from "fs";
-import type { Server } from "net";
+import { createServer, type Server } from "net";
 import { tmpdir } from "os";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 import WebSocket from "ws";
 import type { ManagedSessionRow } from "../src/db/repositories/managed-sessions.repository";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
@@ -17,6 +17,7 @@ import {
   encodeMessage,
   type HostRequest,
   type HostTransport,
+  LineDecoder,
   PTY_HOST_PROTOCOL_VERSION,
   type StatusResult,
 } from "../src/pty-host/protocol";
@@ -147,15 +148,20 @@ describe("pty-host reconnect on boot", () => {
     else process.env.THREADBASE_INSTANCE_ID = previousInstanceId;
     rmSync(rootDir, { recursive: true, force: true });
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  async function startHost(): Promise<RemoteSessionRunner> {
+  async function listenHost(): Promise<string> {
     host = new SessionHost({ idleSweepMs: 1_000_000 });
     const socketPath = hostSocketPath(instanceId);
     socketServer = await listenForStreamers(socketPath, {
       onConnection: (transport) => host?.accept(transport) ?? (() => {}),
     });
-    return RemoteSessionRunner.connect(await connectToHost(socketPath));
+    return socketPath;
+  }
+
+  async function startHost(): Promise<RemoteSessionRunner> {
+    return RemoteSessionRunner.connect(await connectToHost(await listenHost()));
   }
 
   async function closeSocketServer(): Promise<void> {
@@ -539,6 +545,87 @@ describe("pty-host reconnect on boot", () => {
     await server.close();
     server = null;
     expect(connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("replaces an idle host left over from another build", async () => {
+    // The protocol number matches, so only the build says this host predates
+    // the streamer. Without the retry the boot falls back to in-process PTYs.
+    vi.stubGlobal("__TB_BUILD_INFO__", { commit: "aaaaaaa", branch: "main", dirty: false });
+    let staleStopped = false;
+    const stale = statusTransport(
+      { protocolVersion: PTY_HOST_PROTOCOL_VERSION, sessions: [] },
+      () => {
+        staleStopped = true;
+        stale.close();
+      },
+    );
+    const current = statusTransport({
+      protocolVersion: PTY_HOST_PROTOCOL_VERSION,
+      sessions: [],
+      build: "aaaaaaa",
+    });
+    const connect = vi
+      .spyOn(hostSpawner, "connectOrSpawnHost")
+      .mockResolvedValueOnce(stale)
+      .mockResolvedValueOnce(current);
+
+    server = await startStreamer({ ptyHost: true, sessionRehydration: false });
+
+    expect(staleStopped).toBe(true);
+    expect(connect).toHaveBeenCalledTimes(2);
+    const ptyManager = (server as unknown as { ptyManager: LiveSessionManager }).ptyManager;
+    expect(ptyManager.isRemote()).toBe(true);
+  });
+
+  it("waits for a replaced host to stop listening before it reconnects", async () => {
+    // A host acknowledges `shutdown-host` before it closes its listener, and the
+    // streamer's retry connects first. Sent straight away it reached the host
+    // that was on its way out, was dropped, and the boot fell back to in-process
+    // PTYs. The real window is under a millisecond (a reconnect 0.2 ms after the
+    // acknowledgement was dropped 40 times out of 40); the linger holds it open.
+    vi.stubGlobal("__TB_BUILD_INFO__", { commit: "aaaaaaa", branch: "main", dirty: false });
+    const socketPath = hostSocketPath(instanceId);
+    mkdirSync(dirname(socketPath), { recursive: true });
+    let dying = false;
+    const stale = createServer((socket) => {
+      if (dying) {
+        socket.destroy();
+        return;
+      }
+      socket.setEncoding("utf8");
+      const decoder = new LineDecoder();
+      socket.on("data", (chunk: string) => {
+        for (const line of decoder.push(chunk)) {
+          const request = JSON.parse(line) as HostRequest;
+          const result =
+            request.type === "status"
+              ? { protocolVersion: PTY_HOST_PROTOCOL_VERSION, sessions: [] }
+              : {};
+          socket.write(encodeMessage({ id: request.id, ok: true, result }));
+          if (request.type === "shutdown-host") {
+            dying = true;
+            setTimeout(() => stale.close(), 100);
+          }
+        }
+      });
+    });
+    await new Promise<void>((resolve) => stale.listen(socketPath, resolve));
+    socketServer = stale;
+    // Connect-first, like the real one, which spawns a host when nothing answers.
+    const connect = vi.spyOn(hostSpawner, "connectOrSpawnHost").mockImplementation(async () => {
+      try {
+        return await connectToHost(socketPath);
+      } catch {
+        return connectToHost(await listenHost());
+      }
+    });
+
+    server = await startStreamer({ ptyHost: true, sessionRehydration: false });
+
+    expect(dying).toBe(true);
+    expect(connect).toHaveBeenCalledTimes(2);
+    const ptyManager = (server as unknown as { ptyManager: LiveSessionManager }).ptyManager;
+    expect(ptyManager.isRemote()).toBe(true);
   });
 
   it("reports a known empty registry so the disconnected host can reap", async () => {

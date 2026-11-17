@@ -69,3 +69,14 @@ declare const __TB_BUILD_INFO__: { commit: string; branch: string; dirty: boolea
 export function getBuildInfo(): { commit: string; branch: string; dirty: boolean } | null {
   return typeof __TB_BUILD_INFO__ === "undefined" ? null : __TB_BUILD_INFO__;
 }
+
+/**
+ * One string that says which build a process is, for comparing a streamer with
+ * the pty-host it attaches to. Null when the build is unknown (a source run).
+ */
+export function getBuildId(): string | null {
+  const build = getBuildInfo();
+  // ponytail: two dirty builds of one commit share an id; embed a build time if
+  // a rebuild-in-place dev loop ever needs its host replaced too.
+  return build ? `${build.commit}${build.dirty ? "+dirty" : ""}` : null;
+}

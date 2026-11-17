@@ -11,6 +11,7 @@ import {
 import { permissionGateKey } from "../services/questions/detectPermissionGate";
 import { questionContentKey } from "../services/questions/detectQuestionFromScreen";
 import type { ManagedSession, StartFreshSessionOptions, StartSessionOptions } from "../types";
+import { getBuildId } from "../version";
 import {
   encodeMessage,
   type HostEvent,
@@ -260,6 +261,7 @@ export class SessionHost {
       case "status":
         return {
           protocolVersion: PTY_HOST_PROTOCOL_VERSION,
+          build: getBuildId(),
           sessions: this.runner.listSessions().map((session) => this.toHostSession(session)),
           promptSnapshots: [...this.promptSnapshots.values()],
         };
