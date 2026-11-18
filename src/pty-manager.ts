@@ -915,6 +915,10 @@ export class PTYManager implements SessionRunner {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
     await new Promise<void>((resolve) => session.screen.write("", () => resolve()));
+    // The flush yields a tick, and a hold, exit or dispose can land inside it,
+    // disposing the screen. Reading `buffer` off a disposed terminal makes xterm
+    // warn and hand back nothing real.
+    if (this.sessions.get(sessionId) !== session) return [];
 
     const buf = session.screen.buffer.active;
     const lines: string[] = [];
