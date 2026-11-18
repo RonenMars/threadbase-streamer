@@ -1,3 +1,9 @@
+## [1.143.5](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.4...v1.143.5) (2026-11-18)
+
+### Bug Fixes
+
+* **pty-host:** honour THREADBASE_IDLE_REAP_AFTER_MS in the host reaper ([#1275](https://github.com/RonenMars/threadbase-streamer/issues/1275)) ([d134271](https://github.com/RonenMars/threadbase-streamer/commit/d13427192395e3092a8ca0035be17cc4f42506e1)), closes [#1268](https://github.com/RonenMars/threadbase-streamer/issues/1268)
+
 ## [1.143.4](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.3...v1.143.4) (2026-11-17)
 
 ### Bug Fixes
