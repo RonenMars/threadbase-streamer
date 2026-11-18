@@ -22,6 +22,7 @@ import { createHealthRoutes } from "./routes/health.routes";
 import { createLogsRoutes } from "./routes/logs.routes";
 import { createMiscRoutes } from "./routes/misc.routes";
 import { createPairRoutes } from "./routes/pair.routes";
+import { createPinnedDirsRoutes } from "./routes/pinned-dirs.routes";
 import { createProgressRoutes } from "./routes/progress.routes";
 import { createProjectRoutes } from "./routes/projects.routes";
 import { createProviderRoutes } from "./routes/providers.routes";
@@ -201,6 +202,7 @@ export const createHonoApp = (deps: ApiDeps, upgradeWebSocket?: UpgradeWebSocket
   app.route("/api/providers", createProviderRoutes());
   app.route("/api/devices", createDeviceRoutes(deps));
   app.route("/api/recent-dirs", createRecentDirsRoutes(deps));
+  app.route("/api/pinned-dirs", createPinnedDirsRoutes(deps));
   app.route("/api/saved-items", createSavedItemsRoutes(deps));
   app.route("/api/backup", createBackupRoutes(deps));
   app.route("/api/pair", createPairRoutes(deps));

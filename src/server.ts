@@ -1028,16 +1028,16 @@ export class StreamerServer {
 
     const apiDeps = createApiDeps({
       sessionGeometry: this.sessionGeometry,
-      // Values where the literal captured values: publicUrl/browseRoot are the
-      // construction-time reads they always were (realpath resolves later and
-      // deliberately does not update these).
+      // Values where the literal captured values: publicUrl is the
+      // construction-time read it always was. browseRoot is a getter because
+      // realpath resolves it after this point.
       apiKey: () => this.apiKey,
       scanProfiles: this.scanProfiles,
       localNoAuth: this.localNoAuth,
       logMenubarRequests: this.logMenubarRequests,
       publicUrl: this.publicUrl,
       relayUrl: this.relayClientUrl,
-      browseRoot: this.browseRoot,
+      browseRoot: () => this.browseRoot,
       browserCors: this.browserCors,
       ptyGracePeriodMs: this.ptyGracePeriodMs,
       rotateApiKey: () => this.rotateApiKey(),
