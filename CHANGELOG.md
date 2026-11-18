@@ -1,3 +1,9 @@
+## [1.144.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.9...v1.144.0) (2026-11-18)
+
+### Features
+
+* **pinned-dirs:** store per-server pinned browse folders in runtime.db ([#1284](https://github.com/RonenMars/threadbase-streamer/issues/1284)) ([f03c046](https://github.com/RonenMars/threadbase-streamer/commit/f03c046469a471cff32eac235c719eade96ac18b))
+
 ## [1.143.9](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.8...v1.143.9) (2026-11-18)
 
 ### Bug Fixes
