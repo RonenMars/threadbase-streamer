@@ -322,6 +322,23 @@ jobs:
         run: npm test
         shell: bash
 
+      # The step above runs under Git Bash, which puts Git's `sh` on PATH, so a
+      # test that spawns `sh` can never fail there. `deploy.ps1` runs `npm test`
+      # from PowerShell, where a session often has only `Git\cmd` on PATH, and
+      # claude-turn-hooks.test.ts then died with `spawnSync sh ENOENT` (20 tests)
+      # while this job was green. The runner's own pwsh PATH still carries
+      # `Git\bin` and `Git\usr\bin`, so strip them to get the same environment.
+      # Measured on windows-latest: the pre-fix test fails 20 here, the fixed one
+      # passes 27. Only this file, not the suite: it is the one that needs `sh`.
+      - name: Hook tests without Git's sh on PATH (deploy.ps1 environment)
+        if: needs.gate.outputs.skip != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and ($_ -notmatch '\\Git\\(usr\\bin|bin|mingw64\\bin)\\?$') }) -join ';'
+          if (Get-Command sh -ErrorAction SilentlyContinue) { throw "sh is still on PATH; the strip no longer matches the runner image" }
+          npx vitest run __tests__/claude-turn-hooks.test.ts
+          exit $LASTEXITCODE
+
       # node-pty is the dependency most likely to break per-platform, and a
       # failure here is the one a Linux-only matrix can never catch.
       - name: Verify native addon loads
