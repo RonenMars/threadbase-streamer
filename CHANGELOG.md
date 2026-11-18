@@ -1,3 +1,9 @@
+## [1.143.9](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.8...v1.143.9) (2026-11-18)
+
+### Bug Fixes
+
+* **pty:** stop reading the screen after the session is gone mid-flush ([#1283](https://github.com/RonenMars/threadbase-streamer/issues/1283)) ([29c9cdb](https://github.com/RonenMars/threadbase-streamer/commit/29c9cdb74ebd72f7b1382b69a38a4e248133fa98))
+
 ## [1.143.8](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.7...v1.143.8) (2026-11-18)
 
 ## [1.143.7](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.6...v1.143.7) (2026-11-18)
