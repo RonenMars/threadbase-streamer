@@ -1788,7 +1788,9 @@ export class StreamerServer {
       ...summary,
     });
     const sender = this.expoPushSender;
-    if (!sender) return;
+    // A closing server has closed (or is about to close) runtime.db, where the
+    // push tokens live; the next boot recovers and reports these sessions.
+    if (!sender || this.closing) return;
     const { interrupted, left, reason } = summary;
     const cause = reason === "reboot" ? "A reboot" : "A restart";
     const body =
@@ -2071,11 +2073,33 @@ export class StreamerServer {
             });
           }
           this.cacheMetadataRepo = new CacheMetadataRepository(db);
-          this.pushRepo = new PushRepository(db);
-          this.stopPushTokenRetention = startPushTokenRetention(this.pushRepo);
+          // Push state lives in runtime.db (runtime migration 009); move what an
+          // older streamer left in cache.db first. No runtime store, no push.
+          if (this.runtimeStore) {
+            try {
+              const result = this.runtimeStore.importLegacyPush(db);
+              if (result.copied > 0) {
+                this.log.info(
+                  `Moved ${result.copied} push row(s) from cache.db to runtime.db` +
+                    (result.purged
+                      ? "; removed the cache-side copy"
+                      : "; KEPT the cache-side copy (row count did not match after copy)"),
+                  { ...result, table: "push", event: "runtime.legacy_import" },
+                );
+              }
+            } catch (err) {
+              this.log.warn("[registry] legacy push move failed", {
+                event: "runtime.legacy_import_failed",
+                table: "push",
+                err,
+              });
+            }
+            this.pushRepo = new PushRepository(this.runtimeStore.getDatabase());
+            this.stopPushTokenRetention = startPushTokenRetention(this.pushRepo);
 
-          this.initLiveActivityPush(this.pushRepo);
-          this.initWaitingInputPush(this.pushRepo);
+            this.initLiveActivityPush(this.pushRepo);
+            this.initWaitingInputPush(this.pushRepo);
+          }
           // Cache-integrity drift monitor. reset_rescan rebuilds from a fresh
           // scan via the same machinery ?refresh=1 uses (rescanForRefresh).
           this.cacheMonitor = new CacheIntegrityMonitor(

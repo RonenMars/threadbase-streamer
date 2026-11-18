@@ -116,6 +116,8 @@ describe("push capability over HTTP", () => {
       verbose: false,
       disableDb: true,
       cacheDir,
+      // Push tokens live in runtime.db; a per-test file keeps them from leaking.
+      runtimeDbPath: join(cacheDir, "runtime.db"),
       scanProfiles: [],
       featureFlags: { liveActivityPush },
     });

@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import {
   APNS_DEFAULT_BUNDLE_ID,
   APNS_DEFAULT_TEAM_ID,
@@ -37,17 +37,17 @@ import type { ManagedSession } from "../src/types";
  */
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tb-apns-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
 });
 

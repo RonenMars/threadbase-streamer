@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import type { ApnsClient } from "../src/services/push/apnsClient";
 import {
   LiveActivityRenewalScheduler,
@@ -31,19 +31,19 @@ const ORIGINAL_START = 1_700_000_000_000;
 const STALE_DATE = ORIGINAL_START + 8 * HOUR;
 
 let dir: string;
-let cache: ConversationCache;
+let runtime: RuntimeStore;
 let repo: PushRepository;
 let store: SessionStore;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tb-renew-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  runtime = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(runtime.getDatabase());
   store = new SessionStore();
 });
 
 afterEach(() => {
-  cache.close();
+  runtime.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -254,7 +254,7 @@ describe("restart safety", () => {
   it("finds a pending renewal after a restart", () => {
     registerActivity("tok-a");
     // Simulate a restart: a brand-new repository over the same database file.
-    const fresh = new PushRepository(cache.getDatabase());
+    const fresh = new PushRepository(runtime.getDatabase());
 
     expect(fresh.listRenewable().map((r) => r.token)).toEqual(["tok-a"]);
     expect(fresh.get("tok-a")?.started_at).toBe(ORIGINAL_START);

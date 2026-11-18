@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import { ExpoPushSender } from "../src/services/push/expoPushSender";
 import {
   IDLE_NOTIFY_DEFAULT_SWEEP_MS,
@@ -41,20 +41,20 @@ const MIN = 60_000;
 const ON = { enabled: true, thresholdMs: 20 * MIN, sweepMs: MIN };
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository;
 let clock: number;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tb-idle-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
   clock = 1_000_000;
   h.calls.length = 0;
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

@@ -20,6 +20,14 @@ export function resolveRuntimeDbPath(override?: string): string {
   );
 }
 
+/** Parents before children: receipts and subscriptions reference push_tokens. */
+const PUSH_TABLES = [
+  "push_tokens",
+  "push_events",
+  "push_receipts",
+  "external_session_subscriptions",
+] as const;
+
 /**
  * `~/.threadbase/runtime.db` — the authoritative, non-derived half of the
  * streamer's SQLite state.
@@ -42,6 +50,8 @@ export class RuntimeStore {
   static open(dbPath: string, migrationsDir?: string): RuntimeStore {
     const db = instrumentDatabase(new Database(dbPath));
     db.pragma("journal_mode = WAL");
+    // push_receipts and external_session_subscriptions cascade from push_tokens.
+    db.pragma("foreign_keys = ON");
     runSqliteMigrations(db, migrationsDir ?? resolveMigrationsDir("runtime-migrations"));
     return new RuntimeStore(db);
   }
@@ -96,6 +106,34 @@ export class RuntimeStore {
   }
 
   /**
+   * One-time move of the push tables out of `cache.db` (runtime migration 009).
+   *
+   * Moved, not copied, like `devices`: a push token is a delivery credential,
+   * and a second copy left in the cache is one nothing would ever revoke.
+   * Parents first, so the cascading foreign keys hold; all-or-nothing, so a
+   * failure leaves runtime.db as it was and the cache untouched. The source is
+   * deleted only when every table landed in full.
+   */
+  importLegacyPush(source: Database.Database): { copied: number; purged: boolean } {
+    const count = (db: Database.Database, table: string) =>
+      (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    // As a set: copying children whose parent token was skipped breaks the FK.
+    if (PUSH_TABLES.some((table) => count(this.db, table) > 0)) return { copied: 0, purged: false };
+
+    const copied = this.db.transaction(() =>
+      PUSH_TABLES.reduce((n, table) => n + this.importLegacyTable(source, table), 0),
+    )();
+    if (copied === 0) return { copied: 0, purged: false };
+    if (PUSH_TABLES.some((table) => count(this.db, table) !== count(source, table))) {
+      return { copied, purged: false };
+    }
+    source.transaction(() => {
+      for (const table of [...PUSH_TABLES].reverse()) source.prepare(`DELETE FROM ${table}`).run();
+    })();
+    return { copied, purged: true };
+  }
+
+  /**
    * Copy a whole table out of a pre-split `cache.db` into this file.
    *
    * The copy itself is non-destructive — the source is left in place, so an
@@ -111,7 +149,7 @@ export class RuntimeStore {
    */
   private importLegacyTable(
     source: Database.Database,
-    table: "managed_sessions" | "devices",
+    table: "managed_sessions" | "devices" | (typeof PUSH_TABLES)[number],
   ): number {
     const existing = this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as {
       n: number;

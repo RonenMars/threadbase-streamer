@@ -7,8 +7,8 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppEnv } from "../src/api/app";
 import { createMiscRoutes } from "../src/api/routes/misc.routes";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 
 /** PUT / DELETE /api/push/subscriptions (#1265). */
 
@@ -17,7 +17,7 @@ const TOK_B = "ExponentPushToken[b]";
 const CONV = "11111111-2222-3333-4444-555555555555";
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository | null;
 let server: Server;
 let baseUrl: string;
@@ -25,8 +25,8 @@ let principal: { kind: "device"; deviceId: string } | { kind: "api-key" };
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "tb-sub-routes-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
   principal = { kind: "api-key" };
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
@@ -43,7 +43,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
 });
 

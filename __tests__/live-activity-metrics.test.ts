@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import { StreamerServer } from "../src/server";
 import type { ApnsClient, ApnsSendResult } from "../src/services/push/apnsClient";
 import {
@@ -51,19 +51,19 @@ const HOUR = 60 * 60 * 1000;
 const START = 1_700_000_000_000;
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository;
 
 beforeEach(() => {
   h.calls.length = 0;
   resetLiveActivityMetrics();
   dir = mkdtempSync(join(tmpdir(), "tb-la-metrics-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
 });
 

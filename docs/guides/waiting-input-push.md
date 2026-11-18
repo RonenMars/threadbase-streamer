@@ -188,7 +188,7 @@ A device can opt in to one session at a time, and is then sent one `turn_done` p
   A `PUT` for a token this server does not know, or one another device owns, is `404 TOKEN_NOT_FOUND` so the client learns nothing was stored; the shared api key may use any token.
   The path sits under `/api/push`, so it needs the existing `notifications` capability.
 - **Capability.** `push.subscriptions` on `GET /api/info` and `/api/push/health` is true when the server accepts these routes (it follows `notifications`), so a client can tell an older server, whose `PUT` is a bare 404, from `TOKEN_NOT_FOUND`.
-- **Storage.** `external_session_subscriptions` in cache.db (migration 029), keyed `(token, conversation_id)` with `ON DELETE CASCADE` from `push_tokens`.
+- **Storage.** `external_session_subscriptions` in runtime.db (runtime migration 009; it was cache.db migration 029 until a cache clear was found to drop every follow), keyed `(token, conversation_id)` with `ON DELETE CASCADE` from `push_tokens`.
   A device is a push token here because the shared api key names no `deviceId`.
   `conversation_id` is not a foreign key: the conversation may not be cached yet.
 - **Signal.** `ExternalTailManager.broadcastExternalTailLines` hands each batch to `ExternalTurnNotifier`, which reads `transcriptTurnEndAt` (the same parser as the managed runners' transcript signal).

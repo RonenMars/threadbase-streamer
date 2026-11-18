@@ -47,13 +47,14 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub" |
   /**
    * Revoking or erasing a device deletes its push tokens.
    *
-   * Cross-database: devices are in runtime.db and push_tokens in cache.db, so
-   * there is no foreign key to lean on and this is the only place the two are
-   * joined. Delete rather than revoke, for the same reason the record itself
-   * goes — a retained row is still a stored delivery credential.
+   * Both tables are in runtime.db, but push_tokens.device_id carries no
+   * foreign key (a token can predate device identity, and a revoke keeps the
+   * device row), so this is the only place the two are joined. Delete rather
+   * than revoke, for the same reason the record itself goes — a retained row is
+   * still a stored delivery credential.
    *
-   * Silent when the cache is unavailable: a device revoke must never fail
-   * because the conversation cache did not open.
+   * Silent when push is unavailable: a device revoke must never fail because
+   * the push store did not open.
    */
   const dropPushTokens = (deviceId: string): void => {
     const deleted = deps.pushRepo?.()?.deleteForDevice(deviceId) ?? 0;

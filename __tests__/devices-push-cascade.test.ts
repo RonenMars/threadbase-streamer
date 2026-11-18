@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHonoApp } from "../src/api/app";
 import { createDeviceRoutes } from "../src/api/routes/devices.routes";
 import type { ApiDeps } from "../src/api/types/api-deps";
-import { ConversationCache } from "../src/conversation-cache";
 import { DevicesRepository } from "../src/db/repositories/devices.repository";
 import { PushRepository } from "../src/db/repositories/push.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
@@ -16,9 +15,9 @@ import { RuntimeStore } from "../src/db/runtime-store";
 /**
  * Revoking or erasing a device deletes its push tokens.
  *
- * The two tables are in different databases — `devices` in runtime.db,
- * `push_tokens` in cache.db — so there is no foreign key doing this and the
- * cascade only exists as two repository calls in the route. Without it a
+ * Both tables are in runtime.db, but `push_tokens.device_id` carries no
+ * foreign key, so the cascade only exists as two repository calls in the
+ * route. Without it a
  * revoked phone kept a live delivery credential on the server, which is exactly
  * what revoking is supposed to take away.
  *
@@ -31,7 +30,6 @@ import { RuntimeStore } from "../src/db/runtime-store";
 
 let dir: string;
 let store: RuntimeStore;
-let cache: ConversationCache;
 let devices: DevicesRepository;
 let push: PushRepository;
 
@@ -55,14 +53,12 @@ const tokensFor = (deviceId: string) => push.listHealth().filter((t) => t.device
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tb-push-cascade-"));
   store = RuntimeStore.open(join(dir, "runtime.db"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
   devices = new DevicesRepository(store.getDatabase());
-  push = new PushRepository(cache.getDatabase());
+  push = new PushRepository(store.getDatabase());
 });
 
 afterEach(() => {
   store.close();
-  cache.close();
   rmSync(dir, { recursive: true, force: true });
 });
 

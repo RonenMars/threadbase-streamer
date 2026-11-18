@@ -21,7 +21,7 @@ That transport choice is structural, not a preference. An APNs `.p8` signs only 
 - **Failed start** — one `failed` push when a session goes idle with a `failureReason` having never reached a prompt (`readySeen`). Never the reason (it embeds paths): the body is fixed copy picked by `failureCode` (`project_dir_missing`, `instant_exit`, `codex_active_writer`; anything else reads "Open the session for details."). A Codex usage-limit `failureReason` on a live session is not this; it arrives as a `limited` push.
 - **Dead tokens** — an Expo ticket of `DeviceNotRegistered` revokes the token, mirroring how `LiveActivitySender` expires a dead APNs one. Every other error only counts toward the failure streak. Tickets are per-token in one batched response, so one dead device never silences the rest.
 - **Delivery receipts (#543)** — a ticket of `status: "ok"` only means Expo's relay accepted the message.
-  `ExpoPushSender` therefore saves the ticket id in `push_receipts` (cache.db migration 028, beside `push_tokens`, `ON DELETE CASCADE` so unregistering leaves no copy of the token) and does **not** call `recordSuccess` at send time.
+  `ExpoPushSender` therefore saves the ticket id in `push_receipts` (runtime.db, runtime migration 009 — originally cache.db migration 028 — beside `push_tokens`, `ON DELETE CASCADE` so unregistering leaves no copy of the token) and does **not** call `recordSuccess` at send time.
   `ExpoReceiptPoller` (`expoReceiptPoller.ts`) sweeps once a minute on one unref'd timer, asks `POST /--/api/v2/push/getReceipts` for up to 1000 ids sent at least 15 minutes ago, and feeds each receipt into the same paths as the send path: `ok` calls `recordSuccess`, `error` calls `recordFailure` with `details.error`, and `DeviceNotRegistered` also calls `revoke`.
   An id Expo does not return stays and is asked again (least recently polled first, so it cannot starve newer ids), and the 24 hour delete drops it without counting a failure; a network or HTTP failure leaves every row for the next sweep.
   The constants (15 minutes, 24 hours, 1000, 1 minute) are code, not config, and each sweep that polled or purged logs `push.receipts_polled` with counts only.
@@ -48,7 +48,7 @@ A device subscribes to one external session (`PUT`/`DELETE /api/push/subscriptio
 
 - **Where** — `ExternalTurnNotifier` (`src/services/push/externalTurnNotifier.ts`), called from `ExternalTailManager.broadcastExternalTailLines`. Not `WaitingInputNotifier`: an external session never reaches `onStatusChange`.
 - **Capability** — `push.subscriptions` on `/api/info` (follows `notifications`); an older server has no flag and answers the `PUT` with a bare 404.
-- **Targeting** — `ExpoPushSender.send(..., { only: Set<token> })`; an empty set sends nothing, never everyone. Table `external_session_subscriptions` (cache.db, migration 029) cascades from `push_tokens`.
+- **Targeting** — `ExpoPushSender.send(..., { only: Set<token> })`; an empty set sends nothing, never everyone. Table `external_session_subscriptions` (runtime.db, runtime migration 009; originally cache.db migration 029) cascades from `push_tokens`.
 - **Guards** — turn end older than 120 s is a replay; dedupe by end timestamp; a subscribed tail idles 60 min (`SUBSCRIBED_TAIL_IDLE_MS`), not 5; subscriptions untouched 14 days are pruned by the daily token sweep.
 
 ## iOS Live Activity push

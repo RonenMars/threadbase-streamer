@@ -7,8 +7,8 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../src/api/app";
 import { createMiscRoutes } from "../src/api/routes/misc.routes";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import type { NotificationPrefs } from "../src/schemas/notification-prefs.schema";
 import { EXPO_PUSH_ENDPOINT, ExpoPushSender } from "../src/services/push/expoPushSender";
 import {
@@ -32,7 +32,7 @@ const EXPO_A = "ExponentPushToken[a]";
 const EXPO_B = "ExponentPushToken[b]";
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository;
 
 beforeEach(() => {
@@ -40,12 +40,12 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-01-07T12:00:00Z"));
   dir = mkdtempSync(join(tmpdir(), "tb-prefs-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -184,7 +184,7 @@ describe("ExpoPushSender applies preferences per token", () => {
 
   it("fails open on a stored blob that no longer parses", async () => {
     repo.register({ token: EXPO_A, platform: "ios" });
-    cache
+    store
       .getDatabase()
       .prepare("UPDATE push_tokens SET notification_prefs = ? WHERE token = ?")
       .run("{corrupt", EXPO_A);

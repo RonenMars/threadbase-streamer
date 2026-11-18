@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationCache } from "../src/conversation-cache";
 import { DevicesRepository } from "../src/db/repositories/devices.repository";
 import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
+import { PushRepository } from "../src/db/repositories/push.repository";
 import { RuntimeStore } from "../src/db/runtime-store";
 import type { ManagedSession } from "../src/types";
 import { currentBootToken } from "../src/utils/bootToken";
@@ -71,6 +72,7 @@ describe("RuntimeStore", () => {
       "007_create_recent_dirs.sql",
       "008_add_managed_session_model_effort.sql",
       "009_create_pinned_dirs.sql",
+      "009_create_push_tables.sql",
     ]);
     store.close();
 
@@ -338,5 +340,98 @@ describe("RuntimeStore", () => {
       expect(repo.authenticate(deviceToken)?.name).toBe("phone");
       store.close();
     });
+  });
+});
+
+// Push tokens and what hangs off them (receipts, sent-event dedupe, external
+// session subscriptions) moved out of cache.db: a follow subscription is
+// re-sent by nothing, so a cache clear silently ended every followed session's
+// pushes.
+describe("importLegacyPush", () => {
+  /** A real cache.db (all four tables, via its own migrations) with one of each. */
+  function seedLegacyPush(): ConversationCache {
+    const cache = ConversationCache.open(join(cacheDir, "cache.db"));
+    const repo = new PushRepository(cache.getDatabase());
+    repo.register({ token: "tok-1", platform: "ios" });
+    repo.subscribe("tok-1", "conv-1", 1000);
+    repo.saveTicket("ticket-1", "tok-1", 1000);
+    repo.claimEvent("evt-1", "sess-1", 1000);
+    return cache;
+  }
+
+  const count = (db: Database.Database, table: string) =>
+    (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+
+  it("moves all four tables across and deletes the cache-side copy", () => {
+    const cache = seedLegacyPush();
+    const store = openRuntime();
+
+    expect(store.importLegacyPush(cache.getDatabase())).toEqual({ copied: 4, purged: true });
+
+    const repo = new PushRepository(store.getDatabase());
+    expect(repo.get("tok-1")?.platform).toBe("ios");
+    expect([...repo.subscribedTokens("conv-1")]).toEqual(["tok-1"]);
+    expect(repo.listDueReceipts(2000, 10)).toEqual([{ ticket_id: "ticket-1", token: "tok-1" }]);
+    expect(repo.claimEvent("evt-1", "sess-1")).toBe(false);
+    for (const t of [
+      "push_tokens",
+      "push_events",
+      "push_receipts",
+      "external_session_subscriptions",
+    ]) {
+      expect(count(cache.getDatabase(), t)).toBe(0);
+    }
+
+    // Second boot: nothing left to move, and nothing in runtime.db is touched.
+    expect(store.importLegacyPush(cache.getDatabase())).toEqual({ copied: 0, purged: false });
+    expect(repo.get("tok-1")).not.toBeNull();
+    store.close();
+    cache.close();
+  });
+
+  it("keeps the cache-side copy when runtime.db already holds tokens", () => {
+    const cache = seedLegacyPush();
+    const store = openRuntime();
+    new PushRepository(store.getDatabase()).register({ token: "tok-new", platform: "android" });
+
+    expect(store.importLegacyPush(cache.getDatabase()).purged).toBe(false);
+    expect(count(cache.getDatabase(), "push_tokens")).toBe(1);
+    store.close();
+    cache.close();
+  });
+
+  // The cascade the subscriptions and receipts rely on needs foreign_keys ON
+  // (better-sqlite3's build default; RuntimeStore also sets it explicitly).
+  it("cascades a deleted token to its subscriptions and receipts in runtime.db", () => {
+    const store = openRuntime();
+    const repo = new PushRepository(store.getDatabase());
+    repo.register({ token: "tok-1", platform: "ios" });
+    repo.subscribe("tok-1", "conv-1");
+    repo.saveTicket("ticket-1", "tok-1", 1000);
+
+    repo.deleteToken("tok-1");
+
+    // Raw counts: the repository's reads join on push_tokens and hide orphans.
+    const db = store.getDatabase();
+    const rows = (table: string) =>
+      (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    expect(rows("external_session_subscriptions")).toBe(0);
+    expect(rows("push_receipts")).toBe(0);
+    store.close();
+  });
+
+  it("keeps subscriptions after cache.db is deleted", () => {
+    const cachePath = join(cacheDir, "cache.db");
+    const cache = ConversationCache.open(cachePath);
+    const store = openRuntime();
+    const repo = new PushRepository(store.getDatabase());
+    repo.register({ token: "tok-1", platform: "ios" });
+    repo.subscribe("tok-1", "conv-1");
+    cache.close();
+
+    rmSync(cachePath, { force: true });
+
+    expect(repo.hasSubscribers("conv-1")).toBe(true);
+    store.close();
   });
 });

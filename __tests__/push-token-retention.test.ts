@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import { StreamerServer } from "../src/server";
 import {
   DEAD_TOKEN_GRACE_MS,
@@ -48,19 +48,19 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_800_000_000_000;
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository;
 
 beforeEach(() => {
   h.calls.length = 0;
   dir = mkdtempSync(join(tmpdir(), "tb-push-retention-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
 });
 
 afterEach(() => {
   vi.useRealTimers();
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -248,7 +248,7 @@ describe("unused tokens", () => {
 
 describe("scope", () => {
   it("leaves healthy tokens, push_events and device rows alone", () => {
-    const db = cache.getDatabase();
+    const db = store.getDatabase();
     repo.register({ token: "ok", platform: "android", now: NOW - DAY });
     repo.register({ token: "gone", platform: "ios", now: NOW - UNUSED_TOKEN_MS - 1 });
     repo.claimEvent("evt-1", "s1", NOW - 200 * DAY);
@@ -293,7 +293,8 @@ describe("startPushTokenRetention", () => {
 describe("server wiring", () => {
   it("sweeps at boot and stops its timer on close", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "threadbase-push-retention-"));
-    const seed = ConversationCache.open(join(cacheDir, "cache.db"));
+    const runtimeDbPath = join(cacheDir, "runtime.db");
+    const seed = RuntimeStore.open(runtimeDbPath);
     new PushRepository(seed.getDatabase()).register({
       token: "ancient",
       platform: "ios",
@@ -312,6 +313,7 @@ describe("server wiring", () => {
       verbose: false,
       disableDb: true,
       cacheDir,
+      runtimeDbPath,
       scanProfiles: [],
     });
     try {
