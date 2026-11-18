@@ -43,7 +43,7 @@ import { resolveServerUrl } from "../src/lan-url";
 import { getLogger } from "../src/logger";
 import { decideRelay } from "../src/relay/consent";
 import { relaySettings } from "../src/relay/hosted";
-import { StreamerServer } from "../src/server";
+import { resolveIdleReapAfterMs, StreamerServer } from "../src/server";
 import { checkForUpdate } from "../src/updater/check-update";
 import { runInstall } from "../src/updater/install";
 import { appendUpdateLog } from "../src/updater/update-log";
@@ -913,11 +913,15 @@ program
   .action(async (opts) => {
     const { SessionHost } = await import("../src/pty-host/host");
     const { listenForStreamers } = await import("../src/pty-host/socket");
+    const idleReapAfterMs = resolveIdleReapAfterMs();
 
     let server: Awaited<ReturnType<typeof listenForStreamers>>;
     let host: InstanceType<typeof SessionHost>;
     host = new SessionHost({
       logger: getLogger("pty-host"),
+      // Same knob as the streamer-side reaper. 0 means "never reap" there, but SessionHost
+      // reads idleAfterMs 0 as "reap at once", so map it to Infinity.
+      idleAfterMs: idleReapAfterMs === 0 ? Number.POSITIVE_INFINITY : idleReapAfterMs,
       onShutdown: () => {
         host.dispose();
         server.close(() => process.exit(0));
