@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import { ExpoPushSender } from "../src/services/push/expoPushSender";
 import {
   EXTERNAL_TURN_MAX_AGE_MS,
@@ -13,7 +13,7 @@ import { SUBSCRIPTION_UNUSED_MS, sweepPushTokens } from "../src/services/push/pu
 
 /**
  * Turn-end pushes for an external session (#1265): a device subscribes to one
- * conversation and is told when that conversation's turn ends. Real cache.db
+ * conversation and is told when that conversation's turn ends. Real runtime.db
  * and PushRepository, stubbed fetch, injected clock.
  */
 
@@ -33,17 +33,17 @@ const CONV = "11111111-2222-3333-4444-555555555555";
 const NOW = Date.parse("2026-11-15T10:00:00Z");
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tb-ext-sub-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
   vi.unstubAllGlobals();
 });

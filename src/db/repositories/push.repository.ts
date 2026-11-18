@@ -612,9 +612,9 @@ export class PushRepository {
   /**
    * Erase every token attributed to a device.
    *
-   * Cross-database by necessity — devices live in runtime.db and tokens in
-   * cache.db — so this is called from the device routes and the CLI, never
-   * joined in SQL.
+   * Both live in runtime.db, but `device_id` carries no foreign key (a token
+   * can predate device identity), so this is called from the device routes and
+   * the CLI, never joined in SQL.
    */
   deleteForDevice(deviceId: string): number {
     return this.deleteByDeviceStmt.run(deviceId).changes;

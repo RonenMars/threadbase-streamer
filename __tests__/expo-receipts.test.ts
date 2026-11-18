@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import { PushRepository, tokenState } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import { ExpoPushSender } from "../src/services/push/expoPushSender";
 import {
   EXPO_RECEIPTS_ENDPOINT,
@@ -44,18 +44,18 @@ const TOK_A = "ExponentPushToken[aaa]";
 const TOK_B = "ExponentPushToken[bbb]";
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository;
 
 beforeEach(() => {
   h.calls.length = 0;
   dir = mkdtempSync(join(tmpdir(), "tb-receipts-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -85,7 +85,7 @@ function poller(fetchImpl: typeof fetch, accessToken?: string) {
 }
 
 function rowCount(): number {
-  const row = cache.getDatabase().prepare("SELECT COUNT(*) AS n FROM push_receipts").get() as {
+  const row = store.getDatabase().prepare("SELECT COUNT(*) AS n FROM push_receipts").get() as {
     n: number;
   };
   return row.n;

@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConversationCache } from "../src/conversation-cache";
 import {
   DEFAULT_PUSH_TOKEN_KIND,
   isPushTokenKind,
   PushRepository,
 } from "../src/db/repositories/push.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 
 /**
  * Push token kinds (Live Activities, Feature 12 phase 1b).
@@ -19,17 +19,17 @@ import {
  */
 
 let dir: string;
-let cache: ConversationCache;
+let store: RuntimeStore;
 let repo: PushRepository;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tb-push-kind-"));
-  cache = ConversationCache.open(join(dir, "cache.db"));
-  repo = new PushRepository(cache.getDatabase());
+  store = RuntimeStore.open(join(dir, "runtime.db"));
+  repo = new PushRepository(store.getDatabase());
 });
 
 afterEach(() => {
-  cache.close();
+  store.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
