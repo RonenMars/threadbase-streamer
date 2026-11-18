@@ -72,9 +72,24 @@ function lastSettings(): any {
   return JSON.parse(args[args.indexOf("--settings") + 1]);
 }
 
+/**
+ * The `sh` that runs a hook: the one on PATH, else Git for Windows' own. Claude
+ * runs hooks under Git Bash on Windows, but a PowerShell session often has only
+ * `Git\cmd` on PATH, so a bare "sh" is ENOENT there. Walk up from `git.exe` to
+ * the first `bin\sh.exe` (it sits under `cmd\` or `mingw64\bin\`, depending on PATH).
+ */
+const SH = (() => {
+  if (!spawnSync("sh", ["-c", "exit 0"]).error) return "sh";
+  const git = spawnSync("where", ["git"], { encoding: "utf8" }).stdout?.split(/\r?\n/)[0];
+  for (let d = git ? dirname(git) : ""; d && dirname(d) !== d; d = dirname(d)) {
+    if (existsSync(join(d, "bin", "sh.exe"))) return join(d, "bin", "sh.exe");
+  }
+  return "sh";
+})();
+
 /** Run a hook command the way Claude does: payload on stdin, under sh. */
 function runHook(command: string, input: string): string {
-  return execFileSync("sh", ["-c", command], { input: `${input}\n` }).toString();
+  return execFileSync(SH, ["-c", command], { input: `${input}\n` }).toString();
 }
 
 /** A hook-enabled Claude session, booted from a real capture to its first prompt. */
@@ -200,7 +215,7 @@ describe("buildSettingsJson with a hooks file", () => {
       const command = settings.hooks.Stop[0].hooks[0].command;
       // Directory gone (streamer died): exit 0 and silent, so Claude neither
       // blocks the prompt nor shows a hook error every turn.
-      const gone = spawnSync("sh", ["-c", command], { input: `${STOP}\n`, encoding: "utf8" });
+      const gone = spawnSync(SH, ["-c", command], { input: `${STOP}\n`, encoding: "utf8" });
       expect([gone.status, gone.stdout, gone.stderr]).toEqual([0, "", ""]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
