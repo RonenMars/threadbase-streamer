@@ -677,8 +677,7 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
 /**
  * Everything the ApiDeps assembly reads from the server.
  *
- * Values where the original literal captured a value (`publicUrl`,
- * `browseRoot`, and the collaborators built earlier in the constructor);
+ * Values where the original literal captured a value (`publicUrl` and the collaborators built earlier in the constructor);
  * thunks and arrows everywhere the original used them, which is load-bearing:
  * the stores open during listen(), `apiKey` changes under rotateApiKey(), and
  * tests swap `log`/`startGraceTimer`/`broadcastConversationLines` on the
@@ -692,7 +691,7 @@ export type ApiDepsWiring = {
   logMenubarRequests: boolean;
   publicUrl: string | null;
   relayUrl: string | null;
-  browseRoot: string | null;
+  browseRoot: () => string | null;
   browserCors: string | undefined;
   ptyGracePeriodMs: number;
   rotateApiKey: ApiDeps["rotateApiKey"];

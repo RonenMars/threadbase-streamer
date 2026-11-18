@@ -113,6 +113,8 @@ const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]
   ["/api/browse", "fs:browse"],
   // Feeds the browse screen's "Recent directories"; read-only.
   ["/api/recent-dirs", "fs:browse"],
+  // Browse-screen pins; writes need no more than browsing, like mkdir.
+  ["/api/pinned-dirs", "fs:browse"],
   ["/api/upload", "fs:upload"],
   ["/api/push", "notifications"],
   // Writes are split off to session:control in requiredCapability().

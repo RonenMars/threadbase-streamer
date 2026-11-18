@@ -60,7 +60,8 @@ export type ApiDeps = {
   };
   publicUrl: string | null;
   relayUrl: string | null;
-  browseRoot: string | null;
+  /** A getter: the root is realpath-resolved after the deps are built. */
+  browseRoot: () => string | null;
   browserCors: string | undefined;
   ptyManager: LiveSessionManager;
   sessionStore: SessionStore;

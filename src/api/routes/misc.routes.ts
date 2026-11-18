@@ -436,6 +436,9 @@ export const createMiscRoutes = (
       // across restarts. Absent on older servers, where mobile derives the list
       // from the live session list instead.
       recentDirs: true,
+      // This server serves /api/pinned-dirs, the browse screen's pinned
+      // folders. Absent on older servers, where mobile hides pinning.
+      pinnedDirs: true,
       // This server serves /api/saved-items, the favorites list shared by every
       // paired device. Absent on older servers, where mobile keeps favorites local.
       savedItems: true,
