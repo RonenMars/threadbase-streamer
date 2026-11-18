@@ -101,21 +101,6 @@ function buildMobileSchema(responses: Awaited<ReturnType<typeof captureResponses
   return { $schema: "https://json-schema.org/draft/2020-12/schema", $defs: defs };
 }
 
-function buildDesktopSchema(responses: Awaited<ReturnType<typeof captureResponses>>) {
-  const defs: Record<string, object> = {};
-
-  if (responses.listBody.conversations?.length > 0) {
-    defs.DesktopSearchResult = inferSchema(responses.listBody.conversations[0]);
-    defs.DesktopSearchResultArray = { type: "array", items: { $ref: "#/$defs/DesktopSearchResult" } };
-  }
-
-  if (responses.detailBody) {
-    defs.DesktopConversation = inferSchema(responses.detailBody);
-  }
-
-  return { $schema: "https://json-schema.org/draft/2020-12/schema", $defs: defs };
-}
-
 function buildSharedSchema(responses: Awaited<ReturnType<typeof captureResponses>>) {
   const defs: Record<string, object> = {};
 
@@ -151,7 +136,6 @@ function buildSharedSchema(responses: Awaited<ReturnType<typeof captureResponses
 async function main() {
   const args = process.argv.slice(2);
   const updateMobile = args.includes("--mobile") || args.length === 0;
-  const updateDesktop = args.includes("--desktop") || args.length === 0;
   const updateShared = args.includes("--shared") || args.length === 0;
 
   const port = await getRandomPort();
@@ -174,13 +158,6 @@ async function main() {
       const path = join(CONTRACTS_DIR, "mobile.schema.json");
       writeFileSync(path, JSON.stringify(schema, null, 2) + "\n");
       console.log("Updated mobile.schema.json");
-    }
-
-    if (updateDesktop) {
-      const schema = buildDesktopSchema(responses);
-      const path = join(CONTRACTS_DIR, "desktop.schema.json");
-      writeFileSync(path, JSON.stringify(schema, null, 2) + "\n");
-      console.log("Updated desktop.schema.json");
     }
 
     if (updateShared) {
