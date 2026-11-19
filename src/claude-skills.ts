@@ -70,7 +70,7 @@ function toSkill(
   };
 }
 
-/** `<dir>/<name>/SKILL.md`; the frontmatter `name` wins over the folder name. */
+/** `<dir>/<name>/SKILL.md`; Claude Code names it by the folder, not the frontmatter `name`. */
 function readSkillsDir(dir: string, source: ClaudeSkill["source"], prefix = ""): ClaudeSkill[] {
   const out: ClaudeSkill[] = [];
   for (const entry of listNames(dir)) {
@@ -78,8 +78,7 @@ function readSkillsDir(dir: string, source: ClaudeSkill["source"], prefix = ""):
     if (!isDir(folder)) continue;
     const parsed = parseMarkdown(join(folder, "SKILL.md"));
     if (!parsed) continue;
-    const own = typeof parsed.meta.name === "string" && parsed.meta.name ? parsed.meta.name : entry;
-    const s = toSkill(parsed, prefix + own, source);
+    const s = toSkill(parsed, prefix + entry, source);
     if (s) out.push(s);
   }
   return out;
@@ -121,27 +120,28 @@ function readJson(path: string): Record<string, unknown> {
   }
 }
 
-function enabledPlugins(home: string, projectPath: string): Map<string, boolean> {
-  const enabled = new Map<string, boolean>();
+/** One map-valued setting, merged so the project files win over the personal one. */
+function mergedSetting(home: string, projectPath: string, key: string): Map<string, unknown> {
+  const merged = new Map<string, unknown>();
   for (const settings of [
     join(home, ".claude", "settings.json"),
     join(projectPath, ".claude", "settings.json"),
     join(projectPath, ".claude", "settings.local.json"),
   ]) {
-    const map = readJson(settings).enabledPlugins;
+    const map = readJson(settings)[key];
     if (!map || typeof map !== "object") continue;
-    for (const [id, on] of Object.entries(map)) enabled.set(id, on === true);
+    for (const [id, value] of Object.entries(map)) merged.set(id, value);
   }
-  return enabled;
+  return merged;
 }
 
 function readPlugins(home: string, projectPath: string): ClaudeSkill[] {
   const installed = readJson(join(home, ".claude", "plugins", "installed_plugins.json")).plugins;
   if (!installed || typeof installed !== "object") return [];
-  const enabled = enabledPlugins(home, projectPath);
+  const enabled = mergedSetting(home, projectPath, "enabledPlugins");
   const out: ClaudeSkill[] = [];
   for (const [id, installs] of Object.entries(installed)) {
-    if (!enabled.get(id)) continue;
+    if (enabled.get(id) !== true) continue;
     const installPath = Array.isArray(installs) ? installs[0]?.installPath : undefined;
     if (typeof installPath !== "string" || !existsSync(installPath)) continue;
     const prefix = `${id.split("@")[0]}:`;
@@ -173,7 +173,11 @@ export function listClaudeSkills({
     ...readCommandsDir(join(projectPath, ".claude", "commands"), "project"),
     ...readPlugins(home, projectPath),
   ];
+  // `off` hides a skill from `/`; `user-invocable-only` and `name-only` keep it there.
+  const overrides = mergedSetting(home, projectPath, "skillOverrides");
   const byName = new Map<string, ClaudeSkill>();
-  for (const s of ordered) if (!byName.has(s.name)) byName.set(s.name, s);
+  for (const s of ordered) {
+    if (overrides.get(s.name) !== "off" && !byName.has(s.name)) byName.set(s.name, s);
+  }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -34,7 +34,7 @@ afterEach(() => {
 const names = () => listClaudeSkills({ home, projectPath: project }).map((s) => s.name);
 
 describe("listClaudeSkills", () => {
-  it("reads user and project skills with name, description and argument hint", () => {
+  it("names a skill by its folder, as Claude Code does, whatever its frontmatter name", () => {
     skill(
       join(home, ".claude/skills/tdd-folder"),
       "name: tdd\ndescription: Test-driven development.\nargument-hint: <feature>",
@@ -44,7 +44,7 @@ describe("listClaudeSkills", () => {
     expect(listClaudeSkills({ home, projectPath: project })).toEqual([
       { name: "deploy", description: "Ship it.", source: "project" },
       {
-        name: "tdd",
+        name: "tdd-folder",
         description: "Test-driven development.",
         argumentHint: "<feature>",
         source: "user",
@@ -107,6 +107,28 @@ describe("listClaudeSkills", () => {
     );
 
     expect(names()).toEqual(["kit:a"]);
+  });
+
+  it("hides skills turned off in skillOverrides, the project file winning over the personal one", () => {
+    for (const n of ["gone", "back", "model-off", "short"])
+      skill(join(home, `.claude/skills/${n}`), "description: d");
+    put(
+      join(home, ".claude/settings.json"),
+      JSON.stringify({
+        skillOverrides: {
+          gone: "off",
+          back: "off",
+          "model-off": "user-invocable-only",
+          short: "name-only",
+        },
+      }),
+    );
+    put(
+      join(project, ".claude/settings.json"),
+      JSON.stringify({ skillOverrides: { back: "user-invocable-only" } }),
+    );
+
+    expect(names()).toEqual(["back", "model-off", "short"]);
   });
 
   it("hides skills that are not user-invocable", () => {
