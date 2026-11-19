@@ -1,3 +1,9 @@
+## [1.145.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.144.0...v1.145.0) (2026-11-19)
+
+### Features
+
+* **sessions:** list claude code skills for a session ([#1286](https://github.com/RonenMars/threadbase-streamer/issues/1286)) ([5e9bfd7](https://github.com/RonenMars/threadbase-streamer/commit/5e9bfd77e46a862bc7c2ddd4454247c08886ed2e))
+
 ## [1.144.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.143.9...v1.144.0) (2026-11-18)
 
 ### Features
