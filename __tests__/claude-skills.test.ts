@@ -203,10 +203,14 @@ describe("SessionHandlers.handleGetSkills", () => {
     ptyAttachedIds: () => new Set<string>(),
   } as unknown as SessionHandlersDeps);
   let savedHome: string | undefined;
+  let savedUserProfile: string | undefined;
 
   beforeEach(() => {
     savedHome = process.env.HOME;
     process.env.HOME = home;
+    // os.homedir() reads USERPROFILE on Windows and ignores HOME.
+    savedUserProfile = process.env.USERPROFILE;
+    process.env.USERPROFILE = home;
     sessions.claude = { provider: "claude-code", projectPath: project };
     sessions.legacy = { projectPath: project };
     sessions.codex = { provider: "codex-cli", projectPath: project };
@@ -214,6 +218,8 @@ describe("SessionHandlers.handleGetSkills", () => {
 
   afterEach(() => {
     process.env.HOME = savedHome;
+    if (savedUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = savedUserProfile;
   });
 
   it("answers 404 for an unknown session", async () => {
