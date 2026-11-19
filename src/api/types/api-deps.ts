@@ -109,6 +109,7 @@ export type ApiDeps = {
   handleGetSessionNames: (res: ServerResponse) => void;
   handleGetSession: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleGetOutput: (sessionId: string, res: ServerResponse, lines?: string) => Promise<void>;
+  handleGetSkills: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleSendInput: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleRawKey: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleSendAnswer: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;

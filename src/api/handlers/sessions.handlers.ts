@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import type { EventEmitter } from "events";
 import { existsSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
+import { homedir } from "os";
 import { basename, dirname, join } from "path";
 import type { WebSocket } from "ws";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import { handleSendAgentInput } from "../../agent/handle-send-agent-input";
 import { handleStartAgentSession } from "../../agent/handle-start-agent-session";
 import { dropCoveredPaths, resolveAdditionalPaths, resolveBrowsePath } from "../../browse";
 import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "../../claude-flags";
+import { listClaudeSkills } from "../../claude-skills";
 import type { ConversationCache } from "../../conversation-cache";
 import type { createPool } from "../../db";
 import { recordUpload } from "../../db/upload-records";
@@ -2333,6 +2335,29 @@ export class SessionHandlers {
       const message = err instanceof Error ? err.message : "Upload failed";
       json(res, 400, { error: message });
     }
+  }
+
+  /**
+   * The skills and commands Claude Code would offer on `/` for this session,
+   * read from disk (the CLI runs under a PTY, so there is no SDK init message
+   * to ask). Claude Code only for now; other providers answer 501.
+   */
+  async handleGetSkills(sessionId: string, res: ServerResponse): Promise<void> {
+    const session = this.sessionStore.get(sessionId, this.deps.ptyAttachedIds());
+    if (!session) {
+      json(res, 404, { error: "Session not found" });
+      return;
+    }
+    if ((session.provider ?? CLAUDE_CODE_PROVIDER) !== CLAUDE_CODE_PROVIDER) {
+      json(res, 501, {
+        error: `Listing skills of a ${session.provider} session is not supported`,
+        code: "UNSUPPORTED_PROVIDER",
+      });
+      return;
+    }
+    json(res, 200, {
+      skills: listClaudeSkills({ home: homedir(), projectPath: session.projectPath }),
+    });
   }
 
   async handleGetOutput(sessionId: string, res: ServerResponse, lines?: string): Promise<void> {

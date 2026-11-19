@@ -65,6 +65,11 @@ export const createSessionRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
+  app.get("/:id/skills", async (c) => {
+    await deps.handleGetSkills(c.req.param("id"), c.env.outgoing);
+    return alreadyHandled();
+  });
+
   app.post("/:id/input", async (c) => {
     await deps.handleSendInput(c.req.param("id"), c.env.incoming, c.env.outgoing);
     return alreadyHandled();
