@@ -102,7 +102,7 @@ One helper, `unreadFor(meta, readThrough)`, applying §2, used in three places:
 2. `GET /api/sessions` items (`SessionResponse`): the same two fields, read from the cache row of `boundConversationId ?? conversationId`. `unread: false` per D7 when there is no row.
 3. `session_update` frames (`server-wiring.ts`, the `broadcast({ type: "session_update", … })` sites): the same fields, so a turn ending while the phone sits on the list lights the dot without a refetch. A turn end is the moment that matters, and it already emits a `session_update`.
 
-Conversation rows need no new frame: mobile already refetches the list on `conversation_updated` (§5.2), and the refetched items carry `unread`.
+Conversation rows need no new frame: mobile already refetches the list on `conversation_updated`, which external conversations emit (§5.2), and the refetched items carry `unread`.
 
 `readThrough` ships beside `unread` so a client can recompute the dot when a newer `lastActivity` reaches it by another path, without waiting for the next list.
 
@@ -131,6 +131,8 @@ No new plumbing is needed for the common case:
 
 - `session_update` is already merged into the session cache (`lib/eagerCacheSync.ts`, `applySessionUpdateToEagerCache`); the new fields ride along.
 - `conversation_updated` already refreshes the conversation list with a 1 s debounce (`app/_layout.tsx`, `refreshEagerConversations`), so the refetched rows carry the server's `unread`.
+  The streamer sends it only for **external** conversations (`external-tails.ts`, `ownership: "external"`); managed sessions are covered by `session_update`.
+  Any other conversation picks up its dot on the next list fetch, which is the ceiling v1 accepts.
 - **New:** handle `read_state_changed` (`services/ws-client.ts`) by setting `unread: false` / `readThrough` on the matching session and conversation rows in the query cache. This is what clears the dot on a second device without a refetch.
 
 ### 5.3 Marking read
