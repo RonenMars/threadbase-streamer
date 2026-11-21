@@ -250,11 +250,12 @@ export interface DiscoveredProcess {
   /** Set for a Claude teammate (`--agent-name` + `--team-name` in argv), which has no registry entry. */
   teammate?: { agentName: string; teamName: string };
   /** Claude's own turn state from its session registry; absent when it wrote none. */
-  /** Claude: from its session registry. Codex: from its rollout (`observedAt` set). */
+  /** Claude: from its session registry. Codex: its rollout, then its tmux screen (`observedAt` set). */
   turnState?: {
-    state: "idle" | "busy" | "shell" | "unknown";
+    state: "idle" | "busy" | "shell" | "waiting" | "unknown";
     updatedAt: Date;
     observedAt?: Date;
+    source?: "codex-rollout" | "codex-screen";
   };
   /** Claude Code's peer name from its session registry (what /rename sets); not unique. */
   peerName?: { name: string; source?: string; since?: number };
@@ -732,14 +733,18 @@ export interface SessionResponse {
  * `codex-rollout`: the root `task_started` / `task_complete` / `turn_aborted`
  * lines of the rollout the pid holds open (`idle` / `busy` / `unknown`); a start
  * with no end and a rollout silent past `CODEX_TURN_STALE_MS` is `unknown`.
+ * `codex-screen`: the session's tmux pane, read with `capture-pane` when it
+ * proves a different state than the rollout: the footer's `Ready`, the
+ * `Working … esc to interrupt` timer, or a card stopped on the user (`waiting`,
+ * which the rollout cannot show: it writes nothing for an approval).
  */
 export interface ExternalTurn {
-  state: "idle" | "busy" | "shell" | "unknown";
+  state: "idle" | "busy" | "shell" | "waiting" | "unknown";
   /** When the evidence was written; for `unknown`, when it was looked for. */
   updatedAt: string; // ISO 8601
   /** When the streamer read the evidence. Codex only. */
   observedAt?: string;
-  source: "claude-registry" | "codex-rollout";
+  source: "claude-registry" | "codex-rollout" | "codex-screen";
   confidence: "inferred";
 }
 

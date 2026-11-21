@@ -3,7 +3,14 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { conversationToResumableSession } from "../src/api/handlers/http-helpers";
 import { resolveSessionIds, type SessionIdResolvers } from "../src/process-discovery";
-import { CODEX_TURN_STALE_MS, CodexTurnTracker } from "../src/services/sessions/codexTurnState";
+import { codexPaneScreen } from "../src/services/sessions/codexPaneScreen";
+import {
+  CODEX_TURN_STALE_MS,
+  type CodexTurnState,
+  CodexTurnTracker,
+  combineCodexTurn,
+  readCodexScreen,
+} from "../src/services/sessions/codexTurnState";
 import { SessionStore } from "../src/session-store";
 import type { DiscoveredProcess } from "../src/types";
 
@@ -134,10 +141,14 @@ describe("resolveSessionIds for an external Codex process", () => {
     conversationId: null,
     startedAt: new Date(),
   };
-  const resolvers = (codex: SessionIdResolvers["codex"]): SessionIdResolvers => ({
+  const resolvers = (
+    codex: SessionIdResolvers["codex"],
+    codexScreen: SessionIdResolvers["codexScreen"] = async () => null,
+  ): SessionIdResolvers => ({
     claude: async () => null,
     codex,
     codexTurn: (p) => new CodexTurnTracker().read(p),
+    codexScreen,
     teammate: async () => null,
   });
 
@@ -160,6 +171,176 @@ describe("resolveSessionIds for an external Codex process", () => {
       resolvers(async () => null),
     );
     expect(out.turnState?.state).toBe("unknown");
+  });
+
+  it("reports an approval on the pane as waiting while the rollout says busy", async () => {
+    write(started(ROOT));
+    const [out] = await resolveSessionIds(
+      [proc],
+      new Map(),
+      resolvers(
+        async () => ({ id: ROLLOUT_ID, path: file }),
+        async () => APPROVAL_SCREEN,
+      ),
+    );
+    expect(out.turnState).toMatchObject({ state: "waiting", source: "codex-screen" });
+  });
+});
+
+// The footer of a codex-cli 0.171.0 tmux capture (path and model replaced):
+// the status bar is the second-to-last row, a shortcuts hint sits under it.
+const READY_SCREEN = [
+  "• Done.",
+  "",
+  "› Ask Codex to do anything",
+  "  gpt low · ~/dev/app · main · No changes · Ready · Full Access · never · Context 60% left",
+  "  ← for agents · ? for shortcuts      ⚠ 5 warnings",
+  "",
+];
+const WORKING_SCREEN = [
+  "• Working (12s • esc to interrupt)",
+  "",
+  "› Ask Codex to do anything",
+  "  gpt low · ~/dev/app · main · Full Access · never · Context 60% left",
+  "  ← for agents · ? for shortcuts",
+];
+const USAGE_LIMIT_SCREEN = [
+  "■ You've hit your usage limit. Try again at 3:00 PM.",
+  "",
+  "› Ask Codex to do anything",
+  "  gpt low · ~/dev/app · main · Full Access",
+];
+const APPROVAL_SCREEN = [
+  "E X E C",
+  "Environment: local",
+  "Reason: Run the focused test suite",
+  "$ npx vitest run",
+  "› 1. Yes",
+  "  2. No",
+  "Press Enter to confirm",
+];
+
+describe("readCodexScreen", () => {
+  it("reads Ready on the status bar above the hint row as idle", () => {
+    expect(readCodexScreen(READY_SCREEN)).toBe("idle");
+  });
+
+  it("reads the turn timer as busy", () => {
+    expect(readCodexScreen(WORKING_SCREEN)).toBe("busy");
+  });
+
+  it("reads a picker menu as waiting", () => {
+    expect(readCodexScreen(["  Choose a model", "› 1. Fast", "  2. Thorough"])).toBe("waiting");
+  });
+
+  it("reads a usage-limit stop as waiting", () => {
+    expect(readCodexScreen(USAGE_LIMIT_SCREEN)).toBe("waiting");
+  });
+
+  it("reads a command approval card as waiting", () => {
+    expect(readCodexScreen(APPROVAL_SCREEN)).toBe("waiting");
+  });
+
+  it("does not read Ready from transcript text above the footer", () => {
+    expect(
+      readCodexScreen([
+        "The server is Ready now.",
+        "",
+        "› ",
+        "  gpt low · main",
+        "  ? for shortcuts",
+      ]),
+    ).toBeNull();
+  });
+
+  it("does not read a numbered list in the transcript as a picker when Ready", () => {
+    expect(readCodexScreen(["› 1. First", "  2. Second", "", ...READY_SCREEN])).toBe("idle");
+  });
+});
+
+describe("combineCodexTurn", () => {
+  const at = new Date(T0);
+  const seen = new Date(T1);
+  const rollout = (state: CodexTurnState["state"]): CodexTurnState => ({
+    state,
+    updatedAt: at,
+    observedAt: seen,
+  });
+
+  it("keeps the rollout reading when there is no screen", () => {
+    expect(combineCodexTurn(rollout("busy"), null)).toEqual(rollout("busy"));
+  });
+
+  it("lets an approval card override a rollout busy, dated by the observation", () => {
+    expect(combineCodexTurn(rollout("busy"), APPROVAL_SCREEN)).toEqual({
+      state: "waiting",
+      updatedAt: seen,
+      observedAt: seen,
+      source: "codex-screen",
+    });
+  });
+
+  it("lets the turn timer override a rollout idle", () => {
+    expect(combineCodexTurn(rollout("idle"), WORKING_SCREEN).state).toBe("busy");
+  });
+
+  it("fills an unknown rollout from a Ready footer", () => {
+    expect(combineCodexTurn(rollout("unknown"), READY_SCREEN)).toMatchObject({
+      state: "idle",
+      source: "codex-screen",
+    });
+  });
+
+  it("never ends a rollout busy on a Ready footer alone", () => {
+    expect(combineCodexTurn(rollout("busy"), READY_SCREEN)).toEqual(rollout("busy"));
+  });
+
+  it("keeps the rollout's busy, dated by its start, when the timer agrees", () => {
+    expect(combineCodexTurn(rollout("busy"), WORKING_SCREEN)).toEqual(rollout("busy"));
+  });
+
+  it("keeps the rollout's date when both agree", () => {
+    expect(combineCodexTurn(rollout("idle"), READY_SCREEN)).toEqual(rollout("idle"));
+  });
+});
+
+describe("codexPaneScreen", () => {
+  const fake =
+    (out: Record<string, string>) =>
+    async (bin: string, args: string[]): Promise<string> => {
+      const key = bin === "ps" ? "ps" : args[0];
+      if (!(key in out)) throw new Error(`unexpected ${bin} ${args[0]}`);
+      return out[key];
+    };
+
+  it("captures the one pane on the pid's terminal, read-only", async () => {
+    const calls: string[] = [];
+    const run = async (bin: string, args: string[]) => {
+      calls.push(`${bin} ${args[0]}`);
+      return fake({
+        ps: "ttys073\n",
+        "list-panes": "/dev/ttys001 %1\n/dev/ttys073 %7\n",
+        "capture-pane": "a\nb",
+      })(bin, args);
+    };
+    expect(await codexPaneScreen(1, { run, platform: "darwin" })).toEqual(["a", "b"]);
+    expect(calls).toEqual(["ps -o", "tmux list-panes", "tmux capture-pane"]);
+  });
+
+  it("is null outside tmux, with no tmux server, on no terminal, and on Windows", async () => {
+    const noMatch = fake({ ps: "ttys073", "list-panes": "/dev/ttys001 %1" });
+    expect(await codexPaneScreen(1, { run: noMatch, platform: "darwin" })).toBeNull();
+    const noServer = fake({ ps: "ttys073" });
+    expect(await codexPaneScreen(1, { run: noServer, platform: "darwin" })).toBeNull();
+    const noTty = fake({ ps: "??" });
+    expect(await codexPaneScreen(1, { run: noTty, platform: "darwin" })).toBeNull();
+    expect(await codexPaneScreen(1, { run: fake({}), platform: "win32" })).toBeNull();
+    const twoPanes = fake({
+      ps: "ttys073",
+      "list-panes": "/dev/ttys073 %1\n/dev/ttys073 %2",
+      "capture-pane": "a",
+    });
+    expect(await codexPaneScreen(1, { run: twoPanes, platform: "darwin" })).toBeNull();
   });
 });
 
@@ -194,6 +375,21 @@ describe("externalTurn on the wire for Codex", () => {
         source: "codex-rollout",
         confidence: "inferred",
       },
+    });
+  });
+
+  it("labels a reading the screen decided as codex-screen", () => {
+    const store = new SessionStore();
+    store.setDiscovered([
+      {
+        ...codexProc,
+        turnState: { state: "waiting", updatedAt: observedAt, observedAt, source: "codex-screen" },
+      },
+    ]);
+    expect(store.get(ROLLOUT_ID, new Set())?.externalTurn).toMatchObject({
+      state: "waiting",
+      source: "codex-screen",
+      confidence: "inferred",
     });
   });
 

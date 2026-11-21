@@ -592,7 +592,9 @@ function discoveredToResponse(
           state: d.turnState.state,
           updatedAt: d.turnState.updatedAt.toISOString(),
           ...(d.turnState.observedAt && { observedAt: d.turnState.observedAt.toISOString() }),
-          source: d.provider === CODEX_CLI_PROVIDER ? "codex-rollout" : "claude-registry",
+          source:
+            d.turnState.source ??
+            (d.provider === CODEX_CLI_PROVIDER ? "codex-rollout" : "claude-registry"),
           confidence: "inferred",
         }
       : null,

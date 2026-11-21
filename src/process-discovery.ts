@@ -10,7 +10,12 @@ import {
   CURSOR_PROVIDER,
   type ProviderName,
 } from "./providers";
-import { type CodexTurnState, CodexTurnTracker } from "./services/sessions/codexTurnState";
+import { codexPaneScreen } from "./services/sessions/codexPaneScreen";
+import {
+  type CodexTurnState,
+  CodexTurnTracker,
+  combineCodexTurn,
+} from "./services/sessions/codexTurnState";
 import {
   type ClaudeRegistryEntry,
   codexRolloutForPid,
@@ -42,6 +47,8 @@ export interface SessionIdResolvers {
   codex: (pid: number) => Promise<{ id: string; path: string } | null>;
   /** What that rollout says about the root turn. */
   codexTurn: (rolloutPath: string) => Promise<CodexTurnState>;
+  /** The pid's rendered screen when it runs in a tmux pane (read-only), else null. */
+  codexScreen: (pid: number) => Promise<string[] | null>;
   /** A Claude teammate has no registry entry; its own transcript names it. */
   teammate: (proc: DiscoveredProcess, processStartedAt?: Date) => Promise<string | null>;
 }
@@ -52,6 +59,7 @@ const defaultResolvers: SessionIdResolvers = {
   claude: (pid, processStartedAt) => readClaudeSessionRegistry(pid, { processStartedAt }),
   codex: (pid) => codexRolloutForPid(pid),
   codexTurn: (rolloutPath) => codexTurns.read(rolloutPath),
+  codexScreen: (pid) => codexPaneScreen(pid),
   teammate: (proc, processStartedAt) =>
     proc.teammate
       ? findTeammateSessionId(proc.projectPath, proc.teammate.agentName, proc.teammate.teamName, {
@@ -121,10 +129,11 @@ export async function resolveSessionIds(
           // same conversation.
           const conversationId = proc.conversationId ?? rollout?.id ?? null;
           const now = new Date();
-          const turnState: CodexTurnState =
+          const fromRollout: CodexTurnState =
             rollout && rollout.id === conversationId?.toLowerCase()
               ? await resolvers.codexTurn(rollout.path)
               : { state: "unknown", updatedAt: now, observedAt: now };
+          const turnState = combineCodexTurn(fromRollout, await resolvers.codexScreen(proc.pid));
           return { ...proc, conversationId, turnState };
         }
       } catch {

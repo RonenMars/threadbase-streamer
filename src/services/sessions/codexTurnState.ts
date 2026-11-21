@@ -1,4 +1,12 @@
 import { open, stat } from "fs/promises";
+import {
+  CODEX_PROMPT_READY_TEXT,
+  CODEX_WORKING_STATUS_RE,
+  codexStatusBarWords,
+  detectCodexBlockingPrompt,
+  detectCodexCommandApproval,
+  detectCodexPicker,
+} from "../questions/codexScreen";
 
 /**
  * What an external Codex process's rollout says about its root turn. Inferred:
@@ -6,11 +14,14 @@ import { open, stat } from "fs/promises";
  * kill), so a lone start is only a hint that the turn is still running.
  */
 export interface CodexTurnState {
-  state: "idle" | "busy" | "unknown";
-  /** When the evidence was written (the start or end line), or `observedAt` for unknown. */
+  /** `waiting`: a turn is open but stopped on the user (an approval card, a picker, a limit). */
+  state: "idle" | "busy" | "waiting" | "unknown";
+  /** When the evidence was written (the start or end line), or `observedAt` for unknown and screen readings. */
   updatedAt: Date;
   /** When the streamer read it. */
   observedAt: Date;
+  /** Which evidence decided `state`; absent means the rollout. */
+  source?: "codex-rollout" | "codex-screen";
 }
 
 /**
@@ -149,4 +160,48 @@ export class CodexTurnTracker {
       await fh.close();
     }
   }
+}
+
+/** Footer rows to read: Codex 0.171 paints its status bar above a shortcuts hint row. */
+const FOOTER_ROWS = 3;
+/** The active-turn timer Codex paints above the composer: `• Working (12s • esc to interrupt)`. */
+const CODEX_TURN_TIMER_RE = /\bWorking\b.*\besc to interrupt\b/;
+
+/**
+ * What a captured Codex screen says right now, or null when it shows none of
+ * the states it can prove. Only the footer and the turn timer are read for
+ * busy/idle: transcript text above them is history.
+ */
+export function readCodexScreen(lines: string[]): "idle" | "busy" | "waiting" | null {
+  const footer = lines
+    .filter((l) => l.trim() !== "")
+    .slice(-FOOTER_ROWS)
+    .map((l) => codexStatusBarWords([l]));
+  const ready = footer.some((l) => l.includes(CODEX_PROMPT_READY_TEXT));
+  if (detectCodexCommandApproval(lines) || detectCodexBlockingPrompt(lines)) return "waiting";
+  // detectCodexPicker refuses a Ready screen, so a numbered list in the
+  // transcript does not read as a menu waiting on the user.
+  if (detectCodexPicker(lines)) return "waiting";
+  if (lines.some((l) => CODEX_TURN_TIMER_RE.test(l))) return "busy";
+  if (footer.some((l) => CODEX_WORKING_STATUS_RE.test(l))) return "busy";
+  if (ready) return "idle";
+  return null;
+}
+
+/**
+ * The rollout says what Codex logged; the screen says what it shows now. The
+ * screen overrides only where its evidence is specific: a card stopped on the
+ * user (`waiting`, which the rollout cannot show: it writes nothing for an
+ * approval) and the turn timer (`busy`). A `Ready` footer only fills in a
+ * rollout `unknown`; it never ends a rollout `busy`, because whether Codex 0.171
+ * drops `Ready` while a turn runs is unverified, and a marker painted through
+ * the turn is how Claude's `❯` reported "finished" as a turn started (#962).
+ * Agreement keeps the rollout's reading, which is dated by the event.
+ */
+export function combineCodexTurn(rollout: CodexTurnState, screen: string[] | null): CodexTurnState {
+  const seen = screen ? readCodexScreen(screen) : null;
+  if (!seen || seen === rollout.state) return rollout;
+  if (seen === "idle" && rollout.state !== "unknown") return rollout;
+  const { observedAt } = rollout;
+  return { state: seen, updatedAt: observedAt, observedAt, source: "codex-screen" };
 }

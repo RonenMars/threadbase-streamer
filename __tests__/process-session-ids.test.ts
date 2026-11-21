@@ -281,6 +281,7 @@ describe("resolveSessionIds", () => {
       codexTurn: async () => {
         throw new Error("codexTurn not stubbed");
       },
+      codexScreen: async () => null,
       teammate: async () => null,
       ...overrides,
     };
@@ -558,6 +559,7 @@ describe("resolveSessionIds for a teammate", () => {
     claude: async () => null,
     codex: async () => null,
     codexTurn: async () => ({ state: "unknown", updatedAt: new Date(0), observedAt: new Date(0) }),
+    codexScreen: async () => null,
     teammate: async () => null,
   };
 
