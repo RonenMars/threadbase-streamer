@@ -106,6 +106,7 @@ const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]
   // Most specific first for readability; matching sorts by length anyway.
   ["/api/sessions/", "session:control"],
   ["/api/sessions", "history:read"], // listing sessions is a read
+  ["/api/peers", "history:read"], // the messageable subset of that list
   ["/api/conversations", "history:read"],
   ["/api/projects", "history:read"],
   ["/api/search", "history:read"],
