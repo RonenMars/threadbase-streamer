@@ -4,6 +4,7 @@ import type {
   AskQuestion,
   ManagedSession,
   PermissionOption,
+  SessionEvent,
   StartFreshSessionOptions,
   StartSessionOptions,
   UserMessage,
@@ -162,6 +163,9 @@ export type HostEvent =
     }
   | { type: "event"; event: "live-question-gone"; sessionId: string }
   | { type: "event"; event: "user-message"; sessionId: string; text: string; ts: number }
+  // Additive, no protocol bump: a streamer that does not know it drops it, and a
+  // bump would make the next deploy shut down a host that is holding sessions.
+  | { type: "event"; event: "session-event"; sessionId: string; sessionEvent: SessionEvent }
   | { type: "event"; event: "exit"; sessionId: string; exitCode: number };
 
 export type HostMessage = HostResponse | HostEvent;
