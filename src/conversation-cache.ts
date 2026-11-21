@@ -49,6 +49,10 @@ export interface ConversationCacheOptions {
   // Fired the first time an agent JSONL is detected for a given file path
   // (from updateFromLine). Lets the server unwatch the file.
   onAgentFileDetected?: (filePath: string) => void;
+  // Fired after a sub-agent row is written (live tail, scanner upsert or
+  // reclassification) with its parent's id, so the server can tell clients the
+  // parent's count may have moved. A hint only: it fires for unchanged rows too.
+  onSubagentRow?: (parentId: string) => void;
 }
 
 export interface ConversationListItem {
@@ -365,6 +369,7 @@ export class ConversationCache {
   private filterAgentConversations = false;
   private agentEntrypoints: ReadonlySet<string> = DEFAULT_AGENT_ENTRYPOINTS;
   private onAgentFileDetected?: (filePath: string) => void;
+  private onSubagentRow?: (parentId: string) => void;
 
   private constructor(
     db: Database.Database,
@@ -379,6 +384,7 @@ export class ConversationCache {
     this.filterAgentConversations = options?.filterAgentConversations ?? false;
     this.agentEntrypoints = options?.agentEntrypoints ?? DEFAULT_AGENT_ENTRYPOINTS;
     this.onAgentFileDetected = options?.onAgentFileDetected;
+    this.onSubagentRow = options?.onSubagentRow;
     db.exec(SCHEMA);
     runSqliteMigrations(db, this.migrationsDir);
     this.fileAliases = db.prepare(
@@ -1312,6 +1318,7 @@ export class ConversationCache {
           classification.id = meta.id;
           this.classifiers.delete(canonicalizeFilePath(filePath));
         }
+        this.noteSubagentRow(classification);
       }
       return classification;
     } catch {
@@ -1371,6 +1378,11 @@ export class ConversationCache {
       );
       if (this.fileIndexLoaded) this.fileIndex.set(key, current.id);
     })();
+    this.noteSubagentRow(current);
+  }
+
+  private noteSubagentRow(c: { isSubagent: boolean; parentConversationId: string | null }): void {
+    if (c.isSubagent && c.parentConversationId) this.onSubagentRow?.(c.parentConversationId);
   }
 
   /** Repair both legacy parent-keyed rows and live-tail aliases for this file only. */
@@ -1551,6 +1563,7 @@ export class ConversationCache {
   upsertFromScannerMeta(metas: ScannerMeta[]): string[] {
     const filter = this.filterAgentConversations;
     const upsertedIds: string[] = [];
+    const parents = new Set<string>();
     const run = this.db.transaction((items: ScannerMeta[]) => {
       for (const m of items) {
         let classification: ConversationClassifier | null = null;
@@ -1634,12 +1647,15 @@ export class ConversationCache {
             id,
           );
           this.classifiers.delete(canonicalPath);
+          if (classification.isSubagent && classification.parentConversationId)
+            parents.add(classification.parentConversationId);
         }
         if (this.fileIndexLoaded) this.fileIndex.set(canonicalPath, id);
         upsertedIds.push(id);
       }
     });
     run(metas);
+    for (const parentId of parents) this.onSubagentRow?.(parentId);
     return upsertedIds;
   }
 
