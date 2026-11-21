@@ -1884,6 +1884,42 @@ export class ConversationCache {
     return map;
   }
 
+  /** Persisted search bodies (conversation id → text) used to seed a new scanner. */
+  getSearchTexts(): Map<string, string> {
+    const rows = this.db.prepare("SELECT id, body FROM conversation_search_text").all() as Array<{
+      id: string;
+      body: string;
+    }>;
+    return new Map(rows.map((r) => [r.id, r.body]));
+  }
+
+  /** Store one conversation's search body (a refreshed file). */
+  upsertSearchText(id: string, body: string): void {
+    this.db
+      .prepare(
+        "INSERT INTO conversation_search_text (id, body) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body",
+      )
+      .run(id, body);
+  }
+
+  /** Replace the stored search bodies with `texts`; ids absent from it are dropped. */
+  replaceSearchTexts(texts: Map<string, string>): void {
+    const upsert = this.db.prepare(
+      "INSERT INTO conversation_search_text (id, body) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body WHERE body != excluded.body",
+    );
+    const tx = this.db.transaction(() => {
+      const keep = new Set(texts.keys());
+      const del = this.db.prepare("DELETE FROM conversation_search_text WHERE id = ?");
+      for (const { id } of this.db
+        .prepare("SELECT id FROM conversation_search_text")
+        .all() as Array<{ id: string }>) {
+        if (!keep.has(id)) del.run(id);
+      }
+      for (const [id, body] of texts) upsert.run(id, body);
+    });
+    tx();
+  }
+
   getScannerStatCache(): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> {
     const rows = this.stmts.allScannerStatCacheRows.all() as Array<{
       file_path: string;

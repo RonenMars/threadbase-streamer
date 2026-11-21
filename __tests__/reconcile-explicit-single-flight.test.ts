@@ -24,6 +24,7 @@ describe("explicit ?refresh=1 reconcile is single-flighted", () => {
   const make = () => {
     const cache = {
       getScannerStatCache: () => new Map(),
+      getSearchTexts: () => new Map(),
       getFileStats: () => new Map(),
       isAgentFileFiltered: () => false,
       upsertFromScannerMeta: () => [],

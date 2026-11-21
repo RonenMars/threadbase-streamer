@@ -269,6 +269,18 @@ export class ScannerManager {
   buildStatCache(
     previousScanner: ConversationScanner | null,
   ): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> | undefined {
+    const all = this.buildStatCacheUnfiltered(previousScanner);
+    const have = this.deps.cache()?.getSearchTexts();
+    if (!all || !have) return all;
+    // A hit skips the parse, so an entry with no stored body would be indexed
+    // empty. Drop it and let the scanner parse it once (#1311).
+    for (const [path, entry] of all) if (!have.has(entry.meta.id)) all.delete(path);
+    return all.size > 0 ? all : undefined;
+  }
+
+  private buildStatCacheUnfiltered(
+    previousScanner: ConversationScanner | null,
+  ): Map<string, { stat: FileStatEntry; meta: ConversationMeta }> | undefined {
     const cache = this.deps.cache();
     if (!cache) return undefined;
     // The scanner looks statCache entries up by its own ConversationMeta
@@ -306,9 +318,23 @@ export class ScannerManager {
   }
 
   newScanner(options?: ConstructorParameters<typeof ConversationScanner>[0]): ConversationScanner {
-    return new ConversationScanner(
+    const scanner = new ConversationScanner(
       options ?? (this.persistenceDisabled ? { persistent: false } : undefined),
     );
+    // A stat-cache hit skips the parse and reads the body from the scanner's own
+    // map, which a new scanner starts without (#1311). Seed it from the persisted copy.
+    const texts = this.deps.cache()?.getSearchTexts();
+    if (texts?.size) scanner.seedSearchContents(texts);
+    return scanner;
+  }
+
+  /** Persist a finished scan's search bodies so the next boot can seed them. */
+  persistSearchText(scanner: ConversationScanner): void {
+    try {
+      this.deps.cache()?.replaceSearchTexts(scanner.exportSearchContents());
+    } catch {
+      // Best effort: a failed write only costs body search after the next restart.
+    }
   }
 
   /**
@@ -469,8 +495,12 @@ export class ScannerManager {
     const pass: RefreshPass = state.scanner.refreshFile(state.filePath).then(
       (meta) => {
         try {
-          if (meta) this.deps.cache()?.upsertFromScannerMeta([meta] as any[]);
-          else this.deps.cache()?.reconcileClassification(state.filePath);
+          if (meta) {
+            this.deps.cache()?.upsertFromScannerMeta([meta] as any[]);
+            // Keep the stored body current too, or a restart reads this file's stale text.
+            const body = state.scanner.getSearchContent(meta.id);
+            if (body !== undefined) this.deps.cache()?.upsertSearchText(meta.id, body);
+          } else this.deps.cache()?.reconcileClassification(state.filePath);
         } catch (err) {
           this.log.warn("Failed to cache refreshed conversation classification", { err });
         }
@@ -594,6 +624,7 @@ export class ScannerManager {
     });
     try {
       await this.scannerReady;
+      this.persistSearchText(this.scanner);
     } catch (err) {
       // Don't memoize the rejection — a stored rejected promise would make
       // every future request replay this error instantly instead of retrying.
@@ -651,6 +682,7 @@ export class ScannerManager {
       this.scannerReady = null;
       throw err;
     }
+    this.persistSearchText(shadow);
     this.scanner = shadow;
     return shadow;
   }
