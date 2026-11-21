@@ -25,6 +25,7 @@ import type { AppEnv } from "../app";
 import { BodyTooLargeError, readRawBody } from "../handlers/http-helpers";
 import { createRateLimiter } from "../rate-limit";
 import type { ApiDeps } from "../types/api-deps";
+import { ALREADY_HANDLED } from "./sessions.routes";
 
 /**
  * Accept a finite timestamp, reject anything else.
@@ -389,6 +390,7 @@ export const createMiscRoutes = (
     | "scanProfiles"
     | "relayUrl"
     | "sessionStore"
+    | "handleListPeers"
     | "ptyAttachedIds"
     | "rotateApiKey"
     | "localNoAuth"
@@ -400,6 +402,11 @@ export const createMiscRoutes = (
   >,
 ) => {
   const app = new Hono<AppEnv>();
+
+  app.get("/api/peers", async (c) => {
+    await deps.handleListPeers(c.env.outgoing);
+    return new Response(null, { status: ALREADY_HANDLED });
+  });
 
   app.get("/api/info", (c) => {
     const ptyIds = deps.ptyAttachedIds();

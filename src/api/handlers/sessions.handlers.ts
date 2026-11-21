@@ -3424,6 +3424,27 @@ export class SessionHandlers {
     json(res, 200, { ok: true });
   }
 
+  /**
+   * The Claude sessions a peer message can reach, so a client need not page the
+   * whole session list for them. Empty while `peerMessaging` is off, since no row
+   * then carries `canMessage`.
+   */
+  async handleListPeers(res: ServerResponse): Promise<void> {
+    if (this.deps.rejectIfWarmingUp(res, "sessions")) return;
+    await this.refreshDiscovery();
+    const peers = this.sessionStore
+      .list(this.deps.ptyAttachedIds())
+      .filter((s) => s.canMessage)
+      .map((s) => ({
+        id: s.id,
+        name: s.sessionName ?? s.projectName,
+        projectName: s.projectName,
+        ...(s.peerMention && { peerMention: s.peerMention }),
+        peerAddress: s.peerAddress,
+      }));
+    json(res, 200, { peers });
+  }
+
   handleGetSessionNames(res: ServerResponse): void {
     if (!this.cache) {
       json(res, 200, {});
