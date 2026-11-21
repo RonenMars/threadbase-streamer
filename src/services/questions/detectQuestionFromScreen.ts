@@ -1,4 +1,5 @@
 import type { AskOption, AskQuestion } from "../../types";
+import { terminalRowKind } from "./terminalOnlyRows";
 
 // Detect a structured AskUserQuestion menu from the RENDERED screen lines
 // (getOutputLines), not JSONL. The JSONL path (detectAskUserQuestion) is
@@ -168,7 +169,12 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
       const { label, marked, known } = stripStateMarker(rendered);
       if (marked) sawStateMarker = true;
       if (known) sawKnownMarker = true;
-      options.unshift({ label, description: pendingDescription.join(" ") });
+      const terminalRow = terminalRowKind(label);
+      options.unshift({
+        label,
+        description: pendingDescription.join(" "),
+        ...(terminalRow && { terminalRow }),
+      });
       pendingDescription = [];
       firstOptionIdx = i;
     } else {

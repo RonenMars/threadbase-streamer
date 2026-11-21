@@ -218,8 +218,8 @@ describe("detectQuestionFromScreen", () => {
         description: "Do steps 1-3 and report which cause is confirmed before I touch any source.",
       },
       { label: "Stop here", description: "Do nothing further." },
-      { label: "Type something.", description: "" },
-      { label: "Chat about this", description: "" },
+      { label: "Type something.", description: "", terminalRow: "other" },
+      { label: "Chat about this", description: "", terminalRow: "chat" },
     ]);
   });
 

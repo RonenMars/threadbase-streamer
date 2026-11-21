@@ -259,6 +259,12 @@ export interface AskOption {
   label: string;
   description: string;
   preview?: string;
+  /**
+   * Set on a screen-scraped card's two Claude Code rows, so a client need not
+   * match their labels: `other` is "Type something." (free text), `chat` is
+   * "Chat about this". A structured (JSONL) card lists neither row.
+   */
+  terminalRow?: "other" | "chat";
 }
 
 export interface AskQuestion {

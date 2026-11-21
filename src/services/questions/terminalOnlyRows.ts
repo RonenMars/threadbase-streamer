@@ -16,3 +16,7 @@ export const isTerminalOnlyRow = (label: string): boolean =>
 /** How many options the model actually offered. */
 export const countRealOptions = (options: AskOption[]): number =>
   options.filter((o) => !isTerminalOnlyRow(o.label)).length;
+
+/** Which terminal-only row a label is, or undefined for one of the model's options. */
+export const terminalRowKind = (label: string): AskOption["terminalRow"] =>
+  isTypeRow(label) ? "other" : isTerminalOnlyRow(label) ? "chat" : undefined;
