@@ -1,3 +1,9 @@
+## [1.146.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.145.1...v1.146.0) (2026-11-21)
+
+### Features
+
+* **sessions:** record claude code peer names in runtime.db ([#1301](https://github.com/RonenMars/threadbase-streamer/issues/1301)) ([0c65a3b](https://github.com/RonenMars/threadbase-streamer/commit/0c65a3bb2b29031909d67c92c4ecf23573593d1c)), closes [#1300](https://github.com/RonenMars/threadbase-streamer/issues/1300)
+
 ## [1.145.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.145.0...v1.145.1) (2026-11-20)
 
 ## [1.145.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.144.0...v1.145.0) (2026-11-19)
