@@ -34,7 +34,9 @@ function withRelative(dirs: PinnedDirView[], root: string | null) {
  * every paired device. Mobile uses it only when `GET /api/info` reports
  * `pinnedDirs: true`.
  */
-export const createPinnedDirsRoutes = (deps: Pick<ApiDeps, "runtimeStore" | "browseRoot">) => {
+export const createPinnedDirsRoutes = (
+  deps: Pick<ApiDeps, "runtimeStore" | "browseRoot" | "browseUnrestricted">,
+) => {
   const app = new Hono<AppEnv>();
 
   app.get("/", (c) => {
@@ -44,7 +46,8 @@ export const createPinnedDirsRoutes = (deps: Pick<ApiDeps, "runtimeStore" | "bro
   });
 
   // Body `{ path }`: browse-relative (what the browse screen holds) or absolute.
-  // Resolved against the browse root, so a pin can never name a folder outside it.
+  // Resolved against the browse root, so a pin can never name a folder outside it
+  // (unless `unrestrictedBrowse` is on).
   app.put("/", async (c) => {
     const repo = pinnedDirsFor(deps.runtimeStore());
     if (!repo) return c.json(UNAVAILABLE, 503);
@@ -68,7 +71,7 @@ export const createPinnedDirsRoutes = (deps: Pick<ApiDeps, "runtimeStore" | "bro
     if (typeof path !== "string") return c.json({ error: "Missing path field" }, 400);
     let resolved: string;
     try {
-      resolved = await resolveBrowsePath(root, path);
+      resolved = await resolveBrowsePath(root, path, deps.browseUnrestricted());
     } catch (err) {
       if (err instanceof BrowsePathNotFoundError) return c.json({ error: err.message }, 404);
       return c.json({ error: err instanceof Error ? err.message : "Invalid path" }, 400);

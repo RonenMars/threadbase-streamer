@@ -347,6 +347,7 @@ export type SessionHandlersDeps = {
   includeSubagentSessions?: () => boolean;
   log: () => Logger;
   browseRoot: () => string | null;
+  browseUnrestricted: () => boolean;
   claudeFlags: () => ClaudeFlagValues;
   claudeExtraArgs: () => string | undefined;
   dbPool: () => Awaited<ReturnType<typeof createPool>> | null;
@@ -3106,7 +3107,14 @@ export class SessionHandlers {
     const kept: string[] = [];
     for (const p of candidates) {
       try {
-        kept.push(...(await resolveAdditionalPaths(browseRoot, projectPath, [p])));
+        kept.push(
+          ...(await resolveAdditionalPaths(
+            browseRoot,
+            projectPath,
+            [p],
+            this.deps.browseUnrestricted(),
+          )),
+        );
       } catch (err) {
         this.log.warn(`[resume] dropping additional path ${p}`, {
           event: "session.additional_path_missing",
@@ -3156,7 +3164,12 @@ export class SessionHandlers {
       };
     }
     try {
-      const paths = await resolveAdditionalPaths(this.browseRoot, primaryPath, parsed.data);
+      const paths = await resolveAdditionalPaths(
+        this.browseRoot,
+        primaryPath,
+        parsed.data,
+        this.deps.browseUnrestricted(),
+      );
       return { ok: true, paths };
     } catch (err) {
       return {
@@ -3222,7 +3235,11 @@ export class SessionHandlers {
 
     let resolvedPath: string;
     try {
-      resolvedPath = await resolveBrowsePath(this.browseRoot, relativePath);
+      resolvedPath = await resolveBrowsePath(
+        this.browseRoot,
+        relativePath,
+        this.deps.browseUnrestricted(),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Invalid path";
       json(res, 400, { error: message });
@@ -3265,7 +3282,7 @@ export class SessionHandlers {
 
     const systemPromptParts = [
       this.defaultSystemPrompt,
-      BROWSE_SYSTEM_PROMPT(this.browseRoot),
+      this.deps.browseUnrestricted() ? null : BROWSE_SYSTEM_PROMPT(this.browseRoot),
       typeof clientPrompt === "string" ? clientPrompt : null,
     ].filter(Boolean);
 

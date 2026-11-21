@@ -6,6 +6,7 @@ import {
   createDirectory,
   listDirectories,
   listFiles,
+  resolveAdditionalPaths,
   resolveBrowsePath,
 } from "../src/browse";
 
@@ -80,6 +81,63 @@ describe("resolveBrowsePath", () => {
     await expect(resolveBrowsePath(TEST_ROOT, "../")).rejects.not.toBeInstanceOf(
       BrowsePathNotFoundError,
     );
+  });
+});
+
+describe("resolveBrowsePath unrestricted", () => {
+  const OUTSIDE = join(tmpdir(), "threadbase-browse-test-outside");
+
+  beforeEach(() => {
+    rmSync(OUTSIDE, { recursive: true, force: true });
+    mkdirSync(OUTSIDE, { recursive: true });
+  });
+
+  afterAll(() => {
+    rmSync(OUTSIDE, { recursive: true, force: true });
+  });
+
+  it("accepts ../ out of the root", async () => {
+    const resolved = await resolveBrowsePath(TEST_ROOT, "../threadbase-browse-test-outside", true);
+    expect(resolved).toBe(OUTSIDE);
+  });
+
+  it("accepts an absolute path outside the root (Unix)", async () => {
+    if (process.platform === "win32") return;
+    expect(await resolveBrowsePath(TEST_ROOT, OUTSIDE, true)).toBe(OUTSIDE);
+  });
+
+  it("still resolves in-root relative paths against the root", async () => {
+    expect(await resolveBrowsePath(TEST_ROOT, "projectA", true)).toBe(join(TEST_ROOT, "projectA"));
+  });
+
+  it("still reports a missing path as BrowsePathNotFoundError", async () => {
+    await expect(resolveBrowsePath(TEST_ROOT, "../no-such-dir-xyz", true)).rejects.toBeInstanceOf(
+      BrowsePathNotFoundError,
+    );
+  });
+
+  it("is off by default (positive control for the accepts-outside cases)", async () => {
+    await expect(resolveBrowsePath(TEST_ROOT, "../threadbase-browse-test-outside")).rejects.toThrow(
+      "outside browse root",
+    );
+  });
+
+  it("resolveAdditionalPaths accepts a directory outside the root", async () => {
+    const paths = await resolveAdditionalPaths(
+      TEST_ROOT,
+      join(TEST_ROOT, "projectA"),
+      ["../threadbase-browse-test-outside"],
+      true,
+    );
+    expect(paths).toEqual([OUTSIDE]);
+  });
+
+  it("resolveAdditionalPaths still rejects it by default", async () => {
+    await expect(
+      resolveAdditionalPaths(TEST_ROOT, join(TEST_ROOT, "projectA"), [
+        "../threadbase-browse-test-outside",
+      ]),
+    ).rejects.toThrow("outside browse root");
   });
 });
 

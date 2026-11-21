@@ -166,6 +166,85 @@ describe("sessions with additional directories", () => {
     });
   });
 
+  describe("unrestrictedBrowse flag", () => {
+    let outside: string;
+
+    const systemPromptArg = () => {
+      const args = lastSpawnArgs();
+      return args[args.indexOf("--system-prompt") + 1];
+    };
+
+    const restart = async (unrestrictedBrowse: boolean) => {
+      await server.close();
+      const { StreamerServer } = await import("../src/server");
+      server = new StreamerServer({
+        port: 0,
+        apiKey: API_KEY,
+        localNoAuth: false,
+        verbose: false,
+        disableDb: true,
+        cacheDir,
+        browseRoot,
+        featureFlags: { unrestrictedBrowse },
+        scanProfiles: [{ id: "test", label: "Test", configDir, enabled: true, emoji: "🧪" }],
+        scannerPersistent: false,
+        codexRoots: [],
+        cursorRoots: [],
+      });
+      await server.listen(0);
+      port = server.port;
+    };
+
+    beforeEach(() => {
+      outside = realpathSync(mkdtempSync(join(tmpdir(), "tb-multidir-outside-")));
+    });
+
+    afterEach(() => {
+      rmSync(outside, { recursive: true, force: true });
+    });
+
+    it("keeps the boundary and its prompt by default", async () => {
+      expect(
+        (await post("/api/sessions/start", { path: "app", additionalPaths: [outside] })).status,
+      ).toBe(400);
+      (mockSpawn as any).mockClear();
+      await post("/api/sessions/start", { path: "app" });
+      expect(systemPromptArg()).toContain("project boundary");
+    });
+
+    it("takes an extra directory outside the root and drops the boundary prompt when on", async () => {
+      await restart(true);
+      const res = await post("/api/sessions/start", { path: "app", additionalPaths: [outside] });
+
+      expect([200, 202]).toContain(res.status);
+      expect(lastSpawnArgs()).toEqual(expect.arrayContaining(["--add-dir", outside]));
+      expect(systemPromptArg()).not.toContain("project boundary");
+    });
+
+    it("recalls an extra directory outside the root on the next resume when on", async () => {
+      await restart(true);
+      const first = await post("/api/sessions/resume", {
+        sessionId: UUID,
+        force: true,
+        additionalPaths: [outside],
+      });
+      expect(first.status).toBe(201);
+      lastSpawnedProcess().exit(0);
+      await new Promise((r) => setTimeout(r, 50));
+
+      const second = await post("/api/sessions/resume", { sessionId: UUID, force: true });
+      expect(second.status).toBe(201);
+      expect(lastSpawnArgs()).toEqual(expect.arrayContaining(["--add-dir", outside]));
+    });
+
+    it("creates a directory outside the root when on, and refuses it by default", async () => {
+      const mkdir = () => post("/api/browse/mkdir", { path: outside, name: "made" });
+      expect((await mkdir()).status).toBe(400);
+      await restart(true);
+      expect((await mkdir()).status).toBe(201);
+    });
+  });
+
   describe("POST /api/sessions/resume", () => {
     it("takes an explicit list, then replays it when the next resume names none", async () => {
       const first = await post("/api/sessions/resume", {

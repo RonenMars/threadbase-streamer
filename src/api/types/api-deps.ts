@@ -62,6 +62,8 @@ export type ApiDeps = {
   relayUrl: string | null;
   /** A getter: the root is realpath-resolved after the deps are built. */
   browseRoot: () => string | null;
+  /** `unrestrictedBrowse` flag: paths may leave `browseRoot`. */
+  browseUnrestricted: () => boolean;
   browserCors: string | undefined;
   ptyManager: LiveSessionManager;
   sessionStore: SessionStore;

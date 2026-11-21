@@ -993,6 +993,7 @@ export class StreamerServer {
       cache: () => this.cache,
       log: () => this.log,
       browseRoot: () => this.browseRoot,
+      browseUnrestricted: () => this.featureFlags.unrestrictedBrowse,
       claudeFlags: () => this.claudeFlags,
       claudeExtraArgs: () => this.claudeExtraArgs,
       dbPool: () => this.dbPool,
@@ -1038,6 +1039,7 @@ export class StreamerServer {
       publicUrl: this.publicUrl,
       relayUrl: this.relayClientUrl,
       browseRoot: () => this.browseRoot,
+      browseUnrestricted: () => this.featureFlags.unrestrictedBrowse,
       browserCors: this.browserCors,
       ptyGracePeriodMs: this.ptyGracePeriodMs,
       rotateApiKey: () => this.rotateApiKey(),
@@ -3784,7 +3786,11 @@ export class StreamerServer {
     }
     const relativePath = url.searchParams.get("path") ?? "";
     try {
-      const resolved = await resolveBrowsePath(this.browseRoot, relativePath);
+      const resolved = await resolveBrowsePath(
+        this.browseRoot,
+        relativePath,
+        this.featureFlags.unrestrictedBrowse,
+      );
       const [directories, files] = await Promise.all([
         listDirectories(resolved),
         listFiles(resolved),
@@ -3815,7 +3821,11 @@ export class StreamerServer {
       return;
     }
     try {
-      const parentPath = await resolveBrowsePath(this.browseRoot, relativePath ?? "");
+      const parentPath = await resolveBrowsePath(
+        this.browseRoot,
+        relativePath ?? "",
+        this.featureFlags.unrestrictedBrowse,
+      );
       await createDirectory(parentPath, name);
       const parentRelative = relativePath ?? "";
       const created = parentRelative ? `${parentRelative}/${name}` : name;
