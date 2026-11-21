@@ -1,4 +1,5 @@
 import type { AskOption, AskQuestion } from "../../types";
+import { terminalRowKind } from "./terminalOnlyRows";
 
 // Detect a structured AskUserQuestion menu from the RENDERED screen lines
 // (getOutputLines), not JSONL. The JSONL path (detectAskUserQuestion) is
@@ -168,7 +169,12 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
       const { label, marked, known } = stripStateMarker(rendered);
       if (marked) sawStateMarker = true;
       if (known) sawKnownMarker = true;
-      options.unshift({ label, description: pendingDescription.join(" ") });
+      const terminalRow = terminalRowKind(label);
+      options.unshift({
+        label,
+        description: pendingDescription.join(" "),
+        ...(terminalRow && { terminalRow }),
+      });
       pendingDescription = [];
       firstOptionIdx = i;
     } else {
@@ -278,6 +284,26 @@ export function isQuestionMenuOnScreen(lines: string[]): boolean {
     return optionRows >= 2;
   }
   return false;
+}
+
+const CURSOR_ROW_RE = /^\s*❯\s*(\d+)\.\s/;
+
+/**
+ * The 0-based option row the menu's `❯` cursor is on, read from the rendered
+ * screen, or null when no menu is up or no numbered row carries the cursor.
+ * Looks only between the menu's footer and the rows above it, so the composer's
+ * own `❯` never counts. Pure.
+ */
+export function questionCursorRow(lines: string[]): number | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!ASK_FOOTER_ROW_RE.test(stripBoxGutter(lines[i]))) continue;
+    for (let j = i - 1; j >= Math.max(0, i - MENU_WINDOW_ROWS); j--) {
+      const m = CURSOR_ROW_RE.exec(stripBoxGutter(lines[j]));
+      if (m) return Number(m[1]) - 1;
+    }
+    return null;
+  }
+  return null;
 }
 
 /**
