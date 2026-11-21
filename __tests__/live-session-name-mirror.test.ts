@@ -1,3 +1,8 @@
+import { mkdirSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { ManagedSessionsRepository } from "../src/db/repositories/managed-sessions.repository";
+import { RuntimeStore } from "../src/db/runtime-store";
 import type { LiveSessionWiringDeps } from "../src/server-wiring";
 import { createLiveSessionOptions } from "../src/server-wiring";
 import { SessionStore } from "../src/session-store";
@@ -36,7 +41,11 @@ function build(
   const deps = {
     sessionStore: store,
     wsHub: { broadcast },
-    sessionFileMap: new Map([[ID, "/tmp/p/sess-1.jsonl"]]),
+    sessionFileMap: new Map([
+      [ID, "/tmp/p/sess-1.jsonl"],
+      ["sess-2", "/tmp/p/sess-2.jsonl"],
+      ["sess-3", "/tmp/p/sess-3.jsonl"],
+    ]),
     scannerManager: {
       get: async () => ({}),
       refreshFileAfterWrite: async () => ({
@@ -145,5 +154,62 @@ describe("live session name slots: recorded in the runtime registry after a turn
     options.onStatusChange?.(runner({ status: "running" }));
     await settle();
     expect(recordNameSlots).not.toHaveBeenCalled();
+  });
+});
+
+describe("live session name slots: stored on the right row of a real runtime.db", () => {
+  let dir: string;
+  let runtime: RuntimeStore;
+  let repo: ManagedSessionsRepository;
+
+  const spawn = (id: string) =>
+    repo.recordSpawn({
+      session: session({ id, provider: "claude-code" } as Partial<ManagedSession>),
+      pid: 1,
+      cmdline: "claude",
+      streamerInstanceId: "inst",
+    });
+
+  beforeEach(() => {
+    dir = join(tmpdir(), `slot-wiring-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    runtime = RuntimeStore.open(join(dir, "runtime.db"));
+    repo = new ManagedSessionsRepository(runtime.getDatabase());
+  });
+
+  afterEach(() => {
+    runtime.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes the slots to the finished session's row and leaves every other row alone", async () => {
+    spawn(ID);
+    spawn("sess-2");
+    const meta = {
+      messageCount: 2,
+      nameSlots: { userTitle: "Mine", toolTitle: "Tool" },
+      lastPrompt: "plain last prompt",
+    };
+    const { options } = build(null, { meta, repo });
+    options.onStatusChange?.(runner({ id: "sess-2", status: "waiting_input" }));
+
+    await vi.waitFor(() => expect(repo.get("sess-2")?.title_tool).toBe("Tool"));
+    expect(repo.get("sess-2")).toMatchObject({
+      title_user: "Mine",
+      title_tool: "Tool",
+      last_prompt: "plain last prompt",
+    });
+    expect(repo.get(ID)).toMatchObject({ title_user: null, title_tool: null, last_prompt: null });
+  });
+
+  it("does not throw or invent a row for a session the registry never recorded", async () => {
+    spawn(ID);
+    const meta = { messageCount: 2, nameSlots: { toolTitle: "Tool" } };
+    const { options } = build(null, { meta, repo });
+    options.onStatusChange?.(runner({ id: "sess-3", status: "waiting_input" }));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(repo.get("sess-3")).toBeNull();
+    expect(repo.get(ID)?.title_tool).toBeNull();
   });
 });
