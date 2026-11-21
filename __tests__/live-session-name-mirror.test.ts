@@ -26,7 +26,10 @@ function session(overrides: Partial<ManagedSession> = {}): ManagedSession {
   };
 }
 
-function build(refreshedName: string | null) {
+function build(
+  refreshedName: string | null,
+  extra: { meta?: Record<string, unknown> | null; repo?: unknown } = {},
+) {
   const store = new SessionStore();
   store.addManaged(session());
   const broadcast = vi.fn();
@@ -38,11 +41,16 @@ function build(refreshedName: string | null) {
       get: async () => ({}),
       refreshFileAfterWrite: async () => ({
         outcome: "refreshed",
-        meta: refreshedName === null ? null : { sessionName: refreshedName, messageCount: 2 },
+        meta:
+          extra.meta !== undefined
+            ? extra.meta
+            : refreshedName === null
+              ? null
+              : { sessionName: refreshedName, messageCount: 2 },
       }),
     },
     sessionStatusBus: { emit: vi.fn() },
-    managedSessionsRepo: () => null,
+    managedSessionsRepo: () => extra.repo ?? null,
     liveActivityNotifier: () => null,
     waitingInputNotifier: () => null,
     ptyAttachedIds: () => new Set<string>(),
@@ -95,5 +103,47 @@ describe("live session name: runner seed, scanner wins", () => {
     options.onStatusChange?.(runner({ sessionName: "Fix the login bug", status: "waiting_input" }));
     await new Promise((r) => setTimeout(r, 20));
     expect(store.getManaged(ID)?.sessionName).toBe("Fix the login bug");
+  });
+});
+
+describe("live session name slots: recorded in the runtime registry after a turn", () => {
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+
+  it("hands the refreshed meta to the registry under the session id", async () => {
+    const recordNameSlots = vi.fn();
+    const meta = {
+      sessionName: "AI generated title",
+      messageCount: 2,
+      nameSlots: { toolTitle: "AI generated title", lastPrompt: "from slots" },
+      lastPrompt: "plain",
+    };
+    const { options } = build(null, { meta, repo: { recordNameSlots, recordStatus: vi.fn() } });
+    options.onStatusChange?.(runner({ status: "waiting_input" }));
+    await vi.waitFor(() => expect(recordNameSlots).toHaveBeenCalledWith(ID, meta));
+  });
+
+  it("still records when the meta carries a last prompt but no name slots", async () => {
+    const recordNameSlots = vi.fn();
+    const meta = { messageCount: 2, lastPrompt: "plain" };
+    const { options } = build(null, { meta, repo: { recordNameSlots, recordStatus: vi.fn() } });
+    options.onStatusChange?.(runner({ status: "idle" }));
+    await vi.waitFor(() => expect(recordNameSlots).toHaveBeenCalledWith(ID, meta));
+  });
+
+  it("records nothing when the refresh found no parseable file", async () => {
+    const recordNameSlots = vi.fn();
+    const { options } = build(null, { repo: { recordNameSlots, recordStatus: vi.fn() } });
+    options.onStatusChange?.(runner({ status: "waiting_input" }));
+    await settle();
+    expect(recordNameSlots).not.toHaveBeenCalled();
+  });
+
+  it("records nothing while the turn is still running", async () => {
+    const recordNameSlots = vi.fn();
+    const meta = { messageCount: 2, nameSlots: { toolTitle: "T" } };
+    const { options } = build(null, { meta, repo: { recordNameSlots, recordStatus: vi.fn() } });
+    options.onStatusChange?.(runner({ status: "running" }));
+    await settle();
+    expect(recordNameSlots).not.toHaveBeenCalled();
   });
 });

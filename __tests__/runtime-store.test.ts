@@ -73,6 +73,7 @@ describe("RuntimeStore", () => {
       "008_add_managed_session_model_effort.sql",
       "009_create_pinned_dirs.sql",
       "009_create_push_tables.sql",
+      "010_add_managed_session_title_slots.sql",
       "011_create_session_peer_names.sql",
     ]);
     store.close();
