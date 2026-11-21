@@ -2255,6 +2255,7 @@ export class StreamerServer {
             // later request throw instantly. Guard: only adopt if nothing else
             // already owns the slot.
             this.scannerManager.adoptIfUnclaimed(warmupScanner);
+            this.scannerManager.persistSearchText(warmupScanner);
             if (!this.cache) return;
             const metas = [...warmupScanner.getMetadataCache().values()] as any[];
             // upsertFromScannerMeta returns IDs of rows actually upserted
