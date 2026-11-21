@@ -2,10 +2,13 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "crypto";
 import type { Project } from "../../schemas/project.schema";
 import { canonicalizeProjectPath } from "../../utils/canonicalizeProjectPath";
+import { resolveProjectRoot } from "../../utils/resolveProjectRoot";
 
 interface ProjectRow {
   id: string;
   path: string;
+  project_root: string | null;
+  worktree_path: string | null;
   name: string | null;
   last_conversation_id: string | null;
   last_conversation_created_at: string | null;
@@ -20,6 +23,8 @@ function rowToProject(row: ProjectRow): Project {
   return {
     id: row.id,
     path: row.path,
+    projectRoot: row.project_root,
+    worktreePath: row.worktree_path,
     name: row.name,
     lastConversationId: row.last_conversation_id,
     lastConversationCreatedAt: row.last_conversation_created_at,
@@ -52,12 +57,12 @@ export class ProjectsRepository {
     this.listAll = db.prepare("SELECT * FROM projects ORDER BY updated_at DESC");
     this.insert = db.prepare(`
       INSERT INTO projects (
-        id, path, name,
+        id, path, project_root, worktree_path, name,
         last_conversation_id, last_conversation_created_at, last_indexed_at,
         latest_message_at, latest_message_id,
         created_at, updated_at
       ) VALUES (
-        @id, @path, @name,
+        @id, @path, @project_root, @worktree_path, @name,
         @last_conversation_id, @last_conversation_created_at, @last_indexed_at,
         @latest_message_at, @latest_message_id,
         @created_at, @updated_at
@@ -66,6 +71,8 @@ export class ProjectsRepository {
     this.update = db.prepare(`
       UPDATE projects SET
         name                         = COALESCE(@name, name),
+        project_root                 = COALESCE(@project_root, project_root),
+        worktree_path                = COALESCE(@worktree_path, worktree_path),
         last_conversation_id         = COALESCE(@last_conversation_id, last_conversation_id),
         last_conversation_created_at = COALESCE(@last_conversation_created_at, last_conversation_created_at),
         last_indexed_at              = COALESCE(@last_indexed_at, last_indexed_at),
@@ -100,11 +107,14 @@ export class ProjectsRepository {
   upsertProjectByPath(rawPath: string, input: UpsertProjectInput = {}): Project {
     const path = canonicalizeProjectPath(rawPath);
     const now = new Date().toISOString();
+    const root = resolveProjectRoot(path);
 
     const existing = this.getByPath.get(path) as ProjectRow | undefined;
     if (existing) {
       this.update.run({
         id: existing.id,
+        project_root: root?.projectRoot ?? null,
+        worktree_path: root?.worktreePath ?? null,
         name: input.name ?? null,
         last_conversation_id: input.lastConversationId ?? null,
         last_conversation_created_at: input.lastConversationCreatedAt ?? null,
@@ -120,6 +130,8 @@ export class ProjectsRepository {
     this.insert.run({
       id,
       path,
+      project_root: root?.projectRoot ?? null,
+      worktree_path: root?.worktreePath ?? null,
       name: input.name ?? deriveNameFromPath(path),
       last_conversation_id: input.lastConversationId ?? null,
       last_conversation_created_at: input.lastConversationCreatedAt ?? null,

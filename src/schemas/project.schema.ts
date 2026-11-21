@@ -6,6 +6,10 @@ import { z } from "zod";
 export const ProjectSchema = z.object({
   id: z.string().min(1),
   path: z.string().min(1),
+  /** Main checkout of the repo; null until resolved from disk. */
+  projectRoot: z.string().nullable().optional(),
+  /** `path` itself when it is a linked worktree of `projectRoot`; null otherwise. */
+  worktreePath: z.string().nullable().optional(),
   name: z.string().nullable().optional(),
 
   lastConversationId: z.string().nullable().optional(),

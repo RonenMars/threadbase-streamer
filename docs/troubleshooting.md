@@ -1727,3 +1727,15 @@ So a developer seeing test conversations in `threadbase-scanner` CLI output is l
 **Cause:** the runner's mirror of the host's sessions was never cleared on a dropped connection, and nobody was told.
 
 **Fix:** the runner now reports the loss. The streamer logs `pty_host.connection_lost`, drops the sessions from the live store, shows them as resumable stubs carrying `interruptedStatus`, sends the recovery push, and attaches a fresh host. It does not auto-resume them: the machine is up and the cause is unknown, so the user resumes. After a **reboot**, `auto_resume_on_boot` does resume them (the boot token changed), up to `AUTO_RESUME_MAX` (5) within the 15-minute window; the rest are listed and counted in the push.
+
+## A git worktree shows as a separate project from its main checkout
+
+**Symptom:** the Projects tab lists `Tabby` and `Tabby-ios-audio-session` as two projects, though the second is a `git worktree` of the first.
+
+**Cause:** the cache grouped by exact `project_path` (the session's cwd), and a linked worktree has a different cwd.
+
+**Fix:** migration `030_add_project_root.sql` adds `project_root` and `worktree_path` to `conversation_meta` and `projects`.
+`resolveProjectRoot()` reads `<cwd>/.git`: a directory is a main checkout, a file `gitdir: <root>/.git/worktrees/<name>` is a linked worktree of `<root>`, and anything else (a submodule, a missing path) is its own project.
+Scan (`upsertFull`), live tail (`backfillSkeletonProject`), project linking and a boot backfill all write the columns, and `GET /api/projects/summary` groups by `COALESCE(project_root, project_path)`.
+Known limits: a worktree deleted before it was ever resolved stays its own project (a `.git` that cannot be read leaves the columns NULL and is retried each boot), and a resolved value is never cleared.
+Live-session payloads still carry the cwd, so a client that groups running sessions must group by root itself.
