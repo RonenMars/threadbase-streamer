@@ -26,7 +26,17 @@ export class SessionStore {
     // yet (no prompt, adopt, an unbound rollout, a restart). A lookup only: a
     // read never creates a project, since sessions are not project discovery.
     private readonly projectIdFor: (projectPath: string) => string | undefined = () => undefined,
+    // Claude Code's peer name for a conversation, last seen by discovery.
+    private readonly peerNameFor: (
+      conversationId: string,
+    ) => { name: string; source: string | null } | undefined = () => undefined,
   ) {}
+
+  private withPeerName(r: SessionResponse, conversationId: string): SessionResponse {
+    const peer = this.peerNameFor(conversationId);
+    if (!peer) return r;
+    return { ...r, peerName: peer.name, ...(peer.source && { peerNameSource: peer.source }) };
+  }
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();
 
@@ -158,7 +168,15 @@ export class SessionStore {
       // The outside process replaces the stub's historical row.
       if (isProcessless(s) && this.hasDiscovered(s.boundConversationId ?? s.id)) continue;
       results.push(
-        managedToResponse(s, ptyAttachedIds.has(s.id), this.hasOpenPrompt(s.id), this.projectIdFor),
+        this.withPeerName(
+          managedToResponse(
+            s,
+            ptyAttachedIds.has(s.id),
+            this.hasOpenPrompt(s.id),
+            this.projectIdFor,
+          ),
+          s.boundConversationId ?? s.id,
+        ),
       );
       seenIds.add(s.id);
     }
@@ -168,12 +186,15 @@ export class SessionStore {
       if (!this.visibility(d.conversationId)) continue;
       if (seenIds.has(d.conversationId) || this.ownsConversation(d.conversationId)) continue;
       results.push(
-        discoveredToResponse(
-          d,
+        this.withPeerName(
+          discoveredToResponse(
+            d,
+            d.conversationId,
+            this.lastActivityFor(d.conversationId),
+            this.nameFor(d.conversationId),
+            this.projectIdFor,
+          ),
           d.conversationId,
-          this.lastActivityFor(d.conversationId),
-          this.nameFor(d.conversationId),
-          this.projectIdFor,
         ),
       );
       seenIds.add(d.conversationId);
@@ -188,23 +209,29 @@ export class SessionStore {
   get(sessionId: string, ptyAttachedIds: Set<string>): Readonly<SessionResponse> | null {
     const managed = this.managed.get(sessionId);
     if (managed && !(isProcessless(managed) && this.hasDiscovered(sessionId))) {
-      return managedToResponse(
-        managed,
-        ptyAttachedIds.has(sessionId),
-        this.hasOpenPrompt(sessionId),
-        this.projectIdFor,
+      return this.withPeerName(
+        managedToResponse(
+          managed,
+          ptyAttachedIds.has(sessionId),
+          this.hasOpenPrompt(sessionId),
+          this.projectIdFor,
+        ),
+        managed.boundConversationId ?? sessionId,
       );
     }
 
     if (this.ownsConversation(sessionId)) return null;
     for (const d of this.discovered.values()) {
       if (d.conversationId === sessionId) {
-        return discoveredToResponse(
-          d,
+        return this.withPeerName(
+          discoveredToResponse(
+            d,
+            sessionId,
+            this.lastActivityFor(sessionId),
+            this.nameFor(sessionId),
+            this.projectIdFor,
+          ),
           sessionId,
-          this.lastActivityFor(sessionId),
-          this.nameFor(sessionId),
-          this.projectIdFor,
         );
       }
     }

@@ -45,6 +45,10 @@ export interface ClaudeRegistryEntry {
   statusUpdatedAt?: number;
   cwd?: string;
   name?: string;
+  /** `user` once the name was set with /rename, else `derived`. */
+  nameSource?: string;
+  /** Epoch ms the current name was set. */
+  nameSince?: number;
   kind?: string;
   startedAt?: number;
 }
@@ -107,6 +111,8 @@ export function parseClaudeRegistryEntry(
     }),
     ...(typeof d.cwd === "string" && d.cwd && { cwd: d.cwd }),
     ...(typeof d.name === "string" && d.name && { name: d.name }),
+    ...(typeof d.nameSource === "string" && d.nameSource && { nameSource: d.nameSource }),
+    ...(Number.isFinite(d.nameSince) && { nameSince: d.nameSince as number }),
     ...(typeof d.kind === "string" && { kind: d.kind }),
     ...(startedAt != null && { startedAt }),
   };

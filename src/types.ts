@@ -251,6 +251,8 @@ export interface DiscoveredProcess {
   teammate?: { agentName: string; teamName: string };
   /** Claude's own turn state from its session registry; absent when it wrote none. */
   turnState?: { state: "idle" | "busy" | "shell"; updatedAt: Date };
+  /** Claude Code's peer name from its session registry (what /rename sets); not unique. */
+  peerName?: { name: string; source?: string; since?: number };
 }
 
 // ─── WebSocket Messages ────────────────────────────────────────────
@@ -691,6 +693,13 @@ export interface SessionResponse {
   activity?: SessionActivity;
   /** See `ExternalTurn`. Only for external Claude sessions whose registry reports a state. */
   externalTurn?: ExternalTurn;
+  /**
+   * Claude Code's peer name (`/rename`, or the name it derived), last seen in its
+   * session registry; kept after the process exits. Not unique across sessions.
+   */
+  peerName?: string;
+  /** `user` when set with /rename, `derived` when Claude Code chose it. */
+  peerNameSource?: string;
 }
 
 /**

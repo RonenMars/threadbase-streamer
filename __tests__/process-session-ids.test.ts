@@ -52,6 +52,16 @@ describe("parseClaudeRegistryEntry", () => {
     });
   });
 
+  it("reads the peer name's source and when it was set", () => {
+    const since = Date.parse("2026-10-02T10:06:00Z");
+    expect(
+      parseClaudeRegistryEntry(registry({ nameSource: "user", nameSince: since }), PID),
+    ).toMatchObject({ name: "some-session", nameSource: "user", nameSince: since });
+    const bad = parseClaudeRegistryEntry(registry({ nameSource: 7, nameSince: "x" }), PID);
+    expect(bad).not.toHaveProperty("nameSource");
+    expect(bad).not.toHaveProperty("nameSince");
+  });
+
   it("reads the registry's own turn state and when it was written", () => {
     const at = Date.parse("2026-10-02T10:05:00Z");
     expect(
@@ -278,6 +288,33 @@ describe("resolveSessionIds", () => {
       }),
     );
     expect(out.turnState).toEqual({ state: "busy", updatedAt: new Date(at) });
+  });
+
+  it("carries the registry's peer name onto the discovered process", async () => {
+    const since = Date.parse("2026-10-02T10:06:00Z");
+    const [out] = await resolveSessionIds(
+      [proc({})],
+      new Map(),
+      resolvers({
+        claude: async () => ({
+          pid: PID,
+          sessionId: SESSION,
+          name: "name slug developer",
+          nameSource: "user",
+          nameSince: since,
+        }),
+      }),
+    );
+    expect(out.peerName).toEqual({ name: "name slug developer", source: "user", since });
+  });
+
+  it("leaves peerName off when the registry has no name", async () => {
+    const [out] = await resolveSessionIds(
+      [proc({})],
+      new Map(),
+      resolvers({ claude: async () => ({ pid: PID, sessionId: SESSION }) }),
+    );
+    expect(out).not.toHaveProperty("peerName");
   });
 
   it("leaves turnState off when the registry's status has no timestamp", async () => {
