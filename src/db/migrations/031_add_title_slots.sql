@@ -3,7 +3,9 @@
 -- scanner_meta_json. Lift the three that identify a session to columns so it
 -- can be found by them without parsing every row. All providers fill them;
 -- NULL where the agent records none.
---   title_user  - a name the user gave (Claude /rename, Copilot user_named)
+--   title_user  - a name the user gave. Claude (/rename) and Copilot (user_named)
+--                 only: a Codex rename just rewrites thread_name, the same field
+--                 Codex fills with its own title, so it is NULL for Codex and Cursor
 --   title_tool  - a name the agent generated (ai-title, Codex/Cursor/Copilot title)
 --   last_prompt - the most recent prompt
 ALTER TABLE conversation_meta ADD COLUMN title_user TEXT;
