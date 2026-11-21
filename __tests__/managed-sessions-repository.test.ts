@@ -359,3 +359,58 @@ describe("ManagedSessionsRepository", () => {
     });
   });
 });
+
+describe("ManagedSessionsRepository name slots", () => {
+  const spawn = () =>
+    repo.recordSpawn({
+      session: mkSession(),
+      pid: 1,
+      cmdline: "claude",
+      streamerInstanceId: "inst-a",
+    });
+
+  it("records the title and last-prompt slots once the scanner has read a turn", () => {
+    spawn();
+    expect(repo.get("sess-1")).toMatchObject({
+      title_user: null,
+      title_tool: null,
+      last_prompt: null,
+    });
+
+    repo.recordNameSlots("sess-1", {
+      userTitle: "Renamed",
+      toolTitle: "Generated",
+      lastPrompt: "last one",
+    });
+
+    expect(repo.get("sess-1")).toMatchObject({
+      title_user: "Renamed",
+      title_tool: "Generated",
+      last_prompt: "last one",
+    });
+  });
+
+  it("keeps a recorded slot when a later read has none, and replaces it when it changes", () => {
+    spawn();
+    repo.recordNameSlots("sess-1", {
+      userTitle: "Renamed",
+      toolTitle: "Generated",
+      lastPrompt: "first",
+    });
+    repo.recordNameSlots("sess-1", { lastPrompt: "second" });
+
+    expect(repo.get("sess-1")).toMatchObject({
+      title_user: "Renamed",
+      title_tool: "Generated",
+      last_prompt: "second",
+    });
+  });
+
+  it("survives a re-spawn of the same session id", () => {
+    spawn();
+    repo.recordNameSlots("sess-1", { toolTitle: "Generated" });
+    spawn();
+
+    expect(repo.get("sess-1")?.title_tool).toBe("Generated");
+  });
+});

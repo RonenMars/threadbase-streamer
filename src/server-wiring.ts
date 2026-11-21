@@ -577,6 +577,8 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
               // The scanner has now read the turn, so its name resolves every
               // slot (custom title, AI title, last prompt, first prompt, slug):
               // take it over the runner's first-prompt seed and tell clients.
+              if (meta?.nameSlots)
+                deps.managedSessionsRepo()?.recordNameSlots(session.id, meta.nameSlots);
               if (meta?.sessionName) {
                 deps.sessionStore.updateManaged(session.id, { sessionName: meta.sessionName });
                 const resp = deps.sessionStore.get(session.id, deps.ptyAttachedIds());

@@ -151,7 +151,7 @@ export interface ScannerMeta {
   isImportedFromCodex?: boolean;
   isImportedFromCursor?: boolean;
   teamName?: string | null;
-  nameSlots?: { slug?: string };
+  nameSlots?: { slug?: string; userTitle?: string; toolTitle?: string; lastPrompt?: string };
 }
 
 interface MetaRow {
@@ -443,12 +443,12 @@ export class ConversationCache {
           (id, file_path, project_path, project_name, title, model, account, branch,
            message_count, last_activity, first_message, last_message, preview, updated_at,
            mtime_ms, file_size, provider, scanner_meta_json,
-           is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name, slug)
+           is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name, slug, title_user, title_tool, last_prompt)
         VALUES
           (@id, @file_path, @project_path, @project_name, @title, @model, @account, @branch,
            @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at,
            @mtime_ms, @file_size, @provider, @scanner_meta_json,
-           @is_imported_from_claude, @is_imported_from_codex, @is_imported_from_cursor, @team_name, @slug)
+           @is_imported_from_claude, @is_imported_from_codex, @is_imported_from_cursor, @team_name, @slug, @title_user, @title_tool, @last_prompt)
         ON CONFLICT(id) DO UPDATE SET
           file_path     = excluded.file_path,
           project_path  = excluded.project_path,
@@ -474,7 +474,10 @@ export class ConversationCache {
           is_imported_from_codex = excluded.is_imported_from_codex,
           is_imported_from_cursor = excluded.is_imported_from_cursor,
           team_name = excluded.team_name,
-          slug = excluded.slug
+          slug = excluded.slug,
+          title_user = excluded.title_user,
+          title_tool = excluded.title_tool,
+          last_prompt = excluded.last_prompt
         WHERE conversation_meta.updated_at < excluded.updated_at
       `),
       getTail: db.prepare("SELECT * FROM conversation_tail WHERE conversation_id = ?"),
@@ -1627,6 +1630,9 @@ export class ConversationCache {
           is_imported_from_cursor: m.isImportedFromCursor ? 1 : 0,
           team_name: m.teamName ?? null,
           slug: m.nameSlots?.slug ?? null,
+          title_user: m.nameSlots?.userTitle ?? null,
+          title_tool: m.nameSlots?.toolTitle ?? null,
+          last_prompt: m.nameSlots?.lastPrompt ?? null,
         });
         this.stmts.updateScannerCache.run(mtimeMs, fileSize, scannerMetaJson, id);
         if (classification) {

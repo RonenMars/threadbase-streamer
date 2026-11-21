@@ -59,6 +59,10 @@ export interface ManagedSessionRow {
   /** Effective model / effort the session was spawned with (migration 008). Null or absent means unknown. */
   model?: string | null;
   effort?: string | null;
+  /** Scanner name slots (runtime migration 010). Null or absent means none recorded. */
+  title_user?: string | null;
+  title_tool?: string | null;
+  last_prompt?: string | null;
 }
 
 /** Most rows the boot reconciler will probe in one pass. */
@@ -83,6 +87,7 @@ export class ManagedSessionsRepository {
   private bindStmt: Database.Statement;
   private projectIdStmt: Database.Statement;
   private nullProjectStmt: Database.Statement;
+  private nameSlotsStmt: Database.Statement;
   private settingStmts: Record<"model" | "effort", Database.Statement>;
   private getStmt: Database.Statement;
   private listNonTerminalStmt: Database.Statement;
@@ -176,6 +181,16 @@ export class ManagedSessionsRepository {
       model: db.prepare("UPDATE managed_sessions SET model = ? WHERE session_id = ?"),
       effort: db.prepare("UPDATE managed_sessions SET effort = ? WHERE session_id = ?"),
     };
+
+    // COALESCE like session_name: a read that found no slot must not clear one
+    // an earlier read recorded.
+    this.nameSlotsStmt = db.prepare(`
+      UPDATE managed_sessions
+         SET title_user = COALESCE(@title_user, title_user),
+             title_tool = COALESCE(@title_tool, title_tool),
+             last_prompt = COALESCE(@last_prompt, last_prompt)
+       WHERE session_id = @session_id
+    `);
 
     this.getStmt = db.prepare("SELECT * FROM managed_sessions WHERE session_id = ?");
 
@@ -361,6 +376,19 @@ export class ManagedSessionsRepository {
   /** A live `/model` or `/effort` switch; `recordStatus` never touches these columns. */
   recordSetting(sessionId: string, setting: "model" | "effort", value: string): void {
     this.settingStmts[setting].run(value, sessionId);
+  }
+
+  /** Persist the scanner's title and last-prompt slots; an absent slot keeps what is stored. */
+  recordNameSlots(
+    sessionId: string,
+    slots: { userTitle?: string; toolTitle?: string; lastPrompt?: string },
+  ): void {
+    this.nameSlotsStmt.run({
+      session_id: sessionId,
+      title_user: slots.userTitle ?? null,
+      title_tool: slots.toolTitle ?? null,
+      last_prompt: slots.lastPrompt ?? null,
+    });
   }
 
   get(sessionId: string): ManagedSessionRow | null {
