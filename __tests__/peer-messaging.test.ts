@@ -179,7 +179,7 @@ describe("GET /api/peers", () => {
       peers: [
         {
           id: CONV,
-          name: "peer-msg-proj",
+          name: "example-peer",
           projectName: "peer-msg-proj",
           peerMention: "@example-peer",
           peerAddress: `uds:${SOCK}`,
@@ -188,9 +188,16 @@ describe("GET /api/peers", () => {
     });
   });
 
-  it("names a peer by its session name over its project", async () => {
+  it.each([
+    ["its peer name over its session name", { conversationId: CONV }, "example-peer"],
+    [
+      "its session name when it has no peer name",
+      { conversationId: "5b1e2c3d-4f5a-4b6c-8d7e-9f0a1b2c3d4e", peerName: undefined },
+      "example session",
+    ],
+  ])("names a peer by %s", async (_label, overrides, expected) => {
     vi.mocked(discoverClaudeProcesses).mockReset();
-    vi.mocked(discoverClaudeProcesses).mockResolvedValue([proc()]);
+    vi.mocked(discoverClaudeProcesses).mockResolvedValue([proc(overrides)]);
     server = new StreamerServer({
       port: 0,
       apiKey: API_KEY,
@@ -209,7 +216,7 @@ describe("GET /api/peers", () => {
       status: "waiting_input",
       startedAt: new Date(),
       lastActivityAt: new Date(),
-      boundConversationId: CONV,
+      boundConversationId: overrides.conversationId,
       sessionName: "example session",
     });
     const ptyManager = (server as any).sessionHandlers.deps.ptyManager;
@@ -219,7 +226,7 @@ describe("GET /api/peers", () => {
       headers: { Authorization: `Bearer ${API_KEY}` },
     });
     const { peers: rows } = (await res.json()) as { peers: Array<Record<string, unknown>> };
-    expect(rows).toEqual([expect.objectContaining({ id: MANAGED_ID, name: "example session" })]);
+    expect(rows).toEqual([expect.objectContaining({ id: MANAGED_ID, name: expected })]);
   });
 
   it("answers an empty list while the flag is off", async () => {

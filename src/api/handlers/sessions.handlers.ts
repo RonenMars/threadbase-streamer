@@ -3437,7 +3437,7 @@ export class SessionHandlers {
       .filter((s) => s.canMessage)
       .map((s) => ({
         id: s.id,
-        name: s.sessionName ?? s.projectName,
+        name: s.peerName ?? s.sessionName ?? s.projectName,
         projectName: s.projectName,
         ...(s.peerMention && { peerMention: s.peerMention }),
         peerAddress: s.peerAddress,
