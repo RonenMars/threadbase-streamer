@@ -1,5 +1,5 @@
 import { createProgressDedupeLRU } from "./agent/dedupe";
-import { CLAUDE_CODE_PROVIDER } from "./providers";
+import { CLAUDE_CODE_PROVIDER, CODEX_CLI_PROVIDER } from "./providers";
 import type {
   DiscoveredProcess,
   ManagedSession,
@@ -501,6 +501,9 @@ function managedToResponse(
     // Unconditional for the same reason as subStatus: absence must never be a
     // third state on the wire.
     promptSuggestion: s.promptSuggestion ?? null,
+    // We own this process; an external turn reported for the conversation
+    // before the streamer took it over must not survive a merge.
+    externalTurn: null,
     hasOpenPrompt,
     ptyAttached,
     ...(projectId != null && { projectId }),
@@ -584,14 +587,17 @@ function discoveredToResponse(
     ...(lastActivityAt && { lastActivityAt: lastActivityAt.toISOString() }),
     ...(projectId != null && { projectId }),
     ...(sessionName && { sessionName }),
-    ...(d.turnState && {
-      externalTurn: {
-        state: d.turnState.state,
-        updatedAt: d.turnState.updatedAt.toISOString(),
-        source: "claude-registry" as const,
-        confidence: "inferred" as const,
-      },
-    }),
+    externalTurn: d.turnState
+      ? {
+          state: d.turnState.state,
+          updatedAt: d.turnState.updatedAt.toISOString(),
+          ...(d.turnState.observedAt && { observedAt: d.turnState.observedAt.toISOString() }),
+          source:
+            d.turnState.source ??
+            (d.provider === CODEX_CLI_PROVIDER ? "codex-rollout" : "claude-registry"),
+          confidence: "inferred",
+        }
+      : null,
   };
 }
 

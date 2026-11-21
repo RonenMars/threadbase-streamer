@@ -250,7 +250,13 @@ export interface DiscoveredProcess {
   /** Set for a Claude teammate (`--agent-name` + `--team-name` in argv), which has no registry entry. */
   teammate?: { agentName: string; teamName: string };
   /** Claude's own turn state from its session registry; absent when it wrote none. */
-  turnState?: { state: "idle" | "busy" | "shell"; updatedAt: Date };
+  /** Claude: from its session registry. Codex: its rollout, then its tmux screen (`observedAt` set). */
+  turnState?: {
+    state: "idle" | "busy" | "shell" | "waiting" | "unknown";
+    updatedAt: Date;
+    observedAt?: Date;
+    source?: "codex-rollout" | "codex-screen";
+  };
   /** Claude Code's peer name from its session registry (what /rename sets); not unique. */
   peerName?: { name: string; source?: string; since?: number };
   /** Claude Code's peer inbox from its session registry; live only, never persisted. */
@@ -693,8 +699,12 @@ export interface SessionResponse {
    * sessions we own — their `status` is the authoritative signal.
    */
   activity?: SessionActivity;
-  /** See `ExternalTurn`. Only for external Claude sessions whose registry reports a state. */
-  externalTurn?: ExternalTurn;
+  /**
+   * See `ExternalTurn`. Set on external sessions with turn evidence (Claude's
+   * registry) and on every external Codex session; `null` everywhere else, so a
+   * client that merges session frames drops a stale value instead of keeping it.
+   */
+  externalTurn?: ExternalTurn | null;
   /**
    * Claude Code's peer name (`/rename`, or the name it derived), last seen in its
    * session registry; kept after the process exits. Not unique across sessions.
@@ -714,14 +724,27 @@ export interface SessionResponse {
 }
 
 /**
- * What an outside Claude process says about its own turn, read from its session
- * registry. Always `inferred`: a `busy` was seen 6.7 h old, so a client must
- * weigh `updatedAt` rather than trust it. Additive; `status` stays `idle`.
+ * What an outside agent says about its own turn. Always `inferred`, and
+ * additive: `status` stays `idle`, because `running` changes what a client lets
+ * the user do with a session this streamer does not own.
+ *
+ * `claude-registry`: Claude's session registry (`idle` / `busy` / `shell`). A
+ * `busy` was seen 6.7 h old, so a client must weigh `updatedAt`.
+ * `codex-rollout`: the root `task_started` / `task_complete` / `turn_aborted`
+ * lines of the rollout the pid holds open (`idle` / `busy` / `unknown`); a start
+ * with no end and a rollout silent past `CODEX_TURN_STALE_MS` is `unknown`.
+ * `codex-screen`: the session's tmux pane, read with `capture-pane` when it
+ * proves a different state than the rollout: the footer's `Ready`, the
+ * `Working … esc to interrupt` timer, or a card stopped on the user (`waiting`,
+ * which the rollout cannot show: it writes nothing for an approval).
  */
 export interface ExternalTurn {
-  state: "idle" | "busy" | "shell";
+  state: "idle" | "busy" | "shell" | "waiting" | "unknown";
+  /** When the evidence was written; for `unknown`, when it was looked for. */
   updatedAt: string; // ISO 8601
-  source: "claude-registry";
+  /** When the streamer read the evidence. Codex only. */
+  observedAt?: string;
+  source: "claude-registry" | "codex-rollout" | "codex-screen";
   confidence: "inferred";
 }
 

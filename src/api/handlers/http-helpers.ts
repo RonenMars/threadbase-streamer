@@ -60,6 +60,8 @@ export function conversationToResumableSession(c: ConversationListItem) {
     // shape whenever the id is a conversation rather than a live session.
     subStatus: null,
     promptSuggestion: null,
+    // Its external owner, if it had one, is gone: clear any turn it reported.
+    externalTurn: null,
     hasOpenPrompt: false,
     promptCount: c.messageCount,
     startedAt: c.lastActivity,
