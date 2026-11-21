@@ -1,3 +1,13 @@
+## [1.147.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.146.0...v1.147.0) (2026-11-21)
+
+### Features
+
+* **sessions:** store slug, title_user, title_tool and last_prompt as columns ([#1299](https://github.com/RonenMars/threadbase-streamer/issues/1299)) ([826cb8f](https://github.com/RonenMars/threadbase-streamer/commit/826cb8f48c3bb0f78db189f3a4a02b53cee0c1a1))
+
+### Bug Fixes
+
+* **pty:** resend enter when an image mention swallowed the submit ([#1303](https://github.com/RonenMars/threadbase-streamer/issues/1303)) ([9a9163e](https://github.com/RonenMars/threadbase-streamer/commit/9a9163e413d5e6b3e013b0b32bbe63ad434b2d10))
+
 ## [1.146.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.145.1...v1.146.0) (2026-11-21)
 
 ### Features
