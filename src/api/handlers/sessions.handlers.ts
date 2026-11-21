@@ -57,6 +57,7 @@ import {
   questionPromptDraft,
 } from "../../services/prompts/ptyPromptAdapter";
 import { capabilitiesFor } from "../../services/providers/capabilities";
+import { keysForMove } from "../../services/questions/answersToKeystrokes";
 import { CODEX_ACTIVE_WRITER_CODE } from "../../services/questions/codexScreen";
 import {
   detectGateScreen,
@@ -69,6 +70,7 @@ import {
   isLossyViewOf,
   isQuestionMenuOnScreen,
   questionContentKey,
+  questionCursorRow,
 } from "../../services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "../../services/questions/detectShellPrompt";
 import { detectStartupChoiceGate } from "../../services/questions/detectStartupChoiceGate";
@@ -139,6 +141,13 @@ export const HANDOFF_TIMING = { graceMs: 5_000, killMs: 2_000, settleMs: 1_000 }
 // sessions. Ready normally lands well under this: Claude's quiet-checker and
 // Codex's CODEX_READY_FALLBACK_MS (8s) both settle pendingReady first.
 const START_READY_TIMEOUT_MS = 10_000;
+
+// Free text for the AskUserQuestion "Type something." row is sequenced on the
+// rendered screen: move the cursor, wait until it is on the row, write the text,
+// wait for it to paint, then press Enter alone. Each wait is bounded by this, and
+// polls the screen rather than sleeping a fixed time.
+const TEXT_FIELD_TIMEOUT_MS = 3_000;
+const TEXT_FIELD_POLL_MS = 25;
 
 /**
  * Scope under which `/start` idempotency keys are remembered. The store is
@@ -318,6 +327,8 @@ function promptAnswerStatus(code: PromptAnswerErrorCode): number {
 export type SessionHandlersDeps = {
   sessionStore: SessionStore;
   ptyManager: LiveSessionManager;
+  /** Bound on each wait of the free-text answer sequence; tests shorten it. */
+  textFieldTimeoutMs?: number;
   wsHub: WSHub;
   scannerManager: ScannerManager;
   sessionWatchers: SessionWatchers;
@@ -1732,6 +1743,8 @@ export class SessionHandlers {
             : "prompt_unavailable";
         return { ok: false, code };
       }
+      // Free text needs the sequenced route; this adapter builds label answers only.
+      if ("freeText" in resolution) return { ok: false, code: "unsupported_prompt_shape" };
       if (!(await this.questionMenuStillOpen(sessionId))) {
         this.pendingQuestions.delete(sessionId);
         this.pendingQuestionKey.delete(sessionId);
@@ -2195,18 +2208,28 @@ export class SessionHandlers {
     // into the prompt box instead of the picker. The rendered screen is the only
     // authority on whether the picker is still up.
     if (!(await this.questionMenuStillOpen(sessionId))) {
-      const prompt = this.promptRegistry.get(pending?.promptId ?? "");
-      if (prompt?.state === "open" || prompt?.state === "updated") {
-        this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
-      }
-      this.pendingQuestions.delete(sessionId);
-      this.pendingQuestionKey.delete(sessionId);
-      this.broadcastToSession(sessionId, { type: "question_cancelled", sessionId, toolUseId });
+      this.closeGoneQuestion(sessionId, pending?.promptId, toolUseId);
       json(res, 409, { ok: false, reason: "question_gone" });
       return;
     }
     try {
-      this.ptyManager.sendKeys(sessionId, resolution.keys);
+      if ("freeText" in resolution) {
+        const outcome = await this.typeIntoQuestion(sessionId, toolUseId, resolution.freeText);
+        if (outcome === "gone") {
+          // A card that replaced ours is not ours to clear.
+          if (this.pendingQuestions.get(sessionId)?.toolUseId === toolUseId) {
+            this.closeGoneQuestion(sessionId, pending?.promptId, toolUseId);
+          }
+          json(res, 409, { ok: false, reason: "question_gone" });
+          return;
+        }
+        if (outcome === "timeout") {
+          json(res, 409, { ok: false, reason: "text_field_timeout" });
+          return;
+        }
+      } else {
+        this.ptyManager.sendKeys(sessionId, resolution.keys);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send answer";
       json(res, 400, { ok: false, reason: message });
@@ -2251,6 +2274,66 @@ export class SessionHandlers {
       return;
     }
     json(res, promptAnswerStatus(outcome.code), outcome);
+  }
+
+  private closeGoneQuestion(sessionId: string, promptId: string | undefined, toolUseId: string) {
+    const prompt = this.promptRegistry.get(promptId ?? "");
+    if (prompt?.state === "open" || prompt?.state === "updated") {
+      this.promptRegistry.transition(prompt.promptId, "cancelled", "provider_closed");
+    }
+    this.pendingQuestions.delete(sessionId);
+    this.pendingQuestionKey.delete(sessionId);
+    this.broadcastToSession(sessionId, { type: "question_cancelled", sessionId, toolUseId });
+  }
+
+  /**
+   * Type `text` into the "Type something." field of the open question and submit
+   * it. Verified on Claude Code 2.1.328: the field is live as soon as the cursor
+   * is on its row, a raw CR inside a burst of text is read as part of the text,
+   * and Enter on an empty field declines the question — so the cursor is moved
+   * and confirmed on the rendered screen first, the text is written alone, and
+   * Enter goes only once the text has painted. Nothing is typed unless the cursor
+   * is on the row and the same question is still the one pending.
+   */
+  private async typeIntoQuestion(
+    sessionId: string,
+    toolUseId: string,
+    { row, text }: { row: number; text: string },
+  ): Promise<"ok" | "timeout" | "gone"> {
+    const deadline = Date.now() + (this.deps.textFieldTimeoutMs ?? TEXT_FIELD_TIMEOUT_MS);
+    const read = () => this.ptyManager.getOutputLines(sessionId, PTY_ROWS);
+    const stillPending = () => this.pendingQuestions.get(sessionId)?.toolUseId === toolUseId;
+    const waitFor = async (settled: (lines: string[]) => boolean) => {
+      for (;;) {
+        if (settled(await read())) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise((resolve) => setTimeout(resolve, TEXT_FIELD_POLL_MS));
+      }
+    };
+
+    // From where the cursor really is: a retry after a failed attempt does not
+    // start from the top again.
+    const delta = row - (questionCursorRow(await read()) ?? 0);
+    if (delta !== 0) this.ptyManager.sendKeys(sessionId, keysForMove(delta));
+    if (!(await waitFor((lines) => questionCursorRow(lines) === row))) {
+      return isQuestionMenuOnScreen(await read()) ? "timeout" : "gone";
+    }
+    if (!stillPending()) return "gone";
+
+    const before = (await read()).join("\n");
+    this.ptyManager.sendKeys(sessionId, text);
+    let previous: string | null = null;
+    const painted = await waitFor((lines) => {
+      const now = lines.join("\n");
+      const settled = now !== before && now === previous;
+      previous = now;
+      return settled;
+    });
+    // No Enter unless the text showed up: on an empty field it declines the question.
+    if (!painted) return "timeout";
+    if (!stillPending()) return "gone";
+    this.ptyManager.sendKeys(sessionId, "\r");
+    return "ok";
   }
 
   // Best-effort: a session we don't own a PTY for, or one that raced away
