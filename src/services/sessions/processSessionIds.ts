@@ -175,15 +175,16 @@ export const CODEX_ROLLOUT_FOR_PID_TIMEOUT_MS = 800;
 const ROLLOUT_NAME =
   /(?:^|[\\/])rollout-[^\\/]*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 
-/** Rollout uuids named by `lsof -F n` output, distinct, in file order. */
-export function parseLsofRolloutIds(stdout: string): string[] {
-  const ids: string[] = [];
+/** Rollouts named by `lsof -F n` output (uuid and path), distinct by uuid, in file order. */
+export function parseLsofRollouts(stdout: string): { id: string; path: string }[] {
+  const found: { id: string; path: string }[] = [];
   for (const line of stdout.split("\n")) {
     if (!line.startsWith("n")) continue;
-    const id = line.slice(1).trim().match(ROLLOUT_NAME)?.[1]?.toLowerCase();
-    if (id && !ids.includes(id)) ids.push(id);
+    const path = line.slice(1).trim();
+    const id = path.match(ROLLOUT_NAME)?.[1]?.toLowerCase();
+    if (id && !found.some((r) => r.id === id)) found.push({ id, path });
   }
-  return ids;
+  return found;
 }
 
 export interface CodexRolloutForPidOptions {
@@ -194,14 +195,14 @@ export interface CodexRolloutForPidOptions {
 }
 
 /**
- * The session uuid of the one rollout `pid` holds open, or null: no evidence
- * (Windows, lsof missing/denied/slow, nothing open) or ambiguity (more than one
- * rollout open, which a standalone TUI does not do).
+ * The session uuid and path of the one rollout `pid` holds open, or null: no
+ * evidence (Windows, lsof missing/denied/slow, nothing open) or ambiguity (more
+ * than one rollout open, which a standalone TUI does not do).
  */
-export async function codexRolloutIdForPid(
+export async function codexRolloutForPid(
   pid: number,
   options: CodexRolloutForPidOptions = {},
-): Promise<string | null> {
+): Promise<{ id: string; path: string } | null> {
   if ((options.platform ?? process.platform) === "win32") return null;
   const run = options.run ?? runLsof;
   let stdout: string;
@@ -214,8 +215,8 @@ export async function codexRolloutIdForPid(
   } catch {
     return null;
   }
-  const ids = parseLsofRolloutIds(stdout);
-  return ids.length === 1 ? ids[0] : null;
+  const rollouts = parseLsofRollouts(stdout);
+  return rollouts.length === 1 ? rollouts[0] : null;
 }
 
 // ─── Claude teammates: the transcript that names the agent ──────────────────

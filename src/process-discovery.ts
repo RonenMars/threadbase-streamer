@@ -10,9 +10,10 @@ import {
   CURSOR_PROVIDER,
   type ProviderName,
 } from "./providers";
+import { type CodexTurnState, CodexTurnTracker } from "./services/sessions/codexTurnState";
 import {
   type ClaudeRegistryEntry,
-  codexRolloutIdForPid,
+  codexRolloutForPid,
   findTeammateSessionId,
   readClaudeSessionRegistry,
 } from "./services/sessions/processSessionIds";
@@ -37,14 +38,20 @@ export async function discoverClaudeProcesses(): Promise<DiscoveredProcess[]> {
 /** Exact per-provider PID → session-id lookups; see processSessionIds.ts. */
 export interface SessionIdResolvers {
   claude: (pid: number, processStartedAt?: Date) => Promise<ClaudeRegistryEntry | null>;
-  codex: (pid: number) => Promise<string | null>;
+  /** The rollout a Codex pid holds open. */
+  codex: (pid: number) => Promise<{ id: string; path: string } | null>;
+  /** What that rollout says about the root turn. */
+  codexTurn: (rolloutPath: string) => Promise<CodexTurnState>;
   /** A Claude teammate has no registry entry; its own transcript names it. */
   teammate: (proc: DiscoveredProcess, processStartedAt?: Date) => Promise<string | null>;
 }
 
+const codexTurns = new CodexTurnTracker();
+
 const defaultResolvers: SessionIdResolvers = {
   claude: (pid, processStartedAt) => readClaudeSessionRegistry(pid, { processStartedAt }),
-  codex: (pid) => codexRolloutIdForPid(pid),
+  codex: (pid) => codexRolloutForPid(pid),
+  codexTurn: (rolloutPath) => codexTurns.read(rolloutPath),
   teammate: (proc, processStartedAt) =>
     proc.teammate
       ? findTeammateSessionId(proc.projectPath, proc.teammate.agentName, proc.teammate.teamName, {
@@ -108,9 +115,17 @@ export async function resolveSessionIds(
               }),
           };
         }
-        if (proc.provider === CODEX_CLI_PROVIDER && !proc.conversationId) {
-          const rolloutId = await resolvers.codex(proc.pid);
-          return rolloutId ? { ...proc, conversationId: rolloutId } : proc;
+        if (proc.provider === CODEX_CLI_PROVIDER) {
+          const rollout = await resolvers.codex(proc.pid);
+          // argv's id stands; the open rollout is turn evidence only for that
+          // same conversation.
+          const conversationId = proc.conversationId ?? rollout?.id ?? null;
+          const now = new Date();
+          const turnState: CodexTurnState =
+            rollout && rollout.id === conversationId?.toLowerCase()
+              ? await resolvers.codexTurn(rollout.path)
+              : { state: "unknown", updatedAt: now, observedAt: now };
+          return { ...proc, conversationId, turnState };
         }
       } catch {
         // A lookup is an enrichment; it can never cost the process its row.

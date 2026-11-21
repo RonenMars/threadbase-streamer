@@ -15,10 +15,10 @@ import {
 } from "../src/process-discovery";
 import {
   CLAUDE_REGISTRY_START_SLACK_MS,
-  codexRolloutIdForPid,
+  codexRolloutForPid,
   findTeammateSessionId,
   parseClaudeRegistryEntry,
-  parseLsofRolloutIds,
+  parseLsofRollouts,
   procStartFromStat,
   readClaudeSessionRegistry,
 } from "../src/services/sessions/processSessionIds";
@@ -209,30 +209,30 @@ describe("readClaudeSessionRegistry", () => {
   });
 });
 
-describe("codexRolloutIdForPid", () => {
+describe("codexRolloutForPid", () => {
   const rolloutPath = `/Users/someone/.codex/sessions/2026/10/02/rollout-2026-10-02T08-05-49-${ROLLOUT}.jsonl`;
 
   it("parses rollout uuids out of lsof -F n output", () => {
     const out = ["p4242", "n/dev/ttys003", `n${rolloutPath}`, "n/usr/lib/libz.dylib"].join("\n");
-    expect(parseLsofRolloutIds(out)).toEqual([ROLLOUT]);
+    expect(parseLsofRollouts(out)).toEqual([{ id: ROLLOUT, path: rolloutPath }]);
   });
 
   it("returns the one rollout the pid holds open", async () => {
     const calls: string[][] = [];
-    const id = await codexRolloutIdForPid(4242, {
+    const rollout = await codexRolloutForPid(4242, {
       platform: "darwin",
       run: async (args) => {
         calls.push(args);
         return `p4242\nn${rolloutPath}\n`;
       },
     });
-    expect(id).toBe(ROLLOUT);
+    expect(rollout).toEqual({ id: ROLLOUT, path: rolloutPath });
     expect(calls[0]).toEqual(expect.arrayContaining(["-p", "4242"]));
   });
 
   it("refuses to choose when more than one rollout is open", async () => {
     const other = rolloutPath.replace(ROLLOUT, "11111111-2222-4333-8444-555555555555");
-    const id = await codexRolloutIdForPid(4242, {
+    const id = await codexRolloutForPid(4242, {
       platform: "linux",
       run: async () => `p4242\nn${rolloutPath}\nn${other}\n`,
     });
@@ -241,10 +241,10 @@ describe("codexRolloutIdForPid", () => {
 
   it("is no evidence on Windows or when lsof fails", async () => {
     const run = vi.fn(async () => `n${rolloutPath}`);
-    expect(await codexRolloutIdForPid(4242, { platform: "win32", run })).toBeNull();
+    expect(await codexRolloutForPid(4242, { platform: "win32", run })).toBeNull();
     expect(run).not.toHaveBeenCalled();
     expect(
-      await codexRolloutIdForPid(4242, {
+      await codexRolloutForPid(4242, {
         platform: "linux",
         run: async () => {
           throw new Error("lsof timed out");
@@ -278,6 +278,9 @@ describe("resolveSessionIds", () => {
     return {
       claude: async () => null,
       codex: async () => null,
+      codexTurn: async () => {
+        throw new Error("codexTurn not stubbed");
+      },
       teammate: async () => null,
       ...overrides,
     };
@@ -405,20 +408,27 @@ describe("resolveSessionIds", () => {
     const [out] = await resolveSessionIds(
       [proc({ provider: "codex-cli" })],
       new Map(),
-      resolvers({ codex: async () => ROLLOUT }),
+      resolvers({
+        codex: async () => ({ id: ROLLOUT, path: "/r.jsonl" }),
+        codexTurn: async () => ({ state: "idle", updatedAt: new Date(0), observedAt: new Date(0) }),
+      }),
     );
     expect(out.conversationId).toBe(ROLLOUT);
   });
 
-  it("keeps a Codex id stated in argv without probing", async () => {
-    const codex = vi.fn(async () => "11111111-2222-4333-8444-555555555555");
+  it("keeps a Codex id stated in argv, and reads no turn from another rollout", async () => {
+    const codexTurn = vi.fn();
     const [out] = await resolveSessionIds(
       [proc({ provider: "codex-cli", conversationId: ROLLOUT })],
       new Map(),
-      resolvers({ codex }),
+      resolvers({
+        codex: async () => ({ id: "11111111-2222-4333-8444-555555555555", path: "/other.jsonl" }),
+        codexTurn,
+      }),
     );
     expect(out.conversationId).toBe(ROLLOUT);
-    expect(codex).not.toHaveBeenCalled();
+    expect(out.turnState?.state).toBe("unknown");
+    expect(codexTurn).not.toHaveBeenCalled();
   });
 
   it("leaves a process untouched when a lookup finds nothing or throws", async () => {
@@ -547,6 +557,7 @@ describe("resolveSessionIds for a teammate", () => {
   const none: SessionIdResolvers = {
     claude: async () => null,
     codex: async () => null,
+    codexTurn: async () => ({ state: "unknown", updatedAt: new Date(0), observedAt: new Date(0) }),
     teammate: async () => null,
   };
 

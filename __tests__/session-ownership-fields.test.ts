@@ -65,11 +65,12 @@ describe("session ownership fields", () => {
     });
   });
 
-  it("emits no externalTurn when discovery found no registry state", () => {
+  it("emits externalTurn: null when discovery found no registry state", () => {
     const store = new SessionStore();
     store.setDiscovered([discovered]);
     const [resp] = store.list(new Set());
-    expect(resp).not.toHaveProperty("externalTurn");
+    // Explicit, not absent: a client that merges frames must drop an old value.
+    expect(resp.externalTurn).toBeNull();
   });
 
   it("keeps status within the existing vocabulary so ?status= filtering is unaffected", () => {
