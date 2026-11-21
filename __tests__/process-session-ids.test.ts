@@ -62,6 +62,21 @@ describe("parseClaudeRegistryEntry", () => {
     expect(bad).not.toHaveProperty("nameSince");
   });
 
+  it("reads the peer messaging socket and protocol version", () => {
+    expect(
+      parseClaudeRegistryEntry(
+        registry({ messagingSocketPath: "/tmp/example-socks/1.sock", peerProtocol: 1 }),
+        PID,
+      ),
+    ).toMatchObject({ messagingSocketPath: "/tmp/example-socks/1.sock", peerProtocol: 1 });
+    const bad = parseClaudeRegistryEntry(
+      registry({ messagingSocketPath: 7, peerProtocol: "1" }),
+      PID,
+    );
+    expect(bad).not.toHaveProperty("messagingSocketPath");
+    expect(bad).not.toHaveProperty("peerProtocol");
+  });
+
   it("reads the registry's own turn state and when it was written", () => {
     const at = Date.parse("2026-10-02T10:05:00Z");
     expect(
@@ -306,6 +321,31 @@ describe("resolveSessionIds", () => {
       }),
     );
     expect(out.peerName).toEqual({ name: "name slug developer", source: "user", since });
+  });
+
+  it("carries the peer messaging socket and protocol onto the process", async () => {
+    const [out] = await resolveSessionIds(
+      [proc({})],
+      new Map(),
+      resolvers({
+        claude: async () => ({
+          pid: PID,
+          sessionId: SESSION,
+          messagingSocketPath: "/tmp/example-socks/1.sock",
+          peerProtocol: 1,
+        }),
+      }),
+    );
+    expect(out.peerMessaging).toEqual({ socketPath: "/tmp/example-socks/1.sock", protocol: 1 });
+  });
+
+  it("leaves peerMessaging off when the registry has no socket", async () => {
+    const [out] = await resolveSessionIds(
+      [proc({})],
+      new Map(),
+      resolvers({ claude: async () => ({ pid: PID, sessionId: SESSION, peerProtocol: 1 }) }),
+    );
+    expect(out).not.toHaveProperty("peerMessaging");
   });
 
   it("leaves peerName off when the registry has no name", async () => {

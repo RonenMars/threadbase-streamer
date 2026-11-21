@@ -769,6 +769,7 @@ export class StreamerServer {
       (id) => this.cache?.getMetaById(id)?.title ?? undefined,
       (projectPath) => this.projectsRepo?.getProjectByPath(projectPath)?.id,
       (id) => sessionPeerNamesFor(this.runtimeStore)?.get(id) ?? undefined,
+      this.featureFlags.peerMessaging,
     );
     this.wsHub = new WSHub();
     this.promptRegistry = new PromptRegistry({
