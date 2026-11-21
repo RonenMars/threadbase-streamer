@@ -378,9 +378,11 @@ describe("ManagedSessionsRepository name slots", () => {
     });
 
     repo.recordNameSlots("sess-1", {
-      userTitle: "Renamed",
-      toolTitle: "Generated",
-      lastPrompt: "last one",
+      nameSlots: {
+        userTitle: "Renamed",
+        toolTitle: "Generated",
+        lastPrompt: "last one",
+      },
     });
 
     expect(repo.get("sess-1")).toMatchObject({
@@ -393,11 +395,13 @@ describe("ManagedSessionsRepository name slots", () => {
   it("keeps a recorded slot when a later read has none, and replaces it when it changes", () => {
     spawn();
     repo.recordNameSlots("sess-1", {
-      userTitle: "Renamed",
-      toolTitle: "Generated",
-      lastPrompt: "first",
+      nameSlots: {
+        userTitle: "Renamed",
+        toolTitle: "Generated",
+        lastPrompt: "first",
+      },
     });
-    repo.recordNameSlots("sess-1", { lastPrompt: "second" });
+    repo.recordNameSlots("sess-1", { nameSlots: { lastPrompt: "second" } });
 
     expect(repo.get("sess-1")).toMatchObject({
       title_user: "Renamed",
@@ -408,9 +412,18 @@ describe("ManagedSessionsRepository name slots", () => {
 
   it("survives a re-spawn of the same session id", () => {
     spawn();
-    repo.recordNameSlots("sess-1", { toolTitle: "Generated" });
+    repo.recordNameSlots("sess-1", { nameSlots: { toolTitle: "Generated" } });
     spawn();
 
     expect(repo.get("sess-1")?.title_tool).toBe("Generated");
+  });
+
+  it("falls back to the meta's plain lastPrompt, and prefers the slot when both exist", () => {
+    spawn();
+    repo.recordNameSlots("sess-1", { nameSlots: { toolTitle: "T" }, lastPrompt: "plain" });
+    expect(repo.get("sess-1")?.last_prompt).toBe("plain");
+
+    repo.recordNameSlots("sess-1", { nameSlots: { lastPrompt: "slot" }, lastPrompt: "plain2" });
+    expect(repo.get("sess-1")?.last_prompt).toBe("slot");
   });
 });

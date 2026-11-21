@@ -378,16 +378,24 @@ export class ManagedSessionsRepository {
     this.settingStmts[setting].run(value, sessionId);
   }
 
-  /** Persist the scanner's title and last-prompt slots; an absent slot keeps what is stored. */
+  /**
+   * Persist the scanner's title and last-prompt slots from a scanned meta; an
+   * absent one keeps what is stored. The last prompt falls back to the meta's
+   * plain `lastPrompt`, which every provider sets but not every one files as a
+   * name slot (Copilot never does).
+   */
   recordNameSlots(
     sessionId: string,
-    slots: { userTitle?: string; toolTitle?: string; lastPrompt?: string },
+    meta: {
+      nameSlots?: { userTitle?: string; toolTitle?: string; lastPrompt?: string };
+      lastPrompt?: string;
+    },
   ): void {
     this.nameSlotsStmt.run({
       session_id: sessionId,
-      title_user: slots.userTitle ?? null,
-      title_tool: slots.toolTitle ?? null,
-      last_prompt: slots.lastPrompt ?? null,
+      title_user: meta.nameSlots?.userTitle ?? null,
+      title_tool: meta.nameSlots?.toolTitle ?? null,
+      last_prompt: meta.nameSlots?.lastPrompt ?? meta.lastPrompt ?? null,
     });
   }
 

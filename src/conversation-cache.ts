@@ -152,6 +152,8 @@ export interface ScannerMeta {
   isImportedFromCursor?: boolean;
   teamName?: string | null;
   nameSlots?: { slug?: string; userTitle?: string; toolTitle?: string; lastPrompt?: string };
+  /** The last user message, set by every provider apart from the name slots. */
+  lastPrompt?: string;
 }
 
 interface MetaRow {
@@ -1632,7 +1634,7 @@ export class ConversationCache {
           slug: m.nameSlots?.slug ?? null,
           title_user: m.nameSlots?.userTitle ?? null,
           title_tool: m.nameSlots?.toolTitle ?? null,
-          last_prompt: m.nameSlots?.lastPrompt ?? null,
+          last_prompt: m.nameSlots?.lastPrompt ?? m.lastPrompt ?? null,
         });
         this.stmts.updateScannerCache.run(mtimeMs, fileSize, scannerMetaJson, id);
         if (classification) {

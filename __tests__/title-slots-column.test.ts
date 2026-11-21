@@ -115,4 +115,14 @@ describe("conversation_meta title_user / title_tool / last_prompt", () => {
       last_prompt: "two",
     });
   });
+
+  it("falls back to the meta's plain lastPrompt when the name slots carry none", () => {
+    cache.upsertFromScannerMeta([
+      { ...meta("copilot-fb", "copilot", { toolTitle: "T" }), lastPrompt: "plain last" },
+      { ...meta("slot-wins", "codex-cli", { lastPrompt: "from slots" }), lastPrompt: "plain last" },
+    ]);
+
+    expect(rowOf("copilot-fb").last_prompt).toBe("plain last");
+    expect(rowOf("slot-wins").last_prompt).toBe("from slots");
+  });
 });
