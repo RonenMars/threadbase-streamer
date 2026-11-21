@@ -12,6 +12,24 @@ import type {
 } from "./types";
 import { confidenceForSource } from "./types";
 
+/** The peer protocol version whose messaging Claude Code 2.1.330 was checked against. */
+const CHECKED_PEER_PROTOCOL = 1;
+
+/**
+ * The token Claude Code's @ picker inserts for a peer (2.1.330): bare for a word,
+ * quoted otherwise. A name with a quote or a control character cannot be carried.
+ */
+export function peerMentionFor(name: string): string | undefined {
+  if (!name || [...name].some((c) => c === '"' || c < " ")) return undefined;
+  return /^[\w-]+$/.test(name) ? `@${name}` : `@"${name}"`;
+}
+
+/** The CLI's `uds:` address: characters outside its safe set are percent-encoded. */
+export function peerAddressFor(socketPath: string): string {
+  // ponytail: assumes the CLI's encoder is encodeURIComponent; only !'()*~ could differ.
+  return `uds:${socketPath.replace(/[^A-Za-z0-9:_/.\\-]/g, (c) => encodeURIComponent(c))}`;
+}
+
 export class SessionStore {
   constructor(
     private readonly visibility: (id: string, session?: ManagedSession) => boolean = () => true,
@@ -30,12 +48,39 @@ export class SessionStore {
     private readonly peerNameFor: (
       conversationId: string,
     ) => { name: string; source: string | null } | undefined = () => undefined,
+    private readonly peerMessaging = false,
   ) {}
+
+  // Conversation id → the peer inbox discovery saw this sweep, our own PTY
+  // children included (recorded before the owned-pid filter).
+  private livePeers = new Map<string, { socketPath: string; protocol?: number; name?: string }>();
+
+  recordPeers(processes: DiscoveredProcess[]): void {
+    if (!this.peerMessaging) return;
+    this.livePeers.clear();
+    for (const p of processes) {
+      if (p.conversationId && p.peerMessaging) {
+        this.livePeers.set(p.conversationId, { ...p.peerMessaging, name: p.peerName?.name });
+      }
+    }
+  }
 
   private withPeerName(r: SessionResponse, conversationId: string): SessionResponse {
     const peer = this.peerNameFor(conversationId);
-    if (!peer) return r;
-    return { ...r, peerName: peer.name, ...(peer.source && { peerNameSource: peer.source }) };
+    const named = peer
+      ? { ...r, peerName: peer.name, ...(peer.source && { peerNameSource: peer.source }) }
+      : r;
+    if (!this.peerMessaging || (r.provider ?? CLAUDE_CODE_PROVIDER) !== CLAUDE_CODE_PROVIDER)
+      return named;
+    const live = this.livePeers.get(conversationId);
+    if (!live || live.protocol !== CHECKED_PEER_PROTOCOL) return { ...named, canMessage: false };
+    const mention = peerMentionFor(live.name ?? peer?.name ?? "");
+    return {
+      ...named,
+      canMessage: true,
+      ...(mention && { peerMention: mention }),
+      peerAddress: peerAddressFor(live.socketPath),
+    };
   }
   private managed = new Map<string, ManagedSession>();
   private discovered = new Map<number, DiscoveredProcess>();

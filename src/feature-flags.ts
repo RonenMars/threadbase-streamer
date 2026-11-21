@@ -146,6 +146,14 @@ export const FEATURE_FLAGS = {
     default: false,
     env: "THREADBASE_FEATURE_CLAUDE_TURN_HOOKS",
   },
+  peerMessaging: {
+    description:
+      "Add canMessage, peerMention and peerAddress to Claude sessions in the session APIs, so a " +
+      "client can offer a peer to @-mention. The streamer only reports them and never writes to a " +
+      "peer socket: the session the user types in relays the message.",
+    default: false,
+    env: "THREADBASE_FEATURE_PEER_MESSAGING",
+  },
   ptyHost: {
     description:
       "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +

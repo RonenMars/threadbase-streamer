@@ -631,6 +631,7 @@ export class SessionHandlers {
   private async discoverExternalProcesses(): Promise<DiscoveredProcess[]> {
     const discovered = await discoverClaudeProcesses();
     // Before the owned-pid filter: our own PTY children carry a peer name too.
+    this.sessionStore.recordPeers(discovered);
     try {
       this.deps.peerNames?.()?.record(discovered);
     } catch (err) {

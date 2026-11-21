@@ -253,6 +253,8 @@ export interface DiscoveredProcess {
   turnState?: { state: "idle" | "busy" | "shell"; updatedAt: Date };
   /** Claude Code's peer name from its session registry (what /rename sets); not unique. */
   peerName?: { name: string; source?: string; since?: number };
+  /** Claude Code's peer inbox from its session registry; live only, never persisted. */
+  peerMessaging?: { socketPath: string; protocol?: number };
 }
 
 // ─── WebSocket Messages ────────────────────────────────────────────
@@ -700,6 +702,15 @@ export interface SessionResponse {
   peerName?: string;
   /** `user` when set with /rename, `derived` when Claude Code chose it. */
   peerNameSource?: string;
+  /**
+   * `peerMessaging` flag, Claude sessions only: whether another session can message
+   * this one now (a live peer socket and a peer protocol version we have checked).
+   */
+  canMessage?: boolean;
+  /** What the CLI's @ picker inserts: `@name`, or `@"name"` when not a bare word. */
+  peerMention?: string;
+  /** `uds:<socket path>`: unique, unlike the name, so use it when names collide. */
+  peerAddress?: string;
 }
 
 /**
