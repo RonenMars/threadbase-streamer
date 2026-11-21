@@ -90,6 +90,12 @@ export async function resolveSessionIds(
                 ...(entry.nameSince != null && { since: entry.nameSince }),
               },
             }),
+            ...(entry.messagingSocketPath && {
+              peerMessaging: {
+                socketPath: entry.messagingSocketPath,
+                ...(entry.peerProtocol != null && { protocol: entry.peerProtocol }),
+              },
+            }),
             ...(entry.status &&
               entry.statusUpdatedAt != null && {
                 turnState: { state: entry.status, updatedAt: new Date(entry.statusUpdatedAt) },

@@ -51,6 +51,9 @@ export interface ClaudeRegistryEntry {
   nameSince?: number;
   kind?: string;
   startedAt?: number;
+  /** The peer inbox socket other sessions message this one through. */
+  messagingSocketPath?: string;
+  peerProtocol?: number;
 }
 
 /**
@@ -114,6 +117,9 @@ export function parseClaudeRegistryEntry(
     ...(typeof d.nameSource === "string" && d.nameSource && { nameSource: d.nameSource }),
     ...(Number.isFinite(d.nameSince) && { nameSince: d.nameSince as number }),
     ...(typeof d.kind === "string" && { kind: d.kind }),
+    ...(typeof d.messagingSocketPath === "string" &&
+      d.messagingSocketPath && { messagingSocketPath: d.messagingSocketPath }),
+    ...(Number.isFinite(d.peerProtocol) && { peerProtocol: d.peerProtocol as number }),
     ...(startedAt != null && { startedAt }),
   };
 }
