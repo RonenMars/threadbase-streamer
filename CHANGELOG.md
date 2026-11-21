@@ -1,3 +1,9 @@
+## [1.148.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.147.0...v1.148.0) (2026-11-21)
+
+### Features
+
+* **sessions:** report canMessage, peerMention and peerAddress behind peerMessaging ([#1305](https://github.com/RonenMars/threadbase-streamer/issues/1305)) ([540b8ad](https://github.com/RonenMars/threadbase-streamer/commit/540b8adad4b909cd85b0f43375135b8c8101e827)), closes [#1302](https://github.com/RonenMars/threadbase-streamer/issues/1302)
+
 ## [1.147.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.146.0...v1.147.0) (2026-11-21)
 
 ### Features
