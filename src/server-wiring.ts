@@ -692,6 +692,7 @@ export type ApiDepsWiring = {
   publicUrl: string | null;
   relayUrl: string | null;
   browseRoot: () => string | null;
+  browseUnrestricted: ApiDeps["browseUnrestricted"];
   browserCors: string | undefined;
   ptyGracePeriodMs: number;
   rotateApiKey: ApiDeps["rotateApiKey"];
@@ -773,6 +774,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     publicUrl: deps.publicUrl,
     relayUrl: deps.relayUrl,
     browseRoot: deps.browseRoot,
+    browseUnrestricted: deps.browseUnrestricted,
     browserCors: deps.browserCors,
     ptyManager: deps.ptyManager,
     sessionStore: deps.sessionStore,

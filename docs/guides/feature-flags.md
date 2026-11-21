@@ -22,7 +22,7 @@ Those keys are **not** the env var names. This does nothing (unknown key, droppe
 feature_flags: {"THREADBASE_FEATURE_PTY_HOST":true}
 ```
 
-Snake_case (`pty_host`) is also unknown. Current ids: `subagentSessions`, `codexSystemPrompt`, `sessionRehydration`, `liveActivityPush`, `e2ee`, `accessProbe`, `relay`, `ptyHost`. `GET /api/config/feature-flags` `registry[].id` is the same list.
+Snake_case (`pty_host`) is also unknown. Current ids: `subagentSessions`, `codexSystemPrompt`, `sessionRehydration`, `liveActivityPush`, `e2ee`, `accessProbe`, `relay`, `unrestrictedBrowse`, `ptyHost`. `GET /api/config/feature-flags` `registry[].id` is the same list.
 
 ## Provider-created child sessions
 
@@ -35,6 +35,17 @@ Child identities remain independent and expose `isSubagent` and `parentConversat
 Normal lists exclude histories whose completed parse found no renderable messages, regardless of this flag.
 Unclassified migration rows remain visible until scanned.
 `has_messages` records presence, while `message_count` remains display/pagination metadata; presence does not establish an exact count.
+
+## `unrestrictedBrowse` — drop the browse-root boundary
+
+Off by default. By default every path a client names (`/api/browse`, `/api/browse/mkdir`, session start and resume, `additionalPaths`, pinned folders) must resolve under `browse_root`, and each spawned session is told to stay inside it.
+Turn the flag on and all of that stops: `..` and absolute paths may leave the root, any directory on the machine can be listed, created, pinned, or used as a session's working or extra directory, and the "project boundary" sentence is no longer added to the session's system prompt.
+
+Turn it on with `THREADBASE_FEATURE_UNRESTRICTED_BROWSE=1`, `--feature unrestrictedBrowse=true`, or `feature_flags: {"unrestrictedBrowse":true}`; restart to apply.
+`browse_root` must still be set: relative paths resolve against it, and with no root the endpoints still answer 403 `BROWSE_ROOT_NOT_SET`.
+A path must still exist (a missing one is 404), and a bare single-segment absolute path such as `/tmp` is still read as relative to the root, because the mobile browse tree sends `/projectA` that way; send `/tmp/` with a second segment, or `../../tmp`, to leave it.
+
+Anyone holding the API key or a paired device can then read the file tree and start agents anywhere, so keep it off on a streamer reachable through a tunnel unless that is intended.
 
 ## `accessProbe` — on by default, and why
 
