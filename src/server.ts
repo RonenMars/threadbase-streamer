@@ -76,6 +76,7 @@ import { ManagedSessionsRepository } from "./db/repositories/managed-sessions.re
 import { ProjectsRepository } from "./db/repositories/projects.repository";
 import { PushRepository } from "./db/repositories/push.repository";
 import { recentDirsFor } from "./db/repositories/recent-dirs.repository";
+import { sessionPeerNamesFor } from "./db/repositories/session-peer-names.repository";
 import { SessionsRepository } from "./db/repositories/sessions.repository";
 import { RuntimeStore, resolveRuntimeDbPath } from "./db/runtime-store";
 import {
@@ -767,6 +768,7 @@ export class StreamerServer {
       },
       (id) => this.cache?.getMetaById(id)?.title ?? undefined,
       (projectPath) => this.projectsRepo?.getProjectByPath(projectPath)?.id,
+      (id) => sessionPeerNamesFor(this.runtimeStore)?.get(id) ?? undefined,
     );
     this.wsHub = new WSHub();
     this.promptRegistry = new PromptRegistry({
@@ -965,6 +967,7 @@ export class StreamerServer {
       // mutation from a handler is the same mutation the WS/PTY callbacks here
       // — and the tests that reach in via `(server as any)` — observe.
       sessionStore: this.sessionStore,
+      peerNames: () => sessionPeerNamesFor(this.runtimeStore),
       ptyManager: this.ptyManager,
       wsHub: this.wsHub,
       scannerManager: this.scannerManager,

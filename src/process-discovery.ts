@@ -83,6 +83,13 @@ export async function resolveSessionIds(
           return {
             ...proc,
             conversationId: entry.sessionId,
+            ...(entry.name && {
+              peerName: {
+                name: entry.name,
+                ...(entry.nameSource && { source: entry.nameSource }),
+                ...(entry.nameSince != null && { since: entry.nameSince }),
+              },
+            }),
             ...(entry.status &&
               entry.statusUpdatedAt != null && {
                 turnState: { state: entry.status, updatedAt: new Date(entry.statusUpdatedAt) },

@@ -15,6 +15,7 @@ import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "../../claude
 import { listClaudeSkills } from "../../claude-skills";
 import type { ConversationCache } from "../../conversation-cache";
 import type { createPool } from "../../db";
+import type { SessionPeerNamesRepository } from "../../db/repositories/session-peer-names.repository";
 import { recordUpload } from "../../db/upload-records";
 import { MAX_UPLOAD_RECORD_BYTES } from "../../e2ee/record";
 import type { ExternalTailManager } from "../../external-tails";
@@ -317,6 +318,8 @@ function promptAnswerStatus(code: PromptAnswerErrorCode): number {
  */
 export type SessionHandlersDeps = {
   sessionStore: SessionStore;
+  /** Where each discovery sweep records Claude Code peer names; null without runtime.db. */
+  peerNames?: () => SessionPeerNamesRepository | null;
   ptyManager: LiveSessionManager;
   wsHub: WSHub;
   scannerManager: ScannerManager;
@@ -627,6 +630,17 @@ export class SessionHandlers {
    */
   private async discoverExternalProcesses(): Promise<DiscoveredProcess[]> {
     const discovered = await discoverClaudeProcesses();
+    // Before the owned-pid filter: our own PTY children carry a peer name too.
+    try {
+      this.deps.peerNames?.()?.record(discovered);
+    } catch (err) {
+      this.log.warn(
+        `[discovery] peer name write failed: ${err instanceof Error ? err.message : String(err)}`,
+        {
+          event: "session.peer_name_write_failed",
+        },
+      );
+    }
     const ownedPids = new Set<number>();
     for (const s of this.ptyManager.listSessions()) {
       const pid = this.ptyManager.getPid(s.id);
