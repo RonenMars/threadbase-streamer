@@ -205,6 +205,14 @@ const SUBMIT_DELAY_MS = 16;
 // still gets its \r rather than hanging forever.
 const SUBMIT_MAX_WAIT_MS = 500;
 
+// An Enter that lands while Claude Code is still attaching an `@<image path>`
+// mention is swallowed: the prompt stays in the input box and no turn starts
+// (Claude Code 2.1.329, the \r 20-300 ms after the paste; at 450 ms it lands).
+// Quiet does not tell us when the attach is done, so this long after the \r,
+// if no busy signal came and the prompt is still in the composer, the \r is
+// sent once more. The prompt check keeps it off a dialog a slash command opened.
+const SUBMIT_RETRY_MS = 1_500;
+
 // Build the environment for a spawned `claude` process. The Anthropic API key
 // is injected only here — never exported into the streamer's global process
 // env — so it does not leak into unrelated child processes. CLAUDE_API_KEY
@@ -778,8 +786,35 @@ export class PTYManager implements SessionRunner {
         },
       );
       current.process.write(SUBMIT_BYTES);
+      const submittedAt = this.awaitingStart.get(sessionId);
+      setTimeout(() => {
+        this.retrySwallowedSubmit(sessionId, session, input, promptCount, submittedAt);
+      }, SUBMIT_RETRY_MS).unref?.();
     };
     setTimeout(trySubmit, SUBMIT_DELAY_MS);
+  }
+
+  private async retrySwallowedSubmit(
+    sessionId: string,
+    session: InternalSession,
+    input: string,
+    promptCount: number,
+    submittedAt: number | undefined,
+  ): Promise<void> {
+    if (submittedAt === undefined || this.awaitingStart.get(sessionId) !== submittedAt) return;
+    if (this.sessions.get(sessionId) !== session) return;
+    const lines: string[] = await this.getOutputLines(sessionId, PTY_ROWS).catch(() => []);
+    let box = lines.length - 1;
+    while (box >= 0 && !lines[box].includes("❯")) box--;
+    const tail = input.replace(/\s+/g, "").slice(-40);
+    if (box < 0 || !tail || !lines.slice(box).join("").replace(/\s+/g, "").includes(tail)) return;
+    if (this.awaitingStart.get(sessionId) !== submittedAt) return;
+    this.log.warn(`[pty.input.resubmit] ${sessionId.slice(0, 8)} promptCount=${promptCount}`, {
+      event: "pty.input_resubmit",
+      sessionId,
+      promptCount,
+    });
+    session.process.write(SUBMIT_BYTES);
   }
 
   // Drain any inputs that were sent while the session was still pendingReady,
