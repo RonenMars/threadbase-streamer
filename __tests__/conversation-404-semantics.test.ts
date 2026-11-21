@@ -267,7 +267,7 @@ describe("a session with no transcript yet", () => {
     // miss, not a session waiting to speak — even though it was prompted moments
     // ago. (A scanner that cannot read the file must surface, not look empty.)
     const wired = join(dir, "already-wired.jsonl");
-    writeFileSync(wired, [...codexSetupLines(), codexUserLine("hello")].join("\n") + "\n");
+    writeFileSync(wired, `${[...codexSetupLines(), codexUserLine("hello")].join("\n")}\n`);
     const { handlers } = makeHandlers({
       session: managedSession({ promptCount: 1, lastActivityAt: new Date() }),
       liveFilePath: wired,
@@ -287,7 +287,7 @@ describe("a session with no transcript yet", () => {
     //   01:01:37.418  GET /api/conversations/<bound id> -> 404   <- reconnect overlay
     //   01:01:39.983  GET -> 200
     const rollout = join(dir, "rollout-setup-only.jsonl");
-    writeFileSync(rollout, codexSetupLines().join("\n") + "\n");
+    writeFileSync(rollout, `${codexSetupLines().join("\n")}\n`);
     const { handlers, invalidate } = makeHandlers({
       session: managedSession({ promptCount: 1, lastActivityAt: new Date() }),
       liveFilePath: rollout,
