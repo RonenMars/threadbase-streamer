@@ -404,6 +404,13 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
         event,
         at: new Date().toISOString(),
       });
+      if (event.type === "input_not_submitted") {
+        // The frame is one-shot; the store copy is what a reload or reconnect reads.
+        const inputNotSubmitted = { promptCount: event.promptCount, at: new Date().toISOString() };
+        deps.sessionStore.updateManaged(sessionId, { inputNotSubmitted });
+        const resp = deps.sessionStore.get(sessionId, new Set(deps.ptyAttachedIds()));
+        if (resp) deps.wsHub.broadcast({ type: "session_update", session: resp });
+      }
     },
     onOutput: (sessionId, data) => {
       // Agent-activity stamp for the idle reaper. Fires for every provider

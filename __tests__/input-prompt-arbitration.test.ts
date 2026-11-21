@@ -187,7 +187,7 @@ describe("POST /input { input } while a prompt is open", () => {
         await h.handlers.handleSendInput(SESSION, request({ input: "hello" }), res);
 
         expect(status()).toBe(200);
-        expect(body()).toEqual({ ok: true });
+        expect(body()).toEqual({ ok: true, promptCount: 1 });
         expect(h.inputs).toEqual(["hello"]);
         expect(h.pendingPermission.has(SESSION)).toBe(false);
         expect(h.pendingQuestions.has(SESSION)).toBe(false);
@@ -289,7 +289,7 @@ describe("POST /input { input } while a prompt is open", () => {
     await h.handlers.handleSendInput(SESSION, request({ input: "hello" }), res);
 
     expect(status()).toBe(200);
-    expect(body()).toEqual({ ok: true });
+    expect(body()).toEqual({ ok: true, promptCount: 1 });
     expect(h.inputs).toEqual(["hello"]);
   });
 
@@ -588,7 +588,7 @@ describe("#703: POST /input { input } in the answered-gate window", () => {
 
     const { status, body } = await h.send({ input: "hello" });
     expect(status).toBe(200);
-    expect(body).toEqual({ ok: true });
+    expect(body).toEqual({ ok: true, promptCount: 1 });
     expect(h.inputs).toEqual(["hello"]);
   });
 
@@ -712,7 +712,7 @@ describe("#757: a map entry outliving its registry record", () => {
       await h.handlers.handleSendInput(SESSION, request({ input: "hello" }), res);
 
       expect(status()).toBe(200);
-      expect(body()).toEqual({ ok: true });
+      expect(body()).toEqual({ ok: true, promptCount: 1 });
       expect(h.inputs).toEqual(["hello"]);
     },
   );
@@ -781,7 +781,7 @@ describe("an optionless permission entry", () => {
     const { status, body } = await h.send({ input: "hello" });
 
     expect(status).toBe(200);
-    expect(body).toEqual({ ok: true });
+    expect(body).toEqual({ ok: true, promptCount: 1 });
     expect(h.inputs).toEqual(["hello"]);
     expect(h.pendingPermission.has(SESSION)).toBe(false);
     expect(deps.pendingPermissionKey.has(SESSION)).toBe(false);

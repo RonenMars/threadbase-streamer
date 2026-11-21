@@ -803,11 +803,7 @@ export class PTYManager implements SessionRunner {
   ): Promise<void> {
     if (submittedAt === undefined || this.awaitingStart.get(sessionId) !== submittedAt) return;
     if (this.sessions.get(sessionId) !== session) return;
-    const lines: string[] = await this.getOutputLines(sessionId, PTY_ROWS).catch(() => []);
-    let box = lines.length - 1;
-    while (box >= 0 && !lines[box].includes("❯")) box--;
-    const tail = input.replace(/\s+/g, "").slice(-40);
-    if (box < 0 || !tail || !lines.slice(box).join("").replace(/\s+/g, "").includes(tail)) return;
+    if (!(await this.promptStillInBox(sessionId, input))) return;
     if (this.awaitingStart.get(sessionId) !== submittedAt) return;
     this.log.warn(`[pty.input.resubmit] ${sessionId.slice(0, 8)} promptCount=${promptCount}`, {
       event: "pty.input_resubmit",
@@ -815,6 +811,31 @@ export class PTYManager implements SessionRunner {
       promptCount,
     });
     session.process.write(SUBMIT_BYTES);
+    // The resend is the last automatic attempt: if it started no turn either,
+    // tell the client, so it can offer a retry instead of showing the message sent.
+    setTimeout(async () => {
+      if (this.sessions.get(sessionId) !== session) return;
+      if (!(await this.promptStillInBox(sessionId, input))) return;
+      if (this.awaitingStart.get(sessionId) !== submittedAt) return;
+      this.log.warn(
+        `[pty.input.not_submitted] ${sessionId.slice(0, 8)} promptCount=${promptCount}`,
+        {
+          event: "pty.input_not_submitted",
+          sessionId,
+          promptCount,
+        },
+      );
+      this.onSessionEvent?.(sessionId, { type: "input_not_submitted", promptCount });
+    }, SUBMIT_RETRY_MS).unref?.();
+  }
+
+  /** The prompt's tail still sits in the composer: the rows from the last `❯` down. */
+  private async promptStillInBox(sessionId: string, input: string): Promise<boolean> {
+    const lines: string[] = await this.getOutputLines(sessionId, PTY_ROWS).catch(() => []);
+    let box = lines.length - 1;
+    while (box >= 0 && !lines[box].includes("❯")) box--;
+    const tail = input.replace(/\s+/g, "").slice(-40);
+    return box >= 0 && !!tail && lines.slice(box).join("").replace(/\s+/g, "").includes(tail);
   }
 
   // Drain any inputs that were sent while the session was still pendingReady,

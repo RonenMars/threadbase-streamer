@@ -323,6 +323,7 @@ describe("RemoteSessionRunner — events", () => {
       onLiveQuestion: (id, qs) => calls.push(`question:${id}:${qs.length}`),
       onLiveQuestionGone: (id) => calls.push(`question-gone:${id}`),
       onUserMessage: (id, text) => calls.push(`message:${id}:${text}`),
+      onSessionEvent: (id, e) => calls.push(`session-event:${id}:${e.type}`),
     };
     const { host } = await connect({}, options);
 
@@ -333,6 +334,12 @@ describe("RemoteSessionRunner — events", () => {
     host.emit({ type: "event", event: "live-question", sessionId: "s", questions: [] as never[] });
     host.emit({ type: "event", event: "live-question-gone", sessionId: "s" });
     host.emit({ type: "event", event: "user-message", sessionId: "s", text: "go", ts: 1 });
+    host.emit({
+      type: "event",
+      event: "session-event",
+      sessionId: "s",
+      sessionEvent: { type: "input_not_submitted", promptCount: 2 },
+    });
 
     // The detectors run in the host, so a missing event here is a feature that
     // silently stops working once the flag is on — not a cosmetic gap.
@@ -344,6 +351,7 @@ describe("RemoteSessionRunner — events", () => {
       "question:s:0",
       "question-gone:s",
       "message:s:go",
+      "session-event:s:input_not_submitted",
     ]);
   });
 

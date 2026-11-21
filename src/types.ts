@@ -157,6 +157,12 @@ export interface ManagedSession {
    * `subStatus`.
    */
   promptSuggestion?: string | null;
+  /**
+   * The last prompt stayed in the composer after the resent Enter (the
+   * `input_not_submitted` session event), kept so a client that reloads or
+   * reconnects still sees it. Cleared when the session next enters `running`.
+   */
+  inputNotSubmitted?: InputNotSubmitted | null;
   filePath?: string;
   resumedFromConversationId?: string;
 
@@ -313,7 +319,13 @@ export type SessionEvent =
     }
   | { type: "agent_message_delta"; itemId: string; delta: string }
   | { type: "agent_message"; itemId: string; text: string }
-  | { type: "error"; message: string; willRetry: boolean };
+  | { type: "error"; message: string; willRetry: boolean }
+  /**
+   * The prompt numbered `promptCount` (the value POST /input returned) is still
+   * in the composer and started no turn, even after the streamer resent Enter.
+   * Claude PTY sessions only. Answer with `{ keys: "\r" }` to retry.
+   */
+  | { type: "input_not_submitted"; promptCount: number };
 
 export type WSMessage =
   // `seq` is a per-session monotonically increasing chunk counter (starts at
@@ -542,6 +554,12 @@ export interface ServerWarmingUpResponse {
   warmupState: ServerWarmupState;
 }
 
+export interface InputNotSubmitted {
+  promptCount: number;
+  /** ISO time the streamer gave up on the submit. */
+  at: string;
+}
+
 export interface SessionResponse {
   isSubagent?: boolean;
   parentConversationId?: string | null;
@@ -633,6 +651,8 @@ export interface SessionResponse {
    * `...(x != null && { x })` block.
    */
   promptSuggestion: string | null;
+  /** See ManagedSession.inputNotSubmitted. Always serialised, like promptSuggestion. */
+  inputNotSubmitted: InputNotSubmitted | null;
   /**
    * The session holds an `open` or `updated` prompt: it is waiting on the user
    * even while `status` stays `running` (a gate held open mid-turn, #962).
