@@ -24,6 +24,14 @@ const sidecar = z.object({
   finished: z.boolean().optional(),
 });
 
+/**
+ * `finished` only when the Claude sidecar says so and the agent is not still
+ * waiting on a background task (that reads `running`). `quiet` means no recent
+ * write and no open tool call: Codex and Cursor have no sidecar, so they can
+ * never read `finished`, and `quiet` is not proof the agent ended or failed.
+ */
+export type SubagentStatus = "running" | "finished" | "quiet";
+
 export interface SubagentInfo {
   subagentType?: string;
   subagentDescription?: string;
@@ -34,6 +42,8 @@ export interface SubagentInfo {
    * tool call has no result yet (up to SUBAGENT_TOOL_CALL_MAX_MS).
    */
   subagentActive: boolean;
+  /** Three-way form of `subagentActive`; `running` exactly when that is true. */
+  subagentStatus: SubagentStatus;
 }
 
 async function readTail(filePath: string): Promise<string[]> {
@@ -124,7 +134,9 @@ export async function readSubagentInfo(
   now = Date.now(),
 ): Promise<SubagentInfo> {
   const quietMs = now - new Date(lastActivity).getTime();
-  const info: SubagentInfo = { subagentActive: quietMs < SUBAGENT_ACTIVE_MS };
+  const info: Omit<SubagentInfo, "subagentStatus"> = {
+    subagentActive: quietMs < SUBAGENT_ACTIVE_MS,
+  };
   let finished = false;
   try {
     const raw = await readFile(filePath.replace(/\.jsonl$/, ".meta.json"), "utf8");
@@ -145,5 +157,11 @@ export async function readSubagentInfo(
   } else if (!info.subagentActive && quietMs < SUBAGENT_TOOL_CALL_MAX_MS) {
     info.subagentActive = await hasOpenToolCall(filePath).catch(() => false);
   }
-  return info;
+  // Active wins: a finished sidecar still waiting on a background task is running.
+  const subagentStatus: SubagentStatus = info.subagentActive
+    ? "running"
+    : finished
+      ? "finished"
+      : "quiet";
+  return { ...info, subagentStatus };
 }
