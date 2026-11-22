@@ -1,3 +1,9 @@
+## [1.150.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.149.0...v1.150.0) (2026-11-22)
+
+### Features
+
+* **ws:** push a subagents_changed frame when a parent's sub-agent count changes ([#1294](https://github.com/RonenMars/threadbase-streamer/issues/1294)) ([3d85cdd](https://github.com/RonenMars/threadbase-streamer/commit/3d85cdd6570a02a32f920f0986cb45d815bb7901))
+
 ## [1.149.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.148.2...v1.149.0) (2026-11-22)
 
 ### Features
