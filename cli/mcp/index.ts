@@ -1,6 +1,7 @@
 /**
- * `tb-streamer mcp`: a read-only MCP server over stdio for the streamer already
- * running on this machine (#1176 phase 1). Loaded lazily by the CLI action so
+ * `tb-streamer mcp`: an MCP server over stdio for the streamer already running
+ * on this machine (#1176 phase 1). Every tool is read-only except
+ * `handoff_to_threadbase`, which asks the streamer to take this session over. Loaded lazily by the CLI action so
  * `serve` never pays for the SDK.
  *
  * Adding a tool (#1178-#1180): one file exporting a `StreamerTool[]`, one import
@@ -11,6 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getVersion } from "../../src/version";
 import { StreamerClient, type StreamerClientOptions, type StreamerTool } from "./client";
+import { handoffTools } from "./handoff";
 import { listSessionsTools } from "./list-sessions";
 import { readConversationTools } from "./read-conversation";
 import { streamerInfoTools } from "./streamer-info";
@@ -21,6 +23,7 @@ const TOOLS: StreamerTool[] = [
   ...readConversationTools,
   ...listSessionsTools,
   ...tailTerminalTools,
+  ...handoffTools,
 ];
 
 export function createMcpServer(opts: StreamerClientOptions): McpServer {
@@ -32,7 +35,7 @@ export function createMcpServer(opts: StreamerClientOptions): McpServer {
       {
         description: tool.description,
         inputSchema: tool.inputSchema,
-        annotations: { readOnlyHint: true },
+        annotations: tool.annotations ?? { readOnlyHint: true },
       },
       // A thrown Error becomes an `isError` result with its message as the text.
       (args) => tool.handler(args, client),
