@@ -168,6 +168,25 @@ These are the ones an older build can notice. Grep the client, say what you foun
 - Changing pagination cursor behavior in `/api/conversations/{id}`
 - Changing the NaCl box format or key exchange protocol in `/api/pair/exchange`
 
+## Answering a question card: the two terminal-only rows
+
+`POST /api/sessions/:id/answer { toolUseId, answers: { "<question>": <value> } }` answers an `AskUserQuestion` card.
+Claude Code paints two rows of its own under the model's options, and both are now answerable.
+Captured on Claude Code 2.1.328 (single-select, three options); re-check on a newer build before trusting the row positions.
+
+- **"Chat about this"** — `answers: { "<question>": "Chat about this" }`. Declines the question and the turn continues.
+  A structured (JSONL) card omits the row, so the server treats it as a virtual row at index `options.length + 1`; a screen card already lists it in `options`, and nothing is duplicated.
+- **"Type something."** — free text, the additive shape `answers: { "<question>": { other: "<text>" } }`. String and string-array answers are unchanged.
+  The bare label `"Type something."` is refused `400 unsupported_prompt_shape` and nothing is written: it used to move onto the field and press Enter on it empty, which silently declined the whole question with a `200`.
+- **Single question, single-select only.** Either row on a multi-select or multi-question card is `400 unsupported_prompt_shape` with zero bytes written.
+- **One request, sequenced by the server.** The field is live as soon as the cursor lands on it, so the server moves the cursor, waits on the rendered screen until it is there, writes the text on its own, waits for it to paint, then sends Enter on its own. A burst of arrow keys plus Enter on the field declines the question, which is why a client must not try to compose this through `/input`.
+- **Text rules.** Newlines (`\n`, `\r\n`, `\r`) are kept as line breaks inside the field. Surrounding spaces are kept. Empty or whitespace-only text, text over 2000 characters, a non-string, or any other control character (an escape sequence, NUL, tab, DEL) is `400 { ok: false, reason: "invalid_text" }` with nothing written.
+- **New refusals.** `400 invalid_text`, and `409 { ok: false, reason: "text_field_timeout" }` when the field never took the cursor or the text never painted within the timeout (3 s per wait). On a timeout the text is not submitted, Enter is not sent, and the card stays open so the client can retry. `question_gone` (409) is unchanged and is also what a card replaced mid-sequence gets.
+- **Push.** `optionCount` on the question push now counts only the model's real options, never the two terminal rows.
+
+Mobile's refused-reason list (`services/api-client.ts` 161–258, `hooks/useQuestionAnswer.ts`, `components/terminal/QuestionCard.tsx:71`) knows `unknown_option` and `unsupported_prompt_shape` but not `invalid_text` or `text_field_timeout`; the client half must add both.
+`/api/sessions/:id/prompt/answer` (the normalized route) does not take `{ other }` and answers `unsupported_prompt_shape` for it.
+
 ## What a grep cannot answer
 
 These hold regardless of what the client source says today, because they are how a build reaches the server at all:
