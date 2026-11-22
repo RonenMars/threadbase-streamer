@@ -1,4 +1,5 @@
 import { mkdir, readdir, realpath, stat } from "fs/promises";
+import { homedir } from "os";
 import { join, resolve, sep } from "path";
 import { canonicalizeProjectPath } from "./utils/canonicalizeProjectPath";
 
@@ -18,6 +19,8 @@ export class BrowsePathNotFoundError extends Error {
  * `unrestricted` (the `unrestrictedBrowse` feature flag) drops the out-of-root
  * check: `..` and absolute paths may leave `browseRoot`, which stays only the
  * base that relative paths resolve against. Existence is still checked.
+ * A leading `~` means the home directory. Restricted mode also checks the
+ * symlink-resolved path, so a link inside the root cannot lead out of it.
  */
 export async function resolveBrowsePath(
   browseRoot: string,
@@ -30,7 +33,9 @@ export async function resolveBrowsePath(
   // tree — not for full paths like "/Users/foo/bar" which are absolute, not drive-root-relative.
   // On Windows we always strip because "\foo" means "drive root relative", never a full path.
   let sanitized: string;
-  if (
+  if (relativePath === "~" || /^~[/\\]/.test(relativePath)) {
+    sanitized = join(homedir(), relativePath.slice(1));
+  } else if (
     process.platform !== "win32" &&
     relativePath.startsWith("/") &&
     relativePath.length > 1 &&
@@ -49,13 +54,21 @@ export async function resolveBrowsePath(
   }
   // Verify the path exists; surface a not-found as a typed error so the handler
   // can answer 404 (folder gone) rather than the out-of-root 400 above.
+  let realTarget: string;
   try {
-    await realpath(target);
+    realTarget = await realpath(target);
   } catch (err: any) {
     if (err?.code === "ENOENT") {
       throw new BrowsePathNotFoundError(`Path not found: ${target}`);
     }
     throw err;
+  }
+  if (!unrestricted) {
+    const realRoot = await realpath(normalizedRoot).catch(() => normalizedRoot);
+    const realPrefix = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`;
+    if (!realTarget.startsWith(realPrefix) && realTarget !== realRoot) {
+      throw new Error("Path outside browse root");
+    }
   }
   return target;
 }
