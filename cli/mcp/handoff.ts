@@ -36,6 +36,8 @@ const REFUSALS: Record<string, string> = {
     "This Claude Code version does not report its turn state, so the streamer cannot tell when the turn ends; update Claude Code and retry. Nothing was changed.",
   HANDOFF_NOT_DISCOVERED:
     "The Threadbase streamer cannot see this session yet; send one more message in this terminal and retry. Nothing was changed.",
+  HANDOFF_NO_PID:
+    "The Threadbase streamer cannot see this session's process yet; send one more message in this terminal and retry. Nothing was changed.",
   HANDOFF_SESSION_MISMATCH:
     "The streamer could not confirm this session's identity, so it refused the handoff. Nothing was changed.",
   ADOPT_PROJECT_PATH_MISSING:

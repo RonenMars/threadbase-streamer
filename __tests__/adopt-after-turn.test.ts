@@ -282,6 +282,110 @@ describe("POST /api/sessions/:id/adopt-after-turn", () => {
     expect(String(ptySpawn.mock.calls[0][0]).toLowerCase()).toContain("claude");
   }, 15_000);
 
+  type Handlers = { cancelDeferredAdopts(): void; runDeferredAdopt(...a: unknown[]): unknown };
+  const handlers = () => (server as unknown as { sessionHandlers: Handlers }).sessionHandlers;
+  // Any signal other than the liveness probe (0) is a kill.
+  const killSignals = (spy: ReturnType<typeof killableOwner>["spy"]) =>
+    spy.mock.calls.filter(([, sig]) => sig !== 0);
+
+  it("schedules one job for two concurrent requests", async () => {
+    discover();
+    killableOwner();
+    // A slow read holds both requests inside the pre-flight at once.
+    registry.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 100));
+      return entry({ status: "busy", statusUpdatedAt: Date.now() });
+    });
+    const run = vi.spyOn(handlers(), "runDeferredAdopt");
+    const [a, b] = await Promise.all([
+      post("adopt-after-turn", { pid: PID }),
+      post("adopt-after-turn", { pid: PID }),
+    ]);
+    expect([a.status, b.status]).toEqual([202, 202]);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a job whose owner exits, kills nothing, and accepts a fresh request", async () => {
+    discover();
+    let alive = true;
+    const spy = vi.spyOn(process, "kill").mockImplementation(((_p: number, sig?: unknown) => {
+      if (sig === 0 && !alive) throw new Error("ESRCH");
+      return true;
+    }) as never);
+    registry.mockImplementation(async () => entry({ status: "busy", statusUpdatedAt: Date.now() }));
+    const run = vi.spyOn(handlers(), "runDeferredAdopt");
+
+    expect((await post("adopt-after-turn", { pid: PID })).status).toBe(202);
+    alive = false;
+    await vi.waitFor(() => expect(run.mock.results[0]?.value).toBeDefined());
+    await run.mock.results[0].value;
+    expect(killSignals(spy)).toEqual([]);
+    expect(ptySpawn).not.toHaveBeenCalled();
+
+    alive = true;
+    expect((await post("adopt-after-turn", { pid: PID })).status).toBe(202);
+    expect(run).toHaveBeenCalledTimes(2);
+  }, 10_000);
+
+  it("never kills the owner when the server closes with a job pending", async () => {
+    discover();
+    const owner = killableOwner();
+    registry.mockImplementation(async () => entry({ status: "busy", statusUpdatedAt: Date.now() }));
+    const run = vi.spyOn(handlers(), "runDeferredAdopt");
+    expect((await post("adopt-after-turn", { pid: PID })).status).toBe(202);
+    await server.close();
+    await run.mock.results[0].value;
+    expect(owner.killed()).toBe(false);
+    expect(ptySpawn).not.toHaveBeenCalled();
+  });
+
+  it("does not kill when shutdown starts after the turn ended", async () => {
+    discover();
+    const owner = killableOwner();
+    let turnOver = false;
+    registry.mockImplementation(async () =>
+      entry({ status: turnOver ? "idle" : "busy", statusUpdatedAt: Date.now() }),
+    );
+    const run = vi.spyOn(handlers(), "runDeferredAdopt");
+    expect((await post("adopt-after-turn", { pid: PID })).status).toBe(202);
+    // The fire-time owner lookup is where shutdown lands.
+    const row = vi.mocked(discoverClaudeProcesses).getMockImplementation();
+    vi.mocked(discoverClaudeProcesses).mockImplementation(((...a: never[]) => {
+      if (turnOver) handlers().cancelDeferredAdopts();
+      return row ? row(...a) : ([] as never);
+    }) as never);
+    turnOver = true;
+    await run.mock.results[0].value;
+    expect(owner.killed()).toBe(false);
+    expect(ptySpawn).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it("does not kill when another pid owns the session at fire time", async () => {
+    discover();
+    const owner = killableOwner();
+    let turnOver = false;
+    registry.mockImplementation(async () =>
+      entry({ status: turnOver ? "idle" : "busy", statusUpdatedAt: Date.now() }),
+    );
+    const run = vi.spyOn(handlers(), "runDeferredAdopt");
+    expect((await post("adopt-after-turn", { pid: PID })).status).toBe(202);
+    vi.mocked(discoverClaudeProcesses).mockReturnValue([
+      {
+        pid: PID + 1,
+        provider: "claude-code",
+        projectPath: projectCwd,
+        projectName: "project",
+        branch: "",
+        conversationId: CONV_ID,
+        startedAt: new Date(),
+      },
+    ] as never);
+    turnOver = true;
+    await run.mock.results[0].value;
+    expect(owner.killed()).toBe(false);
+    expect(ptySpawn).not.toHaveBeenCalled();
+  }, 10_000);
+
   it("refuses a pid whose registry entry names another session", async () => {
     discover();
     const owner = killableOwner();

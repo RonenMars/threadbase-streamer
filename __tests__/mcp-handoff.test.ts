@@ -82,6 +82,7 @@ describe("handoff_to_threadbase handler", () => {
     [404, "HANDOFF_NOT_DISCOVERED", /cannot see this session/],
     [409, "HANDOFF_ALREADY_MANAGED", /already managed by Threadbase/],
     [409, "HANDOFF_NO_TURN_STATE", /turn state/],
+    [400, "HANDOFF_NO_PID", /session's process/],
     [400, "HANDOFF_SESSION_MISMATCH", /identity/],
     [400, "ADOPT_PROJECT_PATH_MISSING", /project directory/],
   ])("maps %i %s to its own message", async (status, code, message) => {

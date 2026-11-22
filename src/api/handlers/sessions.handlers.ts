@@ -3192,12 +3192,23 @@ export class SessionHandlers {
   /** Adopt without an HTTP response: shared by `/adopt` and the deferred job. */
   private async adoptExternal(
     sessionId: string,
+    deferred?: { pid: number; signal: AbortSignal },
   ): Promise<
     { ok: true; sessionId: string } | { ok: false; status: number; body: Record<string, unknown> }
   > {
     const resolved = await this.resolveExternalOwner(sessionId, "adopt");
     if (!resolved.ok) return resolved;
     const { owner } = resolved;
+
+    // A deferred job re-checks at fire time what it checked when scheduled:
+    // the owner is still the pid that asked, and the server is not closing
+    // (a kill after shutdown began could not be followed by a respawn).
+    if (deferred && owner.pid !== deferred.pid) {
+      return { ok: false, status: 400, body: { code: "HANDOFF_SESSION_MISMATCH" } };
+    }
+    if (deferred?.signal.aborted) {
+      return { ok: false, status: 503, body: { code: "aborted" } };
+    }
 
     if (owner.resumeId != null) {
       this.log.info(`[adopt] taking over codex rollout from pid ${owner.pid}`, {
@@ -3321,6 +3332,11 @@ export class SessionHandlers {
       return;
     }
 
+    // Re-checked after the awaits above, so two concurrent requests schedule one job.
+    if (this.deferredAdopts.has(sessionId)) {
+      json(res, 202, { scheduled: true, sessionId, ceilingMs: HANDOFF_CEILING_MS });
+      return;
+    }
     const abort = new AbortController();
     this.deferredAdopts.set(sessionId, abort);
     this.log.info(`[adopt] scheduled after-turn takeover of pid ${pid}`, {
@@ -3352,12 +3368,11 @@ export class SessionHandlers {
         isAlive: () => isPidAlive(pid),
         signal,
       });
-      if (outcome === "aborted") return;
       if (outcome !== "idle") {
         dropped(outcome);
         return;
       }
-      const result = await this.adoptExternal(sessionId);
+      const result = await this.adoptExternal(sessionId, { pid, signal });
       if (!result.ok) {
         dropped(String(result.body.code ?? `status_${result.status}`));
         return;
@@ -3370,7 +3385,8 @@ export class SessionHandlers {
     } catch (err) {
       dropped(err instanceof Error ? err.message : String(err));
     } finally {
-      this.deferredAdopts.delete(sessionId);
+      if (this.deferredAdopts.get(sessionId)?.signal === signal)
+        this.deferredAdopts.delete(sessionId);
     }
   }
 
