@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import type { IncomingMessage, ServerResponse } from "http";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
+import { setTimeout as sleep } from "timers/promises";
 import type { WebSocket } from "ws";
 import { z } from "zod";
 import type { AgentClient } from "../../agent/agent-client";
@@ -23,6 +24,7 @@ import { handoffArgv } from "../../handoff/command";
 import { readHandoffConfig } from "../../handoff/config";
 import { installedTerminal, launchTerminal, tmuxHasClient } from "../../handoff/terminal";
 import { HANDOFF_ATTACH_COMMAND, HANDOFF_TMUX_SESSION, openTmuxWindow } from "../../handoff/tmux";
+import { isPidAlive } from "../../lifecycle/process-liveness";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { Logger } from "../../logger";
 import { locateProviderExe } from "../../platform";
@@ -217,11 +219,11 @@ export async function waitForProcessExit(
 // TURN_DONE_SETTLE_MS, so the final assistant line reaches the JSONL before
 // `--resume` reads it; the ceiling keeps a forgotten request from killing the
 // session hours later.
-export const HANDOFF_POLL_MS = 500;
-export const HANDOFF_HOLD_MS = 2_000;
-export const HANDOFF_CEILING_MS = 10 * 60_000;
+const HANDOFF_POLL_MS = 500;
+const HANDOFF_HOLD_MS = 2_000;
+const HANDOFF_CEILING_MS = 10 * 60_000;
 
-export type TurnEndOutcome = "idle" | "turn_ceiling" | "owner_gone" | "aborted";
+type TurnEndOutcome = "idle" | "turn_ceiling" | "owner_gone" | "aborted";
 
 /**
  * Wait until a Claude registry entry reports the turn over: `status` reads
@@ -260,28 +262,8 @@ export async function waitForTurnEnd(opts: {
       idleSince = null;
     }
     if (now - since >= ceilingMs) return "turn_ceiling";
-    // An abort during the read above has already fired; a listener added now never would.
-    if (signal.aborted) return "aborted";
-    await new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, pollMs);
-      signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(t);
-          resolve();
-        },
-        { once: true },
-      );
-    });
-  }
-}
-
-function pidIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    // Rejects at once on an abort, even one that fired during the read; the loop top returns it.
+    await sleep(pollMs, undefined, { signal }).catch(() => {});
   }
 }
 
@@ -503,7 +485,7 @@ export class SessionHandlers {
   constructor(private deps: SessionHandlersDeps) {}
 
   /** Self-requested takeovers waiting for their turn to end, by session id. */
-  private deferredAdopts = new Map<string, { abort: AbortController; ceilingMs: number }>();
+  private deferredAdopts = new Map<string, AbortController>();
 
   private get sessionStore(): SessionStore {
     return this.deps.sessionStore;
@@ -3290,7 +3272,7 @@ export class SessionHandlers {
 
     const pending = this.deferredAdopts.get(sessionId);
     if (pending) {
-      json(res, 202, { scheduled: true, sessionId, ceilingMs: pending.ceilingMs });
+      json(res, 202, { scheduled: true, sessionId, ceilingMs: HANDOFF_CEILING_MS });
       return;
     }
 
@@ -3340,7 +3322,7 @@ export class SessionHandlers {
     }
 
     const abort = new AbortController();
-    this.deferredAdopts.set(sessionId, { abort, ceilingMs: HANDOFF_CEILING_MS });
+    this.deferredAdopts.set(sessionId, abort);
     this.log.info(`[adopt] scheduled after-turn takeover of pid ${pid}`, {
       event: "session.adopt_scheduled",
       sessionId,
@@ -3367,7 +3349,7 @@ export class SessionHandlers {
       const outcome = await waitForTurnEnd({
         since,
         read: () => readClaudeSessionRegistry(pid),
-        isAlive: () => pidIsAlive(pid),
+        isAlive: () => isPidAlive(pid),
         signal,
       });
       if (outcome === "aborted") return;
@@ -3394,7 +3376,7 @@ export class SessionHandlers {
 
   /** Stop every pending after-turn takeover; server shutdown calls this. */
   cancelDeferredAdopts(): void {
-    for (const { abort } of this.deferredAdopts.values()) abort.abort();
+    for (const abort of this.deferredAdopts.values()) abort.abort();
     this.deferredAdopts.clear();
   }
 

@@ -25,7 +25,6 @@ export interface StreamerTool<Shape extends ZodRawShapeCompat = ZodRawShapeCompa
   description: string;
   inputSchema: Shape;
   handler: (args: ShapeOutput<Shape>, client: StreamerClient) => Promise<CallToolResult>;
-  /** Defaults to `{ readOnlyHint: true }`; a tool that changes anything says so. */
   annotations?: ToolAnnotations;
 }
 
@@ -34,7 +33,6 @@ export class StreamerHttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
-    /** The body's `code`, when the streamer sent one. */
     readonly code?: string,
   ) {
     super(message);

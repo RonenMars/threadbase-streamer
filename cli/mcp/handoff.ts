@@ -65,10 +65,9 @@ async function psParent(pid: number): Promise<number | null> {
 export async function findOwnSession(
   opts: FindOwnSessionOptions = {},
 ): Promise<ClaudeRegistryEntry | null> {
-  // No `ps` and no registry walk on Windows (KTD5).
   if ((opts.platform ?? process.platform) === "win32") return null;
   const parentOf = opts.parentOf ?? psParent;
-  const readEntry = opts.readEntry ?? ((pid: number) => readClaudeSessionRegistry(pid));
+  const readEntry = opts.readEntry ?? readClaudeSessionRegistry;
   let pid: number | null = opts.startPid ?? process.ppid;
   for (let hop = 0; hop < MAX_HOPS && pid != null && pid > 1; hop++) {
     const entry = await readEntry(pid);
