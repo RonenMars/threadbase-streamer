@@ -403,6 +403,11 @@ export type WSMessage =
       lastActivity: string;
       ownership: "external" | "managed";
     }
+  // A parent conversation's sub-agent count changed. `total` is always the full
+  // count (never a delta) so a missed frame is corrected by the next. Same rows
+  // `GET /api/conversations?parent=<parentId>` reports as `total`. Additive —
+  // old clients ignore it.
+  | { type: "subagents_changed"; parentId: string; total: number; updatedAt: string }
   // Structured interactive prompt (AskUserQuestion). Old clients ignore it.
   | { type: "question"; sessionId: string; toolUseId: string; questions: AskQuestion[] }
   | { type: "question_cancelled"; sessionId: string; toolUseId: string }

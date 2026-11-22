@@ -149,6 +149,7 @@ import { ConversationWatcher } from "./services/conversations/conversationWatche
 import { parseAgentEntrypointsEnv } from "./services/conversations/isAgentConversation";
 import { pruneAgentConversations } from "./services/conversations/pruneAgentConversations";
 import { refreshConversationCache } from "./services/conversations/refreshConversationCache";
+import { createSubagentCountNotifier } from "./services/conversations/subagentCountNotifier";
 import { startRuntimeDiagnostics } from "./services/diagnostics/runtimeDiagnostics";
 import {
   createHostPressureMonitor,
@@ -543,6 +544,11 @@ export class StreamerServer {
   // Reverse map for cleanup on close
   private wsToClientId = new Map<WebSocket, string>();
   private cache: ConversationCache | null = null;
+  private subagentCounts = createSubagentCountNotifier({
+    count: (parentId) =>
+      this.cache?.listConversations({ parent: parentId, limit: 0, offset: 0 }).total ?? 0,
+    broadcast: (msg) => this.wsHub.broadcast(msg),
+  });
   private cacheMonitor: CacheIntegrityMonitor | null = null;
   private hostPressureMonitor: HostPressureMonitor | null = null;
   private stopRuntimeDiagnostics: (() => void) | null = null;
@@ -1987,6 +1993,7 @@ export class StreamerServer {
               filterAgentConversations: !this.includeAgents,
               includeSubagentSessions: this.featureFlags.subagentSessions,
               agentEntrypoints: this.agentEntrypoints,
+              onSubagentRow: (parentId) => this.subagentCounts.poke(parentId),
               onAgentFileDetected: (fp) => {
                 this.fileWatcher.unwatch(fp);
                 // Release the external-tail slot too, otherwise an agent JSONL
@@ -2505,6 +2512,7 @@ export class StreamerServer {
       this.codexFormatCanaryTimer = null;
     }
     this.idleSessionNotifier?.stop();
+    this.subagentCounts.dispose();
     this.stopRuntimeDiagnostics?.();
     this.stopRuntimeDiagnostics = null;
     this.stopPushTokenRetention?.();
