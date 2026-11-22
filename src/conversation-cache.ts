@@ -37,6 +37,7 @@ import {
 import { canonicalizeFilePath } from "./utils/canonicalizeFilePath";
 import { parseCodexMessageAt } from "./utils/codexConversationLine";
 import { fileIdentity, type LineSpan, splitCompleteLines } from "./utils/fileIdentity";
+import { resolveProjectRoot } from "./utils/resolveProjectRoot";
 
 export interface ConversationCacheOptions {
   includeSubagentSessions?: boolean;
@@ -59,6 +60,10 @@ export interface ConversationListItem {
   filePath: string;
   projectId: string | null;
   projectPath: string | null;
+  /** Main checkout the cwd belongs to; null until resolved from disk. */
+  projectRoot?: string | null;
+  /** The cwd when it is a linked worktree of `projectRoot`; null otherwise. */
+  worktreePath?: string | null;
   projectName: string | null;
   title: string | null;
   model: string | null;
@@ -133,6 +138,9 @@ export interface ScannerMeta {
   filePath: string;
   projectPath?: string;
   projectName?: string;
+  /** Set by scanner >= 0.26 from projectPath; see readProjectRoot. */
+  projectRoot?: string | null;
+  worktreePath?: string | null;
   title?: string;
   // The scanner emits the derived conversation name as `sessionName`; the cache
   // stores it in the `title` column. Callers pass the scanner's ConversationMeta
@@ -164,6 +172,8 @@ interface MetaRow {
   file_path: string;
   project_id: string | null;
   project_path: string | null;
+  project_root: string | null;
+  worktree_path: string | null;
   project_name: string | null;
   title: string | null;
   model: string | null;
@@ -218,6 +228,14 @@ interface JsonlLine {
 
 // Last three path segments — mirrors @threadbase-sh/scanner's
 // `getShortProjectName`. Inlined here because the scanner does not export it.
+function rootColumns(projectPath: string | null | undefined): {
+  project_root: string | null;
+  worktree_path: string | null;
+} {
+  const r = projectPath ? resolveProjectRoot(projectPath) : null;
+  return { project_root: r?.projectRoot ?? null, worktree_path: r?.worktreePath ?? null };
+}
+
 function shortProjectName(fullPath: string): string {
   const parts = fullPath.split(/[/\\]/).filter(Boolean);
   return parts.slice(-3).join("/");
@@ -384,6 +402,7 @@ export class ConversationCache {
     this.onAgentFileDetected = options?.onAgentFileDetected;
     db.exec(SCHEMA);
     runSqliteMigrations(db, this.migrationsDir);
+    this.backfillProjectRoots();
     this.fileAliases = db.prepare(
       "SELECT id FROM conversation_meta WHERE file_path = ? AND id != ?",
     );
@@ -402,7 +421,7 @@ export class ConversationCache {
     // getFullById deliberately keeps `SELECT *`: it is a single row by primary
     // key and its callers want every column.
     const LIST_COLUMNS =
-      "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name";
+      "id, file_path, project_id, project_path, project_root, worktree_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name";
     const visible = "has_messages IS NOT 0 AND deleted_at IS NULL AND is_subagent IS NOT 1";
     this.stmts = {
       getById: db.prepare("SELECT id FROM conversation_meta WHERE id = ?"),
@@ -436,24 +455,30 @@ export class ConversationCache {
         `UPDATE conversation_meta
          SET project_path = COALESCE(project_path, @project_path),
              project_name = COALESCE(project_name, @project_name),
-             title        = COALESCE(title,        @title)
+             title        = COALESCE(title,        @title),
+             project_root  = COALESCE(project_root,  @project_root),
+             worktree_path = COALESCE(worktree_path, @worktree_path)
          WHERE id = @id
-           AND (project_path IS NULL OR project_name IS NULL OR title IS NULL)`,
+           AND (project_path IS NULL OR project_name IS NULL OR title IS NULL
+                OR (project_root IS NULL AND @project_root IS NOT NULL))`,
       ),
       upsertFull: db.prepare(`
         INSERT INTO conversation_meta
-          (id, file_path, project_path, project_name, title, model, account, branch,
+          (id, file_path, project_path, project_root, worktree_path, project_name, title, model, account, branch,
            message_count, last_activity, first_message, last_message, preview, updated_at,
            mtime_ms, file_size, provider, scanner_meta_json,
            is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name, slug, title_user, title_tool, last_prompt)
         VALUES
-          (@id, @file_path, @project_path, @project_name, @title, @model, @account, @branch,
+          (@id, @file_path, @project_path, @project_root, @worktree_path, @project_name, @title, @model, @account, @branch,
            @message_count, @last_activity, @first_message, @last_message, @preview, @updated_at,
            @mtime_ms, @file_size, @provider, @scanner_meta_json,
            @is_imported_from_claude, @is_imported_from_codex, @is_imported_from_cursor, @team_name, @slug, @title_user, @title_tool, @last_prompt)
         ON CONFLICT(id) DO UPDATE SET
           file_path     = excluded.file_path,
           project_path  = excluded.project_path,
+          -- Never cleared: a deleted worktree cannot be re-resolved, and keeps its group.
+          project_root  = COALESCE(excluded.project_root,  conversation_meta.project_root),
+          worktree_path = COALESCE(excluded.worktree_path, conversation_meta.worktree_path),
           project_name  = excluded.project_name,
           title         = excluded.title,
           model         = excluded.model,
@@ -585,15 +610,17 @@ export class ConversationCache {
       // page it opens. Bare project_name is the one from the MAX(last_activity)
       // row (SQLite's documented min/max-aggregate bare-column rule).
       projectSummaries: db.prepare(
-        `SELECT project_path, project_name, COUNT(*) as cnt, MAX(last_activity) as latest
+        `SELECT COALESCE(project_root, project_path) AS grp, project_path, project_name,
+                COUNT(*) as cnt, MAX(last_activity) as latest,
+                json_group_array(DISTINCT worktree_path) FILTER (WHERE worktree_path IS NOT NULL) AS worktrees
          FROM conversation_meta
          WHERE ${visible} AND project_path IS NOT NULL
-         GROUP BY project_path
-         ORDER BY latest DESC, project_path ASC
+         GROUP BY grp
+         ORDER BY latest DESC, grp ASC
          LIMIT ? OFFSET ?`,
       ),
       projectSummaryCount: db.prepare(
-        `SELECT COUNT(DISTINCT project_path) as n FROM conversation_meta WHERE ${visible} AND project_path IS NOT NULL`,
+        `SELECT COUNT(DISTINCT COALESCE(project_root, project_path)) as n FROM conversation_meta WHERE ${visible} AND project_path IS NOT NULL`,
       ),
       getFileState: db.prepare("SELECT * FROM conversation_file_state WHERE path = ?"),
       upsertFileState: db.prepare(
@@ -1232,6 +1259,8 @@ export class ConversationCache {
       name: string;
       conversationCount: number;
       lastActivity: string;
+      /** Linked worktrees of `path` that have conversations; empty for a plain project. */
+      worktreePaths: string[];
     }>;
     total: number;
   } {
@@ -1240,20 +1269,48 @@ export class ConversationCache {
       opts.limit === 0
         ? []
         : (this.stmts.projectSummaries.all(opts.limit, opts.offset) as Array<{
+            grp: string;
             project_path: string;
             project_name: string | null;
+            worktrees: string | null;
             cnt: number;
             latest: number | null;
           }>);
     return {
       total,
-      projects: rows.map((r) => ({
-        path: r.project_path,
-        name: r.project_name ?? r.project_path.split(/[/\\]/).pop() ?? r.project_path,
-        conversationCount: r.cnt,
-        lastActivity: new Date(r.latest ?? 0).toISOString(),
-      })),
+      projects: rows.map((r) => {
+        const worktreePaths: string[] = JSON.parse(r.worktrees ?? "[]");
+        return {
+          path: r.grp,
+          // project_name belongs to whichever row is newest, which may be a worktree's.
+          name: worktreePaths.length
+            ? shortProjectName(r.grp)
+            : (r.project_name ?? r.grp.split(/[/\\]/).pop() ?? r.grp),
+          conversationCount: r.cnt,
+          lastActivity: new Date(r.latest ?? 0).toISOString(),
+          worktreePaths,
+        };
+      }),
     };
+  }
+
+  /** Fill project_root / worktree_path on rows written before they existed. A path
+   *  that cannot be resolved (deleted worktree) stays NULL and is retried next boot. */
+  private backfillProjectRoots(): void {
+    const paths = this.db
+      .prepare(
+        "SELECT DISTINCT project_path FROM conversation_meta WHERE project_root IS NULL AND project_path IS NOT NULL",
+      )
+      .all() as Array<{ project_path: string }>;
+    const set = this.db.prepare(
+      "UPDATE conversation_meta SET project_root = ?, worktree_path = ? WHERE project_path = ? AND project_root IS NULL",
+    );
+    this.db.transaction(() => {
+      for (const { project_path } of paths) {
+        const r = resolveProjectRoot(project_path);
+        if (r) set.run(r.projectRoot, r.worktreePath, project_path);
+      }
+    })();
   }
 
   private ensureFileIndex(): void {
@@ -1518,6 +1575,7 @@ export class ConversationCache {
         this.stmts.backfillSkeletonProject.run({
           id,
           project_path: backfillProjectPath,
+          ...rootColumns(backfillProjectPath),
           project_name: backfillProjectName,
           title: backfillTitle,
         });
@@ -1610,6 +1668,10 @@ export class ConversationCache {
           id,
           file_path: canonicalPath,
           project_path: projectPath,
+          // The scanner resolves these from projectPath; fall back for a meta that has none.
+          ...(m.projectRoot
+            ? { project_root: m.projectRoot, worktree_path: m.worktreePath ?? null }
+            : rootColumns(projectPath)),
           project_name: m.projectName ?? null,
           title: m.title ?? m.sessionName ?? m.projectName ?? null,
           model: m.model ?? null,
@@ -1799,6 +1861,8 @@ export class ConversationCache {
         filePath: r.file_path,
         projectId: r.project_id,
         projectPath: r.project_path,
+        projectRoot: r.project_root,
+        worktreePath: r.worktree_path,
         projectName: r.project_name,
         title: r.title,
         model: r.model,
@@ -1824,7 +1888,7 @@ export class ConversationCache {
   }
 
   private get listColumns(): string {
-    return "id, file_path, project_id, project_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name";
+    return "id, file_path, project_id, project_path, project_root, worktree_path, project_name, title, model, account, branch, message_count, last_activity, first_message, last_message, preview, source, provider, has_messages, is_subagent, parent_conversation_id, is_imported_from_claude, is_imported_from_codex, is_imported_from_cursor, team_name";
   }
 
   private conversationListWhere(opts: ConversationListFilters): {
@@ -1840,8 +1904,9 @@ export class ConversationCache {
     } else if (include === "conversations") clauses.push("is_subagent IS NOT 1");
     else if (include === "subagents") clauses.push("is_subagent = 1");
     if (opts.project) {
-      clauses.push("project_path = ?");
-      params.push(opts.project);
+      // A project root also matches its worktrees' conversations.
+      clauses.push("(project_path = ? OR project_root = ?)");
+      params.push(opts.project, opts.project);
     }
     if (opts.provider) {
       const provider = canonicalizeProviderName(opts.provider) ?? opts.provider;
@@ -1928,6 +1993,8 @@ export class ConversationCache {
       parentConversationId: row.parent_conversation_id,
       projectId: row.project_id,
       projectPath: row.project_path,
+      projectRoot: row.project_root,
+      worktreePath: row.worktree_path,
       projectName: row.project_name,
       title: row.title,
       model: row.model,

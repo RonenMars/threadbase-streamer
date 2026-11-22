@@ -57,6 +57,7 @@ import {
   isLeadingInjectedContext,
 } from "../../utils/codexConversationLine";
 import { computeConversationEtag } from "../../utils/conversationEtag";
+import { resolveProjectRoot } from "../../utils/resolveProjectRoot";
 import { createScanProgressThrottle } from "../../utils/scanProgressThrottle";
 import type { WSHub } from "../../ws-hub";
 import {
@@ -672,7 +673,9 @@ export class ConversationHandlers {
     await this.externalConversationIds();
     const live = new Map<string, number>();
     for (const d of this.externalProcesses()) {
-      const key = canonicalizeProjectPath(d.projectPath);
+      // Count under the same key the summary groups by, so a worktree's live agent lands on its project.
+      const key =
+        resolveProjectRoot(d.projectPath)?.projectRoot ?? canonicalizeProjectPath(d.projectPath);
       live.set(key, (live.get(key) ?? 0) + 1);
     }
     const tagged = projects.map((p) => ({
