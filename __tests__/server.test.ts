@@ -309,6 +309,79 @@ describe("StreamerServer", () => {
       rmSync(browseRoot, { recursive: true, force: true });
     });
 
+    describe("unrestrictedBrowse flag", () => {
+      let outside: string;
+
+      beforeEach(() => {
+        outside = realpathSync(mkdtempSync(join(tmpdir(), "threadbase-outside-test-")));
+      });
+
+      afterEach(() => {
+        rmSync(outside, { recursive: true, force: true });
+      });
+
+      const restart = async (unrestrictedBrowse: boolean) => {
+        await server.close();
+        server = new StreamerServer({
+          ...HOST_ISOLATION,
+          port,
+          apiKey: API_KEY,
+          localNoAuth: false,
+          verbose: false,
+          disableDb: true,
+          cacheDir,
+          browseRoot,
+          featureFlags: { unrestrictedBrowse },
+          scanProfiles: FIXTURE_PROFILES,
+        });
+        await server.listen(port, { awaitReady: true });
+        port = server.port;
+        baseUrl = `http://127.0.0.1:${port}`;
+      };
+
+      const browse = (path: string) =>
+        fetch(`${baseUrl}/api/browse?path=${encodeURIComponent(path)}`, {
+          headers: { Authorization: `Bearer ${API_KEY}` },
+        });
+
+      const startCopilot = (path: string) =>
+        fetch(`${baseUrl}/api/sessions/start`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ path, provider: "copilot" }),
+        });
+
+      it("refuses a path outside the browse root by default", async () => {
+        await restart(false);
+        expect((await browse(outside)).status).toBe(400);
+        expect((await startCopilot(outside)).status).toBe(400);
+      });
+
+      it("accepts it for browse and session start when on", async () => {
+        await restart(true);
+        const res = await browse(outside);
+        expect(res.status).toBe(200);
+        const spy = vi.spyOn(CopilotPtyRunner.prototype, "startFresh").mockResolvedValueOnce({
+          id: "copilot-outside",
+          provider: "copilot",
+          projectPath: outside,
+          projectName: "outside",
+          branch: "",
+          status: "running",
+          startedAt: new Date(),
+          completedAt: null,
+          promptCount: 0,
+          lastOutput: "",
+        });
+        try {
+          expect((await startCopilot(outside)).status).toBe(200);
+          expect(spy).toHaveBeenCalledTimes(1);
+        } finally {
+          spy.mockRestore();
+        }
+      });
+    });
+
     it("starts Copilot without waiting for a semantic readiness signal", async () => {
       const spy = vi.spyOn(CopilotPtyRunner.prototype, "startFresh").mockResolvedValueOnce({
         id: "copilot-test",

@@ -71,6 +71,7 @@ describe("/api/pinned-dirs", () => {
   let server: ReturnType<typeof serve>;
   let baseUrl: string;
   let browseRoot: string | null;
+  let unrestricted: boolean;
   let runtime: RuntimeStore | null;
 
   const put = (body: unknown) =>
@@ -84,6 +85,7 @@ describe("/api/pinned-dirs", () => {
 
   beforeEach(async () => {
     browseRoot = root;
+    unrestricted = false;
     runtime = store;
     const app = new Hono();
     app.route(
@@ -91,6 +93,7 @@ describe("/api/pinned-dirs", () => {
       createPinnedDirsRoutes({
         runtimeStore: () => runtime,
         browseRoot: () => browseRoot,
+        browseUnrestricted: () => unrestricted,
       } as never),
     );
     server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
@@ -133,6 +136,17 @@ describe("/api/pinned-dirs", () => {
   ])("rejects %s", async (_name, body, status) => {
     expect((await put(body)).status).toBe(status);
     expect((await list()).dirs).toEqual([]);
+  });
+
+  it("pins a path outside the root when unrestricted", async () => {
+    unrestricted = true;
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), "tb-pinned-outside-")));
+    try {
+      expect((await put({ path: outside })).status).toBe(200);
+      expect((await list()).dirs.map((d) => d.path)).toEqual([outside]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("answers 409 when full", async () => {
