@@ -48,6 +48,14 @@ describe("AskUserQuestion on Claude Code 2.1.328", () => {
       "Type something.",
       "Chat about this",
     ]);
+    // The two rows say what they are, so a client need not match their labels.
+    expect(questions[0].options.map((o) => o.terminalRow)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      "other",
+      "chat",
+    ]);
     const q = questions[0].question;
     expect(planAnswer(questions, { [q]: { other: "x" } })).toEqual({
       freeText: { row: await cursorOf("type-row-focused"), text: "x" },
