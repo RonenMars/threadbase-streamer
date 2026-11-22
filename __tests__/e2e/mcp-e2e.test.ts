@@ -223,25 +223,43 @@ describe.skipIf(!existsSync(CLI))("tb-streamer mcp (e2e)", () => {
   });
 
   describe("streamer_info", () => {
-    it("lists exactly the phase-1 tools, each with a description", async () => {
+    it("lists exactly the shim's tools, each with a description", async () => {
       const shim = await startShim(["--port", String(port)], childEnv(cfgOk));
       try {
         const { tools } = await shim.client.listTools();
-        // #1178-#1180 each extend this list; #1181 locks it at four.
+        // #1178-#1180 each extend this list; #1181 locked it at four, and the handoff tool is the fifth.
         expect(tools.map((t) => t.name)).toEqual([
           "streamer_info",
           "read_conversation",
           "list_sessions",
           "tail_terminal",
+          "handoff_to_threadbase",
         ]);
         const info = tools.find((t) => t.name === "streamer_info");
         expect(info).toBeDefined();
         expect(info?.description).toMatch(/\S/);
-        // Phase 1 is read-only: every tool must say so to the host.
+        // Every tool but the handoff is read-only and must say so to the host.
         for (const tool of tools) {
           expect(tool.description, tool.name).toMatch(/\S/);
-          expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
+          if (tool.name === "handoff_to_threadbase") {
+            expect(tool.annotations?.readOnlyHint, tool.name).toBeUndefined();
+            expect(tool.annotations?.destructiveHint, tool.name).toBe(true);
+          } else {
+            expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
+          }
         }
+      } finally {
+        await shim.close();
+      }
+    });
+
+    it("offers the handoff as its only prompt, naming the tool", async () => {
+      const shim = await startShim(["--port", String(port)], childEnv(cfgOk));
+      try {
+        const { prompts } = await shim.client.listPrompts();
+        expect(prompts.map((p) => p.name)).toEqual(["handoff_to_threadbase"]);
+        const { messages } = await shim.client.getPrompt({ name: "handoff_to_threadbase" });
+        expect(JSON.stringify(messages)).toContain("`handoff_to_threadbase` tool");
       } finally {
         await shim.close();
       }

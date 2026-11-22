@@ -41,6 +41,22 @@ export function createMcpServer(opts: StreamerClientOptions): McpServer {
       (args) => tool.handler(args, client),
     );
   }
+  // Claude Code lists an MCP prompt as `/mcp__threadbase__handoff_to_threadbase`.
+  server.registerPrompt(
+    "handoff_to_threadbase",
+    { description: "Move this Claude Code session to Threadbase, to continue it on the phone." },
+    () => ({
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: "Call the `handoff_to_threadbase` tool now. If it succeeds, tell me in one line that this terminal will close and the session continues in Threadbase, then end your turn. If it fails, tell me its message.",
+          },
+        },
+      ],
+    }),
+  );
   return server;
 }
 
