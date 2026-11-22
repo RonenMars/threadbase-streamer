@@ -24,7 +24,8 @@ Done means:
 - Mobile shows the dot on both list screens, on idle and on-hold rows as well as live ones, and shows nothing against a server without `readState`.
 - Tests listed in §6 (streamer) and §5.5 (mobile) pass, each negative test seen red once.
 
-Out of scope for v1: a numeric unread count, "mark as unread", the app icon badge. §8 says when to add each.
+Out of scope for v1 (the dot): a numeric unread count on rows, "mark as unread", the app icon badge. §8 says when to add each.
+Phase 2 (§4.7, §5.6, §7 step 5) turns the per-turn "finished" push into a counted notification that replaces the older one for the session.
 
 ## 2. What "unread" means
 
@@ -179,6 +180,21 @@ Conversation rows need no new frame: mobile already refetches the list on `conve
 
 Additive only: optional fields on list items, session payloads and messages, one new route, one new WS frame type. No grep of tb-mobile is needed (CLAUDE.md "Backward compatibility": additive changes need no check). Older mobile builds ignore all of it.
 
+### 4.7 Counted notifications (phase 2)
+
+**Today.** A turn that ends sends one "finished" push, from `WaitingInputNotifier` for a managed session and `ExternalTurnNotifier` for an external one (`waitingInputMessage(…, "turn_done")`).
+Each push already carries `collapseId` and `tag` equal to the session id, so a newer push replaces the banner on screen, but its text never says how many replies the user has missed: three finished turns read the same as one.
+
+**Change.** The `turn_done` push carries the number of unread replies in the conversation, and keeps the same `collapseId`/`tag`, so the latest count replaces the older notification and the session never stacks more than one.
+
+- **The count** is the number of countable messages of the conversation above the frontier with no ack: the count §8 lists as "left out", computed server side only for this push. A push cannot read the device's state, so the count cannot be computed on the phone.
+- **Where it is computed**: once per send, in a helper both notifiers call, from `cache.listCountable(id, { above: frontier })` minus `acksFor`, the same expansion the route uses (§4.3). Nothing is stored.
+- **Copy**: `N === 1` keeps today's text. `N > 1` becomes "N new replies" in every locale of `notificationCopy.ts`, and `data.unreadCount` carries `String(N)` for a client that wants it. `N === 0` (nothing countable, everything acked, no row) falls back to today's text, so a push is never worse than it is now.
+- **Floor of 1**: the push exists because a turn just ended, so the count is `max(1, N)`. The cache can lag the end of the turn (`noteLastMessage` sends a late frame for the same reason, §4.4), and the floor keeps the line from reading one low.
+- **Not counted**: `permission`, `question`, `failed`, `limited` and `idle` pushes are about the agent's state, not replies, and are unchanged. They still replace the session's banner through the shared `collapseId`.
+- **No capability flag**: the body is composed on the server, so an app that never heard of `unreadCount` shows "3 new replies" correctly. `data.unreadCount` is additive.
+- **Reading clears it on the device that read**: mobile dismisses the session's presented notification (§5.6). A device that did not read cannot be reached without a silent push; §8.
+
 ## 5. Mobile changes
 
 Anchors checked against tb-mobile `main` on 2026-11-20; line numbers drift, the quoted anchors do not.
@@ -235,8 +251,25 @@ Unit and integration suites (`test:unit` alone is a false green):
 - A burst of live replies is one request.
 - A failed ack is resent with the next flush; a `200` clears it.
 - No ack while backgrounded, and none against a server without `readState`.
+- Phase 2: a conversation turning read dismisses the presented notifications whose `sessionId` and `serverId` match, and leaves another session's and another server's alone; a `read_state_changed` with `unread: true` dismisses nothing.
+
+### 5.6 Counted notifications (phase 2)
+
+- The notification itself needs no mobile code: it replaces by `collapseId` (iOS) and `tag` (Android) already, and its text is server-composed (§4.7).
+- **Dismiss on read.** When the session's conversation turns read (the ack response or a `read_state_changed` with `unread: false` for it), call `Notifications.getPresentedNotificationsAsync()`, keep the ones whose `data.sessionId` and `data.serverId` match, and `dismissNotificationAsync` each. Today only `services/live-activity.android.ts` dismisses anything. Without this, "3 new replies" stays in the tray after the user read all three.
+- **Foreground suppression stays**: `setNotificationHandler` in `services/push.ts` already hides a push for the session on screen; the count is not shown there.
+- A device whose app is not running keeps the notification until it is opened; that is §8.
 
 ## 6. Tests (streamer)
+
+Phase 2 (§4.7), each with a positive control:
+
+- **Counted push**: one unread reply → today's text and `data.unreadCount: "1"`; three → "3 new replies", `data.unreadCount: "3"`; all acked or no row → today's text.
+- **Replacement**: two consecutive `turn_done` pushes for one session carry the same `collapseId` and `tag`, and the second carries the larger count.
+- **Both notifiers**: the managed path and the external path produce the same count for the same transcript.
+- **Floor**: a cache that does not hold the reply that ended the turn yet still sends "1", never "0" or a missing count.
+- **Other kinds** (`permission`, `question`, `failed`) carry no count and are unchanged.
+- **Locales**: every locale of `notificationCopy.ts` has the plural line (the existing copy test iterates them).
 
 - **Migrations**: cache `030` and runtime `010` run on a fresh database and on one at the previous number; the baseline row exists once and a second run leaves it unchanged.
 - **Ingestion flag**: an assistant line with text is countable; a tool-use-only assistant line, a thinking line, a sidechain line, a `user` line (empty or not) and a line with no timestamp are not. `last_countable_ts` takes the `MAX` and survives a rescan.
@@ -267,13 +300,16 @@ Unit and integration suites (`test:unit` alone is a false green):
 3. Streamer PR 2: list, message and `session_update` decoration. Can fold into PR 1 if it stays small.
 4. Mobile PR after the streamer release that carries `readState` **and** the decoration (step 3). If step 3 stays a separate PR, the mobile PR waits for its release too, since `readState: true` alone would show a gate with no `unread` on any row.
 
+5. **Phase 2, after the dot ships**: counted notifications. Streamer PR: the count helper and the `turn_done` copy (§4.7). Mobile PR: dismiss on read (§5.6). Neither depends on the other to land, since the push text is server-composed, but the count needs `readState`, so the streamer PR goes in a release that carries step 2. File one issue per repo, each describing its own half and linked by URL: `P2: send a counted notification per session` (`enhancement`, `ux`).
+
 Each PR closes out with a status comment on its issue (CLAUDE.md "Issue status updates").
 
 ## 8. Deliberately left out
 
 | Left out | Add when |
 |---|---|
-| Unread **count** | Someone asks for a number. Count the countable messages above the frontier with no ack; it needs a batched query for the list and a rule for what the number means when replies were skipped. |
+| Unread **count on rows** | Someone asks for a number. The push count (§4.7) already counts the countable messages above the frontier with no ack, for one conversation at send time; a row count needs a batched query for the list and a rule for what the number means when replies were skipped. |
+| Dismissing the notification on **other devices** | A device that did not read keeps "3 new replies" until opened. Clearing it means a silent push per paired device to dismiss by `collapseId`; add when users report stale banners. |
 | **Mark as unread** | Asked for. Delete the message's ack and pull the frontier back below it; it breaks the frontier's monotonicity, so it needs its own test. |
 | **App icon badge** | Pushes already carry the conversation. Badge = number of unread conversations; needs the count of `unread` across the list, server-side so a push can set it. |
 | Advancing the read point when the user **sends input** | Only if a client sends input without the conversation open. Today replying means the screen is open, which already acks. |
@@ -288,4 +324,4 @@ Each PR closes out with a status comment on its issue (CLAUDE.md "Issue status u
 3. **Subagent transcripts?** Not shown in lists today (`is_subagent IS NOT 1`), so no dot; a parent's dot follows the parent's own transcript only.
 4. **Does watching live terminal output count as reading?** Yes, for replies that arrive while the session screen is open (§5.3).
 
-Unverified, to settle in the first PR that needs each: which providers emit messages without a `uuid` (the timestamp key covers them, with a collision only for two replies in the same millisecond); whether the cache write precedes the WS line broadcast (§4.3); whether the mobile message list supports a viewability config (§5.3); whether any provider writes a countable line with a timestamp older than the line before it, which is what the late-indexed ceiling in §4.3 needs (if one does, add a count to the ack so the server can refuse a range that grew).
+Unverified, to settle in the first PR that needs each: which providers emit messages without a `uuid` (the timestamp key covers them, with a collision only for two replies in the same millisecond); whether the cache write precedes the WS line broadcast (§4.3) and the settled `turn_done` push (§4.7); whether the mobile message list supports a viewability config (§5.3); whether any provider writes a countable line with a timestamp older than the line before it, which is what the late-indexed ceiling in §4.3 needs (if one does, add a count to the ack so the server can refuse a range that grew).
