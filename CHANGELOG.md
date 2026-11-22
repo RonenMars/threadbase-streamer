@@ -1,3 +1,9 @@
+## [1.149.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.148.2...v1.149.0) (2026-11-22)
+
+### Features
+
+* **sessions:** answer the terminal-only question rows ([#1293](https://github.com/RonenMars/threadbase-streamer/issues/1293)) ([87e4929](https://github.com/RonenMars/threadbase-streamer/commit/87e492912d6dfdd4eef412922985082b1165e68b)), closes [#1287](https://github.com/RonenMars/threadbase-streamer/issues/1287)
+
 ## [1.148.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.148.1...v1.148.2) (2026-11-21)
 
 ## [1.148.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.148.0...v1.148.1) (2026-11-21)
