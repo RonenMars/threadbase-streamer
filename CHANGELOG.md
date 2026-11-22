@@ -1,3 +1,9 @@
+## [1.151.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.150.0...v1.151.0) (2026-11-22)
+
+### Features
+
+* **browse:** add unrestrictedBrowse flag to drop the browse-root boundary ([#1298](https://github.com/RonenMars/threadbase-streamer/issues/1298)) ([2a72f78](https://github.com/RonenMars/threadbase-streamer/commit/2a72f782a366e3abf964f1f1a6fdb570a2e67681))
+
 ## [1.150.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.149.0...v1.150.0) (2026-11-22)
 
 ### Features
