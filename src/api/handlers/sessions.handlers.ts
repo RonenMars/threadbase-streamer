@@ -86,6 +86,7 @@ import {
 } from "../../services/sessions/conversationBusy";
 import type { IdempotencyStore } from "../../services/sessions/idempotency";
 import { readIdempotencyKey } from "../../services/sessions/idempotency";
+import { readClaudeSessionRegistry } from "../../services/sessions/processSessionIds";
 import type { SessionRegistryBoot } from "../../session-registry-boot";
 import type { SessionStore } from "../../session-store";
 import type { SessionWatchers } from "../../session-watchers";
@@ -208,6 +209,79 @@ export async function waitForProcessExit(
     }
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
+// A self-requested takeover (`POST /api/sessions/:id/adopt-after-turn`) waits
+// for the requesting turn to end before it kills anything. The hold mirrors
+// TURN_DONE_SETTLE_MS, so the final assistant line reaches the JSONL before
+// `--resume` reads it; the ceiling keeps a forgotten request from killing the
+// session hours later.
+export const HANDOFF_POLL_MS = 500;
+export const HANDOFF_HOLD_MS = 2_000;
+export const HANDOFF_CEILING_MS = 10 * 60_000;
+
+export type TurnEndOutcome = "idle" | "turn_ceiling" | "owner_gone" | "aborted";
+
+/**
+ * Wait until a Claude registry entry reports the turn over: `status` reads
+ * `idle`, written after `since`, and stays that way for `holdMs`. Only an
+ * explicit `idle` counts — while a question card is open Claude writes
+ * `waiting`, which the parser drops, so a missing status keeps waiting.
+ */
+export async function waitForTurnEnd(opts: {
+  since: number;
+  read: () => Promise<{ status?: string; statusUpdatedAt?: number } | null>;
+  isAlive: () => boolean;
+  signal: AbortSignal;
+  pollMs?: number;
+  holdMs?: number;
+  ceilingMs?: number;
+}): Promise<TurnEndOutcome> {
+  const {
+    since,
+    read,
+    isAlive,
+    signal,
+    pollMs = HANDOFF_POLL_MS,
+    holdMs = HANDOFF_HOLD_MS,
+    ceilingMs = HANDOFF_CEILING_MS,
+  } = opts;
+  let idleSince: number | null = null;
+  for (;;) {
+    if (signal.aborted) return "aborted";
+    if (!isAlive()) return "owner_gone";
+    const entry = await read().catch(() => null);
+    const now = Date.now();
+    if (entry?.status === "idle" && (entry.statusUpdatedAt ?? 0) > since) {
+      idleSince ??= now;
+      if (now - idleSince >= holdMs) return "idle";
+    } else {
+      idleSince = null;
+    }
+    if (now - since >= ceilingMs) return "turn_ceiling";
+    // An abort during the read above has already fired; a listener added now never would.
+    if (signal.aborted) return "aborted";
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, pollMs);
+      signal.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          resolve();
+        },
+        { once: true },
+      );
+    });
+  }
+}
+
+function pidIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -427,6 +501,9 @@ export type SessionHandlersDeps = {
  */
 export class SessionHandlers {
   constructor(private deps: SessionHandlersDeps) {}
+
+  /** Self-requested takeovers waiting for their turn to end, by session id. */
+  private deferredAdopts = new Map<string, { abort: AbortController; ceilingMs: number }>();
 
   private get sessionStore(): SessionStore {
     return this.deps.sessionStore;
@@ -3122,11 +3199,22 @@ export class SessionHandlers {
    * under this streamer.
    */
   async handleAdopt(sessionId: string, res: ServerResponse): Promise<void> {
-    const resolved = await this.resolveExternalOwner(sessionId, "adopt");
-    if (!resolved.ok) {
-      json(res, resolved.status, resolved.body);
+    const result = await this.adoptExternal(sessionId);
+    if (!result.ok) {
+      json(res, result.status, result.body);
       return;
     }
+    json(res, 201, { sessionId: result.sessionId });
+  }
+
+  /** Adopt without an HTTP response: shared by `/adopt` and the deferred job. */
+  private async adoptExternal(
+    sessionId: string,
+  ): Promise<
+    { ok: true; sessionId: string } | { ok: false; status: number; body: Record<string, unknown> }
+  > {
+    const resolved = await this.resolveExternalOwner(sessionId, "adopt");
+    if (!resolved.ok) return resolved;
     const { owner } = resolved;
 
     if (owner.resumeId != null) {
@@ -3141,13 +3229,16 @@ export class SessionHandlers {
     // A process that outlives the grace period aborts the takeover rather than
     // knowingly starting a second agent on the same transcript.
     if (!(await this.terminateExternalOwner(sessionId, owner.pid, "adopt"))) {
-      json(res, 409, {
-        error:
-          "The existing process did not exit; not starting a second agent on this conversation",
-        code: "ADOPT_KILL_TIMEOUT",
-        pid: owner.pid,
-      });
-      return;
+      return {
+        ok: false,
+        status: 409,
+        body: {
+          error:
+            "The existing process did not exit; not starting a second agent on this conversation",
+          code: "ADOPT_KILL_TIMEOUT",
+          pid: owner.pid,
+        },
+      };
     }
 
     // The provider has to be carried: `LiveSessionManager.start` defaults to
@@ -3173,7 +3264,138 @@ export class SessionHandlers {
       sessions: this.sessionStore.list(this.deps.ptyAttachedIds()),
     });
 
-    json(res, 201, { sessionId: session.id });
+    return { ok: true, sessionId: session.id };
+  }
+
+  /**
+   * Take over a terminal Claude session after its current turn ends, at that
+   * session's own request (the MCP `handoff_to_threadbase` tool). Answers 202
+   * at once, so the agent can tell the user before its process is killed.
+   *
+   * Every refusal is checked before scheduling and carries a `code`, so the
+   * caller can tell a refusal from an older streamer without this route (a
+   * bare 404).
+   */
+  async handleAdoptAfterTurn(
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await readBody(req).catch(() => null);
+    const pid = body?.pid;
+    if (!Number.isInteger(pid) || pid <= 0) {
+      json(res, 400, { error: "pid must be a positive integer", code: "HANDOFF_INVALID_PID" });
+      return;
+    }
+
+    const pending = this.deferredAdopts.get(sessionId);
+    if (pending) {
+      json(res, 202, { scheduled: true, sessionId, ceilingMs: pending.ceilingMs });
+      return;
+    }
+
+    // The pid must be the one whose own registry entry names this session, so
+    // a request cannot schedule the takeover of another conversation.
+    const entry = await readClaudeSessionRegistry(pid);
+    if (!entry || entry.sessionId !== sessionId) {
+      json(res, 400, {
+        error: "That process does not own this session",
+        code: "HANDOFF_SESSION_MISMATCH",
+      });
+      return;
+    }
+    if (entry.status === undefined) {
+      json(res, 409, {
+        error: "This Claude Code version does not report turn state; cannot wait for the turn",
+        code: "HANDOFF_NO_TURN_STATE",
+      });
+      return;
+    }
+    if (this.sessionStore.ownsConversation(sessionId)) {
+      json(res, 409, {
+        error: "This session is already managed by the streamer",
+        code: "HANDOFF_ALREADY_MANAGED",
+      });
+      return;
+    }
+
+    // Non-destructive pre-flight: the same checks adopt runs before its kill,
+    // answered now rather than after the agent told the user it is leaving.
+    const resolved = await this.resolveExternalOwner(sessionId, "adopt");
+    if (!resolved.ok) {
+      json(res, resolved.status, {
+        ...resolved.body,
+        code:
+          resolved.body.code ??
+          (resolved.status === 404 ? "HANDOFF_NOT_DISCOVERED" : "HANDOFF_NO_PID"),
+      });
+      return;
+    }
+    if (resolved.owner.pid !== pid) {
+      json(res, 400, {
+        error: "That process does not own this session",
+        code: "HANDOFF_SESSION_MISMATCH",
+      });
+      return;
+    }
+
+    const abort = new AbortController();
+    this.deferredAdopts.set(sessionId, { abort, ceilingMs: HANDOFF_CEILING_MS });
+    this.log.info(`[adopt] scheduled after-turn takeover of pid ${pid}`, {
+      event: "session.adopt_scheduled",
+      sessionId,
+      pid,
+    });
+    void this.runDeferredAdopt(sessionId, pid, Date.now(), abort.signal);
+    json(res, 202, { scheduled: true, sessionId, ceilingMs: HANDOFF_CEILING_MS });
+  }
+
+  private async runDeferredAdopt(
+    sessionId: string,
+    pid: number,
+    since: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const dropped = (reason: string) =>
+      this.log.warn(`[adopt] dropped after-turn takeover of pid ${pid}: ${reason}`, {
+        event: "session.adopt_deferred_dropped",
+        sessionId,
+        pid,
+        reason,
+      });
+    try {
+      const outcome = await waitForTurnEnd({
+        since,
+        read: () => readClaudeSessionRegistry(pid),
+        isAlive: () => pidIsAlive(pid),
+        signal,
+      });
+      if (outcome === "aborted") return;
+      if (outcome !== "idle") {
+        dropped(outcome);
+        return;
+      }
+      const result = await this.adoptExternal(sessionId);
+      if (!result.ok) {
+        dropped(String(result.body.code ?? `status_${result.status}`));
+        return;
+      }
+      this.log.info(`[adopt] took over pid ${pid} after its turn`, {
+        event: "session.adopt_deferred_fired",
+        sessionId,
+        pid,
+      });
+    } catch (err) {
+      dropped(err instanceof Error ? err.message : String(err));
+    } finally {
+      this.deferredAdopts.delete(sessionId);
+    }
+  }
+
+  /** Stop every pending after-turn takeover; server shutdown calls this. */
+  cancelDeferredAdopts(): void {
+    for (const { abort } of this.deferredAdopts.values()) abort.abort();
+    this.deferredAdopts.clear();
   }
 
   /**
