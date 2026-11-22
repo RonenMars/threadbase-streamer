@@ -14,7 +14,16 @@ export class BrowsePathNotFoundError extends Error {
   }
 }
 
-export async function resolveBrowsePath(browseRoot: string, relativePath: string): Promise<string> {
+/**
+ * `unrestricted` (the `unrestrictedBrowse` feature flag) drops the out-of-root
+ * check: `..` and absolute paths may leave `browseRoot`, which stays only the
+ * base that relative paths resolve against. Existence is still checked.
+ */
+export async function resolveBrowsePath(
+  browseRoot: string,
+  relativePath: string,
+  unrestricted = false,
+): Promise<string> {
   const normalizedRoot = resolve(browseRoot);
   // On Unix, if relativePath is already an absolute path under browseRoot, use it directly.
   // Only strip the leading separator for bare names like "/projectA" sent by the mobile browse
@@ -35,7 +44,7 @@ export async function resolveBrowsePath(browseRoot: string, relativePath: string
   // Build the allowed prefix with exactly one separator — normalizedRoot may already end with sep
   // when browseRoot is a drive root (e.g. "C:\"), which would otherwise create a double-sep prefix.
   const rootPrefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
-  if (!target.startsWith(rootPrefix) && target !== normalizedRoot) {
+  if (!unrestricted && !target.startsWith(rootPrefix) && target !== normalizedRoot) {
     throw new Error("Path outside browse root");
   }
   // Verify the path exists; surface a not-found as a typed error so the handler
@@ -94,10 +103,11 @@ export async function resolveAdditionalPaths(
   browseRoot: string,
   primaryPath: string,
   relativePaths: readonly string[],
+  unrestricted = false,
 ): Promise<string[]> {
   const resolved: string[] = [];
   for (const p of relativePaths) {
-    const target = canonicalizeProjectPath(await resolveBrowsePath(browseRoot, p));
+    const target = canonicalizeProjectPath(await resolveBrowsePath(browseRoot, p, unrestricted));
     const s = await stat(target);
     if (!s.isDirectory()) throw new Error(`Not a directory: ${target}`);
     resolved.push(target);

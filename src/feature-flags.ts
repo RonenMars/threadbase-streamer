@@ -154,6 +154,16 @@ export const FEATURE_FLAGS = {
     default: false,
     env: "THREADBASE_FEATURE_PEER_MESSAGING",
   },
+  unrestrictedBrowse: {
+    description:
+      "Remove the browse-root boundary: browse, mkdir, session start and resume, additional " +
+      "directories and pinned folders accept any path on this machine, not only paths under " +
+      "browse_root, and sessions are no longer told to stay inside it. browse_root still has to " +
+      "be set (relative paths resolve against it). Off by default: anyone holding the API key or " +
+      "a paired device can then read the file tree and start agents anywhere.",
+    default: false,
+    env: "THREADBASE_FEATURE_UNRESTRICTED_BROWSE",
+  },
   ptyHost: {
     description:
       "Keep live PTYs in a separate host process so a streamer restart can reconnect without " +
