@@ -223,16 +223,19 @@ describe.skipIf(!existsSync(CLI))("tb-streamer mcp (e2e)", () => {
   });
 
   describe("streamer_info", () => {
-    it("lists exactly the phase-1 tools, each with a description", async () => {
+    it("lists exactly the read-only tools, each with a description", async () => {
       const shim = await startShim(["--port", String(port)], childEnv(cfgOk));
       try {
         const { tools } = await shim.client.listTools();
-        // #1178-#1180 each extend this list; #1181 locks it at four.
+        // Phase 1 locked four (#1181); the read-tools batch adds three.
         expect(tools.map((t) => t.name)).toEqual([
           "streamer_info",
           "read_conversation",
           "list_sessions",
           "tail_terminal",
+          "search_conversations",
+          "list_projects",
+          "wait_for_turn",
         ]);
         const info = tools.find((t) => t.name === "streamer_info");
         expect(info).toBeDefined();

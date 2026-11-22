@@ -28,6 +28,21 @@ const inputSchema = {
   cursor: z.string().optional().describe("`nextCursor` from the previous page."),
 };
 
+/** The session shape every MCP tool returns; `wait_for_turn` reuses it. */
+export function toMcpSession(s: SessionResponse) {
+  return {
+    id: s.id,
+    name: s.sessionName ?? null,
+    provider: s.provider ?? null,
+    projectName: s.projectName,
+    projectPath: s.projectPath,
+    status: s.status,
+    needsYou: s.hasOpenPrompt,
+    ownership: s.ownership === "external" ? "external" : "threadbase",
+    lastActivityAt: s.lastActivityAt ?? null,
+  };
+}
+
 export const listSessionsTools: StreamerTool[] = [
   {
     name: "list_sessions",
@@ -73,17 +88,7 @@ export const listSessionsTools: StreamerTool[] = [
       } while (next && out.length < limit);
 
       return textResult({
-        sessions: out.map((s) => ({
-          id: s.id,
-          name: s.sessionName ?? null,
-          provider: s.provider ?? null,
-          projectName: s.projectName,
-          projectPath: s.projectPath,
-          status: s.status,
-          needsYou: s.hasOpenPrompt,
-          ownership: s.ownership === "external" ? "external" : "threadbase",
-          lastActivityAt: s.lastActivityAt ?? null,
-        })),
+        sessions: out.map(toMcpSession),
         nextCursor: next,
       });
     },
