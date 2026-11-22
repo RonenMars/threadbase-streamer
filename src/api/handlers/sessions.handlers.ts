@@ -132,6 +132,8 @@ export const RESUME_DISCOVERY_TIMEOUT_MS = 750;
 const DISCOVERY_TTL_MS = 15_000;
 
 export const ADOPT_KILL_TIMEOUT_MS = 5_000;
+/** Wait before the single respawn retry after a kill. */
+export const ADOPT_RESPAWN_RETRY_MS = 1_000;
 const ADOPT_KILL_POLL_MS = 100;
 
 // Hand off to Terminal: SIGINT grace, then the wait after SIGKILL, then how
@@ -3209,6 +3211,19 @@ export class SessionHandlers {
     if (deferred?.signal.aborted) {
       return { ok: false, status: 503, body: { code: "aborted" } };
     }
+    // Make before break: the terminal cannot be brought back once killed, so
+    // what would fail the respawn is checked while it is still running.
+    const provider = owner.provider ?? CLAUDE_CODE_PROVIDER;
+    if (locateProviderExe(provider) === null) {
+      return {
+        ok: false,
+        status: 503,
+        body: {
+          error: `The ${provider} CLI was not found on this server; not stopping the session`,
+          code: "PROVIDER_NOT_INSTALLED",
+        },
+      };
+    }
 
     if (owner.resumeId != null) {
       this.log.info(`[adopt] taking over codex rollout from pid ${owner.pid}`, {
@@ -3237,7 +3252,7 @@ export class SessionHandlers {
     // The provider has to be carried: `LiveSessionManager.start` defaults to
     // Claude when it is absent, so adopting a Codex session used to respawn it
     // as Claude against a Codex rollout id.
-    const session = await this.ptyManager.start(owner.spawnId, {
+    const startOptions = {
       provider: owner.provider,
       projectPath: owner.projectPath,
       projectName: owner.projectName,
@@ -3246,7 +3261,20 @@ export class SessionHandlers {
       claudeFlags: this.claudeFlags,
       claudeExtraArgs: this.claudeExtraArgs,
       ...(owner.provider !== COPILOT_PROVIDER && this.deps.spawnFlagOverrides()),
-    });
+    };
+    // The owner is already gone, so a transient spawn error (EMFILE, EAGAIN)
+    // gets one retry before the conversation is left for a manual resume.
+    const session = await this.ptyManager
+      .start(owner.spawnId, startOptions)
+      .catch(async (err: unknown) => {
+        this.log.warn("adopt: respawn failed after the kill; retrying once", {
+          event: "adopt.respawn_retry",
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        await new Promise((r) => setTimeout(r, ADOPT_RESPAWN_RETRY_MS));
+        return this.ptyManager.start(owner.spawnId, startOptions);
+      });
 
     this.sessionStore.addManaged(session);
     this.registryBoot.recordSessionSpawn(session);

@@ -20,6 +20,13 @@ vi.mock("../src/services/sessions/processSessionIds", async (importOriginal) => 
   readClaudeSessionRegistry: vi.fn(),
 }));
 
+// Overrides the suite-wide "CLI installed" stub so a test can take the CLI away.
+const cli = vi.hoisted(() => ({ path: "/mock/bin/provider-cli" as string | null }));
+vi.mock("../src/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/platform")>()),
+  locateProviderExe: () => cli.path,
+}));
+
 vi.mock("node-pty", () => {
   const { EventEmitter } = require("events");
   function makeMockProcess() {
@@ -166,6 +173,7 @@ describe("POST /api/sessions/:id/adopt-after-turn", () => {
   beforeEach(async () => {
     ptySpawn.mockClear();
     registry.mockReset();
+    cli.path = "/mock/bin/provider-cli";
 
     tmpBase = mkdtempSync(join(tmpdir(), "threadbase-adopt-after-turn-"));
     const configDir = join(tmpBase, "profile");
@@ -287,6 +295,32 @@ describe("POST /api/sessions/:id/adopt-after-turn", () => {
   // Any signal other than the liveness probe (0) is a kill.
   const killSignals = (spy: ReturnType<typeof killableOwner>["spy"]) =>
     spy.mock.calls.filter(([, sig]) => sig !== 0);
+
+  it("does not kill when the CLI the respawn needs is missing", async () => {
+    discover();
+    const owner = killableOwner();
+    registry.mockImplementation(async () => entry({ status: "idle", statusUpdatedAt: Date.now() }));
+    const run = vi.spyOn(handlers(), "runDeferredAdopt");
+    expect((await post("adopt-after-turn", { pid: PID })).status).toBe(202);
+    cli.path = null;
+    await run.mock.results[0].value;
+    expect(owner.killed()).toBe(false);
+    expect(ptySpawn).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it("retries a respawn that fails after the kill once", async () => {
+    discover();
+    const owner = killableOwner();
+    registry.mockImplementation(async () => entry({ status: "idle", statusUpdatedAt: Date.now() }));
+    ptySpawn.mockImplementationOnce(() => {
+      throw new Error("EAGAIN");
+    });
+    const run = vi.spyOn(handlers(), "runDeferredAdopt");
+    expect((await post("adopt-after-turn", { pid: PID })).status).toBe(202);
+    await run.mock.results[0].value;
+    expect(owner.killed()).toBe(true);
+    expect(ptySpawn).toHaveBeenCalledTimes(2);
+  }, 15_000);
 
   it("schedules one job for two concurrent requests", async () => {
     discover();
