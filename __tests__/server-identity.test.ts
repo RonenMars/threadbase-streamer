@@ -268,5 +268,6 @@ describe("server identity key over HTTP", () => {
     expect(body.devicesDurable).toBe(true);
     expect(body.recentDirs).toBe(true);
     expect(body.savedItems).toBe(true);
+    expect(body.questionOther).toBe(true);
   });
 });

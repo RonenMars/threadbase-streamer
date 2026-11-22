@@ -442,6 +442,11 @@ export const createMiscRoutes = (
       // This server serves /api/saved-items, the favorites list shared by every
       // paired device. Absent on older servers, where mobile keeps favorites local.
       savedItems: true,
+      // This server answers an AskUserQuestion card's two Claude Code rows on
+      // POST /api/sessions/:id/answer: "Chat about this" by label and free text as
+      // { other }. Absent on older servers, where the same bodies are refused or
+      // decline the question, so mobile hides both rows.
+      questionOther: true,
       // Delivery capability, not endpoint support: whether this server can
       // actually send a push, so mobile can hide an affordance instead of
       // registering tokens nothing will ever send to. Absent on older servers,

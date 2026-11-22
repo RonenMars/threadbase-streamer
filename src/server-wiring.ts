@@ -41,6 +41,7 @@ import {
   type WaitingInputNotifier,
 } from "./services/push/waitingInputNotifier";
 import { permissionGateKey } from "./services/questions/detectPermissionGate";
+import { countRealOptions } from "./services/questions/terminalOnlyRows";
 import { type Capability, hasCapability, type Principal } from "./services/security/capabilities";
 import type { ReconcileVerdict } from "./services/sessions/reconcileSessions";
 import type { SessionStore } from "./session-store";
@@ -474,7 +475,8 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
       deps.sessionHandlers().handleLiveQuestion(sessionId, questions, occurrenceId);
       // One question: say how many options it offers. Several: say nothing
       // about options, since there is no one count that describes them.
-      const optionCount = questions.length === 1 ? questions[0].options.length : undefined;
+      const optionCount =
+        questions.length === 1 ? countRealOptions(questions[0].options) : undefined;
       notifyPrompt(sessionId, "question", true, { optionCount });
     },
     onLiveQuestionGone: (sessionId) => {
