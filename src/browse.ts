@@ -136,3 +136,16 @@ export function dropCoveredPaths(primaryPath: string, paths: readonly string[]):
   }
   return paths.filter((p, i) => kept.has(p) && paths.indexOf(p) === i);
 }
+
+/** Cuts a listing to `limit` entries, keeping directories first. */
+export function capEntries(
+  directories: Array<{ name: string }>,
+  files: Array<{ name: string }>,
+  limit: number,
+) {
+  return {
+    directories: directories.slice(0, limit),
+    files: files.slice(0, Math.max(0, limit - directories.length)),
+    truncated: directories.length + files.length > limit,
+  };
+}
