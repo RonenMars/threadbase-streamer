@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import type { Dirent } from "fs";
 import { lstat, readdir, realpath } from "fs/promises";
-import { basename, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import {
   BrowsePathNotFoundError,
   capEntries,
@@ -22,6 +22,16 @@ export class OutsideBrowseRootError extends Error {
  * real path. Unlike resolveBrowsePath, containment is checked on the realpath,
  * so a symlink inside the cwd cannot lead out of browseRoot.
  */
+async function deepestExistingReal(path: string): Promise<string> {
+  for (let p = path; ; p = dirname(p)) {
+    try {
+      return await realpath(p);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT" || dirname(p) === p) throw err;
+    }
+  }
+}
+
 export async function resolveSessionDir(
   browseRoot: string,
   cwd: string,
@@ -35,9 +45,10 @@ export async function resolveSessionDir(
     real = await realpath(target);
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
-    // Containment first: a missing path outside the root must answer exactly
-    // like an existing one, or the 404 maps the filesystem beyond browseRoot.
-    if (root && !isSameOrInside(target, root) && !isSameOrInside(target, resolve(browseRoot))) {
+    // Containment first, judged on the deepest ancestor that exists: a missing
+    // path outside the root (or behind a symlink that leaves it) must answer
+    // exactly like an existing one, or the 404 maps the filesystem beyond it.
+    if (root && !isSameOrInside(await deepestExistingReal(target), root)) {
       throw new OutsideBrowseRootError();
     }
     throw new BrowsePathNotFoundError(`Path not found: ${dir}`);

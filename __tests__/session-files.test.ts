@@ -95,6 +95,25 @@ describe("resolveSessionDir", () => {
     await expect(resolveSessionDir(root, cwd, "../../etc")).rejects.toThrow("outside browse root");
   });
 
+  it("does not reveal what exists behind a symlink that leaves the root", async () => {
+    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    try {
+      mkdirSync(join(elsewhere, "real"));
+      symlinkSync(elsewhere, join(cwd, "link"));
+      await expect(resolveSessionDir(root, cwd, "link/real")).rejects.toThrow(
+        "outside browse root",
+      );
+      await expect(resolveSessionDir(root, cwd, "link/missing")).rejects.toThrow(
+        "outside browse root",
+      );
+      await expect(resolveSessionDir(root, cwd, "link/missing/deeper")).rejects.toThrow(
+        "outside browse root",
+      );
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
   it("throws BrowsePathNotFoundError for a missing dir", async () => {
     await expect(resolveSessionDir(root, cwd, "nope")).rejects.toBeInstanceOf(
       BrowsePathNotFoundError,
