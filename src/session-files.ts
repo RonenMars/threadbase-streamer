@@ -1,7 +1,21 @@
 import { execFile } from "child_process";
-import { readdir, realpath } from "fs/promises";
-import { basename, join, resolve, sep } from "path";
-import { BrowsePathNotFoundError, capEntries, listDirectories, listFiles } from "./browse";
+import type { Dirent } from "fs";
+import { lstat, readdir, realpath } from "fs/promises";
+import { basename, join, resolve } from "path";
+import {
+  BrowsePathNotFoundError,
+  capEntries,
+  isSameOrInside,
+  listDirectories,
+  listFiles,
+} from "./browse";
+
+export class OutsideBrowseRootError extends Error {
+  constructor() {
+    super("Path outside browse root");
+    this.name = "OutsideBrowseRootError";
+  }
+}
 
 /**
  * Resolves `dir` relative to the SESSION cwd (not browseRoot) and returns the
@@ -14,20 +28,21 @@ export async function resolveSessionDir(
   dir: string,
   unrestricted = false,
 ): Promise<string> {
+  const target = resolve(cwd, dir);
+  const root = unrestricted ? null : await realpath(resolve(browseRoot));
   let real: string;
   try {
-    real = await realpath(resolve(cwd, dir));
+    real = await realpath(target);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-      throw new BrowsePathNotFoundError(`Path not found: ${dir}`);
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+    // Containment first: a missing path outside the root must answer exactly
+    // like an existing one, or the 404 maps the filesystem beyond browseRoot.
+    if (root && !isSameOrInside(target, root) && !isSameOrInside(target, resolve(browseRoot))) {
+      throw new OutsideBrowseRootError();
     }
-    throw err;
+    throw new BrowsePathNotFoundError(`Path not found: ${dir}`);
   }
-  if (!unrestricted) {
-    const root = await realpath(resolve(browseRoot));
-    const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
-    if (real !== root && !real.startsWith(prefix)) throw new Error("Path outside browse root");
-  }
+  if (root && !isSameOrInside(real, root)) throw new OutsideBrowseRootError();
   return real;
 }
 
@@ -70,7 +85,13 @@ async function walk(root: string, maxEntries: number, deadline: number) {
   const stack = [""];
   while (stack.length) {
     const rel = stack.pop() as string;
-    for (const e of await readdir(join(root, rel), { withFileTypes: true })) {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(join(root, rel), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
       if (++seen > maxEntries || Date.now() > deadline) return { paths, truncated: true };
       if (e.isDirectory()) {
         if (e.name !== "node_modules" && !e.name.startsWith("."))
@@ -105,7 +126,8 @@ export async function searchSessionFiles(cwd: string, query: string, opts: Searc
   let paths: string[];
   let truncated = false;
   try {
-    paths = await execGit(cwd, opts.budgetMs);
+    // Git gets two thirds so a timeout still leaves the walk a real slice of the budget.
+    paths = await execGit(cwd, Math.ceil((opts.budgetMs * 2) / 3));
     if (paths.length > maxEntries) {
       paths = paths.slice(0, maxEntries);
       truncated = true;
@@ -114,12 +136,25 @@ export async function searchSessionFiles(cwd: string, query: string, opts: Searc
     ({ paths, truncated } = await walk(cwd, maxEntries, deadline));
   }
   const q = query.toLowerCase();
-  const ranked = paths
+  const ranked = [...new Set(paths)]
+    .filter((path) => !path.endsWith("/"))
     .map((path) => ({ path, t: tier(path, q) }))
     .filter((m) => m.t >= 0)
     .sort((a, b) => a.t - b.t || a.path.length - b.path.length || a.path.localeCompare(b.path));
+  // Git lists tracked files that were since deleted, so keep only paths that still exist.
+  const files: { path: string }[] = [];
+  for (const { path } of ranked) {
+    if (files.length > opts.limit) break;
+    if (
+      await lstat(join(cwd, path)).then(
+        () => true,
+        () => false,
+      )
+    )
+      files.push({ path });
+  }
   return {
-    files: ranked.slice(0, opts.limit).map(({ path }) => ({ path })),
-    truncated: truncated || ranked.length > opts.limit,
+    files: files.slice(0, opts.limit),
+    truncated: truncated || files.length > opts.limit,
   };
 }

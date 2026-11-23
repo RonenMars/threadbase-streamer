@@ -1,5 +1,13 @@
 import { execFileSync } from "child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { BrowsePathNotFoundError } from "../src/browse";
@@ -66,6 +74,25 @@ describe("resolveSessionDir", () => {
     } finally {
       rmSync(elsewhere, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a sibling that only shares the root's string prefix", async () => {
+    const sibling = `${root}-evil`;
+    mkdirSync(sibling);
+    try {
+      await expect(resolveSessionDir(root, sibling, "")).rejects.toThrow("outside browse root");
+      symlinkSync(sibling, join(cwd, "link"));
+      await expect(resolveSessionDir(root, cwd, "link")).rejects.toThrow("outside browse root");
+    } finally {
+      rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reveal whether a path outside the browse root exists", async () => {
+    await expect(resolveSessionDir(root, cwd, "../../etc/nope")).rejects.toThrow(
+      "outside browse root",
+    );
+    await expect(resolveSessionDir(root, cwd, "../../etc")).rejects.toThrow("outside browse root");
   });
 
   it("throws BrowsePathNotFoundError for a missing dir", async () => {
@@ -163,6 +190,77 @@ describe("searchSessionFiles", () => {
     touch("src/index.js");
     const out = await searchSessionFiles(cwd, "index", { limit: 10, budgetMs: 2000 });
     expect(out.files.map((f) => f.path)).toEqual(["src/index.js"]);
+  });
+
+  it("skips an unreadable subdirectory instead of failing the walk", async () => {
+    touch("open/index.js");
+    touch("locked/index.js");
+    chmodSync(join(cwd, "locked"), 0o000);
+    try {
+      const out = await searchSessionFiles(cwd, "index", { limit: 10, budgetMs: 2000 });
+      expect(out.files.map((f) => f.path)).toEqual(["open/index.js"]);
+    } finally {
+      chmodSync(join(cwd, "locked"), 0o755);
+    }
+  });
+
+  it("does not return a tracked file that was deleted", async () => {
+    gitInit();
+    touch("gone.ts");
+    touch("kept.ts");
+    execFileSync("git", ["add", "."], { cwd });
+    rmSync(join(cwd, "gone.ts"));
+    const out = await searchSessionFiles(cwd, "ts", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual(["kept.ts"]);
+  });
+
+  it("does not flag truncation for a deleted match beyond the limit", async () => {
+    gitInit();
+    touch("gone.ts");
+    touch("kept.ts");
+    execFileSync("git", ["add", "."], { cwd });
+    rmSync(join(cwd, "gone.ts"));
+    const out = await searchSessionFiles(cwd, "ts", { limit: 1, budgetMs: 2000 });
+    expect(out).toEqual({ files: [{ path: "kept.ts" }], truncated: false });
+  });
+
+  it("does not return a nested repository as a file", async () => {
+    gitInit();
+    mkdirSync(join(cwd, "sub"));
+    execFileSync("git", ["init", "-q"], { cwd: join(cwd, "sub") });
+    touch("sub/inner.ts");
+    const out = await searchSessionFiles(cwd, "sub", { limit: 10, budgetMs: 2000 });
+    expect(out.files).toEqual([]);
+  });
+
+  it("lists a path once while the index holds it at several merge stages", async () => {
+    gitInit();
+    touch("conflict.ts");
+    const sha = execFileSync("git", ["hash-object", "-w", "conflict.ts"], { cwd })
+      .toString()
+      .trim();
+    execFileSync("git", ["update-index", "--index-info"], {
+      cwd,
+      input: [1, 2, 3].map((n) => `100644 ${sha} ${n}\tconflict.ts\n`).join(""),
+    });
+    const out = await searchSessionFiles(cwd, "conflict", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual(["conflict.ts"]);
+  });
+
+  it("still walks after git times out, within the same budget", async () => {
+    const bin = mkdtempSync(join(tmpdir(), "tb-fake-git-"));
+    writeFileSync(join(bin, "git"), "#!/bin/sh\nexec sleep 5\n", { mode: 0o755 });
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${bin}:${oldPath}`;
+    try {
+      touch("src/index.js");
+      const out = await searchSessionFiles(cwd, "index", { limit: 10, budgetMs: 900 });
+      expect(out.files.map((f) => f.path)).toEqual(["src/index.js"]);
+      expect(out.truncated).toBe(false);
+    } finally {
+      process.env.PATH = oldPath;
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 
   it("flags truncation when the walk exceeds its entry budget", async () => {

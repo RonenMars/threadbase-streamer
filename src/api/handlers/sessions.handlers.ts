@@ -93,6 +93,7 @@ import type { IdempotencyStore } from "../../services/sessions/idempotency";
 import { readIdempotencyKey } from "../../services/sessions/idempotency";
 import {
   listSessionDir,
+  OutsideBrowseRootError,
   parseLimit,
   resolveSessionDir,
   searchSessionFiles,
@@ -2518,7 +2519,9 @@ export class SessionHandlers {
         json(res, 404, { error: err.message, code: "PATH_NOT_FOUND" });
         return;
       }
-      json(res, 400, { error: err instanceof Error ? err.message : "Listing failed" });
+      json(res, 400, {
+        error: err instanceof OutsideBrowseRootError ? err.message : "Listing failed",
+      });
     }
   }
 
@@ -2539,7 +2542,9 @@ export class SessionHandlers {
       const abs = await resolveSessionDir(this.browseRoot, cwd, "", this.deps.browseUnrestricted());
       json(res, 200, await searchSessionFiles(abs, q, { limit, budgetMs: FILE_SEARCH_BUDGET_MS }));
     } catch (err) {
-      json(res, 400, { error: err instanceof Error ? err.message : "Search failed" });
+      json(res, 400, {
+        error: err instanceof OutsideBrowseRootError ? err.message : "Search failed",
+      });
     }
   }
 

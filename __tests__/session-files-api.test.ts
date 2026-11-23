@@ -3,10 +3,15 @@ import type { ServerResponse } from "http";
 import { tmpdir } from "os";
 import { join } from "path";
 import { SessionHandlers, type SessionHandlersDeps } from "../src/api/handlers/sessions.handlers";
+import { authMiddleware } from "../src/api/middleware/auth.middleware";
 import { createMiscRoutes } from "../src/api/routes/misc.routes";
 import { capEntries } from "../src/browse";
 import { resolveFeatureFlags } from "../src/feature-flags";
-import { requiredCapability } from "../src/services/security/capabilities";
+import {
+  capabilitiesForPreset,
+  type Principal,
+  requiredCapability,
+} from "../src/services/security/capabilities";
 import type { SessionStore } from "../src/session-store";
 
 function fakeRes() {
@@ -101,6 +106,11 @@ describe("GET /api/sessions/:id/files", () => {
     expect(out).toMatchObject({ status: 404, body: { code: "PATH_NOT_FOUND" } });
   });
 
+  it("answers 400 without leaking the server path when the dir is a file", async () => {
+    const out = await list(handlers(), "s1", "?dir=README.md");
+    expect(out).toEqual({ status: 400, body: { error: "Listing failed" } });
+  });
+
   it("answers 400 for a dir that escapes the browse root", async () => {
     expect((await list(handlers(), "s1", "?dir=../..")).status).toBe(400);
   });
@@ -191,8 +201,76 @@ describe("session file routes capability", () => {
     expect(requiredCapability("/api/sessions/abc/files", "POST")).toBe("session:control");
   });
 
+  it.each([
+    "/api/sessions/abc/%66iles",
+    "/api/sessions/abc/%66iles/search",
+    "/api/sessions/abc/files/%73earch",
+  ])("classifies the path the router will serve, not the raw bytes: GET %s", (path) => {
+    expect(requiredCapability(path, "GET")).toBe("fs:browse");
+  });
+
+  it("classifies an encoded /api/browse as fs:browse", () => {
+    expect(requiredCapability("/api/%62rowse", "GET")).toBe("fs:browse");
+  });
+
+  it("fails closed on a malformed escape", () => {
+    expect(requiredCapability("/api/sessions/abc/files%E0%A4%A", "GET")).toBe("admin");
+  });
+
   it("leaves other session reads on history:read", () => {
     expect(requiredCapability("/api/sessions/abc/output", "GET")).toBe("history:read");
+  });
+});
+
+describe("auth middleware on session file routes", () => {
+  const readOnly: Principal = {
+    kind: "device",
+    deviceId: "d1",
+    capabilities: capabilitiesForPreset("read-only"),
+  } as Principal;
+
+  async function status(path: string, principal: Principal) {
+    let code: number | undefined;
+    let nexts = 0;
+    const c = {
+      req: {
+        url: `http://127.0.0.1:8766${path}`,
+        method: "GET",
+        header: () => undefined,
+        query: () => undefined,
+      },
+      env: { incoming: { socket: { remoteAddress: "127.0.0.1" } } },
+      get: () => principal,
+      set: () => undefined,
+      json: (_b: unknown, s: number) => {
+        code = s;
+        return undefined as unknown as Response;
+      },
+    } as unknown as Parameters<ReturnType<typeof authMiddleware>>[0];
+    const mw = authMiddleware({
+      apiKey: "tb_0123456789abcdef0123456789abcdef",
+      localNoAuth: false,
+      devicesRepo: () => null,
+    } as unknown as Parameters<typeof authMiddleware>[0]);
+    await mw(c, async () => {
+      nexts += 1;
+    });
+    return { code, nexts };
+  }
+
+  it.each([
+    "/api/sessions/abc/files",
+    "/api/sessions/abc/%66iles",
+    "/api/sessions/abc/%66iles/search",
+  ])("refuses a read-only principal on %s", async (path) => {
+    expect(await status(path, readOnly)).toEqual({ code: 403, nexts: 0 });
+  });
+
+  it("still lets a read-only principal read other session routes", async () => {
+    expect(await status("/api/sessions/abc/output", readOnly)).toEqual({
+      code: undefined,
+      nexts: 1,
+    });
   });
 });
 

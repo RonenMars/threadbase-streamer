@@ -157,7 +157,16 @@ const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]
   ["/internal/sessions", "admin"],
 ];
 
-export function requiredCapability(path: string, method: string): Capability | null {
+export function requiredCapability(rawPath: string, method: string): Capability | null {
+  // The router matches the percent-decoded path, so classifying the raw bytes
+  // lets `/api/sessions/x/%66iles` reach a handler this function never saw.
+  // A malformed escape is refused outright rather than guessed at.
+  let path: string;
+  try {
+    path = decodeURI(rawPath);
+  } catch {
+    return "admin";
+  }
   // A read of the session list is not the same authority as driving a session.
   // GET /api/sessions/:id and its sub-resources are reads; writes to them are
   // control. Without this split a read-only device could not see a session at

@@ -115,7 +115,7 @@ export async function resolveAdditionalPaths(
   return dropCoveredPaths(canonicalizeProjectPath(primaryPath), resolved);
 }
 
-function isSameOrInside(child: string, parent: string): boolean {
+export function isSameOrInside(child: string, parent: string): boolean {
   if (child === parent) return true;
   const prefix = parent.endsWith(sep) ? parent : `${parent}${sep}`;
   return child.startsWith(prefix);
