@@ -22,7 +22,7 @@ const touch = (rel: string) => {
 };
 
 beforeEach(() => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "tb-session-files-")));
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-session-files-")));
   cwd = join(root, "proj");
   mkdirSync(cwd);
 });
@@ -49,7 +49,7 @@ describe("resolveSessionDir", () => {
   });
 
   it("rejects a session cwd outside the browse root", async () => {
-    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    const elsewhere = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
     try {
       await expect(resolveSessionDir(root, elsewhere, "")).rejects.toThrow("outside browse root");
     } finally {
@@ -58,7 +58,7 @@ describe("resolveSessionDir", () => {
   });
 
   it("allows an outside cwd when browsing is unrestricted", async () => {
-    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    const elsewhere = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
     try {
       expect(await resolveSessionDir(root, elsewhere, "", true)).toBe(elsewhere);
     } finally {
@@ -67,7 +67,7 @@ describe("resolveSessionDir", () => {
   });
 
   it("rejects a symlink inside the cwd that points outside the root", async () => {
-    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    const elsewhere = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
     try {
       symlinkSync(elsewhere, join(cwd, "link"));
       await expect(resolveSessionDir(root, cwd, "link")).rejects.toThrow("outside browse root");
@@ -96,7 +96,7 @@ describe("resolveSessionDir", () => {
   });
 
   it("does not reveal what exists behind a symlink that leaves the root", async () => {
-    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    const elsewhere = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
     try {
       mkdirSync(join(elsewhere, "real"));
       symlinkSync(elsewhere, join(cwd, "link"));
@@ -211,17 +211,21 @@ describe("searchSessionFiles", () => {
     expect(out.files.map((f) => f.path)).toEqual(["src/index.js"]);
   });
 
-  it("skips an unreadable subdirectory instead of failing the walk", async () => {
-    touch("open/index.js");
-    touch("locked/index.js");
-    chmodSync(join(cwd, "locked"), 0o000);
-    try {
-      const out = await searchSessionFiles(cwd, "index", { limit: 10, budgetMs: 2000 });
-      expect(out.files.map((f) => f.path)).toEqual(["open/index.js"]);
-    } finally {
-      chmodSync(join(cwd, "locked"), 0o755);
-    }
-  });
+  // chmod 000 does not make a directory unreadable on Windows
+  it.skipIf(process.platform === "win32")(
+    "skips an unreadable subdirectory instead of failing the walk",
+    async () => {
+      touch("open/index.js");
+      touch("locked/index.js");
+      chmodSync(join(cwd, "locked"), 0o000);
+      try {
+        const out = await searchSessionFiles(cwd, "index", { limit: 10, budgetMs: 2000 });
+        expect(out.files.map((f) => f.path)).toEqual(["open/index.js"]);
+      } finally {
+        chmodSync(join(cwd, "locked"), 0o755);
+      }
+    },
+  );
 
   it("does not return a tracked file that was deleted", async () => {
     gitInit();
