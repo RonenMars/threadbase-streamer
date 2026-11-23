@@ -129,6 +129,24 @@ export interface MessageIndexRow {
   uuid: string | null;
   role: string | null;
   ts: number | null;
+  /** 1 when this is a reply a user can read (see `countsForUnread`). Defaults to 0. */
+  counts_for_unread?: number;
+}
+
+/**
+ * A reply the user can read: an assistant line with non-empty text that is not
+ * a sidechain and carries a timestamp. A thinking-only line has no text, so the
+ * text check already excludes it; a line with both is still a reply. Only these can be
+ * unread (docs/plans/unread-messages-plan.md §2).
+ */
+export function countsForUnread(msg: ConversationMessage): boolean {
+  return (
+    msg.role === "assistant" &&
+    msg.text.trim() !== "" &&
+    !msg.isSidechain &&
+    !!msg.timestamp &&
+    !Number.isNaN(Date.parse(msg.timestamp))
+  );
 }
 
 export interface ScannerMeta {
@@ -361,6 +379,7 @@ export class ConversationCache {
     deleteFileState: Database.Statement;
     deleteMessageIndex: Database.Statement;
     insertMessageIndexRow: Database.Statement;
+    refreshLastCountable: Database.Statement;
     getMessageIndexWindow: Database.Statement;
     getIndexedMessageCount: Database.Statement;
   };
@@ -619,14 +638,23 @@ export class ConversationCache {
       ),
       insertMessageIndexRow: db.prepare(
         `INSERT INTO conversation_message_index
-           (conversation_id, message_index, byte_offset, byte_length, uuid, role, ts)
-         VALUES (@conversation_id, @message_index, @byte_offset, @byte_length, @uuid, @role, @ts)
+           (conversation_id, message_index, byte_offset, byte_length, uuid, role, ts, counts_for_unread)
+         VALUES (@conversation_id, @message_index, @byte_offset, @byte_length, @uuid, @role, @ts, @counts_for_unread)
          ON CONFLICT(conversation_id, message_index) DO UPDATE SET
-           byte_offset = excluded.byte_offset,
-           byte_length = excluded.byte_length,
-           uuid        = excluded.uuid,
-           role        = excluded.role,
-           ts          = excluded.ts`,
+           byte_offset      = excluded.byte_offset,
+           byte_length      = excluded.byte_length,
+           uuid             = excluded.uuid,
+           role             = excluded.role,
+           ts               = excluded.ts,
+           counts_for_unread = excluded.counts_for_unread`,
+      ),
+      // Derived from the index, so a rescan or rebuild can never leave it
+      // disagreeing with the rows it summarises. Uses the partial index.
+      refreshLastCountable: db.prepare(
+        `UPDATE conversation_meta SET last_countable_ts =
+           (SELECT MAX(ts) FROM conversation_message_index
+             WHERE conversation_id = @id AND counts_for_unread = 1)
+         WHERE id = @id`,
       ),
       getMessageIndexWindow: db.prepare(
         `SELECT message_index, byte_offset, byte_length, uuid, role, ts
@@ -674,10 +702,43 @@ export class ConversationCache {
     this.indexParseState.delete(path);
   }
 
+  /**
+   * Countable messages of a conversation (see `countsForUnread`), oldest first.
+   * `above` is exclusive, `from`/`through` inclusive, all epoch ms.
+   */
+  listCountable(
+    conversationId: string,
+    opts: { above?: number; from?: number; through?: number; limit?: number } = {},
+  ): { uuid: string | null; ts: number }[] {
+    return this.db
+      .prepare(
+        `SELECT uuid, ts FROM conversation_message_index
+         WHERE conversation_id = ? AND counts_for_unread = 1
+           AND ts > ? AND ts >= ? AND ts <= ?
+         ORDER BY ts, message_index LIMIT ?`,
+      )
+      .all(
+        conversationId,
+        opts.above ?? -1,
+        opts.from ?? 0,
+        opts.through ?? Number.MAX_SAFE_INTEGER,
+        opts.limit ?? -1,
+      ) as { uuid: string | null; ts: number }[];
+  }
+
+  /** Newest countable timestamp of a conversation, or null when it has none. */
+  getLastCountableTs(conversationId: string): number | null {
+    const row = this.db
+      .prepare("SELECT last_countable_ts AS t FROM conversation_meta WHERE id = ?")
+      .get(conversationId) as { t: number | null } | undefined;
+    return row?.t ?? null;
+  }
+
   /** Append/replace index rows in one transaction. */
   appendMessageIndexRows(rows: MessageIndexRow[]): void {
     const tx = this.db.transaction((batch: MessageIndexRow[]) => {
-      for (const r of batch) this.stmts.insertMessageIndexRow.run(r);
+      for (const r of batch) this.stmts.insertMessageIndexRow.run({ counts_for_unread: 0, ...r });
+      if (batch.length > 0) this.stmts.refreshLastCountable.run({ id: batch[0].conversation_id });
     });
     tx(rows);
   }
@@ -869,6 +930,7 @@ export class ConversationCache {
         uuid: msg.uuid ?? null,
         role: msg.role ?? null,
         ts: msg.timestamp ? Date.parse(msg.timestamp) || null : null,
+        counts_for_unread: countsForUnread(msg) ? 1 : 0,
       });
       seqs.push(nextIndex);
       nextIndex++;
@@ -876,6 +938,7 @@ export class ConversationCache {
 
     const tx = this.db.transaction(() => {
       for (const r of rows) this.stmts.insertMessageIndexRow.run(r);
+      if (rows.length > 0) this.stmts.refreshLastCountable.run({ id: convId });
       this.stmts.upsertFileState.run({
         path: filePath,
         identity: fileIdentity(stat),
@@ -963,6 +1026,7 @@ export class ConversationCache {
               uuid: msg.uuid ?? null,
               role: msg.role ?? null,
               ts: msg.timestamp ? Date.parse(msg.timestamp) || null : null,
+              counts_for_unread: countsForUnread(msg) ? 1 : 0,
             });
             nextIndex++;
           }

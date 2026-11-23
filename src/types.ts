@@ -531,7 +531,14 @@ export type WSMessage =
   | { type: "host_pressure_cleared"; updatedAt: string }
   // The shared saved-items list changed; clients refetch when `revision` is
   // newer than theirs. Additive; old clients ignore it.
-  | { type: "saved_items_changed"; revision: number };
+  | { type: "saved_items_changed"; revision: number }
+  | {
+      type: "read_state_changed";
+      conversationId: string;
+      readThrough: string;
+      unread: boolean;
+      read: { key: string; readAt: number }[];
+    };
 
 /** Coarse host-starvation level pushed on `host_pressure`. Never `ok` on the wire. */
 export type HostPressureLevel = "elevated" | "critical";

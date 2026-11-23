@@ -697,6 +697,7 @@ export type ApiDepsWiring = {
   browseRoot: () => string | null;
   browseUnrestricted: ApiDeps["browseUnrestricted"];
   browserCors: string | undefined;
+  resolveConversationLookupId: (id: string) => string;
   ptyGracePeriodMs: number;
   rotateApiKey: ApiDeps["rotateApiKey"];
   claudeFlagsConfig: ApiDeps["claudeFlagsConfig"];
@@ -784,6 +785,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     wsHub: deps.wsHub,
     cache: () => deps.cache(),
     isExcludedSubagent: (id) => deps.conversationHandlers.isExcludedSubagent(id),
+    resolveConversationLookupId: (id) => deps.resolveConversationLookupId(id),
     cacheMonitor: () => deps.cacheMonitor(),
     hostPressureMonitor: () => deps.hostPressureMonitor(),
     pushRepo: () => deps.pushRepo(),
