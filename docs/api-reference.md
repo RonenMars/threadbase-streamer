@@ -20,13 +20,15 @@ The read-only MCP server that wraps part of this API is documented in [docs/agen
 | PATCH | `/api/sessions/:id/effort` | Switch a LIVE session's effort: `{effort}` (`low`…`max`) → 202. Same error codes |
 | GET | `/api/sessions/:id/output` | Get terminal output buffer → `{output}`. With `?lines=N` (integer 1–500) it answers the last N rows of the rendered screen instead → `{ lines: string[] }`; a malformed or out-of-range N is 400. An unknown id returns an empty 200 in both shapes (`{output: ""}` / `{lines: []}`) |
 | POST | `/api/sessions/:id/files` | Upload a file attachment |
+| GET | `/api/sessions/:id/files` | List a directory of the session's working tree. `dir` is relative to the session cwd (default: the cwd), `limit` 1–1000 (default 500). Answers `{ path, directories, files, truncated }`. Contained by the browse root; 403 `BROWSE_ROOT_NOT_SET`, 404 `PATH_NOT_FOUND` / `NO_SESSION_CWD`. Requires `fs:browse`. |
+| GET | `/api/sessions/:id/files/search` | Fuzzy-search the session's working tree. `q` 1–200 characters, `limit` 1–200 (default 50). Honours `.gitignore` in a git repo; elsewhere a bounded walk that skips `node_modules` and dot-directories. Answers `{ files: [{ path }], truncated }`. Requires `fs:browse`. |
 | GET | `/api/conversations` | Paginated conversation history |
 | GET | `/api/conversations/:id` | Full conversation with messages |
 | GET | `/project-chats` | Active sessions + historical conversations, combined |
 | GET | `/api/projects/summary` | Projects with at least one cached conversation, paginated (`limit`, `offset`) |
 | GET | `/api/projects` | **Retired.** Always 410 `{error}` pointing at `/api/projects/summary`; the query string is ignored |
 | GET | `/api/search?q=...` | Full-text search across conversations |
-| GET | `/api/browse` | Browse the file system |
+| GET | `/api/browse` | Browse the file system. Optional `limit` (1–1000) caps the listing, directories first, and adds `truncated`; without it the response is unchanged |
 | GET | `/api/profiles` | List configured scan profiles as a bare array of `{ id, label, emoji, enabled }` in config order; `[]` when none are configured. Never includes `configDir`, under any capability |
 | GET | `/api/config/claude-flags` | Allowlisted Claude CLI flags: `{registry, values, extraArgs, persisted}` (admin) |
 | PUT | `/api/config/claude-flags` | Update those flags; 403 while `--local-no-auth` is active (admin) |

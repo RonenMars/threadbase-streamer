@@ -162,6 +162,13 @@ export function requiredCapability(path: string, method: string): Capability | n
   // GET /api/sessions/:id and its sub-resources are reads; writes to them are
   // control. Without this split a read-only device could not see a session at
   // all, which would make the mode useless.
+  // Listing and searching a session's working tree is file browsing, not a session read.
+  if (
+    (method === "GET" || method === "HEAD") &&
+    /^\/api\/sessions\/[^/]+\/files(\/|$)/.test(path)
+  ) {
+    return "fs:browse";
+  }
   if (path.startsWith("/api/sessions") && (method === "GET" || method === "HEAD")) {
     return "history:read";
   }

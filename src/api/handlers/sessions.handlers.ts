@@ -10,7 +10,12 @@ import type { AgentClient } from "../../agent/agent-client";
 import type { AgentConfig } from "../../agent/agent-config";
 import { handleSendAgentInput } from "../../agent/handle-send-agent-input";
 import { handleStartAgentSession } from "../../agent/handle-start-agent-session";
-import { dropCoveredPaths, resolveAdditionalPaths, resolveBrowsePath } from "../../browse";
+import {
+  BrowsePathNotFoundError,
+  dropCoveredPaths,
+  resolveAdditionalPaths,
+  resolveBrowsePath,
+} from "../../browse";
 import type { ClaudeFlagValues, EffortLevel, PermissionMode } from "../../claude-flags";
 import { listClaudeSkills } from "../../claude-skills";
 import type { ConversationCache } from "../../conversation-cache";
@@ -86,6 +91,12 @@ import {
 } from "../../services/sessions/conversationBusy";
 import type { IdempotencyStore } from "../../services/sessions/idempotency";
 import { readIdempotencyKey } from "../../services/sessions/idempotency";
+import {
+  listSessionDir,
+  parseLimit,
+  resolveSessionDir,
+  searchSessionFiles,
+} from "../../session-files";
 import type { SessionRegistryBoot } from "../../session-registry-boot";
 import type { SessionStore } from "../../session-store";
 import type { SessionWatchers } from "../../session-watchers";
@@ -101,6 +112,11 @@ import type {
 import { saveUploadFile } from "../../uploads";
 import type { WSHub } from "../../ws-hub";
 import { MAX_OUTPUT_LINES } from "../output-lines";
+
+const MAX_FILE_SEARCH_QUERY = 200;
+// A mention picker is typing-paced: better a truncated answer in time than a complete one late.
+const FILE_SEARCH_BUDGET_MS = 1500;
+
 import {
   BodyTooLargeError,
   classifyResumability,
@@ -2457,6 +2473,74 @@ export class SessionHandlers {
     json(res, 200, {
       skills: listClaudeSkills({ home: homedir(), projectPath: session.projectPath }),
     });
+  }
+
+  /** The session's cwd, or null after answering why it has none. */
+  private sessionCwdOrReply(sessionId: string, res: ServerResponse): string | null {
+    const session = this.sessionStore.get(sessionId, this.deps.ptyAttachedIds());
+    if (!session) {
+      json(res, 404, { error: "Session not found" });
+      return null;
+    }
+    if (!this.browseRoot) {
+      json(res, 403, {
+        error: "File browsing not configured. Set browseRoot on the server.",
+        code: "BROWSE_ROOT_NOT_SET",
+      });
+      return null;
+    }
+    if (!session.projectPath) {
+      json(res, 404, { error: "Session has no working directory", code: "NO_SESSION_CWD" });
+      return null;
+    }
+    return session.projectPath;
+  }
+
+  async handleListSessionFiles(sessionId: string, url: URL, res: ServerResponse): Promise<void> {
+    const cwd = this.sessionCwdOrReply(sessionId, res);
+    if (cwd === null || this.browseRoot === null) return;
+    const limit = parseLimit(url.searchParams.get("limit"), 500, 1000);
+    if (limit === null) {
+      json(res, 400, { error: "limit must be an integer from 1 to 1000" });
+      return;
+    }
+    const dir = url.searchParams.get("dir") ?? "";
+    try {
+      const abs = await resolveSessionDir(
+        this.browseRoot,
+        cwd,
+        dir,
+        this.deps.browseUnrestricted(),
+      );
+      json(res, 200, { path: dir, ...(await listSessionDir(abs, limit)) });
+    } catch (err) {
+      if (err instanceof BrowsePathNotFoundError) {
+        json(res, 404, { error: err.message, code: "PATH_NOT_FOUND" });
+        return;
+      }
+      json(res, 400, { error: err instanceof Error ? err.message : "Listing failed" });
+    }
+  }
+
+  async handleSearchSessionFiles(sessionId: string, url: URL, res: ServerResponse): Promise<void> {
+    const cwd = this.sessionCwdOrReply(sessionId, res);
+    if (cwd === null || this.browseRoot === null) return;
+    const q = url.searchParams.get("q") ?? "";
+    if (q.length < 1 || q.length > MAX_FILE_SEARCH_QUERY) {
+      json(res, 400, { error: `q must be 1 to ${MAX_FILE_SEARCH_QUERY} characters` });
+      return;
+    }
+    const limit = parseLimit(url.searchParams.get("limit"), 50, 200);
+    if (limit === null) {
+      json(res, 400, { error: "limit must be an integer from 1 to 200" });
+      return;
+    }
+    try {
+      const abs = await resolveSessionDir(this.browseRoot, cwd, "", this.deps.browseUnrestricted());
+      json(res, 200, await searchSessionFiles(abs, q, { limit, budgetMs: FILE_SEARCH_BUDGET_MS }));
+    } catch (err) {
+      json(res, 400, { error: err instanceof Error ? err.message : "Search failed" });
+    }
   }
 
   async handleGetOutput(sessionId: string, res: ServerResponse, lines?: string): Promise<void> {

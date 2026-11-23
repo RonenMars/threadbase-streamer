@@ -95,6 +95,16 @@ export const createSessionRoutes = (deps: ApiDeps) => {
     return alreadyHandled();
   });
 
+  app.get("/:id/files", async (c) => {
+    await deps.handleListSessionFiles(c.req.param("id"), new URL(c.req.url), c.env.outgoing);
+    return alreadyHandled();
+  });
+
+  app.get("/:id/files/search", async (c) => {
+    await deps.handleSearchSessionFiles(c.req.param("id"), new URL(c.req.url), c.env.outgoing);
+    return alreadyHandled();
+  });
+
   app.post("/:id/files", async (c) => {
     await deps.handleUploadFile(c.req.param("id"), c.env.incoming, c.env.outgoing);
     return alreadyHandled();

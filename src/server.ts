@@ -48,6 +48,7 @@ import {
 } from "./auth";
 import {
   BrowsePathNotFoundError,
+  capEntries,
   createDirectory,
   listDirectories,
   listFiles,
@@ -185,6 +186,7 @@ import { type BusySignal, resolveResumeBusyWindowMs } from "./services/sessions/
 import { IdempotencyStore } from "./services/sessions/idempotency";
 import type { ReconcileVerdict } from "./services/sessions/reconcileSessions";
 import { resumeIdForRow } from "./services/sessions/resumeIdentity";
+import { parseLimit } from "./session-files";
 import { type BootRecoverySummary, SessionRegistryBoot } from "./session-registry-boot";
 import { SessionStore } from "./session-store";
 import { SessionWatchers } from "./session-watchers";
@@ -3807,7 +3809,18 @@ export class StreamerServer {
         listDirectories(resolved),
         listFiles(resolved),
       ]);
-      json(res, 200, { path: relativePath, directories, files });
+      // `limit` is opt-in so an older client's response keeps its exact shape.
+      const rawLimit = url.searchParams.get("limit");
+      if (rawLimit === null) {
+        json(res, 200, { path: relativePath, directories, files });
+        return;
+      }
+      const limit = parseLimit(rawLimit, 0, 1000);
+      if (limit === null) {
+        json(res, 400, { error: "limit must be an integer from 1 to 1000" });
+        return;
+      }
+      json(res, 200, { path: relativePath, ...capEntries(directories, files, limit) });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Browse failed";
       if (err instanceof BrowsePathNotFoundError) {
