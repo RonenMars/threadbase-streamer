@@ -79,5 +79,8 @@ afterAll(() => {
   else process.env.HOME = originalHome;
   if (originalUserProfile === undefined) delete process.env.USERPROFILE;
   else process.env.USERPROFILE = originalUserProfile;
-  rmSync(SANDBOX_HOME, { recursive: true, force: true });
+  // Retries: on Windows a handle another process briefly holds (an antivirus
+  // scanner, an indexer) leaves a deleted entry pending-delete, so the parent
+  // rmdir fails ENOTEMPTY/EBUSY/EPERM and fails a file whose tests all passed.
+  rmSync(SANDBOX_HOME, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
