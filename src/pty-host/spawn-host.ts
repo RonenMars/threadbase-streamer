@@ -11,8 +11,11 @@ import { connectToHost, hostSocketPath } from "./socket";
  * The streamer calls this at boot when the `ptyHost` feature flag is enabled.
  */
 
-/** How long to wait for a freshly-spawned host to accept a connection. */
-const HOST_READY_TIMEOUT_MS = 5_000;
+/**
+ * How long to wait for a freshly-spawned host to accept a connection. 5 s was
+ * too tight: a host spawned at boot once took 28 s to listen.
+ */
+const HOST_READY_TIMEOUT_MS = 15_000;
 const HOST_POLL_INTERVAL_MS = 50;
 
 export interface SpawnHostOptions {

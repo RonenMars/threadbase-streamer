@@ -1827,18 +1827,13 @@ export class StreamerServer {
 
   async listen(port: number, opts?: { awaitReady?: boolean }): Promise<void> {
     if (this.featureFlags.ptyHost) {
-      // Degrade to in-process runners rather than refusing to boot.
+      // Refuse to boot rather than degrade to in-process runners.
       //
-      // `connectOrSpawnHost` rejects after ~5s if the host never accepts a
-      // connection — a broken node-pty in the child, an unwritable socket
-      // directory, a half-dead host still holding the path. Unhandled, that
-      // makes an experimental, default-off flag the one subsystem that can stop
-      // the streamer from starting at all, when every other optional subsystem
-      // here (runtime store, cache, reconciliation) logs and continues.
-      //
-      // Safe to fall through: `useRemoteRunner` only disposes the in-process
-      // runners *after* a successful connect, so on this path they are still
-      // the live ones and nothing has been adopted.
+      // The operator asked for the host. Without it every session dies with
+      // this process, and a streamer that quietly ran that way for 9 hours
+      // lost them all to one OOM. Nothing is bound yet, so a throw here leaves
+      // nothing half-started, and the supervisor restarts it. A host that was
+      // only slow is already listening by then.
       try {
         this.ptyManager.onRemoteLost((lost) => void this.handlePtyHostLost(lost));
         const sessions = await this.connectPtyHost();
@@ -1850,12 +1845,11 @@ export class StreamerServer {
           sessions: sessions.length,
         });
       } catch (err) {
-        // Error, not warn: the operator asked for the host and is not getting
-        // it, so sessions will not survive the next restart. Boot continues.
-        this.log.error(
-          "[pty-host] could not attach; falling back to in-process PTYs for this run",
-          { event: "pty_host.attach_failed", err },
-        );
+        this.log.error("[pty-host] could not attach; refusing to start without it", {
+          event: "pty_host.attach_failed",
+          err,
+        });
+        throw err;
       }
     }
 
