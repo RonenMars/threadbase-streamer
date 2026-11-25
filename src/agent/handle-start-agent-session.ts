@@ -13,6 +13,8 @@ import { AgentErrorCode, agentErrorResponse } from "./errors";
 
 export interface StartSessionBody {
   conversationId?: string;
+  /** The project directory, relative to the browse root, as on a PTY start. */
+  path?: string;
 }
 
 export interface StartAgentSessionDeps {
@@ -23,6 +25,8 @@ export interface StartAgentSessionDeps {
   agentClient: AgentClient;
   conversationsDir: string;
   agentConfig: AgentConfig;
+  /** Resolves a body `path` the way a PTY start does; throws when it is not allowed. */
+  resolveProjectPath: (path: string) => Promise<string>;
 }
 
 export interface StartAgentSessionResult {
@@ -30,25 +34,27 @@ export interface StartAgentSessionResult {
   body: Record<string, unknown>;
 }
 
+const BODY_KEYS = ["conversationId", "path"];
+
 /**
- * Validate body shape. Accept only `{}` or `{conversationId: string}`.
- * Anything else is `INVALID_BODY`.
+ * Validate body shape. Accept `{}`, with an optional `conversationId` and an
+ * optional `path`, each a non-empty string. Anything else is `INVALID_BODY`.
  */
-function validateBody(body: unknown): { ok: true; conversationId: string | null } | { ok: false } {
+function validateBody(
+  body: unknown,
+): { ok: true; conversationId: string | null; path: string | null } | { ok: false } {
   if (body === null || body === undefined || typeof body !== "object") {
     return { ok: false };
   }
-  const keys = Object.keys(body);
-  if (keys.length === 0) {
-    return { ok: true, conversationId: null };
+  const fields = body as Record<string, unknown>;
+  for (const [key, v] of Object.entries(fields)) {
+    if (!BODY_KEYS.includes(key) || typeof v !== "string" || v.length === 0) return { ok: false };
   }
-  if (keys.length === 1 && keys[0] === "conversationId") {
-    const v = (body as { conversationId: unknown }).conversationId;
-    if (typeof v === "string" && v.length > 0) {
-      return { ok: true, conversationId: v };
-    }
-  }
-  return { ok: false };
+  return {
+    ok: true,
+    conversationId: (fields.conversationId as string | undefined) ?? null,
+    path: (fields.path as string | undefined) ?? null,
+  };
 }
 
 export async function handleStartAgentSession(
@@ -61,7 +67,7 @@ export async function handleStartAgentSession(
       status: 400,
       body: agentErrorResponse(
         AgentErrorCode.INVALID_BODY,
-        "Body must be {} or {conversationId: string}",
+        "Body must be {} with an optional conversationId and path, each a string",
       ),
     };
   }
@@ -81,6 +87,21 @@ export async function handleStartAgentSession(
     }
   }
 
+  let projectPath = "";
+  if (parsed.path) {
+    try {
+      projectPath = await deps.resolveProjectPath(parsed.path);
+    } catch (err) {
+      return {
+        status: 400,
+        body: agentErrorResponse(
+          AgentErrorCode.INVALID_BODY,
+          err instanceof Error ? err.message : "Invalid path",
+        ),
+      };
+    }
+  }
+
   const sessionId = nanoid();
   if (!conversationId) conversationId = sessionId;
 
@@ -90,7 +111,7 @@ export async function handleStartAgentSession(
   const session: ManagedSession = {
     id: sessionId,
     conversationId,
-    projectPath: "",
+    projectPath,
     projectName: "",
     branch: "",
     status: "running",
@@ -104,7 +125,9 @@ export async function handleStartAgentSession(
   try {
     deps.sessionStore.addManaged(session);
     deps.sessionStore.initAgentSession(sessionId, deps.agentConfig.dedupe.perSessionCapacity);
-    await deps.agentClient.startSession(sessionId);
+    await (projectPath
+      ? deps.agentClient.startSession(sessionId, { projectPath })
+      : deps.agentClient.startSession(sessionId));
   } catch (err) {
     const message = err instanceof Error ? err.message : "Temporal unavailable";
     return {

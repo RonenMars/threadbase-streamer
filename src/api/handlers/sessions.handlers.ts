@@ -3309,6 +3309,12 @@ export class SessionHandlers {
         agentClient: this.agentClient!,
         conversationsDir: this.cacheDir ? join(dirname(this.cacheDir), "conversations") : "",
         agentConfig: this.agentConfig,
+        resolveProjectPath: (path) =>
+          this.browseRoot
+            ? resolveBrowsePath(this.browseRoot, path, this.deps.browseUnrestricted())
+            : Promise.reject(
+                new Error("File browsing not configured. Set browseRoot on the server."),
+              ),
       });
       json(res, result.status, result.body);
       if (result.status === 200) {

@@ -46,6 +46,17 @@ describe("AgentClient", () => {
     expect(callArgs.workflowIdReusePolicy).toBe("REJECT_DUPLICATE");
   });
 
+  it("startSession passes projectPath as the second workflow argument", async () => {
+    const fake = makeFakeTemporalClient();
+    const client = createAgentClient({ temporalClient: fake as any, taskQueue: "agent-tasks" });
+
+    await client.startSession("sess_path", { projectPath: "/work/repo" });
+    expect(fake.workflow.start.mock.calls[0]?.[1].args).toEqual([
+      "sess_path",
+      { projectPath: "/work/repo" },
+    ]);
+  });
+
   it("sendUserInput signals the right handle with the userInput payload", async () => {
     const fake = makeFakeTemporalClient();
     const client = createAgentClient({

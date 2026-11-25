@@ -28,7 +28,8 @@ const stageQuery = { type: "query", name: "stage" } as unknown as {
 const ORCHESTRATOR_WORKFLOW_TYPE = "orchestratorWorkflow";
 
 export interface AgentClient {
-  startSession(sessionId: string): Promise<string>;
+  /** `projectPath` lets the worker's repo-aware roles run in that directory. */
+  startSession(sessionId: string, opts?: { projectPath?: string }): Promise<string>;
   sendUserInput(sessionId: string, payload: UserInputSignal): Promise<void>;
   endSession(sessionId: string): Promise<void>;
   getSessionStage(sessionId: string): Promise<string>;
@@ -43,11 +44,11 @@ const sessionWorkflowId = (sessionId: string): string => `session-${sessionId}`;
 
 export function createAgentClient({ temporalClient, taskQueue }: AgentClientOpts): AgentClient {
   return {
-    async startSession(sessionId: string): Promise<string> {
+    async startSession(sessionId: string, opts?: { projectPath?: string }): Promise<string> {
       const handle = await temporalClient.workflow.start(ORCHESTRATOR_WORKFLOW_TYPE, {
         taskQueue,
         workflowId: sessionWorkflowId(sessionId),
-        args: [sessionId],
+        args: opts?.projectPath ? [sessionId, { projectPath: opts.projectPath }] : [sessionId],
         workflowIdReusePolicy: "REJECT_DUPLICATE",
       } as any);
       return handle.workflowId;
