@@ -8,6 +8,7 @@ import type { WebSocket } from "ws";
 import { z } from "zod";
 import type { AgentClient } from "../../agent/agent-client";
 import type { AgentConfig } from "../../agent/agent-config";
+import { handleEndAgentSession } from "../../agent/handle-end-agent-session";
 import { handleSendAgentInput } from "../../agent/handle-send-agent-input";
 import { handleStartAgentSession } from "../../agent/handle-start-agent-session";
 import { dropCoveredPaths, resolveAdditionalPaths, resolveBrowsePath } from "../../browse";
@@ -2668,8 +2669,22 @@ export class SessionHandlers {
       );
       return;
     }
-    const signal = opts.signal ?? "SIGINT";
     const deleteAfter = opts.delete ?? false;
+    if (this.agentConfig.enabled) {
+      const result = await handleEndAgentSession(sessionId, {
+        sessionStore: this.sessionStore,
+        // biome-ignore lint/style/noNonNullAssertion: agentClient is set when agentConfig.enabled is true
+        agentClient: this.agentClient!,
+      });
+      if (result.status === 200 && deleteAfter) this.softDeleteConversation(sessionId);
+      json(res, result.status, result.body);
+      const session = this.sessionStore.get(sessionId, this.deps.ptyAttachedIds());
+      if (result.body.event === "stopped" && session) {
+        this.wsHub.broadcast({ type: "session_update", session });
+      }
+      return;
+    }
+    const signal = opts.signal ?? "SIGINT";
     const STOP_TIMEOUT_MS = 5000;
 
     const session = this.ptyManager.getSession(sessionId);
