@@ -1,3 +1,9 @@
+## [1.151.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.151.0...v1.151.1) (2026-11-25)
+
+### Bug Fixes
+
+* **agent:** end the session workflow when a session is stopped ([#1328](https://github.com/RonenMars/threadbase-streamer/issues/1328)) ([0a531f7](https://github.com/RonenMars/threadbase-streamer/commit/0a531f79977c94b0bce8a4f7ad085a14df439ca5))
+
 ## [1.151.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.150.0...v1.151.0) (2026-11-22)
 
 ### Features
