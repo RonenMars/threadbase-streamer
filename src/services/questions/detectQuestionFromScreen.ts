@@ -131,6 +131,28 @@ const SCROLLED_ROW_RE = /^\s*[↑↓] \d+ more lines?\s*$/;
 const PREVIEW_FOOTER_RE = /n to add notes/i;
 // The footer wraps on a narrow terminal.
 const FOOTER_MAX_ROWS = 3;
+// A long option list scrolls by itself and keeps "Chat about this" pinned below,
+// so that row's number says how many rows belong above it. A scroll arrow is not
+// enough to go by (the row under the cursor shows `❯` in its place), and an
+// arrowed row is not counted as a row.
+const CHAT_ROW_RE = /^\s*(?:❯)?\s*(\d+)\.\s+Chat about this\s*$/;
+const LIST_ROW_RE = /^\s*(?:❯)?\s*(\d+)\.\s/;
+
+function hidesListRows(lines: string[], footerIdx: number): boolean {
+  let want: number | undefined;
+  for (let i = footerIdx - 1; i >= 0; i--) {
+    const row = stripBoxGutter(lines[i]);
+    if (want === undefined) {
+      const chat = CHAT_ROW_RE.exec(row);
+      if (chat) want = Number(chat[1]) - 1;
+    } else if (HEADER_CHIP_RE.test(row.trim())) {
+      break; // numbered prose above the header must not stand in for a hidden row
+    } else if (Number(LIST_ROW_RE.exec(row)?.[1]) === want) {
+      want--;
+    }
+  }
+  return want !== undefined && want > 0;
+}
 
 /** True when a question form is up that the screen cannot represent. Pure. */
 export function isUnreadableQuestionForm(lines: string[]): boolean {
@@ -140,7 +162,7 @@ export function isUnreadableQuestionForm(lines: string[]): boolean {
       .slice(i, i + FOOTER_MAX_ROWS)
       .map((l) => l.trim())
       .join(" ");
-    if (PREVIEW_FOOTER_RE.test(footer)) return true;
+    if (PREVIEW_FOOTER_RE.test(footer) || hidesListRows(lines, i)) return true;
     for (let j = i - 1; j >= 0; j--) {
       if (lines[j].trim() !== "") return SCROLLED_ROW_RE.test(lines[j]);
     }

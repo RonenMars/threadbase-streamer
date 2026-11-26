@@ -174,6 +174,10 @@ Detection runs in `detectLivePrompts` (`src/pty-manager.ts:1003`) on every outpu
 
 The arms run in a fixed order: OSC-triggered scrape (even with zero options), refresh or close of an already-open gate, then a paint-time claim `detectGateScreen ?? detectPickerScreen ?? detectStartupChoiceGate` (`:1139`, `:1177`), then `detectQuestionFromScreen` (`:1197`), then `detectShellPrompt` (`:1220`). **[code]**
 
+For 300 ms after a size change (`RESIZE_REPAINT_MS`) the screen is not read, unless the chunk carries an OSC 777 notify.
+Claude Code clears and repaints over several chunks with nothing to mark the end of the frame, and a read in between sees a menu with no footer, which cancelled a pending question. **[capture 2026-11-27]**
+A repaint that starts after the window, or one that no size change caused, is read as it arrives.
+
 A gate or an `Enter to select` menu on screen holds the turn open: `recheckReadyFromScreen` (`:1400`) refuses to end the turn while one is painted. **[code]**
 
 ### 2.4 Parsing rules
@@ -199,6 +203,7 @@ A gate or an `Enter to select` menu on screen holds the turn open: `recheckReady
 - The "Type something" and "Chat about this" rows are carded as ordinary options.
 - The submit screen is recognised (`isSubmitConfirmationScreen`, `:216`) and carded as a normal two-option question.
 - A form taller than the terminal (`↑ N more lines` above the footer) or a preview form (`n to add notes` in the footer) raises no card (`isUnreadableQuestionForm`). The live-question callback still fires with an empty list, so the push and the later close still happen. **[capture 2026-11-26]**
+- At 120x12 the tab bar and the question can stay while only the option list scrolls, with no `more line` row. `Chat about this` stays pinned under the list, so the same function also calls a form unreadable when the rows above it do not number down to 1. A `↑` or `↓` row is not counted. **[capture 2026-11-27]**
 
 **`AskUserQuestion` from the transcript** carries everything the tool call held: every question, `header`, option `description`, `preview`, `multiSelect` and the real `toolUseId`. **[code]**
 
