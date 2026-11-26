@@ -442,6 +442,10 @@ export const createMiscRoutes = (
       // This server serves /api/saved-items, the favorites list shared by every
       // paired device. Absent on older servers, where mobile keeps favorites local.
       savedItems: true,
+      // This server serves PUT /api/conversations/:id/read, the range ack behind the
+      // unread dot, and broadcasts read_state_changed. Absent on older servers,
+      // where mobile shows no dot.
+      readState: true,
       // This server answers an AskUserQuestion card's two Claude Code rows on
       // POST /api/sessions/:id/answer: "Chat about this" by label and free text as
       // { other }. Absent on older servers, where the same bodies are refused or

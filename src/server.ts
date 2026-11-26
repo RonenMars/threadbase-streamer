@@ -1058,6 +1058,7 @@ export class StreamerServer {
       setClaudeFlagsConfig: (values, extraArgs) => this.setClaudeFlagsConfig(values, extraArgs),
       ptyManager: this.ptyManager,
       sessionStore: this.sessionStore,
+      resolveConversationLookupId: (id) => this.resolveConversationLookupId(id),
       wsHub: this.wsHub,
       sessionHandlers: this.sessionHandlers,
       conversationHandlers: this.conversationHandlers,

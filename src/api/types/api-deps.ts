@@ -70,6 +70,8 @@ export type ApiDeps = {
   wsHub: WSHub;
   cache: () => ConversationCache | null;
   isExcludedSubagent?: (id: string) => Promise<boolean>;
+  /** Codex placeholder session id → the rollout id its history is indexed under. */
+  resolveConversationLookupId?: (id: string) => string;
   cacheMonitor: () => CacheIntegrityMonitor | null;
   hostPressureMonitor: () => HostPressureMonitor | null;
   /** Push registration + delivery state (C7). Null when the cache DB is unavailable. */
