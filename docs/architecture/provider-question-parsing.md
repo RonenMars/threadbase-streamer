@@ -64,7 +64,7 @@ Two legacy WebSocket transports exist, plus a newer provider-neutral contract la
 
 **Prompt contract** (`prompt_event` / `prompt_snapshot`, `src/schemas/prompt.schema.ts`) **[code]**
 
-- `PROMPT_SCHEMA_VERSION = 1` (`:3`), advertised by `/api/info` as `promptContract: { schemaVersion: 1, atomicAnswer: true }` (`src/api/routes/misc.routes.ts:460`).
+- `PROMPT_SCHEMA_VERSION = 1` (`:3`), advertised by `/api/info` as `promptContract: { schemaVersion: 1, atomicAnswer: true, multiQuestion: true }` (`src/api/routes/misc.routes.ts`).
 - `PromptSchema` (`:52`) carries `state` (open, updated, resolved, cancelled, expired, unavailable), `intent` (`approval` or `question`, `:60`), title, message, detail, questions and a `provenance` with a `source` (provider, screen, transcript, synthetic) and a `confidence` (authoritative or inferred).
 - `PromptQuestionSchema` (`:15`) carries `questionId`, `text`, `header?`, `inputMode` (`single`, `multi` or `text`, `:20`), `options`, `allowOther` and `secret`.
 - `PromptOptionSchema` (`:8`) carries `optionId`, `label`, `description?`, `preview?`.
@@ -198,6 +198,7 @@ A gate or an `Enter to select` menu on screen holds the turn open: `recheckReady
 - **One question per card**, with `header: ""` (`:206`): on a multi-question form only the tab currently on screen is carded.
 - The "Type something" and "Chat about this" rows are carded as ordinary options.
 - The submit screen is recognised (`isSubmitConfirmationScreen`, `:216`) and carded as a normal two-option question.
+- A form taller than the terminal (`↑ N more lines` above the footer) or a preview form (`n to add notes` in the footer) raises no card (`isUnreadableQuestionForm`). The live-question callback still fires with an empty list, so the push and the later close still happen. **[capture 2026-11-26]**
 
 **`AskUserQuestion` from the transcript** carries everything the tool call held: every question, `header`, option `description`, `preview`, `multiSelect` and the real `toolUseId`. **[code]**
 
@@ -223,17 +224,32 @@ So a Claude question card starts with labels only and gains headers, description
 | Shell `[y/n]` | `y\r` or `n\r` | `detectShellPrompt.ts` (`YN_RE` branch) |
 | Shell "press enter" / "continue" | `\r` | same file |
 | `AskUserQuestion`, single question, single select | Down repeated by the option's position, then `\r` | `answersToKeystrokes`, `answersToKeystrokes.ts:43`, `:62` |
+| `AskUserQuestion`, multi-question (`/prompt/answer` only) | one key at a time, each checked on the screen before the next; see below | `driveQuestionForm`, `driveQuestionForm.ts` |
 | `AskUserQuestion`, single question, multi select | for each chosen option in on-screen order: Down by the distance from the cursor, then Space; then Right and `\r` | `answersToKeystrokes`, `multiSelectKeystrokes` |
 
 All **[code]**.
 
 - `answersToKeystrokes` assumes the cursor starts on the first option and supports exactly one question: a single-select question with one chosen label, or a multi-select question with a list of labels (`string[]`; a single string counts as a one-item list; order and duplicates do not matter). **[code]**
 - On a multi-select picker Enter toggles the row under the cursor rather than submitting, so the answer is Space per chosen option, Right to the "Review your answers" screen, and Enter on its default "Submit answers". Verified on Claude Code 2.1.316 with two of four options chosen, stepwise and as one burst write. **[capture 2026-11-02]**
-- A multi-question card, more than one label for a single-select card, or a multi-select card whose checkbox marker the detector could not read (`multiSelectUnverified`, #728) throws `UnsupportedPromptShapeError`, surfaced as `unsupported_prompt_shape`; the legacy route answers 400 telling the user to answer in the terminal (`resolveAnswer.ts:21`, `handleSendAnswer`). **[code]**
+- On the legacy `/answer` route a multi-question card, more than one label for a single-select card, or a multi-select card whose checkbox marker the detector could not read (`multiSelectUnverified`, #728) throws `UnsupportedPromptShapeError`, surfaced as `unsupported_prompt_shape`; the legacy route answers 400 telling the user to answer in the terminal (`resolveAnswer.ts:21`, `handleSendAnswer`). **[code]**
 - A multi-select label that is not an option is refused whole as `unknown_option`, and nothing is written. On a screen-detected multi-select card the options include the `Type something` and `Chat about this` rows; Space on those is not verified, so clients should offer only the model's own options. **[code]**
 - A free-text answer has no encoding at all: text responses to a question are refused as `unsupported_prompt_shape` (`questionAnswerAdapter`, `:1534`). **[code]**
 - Before writing, the server re-scrapes the screen to confirm the gate or menu is still painted (`permissionGateStillOpen`, `:1784`; `isQuestionMenuOnScreen`, `detectQuestionFromScreen.ts:236`). **[code]**
 - Writing an exact permission answer closes the gate immediately, without waiting for the screen to change (`isPermissionAnswer`, `pty-manager.ts:549`). **[code]**
+
+**Multi-question forms** (`/prompt/answer`, advertised as `promptContract.multiQuestion`). Keys and screens captured on Claude Code 2.1.332 at 120x40. **[capture 2026-11-26]**
+
+- Every response is validated before the first byte, and a preview form or an unverified multi-select is refused.
+- The drive starts only with the first question on screen. A form that scrolled gets a terminal 100 rows tall, announced as `terminal_resize`, and the previous size is restored on every exit.
+- It visits every tab and the review before choosing anything, then plans each key from the cursor and ticks it reads (`readFormScreen`), and writes the next key only after the screen shows the effect of the last one. No key is resent.
+- The last Enter is written only when the review lists exactly the requested answers.
+- A single-select Enter advances to the next tab. A multi-select never advances on Enter or Space, so it is left with Right.
+- While it drives, no other writer reaches the session: `/input` answers 409 `prompt_pending`, the raw-key route answers 409 `raw_key_unavailable`, `resize_session` is ignored, and screen and transcript prompt events are dropped.
+- A refusal writes nothing: 409 `form_not_ready` when the first question is not on screen (the prompt stays open and can be answered once it is), or 400 `unsupported_prompt_shape`.
+- A stop after the first key is 409 `partly_answered`. This is the one case where `atomicAnswer` does not hold: the keys cannot be taken back, so the prompt ends as `unavailable`, the card closes, and the user finishes the form in the terminal. A retry writes nothing.
+- After `partly_answered`, composer text stays refused while the form may be on screen. A check that runs every 60 seconds releases it, so the release can trail the user's finishing the form by up to 60 seconds.
+- A `pty-host` from an older build with the same protocol version is replaced only when it holds no sessions. One with live sessions keeps running its old screen detectors until they end (`RemoteSessionRunner.connect`). **[code]**
+- Free text, "Type something" and "Chat about this" are not driven.
 
 ### 2.7 Persistence or auto-answer
 
@@ -245,7 +261,7 @@ The only streamer-side avoidance is at spawn: the default permission mode and th
 
 - Option descriptions are dropped from screen-detected questions on `main`. PR #1012 (open, branch `feat/screen-question-option-descriptions`, read at `f5af99fc`) attaches indented rows under an option as its description and widens `HEADER_CHIP_RE` to include the tab-bar arrows. **[code]** for both sides of the diff.
 - A multi-question form is carded one tab at a time from the screen; a client sees the full set only after the transcript line arrives. **[code]**
-- Multi-select, multi-question and free-text answers cannot be sent through a card; they need raw keys or the terminal. **[code]**
+- A multi-question form is answerable through `/prompt/answer` only, without free text; a client that does not send that request needs raw keys or the terminal. **[code]**
 - A wrapped question once reached the phone as only its last row; fixed by `joinWrappedQuestion` (PR #1007, release 1.105.1). **[transcript 2026-10-01]** for the symptom, **[code]** for the fix.
 - "The card still shows no option labels for a multi-question prompt" was reported from the mobile side. **[transcript 2026-10-04]**, not reproduced here.
 - The paint-time detectors have a raw fixture only for the numbered gate and the `AskUserQuestion` menu. **[code]**
@@ -587,7 +603,7 @@ Nothing is persisted by the streamer.
 | **Options** | Last numbered block, bottom-up | Numbered rows; contiguous `1..N` for pickers | — | — |
 | **Descriptions** | Transcript only; dropped from the screen path (PR #1012 open) | Skipped; transport has no field | — | — |
 | **Multi-select** | Detected (`multiSelect`), not answerable by card | Not handled | — | — |
-| **Multi-question** | One tab per screen card; all in the transcript card; not answerable by card | Not handled | — | — |
+| **Multi-question** | One tab per screen card; all in the transcript card; answerable through `/prompt/answer` | Not handled | — | — |
 | **Wrapped question** | Rejoined, up to 6 rows | Not rejoined | — | — |
 | **Free text** | Row carded as an option; no text answer path | Not handled | — | — |
 | **Usage limit** | No detector | Card plus `failureReason` | Unknown | Unknown |
@@ -639,7 +655,7 @@ No such line for the session and time in question means the card was scraped on 
 Each item names the provider and the evidence.
 
 1. **Claude Code — option descriptions missing from screen cards.** `detectQuestionFromScreen.ts:160` emits `description: ""`; PR #1012 is open. **[code]**
-2. **Claude Code — multi-question and free-text answers have no card path.** `answersToKeystrokes.ts` throws `UnsupportedPromptShapeError` for a multi-question form; no producer emits `inputMode: "text"`. A single multi-select question is answerable (#1167). **[code]**
+2. **Claude Code — free-text answers have no `/prompt/answer` path.** No producer emits `inputMode: "text"`, and a multi-question form takes option choices only. A single multi-select question is answerable (#1167). **[code]**
 3. **Claude Code — multi-question screen cards show one tab.** `detectQuestionFromScreen.ts:206` always returns a single question with an empty header. **[code]**
 4. **Claude Code — usage-limit screens are not detected.** No detector found; screen shape **[unknown]**.
 5. **Claude Code — no raw fixture for the startup choice or the unboxed picker.** Both detectors rest on a measurement recorded only in comments. **[code]**

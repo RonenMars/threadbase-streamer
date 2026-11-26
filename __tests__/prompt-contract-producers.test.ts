@@ -165,6 +165,7 @@ function harness(
     },
     sessionStore: { getManaged: () => null },
     ptyManager: {
+      isInputLocked: () => false,
       hasSession: () => options.hasSession ?? false,
       getOutputLines: () => options.outputLines ?? [],
       sendKeys: (_sessionId: string, keys: string) => written.push(keys),

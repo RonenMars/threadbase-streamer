@@ -99,7 +99,8 @@ async function liveGate() {
       broadcast: (m: WSMessage) => broadcasts.push(m),
       broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
     },
-    ptyManager: mgr,
+    // The lock lives on LiveSessionManager; this is the runner under it.
+    ptyManager: Object.assign(mgr, { isInputLocked: () => false }),
   } as unknown as SessionHandlersDeps);
 
   const session = await mgr.startFresh({ projectPath: "/tmp/test", projectName: "test" });

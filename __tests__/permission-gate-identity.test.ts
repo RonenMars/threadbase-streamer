@@ -98,6 +98,7 @@ function harness(opts: { provider: ProviderName | null; liveScreen: string[] }):
       broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
     },
     ptyManager: {
+      isInputLocked: () => false,
       hasSession: () => true,
       getOutputLines: async () => opts.liveScreen,
       sendKeys: (_id: string, keys: string) => written.push(keys),

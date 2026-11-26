@@ -179,6 +179,7 @@ import {
   questionsFromLines,
   shouldBroadcastQuestion,
 } from "./services/questions/questionBroadcast";
+import { readFormScreen } from "./services/questions/readFormScreen";
 import { sweepCodexFormat } from "./services/sessions/codexFormatCanary";
 import type { CodexOwnerSource } from "./services/sessions/codexRolloutOwner";
 import { type BusySignal, resolveResumeBusyWindowMs } from "./services/sessions/conversationBusy";
@@ -883,6 +884,7 @@ export class StreamerServer {
         idleSessionNotifier: () => this.idleSessionNotifier,
         ptyAttachedIds: () => this.ptyAttachedIds(),
         cancelPendingQuestion: (sessionId) => this.cancelPendingQuestion(sessionId),
+        isFormHeld: (sessionId) => this.sessionHandlers.isFormHeld(sessionId),
         rememberSelfPtyEnded: (conversationId) => this.rememberSelfPtyEnded(conversationId),
         maybeFireHoldWhenIdle: (session) => this.maybeFireHoldWhenIdle(session),
       }),
@@ -969,6 +971,12 @@ export class StreamerServer {
 
     this.sessionHandlers = new SessionHandlers({
       includeSubagentSessions: () => this.featureFlags.subagentSessions,
+      sessionGeometry: this.sessionGeometry,
+      // The form's own "menu gone" is held back while it is being answered.
+      onQuestionAnswered: (sessionId) => {
+        const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
+        if (session) void this.waitingInputNotifier?.onPrompt(session, "question", false);
+      },
       // Collaborators the constructor already built. The Maps and Sets are
       // passed by reference on purpose: they stay StreamerServer state, and a
       // mutation from a handler is the same mutation the WS/PTY callbacks here
@@ -3690,6 +3698,8 @@ export class StreamerServer {
   //       DIFFERENT question — answering it would type into this streamer's PTY.
   //       Same-content re-syncs (screen synthetic id → real toolUseId) still pass.
   private processJsonlQuestions(sessionId: string, lines: string[]): void {
+    // The prompt being answered must not be replaced under the keys.
+    if (this.ptyManager.isInputLocked(sessionId)) return;
     // toolUseId the client currently holds for this session (set by the
     // live-screen path as `screen:…`, or a prior JSONL flush). Captured BEFORE
     // the overwrite below so we can detect an id change.
@@ -3761,11 +3771,19 @@ export class StreamerServer {
   // the menu is up; getOutputLines failing falls through to the cancel.
   private armPhantomQuestionCancel(sessionId: string, toolUseId: string): void {
     const t = setTimeout(async () => {
-      if (this.pendingQuestions.get(sessionId)?.toolUseId !== toolUseId) return;
-      const menuUp = await this.ptyManager
-        .getOutputLines(sessionId, PTY_ROWS)
-        .then(isQuestionMenuOnScreen)
-        .catch(() => false);
+      const pq = this.pendingQuestions.get(sessionId);
+      if (pq?.toolUseId !== toolUseId) return;
+      const menuUp =
+        this.ptyManager.isInputLocked(sessionId) ||
+        (await this.ptyManager
+          .getOutputLines(sessionId, PTY_ROWS)
+          .then(
+            (screen) =>
+              isQuestionMenuOnScreen(screen) ||
+              // The review of a multi-question form has no menu footer.
+              (pq.questions.length > 1 && readFormScreen(screen, pq.questions) !== null),
+          )
+          .catch(() => false));
       if (this.pendingQuestions.get(sessionId)?.toolUseId !== toolUseId) return;
       if (menuUp) this.armPhantomQuestionCancel(sessionId, toolUseId);
       else this.cancelPendingQuestion(sessionId);

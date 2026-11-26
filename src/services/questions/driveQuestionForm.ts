@@ -16,7 +16,8 @@ const SUBMIT_ROW_RE = /Submit answers\s*$/;
 export interface FormTerminal {
   /** The rendered rows, as many as the terminal is tall. */
   read(): Promise<string[]>;
-  write(key: string): void;
+  /** `submits` marks the one key that hands the answers to the agent. */
+  write(key: string, submits?: boolean): void;
   /** Make the terminal tall enough for a form that scrolled. Restoring is the caller's job. */
   grow(): void;
 }
@@ -88,8 +89,13 @@ export async function driveQuestionForm(
     }
   }
 
-  async function press<T>(key: string, step: string, match: Match<T>): Promise<T> {
-    terminal.write(key);
+  async function press<T>(
+    key: string,
+    step: string,
+    match: Match<T>,
+    submits?: boolean,
+  ): Promise<T> {
+    terminal.write(key, submits);
     wrote = true;
     const { hit } = await waitFor(match);
     if (hit === null) throw new Error(`the screen did not show ${step}`);
@@ -171,8 +177,12 @@ export async function driveQuestionForm(
       }
     }
 
-    await press(ENTER, "the form closing", (screen, lines) =>
-      screen === null && !lines.some((l) => SUBMIT_ROW_RE.test(l)) ? true : null,
+    await press(
+      ENTER,
+      "the form closing",
+      (screen, lines) =>
+        screen === null && !lines.some((l) => SUBMIT_ROW_RE.test(l)) ? true : null,
+      true,
     );
     return { outcome: "answered" };
   } catch (err) {

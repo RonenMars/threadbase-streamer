@@ -118,6 +118,7 @@ function harness(): Harness {
     sessionStore: { getManaged: () => ({ provider: CLAUDE_CODE_PROVIDER }) },
     log: () => ({ info: () => {}, warn: () => {}, debug: () => {} }),
     ptyManager: {
+      isInputLocked: () => false,
       hasSession: () => true,
       getOutputLines: async () => h.liveScreen,
       sendKeys: () => {},
