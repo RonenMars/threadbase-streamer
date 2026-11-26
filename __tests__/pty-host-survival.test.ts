@@ -366,12 +366,11 @@ describe("pty-host reconnect on boot", () => {
     host?.dispose();
     await closeSocketServer();
     // Nothing is listening now, so the real connectOrSpawnHost would spawn a
-    // detached node process and poll it for the full 5s ready timeout before
-    // giving up — under vitest that child is argv[1] of the pool worker, i.e. an
-    // orphan nothing reaps. Rejecting is the same end state (no host attached)
-    // without either cost.
-    vi.spyOn(hostSpawner, "connectOrSpawnHost").mockRejectedValue(
-      new Error("pty-host did not accept a connection"),
+    // detached node process — under vitest that child is argv[1] of the pool
+    // worker, i.e. an orphan nothing reaps. A fresh in-test host is the same
+    // end state: a reboot leaves a new, empty host with none of the old sessions.
+    vi.spyOn(hostSpawner, "connectOrSpawnHost").mockImplementation(async () =>
+      connectToHost(await listenHost()),
     );
 
     const store = RuntimeStore.open(runtimeDbPath);
@@ -412,31 +411,18 @@ describe("pty-host reconnect on boot", () => {
     expect((await listSessions(server)).map((row) => row.id)).not.toContain(CLAUDE_ID);
   });
 
-  it("boots on in-process PTYs when the host cannot be attached", async () => {
-    // The flag is experimental and default-off, so it must never be the one
-    // subsystem that can stop the streamer from starting. Every other optional
-    // subsystem here — runtime store, cache, reconciliation — logs and carries
-    // on; this one used to reject out of listen() with nothing catching it.
+  it("refuses to start when the host cannot be attached", async () => {
+    // Running on in-process PTYs instead is how a streamer once lost every
+    // session to one OOM: nothing outlives it, and nothing said so.
     const connect = vi
       .spyOn(hostSpawner, "connectOrSpawnHost")
       .mockRejectedValue(new Error("pty-host did not accept a connection"));
 
-    server = await startStreamer({ ptyHost: true, sessionRehydration: false });
+    await expect(startStreamer({ ptyHost: true, sessionRehydration: false })).rejects.toThrow(
+      "pty-host did not accept a connection",
+    );
 
     expect(connect).toHaveBeenCalled();
-    // Serving requests at all is the assertion: listen() resolved despite the
-    // rejection instead of taking the process down with it.
-    expect(Array.isArray(await listSessions(server))).toBe(true);
-
-    // Fell back rather than half-attaching: the in-process runners are still
-    // the live ones, so a spawn works and is owned locally.
-    const ptyManager = (server as unknown as { ptyManager: LiveSessionManager }).ptyManager;
-    const started = await ptyManager.startFresh({
-      projectPath: projectDir,
-      projectName: "project",
-    });
-    expect(ptyManager.isRemote()).toBe(false);
-    expect(ptyManager.hasSession(started.id)).toBe(true);
   });
 
   it("replaces an incompatible host before adopting sessions", async () => {
