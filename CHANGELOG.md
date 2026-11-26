@@ -1,3 +1,5 @@
+## [1.151.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.151.1...v1.151.2) (2026-11-26)
+
 ## [1.151.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.151.0...v1.151.1) (2026-11-25)
 
 ### Bug Fixes
