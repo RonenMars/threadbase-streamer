@@ -10,7 +10,7 @@ import type {
   ShapeOutput,
   ZodRawShapeCompat,
 } from "@modelcontextprotocol/sdk/server/zod-compat.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
 export interface StreamerClientOptions {
   baseUrl: string;
@@ -25,6 +25,7 @@ export interface StreamerTool<Shape extends ZodRawShapeCompat = ZodRawShapeCompa
   description: string;
   inputSchema: Shape;
   handler: (args: ShapeOutput<Shape>, client: StreamerClient) => Promise<CallToolResult>;
+  annotations?: ToolAnnotations;
 }
 
 /** A non-2xx answer; tools map the statuses they understand (404 → "no such session"). */
@@ -32,6 +33,7 @@ export class StreamerHttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -71,24 +73,48 @@ export class StreamerClient {
     return this.apiKey ? text.replaceAll(this.apiKey, "[redacted]") : text;
   }
 
-  async get<T>(path: string): Promise<T> {
+  get<T>(path: string): Promise<T> {
+    return this.request<T>(path);
+  }
+
+  post<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!this.apiKey) throw new Error(KEY_MISSING);
     let res: Response;
     try {
       res = await this.fetchFn(`${this.baseUrl}${path}`, {
-        headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" },
+        ...init,
+        headers: {
+          ...(init.headers as Record<string, string>),
+          Authorization: `Bearer ${this.apiKey}`,
+          Accept: "application/json",
+        },
       });
     } catch {
       throw new Error(NOT_RUNNING);
     }
     if (res.status === 401 || res.status === 403)
       throw new StreamerHttpError(res.status, KEY_REJECTED);
-    const body = (await res.json().catch(() => null)) as T | { error?: string } | null;
+    const body = (await res.json().catch(() => null)) as
+      | T
+      | { error?: string; code?: string }
+      | null;
     if (!res.ok) {
-      const detail = body && typeof body === "object" && "error" in body ? body.error : undefined;
+      const err =
+        body && typeof body === "object" ? (body as { error?: string; code?: string }) : {};
       throw new StreamerHttpError(
         res.status,
-        this.redact(`The streamer answered HTTP ${res.status}${detail ? `: ${detail}` : ""}.`),
+        this.redact(
+          `The streamer answered HTTP ${res.status}${err.error ? `: ${err.error}` : ""}.`,
+        ),
+        typeof err.code === "string" ? err.code : undefined,
       );
     }
     return body as T;

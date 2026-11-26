@@ -99,6 +99,10 @@ waiting_input / idle ──(idle reaper, 6h of agent silence)───► idle  
   Clients show it read-only and never send input to it.
   The only client actions are rename (`PATCH /api/sessions/:id/name`) and terminate (`POST /api/sessions/:id/terminate`, which SIGTERMs the owner and polls until the pid is gone).
   Adopt (`POST /api/sessions/:id/adopt`) terminates the owner the same way and respawns the conversation under this streamer.
+  A Claude session can also request its own adopt through the MCP `handoff_to_threadbase` tool, which calls `POST /api/sessions/:id/adopt-after-turn` with its own pid.
+  That route answers 202 at once and runs the same adopt only after the pid's `~/.claude/sessions` entry reads `idle` after the request, held 2 s; a question card writes `waiting`, which the parser drops, so it keeps waiting.
+  A turn that has not ended in 10 minutes, or an owner that exits first, drops the job (`session.adopt_deferred_dropped`, with `reason`) and kills nothing.
+  Like `/adopt`, it does not carry the terminal's own CLI flags or extra directories.
 - **Managed**: a session the streamer spawned as a PTY child (`ownership: "managed"`).
   `SessionStore.ownsConversation()` keeps those out of the external list.
 - The user-facing word is "External", never "Observed".

@@ -31,7 +31,7 @@ This repository registers no marketplace or plugin itself; the shared skills abo
 
 ## Threadbase MCP server
 
-`tb-streamer mcp` runs a read-only MCP server over stdio, so an agent can see the sessions on this machine.
+`tb-streamer mcp` runs an MCP server over stdio, so an agent can see the sessions on this machine, and a Claude Code session can hand itself over to Threadbase.
 It is a separate process the MCP client launches; it calls the streamer that is already running, over loopback, with the local API key.
 Start the streamer first (`tb-streamer serve`); the other REST endpoints it wraps are in [docs/api-reference.md](../api-reference.md).
 
@@ -68,7 +68,7 @@ To pass it, add `--port <n>` after `mcp`, or set the variable in the client's `e
 ### Tools
 
 Every result is one text block.
-The first three tools return JSON; `tail_terminal` returns the terminal lines as plain text.
+`tail_terminal` returns the terminal lines as plain text; every other tool returns JSON.
 
 - `streamer_info`: no inputs.
   Returns `{ reachable: true, version, providers: [{ name, available, version }] }`, where `available` means that provider's CLI is installed and `version` is null when it is not known.
@@ -92,11 +92,21 @@ The first three tools return JSON; `tail_terminal` returns the terminal lines as
     An unknown id is the error `Session not found.`
   - It reads `GET /api/sessions/:id/output?lines=N`.
     That `lines` mode is additive: without it the route still returns the raw `{ output }` buffer, unchanged.
+- `handoff_to_threadbase`: hands the calling Claude Code session over to Threadbase, to continue it on the phone.
+  - No inputs: the session identifies itself by walking up from the MCP server to the first process with a `~/.claude/sessions/<pid>.json` entry.
+    Anything else (another agent, Windows) is refused before any request.
+  - It calls `POST /api/sessions/:id/adopt-after-turn` with `{ pid }` and returns `{ scheduled: true, sessionId, instruction }` at once.
+    The streamer waits until that registry entry reads `idle` after the request, for 2 s, then adopts it: the terminal `claude` is terminated and the same conversation resumes as a Threadbase session.
+    A question card keeps the wait going, a turn that has not ended in 10 minutes drops the job, and either way the terminal keeps running.
+  - The adopted session is resumed with the server's own Claude flags, not the terminal's CLI flags or `--add-dir` directories.
+  - Refusals (already managed, no turn state in this Claude Code version, not yet discovered, project directory gone) come back as one-line tool errors; a streamer without the route says it is too old.
+  - It is the only tool that is not read-only (`destructiveHint: true`), so Claude Code asks for permission before running it, except in auto or bypass permission mode.
+  - Claude Code also lists it as the slash command `/mcp__threadbase__handoff_to_threadbase`, an MCP prompt that asks the agent to call the tool.
 
 ### Notes
 
-- Every tool is read-only.
-  None can send input to, start or stop a session.
+- Every tool but `handoff_to_threadbase` is read-only.
+  None can send input to or start a session, and the handoff stops only the terminal session that calls it.
 - Results carry conversation and terminal content unredacted, so the MCP client sees whatever your sessions contain.
 - The shim reads the key from the existing local config and never creates one; if it is missing, run `tb-streamer set-key`.
 - Sessions Threadbase did not start are "External".

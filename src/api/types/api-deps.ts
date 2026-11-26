@@ -158,6 +158,11 @@ export type ApiDeps = {
   ) => Promise<void>;
   handleUploadFile: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleAdopt: (sessionId: string, res: ServerResponse) => Promise<void>;
+  handleAdoptAfterTurn: (
+    sessionId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ) => Promise<void>;
   handleTerminate: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleFork: (sessionId: string, req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleResume: (req: IncomingMessage, res: ServerResponse) => Promise<void>;

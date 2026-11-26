@@ -2505,6 +2505,7 @@ export class StreamerServer {
     for (const timer of this.ptyGraceTimers.values()) clearTimeout(timer);
     this.ptyGraceTimers.clear();
     this.holdWhenIdle.clear();
+    this.sessionHandlers.cancelDeferredAdopts();
     if (this.idleReaperTimer) {
       clearInterval(this.idleReaperTimer);
       this.idleReaperTimer = null;
