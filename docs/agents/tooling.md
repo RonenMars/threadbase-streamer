@@ -68,7 +68,7 @@ To pass it, add `--port <n>` after `mcp`, or set the variable in the client's `e
 ### Tools
 
 Every result is one text block.
-The first three tools return JSON; `tail_terminal` returns the terminal lines as plain text.
+Every tool returns JSON except `tail_terminal`, which returns the terminal lines as plain text.
 
 - `streamer_info`: no inputs.
   Returns `{ reachable: true, version, providers: [{ name, available, version }] }`, where `available` means that provider's CLI is installed and `version` is null when it is not known.
@@ -92,6 +92,19 @@ The first three tools return JSON; `tail_terminal` returns the terminal lines as
     An unknown id is the error `Session not found.`
   - It reads `GET /api/sessions/:id/output?lines=N`.
     That `lines` mode is additive: without it the route still returns the raw `{ output }` buffer, unchanged.
+- `search_conversations`: full-text search across past conversations of every provider, best match first.
+  - Inputs: `q` (string, required), `provider`, `project` (a project path), `limit` (integer 1-200, default 20) and `cursor` (string).
+  - Returns `{ results: [{ id, name, provider, projectPath, lastActivityAt, snippets }], nextCursor }`; `id` works with `read_conversation`.
+  - It reads `GET /api/search`.
+- `list_projects`: projects with conversations, most recently active first.
+  - Inputs: `limit` (integer 1-500, default 50) and `cursor` (string).
+  - Returns `{ projects: [{ name, path, conversationCount, liveExternalSessions, lastActivityAt }], nextCursor }`.
+  - It reads `GET /api/projects/summary`.
+- `wait_for_turn`: waits until a session finishes its turn, goes idle, or needs the user.
+  - Inputs: `sessionId` (string, required) and `timeoutSeconds` (integer 1-600, default 120).
+  - Returns `{ outcome, session }`, where `outcome` is `needs_you`, `waiting_input`, `idle` or `timeout`, and `session` has the `list_sessions` shape.
+    `needs_you` wins when a prompt is open on a settled turn; `timeout` is a normal result, so call again to keep waiting.
+  - It polls `GET /api/sessions/:id` once a second. An unknown id is the error `Session not found.`
 
 ### Notes
 
