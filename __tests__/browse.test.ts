@@ -1,6 +1,6 @@
-import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { homedir, tmpdir } from "os";
+import { join, relative } from "path";
 import {
   BrowsePathNotFoundError,
   createDirectory,
@@ -138,6 +138,58 @@ describe("resolveBrowsePath unrestricted", () => {
         "../threadbase-browse-test-outside",
       ]),
     ).rejects.toThrow("outside browse root");
+  });
+});
+
+describe("resolveBrowsePath home and symlinks", () => {
+  const OUTSIDE = join(tmpdir(), "threadbase-browse-test-outside");
+
+  beforeEach(() => {
+    rmSync(OUTSIDE, { recursive: true, force: true });
+    mkdirSync(OUTSIDE, { recursive: true });
+  });
+
+  afterAll(() => {
+    rmSync(OUTSIDE, { recursive: true, force: true });
+  });
+
+  it("expands ~ to the home directory", async () => {
+    const home = homedir();
+    expect(await resolveBrowsePath(home, "~")).toBe(home);
+  });
+
+  it("expands ~/ and keeps it inside the root", async () => {
+    const rel = relative(homedir(), join(TEST_ROOT, "projectA"));
+    const resolved = await resolveBrowsePath(TEST_ROOT, `~/${rel}`);
+    expect(resolved).toBe(join(TEST_ROOT, "projectA"));
+  });
+
+  it("rejects ~ when the home directory is outside the root", async () => {
+    await expect(resolveBrowsePath(TEST_ROOT, "~")).rejects.toThrow("Path outside browse root");
+  });
+
+  it("rejects a symlink inside the root that points out of it", async () => {
+    symlinkSync(OUTSIDE, join(TEST_ROOT, "escape"));
+    await expect(resolveBrowsePath(TEST_ROOT, "escape")).rejects.toThrow(
+      "Path outside browse root",
+    );
+  });
+
+  it("follows the same symlink when unrestricted", async () => {
+    symlinkSync(OUTSIDE, join(TEST_ROOT, "escape"));
+    expect(await resolveBrowsePath(TEST_ROOT, "escape", true)).toBe(join(TEST_ROOT, "escape"));
+  });
+
+  it("accepts a symlink that stays inside the root", async () => {
+    symlinkSync(join(TEST_ROOT, "projectB"), join(TEST_ROOT, "projectA", "b-link"));
+    const resolved = await resolveBrowsePath(TEST_ROOT, "projectA/b-link");
+    expect(resolved).toBe(join(TEST_ROOT, "projectA", "b-link"));
+  });
+
+  it("accepts paths under a root that is itself a symlink", async () => {
+    const linkedRoot = join(OUTSIDE, "root-link");
+    symlinkSync(TEST_ROOT, linkedRoot);
+    expect(await resolveBrowsePath(linkedRoot, "projectA")).toBe(join(linkedRoot, "projectA"));
   });
 });
 
