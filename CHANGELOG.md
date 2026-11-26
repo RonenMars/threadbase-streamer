@@ -1,3 +1,9 @@
+## [1.152.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.151.2...v1.152.0) (2026-11-26)
+
+### Features
+
+* **agent:** pass the session's project path to the orchestrator workflow ([#1329](https://github.com/RonenMars/threadbase-streamer/issues/1329)) ([e160f80](https://github.com/RonenMars/threadbase-streamer/commit/e160f80915223dcb3002a9f0b2a2c98567930138))
+
 ## [1.151.2](https://github.com/RonenMars/threadbase-streamer/compare/v1.151.1...v1.151.2) (2026-11-26)
 
 ## [1.151.1](https://github.com/RonenMars/threadbase-streamer/compare/v1.151.0...v1.151.1) (2026-11-25)
