@@ -1,3 +1,9 @@
+## [1.153.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.152.0...v1.153.0) (2026-11-26)
+
+### Features
+
+* **agent:** show the worker's sign-off gate as a permission card ([#1331](https://github.com/RonenMars/threadbase-streamer/issues/1331)) ([0c4583a](https://github.com/RonenMars/threadbase-streamer/commit/0c4583a39a1d7d670f219c67e6fb1465d1624574))
+
 ## [1.152.0](https://github.com/RonenMars/threadbase-streamer/compare/v1.151.2...v1.152.0) (2026-11-26)
 
 ### Features
