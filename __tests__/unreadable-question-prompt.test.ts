@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StreamerServer } from "../src/server";
+import { isUnreadableQuestionForm } from "../src/services/questions/detectQuestionFromScreen";
 import type { AskQuestion } from "../src/types";
 
 const SESSION = "unreadable-form-session";
@@ -58,5 +59,17 @@ describe("handleLiveQuestion with an unreadable form", () => {
     expect(before).toHaveLength(1);
     expect(internals().promptRegistry.snapshot(SESSION).prompts).toEqual(before);
     expect(internals().pendingQuestions.get(SESSION).toolUseId).toBe("toolu_1");
+  });
+});
+
+describe("isUnreadableQuestionForm", () => {
+  it("finds the preview hint on a row the footer wrapped onto", () => {
+    const rows = ["Pick a fruit?", "Enter to select · ↑/↓ to", "navigate · n to add notes"];
+    expect(isUnreadableQuestionForm(rows)).toBe(true);
+  });
+
+  it("sees the scrolled marker across a blank row", () => {
+    const rows = ["  ↑ 4 more lines", "", "Enter to select · Esc to cancel"];
+    expect(isUnreadableQuestionForm(rows)).toBe(true);
   });
 });

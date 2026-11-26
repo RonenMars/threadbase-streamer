@@ -342,8 +342,6 @@ export type SessionHandlersDeps = {
   /** Waits of the multi-question form drive; tests shorten them. */
   multiAnswerTiming?: { timeoutMs: number; pollMs: number };
   sessionGeometry: Map<string, { cols: number; rows: number }>;
-  /** Optional so unit tests that stub these deps stay valid. */
-  onQuestionAnswered?: (sessionId: string) => void;
   wsHub: WSHub;
   scannerManager: ScannerManager;
   sessionWatchers: SessionWatchers;
@@ -1950,7 +1948,6 @@ export class SessionHandlers {
     this.pendingQuestions.delete(sessionId);
     // The drive saw the form close, so there is no painted menu left to dedupe.
     this.pendingQuestionKey.delete(sessionId);
-    this.deps.onQuestionAnswered?.(sessionId);
     return { ok: true };
   }
 

@@ -972,11 +972,6 @@ export class StreamerServer {
     this.sessionHandlers = new SessionHandlers({
       includeSubagentSessions: () => this.featureFlags.subagentSessions,
       sessionGeometry: this.sessionGeometry,
-      // The form's own "menu gone" is held back while it is being answered.
-      onQuestionAnswered: (sessionId) => {
-        const session = this.sessionStore.get(sessionId, this.ptyAttachedIds());
-        if (session) void this.waitingInputNotifier?.onPrompt(session, "question", false);
-      },
       // Collaborators the constructor already built. The Maps and Sets are
       // passed by reference on purpose: they stay StreamerServer state, and a
       // mutation from a handler is the same mutation the WS/PTY callbacks here

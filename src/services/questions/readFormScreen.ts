@@ -67,7 +67,7 @@ export function readFormScreen(lines: string[], questions: AskQuestion[]): FormS
   if (isUnreadableQuestionForm(lines)) {
     return PREVIEW_RE.test(footer.join(" ")) ? { kind: "preview" } : { kind: "scrolled" };
   }
-  if (barAt === -1 || barAt > footerAt) return null;
+  if (barAt === -1) return null;
   if (lines[barAt].match(CHIP_RE)?.length !== questions.length) return null;
   return readTab(lines.slice(barAt + 1, footerAt), questions);
 }

@@ -55,6 +55,10 @@ type Internal = {
     hasSession: (id: string) => boolean;
     isInputLocked: (id: string) => boolean;
     sendKeys: (id: string, keys: string) => void;
+    sendRawKeys: (id: string, keys: string) => void;
+    sendInput: (id: string, input: string) => number;
+    resize: (id: string, cols: number, rows: number) => void;
+    lockInput: (id: string) => unknown;
     runnerFor: (id: string) => unknown;
     options: {
       onLiveQuestion: (id: string, q: AskQuestion[]) => void;
@@ -111,6 +115,8 @@ beforeEach(async () => {
       resizes.push([cols, rows]);
       form.rows = rows;
     },
+    getReplayLines: async () => ({ lines: [], archivedLineCount: 0 }),
+    getInputHistory: () => [],
     getOutputLines: async (_id: string, max: number) => {
       await screenHeld;
       return (await form.terminal.read()).slice(-max);
@@ -186,6 +192,43 @@ async function duringDrive<T>(prompt: OpenPrompt, check: () => T | Promise<T>) {
   return { result, answered: await answering };
 }
 
+async function openSocket() {
+  const ws = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`);
+  await new Promise((resolve) => ws.once("open", resolve));
+  return ws;
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+
+// The cards a client gets just for subscribing.
+async function replayedQuestions() {
+  const received: Record<string, unknown>[] = [];
+  const ws = await openSocket();
+  ws.on("message", (raw) => received.push(JSON.parse(String(raw))));
+  ws.send(JSON.stringify({ type: "subscribe_session", sessionId: SESSION }));
+  await settle();
+  ws.close();
+  return received.filter((m) => m.type === "question");
+}
+
+// What the push notifier is told: a "needs you" opening or closing.
+function watchPrompts() {
+  const notices: string[] = [];
+  const reach = server as unknown as {
+    waitingInputNotifier: unknown;
+    sessionStore: { get: () => unknown };
+  };
+  reach.sessionStore.get = () => ({ id: SESSION });
+  reach.waitingInputNotifier = {
+    onPrompt: (_session: unknown, kind: string, open: boolean) => {
+      notices.push(`${kind} ${open ? "open" : "closed"}`);
+    },
+    onStatus: () => {},
+    dispose: () => {},
+  };
+  return notices;
+}
+
 describe("answering a multi-question form", () => {
   it("submits every choice, opening a turn only with the final Enter", async () => {
     const prompt = openPrompt();
@@ -200,27 +243,32 @@ describe("answering a multi-question form", () => {
     expect(internal.pendingQuestions.has(SESSION)).toBe(false);
     expect(internal.pendingQuestionKey.has(SESSION)).toBe(false);
     expect(internal.ptyManager.isInputLocked(SESSION)).toBe(false);
-    expect(sentOfType("question_cancelled")).toHaveLength(1);
+    expect(sentOfType("question_cancelled")).toEqual([
+      { type: "question_cancelled", sessionId: SESSION, toolUseId: "toolu_1" },
+    ]);
     expect(sentOfType("terminal_resize")).toEqual([]);
     expect(resizes).toEqual([]);
   });
 
-  it("tells the notifier the question closed, so the next one can push", async () => {
-    const closed: unknown[][] = [];
-    const reach = server as unknown as {
-      waitingInputNotifier: unknown;
-      sessionStore: { get: () => unknown };
-    };
-    reach.sessionStore.get = () => ({ id: SESSION });
-    reach.waitingInputNotifier = {
-      onPrompt: (...args: unknown[]) => closed.push(args),
-      onStatus: () => {},
-      dispose: () => {},
-    };
+  it("forgets the painted menu, so the same form can be shown again", async () => {
+    const prompt = openPrompt();
+    internal.pendingQuestionKey.set(SESSION, "painted");
 
-    await answer(openPrompt());
+    await answer(prompt);
 
-    expect(closed).toEqual([[{ id: SESSION }, "question", false]]);
+    expect(internal.pendingQuestionKey.has(SESSION)).toBe(false);
+  });
+
+  it("answers a single question without driving the form", async () => {
+    const prompt = openPrompt([QUESTIONS[0]]);
+    const painted = [QUESTIONS[0].question, "", "\u276f 1. Red", "  2. Blue", ""];
+    form.override = () => [...painted, "Enter to select · ↑/↓ to navigate · Esc to cancel"];
+    form.terminal.write = () => {};
+
+    const res = await post("prompt/answer", answerFor(prompt, [[1]]));
+
+    expect(res.status).toBe(200);
+    expect(writes).toEqual([{ via: "keys", data: `${DOWN}${ENTER}` }]);
   });
 
   it("writes nothing for a response missing a question", async () => {
@@ -313,6 +361,32 @@ describe("answering a multi-question form", () => {
         { type: "terminal_resize", sessionId: SESSION, cols: 120, rows: 40 },
       ]);
       expect(internal.sessionGeometry.has(SESSION)).toBe(false);
+    });
+
+    it("tells a client that subscribes mid-drive the grown size", async () => {
+      tall();
+      const prompt = openPrompt();
+      const during: unknown[] = [];
+      form.onWrite = () => {
+        during.push(internal.sessionGeometry.get(SESSION));
+        return undefined;
+      };
+
+      await answer(prompt);
+
+      expect(during.at(-1)).toEqual({ cols: 120, rows: 100 });
+    });
+
+    it("never shrinks a client's terminal that is already taller than the grow size", async () => {
+      form = new FakeQuestionForm(QUESTIONS, [130, 0, 0]);
+      internal.sessionGeometry.set(SESSION, { cols: 120, rows: 120 });
+      form.rows = 120;
+      const prompt = openPrompt();
+
+      await answer(prompt);
+
+      expect(resizes.filter(([, rows]) => rows < 120)).toEqual([]);
+      expect(internal.sessionGeometry.get(SESSION)).toEqual({ cols: 120, rows: 120 });
     });
 
     it("still reports answered when restoring the size fails", async () => {
@@ -409,6 +483,45 @@ describe("answering a multi-question form", () => {
       expect(writes.some((w) => w.via === "text")).toBe(false);
     });
 
+    it("keeps composer text refused after the registry forgets the prompt", async () => {
+      const { prompt } = await partial();
+      const registry = internal.promptRegistry as unknown as { now: () => number };
+      registry.now = () => Date.now() + 11 * 60_000;
+      expect(internal.promptRegistry.get(prompt.promptId)).toBeNull();
+
+      const res = await post("input", { input: "hello" });
+
+      expect(res.status).toBe(409);
+      expect(writes.some((w) => w.via === "text")).toBe(false);
+    });
+
+    it("stays half answered when the transcript repeats the same call", async () => {
+      const { prompt } = await partial();
+
+      internal.sessionHandlers.handleJsonlQuestion(SESSION, "toolu_1", QUESTIONS, "jsonl");
+
+      expect(internal.pendingQuestions.get(SESSION)).toMatchObject({
+        promptId: prompt.promptId,
+        partlyAnswered: true,
+      });
+      expect(
+        internal.promptRegistry.snapshot(SESSION).prompts.filter((p) => p.state === "open"),
+      ).toEqual([]);
+    });
+
+    it("opens a new prompt when a later call asks the same questions", async () => {
+      const { prompt } = await partial();
+
+      internal.sessionHandlers.handleJsonlQuestion(SESSION, "toolu_2", QUESTIONS, "jsonl");
+
+      const pending = internal.pendingQuestions.get(SESSION);
+      expect(pending).not.toHaveProperty("partlyAnswered");
+      expect(pending).not.toMatchObject({ promptId: prompt.promptId });
+      expect(
+        internal.promptRegistry.snapshot(SESSION).prompts.filter((p) => p.state === "open"),
+      ).toHaveLength(1);
+    });
+
     it("raises no card from a tab of the half-answered form", async () => {
       await partial();
       sent.length = 0;
@@ -466,20 +579,34 @@ describe("answering a multi-question form", () => {
 
     it("does not replay the closed card to a new subscriber", async () => {
       await partial();
-      const received: Record<string, unknown>[] = [];
-      const ws = new WebSocket(`ws://localhost:${server.port}/ws?key=${API_KEY}`);
-      await new Promise((resolve) => ws.once("open", resolve));
-      ws.on("message", (raw) => received.push(JSON.parse(String(raw))));
 
-      ws.send(JSON.stringify({ type: "subscribe_session", sessionId: SESSION }));
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      ws.close();
-
-      expect(received.filter((m) => m.type === "question")).toEqual([]);
+      expect(await replayedQuestions()).toEqual([]);
     });
   });
 
+  it("replays an open card to a new subscriber", async () => {
+    openPrompt();
+
+    expect(await replayedQuestions()).toHaveLength(1);
+  });
+
   describe("while the form is being driven", () => {
+    it("ignores a client's resize without failing the frame", async () => {
+      const prompt = openPrompt();
+      const errors = vi.spyOn((server as unknown as { log: { error: () => void } }).log, "error");
+
+      await duringDrive(prompt, async () => {
+        const ws = await openSocket();
+        ws.send(JSON.stringify({ type: "resize_session", sessionId: SESSION, cols: 80, rows: 24 }));
+        await settle();
+        ws.close();
+      });
+
+      expect(resizes).toEqual([]);
+      expect(sentOfType("terminal_resize")).toEqual([]);
+      expect(errors).not.toHaveBeenCalled();
+    });
+
     it("refuses every other writer and a second answer writes nothing more", async () => {
       const prompt = openPrompt();
 
@@ -487,8 +614,19 @@ describe("answering a multi-question form", () => {
         const text = await post("input", { input: "hello" });
         const keys = await post("input", { keys: "\r" });
         const escaped = await post("raw-key", { action: "escape" });
-        const direct = () => internal.ptyManager.sendKeys(SESSION, "x");
-        expect(direct).toThrow(/answering/i);
+        // Bound to the prompt: it must not reach the check that would retire it.
+        const bound = await post("raw-key", { action: "escape", promptId: prompt.promptId });
+        expect(await bound.json()).toMatchObject({ code: "raw_key_unavailable" });
+        const { ptyManager } = internal;
+        for (const write of [
+          () => ptyManager.sendKeys(SESSION, "x"),
+          () => ptyManager.sendRawKeys(SESSION, "x"),
+          () => ptyManager.sendInput(SESSION, "x"),
+          () => ptyManager.resize(SESSION, 80, 24),
+          () => ptyManager.lockInput(SESSION),
+        ]) {
+          expect(write).toThrow(/answering/i);
+        }
         return {
           text: [text.status, await text.json()],
           keys: keys.status,
@@ -509,12 +647,15 @@ describe("answering a multi-question form", () => {
 
     it("lets no screen or transcript event reach clients or replace the prompt", async () => {
       const prompt = openPrompt();
+      const notices = watchPrompts();
 
       const { answered } = await duringDrive(prompt, () => {
         sent.length = 0;
         const { options } = internal.ptyManager;
         options.onLiveQuestion(SESSION, [QUESTIONS[1]]);
         options.onLiveQuestion(SESSION, []);
+        // A screen read as some other question must not replace the prompt.
+        options.onLiveQuestion(SESSION, [{ ...QUESTIONS[0], question: "Misread?" }]);
         options.onPermissionChange(SESSION, {
           options: [
             { index: 1, label: "Submit answers" },
@@ -540,12 +681,17 @@ describe("answering a multi-question form", () => {
           }),
         ]);
         expect(sent).toEqual([]);
+        // The form's menu leaving still closes the push; nothing opens one.
+        expect(notices).toEqual(["question closed"]);
         expect(internal.pendingPermission.has(SESSION)).toBe(false);
         expect(internal.pendingQuestions.get(SESSION)?.toolUseId).toBe("toolu_1");
         expect(internal.promptRegistry.get(prompt.promptId)?.state).toBe("open");
       });
 
       expect(answered.status).toBe(200);
+      // The same notifier does hear a question once the drive is over.
+      internal.ptyManager.options.onLiveQuestion(SESSION, [QUESTIONS[1]]);
+      expect(notices).toEqual(["question closed", "question open"]);
     });
 
     it("is not cancelled by the 60s check", async () => {

@@ -220,3 +220,69 @@ describe("readFormScreen on the review screen", () => {
     expect(await edited((l) => [...l, "Thinking"])).toBeNull();
   });
 });
+
+describe("readFormScreen fails closed on each part it checks", () => {
+  const edited = async (name: string, questions: AskQuestion[], edit: (l: string[]) => string[]) =>
+    readFormScreen(edit(await screen(name)), questions);
+  const replace = (from: string | RegExp, to: string) => (lines: string[]) =>
+    lines.map((l) => l.replace(from, to));
+  const without = (row: RegExp) => (lines: string[]) => lines.filter((l) => !row.test(l));
+  const after = (row: string, added: string) => (lines: string[]) =>
+    lines.flatMap((l) => (l.includes(row) ? [l, added] : [l]));
+  const unmarked = replace("❯ 1.", "  1.");
+  const multi = (edit: (l: string[]) => string[]) =>
+    edited("single-multi-tab2-multi-last", SINGLE_MULTI, edit);
+
+  it.each([
+    ["no Chat about this row", without(/Chat about this/)],
+    ["another row where Chat about this belongs", replace("Chat about this", "Something else")],
+    ["another row where Type something belongs", replace("Type something", "Something else")],
+    ["a second cursor off the option rows", after("2. Pear", "     ❯ stray")],
+    [
+      "a cursor only off the option rows",
+      (l: string[]) => after("2. Pear", "     ❯ x")(unmarked(l)),
+    ],
+  ])("a tab with %s", async (_what, edit) => {
+    expect(await edited("two-single-tab1", TWO, edit)).toBeNull();
+  });
+
+  it("reads a cursor on Chat about this under a multi-select", async () => {
+    const read = await multi((l) =>
+      unmarked(l).map((x) => (x.includes("Chat about this") ? x.replace(/^ {2}/, "❯ ") : x)),
+    );
+    expect(read).toEqual(tab(1, 6, none(4)));
+  });
+
+  it("a multi-select without its Next row", async () => {
+    expect(await multi(without(/^\s*(?:❯)?\s*(?:Next|Submit)\s*$/))).toBeNull();
+  });
+
+  it("another menu that ends in Cancel", () => {
+    expect(readFormScreen(["Delete it?", "❯ 1. Yes", "  2. Cancel"], TWO)).toBeNull();
+  });
+
+  const review = (edit: (l: string[]) => string[]) => edited("two-single-review", TWO, edit);
+
+  it("a review for a form with more questions than its tab bar shows", async () => {
+    const lines = await screen("two-single-review");
+    expect(readFormScreen(lines, [...TWO, q("Pick again?", ["A", "B"])])).toBeNull();
+  });
+
+  it.each([
+    ["a question listed twice", replace("Pick a drink?", "Pick a fruit?")],
+    ["two cursors", replace("  2. Cancel", "❯ 2. Cancel")],
+    ["no cursor", unmarked],
+    ["a row it does not know", after("Review your answers", "  Something new")],
+  ])("a review with %s", async (_what, edit) => {
+    expect(await review(edit)).toBeNull();
+  });
+
+  it("joins a review question that wraps", async () => {
+    const read = await review((l) =>
+      l.flatMap((x) =>
+        x.includes("Pick a fruit?") ? [x.replace(" fruit?", ""), "   fruit?"] : [x],
+      ),
+    );
+    expect(read).toMatchObject({ kind: "review", answers: ["Pear", "Water"] });
+  });
+});
