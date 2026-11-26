@@ -77,6 +77,13 @@ Why no fallback: multi-agent mode is off by default, so the sender and receiver 
 Closes the replay gap recorded as M4 in [docs/security/2026-11-02-reverted-hardening-decisions.md](security/2026-11-02-reverted-hardening-decisions.md).
 - Existing WebSocket protocol — augmented with `session_update.stage`, `session_update.stalledSinceMs`, plus two new event types: `agent_output` and `turn_failure`. All additive — old clients ignore unknown fields.
 
+### Sign-off gates
+
+A worker that asks for a human answer sends `gate_open` (`{ gateId, prompt, detail?, options }`, from `@threadbase-sh/agent-types` 1.1.0).
+The streamer turns it into the `permission` card mobile already shows, with options numbered from 1, stores it in the same pending map as a PTY gate, so a client that subscribes later gets it replayed, and sets the session to `waiting_input`.
+`POST /api/sessions/:id/permission/answer` runs the usual gate, option and label checks, then sends a `gateAnswer` signal (`{ gateId, optionIndex }`) to the turn's child workflow, `turn-<turnId>`, and answers 200 without closing the card; a failed signal answers 503 and leaves the card up.
+The worker's `gate_closed` for the open `gateId` broadcasts `permission_cancelled` and sets the session back to `running`; a `gate_closed` for an earlier gate is ignored, and a `terminal_failure` cancels any open card.
+
 ## Smoke test
 
 With all three processes running, send a user input via the WebSocket as you would in PTY mode. Watch:

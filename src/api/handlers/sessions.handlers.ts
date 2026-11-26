@@ -1926,6 +1926,22 @@ export class SessionHandlers {
       json(res, 409, { ok: false, reason: "unknown_option" });
       return;
     }
+    // A multi-agent sign-off gate has no screen: the worker's turn workflow
+    // takes the answer as a signal, and its gate_closed event retires the card.
+    if (gate.agentTurnId) {
+      try {
+        if (!this.agentClient) throw new Error("multi-agent mode not enabled");
+        await this.agentClient.sendGateAnswer(gate.agentTurnId, { gateId, optionIndex });
+      } catch (err) {
+        json(res, 503, {
+          ok: false,
+          reason: err instanceof Error ? err.message : "Failed to send answer",
+        });
+        return;
+      }
+      json(res, 200, { ok: true });
+      return;
+    }
     // Our copy agrees; now ask the screen, which is fresher than the map — for
     // Claude. Codex gates are synthesized by its runner from its own TUI
     // patterns, and the Claude box scraper never matches a Codex screen, so
