@@ -1458,6 +1458,7 @@ export class SessionHandlers {
   // screen-scoped toolUseId; the JSONL path overwrites pendingQuestions with the
   // real toolUseId when it lands, so answering works once JSONL catches up.
   handleLiveQuestion(sessionId: string, questions: AskQuestion[], occurrenceId?: string): void {
+    if (questions.length === 0) return; // unreadable form: the transcript prompt stands alone
     const key = questionContentKey(questions);
     // Unchanged repaint: same content and, when the pty-host names the
     // occurrence, one we already minted a prompt for (the registry keeps it

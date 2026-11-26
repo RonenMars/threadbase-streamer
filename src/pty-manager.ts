@@ -39,6 +39,7 @@ import { readPromptSuggestion } from "./services/questions/detectPromptSuggestio
 import {
   detectQuestionFromScreen,
   isQuestionMenuOnScreen,
+  isUnreadableQuestionForm,
   questionContentKey,
 } from "./services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "./services/questions/detectShellPrompt";
@@ -1377,7 +1378,10 @@ export class PTYManager implements SessionRunner {
     // user can tap to confirm — the carousel doesn't reliably auto-submit.
     // (Roadmap: robust carousel auto-submit.)
     if (askFooterOnScreen) {
-      const detected = detectQuestionFromScreen(lines);
+      // An empty list still sends the push and, later, "gone"; it opens no card.
+      const detected =
+        detectQuestionFromScreen(lines) ??
+        (isUnreadableQuestionForm(lines) ? { questions: [] } : null);
       if (detected) {
         const key = questionContentKey(detected.questions);
         if (this.lastScreenQuestionKey.get(sessionId) !== key) {

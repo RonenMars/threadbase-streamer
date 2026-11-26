@@ -1,0 +1,115 @@
+7[r8[?25h[?25l[?2004h[?2031h[?1004h]0;✳ Claude Code[38;5;174m ▐[48;5;16m▛███▛█[12G[39m[49m[1mClaude[19GCode[24G[22m[38;5;246mv2.1.332[39m
+[38;5;174m▝▜[48;5;16m█████[49m█▀[12G[38;5;246mHaiku[18G5.5[22G·[24GClaude[31G     [39m
+[38;5;174m ▝▝[7G▝▝[12G[38;5;246m/…/capture/cwd                                             [39m
+
+
+[48;5;237m[38;5;246m❯ [38;5;231mUse the AskUserQuestion tool exactly once, with exactly two questions in one [39m [49m
+[48;5;237m  [38;5;231mcall, both single select. Question 1: 'Pick a layout?' header 'Layout', [39m      [49m
+[48;5;237m  [38;5;231moptions Stacked, Split, Grid, each with a short description AND a 'preview' [39m  [49m
+[48;5;237m  [38;5;231mfield: a multi-line ASCII box drawing of about 6 lines showing that layout. [39m  [49m
+[48;5;237m  [38;5;231mQuestion 2: 'Pick a drink?' header 'Drink', options Tea, Coffee, Water with [39m  [49m
+[48;5;237m  [38;5;231mshort descriptions and no preview. After the answer, reply with one word and [39m [49m
+[48;5;237m  [38;5;231mdo nothing else.[39m                                                              [49m
+
+[38;5;174m✢[3GImagining…[39m
+
+[38;5;244m────────────────────────────────────────────────────────────────────────────────[39m
+❯ 
+[38;5;244m────────────────────────────────────────────────────────────────────────────────[39m
+[3G[38;5;220m⏵⏵[6Gauto[11Gmode[16Gon[61G[38;5;246m◐[63Gmedium[70G·[72G/effort[39m
+[2C[3A[?25h]0;◐ Claude Code[?25l[2D[3B[3A[38;5;246m❯ [17C[2B (shift+tab to cycle) · esc to interrupt · ←[63Gfor agents[39m[K
+[61G[38;5;246m◐[63Gmedium[70G·[72G/effort[39m
+[2C[4A[?25h[>0q[?u]7501;?[c[?25l[2D[4B[10C[7A[38;5;216mg…[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✳[10G[38;5;216mn[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;◑ Claude Code[?25l[2D[4B[7A[38;5;174m✻[9G[38;5;216mi[12G[38;5;174m…[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✽[8G[38;5;216mn[11G[38;5;174mg[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;◑ AskUserQuestion layout and drink test[?25l[2D[4B[7A[38;5;174m✻[6G[38;5;216mgi[9G[38;5;174min[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;◐ AskUserQuestion layout and drink test[?25l[2D[4B[7A[38;5;174m✶[5G[38;5;216ma[8G[38;5;174mn[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✳[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✢[3G[38;5;216mI[5G[38;5;174magi[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;◑ AskUserQuestion layout and drink test[?25l[2D[4B[7A[38;5;174m✳[3GI[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✶[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✻[14G[38;5;246m(4s · ↓[22G132 tokens)[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;✳ AskUserQuestion layout and drink test[?25l[2D[4B[7A[38;5;246m────────────────────────────────────────────────────────────────────────────────[1B← [48;5;153m[38;5;16m ☐ Layout [14G[39m[49m☐[16GDrink[23G✔[25GSubmit[33G→[1B[K[1B[38;5;231m[1mPick a layout?[1B[22m[39m[K[1B[38;5;153m❯[38;5;246m 1.[38;5;153m[1m Stacked[22m[39m                      [38;5;246m┌──────────────────────────────────────────┐[1C[1B 2.[6G[39mSplit[35G[38;5;246m│ [39m+----------------+[38;5;246m       [63G      [70G [72G      │[39m
+[2G[38;5;246m 3.[6G[39mGrid[35G[38;5;246m│[37G[39m|[43GHeader[54G|[38;5;246m [78G│[39m
+[35G[38;5;246m│[37G[39m+----------------+[38;5;246m [78G│[39m
+[35G[38;5;246m│[37G[39m|[42GContent[54G|[38;5;246m [78G│[39m
+[35G[38;5;246m│[37G[39m+----------------+[38;5;246m [78G│[39m
+[35G[38;5;246m│[37G[39m|[43GFooter[54G|[38;5;246m [78G│[39m
+[35G[38;5;246m│[37G[39m+----------------+[38;5;246m [78G│[39m
+[35G[38;5;246m└──────────────────────────────────────────┘[39m
+
+[35G[38;5;153mNotes:[42G[38;5;246m[3mpress[48Gn[50Gto[53Gadd[57Gnotes[23m[39m
+
+[38;5;246m────────────────────────────────────────────────────────────────────────────────[39m
+[3GChat[8Gabout[14Gthis
+
+[38;5;246mEnter[7Gto[10Gselect[17G·[19G↑/↓[23Gto[26Gnavigate[35G·[37Gn[39Gto[42Gadd[46Gnotes[52G·[54GTab[58Gto[61Gswitch[68Gquestions[78G·[39m
+[38;5;246mEsc[5Gto[8Gcancel[39m
+]777;notify;Claude Code;Claude needs your permission
