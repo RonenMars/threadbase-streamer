@@ -34,7 +34,7 @@ const NUMBERED_ROW_RE = /^\s*(❯)?\s*(\d+)\.\s+(?:\[( |✔)\]\s+)?(.*)$/;
 const NEXT_ROW_RE = /^\s*(❯)?\s*(?:Next|Submit)\s*$/;
 const RULE_RE = /^\s*─+\s*$/;
 
-const squash = (text: string): string => text.replace(/\s+/g, "");
+export const squash = (text: string): string => text.replace(/\s+/g, "");
 const ungutter = (line: string): string => line.replace(/^\s*│/, "");
 
 const lastMatch = (lines: string[], re: RegExp): number =>
