@@ -809,6 +809,10 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleGetSession: (id, res) => deps.sessionHandlers.handleGetSession(id, res),
     handleGetOutput: (id, res, lines) => deps.sessionHandlers.handleGetOutput(id, res, lines),
     handleGetSkills: (id, res) => deps.sessionHandlers.handleGetSkills(id, res),
+    handleListSessionFiles: (id, url, res) =>
+      deps.sessionHandlers.handleListSessionFiles(id, url, res),
+    handleSearchSessionFiles: (id, url, res) =>
+      deps.sessionHandlers.handleSearchSessionFiles(id, url, res),
     handleSendInput: (id, req, res) => deps.sessionHandlers.handleSendInput(id, req, res),
     handleRawKey: (id, req, res) => deps.sessionHandlers.handleRawKey(id, req, res),
     handleSendAnswer: (id, req, res) => deps.sessionHandlers.handleSendAnswer(id, req, res),

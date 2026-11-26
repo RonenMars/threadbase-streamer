@@ -1,0 +1,294 @@
+import { execFileSync } from "child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { BrowsePathNotFoundError } from "../src/browse";
+import { listSessionDir, resolveSessionDir, searchSessionFiles } from "../src/session-files";
+
+let root: string;
+let cwd: string;
+
+const touch = (rel: string) => {
+  mkdirSync(join(cwd, rel, ".."), { recursive: true });
+  writeFileSync(join(cwd, rel), "x");
+};
+
+beforeEach(() => {
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-session-files-")));
+  cwd = join(root, "proj");
+  mkdirSync(cwd);
+});
+
+afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+describe("resolveSessionDir", () => {
+  it("resolves the session cwd for an empty dir", async () => {
+    expect(await resolveSessionDir(root, cwd, "")).toBe(cwd);
+  });
+
+  it("resolves a nested dir relative to the cwd, not the browse root", async () => {
+    mkdirSync(join(cwd, "src", "lib"), { recursive: true });
+    expect(await resolveSessionDir(root, cwd, "src/lib")).toBe(join(cwd, "src", "lib"));
+  });
+
+  it("allows .. while the result stays inside the browse root", async () => {
+    mkdirSync(join(root, "sibling"));
+    expect(await resolveSessionDir(root, cwd, "../sibling")).toBe(join(root, "sibling"));
+  });
+
+  it("rejects a dir that escapes the browse root", async () => {
+    await expect(resolveSessionDir(root, cwd, "../..")).rejects.toThrow("outside browse root");
+  });
+
+  it("rejects a session cwd outside the browse root", async () => {
+    const elsewhere = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    try {
+      await expect(resolveSessionDir(root, elsewhere, "")).rejects.toThrow("outside browse root");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("allows an outside cwd when browsing is unrestricted", async () => {
+    const elsewhere = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    try {
+      expect(await resolveSessionDir(root, elsewhere, "", true)).toBe(elsewhere);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symlink inside the cwd that points outside the root", async () => {
+    const elsewhere = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    try {
+      symlinkSync(elsewhere, join(cwd, "link"));
+      await expect(resolveSessionDir(root, cwd, "link")).rejects.toThrow("outside browse root");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a sibling that only shares the root's string prefix", async () => {
+    const sibling = `${root}-evil`;
+    mkdirSync(sibling);
+    try {
+      await expect(resolveSessionDir(root, sibling, "")).rejects.toThrow("outside browse root");
+      symlinkSync(sibling, join(cwd, "link"));
+      await expect(resolveSessionDir(root, cwd, "link")).rejects.toThrow("outside browse root");
+    } finally {
+      rmSync(sibling, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reveal whether a path outside the browse root exists", async () => {
+    await expect(resolveSessionDir(root, cwd, "../../etc/nope")).rejects.toThrow(
+      "outside browse root",
+    );
+    await expect(resolveSessionDir(root, cwd, "../../etc")).rejects.toThrow("outside browse root");
+  });
+
+  it("does not reveal what exists behind a symlink that leaves the root", async () => {
+    const elsewhere = realpathSync.native(mkdtempSync(join(tmpdir(), "tb-elsewhere-")));
+    try {
+      mkdirSync(join(elsewhere, "real"));
+      symlinkSync(elsewhere, join(cwd, "link"));
+      await expect(resolveSessionDir(root, cwd, "link/real")).rejects.toThrow(
+        "outside browse root",
+      );
+      await expect(resolveSessionDir(root, cwd, "link/missing")).rejects.toThrow(
+        "outside browse root",
+      );
+      await expect(resolveSessionDir(root, cwd, "link/missing/deeper")).rejects.toThrow(
+        "outside browse root",
+      );
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("throws BrowsePathNotFoundError for a missing dir", async () => {
+    await expect(resolveSessionDir(root, cwd, "nope")).rejects.toBeInstanceOf(
+      BrowsePathNotFoundError,
+    );
+  });
+});
+
+describe("listSessionDir", () => {
+  it("lists directories and files, sorted, without truncation", async () => {
+    mkdirSync(join(cwd, "b"));
+    mkdirSync(join(cwd, "a"));
+    touch("z.txt");
+    touch("m.txt");
+    expect(await listSessionDir(cwd, 100)).toEqual({
+      directories: [{ name: "a" }, { name: "b" }],
+      files: [{ name: "m.txt" }, { name: "z.txt" }],
+      truncated: false,
+    });
+  });
+
+  it("keeps directories first and flags truncation at the limit", async () => {
+    mkdirSync(join(cwd, "d1"));
+    mkdirSync(join(cwd, "d2"));
+    touch("f1.txt");
+    touch("f2.txt");
+    expect(await listSessionDir(cwd, 3)).toEqual({
+      directories: [{ name: "d1" }, { name: "d2" }],
+      files: [{ name: "f1.txt" }],
+      truncated: true,
+    });
+  });
+
+  it("is not truncated when the entry count equals the limit", async () => {
+    touch("a.txt");
+    touch("b.txt");
+    expect((await listSessionDir(cwd, 2)).truncated).toBe(false);
+  });
+});
+
+describe("searchSessionFiles", () => {
+  const gitInit = () => {
+    execFileSync("git", ["init", "-q"], { cwd });
+  };
+
+  it("ranks a filename prefix above a path-only match", async () => {
+    touch("components/Composer.tsx");
+    touch("docs/composer/notes.md");
+    touch("lib/unrelated.ts");
+    const out = await searchSessionFiles(cwd, "Composer", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual([
+      "components/Composer.tsx",
+      "docs/composer/notes.md",
+    ]);
+  });
+
+  it("fuzzy-matches a subsequence", async () => {
+    touch("components/conversation/ChatComposer.tsx");
+    const out = await searchSessionFiles(cwd, "ccomp", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual(["components/conversation/ChatComposer.tsx"]);
+  });
+
+  it("returns nothing for a query that matches no path", async () => {
+    touch("a.ts");
+    expect((await searchSessionFiles(cwd, "zzz", { limit: 10, budgetMs: 2000 })).files).toEqual([]);
+  });
+
+  it("caps results and flags truncation", async () => {
+    for (let i = 0; i < 5; i++) touch(`src/file${i}.ts`);
+    const out = await searchSessionFiles(cwd, "file", { limit: 3, budgetMs: 2000 });
+    expect(out.files).toHaveLength(3);
+    expect(out.truncated).toBe(true);
+  });
+
+  it("honours .gitignore inside a git repo", async () => {
+    gitInit();
+    writeFileSync(join(cwd, ".gitignore"), "build/\n");
+    touch("build/out.js");
+    touch("src/out.ts");
+    const out = await searchSessionFiles(cwd, "out", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual(["src/out.ts"]);
+  });
+
+  it("lists untracked files in a git repo", async () => {
+    gitInit();
+    touch("new-file.ts");
+    const out = await searchSessionFiles(cwd, "new-file", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual(["new-file.ts"]);
+  });
+
+  it("walks outside a repo and skips node_modules and hidden dirs", async () => {
+    touch("node_modules/pkg/index.js");
+    touch(".hidden/index.js");
+    touch("src/index.js");
+    const out = await searchSessionFiles(cwd, "index", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual(["src/index.js"]);
+  });
+
+  // chmod 000 does not make a directory unreadable on Windows
+  it.skipIf(process.platform === "win32")(
+    "skips an unreadable subdirectory instead of failing the walk",
+    async () => {
+      touch("open/index.js");
+      touch("locked/index.js");
+      chmodSync(join(cwd, "locked"), 0o000);
+      try {
+        const out = await searchSessionFiles(cwd, "index", { limit: 10, budgetMs: 2000 });
+        expect(out.files.map((f) => f.path)).toEqual(["open/index.js"]);
+      } finally {
+        chmodSync(join(cwd, "locked"), 0o755);
+      }
+    },
+  );
+
+  it("does not return a tracked file that was deleted", async () => {
+    gitInit();
+    touch("gone.ts");
+    touch("kept.ts");
+    execFileSync("git", ["add", "."], { cwd });
+    rmSync(join(cwd, "gone.ts"));
+    const out = await searchSessionFiles(cwd, "ts", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual(["kept.ts"]);
+  });
+
+  it("does not flag truncation for a deleted match beyond the limit", async () => {
+    gitInit();
+    touch("gone.ts");
+    touch("kept.ts");
+    execFileSync("git", ["add", "."], { cwd });
+    rmSync(join(cwd, "gone.ts"));
+    const out = await searchSessionFiles(cwd, "ts", { limit: 1, budgetMs: 2000 });
+    expect(out).toEqual({ files: [{ path: "kept.ts" }], truncated: false });
+  });
+
+  it("does not return a nested repository as a file", async () => {
+    gitInit();
+    mkdirSync(join(cwd, "sub"));
+    execFileSync("git", ["init", "-q"], { cwd: join(cwd, "sub") });
+    touch("sub/inner.ts");
+    const out = await searchSessionFiles(cwd, "sub", { limit: 10, budgetMs: 2000 });
+    expect(out.files).toEqual([]);
+  });
+
+  it("lists a path once while the index holds it at several merge stages", async () => {
+    gitInit();
+    touch("conflict.ts");
+    const sha = execFileSync("git", ["hash-object", "-w", "conflict.ts"], { cwd })
+      .toString()
+      .trim();
+    execFileSync("git", ["update-index", "--index-info"], {
+      cwd,
+      input: [1, 2, 3].map((n) => `100644 ${sha} ${n}\tconflict.ts\n`).join(""),
+    });
+    const out = await searchSessionFiles(cwd, "conflict", { limit: 10, budgetMs: 2000 });
+    expect(out.files.map((f) => f.path)).toEqual(["conflict.ts"]);
+  });
+
+  it("still walks after git times out, within the same budget", async () => {
+    const bin = mkdtempSync(join(tmpdir(), "tb-fake-git-"));
+    writeFileSync(join(bin, "git"), "#!/bin/sh\nexec sleep 5\n", { mode: 0o755 });
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${bin}:${oldPath}`;
+    try {
+      touch("src/index.js");
+      const out = await searchSessionFiles(cwd, "index", { limit: 10, budgetMs: 900 });
+      expect(out.files.map((f) => f.path)).toEqual(["src/index.js"]);
+      expect(out.truncated).toBe(false);
+    } finally {
+      process.env.PATH = oldPath;
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("flags truncation when the walk exceeds its entry budget", async () => {
+    for (let i = 0; i < 20; i++) touch(`d${i}/f.ts`);
+    const out = await searchSessionFiles(cwd, "f.ts", { limit: 50, budgetMs: 2000, maxEntries: 5 });
+    expect(out.truncated).toBe(true);
+  });
+});

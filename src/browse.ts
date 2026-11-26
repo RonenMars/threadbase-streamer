@@ -115,7 +115,7 @@ export async function resolveAdditionalPaths(
   return dropCoveredPaths(canonicalizeProjectPath(primaryPath), resolved);
 }
 
-function isSameOrInside(child: string, parent: string): boolean {
+export function isSameOrInside(child: string, parent: string): boolean {
   if (child === parent) return true;
   const prefix = parent.endsWith(sep) ? parent : `${parent}${sep}`;
   return child.startsWith(prefix);
@@ -135,4 +135,17 @@ export function dropCoveredPaths(primaryPath: string, paths: readonly string[]):
     kept.add(p);
   }
   return paths.filter((p, i) => kept.has(p) && paths.indexOf(p) === i);
+}
+
+/** Cuts a listing to `limit` entries, keeping directories first. */
+export function capEntries(
+  directories: Array<{ name: string }>,
+  files: Array<{ name: string }>,
+  limit: number,
+) {
+  return {
+    directories: directories.slice(0, limit),
+    files: files.slice(0, Math.max(0, limit - directories.length)),
+    truncated: directories.length + files.length > limit,
+  };
 }

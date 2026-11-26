@@ -473,6 +473,10 @@ export const createMiscRoutes = (
       // off this polled endpoint. Absent means an older server that never
       // samples. Informational: pressure never holds, kills, or refuses sessions.
       hostPressure: true,
+      // This server lists and fuzzy-searches a session's working tree relative to
+      // its cwd: GET /api/sessions/:id/files and /files/search. Absent on older
+      // servers, where mobile falls back to absolute-path /api/browse.
+      sessionFiles: true,
       // Fixed-action picker navigation is available at POST /api/sessions/:id/raw-key.
       // Absent on older streamers, so mobile can explain the required update.
       rawKeys: true,
