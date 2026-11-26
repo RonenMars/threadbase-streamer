@@ -7,7 +7,7 @@ import { EventEmitter } from "events";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { PTYManager } from "../src/pty-manager";
-import type { ManagedSession } from "../src/types";
+import type { ManagedSession, SessionEvent } from "../src/types";
 
 vi.mock("node-pty", () => {
   function makeMockProcess() {
@@ -34,14 +34,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function bootWaiting() {
   const changes: ManagedSession[] = [];
-  const mgr = new PTYManager({ onStatusChange: (s) => changes.push({ ...s }) });
+  const events: SessionEvent[] = [];
+  const mgr = new PTYManager({
+    onStatusChange: (s) => changes.push({ ...s }),
+    onSessionEvent: (_id, e) => events.push(e),
+  });
   const session = await mgr.startFresh({ projectPath: "/tmp", projectName: "proj" });
   const proc = (mgr as any).sessions.get(session.id).process;
   for (const [, d] of CAP.chunks.slice(0, SUBMIT_IDX)) proc._emit("data", d);
   await vi.waitFor(() => expect(changes.at(-1)?.status).toBe("waiting_input"), { timeout: 2_000 });
   await sleep(700);
   proc.write.mockClear();
-  return { mgr, id: session.id, proc };
+  return { mgr, id: session.id, proc, events };
 }
 
 const enters = (proc: { write: { mock: { calls: unknown[][] } } }) =>
@@ -60,6 +64,31 @@ describe("Claude submit retry", () => {
     await vi.waitFor(() => expect(enters(proc)).toBe(2), { timeout: 3_000 });
     await sleep(2_000);
     expect(enters(proc)).toBe(2);
+    mgr.dispose();
+  }, 15_000);
+
+  it("reports input_not_submitted when the resent Enter started no turn either", async () => {
+    const { mgr, id, proc, events } = await bootWaiting();
+    const promptCount = mgr.sendInput(id, PROMPT);
+    proc._emit("data", paintComposer(PROMPT));
+    await vi.waitFor(() => expect(enters(proc)).toBe(2), { timeout: 4_000 });
+    expect(events).toEqual([]);
+    await vi.waitFor(() => expect(events).toEqual([{ type: "input_not_submitted", promptCount }]), {
+      timeout: 3_000,
+    });
+    await sleep(2_000);
+    expect(events).toHaveLength(1);
+    mgr.dispose();
+  }, 15_000);
+
+  it("does not report input_not_submitted when the resent Enter started the turn", async () => {
+    const { mgr, id, proc, events } = await bootWaiting();
+    mgr.sendInput(id, PROMPT);
+    proc._emit("data", paintComposer(PROMPT));
+    await vi.waitFor(() => expect(enters(proc)).toBe(2), { timeout: 4_000 });
+    proc._emit("data", "\x1b]0;◐ Claude Code\x07");
+    await sleep(2_500);
+    expect(events).toEqual([]);
     mgr.dispose();
   }, 15_000);
 

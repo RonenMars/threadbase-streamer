@@ -368,6 +368,9 @@ export class RemoteSessionRunner implements SessionRunner {
         this.options.onUserMessage?.(event.sessionId, event.text, event.ts);
         break;
       }
+      case "session-event":
+        this.options.onSessionEvent?.(event.sessionId, event.sessionEvent);
+        break;
       case "exit": {
         // Drop it from the mirror, matching what the in-process runners do on
         // exit — `handleExit` deletes from their map, which is what makes a

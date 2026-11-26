@@ -118,6 +118,8 @@ export class SessionStore {
     if (updates.status != null && updates.status !== "waiting_input") {
       session.promptSuggestion = null;
     }
+    // A turn started (or new input went in), so the prompt is no longer stuck.
+    if (updates.status === "running") session.inputNotSubmitted = null;
     return session;
   }
 
@@ -501,6 +503,7 @@ function managedToResponse(
     // Unconditional for the same reason as subStatus: absence must never be a
     // third state on the wire.
     promptSuggestion: s.promptSuggestion ?? null,
+    inputNotSubmitted: s.inputNotSubmitted ?? null,
     hasOpenPrompt,
     ptyAttached,
     ...(projectId != null && { projectId }),
@@ -567,6 +570,7 @@ function discoveredToResponse(
     // managedToResponse: absence must never be a third state on the wire.
     subStatus: null,
     promptSuggestion: null,
+    inputNotSubmitted: null,
     // Its prompts are on a screen we cannot see.
     hasOpenPrompt: false,
     projectPath: d.projectPath,

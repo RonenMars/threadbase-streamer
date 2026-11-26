@@ -171,6 +171,8 @@ export class SessionHost {
       },
       onUserMessage: (sessionId, text, ts) =>
         this.emit({ type: "event", event: "user-message", sessionId, text, ts }),
+      onSessionEvent: (sessionId, sessionEvent) =>
+        this.emit({ type: "event", event: "session-event", sessionId, sessionEvent }),
     });
 
     this.idleTimer = setInterval(() => this.reapIdle(), options.idleSweepMs ?? HOST_IDLE_SWEEP_MS);

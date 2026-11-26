@@ -1441,7 +1441,7 @@ export class SessionHandlers {
             });
           });
       }
-      const result = { status: 200, body: { ok: true } };
+      const result = { status: 200, body: { ok: true, promptCount } };
       // Record only on success: a failed write must stay retryable, otherwise a
       // transient error would be replayed as a permanent one.
       if (idempotencyKey) this.idempotency.set(sessionId, idempotencyKey, result);

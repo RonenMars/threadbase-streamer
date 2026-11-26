@@ -6,6 +6,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PTYManagerOptions } from "../src/pty-manager";
+import type { SessionEvent } from "../src/types";
 
 vi.mock("node-pty", () => {
   const procs: any[] = [];
@@ -100,7 +102,10 @@ describe("pty-host events reach the log", () => {
     return { lines, logger, events: () => lines.map((l) => l.fields?.event) };
   }
 
-  async function startHost(options: ConstructorParameters<typeof SessionHost>[0]) {
+  async function startHost(
+    options: ConstructorParameters<typeof SessionHost>[0],
+    runnerOptions: PTYManagerOptions = {},
+  ) {
     const configDir = mkdtempSync(join(tmpdir(), "tbh-"));
     withEnv("THREADBASE_CONFIG_DIR", configDir);
     const socketPath = hostSocketPath(`l${Math.random().toString(36).slice(2, 8)}`);
@@ -112,7 +117,10 @@ describe("pty-host events reach the log", () => {
       host.dispose();
       server.close();
     });
-    const runner = await RemoteSessionRunner.connect(await connectToHost(socketPath), {});
+    const runner = await RemoteSessionRunner.connect(
+      await connectToHost(socketPath),
+      runnerOptions,
+    );
     cleanups.push(() => runner.dispose());
     return { host, runner };
   }
@@ -121,6 +129,14 @@ describe("pty-host events reach the log", () => {
     const pty = await import("node-pty");
     return (pty.spawn as any).mock.results.at(-1)?.value;
   }
+
+  it("forwards a runner session event to the streamer", async () => {
+    const got: [string, SessionEvent][] = [];
+    const { host } = await startHost({}, { onSessionEvent: (id, e) => got.push([id, e]) });
+    const event: SessionEvent = { type: "input_not_submitted", promptCount: 3 };
+    (host as any).runner.options.onSessionEvent("s1", event);
+    await vi.waitFor(() => expect(got).toEqual([["s1", event]]));
+  });
 
   it("logs an agent process exit with the session id", async () => {
     const { logger, lines } = capture();
