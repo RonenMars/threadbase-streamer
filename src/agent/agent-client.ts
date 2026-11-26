@@ -6,7 +6,7 @@
 // lives in @threadbase-sh/agent-types.
 
 import type { Client } from "@temporalio/client";
-import type { UserInputSignal } from "@threadbase-sh/agent-types";
+import type { GateAnswerSignal, UserInputSignal } from "@threadbase-sh/agent-types";
 
 // `defineSignal` / `defineQuery` only ship in `@temporalio/workflow` (a worker-
 // side package we deliberately do NOT pull into the streamer). The handle
@@ -20,6 +20,10 @@ const userInputSignal = { type: "signal", name: "userInput" } as unknown as {
   type: "signal";
   name: "userInput";
 };
+const gateAnswerSignal = { type: "signal", name: "gateAnswer" } as unknown as {
+  type: "signal";
+  name: "gateAnswer";
+};
 const stageQuery = { type: "query", name: "stage" } as unknown as {
   type: "query";
   name: "stage";
@@ -31,6 +35,8 @@ export interface AgentClient {
   /** `projectPath` lets the worker's repo-aware roles run in that directory. */
   startSession(sessionId: string, opts?: { projectPath?: string }): Promise<string>;
   sendUserInput(sessionId: string, payload: UserInputSignal): Promise<void>;
+  /** The gate belongs to the turn's child workflow (`turn-<turnId>`), not the session. */
+  sendGateAnswer(turnId: string, payload: GateAnswerSignal): Promise<void>;
   endSession(sessionId: string): Promise<void>;
   getSessionStage(sessionId: string): Promise<string>;
 }
@@ -57,6 +63,11 @@ export function createAgentClient({ temporalClient, taskQueue }: AgentClientOpts
       await temporalClient.workflow
         .getHandle(sessionWorkflowId(sessionId))
         .signal(userInputSignal as any, payload);
+    },
+    async sendGateAnswer(turnId: string, payload: GateAnswerSignal): Promise<void> {
+      await temporalClient.workflow
+        .getHandle(`turn-${turnId}`)
+        .signal(gateAnswerSignal as any, payload);
     },
     async endSession(sessionId: string): Promise<void> {
       await temporalClient.workflow.getHandle(sessionWorkflowId(sessionId)).cancel();

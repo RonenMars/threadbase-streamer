@@ -14,9 +14,16 @@
 // return 200 with deduped:true and do not broadcast.
 
 import crypto from "node:crypto";
-import type { AgentOutputPayload, ProgressEvent, Stage } from "@threadbase-sh/agent-types";
+import type {
+  AgentOutputPayload,
+  GateClosedPayload,
+  GateOpenPayload,
+  ProgressEvent,
+  Stage,
+} from "@threadbase-sh/agent-types";
 import { Hono } from "hono";
-import type { WSMessage } from "../../types";
+import { permissionGateKey } from "../../services/questions/detectPermissionGate";
+import type { SessionStatus, WSMessage } from "../../types";
 import type { AppEnv } from "../app";
 import { readRawBody } from "../handlers/http-helpers";
 import type { ApiDeps } from "../types/api-deps";
@@ -28,6 +35,8 @@ interface AgentDeps {
       progressDedupeIds?: { hasSeen: (id: string) => boolean };
       currentTurnId?: string | null;
     } | null;
+    updateManaged: (sessionId: string, updates: { status: SessionStatus }) => unknown;
+    get: (sessionId: string, ptyAttachedIds: Set<string>) => unknown;
   };
   wsHub: { broadcast: (m: WSMessage) => void };
   conversationWriter: {
@@ -131,6 +140,24 @@ export const createProgressRoutes = (deps: ApiDeps & AgentDeps) => {
       return c.json({ ok: true, deduped: true }, 200);
     }
 
+    const setStatus = (status: SessionStatus): void => {
+      deps.sessionStore.updateManaged(sessionId, { status });
+      const updated = deps.sessionStore.get(sessionId, deps.ptyAttachedIds());
+      if (updated) deps.wsHub.broadcast({ type: "session_update", session: updated } as WSMessage);
+    };
+    // A sign-off gate is a permission card, held in the same map the PTY gates
+    // use, so a phone that subscribes later gets it replayed. `agentTurnId`
+    // marks it as the worker's: the answer route signals instead of typing.
+    const closeGate = (): void => {
+      deps.pendingPermission.delete(sessionId);
+      deps.pendingPermissionKey.delete(sessionId);
+      deps.wsHub.broadcast({ type: "permission_cancelled", sessionId });
+    };
+    const openGateId = (): string | undefined => {
+      const gate = deps.pendingPermission.get(sessionId);
+      return gate?.agentTurnId ? gate.gateId : undefined;
+    };
+
     // ─── Translate to WSMessage and broadcast ───────────────────────────
     if (event.type === "stage_transition") {
       const msg: WSMessage = {
@@ -176,7 +203,31 @@ export const createProgressRoutes = (deps: ApiDeps & AgentDeps) => {
       if (event.stage === "done" && session.currentTurnId === event.turnId) {
         (session as { currentTurnId: string | null }).currentTurnId = null;
       }
+    } else if (event.type === "gate_open") {
+      const payload = event.payload as unknown as GateOpenPayload;
+      const gate = {
+        prompt: payload.prompt,
+        ...(payload.detail ? { detail: payload.detail } : {}),
+        options: payload.options.map((label, i) => ({ index: i + 1, label })),
+        gateId: payload.gateId,
+        agentTurnId: event.turnId,
+      };
+      const contentKey = permissionGateKey(gate);
+      deps.pendingPermission.set(sessionId, gate);
+      deps.pendingPermissionKey.set(sessionId, contentKey);
+      const { agentTurnId: _, ...card } = gate;
+      deps.wsHub.broadcast({ type: "permission", sessionId, ...card, contentKey });
+      setStatus("waiting_input");
+    } else if (event.type === "gate_closed") {
+      const payload = event.payload as unknown as GateClosedPayload;
+      // A close for an earlier card (rework asks again under a new id) must
+      // not retire the one on screen.
+      if (openGateId() === payload.gateId) {
+        closeGate();
+        setStatus("running");
+      }
     } else if (event.type === "terminal_failure") {
+      if (openGateId()) closeGate();
       const reason = (event.payload as { reason?: string } | undefined)?.reason ?? "unknown";
       const msg: WSMessage = {
         type: "turn_failure",

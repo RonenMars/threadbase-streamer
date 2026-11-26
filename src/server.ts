@@ -1100,6 +1100,7 @@ export class StreamerServer {
       sessionSubscribers: this.sessionSubscribers,
       terminalSeq: this.terminalSeq,
       pendingPermission: this.pendingPermission,
+      pendingPermissionKey: this.pendingPermissionKey,
       pendingQuestions: this.pendingQuestions,
       promptRegistry: this.promptRegistry,
       agentClient,

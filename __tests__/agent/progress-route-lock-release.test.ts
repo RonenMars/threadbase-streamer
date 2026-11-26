@@ -29,7 +29,15 @@ function makeDeps(sessionOverrides: Record<string, unknown> = {}) {
     webhook: { hmacSecret: SECRET, timestampSkewSeconds: 300 },
     dedupe: { perSessionCapacity: 64 },
   };
-  return { sessionStore, wsHub, conversationWriter, agentConfig, session };
+  return {
+    sessionStore,
+    wsHub,
+    conversationWriter,
+    agentConfig,
+    session,
+    pendingPermission: new Map(),
+    pendingPermissionKey: new Map(),
+  };
 }
 
 function makeApp(deps: ReturnType<typeof makeDeps>) {

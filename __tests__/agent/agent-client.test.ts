@@ -80,6 +80,17 @@ describe("AgentClient", () => {
     expect(sigCall[1]).toEqual(payload);
   });
 
+  it("sendGateAnswer signals the turn's child workflow, not the session", async () => {
+    const fake = makeFakeTemporalClient();
+    const client = createAgentClient({ temporalClient: fake as any, taskQueue: "x" });
+    await client.sendGateAnswer("turn_7", { gateId: "g1", optionIndex: 2 });
+
+    expect(fake.workflow.getHandle).toHaveBeenCalledWith("turn-turn_7");
+    const sigCall = (fake as any).workflow.getHandle().signal.mock.calls[0];
+    expect(sigCall[0].name).toBe("gateAnswer");
+    expect(sigCall[1]).toEqual({ gateId: "g1", optionIndex: 2 });
+  });
+
   it("endSession cancels the orchestrator handle", async () => {
     const fake = makeFakeTemporalClient();
     const client = createAgentClient({

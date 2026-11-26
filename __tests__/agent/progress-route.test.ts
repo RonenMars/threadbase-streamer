@@ -20,12 +20,15 @@ function makeDeps(
   const dedupe = overrides.dedupe ?? createProgressDedupeLRU(64);
 
   const wsHub = { broadcast: broadcastSpy };
+  const session: Record<string, unknown> = {
+    id: "sess_t",
+    status: "running",
+    progressDedupeIds: dedupe,
+  };
   const sessionStore = {
-    getManaged: vi.fn(() => ({
-      id: "sess_t",
-      status: "running",
-      progressDedupeIds: dedupe,
-    })),
+    getManaged: vi.fn(() => session),
+    updateManaged: (_id: string, u: Record<string, unknown>) => Object.assign(session, u),
+    get: () => ({ id: session.id, status: session.status }),
   };
   const conversationWriter = { appendAssistantTurn: writeSpy };
   const agentConfig = {
@@ -37,6 +40,10 @@ function makeDeps(
   };
 
   return {
+    session,
+    pendingPermission: new Map<string, any>(),
+    pendingPermissionKey: new Map<string, string>(),
+    ptyAttachedIds: () => new Set<string>(),
     wsHub,
     sessionStore,
     conversationWriter,
@@ -287,5 +294,116 @@ describe("progress route", () => {
     const body = event();
     const res = await post(app, body, sign(JSON.stringify(body), SECRET));
     expect(res.status).toBe(404);
+  });
+});
+
+describe("progress route: sign-off gates", () => {
+  const OPEN = {
+    gateId: "gate_1",
+    prompt: "Release this answer?",
+    options: ["Approve", "Request changes", "Stop"],
+  };
+
+  async function send(
+    deps: ReturnType<typeof makeDeps>,
+    eventId: string,
+    over: Partial<ProgressEvent>,
+  ): Promise<Response> {
+    const body = event({ eventId, stage: "sign-off", ...over });
+    return post(makeApp(deps), body, sign(JSON.stringify(body), SECRET));
+  }
+
+  it("gate_open broadcasts a permission card, records the gate and sets waiting_input", async () => {
+    const deps = makeDeps();
+    const res = await send(deps, "e1", { type: "gate_open", payload: OPEN } as any);
+    expect(res.status).toBe(200);
+
+    const card = deps.broadcastSpy.mock.calls
+      .map((c) => c[0])
+      .find((m: any) => m.type === "permission");
+    expect(card).toEqual({
+      type: "permission",
+      sessionId: "sess_t",
+      prompt: "Release this answer?",
+      options: [
+        { index: 1, label: "Approve" },
+        { index: 2, label: "Request changes" },
+        { index: 3, label: "Stop" },
+      ],
+      contentKey: expect.any(String),
+      gateId: "gate_1",
+    });
+    expect(deps.pendingPermission.get("sess_t")).toMatchObject({
+      gateId: "gate_1",
+      agentTurnId: "turn_t",
+    });
+    expect(deps.pendingPermissionKey.get("sess_t")).toBe(card.contentKey);
+    expect(deps.session.status).toBe("waiting_input");
+    expect(deps.broadcastSpy.mock.calls.map((c) => c[0])).toContainEqual({
+      type: "session_update",
+      session: { id: "sess_t", status: "waiting_input" },
+    });
+  });
+
+  it("gate_closed for the open gate cancels the card and sets running", async () => {
+    const deps = makeDeps();
+    await send(deps, "e1", { type: "gate_open", payload: OPEN } as any);
+    deps.broadcastSpy.mockClear();
+    await send(deps, "e2", {
+      type: "gate_closed",
+      payload: { gateId: "gate_1", optionIndex: 0, timedOut: false },
+    } as any);
+
+    const sent = deps.broadcastSpy.mock.calls.map((c) => c[0]);
+    expect(sent).toContainEqual({ type: "permission_cancelled", sessionId: "sess_t" });
+    expect(sent).toContainEqual({
+      type: "session_update",
+      session: { id: "sess_t", status: "running" },
+    });
+    expect(deps.pendingPermission.has("sess_t")).toBe(false);
+    expect(deps.pendingPermissionKey.has("sess_t")).toBe(false);
+    expect(deps.session.status).toBe("running");
+  });
+
+  it("gate_closed for an older gate leaves the open card alone", async () => {
+    const deps = makeDeps();
+    await send(deps, "e1", { type: "gate_open", payload: OPEN } as any);
+    deps.broadcastSpy.mockClear();
+    await send(deps, "e2", {
+      type: "gate_closed",
+      payload: { gateId: "gate_0", optionIndex: 1, timedOut: false },
+    } as any);
+
+    expect(deps.broadcastSpy).not.toHaveBeenCalled();
+    expect(deps.pendingPermission.get("sess_t")?.gateId).toBe("gate_1");
+    expect(deps.session.status).toBe("waiting_input");
+  });
+
+  it("never closes a card the worker did not open", async () => {
+    const deps = makeDeps();
+    deps.pendingPermission.set("sess_t", { options: [], gateId: "gate_1" });
+    await send(deps, "e1", {
+      type: "gate_closed",
+      payload: { gateId: "gate_1", optionIndex: 0, timedOut: false },
+    } as any);
+    await send(deps, "e2", { type: "terminal_failure", payload: { reason: "x" } } as any);
+
+    expect(deps.pendingPermission.has("sess_t")).toBe(true);
+    expect(deps.broadcastSpy.mock.calls.map((c) => c[0])).not.toContainEqual(
+      expect.objectContaining({ type: "permission_cancelled" }),
+    );
+  });
+
+  it("a terminal_failure while a gate is open cancels the card", async () => {
+    const deps = makeDeps();
+    await send(deps, "e1", { type: "gate_open", payload: OPEN } as any);
+    deps.broadcastSpy.mockClear();
+    await send(deps, "e2", { type: "terminal_failure", payload: { reason: "cancelled" } } as any);
+
+    expect(deps.broadcastSpy.mock.calls.map((c) => c[0])).toContainEqual({
+      type: "permission_cancelled",
+      sessionId: "sess_t",
+    });
+    expect(deps.pendingPermission.has("sess_t")).toBe(false);
   });
 });

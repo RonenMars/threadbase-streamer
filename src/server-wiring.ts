@@ -87,6 +87,8 @@ export type PendingPermission = {
    * for a replayed occurrence held by a terminal record.
    */
   occurrenceId?: string;
+  /** Set on a multi-agent sign-off gate: the turn whose workflow takes the answer. */
+  agentTurnId?: string;
 };
 
 /** The AskUserQuestion card currently broadcast for a session. */
@@ -747,6 +749,7 @@ export type ApiDepsWiring = {
   sessionSubscribers: Map<string, Set<WebSocket>>;
   terminalSeq: Map<string, number>;
   pendingPermission: Map<string, PendingPermission>;
+  pendingPermissionKey: Map<string, string>;
   pendingQuestions: Map<string, PendingQuestion>;
   promptRegistry: PromptRegistry;
   agentClient: AgentClient | null;
@@ -1158,5 +1161,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     agentClient: deps.agentClient,
     conversationWriter: deps.conversationWriter,
     agentConfig: deps.agentConfig,
+    pendingPermission: deps.pendingPermission,
+    pendingPermissionKey: deps.pendingPermissionKey,
   };
 }

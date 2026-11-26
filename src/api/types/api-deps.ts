@@ -22,6 +22,7 @@ import type {
 } from "../../feature-flags";
 import type { LiveSessionManager } from "../../live-session-manager";
 import type { RelayState } from "../../relay/connector";
+import type { PendingPermission } from "../../server-wiring";
 import type { CacheIntegrityMonitor } from "../../services/cache-integrity/cacheIntegrityMonitor";
 import type { HostPressureMonitor } from "../../services/host-pressure/hostPressure";
 import type { ExpoPushSender } from "../../services/push/expoPushSender";
@@ -196,4 +197,7 @@ export type ApiDeps = {
   agentClient: AgentClient | null;
   conversationWriter: ConversationWriter | null;
   agentConfig: AgentConfig;
+  /** The open permission card per session; the progress route opens sign-off gates here. */
+  pendingPermission: Map<string, PendingPermission>;
+  pendingPermissionKey: Map<string, string>;
 };
