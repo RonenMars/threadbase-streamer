@@ -5349,6 +5349,8 @@ describe("StreamerServer", () => {
           toolNames: [],
         },
       ]);
+      // A cached row without stored search text is re-parsed on purpose (#1311).
+      cache.replaceSearchTexts(new Map([[convId, "hi"]]));
       cache.close();
 
       const scanCalls: Array<{ persistent: boolean; hasStatCache: boolean }> = [];

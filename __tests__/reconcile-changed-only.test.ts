@@ -55,6 +55,7 @@ describe("background reconcile writes only new or changed transcripts", () => {
     tasks = [];
     const cache = {
       getScannerStatCache: () => new Map(),
+      getSearchTexts: () => new Map(),
       getFileStats: () => stats,
       isAgentFileFiltered: (filePath: string) => filePath === agent,
       upsertFromScannerMeta: (metas: Array<{ filePath: string }>) => {
