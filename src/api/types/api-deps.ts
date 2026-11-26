@@ -109,6 +109,7 @@ export type ApiDeps = {
   handleSessionsCount: (res: ServerResponse) => void;
   handleGetRecentSessions: (url: URL, res: ServerResponse) => void;
   handleGetSessionNames: (res: ServerResponse) => void;
+  handleListPeers: (res: ServerResponse) => Promise<void>;
   handleGetSession: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleGetOutput: (sessionId: string, res: ServerResponse, lines?: string) => Promise<void>;
   handleGetSkills: (sessionId: string, res: ServerResponse) => Promise<void>;

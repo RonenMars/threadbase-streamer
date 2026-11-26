@@ -806,6 +806,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
     handleGetRecentSessions: (url, res) =>
       deps.conversationHandlers.handleGetRecentSessions(url, res),
     handleGetSessionNames: (res) => deps.sessionHandlers.handleGetSessionNames(res),
+    handleListPeers: (res) => deps.sessionHandlers.handleListPeers(res),
     handleGetSession: (id, res) => deps.sessionHandlers.handleGetSession(id, res),
     handleGetOutput: (id, res, lines) => deps.sessionHandlers.handleGetOutput(id, res, lines),
     handleGetSkills: (id, res) => deps.sessionHandlers.handleGetSkills(id, res),
