@@ -206,6 +206,7 @@ describe("conversation list import flags and filters", () => {
     );
     const [row] = res.body.conversations as Array<Record<string, unknown>>;
     expect(row?.subagentActive).toBe(false); // fixture timestamp is from 2026-06
+    expect(row?.subagentStatus).toBe("quiet"); // Cursor has no sidecar, so never "finished"
     const top = response();
     await handlers.handleListConversations(
       new URL("http://localhost/api/conversations?provider=cursor&limit=20"),
@@ -213,6 +214,7 @@ describe("conversation list import flags and filters", () => {
     );
     for (const c of top.body.conversations as Array<Record<string, unknown>>) {
       expect("subagentActive" in c).toBe(false);
+      expect("subagentStatus" in c).toBe(false);
     }
   });
 

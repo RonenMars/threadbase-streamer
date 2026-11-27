@@ -4,6 +4,7 @@ import { join } from "path";
 import {
   readSubagentInfo,
   SUBAGENT_ACTIVE_MS,
+  SUBAGENT_BG_WAIT_MAX_MS,
   SUBAGENT_TOOL_CALL_MAX_MS,
 } from "../src/services/conversations/subagentInfo";
 
@@ -28,12 +29,14 @@ describe("readSubagentInfo", () => {
       subagentDescription: "/code-review",
       subagentName: "cr",
       subagentActive: true,
+      subagentStatus: "running",
     });
   });
 
   it("gives liveness only when there is no sidecar (Codex, Cursor)", async () => {
     expect(await readSubagentInfo(join(dir, "x.jsonl"), at(1000), now)).toEqual({
       subagentActive: true,
+      subagentStatus: "running",
     });
   });
 
@@ -41,6 +44,7 @@ describe("readSubagentInfo", () => {
     writeFileSync(join(dir, "bad.meta.json"), "{not json");
     expect(await readSubagentInfo(join(dir, "bad.jsonl"), at(0), now)).toEqual({
       subagentActive: true,
+      subagentStatus: "running",
     });
   });
 
@@ -81,6 +85,76 @@ describe("readSubagentInfo", () => {
     expect((await readSubagentInfo(f, at(0), now)).subagentActive).toBe(false);
   });
 
+  // A sub-agent that starts `sleep N` in the background ends its first run and
+  // waits, and Claude marks its sidecar `finished` then. The shapes below are
+  // taken from a real 2.1.312 transcript (agent waiting on a 900 s sleep).
+  const bgLaunch = (toolId: string, taskId: string) =>
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: toolId,
+            content: `Command running in background with ID: ${taskId}. Output is being written to: /tmp/${taskId}.output. You will be notified when it completes.`,
+          },
+        ],
+      },
+    });
+  const bgDone = (toolId: string, taskId: string) =>
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: `[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolId}</tool-use-id>\n<status>completed</status>\n</task-notification>`,
+      },
+    });
+  const finishedSidecar = (name: string) =>
+    writeFileSync(join(dir, `${name}.meta.json`), JSON.stringify({ finished: true }));
+
+  it("stays active when finished but still waiting on a background task", async () => {
+    const f = transcript("bgwait", use("t1"), bgLaunch("t1", "b1"));
+    finishedSidecar("bgwait");
+    expect((await readSubagentInfo(f, quiet, now)).subagentActive).toBe(true);
+  });
+
+  it("is inactive when finished and the background task has reported back", async () => {
+    const f = transcript("bgdone", use("t1"), bgLaunch("t1", "b1"), bgDone("t1", "b1"));
+    finishedSidecar("bgdone");
+    expect((await readSubagentInfo(f, quiet, now)).subagentActive).toBe(false);
+  });
+
+  it("stays active while one of two background tasks is still pending", async () => {
+    const f = transcript(
+      "bg2",
+      use("t1"),
+      bgLaunch("t1", "b1"),
+      use("t2"),
+      bgLaunch("t2", "b2"),
+      bgDone("t1", "b1"),
+    );
+    finishedSidecar("bg2");
+    expect((await readSubagentInfo(f, quiet, now)).subagentActive).toBe(true);
+  });
+
+  it("gives up on a background wait past the cap", async () => {
+    const f = transcript("bgstale", use("t1"), bgLaunch("t1", "b1"));
+    finishedSidecar("bgstale");
+    expect((await readSubagentInfo(f, at(SUBAGENT_BG_WAIT_MAX_MS - 1), now)).subagentActive).toBe(
+      true,
+    );
+    expect((await readSubagentInfo(f, at(SUBAGENT_BG_WAIT_MAX_MS), now)).subagentActive).toBe(
+      false,
+    );
+  });
+
+  it("ignores a background launch when the sidecar does not say finished", async () => {
+    // Not finished: the ordinary rules apply, and a closed tool call is quiet.
+    const f = transcript("bgnofin", use("t1"), bgLaunch("t1", "b1"));
+    expect((await readSubagentInfo(f, quiet, now)).subagentActive).toBe(false);
+  });
+
   it("stays active through a long tool call that has no result yet", async () => {
     const f = transcript("open", use("t1"), result("t1"), use("t2"));
     expect((await readSubagentInfo(f, quiet, now)).subagentActive).toBe(true);
@@ -104,5 +178,73 @@ describe("readSubagentInfo", () => {
     expect((await readSubagentInfo(f, at(SUBAGENT_TOOL_CALL_MAX_MS), now)).subagentActive).toBe(
       false,
     );
+  });
+
+  describe("subagentStatus", () => {
+    it("is finished when the sidecar says so, even with a fresh write and an open tool call", async () => {
+      const f = transcript("sfin", use("t1"));
+      writeFileSync(join(dir, "sfin.meta.json"), JSON.stringify({ finished: true }));
+      const info = await readSubagentInfo(f, at(0), now);
+      expect(info.subagentStatus).toBe("finished");
+      expect(info.subagentActive).toBe(false);
+    });
+
+    it("is running on a recent write", async () => {
+      const f = transcript("srun", use("t1"), result("t1"));
+      expect((await readSubagentInfo(f, at(1000), now)).subagentStatus).toBe("running");
+    });
+
+    it("is running through an open tool call while the transcript is quiet", async () => {
+      const f = transcript("sopen", use("t1"));
+      expect((await readSubagentInfo(f, quiet, now)).subagentStatus).toBe("running");
+    });
+
+    it("is quiet, not finished, when nothing is open and nothing was written (no sidecar to say done)", async () => {
+      const f = transcript("squiet", use("t1"), result("t1"));
+      expect((await readSubagentInfo(f, quiet, now)).subagentStatus).toBe("quiet");
+    });
+
+    it("is quiet past the open-tool-call cap", async () => {
+      const f = transcript("scap", use("t1"));
+      expect((await readSubagentInfo(f, at(SUBAGENT_TOOL_CALL_MAX_MS), now)).subagentStatus).toBe(
+        "quiet",
+      );
+    });
+
+    it("is running, not finished, while a finished sidecar waits on a background task", async () => {
+      const f = transcript("sbgwait", use("t1"), bgLaunch("t1", "b1"));
+      finishedSidecar("sbgwait");
+      const info = await readSubagentInfo(f, quiet, now);
+      expect(info.subagentActive).toBe(true);
+      expect(info.subagentStatus).toBe("running");
+    });
+
+    it("is finished once the background task has reported back", async () => {
+      const f = transcript("sbgdone", use("t1"), bgLaunch("t1", "b1"), bgDone("t1", "b1"));
+      finishedSidecar("sbgdone");
+      expect((await readSubagentInfo(f, quiet, now)).subagentStatus).toBe("finished");
+    });
+
+    it("is finished again once the background wait outlives its cap", async () => {
+      const f = transcript("sbgstale", use("t1"), bgLaunch("t1", "b1"));
+      finishedSidecar("sbgstale");
+      expect((await readSubagentInfo(f, at(SUBAGENT_BG_WAIT_MAX_MS), now)).subagentStatus).toBe(
+        "finished",
+      );
+    });
+
+    it("agrees with subagentActive in every case", async () => {
+      const f = transcript("sagree", use("t1"), bgLaunch("t1", "b1"));
+      finishedSidecar("sagree");
+      for (const when of [
+        at(0),
+        quiet,
+        at(SUBAGENT_TOOL_CALL_MAX_MS),
+        at(SUBAGENT_BG_WAIT_MAX_MS),
+      ]) {
+        const i = await readSubagentInfo(f, when, now);
+        expect(i.subagentActive).toBe(i.subagentStatus === "running");
+      }
+    });
   });
 });
