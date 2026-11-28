@@ -74,6 +74,7 @@ function harness(open: "permission" | "question" | null): Harness {
     wsHub: { broadcast: (_m: WSMessage) => {} },
     sessionStore: { get: () => null, updateManaged: () => {} },
     ptyManager: {
+      isInputLocked: () => false,
       // GATE carries options but no promptId, so arbitration asks the screen
       // about it (see the optionless-entry cases below). A gate is painted, so
       // every case built on this harness refuses for the reason it always did.
@@ -428,6 +429,7 @@ function gateHarness(): GateHarness {
       getManaged: () => ({ provider: CLAUDE_CODE_PROVIDER }),
     },
     ptyManager: {
+      isInputLocked: () => false,
       hasSession: () => true,
       getOutputLines: async () => screen.lines,
       sendInput: (_id: string, input: string) => {

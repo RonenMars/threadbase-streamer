@@ -74,6 +74,8 @@ export interface InternalSession extends ManagedSession {
   // order rather than raw byte order (which both providers' absolute-cursor
   // repaints scramble — see getOutputLines for the desync this fixes).
   screen: Terminal;
+  // When the terminal last changed size; detection waits out the repaint.
+  resizedAt?: number;
   // Ground-truth user messages submitted to this PTY, oldest-first, capped at
   // INPUT_HISTORY_MAX. Recorded in writeSubmit(); replayed via getInputHistory().
   inputHistory: UserMessage[];

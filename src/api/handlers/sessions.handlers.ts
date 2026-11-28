@@ -24,7 +24,7 @@ import { handoffArgv } from "../../handoff/command";
 import { readHandoffConfig } from "../../handoff/config";
 import { installedTerminal, launchTerminal, tmuxHasClient } from "../../handoff/terminal";
 import { HANDOFF_ATTACH_COMMAND, HANDOFF_TMUX_SESSION, openTmuxWindow } from "../../handoff/tmux";
-import type { LiveSessionManager } from "../../live-session-manager";
+import { INPUT_LOCKED_MESSAGE, type LiveSessionManager } from "../../live-session-manager";
 import type { Logger } from "../../logger";
 import { locateProviderExe } from "../../platform";
 import { discoverClaudeProcesses } from "../../process-discovery";
@@ -39,11 +39,11 @@ import {
   type ProviderName,
 } from "../../providers";
 import { buildSpawnEnv } from "../../pty-manager";
-import { PTY_ROWS } from "../../pty-shared";
+import { PTY_COLS, PTY_ROWS } from "../../pty-shared";
 import { rateLimitKey } from "../../relay/ingress";
 import type { ScannerManager } from "../../scanner-manager";
 import { HandoffSessionSchema } from "../../schemas/handoffSession.schema";
-import { type Prompt, PromptAnswerSchema } from "../../schemas/prompt.schema";
+import { type Prompt, type PromptAnswer, PromptAnswerSchema } from "../../schemas/prompt.schema";
 import { AdditionalPathsSchema, MAX_ADDITIONAL_PATHS } from "../../schemas/sessionStart.schema";
 import type { ResumeFailure, ResumeOutcome } from "../../server";
 import type { PendingPermission, PendingQuestion } from "../../server-wiring";
@@ -76,6 +76,7 @@ import {
 } from "../../services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "../../services/questions/detectShellPrompt";
 import { detectStartupChoiceGate } from "../../services/questions/detectStartupChoiceGate";
+import { type DriveResult, driveQuestionForm } from "../../services/questions/driveQuestionForm";
 import { parseStatusLine } from "../../services/questions/parseStatusLine";
 import { permissionAnswerKeys } from "../../services/questions/permissionAnswerKeys";
 import { resolveAnswer } from "../../services/questions/resolveAnswer";
@@ -150,6 +151,11 @@ const START_READY_TIMEOUT_MS = 10_000;
 // polls the screen rather than sleeping a fixed time.
 const TEXT_FIELD_TIMEOUT_MS = 3_000;
 const TEXT_FIELD_POLL_MS = 25;
+
+// One wait per key of a multi-question form. The slowest repaint measured on
+// Claude Code 2.1.332 was 88 ms. FORM_ROWS is the height a scrolled form gets.
+const FORM_TIMING = { timeoutMs: 3_000, pollMs: 25 };
+const FORM_ROWS = 100;
 
 /**
  * Scope under which `/start` idempotency keys are remembered. The store is
@@ -333,6 +339,9 @@ export type SessionHandlersDeps = {
   ptyManager: LiveSessionManager;
   /** Bound on each wait of the free-text answer sequence; tests shorten it. */
   textFieldTimeoutMs?: number;
+  /** Waits of the multi-question form drive; tests shorten them. */
+  multiAnswerTiming?: { timeoutMs: number; pollMs: number };
+  sessionGeometry: Map<string, { cols: number; rows: number }>;
   wsHub: WSHub;
   scannerManager: ScannerManager;
   sessionWatchers: SessionWatchers;
@@ -1287,6 +1296,19 @@ export class SessionHandlers {
       }
     }
 
+    // A form being answered takes no other bytes, raw keys included. Not recorded
+    // in idempotency, so the same send goes through afterwards.
+    if (this.ptyManager.isInputLocked(sessionId)) {
+      json(res, 409, {
+        ok: false,
+        reason: "prompt_pending",
+        promptKind: "question",
+        promptState: "answered",
+        error: INPUT_LOCKED_MESSAGE,
+      });
+      return;
+    }
+
     if (typeof keys === "string") {
       // Raw key bytes (e.g. arrow navigation for interactive prompts).
       // These bypass bracketed-paste wrapping — caller is responsible for
@@ -1365,7 +1387,9 @@ export class SessionHandlers {
     const openPrompt =
       pendingPermissionEntry && isLive(pendingPermissionEntry.promptId)
         ? "permission"
-        : pendingQuestionEntry && isLive(pendingQuestionEntry.promptId)
+        : pendingQuestionEntry &&
+            // A half-answered form outlives its registry record.
+            (pendingQuestionEntry.partlyAnswered || isLive(pendingQuestionEntry.promptId))
           ? "question"
           : null;
     if (openPrompt) {
@@ -1457,7 +1481,17 @@ export class SessionHandlers {
   // the later JSONL flush of the same question is de-duped. We synthesize a
   // screen-scoped toolUseId; the JSONL path overwrites pendingQuestions with the
   // real toolUseId when it lands, so answering works once JSONL catches up.
-  handleLiveQuestion(sessionId: string, questions: AskQuestion[], occurrenceId?: string): void {
+  // Returns false when the screen is a form this streamer holds, so nothing is
+  // announced for it.
+  handleLiveQuestion(
+    sessionId: string,
+    questions: AskQuestion[],
+    occurrenceId?: string,
+  ): false | undefined {
+    if (this.ptyManager.isInputLocked(sessionId)) return false;
+    const held = this.pendingQuestions.get(sessionId);
+    if (held?.partlyAnswered && isLossyViewOf(questions, held.questions)) return false;
+    if (questions.length === 0) return; // unreadable form: the transcript prompt stands alone
     const key = questionContentKey(questions);
     // Unchanged repaint: same content and, when the pty-host names the
     // occurrence, one we already minted a prompt for (the registry keeps it
@@ -1527,9 +1561,14 @@ export class SessionHandlers {
     questions: AskQuestion[],
     origin: "pty" | "jsonl",
   ): void {
+    // The prompt being answered must not be replaced under the keys.
+    if (this.ptyManager.isInputLocked(sessionId)) return;
     const prior = this.pendingQuestions.get(sessionId);
     const sameQuestion =
-      prior !== undefined && questionContentKey(prior.questions) === questionContentKey(questions);
+      prior !== undefined &&
+      questionContentKey(prior.questions) === questionContentKey(questions) &&
+      // A later call repeating a half-answered form is a new prompt.
+      !(prior.partlyAnswered && prior.toolUseId !== toolUseId);
     let prompt: Prompt;
     if (sameQuestion) {
       const current = this.promptRegistry.get(prior.promptId);
@@ -1556,6 +1595,7 @@ export class SessionHandlers {
       questions,
       origin,
       promptId: prompt.promptId,
+      ...(sameQuestion && prior.partlyAnswered && { partlyAnswered: true }),
     });
     // No broadcast on this path — the card reaches the client on the next
     // GET /api/sessions/:id — so without this the question is pending with
@@ -1581,7 +1621,9 @@ export class SessionHandlers {
       cursor?: number;
     } | null,
     occurrenceId?: string,
-  ): void {
+  ): false | undefined {
+    // The review screen of a form being answered reads as a two-option menu.
+    if (this.ptyManager.isInputLocked(sessionId)) return false;
     if (gate === null) {
       const prior = this.pendingPermission.get(sessionId);
       if (!prior) return;
@@ -1595,7 +1637,7 @@ export class SessionHandlers {
       this.pendingPermission.delete(sessionId);
       this.pendingPermissionKey.delete(sessionId);
       this.broadcastToSession(sessionId, { type: "permission_cancelled", sessionId });
-      return;
+      return undefined;
     }
     const key = permissionContentKey(gate);
     const prior = this.pendingPermission.get(sessionId);
@@ -1738,6 +1780,9 @@ export class SessionHandlers {
           terminal: { state: "unavailable", reason: "provider_prompt_missing" },
         };
       }
+      if (prompt.questions.length > 1) {
+        return this.answerQuestionForm(sessionId, pending, prompt, answer);
+      }
       const answers: Record<string, string | string[]> = {};
       for (const question of prompt.questions) {
         const response = answer.responses.find((item) => item.questionId === question.questionId);
@@ -1796,6 +1841,114 @@ export class SessionHandlers {
       });
       return { ok: true };
     };
+  }
+
+  /** A multi-question form this streamer is typing into, or stopped partway through. */
+  isFormHeld(sessionId: string): boolean {
+    return (
+      this.ptyManager.isInputLocked(sessionId) ||
+      this.pendingQuestions.get(sessionId)?.partlyAnswered === true
+    );
+  }
+
+  /**
+   * Answer a multi-question form one screen-verified key at a time (see
+   * driveQuestionForm). Nothing else may write to the session meanwhile. A form
+   * that does not fit gets a taller terminal, restored on every exit.
+   */
+  private async answerQuestionForm(
+    sessionId: string,
+    pending: PendingQuestion,
+    prompt: Prompt,
+    answer: PromptAnswer,
+  ): Promise<PromptAdapterResult> {
+    // By position: two questions may share a header. The registry has validated
+    // completeness and ids; the driver refuses an empty selection.
+    const selections = prompt.questions.map((question) => {
+      const response = answer.responses.find((item) => item.questionId === question.questionId);
+      return (response?.optionIds ?? []).map((id) =>
+        question.options.findIndex((o) => o.optionId === id),
+      );
+    });
+
+    const { sessionGeometry } = this.deps;
+    const chosen = sessionGeometry.get(sessionId);
+    const before = chosen ?? { cols: PTY_COLS, rows: PTY_ROWS };
+    let rows = before.rows;
+    const input = this.ptyManager.lockInput(sessionId);
+    const resize = (size: { cols: number; rows: number }) => {
+      input.resize(size.cols, size.rows);
+      sessionGeometry.set(sessionId, size);
+      this.wsHub.broadcast({ type: "terminal_resize", sessionId, ...size });
+    };
+    let result: DriveResult;
+    try {
+      result = await driveQuestionForm(
+        {
+          read: () => this.ptyManager.getOutputLines(sessionId, rows),
+          write: (key, submits) => (submits ? input.sendKeys(key) : input.sendRawKeys(key)),
+          grow: () => {
+            rows = Math.max(FORM_ROWS, before.rows);
+            resize({ cols: before.cols, rows });
+          },
+        },
+        pending.questions,
+        selections,
+        this.deps.multiAnswerTiming ?? FORM_TIMING,
+      );
+    } catch {
+      // The driver throws only before its first key.
+      return { ok: false, code: "provider_error" };
+    } finally {
+      input.release();
+      if (rows !== before.rows && this.ptyManager.hasSession(sessionId)) {
+        try {
+          resize(before);
+          if (!chosen) sessionGeometry.delete(sessionId);
+        } catch (err) {
+          // The drive's result stands: the keys are already written or not.
+          this.log.warn(`[question.form] ${sessionId.slice(0, 8)} size not restored`, {
+            event: "question.form_restore_failed",
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
+    this.log.info(`[question.form] ${sessionId.slice(0, 8)} outcome=${result.outcome}`, {
+      event: "question.form",
+      sessionId,
+      questionCount: pending.questions.length,
+      outcome: result.outcome,
+      // Names a step or a refusal, never question or option text.
+      reason: result.outcome === "answered" ? undefined : result.reason,
+    });
+    if (result.outcome === "refused") {
+      // A form the user moved in the terminal can be answered once it is back, so
+      // not `prompt_unavailable`: clients read that as closed.
+      return {
+        ok: false,
+        code: result.reason === "not_on_screen" ? "form_not_ready" : "unsupported_prompt_shape",
+      };
+    }
+    this.broadcastToSession(sessionId, {
+      type: "question_cancelled",
+      sessionId,
+      toolUseId: pending.toolUseId,
+    });
+    if (result.outcome === "partial") {
+      pending.partlyAnswered = true;
+      return {
+        ok: false,
+        code: "partly_answered",
+        terminal: { state: "unavailable", reason: "partly_answered" },
+      };
+    }
+    this.pendingQuestions.delete(sessionId);
+    // The drive saw the form close, so there is no painted menu left to dedupe.
+    this.pendingQuestionKey.delete(sessionId);
+    return { ok: true };
   }
 
   /**
@@ -2066,7 +2219,7 @@ export class SessionHandlers {
       return;
     }
     const { action, promptId, confirm } = parsed.data;
-    if (!this.ptyManager.hasSession(sessionId)) {
+    if (!this.ptyManager.hasSession(sessionId) || this.ptyManager.isInputLocked(sessionId)) {
       json(res, 409, { ok: false, code: "raw_key_unavailable" });
       return;
     }

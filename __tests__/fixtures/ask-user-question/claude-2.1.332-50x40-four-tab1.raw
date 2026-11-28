@@ -1,0 +1,106 @@
+7[r8[?25h[?25l[?2004h[?2031h[?1004h]0;✳ Claude Code[38;5;174m ▐[48;5;16m▛███▛█[12G[39m[49m[1mClaude[19GCode[24G[22m[38;5;246mv2.1.332[39m
+[38;5;174m▝▜[48;5;16m█████[49m█▀[12G[38;5;246mHaiku[18G5.5[22G·[24GClaude[31G     [39m
+[38;5;174m ▝▝[7G▝▝[12G[38;5;246m/…/capture/cwd          [39m
+
+
+[48;5;237m[38;5;246m❯ [38;5;231mUse the AskUserQuestion tool exactly once, with[39m [49m
+[48;5;237m  [38;5;231mexactly four questions in one call. Q1 single [39m  [49m
+[48;5;237m  [38;5;231mselect: 'Pick a fruit?' header 'Fruit', options[39m [49m
+[48;5;237m  [38;5;231mApple, Pear, Plum. Q2 multiSelect true: 'Pick [39m  [49m
+[48;5;237m  [38;5;231mtoppings?' header 'Toppings', options Salt, [39m    [49m
+[48;5;237m  [38;5;231mPepper, Honey. Q3 single select: 'Pick a [39m       [49m
+[48;5;237m  [38;5;231mdrink?' header 'Drink', options Tea, Coffee, [39m   [49m
+[48;5;237m  [38;5;231mWater. Q4 multiSelect true: 'Pick sides?' [39m      [49m
+[48;5;237m  [38;5;231mheader 'Sides', options Rice, Beans, Corn. [39m     [49m
+[48;5;237m  [38;5;231mShort descriptions. After the answer, reply [39m    [49m
+[48;5;237m  [38;5;231mwith one word and do nothing else.[39m              [49m
+
+[38;5;174m✢[3GDiscombobulating…[39m
+
+[38;5;244m──────────────────────────────────────────────────[39m
+❯ 
+[38;5;244m──────────────────────────────────────────────────[39m
+[3G[38;5;220m⏵⏵[6Gauto[11Gmode[16Gon[31G[38;5;246m◐[33Gmedium[40G·[42G/effort[39m
+[2C[3A[?25h]0;◐ Claude Code[?25l[2D[3B[3A[38;5;246m❯ [17C[2B · esc to interrupt ·[40G←[42Gfor ag…[39m
+[31G[38;5;246m◐[33Gmedium[40G·[42G/effort[39m
+[2C[4A[?25h[>0q[?u]7501;?[c[?25l[2D[4B[17C[7A[38;5;216mg…[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✳[17G[38;5;216mn[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;◑ Claude Code[?25l[2D[4B[7A[38;5;174m✻[16G[38;5;216mi[19G[38;5;174m…[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✽[15G[38;5;216mt[18G[38;5;174mg[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✻[13G[38;5;216mla[16G[38;5;174min[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;◐ Claude Code[?25l[2D[4B[7A[38;5;174m✶[12G[38;5;216mu[15G[38;5;174mt[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;◐ AskUserQuestion tool test[?25l[2D[4B[7A[38;5;174m✳[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;◑ AskUserQuestion tool test[?25l[2D[4B[6C[7A[38;5;216momb[12G[38;5;174mula[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✶[39m
+
+
+
+
+
+
+[2C[4A[?25h[?25l[2D[4B[7A[38;5;174m✻[6G[38;5;216mc[9G[38;5;174mb[39m
+
+
+
+
+
+
+[2C[4A[?25h]0;✳ AskUserQuestion tool test[?25l[2D[4B[8A[38;5;246m──────────────────────────────────────────────────[1B← [48;5;153m[38;5;16m ☐ Fruit [39m[49m ☐ Topp… [22G☐[24GDrink[31G☐[33GSides[40G✔[42GSubmit[50G→[2B[38;5;231m[1mPick a fruit?[22m[39m[K[1B[K[1B[38;5;153m❯[39m [38;5;246m1.[39m [38;5;153mApple[39m[K[2C[1B   [38;5;246mCrisp and sweet[39m[K[2C[1B[38;5;246m2.[6G[39mPear[31G[K
+[6G[38;5;246mSoft[11Gand[15Gjuicy[39m
+[3G[38;5;246m3.[6G[39mPlum
+[6G[38;5;246mTart[11Gand[15Gsmall[39m
+[3G[38;5;246m4.[6GType[11Gsomething.[39m
+[38;5;246m──────────────────────────────────────────────────[39m
+[3G5.[6GChat[11Gabout[17Gthis
+
+[38;5;246mEnter[7Gto[10Gselect[17G·[19GTab/Arrow[29Gkeys[34Gto[37Gnavigate[46G·[48GEsc[39m
+[38;5;246mto[4Gcancel[39m
+[12A]777;notify;Claude Code;Claude needs your permission

@@ -39,6 +39,7 @@ import { readPromptSuggestion } from "./services/questions/detectPromptSuggestio
 import {
   detectQuestionFromScreen,
   isQuestionMenuOnScreen,
+  isUnreadableQuestionForm,
   questionContentKey,
 } from "./services/questions/detectQuestionFromScreen";
 import { detectShellPrompt } from "./services/questions/detectShellPrompt";
@@ -143,6 +144,15 @@ const QUIET_DETECT_MS = 500;
 // half when split. 128 chars covers the escape with margin, tmux-wrapped or
 // not.
 const OSC_TAIL_CHARS = 128;
+
+// A resize makes Claude Code clear the screen and repaint it over several
+// chunks with nothing to mark the end of the frame (on 2.1.332 the footer
+// arrived about 27ms after the resize, some 20ms after the first repaint
+// chunk). A read in that gap sees a menu with no footer, which reports a
+// pending question gone or reads half of it as a permission gate. Shorter than
+// QUIET_DETECT_MS, so the quiet rescan always reads the settled screen.
+// ponytail: fixed window; a repaint that starts later than this is read as before.
+const RESIZE_REPAINT_MS = 300;
 
 // Ceiling on unsolicited rendered-screen scrapes: a chunk's arrival alone
 // may trigger a full detection pass at most this often. Exists because the
@@ -861,6 +871,9 @@ export class PTYManager implements SessionRunner {
     if (!session?.process) return;
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) return;
     try {
+      if (cols !== session.screen.cols || rows !== session.screen.rows) {
+        session.resizedAt = Date.now();
+      }
       session.process.resize(cols, rows);
       // The headless render terminal MUST track the PTY (see pty-shared.ts):
       // getOutputLines reads its grid for replay, and the gate detectors scrape
@@ -1207,6 +1220,10 @@ export class PTYManager implements SessionRunner {
       if (oscPermission || oscWaitingForInput) this.oscTail.delete(sessionId);
       else this.oscTail.set(sessionId, oscWindow.slice(-OSC_TAIL_CHARS));
     }
+    // The notifications are whole in themselves; every other trigger reads the
+    // screen, which may be half repainted.
+    const repainting = Date.now() - (session.resizedAt ?? 0) < RESIZE_REPAINT_MS;
+    if (repainting && !oscPermission && !oscWaitingForInput) return;
     // Footer test on the CURRENT chunk — a cheap trigger only. The authoritative
     // test runs on the full rendered screen below (askFooterOnScreen), because
     // the OSC-777 notify and the "Enter to select" footer often arrive in
@@ -1377,7 +1394,10 @@ export class PTYManager implements SessionRunner {
     // user can tap to confirm — the carousel doesn't reliably auto-submit.
     // (Roadmap: robust carousel auto-submit.)
     if (askFooterOnScreen) {
-      const detected = detectQuestionFromScreen(lines);
+      // An empty list still sends the push and, later, "gone"; it opens no card.
+      const detected =
+        detectQuestionFromScreen(lines) ??
+        (isUnreadableQuestionForm(lines) ? { questions: [] } : null);
       if (detected) {
         const key = questionContentKey(detected.questions);
         if (this.lastScreenQuestionKey.get(sessionId) !== key) {

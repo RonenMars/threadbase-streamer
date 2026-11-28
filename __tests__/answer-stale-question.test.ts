@@ -86,6 +86,7 @@ function harness(screen: string[], opts: { hasSession?: boolean } = {}): Harness
       broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
     },
     ptyManager: {
+      isInputLocked: () => false,
       hasSession: () => opts.hasSession ?? true,
       getOutputLines: async () => screen,
       sendKeys: (_id: string, keys: string) => written.push(keys),

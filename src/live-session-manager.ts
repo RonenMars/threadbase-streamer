@@ -35,7 +35,12 @@ async function withGitBranch<T extends { projectPath: string; branch?: string }>
   return { ...options, branch: options.branch || (await readGitBranch(options.projectPath)) };
 }
 
+/** What every other writer gets while a multi-question form is being answered. */
+export const INPUT_LOCKED_MESSAGE =
+  "The streamer is answering a question in this session; try again in a moment";
+
 export class LiveSessionManager {
+  private inputLocks = new Set<string>();
   private runners: Map<ProviderName, SessionRunner>;
   private remoteRunner: RemoteSessionRunner | null = null;
   private options: PTYManagerOptions;
@@ -129,19 +134,43 @@ export class LiveSessionManager {
   }
 
   sendInput(sessionId: string, input: string): number {
-    return this.runnerFor(sessionId).sendInput(sessionId, input);
+    return this.writableRunner(sessionId).sendInput(sessionId, input);
   }
 
   sendKeys(sessionId: string, keys: string): void {
-    this.runnerFor(sessionId).sendKeys(sessionId, keys);
+    this.writableRunner(sessionId).sendKeys(sessionId, keys);
   }
 
   sendRawKeys(sessionId: string, keys: string): void {
-    this.runnerFor(sessionId).sendRawKeys(sessionId, keys);
+    this.writableRunner(sessionId).sendRawKeys(sessionId, keys);
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
-    this.runnerFor(sessionId).resize(sessionId, cols, rows);
+    this.writableRunner(sessionId).resize(sessionId, cols, rows);
+  }
+
+  isInputLocked(sessionId: string): boolean {
+    return this.inputLocks.has(sessionId);
+  }
+
+  /** Makes the caller the only writer to this session until it calls release. */
+  lockInput(sessionId: string) {
+    this.writableRunner(sessionId);
+    this.inputLocks.add(sessionId);
+    return {
+      sendKeys: (keys: string) => this.runnerFor(sessionId).sendKeys(sessionId, keys),
+      sendRawKeys: (keys: string) => this.runnerFor(sessionId).sendRawKeys(sessionId, keys),
+      resize: (cols: number, rows: number) =>
+        this.runnerFor(sessionId).resize(sessionId, cols, rows),
+      release: () => {
+        this.inputLocks.delete(sessionId);
+      },
+    };
+  }
+
+  private writableRunner(sessionId: string): SessionRunner {
+    if (this.inputLocks.has(sessionId)) throw new Error(INPUT_LOCKED_MESSAGE);
+    return this.runnerFor(sessionId);
   }
 
   cancel(sessionId: string): void {

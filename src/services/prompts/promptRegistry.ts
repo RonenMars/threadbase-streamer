@@ -39,6 +39,10 @@ export type PromptAnswerErrorCode =
   | "unknown_option"
   | "incomplete_answer"
   | "unsupported_prompt_shape"
+  // Nothing was written and the prompt is still open: the screen is not on it.
+  | "form_not_ready"
+  // Some keys reached the form and the rest did not: finish it in the terminal.
+  | "partly_answered"
   | "provider_error";
 
 export type PromptAnswerOutcome =

@@ -189,6 +189,8 @@ Captured on Claude Code 2.1.328 (single-select, three options); re-check on a ne
 
 Mobile's refused-reason list (`services/api-client.ts` 161–258, `hooks/useQuestionAnswer.ts`, `components/terminal/QuestionCard.tsx:71`) knows `unknown_option` and `unsupported_prompt_shape` but not `invalid_text` or `text_field_timeout`; the client half must add both.
 `/api/sessions/:id/prompt/answer` (the normalized route) does not take `{ other }` and answers `unsupported_prompt_shape` for it.
+It takes a multi-question form when `promptContract.multiQuestion` is true, and adds two 409 codes: `form_not_ready` (nothing written, the card stays open) and `partly_answered` (some keys written, not retryable, finish in the terminal).
+The streamer may send `terminal_resize` twice around such an answer.
 
 ## What a grep cannot answer
 

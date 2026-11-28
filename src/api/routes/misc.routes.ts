@@ -481,7 +481,10 @@ export const createMiscRoutes = (
       // carries RETAINED prompts, terminal ones included — render on `state`,
       // not on presence — and an answer retry after that retention window is
       // answered 404 prompt_not_found rather than the recorded outcome.
-      promptContract: { schemaVersion: 1, atomicAnswer: true },
+      // multiQuestion: /prompt/answer takes a form with several questions. It can
+      // answer 409 partly_answered: some keys went in, so atomicAnswer does not
+      // hold for that one case and the user finishes the form in the terminal.
+      promptContract: { schemaVersion: 1, atomicAnswer: true, multiQuestion: true },
       // POST /api/sessions/:id/handoff works here: macOS, `tb-streamer handoff
       // setup` enabled it, and its tmux still exists. Absent otherwise, so
       // mobile hides "Hand off to Terminal". openTerminal: the configured

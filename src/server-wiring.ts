@@ -97,6 +97,12 @@ export type PendingQuestion = {
   questions: AskQuestion[];
   origin: "pty" | "jsonl";
   promptId: string;
+  /**
+   * The streamer typed part of this multi-question form and stopped. Its card is
+   * closed, and the entry stays so composer text is refused while the form may
+   * still be on screen.
+   */
+  partlyAnswered?: boolean;
 };
 
 export type ExpiredPendingPromptDeps = {
@@ -367,6 +373,8 @@ export type LiveSessionWiringDeps = {
   idleSessionNotifier?: () => IdleSessionNotifier | null;
   ptyAttachedIds: () => Set<string>;
   cancelPendingQuestion: (sessionId: string) => void;
+  /** Optional so unit tests that stub these deps stay valid. */
+  isFormHeld?: (sessionId: string) => boolean;
   rememberSelfPtyEnded: (conversationId: string) => void;
   maybeFireHoldWhenIdle: (session: { id: string; status: string }) => void;
 };
@@ -461,7 +469,8 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
       });
     },
     onPermissionChange: (sessionId, gate, occurrenceId) => {
-      deps.sessionHandlers().handlePermissionChange(sessionId, gate, occurrenceId);
+      const shown = deps.sessionHandlers().handlePermissionChange(sessionId, gate, occurrenceId);
+      if (shown === false) return;
       if (gate === null) {
         notifyPrompt(sessionId, "permission", false);
       } else {
@@ -474,7 +483,8 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
       }
     },
     onLiveQuestion: (sessionId, questions, occurrenceId) => {
-      deps.sessionHandlers().handleLiveQuestion(sessionId, questions, occurrenceId);
+      const shown = deps.sessionHandlers().handleLiveQuestion(sessionId, questions, occurrenceId);
+      if (shown === false) return;
       // One question: say how many options it offers. Several: say nothing
       // about options, since there is no one count that describes them.
       const optionCount =
@@ -483,6 +493,9 @@ export function createLiveSessionOptions(deps: LiveSessionWiringDeps): PTYManage
     },
     onLiveQuestionGone: (sessionId) => {
       notifyPrompt(sessionId, "question", false);
+      // A form being answered goes through its review screen, which reads as the
+      // menu leaving. The 60 s check releases one the streamer left half done.
+      if (deps.isFormHeld?.(sessionId)) return;
       // The rendered AskUserQuestion menu closed on this streamer's own live
       // PTY — authoritative regardless of whether pendingQuestions still holds
       // the screen-synthesized id or the real toolUseId a JSONL flush swapped
@@ -1022,7 +1035,7 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
             });
           }
           const pendingQuestion = deps.pendingQuestions.get(msg.sessionId);
-          if (pendingQuestion) {
+          if (pendingQuestion && !pendingQuestion.partlyAnswered) {
             deps.log().info(`[ws.replay_question] ${msg.sessionId.slice(0, 8)}`, {
               event: "ws.replay_question",
               sessionId: msg.sessionId,
@@ -1059,6 +1072,9 @@ export function createApiDeps(deps: ApiDepsWiring): ApiDeps {
           // runner guards both. A client dragging a window must not have to
           // care whether the session is still alive.
           if (!deps.ptyManager.hasSession(msg.sessionId)) return;
+          // The size is the streamer's while it answers a form; it announces the
+          // restore with its own terminal_resize.
+          if (deps.ptyManager.isInputLocked(msg.sessionId)) return;
           deps.ptyManager.resize(msg.sessionId, msg.cols, msg.rows);
           deps.sessionGeometry.set(msg.sessionId, { cols: msg.cols, rows: msg.rows });
           // Every other subscriber is decoding this session's stream against a

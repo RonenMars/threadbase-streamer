@@ -123,6 +123,54 @@ export function joinWrappedQuestion(lines: string[], questionIdx: number, last: 
   return rows.join(" ");
 }
 
+// A form taller than the terminal ends in "↑ N more lines" above its footer: its
+// tab bar and question have scrolled away, and the scrollback above can supply
+// another tab's. A preview form paints a box beside its options. Neither can be
+// shown or answered from the screen.
+const SCROLLED_ROW_RE = /^\s*[↑↓] \d+ more lines?\s*$/;
+const PREVIEW_FOOTER_RE = /n to add notes/i;
+// The footer wraps on a narrow terminal.
+const FOOTER_MAX_ROWS = 3;
+// A long option list scrolls by itself and keeps "Chat about this" pinned below,
+// so that row's number says how many rows belong above it. A scroll arrow is not
+// enough to go by (the row under the cursor shows `❯` in its place), and an
+// arrowed row is not counted as a row.
+const CHAT_ROW_RE = /^\s*(?:❯)?\s*(\d+)\.\s+Chat about this\s*$/;
+const LIST_ROW_RE = /^\s*(?:❯)?\s*(\d+)\.\s/;
+
+function hidesListRows(lines: string[], footerIdx: number): boolean {
+  let want: number | undefined;
+  for (let i = footerIdx - 1; i >= 0; i--) {
+    const row = stripBoxGutter(lines[i]);
+    if (want === undefined) {
+      const chat = CHAT_ROW_RE.exec(row);
+      if (chat) want = Number(chat[1]) - 1;
+    } else if (HEADER_CHIP_RE.test(row.trim())) {
+      break; // numbered prose above the header must not stand in for a hidden row
+    } else if (Number(LIST_ROW_RE.exec(row)?.[1]) === want) {
+      want--;
+    }
+  }
+  return want !== undefined && want > 0;
+}
+
+/** True when a question form is up that the screen cannot represent. Pure. */
+export function isUnreadableQuestionForm(lines: string[]): boolean {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!ASK_FOOTER_ROW_RE.test(stripBoxGutter(lines[i]))) continue;
+    const footer = lines
+      .slice(i, i + FOOTER_MAX_ROWS)
+      .map((l) => l.trim())
+      .join(" ");
+    if (PREVIEW_FOOTER_RE.test(footer) || hidesListRows(lines, i)) return true;
+    for (let j = i - 1; j >= 0; j--) {
+      if (lines[j].trim() !== "") return SCROLLED_ROW_RE.test(lines[j]);
+    }
+    return false;
+  }
+  return false;
+}
+
 /**
  * Detect an AskUserQuestion menu in rendered screen lines. Returns the question
  * set (single-question; the TUI shows one picker at a time) or null.
@@ -137,7 +185,7 @@ export function detectQuestionFromScreen(lines: string[]): { questions: AskQuest
       break;
     }
   }
-  if (footerIdx === -1) return null;
+  if (footerIdx === -1 || isUnreadableQuestionForm(lines)) return null;
 
   // Collect option rows above the footer. Real menus interleave each "N. label"
   // row with wrapped DESCRIPTION lines and may insert a box border between

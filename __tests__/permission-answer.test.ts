@@ -109,6 +109,7 @@ function harness(
       broadcastToClients: (_c: unknown, m: WSMessage) => broadcasts.push(m),
     },
     ptyManager: {
+      isInputLocked: () => false,
       hasSession: () => opts.hasSession ?? true,
       getOutputLines: async () => {
         opts.onFlush?.(handlers);
