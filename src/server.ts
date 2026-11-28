@@ -3716,7 +3716,15 @@ export class StreamerServer {
     const answeredLate = (questions: AskQuestion[]): boolean =>
       answeredKey !== null && questionContentKey(questions) === answeredKey;
     const { messages, pending } = questionsFromLines(sessionId, lines);
+    const answeredCopies = new Set(
+      pending
+        .filter((p) =>
+          this.sessionHandlers.isAnsweredTranscript(sessionId, p.toolUseId, p.questions, lines),
+        )
+        .map((p) => p.toolUseId),
+    );
     for (const p of pending) {
+      if (answeredCopies.has(p.toolUseId)) continue;
       if (contended || foreignVsPty(p.questions) || answeredLate(p.questions)) continue;
       // Preserve a same-question re-sync's "pty" origin so a later foreign JSONL
       // question still can't clobber it.
@@ -3737,6 +3745,7 @@ export class StreamerServer {
     // (mapAskQuestionToBlock just replaces activeQuestion — the card re-renders
     // identically) so answering works.
     for (const m of messages) {
+      if (answeredCopies.has(m.toolUseId)) continue;
       // Same suppression as the pending loop: never render a JSONL card for a
       // contended file, nor a foreign question over a live PTY one.
       if (contended || foreignVsPty(m.questions) || answeredLate(m.questions)) continue;
