@@ -160,3 +160,30 @@ describe("PTYManager — AskUserQuestion submit confirmation surfaces as a card"
     mgr.dispose();
   });
 });
+
+// Claude paints the menu in pieces: before the footer lands it reads as an
+// unboxed picker, so one menu produced a permission card AND a question card.
+describe("PTYManager — a picker claimed off a half-painted question menu", () => {
+  it("closes the permission card once the menu's footer paints", async () => {
+    const opened: AskQuestion[][] = [];
+    const gates: unknown[] = [];
+    const mgr = new PTYManager({
+      onLiveQuestion: (_id, qs) => opened.push(qs),
+      onPermissionChange: (_id, gate) => gates.push(gate),
+    });
+    const session = await spawnFresh(mgr);
+    const proc = getMockProc(mgr, session.id);
+    const footerAt = MENU.indexOf("Enter to select");
+
+    proc._emit("data", MENU.slice(0, footerAt));
+    await vi.waitFor(() => expect(gates).toHaveLength(1));
+    expect(gates[0]).not.toBeNull();
+
+    proc._emit("data", MENU.slice(footerAt));
+    await waitForOpened(opened);
+
+    expect(gates).toHaveLength(2);
+    expect(gates[1]).toBeNull();
+    mgr.dispose();
+  });
+});

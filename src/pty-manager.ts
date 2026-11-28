@@ -1302,6 +1302,19 @@ export class PTYManager implements SessionRunner {
       });
     }
 
+    // A menu painted in pieces reads as an unboxed picker until its footer lands,
+    // so the paint-time claim below can open a permission card for a question.
+    // The question card replaces it: close a gate made of the menu's own rows.
+    const claimed = askFooterOnScreen ? this.permissionOpen.get(sessionId) : undefined;
+    if (claimed && claimed.options.length > 0) {
+      const menu = detectQuestionFromScreen(lines)?.questions[0];
+      const rows = new Set(menu?.options.map((o) => o.label));
+      if (claimed.options.every((o) => rows.has(o.label))) {
+        this.permissionOpen.delete(sessionId);
+        this.onPermissionChange?.(sessionId, null);
+      }
+    }
+
     // ── Permission gate ──────────────────────────────────────────────
     // Skip entirely when the screen is an AskUserQuestion menu — its OSC-777
     // notify would otherwise be misread as a permission gate.
