@@ -593,6 +593,12 @@ program
         const store = RuntimeStore.open(resolveRuntimeDbPath(opts.db));
         const ok = new DevicesRepository(store.getDatabase()).revoke(deviceId);
         const dropped = ok ? await dropPushTokensForDevices(store.getDatabase(), [deviceId]) : 0;
+        if (ok) {
+          const { ExternalControlGrantsRepository } = await import(
+            "../src/services/external-control/repository"
+          );
+          new ExternalControlGrantsRepository(store.getDatabase()).revokeForDevice(deviceId);
+        }
         store.close();
         if (dropped) log.info(`Deleted ${dropped} push token(s).`, undefined, "console");
         log.info(ok ? `Revoked ${deviceId}.` : `No such device: ${deviceId}`, undefined, "console");
@@ -772,6 +778,118 @@ program
     });
     process.exit(code);
   });
+
+program
+  .command("external-control")
+  .description("Connect live: let a paired device view an agent's tmux pane (local grants only)")
+  .addCommand(
+    new Command("setup")
+      .description("Enable Connect live on this machine, or turn it off with --disable")
+      .option("--disable", "Turn Connect live off", false)
+      .option("--socket <path...>", "Also allow this tmux socket (absolute path)")
+      .action(async (opts) => {
+        const { runExternalControlSetup } = await import("./externalControl");
+        const { readTmuxVersion } = await import("../src/tmux/client");
+        const code = await runExternalControlSetup(opts, {
+          log: { info: (m) => console.log(m), error: (m) => console.error(m) },
+          tmuxVersion: readTmuxVersion,
+        });
+        process.exit(code);
+      }),
+  )
+  .addCommand(
+    new Command("grant")
+      .description("Let one paired device view one external agent's pane, for a limited time")
+      .requiredOption("--session <id>", "Conversation id of the external session")
+      .requiredOption("--device <id>", "Paired device id (see: tb-streamer devices list)")
+      .option("--ttl <duration>", "How long the grant lasts, at most 24h", "1h")
+      .option("-y, --yes", "Skip the confirmation prompt", false)
+      .option("--db <path>", "runtime.db path (default: ~/.threadbase/runtime.db)")
+      .action(async (opts) => {
+        const { runExternalControlGrant } = await import("./externalControl");
+        const { readExternalControlConfig } = await import(
+          "../src/services/external-control/config"
+        );
+        const config = readExternalControlConfig();
+        if (!config) {
+          console.error("Connect live is not set up. Run: tb-streamer external-control setup");
+          process.exit(1);
+        }
+        const { RuntimeStore, resolveRuntimeDbPath } = await import("../src/db/runtime-store");
+        const { DevicesRepository } = await import("../src/db/repositories/devices.repository");
+        const { ExternalControlGrantsRepository } = await import(
+          "../src/services/external-control/repository"
+        );
+        const { resolveBinding } = await import("../src/services/external-control/resolver");
+        const { buildResolverDeps } = await import("../src/services/external-control/service");
+        const { createTmuxExec } = await import("../src/tmux/client");
+        const { discoverClaudeProcesses } = await import("../src/process-discovery");
+        const store = RuntimeStore.open(resolveRuntimeDbPath(opts.db));
+        const devices = new DevicesRepository(store.getDatabase());
+        const grants = new ExternalControlGrantsRepository(store.getDatabase());
+        const code = await runExternalControlGrant(opts, {
+          log: { info: (m) => console.log(m), error: (m) => console.error(m) },
+          device: (id) => {
+            const d = devices.list().find((row) => row.deviceId === id);
+            if (!d) return null;
+            if (d.revokedAt) return { name: d.name, usable: false, reason: "revoked" };
+            if (!d.capabilities.includes("session:control")) {
+              return { name: d.name, usable: false, reason: "read-only device" };
+            }
+            return { name: d.name, usable: true };
+          },
+          resolve: async (sessionId) => {
+            const procs = await discoverClaudeProcesses();
+            const proc = procs.find((p) => p.conversationId === sessionId);
+            if (!proc) return null;
+            const deps = buildResolverDeps(config, createTmuxExec(config.tmuxPath), () =>
+              procs.map((p) => p.pid),
+            );
+            return resolveBinding(proc, sessionId, deps);
+          },
+          createGrant: (input) => grants.create({ ...input, scopes: ["screen"] }),
+        });
+        store.close();
+        process.exit(code);
+      }),
+  )
+  .addCommand(
+    new Command("list")
+      .description("Show active Connect live grants")
+      .option("--db <path>", "runtime.db path (default: ~/.threadbase/runtime.db)")
+      .action(async (opts) => {
+        const { RuntimeStore, resolveRuntimeDbPath } = await import("../src/db/runtime-store");
+        const { ExternalControlGrantsRepository } = await import(
+          "../src/services/external-control/repository"
+        );
+        const store = RuntimeStore.open(resolveRuntimeDbPath(opts.db));
+        const rows = new ExternalControlGrantsRepository(store.getDatabase()).listActive();
+        store.close();
+        if (rows.length === 0) console.log("No active grants.");
+        for (const g of rows) {
+          console.log(
+            `${g.grantId}  device ${g.deviceId}  session ${g.sessionId}  [${g.scopes.join(", ")}]  expires ${new Date(g.expiresAt).toISOString()}`,
+          );
+        }
+      }),
+  )
+  .addCommand(
+    new Command("revoke")
+      .argument("<grantId>")
+      .description("End a Connect live grant now; the agent keeps running")
+      .option("--db <path>", "runtime.db path (default: ~/.threadbase/runtime.db)")
+      .action(async (grantId: string, opts) => {
+        const { RuntimeStore, resolveRuntimeDbPath } = await import("../src/db/runtime-store");
+        const { ExternalControlGrantsRepository } = await import(
+          "../src/services/external-control/repository"
+        );
+        const store = RuntimeStore.open(resolveRuntimeDbPath(opts.db));
+        const ok = new ExternalControlGrantsRepository(store.getDatabase()).revoke(grantId);
+        store.close();
+        console.log(ok ? `Revoked ${grantId}.` : `No active grant: ${grantId}`);
+        if (!ok) process.exitCode = 1;
+      }),
+  );
 
 program
   .command("update")

@@ -157,7 +157,14 @@ const ROUTE_CAPABILITIES: ReadonlyArray<[prefix: string, capability: Capability]
   ["/internal/sessions", "admin"],
 ];
 
+const EXTERNAL_CONTROL_PATH = /^\/api\/sessions\/[^/]+\/external-control(?:\/|$)/;
+
 export function requiredCapability(path: string, method: string): Capability | null {
+  // Connect live shows a desktop agent's raw terminal, which can hold what the
+  // transcript does not (secrets echoed by a tool, the user's shell). Every
+  // method needs control, a GET included, on top of the per-device grant the
+  // handler checks.
+  if (EXTERNAL_CONTROL_PATH.test(path)) return "session:control";
   // A read of the session list is not the same authority as driving a session.
   // GET /api/sessions/:id and its sub-resources are reads; writes to them are
   // control. Without this split a read-only device could not see a session at

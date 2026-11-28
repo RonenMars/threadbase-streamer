@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
+import { mountExternalControlRoutes } from "./external-control.routes";
 
 // Sentinel status used to signal that the handler already wrote to the Node
 // ServerResponse directly. writeHonoResponse in server.ts skips piping when
@@ -152,6 +153,8 @@ export const createSessionRoutes = (deps: ApiDeps) => {
     await deps.handleKillSession(c.req.param("id"), c.env.outgoing, { delete: deleteConversation });
     return alreadyHandled();
   });
+
+  mountExternalControlRoutes(app, deps);
 
   app.post("/:id/handoff", async (c) => {
     await deps.handleHandoffSession(c.req.param("id"), c.env.incoming, c.env.outgoing);
