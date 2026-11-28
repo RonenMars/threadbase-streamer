@@ -506,6 +506,35 @@ export class SessionHandlers {
   // carry prompt content and go ONLY to the session's subscribers — never to
   // every connected socket. A client that subscribes after a prompt opened
   // gets it from the subscribe replay (server-wiring), not from a broadcast.
+  // Questions answered through this server. pendingQuestionKey alone cannot
+  // recognise one coming back: it needs identical option labels, which a screen
+  // card (with the TUI's two extra rows) and its transcript copy never share.
+  private answeredQuestions = new Map<string, { questions: AskQuestion[]; answeredAt: number }[]>();
+
+  private rememberAnswered(sessionId: string, questions: AskQuestion[]): void {
+    const list = this.answeredQuestions.get(sessionId) ?? [];
+    list.push({ questions, answeredAt: Date.now() });
+    this.answeredQuestions.set(sessionId, list);
+  }
+
+  /**
+   * True for the transcript copy of an answered question. Claude can flush it
+   * after the answer, but the line is stamped when the question was asked, so
+   * one stamped after the answer is a new question with the same wording.
+   */
+  isAnsweredTranscript(
+    sessionId: string,
+    toolUseId: string,
+    questions: AskQuestion[],
+    lines: string[],
+  ): boolean {
+    const answered = this.answeredQuestions.get(sessionId);
+    if (!answered) return false;
+    const line = lines.find((l) => l.includes(toolUseId) && l.includes('"tool_use"'));
+    const askedAt = Date.parse(line ? (JSON.parse(line).timestamp ?? "") : "");
+    return answered.some((a) => askedAt <= a.answeredAt && isLossyViewOf(a.questions, questions));
+  }
+
   private broadcastToSession(sessionId: string, message: WSMessage): void {
     this.wsHub.broadcastToClients(this.sessionSubscribers.get(sessionId) ?? [], message);
   }
@@ -1471,6 +1500,16 @@ export class SessionHandlers {
     ) {
       return; // already shown
     }
+    // A repaint of an answered menu can differ enough to miss the key above. The
+    // key is held until the menu leaves the screen, so it bounds this check.
+    if (
+      occurrenceId === undefined &&
+      this.pendingQuestionKey.has(sessionId) &&
+      !this.pendingQuestions.has(sessionId) &&
+      this.answeredQuestions.get(sessionId)?.some((a) => isLossyViewOf(questions, a.questions))
+    ) {
+      return;
+    }
     const toolUseId = `screen:${sessionId}:${createHash("sha256").update(key).digest("hex").slice(0, 12)}`;
     const prior = this.pendingQuestions.get(sessionId);
     const priorPrompt = prior ? this.promptRegistry.get(prior.promptId) : null;
@@ -1788,6 +1827,7 @@ export class SessionHandlers {
       // it: a menu still painted after its answer must dedupe as a repaint, not
       // re-mint as a fresh open prompt for a question already answered (#724).
       // The menu leaving the screen clears it (onLiveQuestionGone), as does exit.
+      this.rememberAnswered(sessionId, pending.questions);
       this.pendingQuestions.delete(sessionId);
       this.broadcastToSession(sessionId, {
         type: "question_cancelled",
@@ -2272,6 +2312,7 @@ export class SessionHandlers {
     if (normalized?.state === "open" || normalized?.state === "updated") {
       this.promptRegistry.transition(normalized.promptId, "resolved", "answered_legacy");
     }
+    if (pending) this.rememberAnswered(sessionId, pending.questions);
     this.pendingQuestions.delete(sessionId);
     this.broadcastToSession(sessionId, { type: "question_cancelled", sessionId, toolUseId });
     json(res, 200, { ok: true });
