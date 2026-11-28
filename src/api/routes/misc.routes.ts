@@ -17,6 +17,7 @@ import { installedTerminal } from "../../handoff/terminal";
 import { getLogger } from "../../logger";
 import { NotificationPrefsSchema } from "../../schemas/notification-prefs.schema";
 import { serverIdentityPublicKey } from "../../server-identity";
+import { readExternalControlConfig } from "../../services/external-control/config";
 import { describeMissingApnsCredentials } from "../../services/push/apnsClient";
 import { liveActivityMetricsSnapshot } from "../../services/push/liveActivityMetrics";
 import { testNotificationBody } from "../../services/push/notificationCopy";
@@ -405,6 +406,8 @@ export const createMiscRoutes = (
     const ptyIds = deps.ptyAttachedIds();
     const handoff = readHandoffConfig();
     const terminalApp = handoff && installedTerminal(handoff.terminal);
+    const externalControl =
+      deps.featureFlagsConfig().values.externalControl === true && readExternalControlConfig();
     return c.json({
       version: getVersion(),
       machineName: hostname(),
@@ -491,6 +494,11 @@ export const createMiscRoutes = (
           ? { openTerminal: true, terminalName: terminalApp.name }
           : { openTerminal: false },
       }),
+      // GET /api/sessions/:id/external-control answers here: the flag is on and
+      // `tb-streamer external-control setup` enabled it. Absent otherwise, so
+      // mobile shows no Connect live entry. Whether one session is eligible is
+      // that endpoint's answer, not this one's.
+      ...(externalControl && { externalControl: { runtime: "tmux", screen: true, input: false } }),
     });
   });
 

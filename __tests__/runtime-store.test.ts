@@ -75,6 +75,7 @@ describe("RuntimeStore", () => {
       "009_create_push_tables.sql",
       "010_add_managed_session_title_slots.sql",
       "011_create_session_peer_names.sql",
+      "012_create_external_control_grants.sql",
     ]);
     store.close();
 

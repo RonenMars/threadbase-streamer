@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { contextRegistry } from "../../e2ee/context";
 import { getLogger } from "../../logger";
+import { ExternalControlGrantsRepository } from "../../services/external-control/repository";
 import type { AppEnv } from "../app";
 import type { ApiDeps } from "../types/api-deps";
 
@@ -18,8 +19,24 @@ const log = getLogger("e2ee");
  * has no reason to hand back a credential, and this endpoint is exactly where
  * an accidental echo would be most damaging.
  */
-export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub" | "pushRepo">) => {
+export const createDeviceRoutes = (
+  deps: Pick<ApiDeps, "devicesRepo" | "wsHub" | "pushRepo"> &
+    Partial<Pick<ApiDeps, "runtimeStore">>,
+) => {
   const app = new Hono<AppEnv>();
+
+  // A revoked device must not keep a Connect live grant waiting for a re-pair.
+  const revokeExternalGrants = (deviceId: string): void => {
+    const db = deps.runtimeStore?.()?.getDatabase();
+    if (!db) return;
+    try {
+      new ExternalControlGrantsRepository(db).revokeForDevice(deviceId);
+    } catch (err) {
+      log.warn("[external-control] grant revoke on device revoke failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
 
   /**
    * Make a revocation reach the live process, not just the next request.
@@ -91,12 +108,14 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub" |
     if (existing.revoked_at != null) {
       cutLiveContexts(id);
       dropPushTokens(id);
+      revokeExternalGrants(id);
       return c.json({ ok: true, alreadyRevoked: true });
     }
 
     repo.revoke(id);
     cutLiveContexts(id);
     dropPushTokens(id);
+    revokeExternalGrants(id);
     return c.json({ ok: true, alreadyRevoked: false });
   });
 
@@ -126,6 +145,7 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub" |
     if (!existing) {
       cutLiveContexts(id);
       dropPushTokens(id);
+      revokeExternalGrants(id);
       return c.json({ ok: true, alreadyDeleted: true });
     }
 
@@ -147,6 +167,7 @@ export const createDeviceRoutes = (deps: Pick<ApiDeps, "devicesRepo" | "wsHub" |
     // name. Erasing a device is at least as strong as revoking it.
     cutLiveContexts(id);
     dropPushTokens(id);
+    revokeExternalGrants(id);
     return c.json({ ok: true, alreadyDeleted: false });
   });
 

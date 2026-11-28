@@ -171,6 +171,14 @@ export const FEATURE_FLAGS = {
     default: false,
     env: "THREADBASE_FEATURE_PTY_HOST",
   },
+  externalControl: {
+    description:
+      "Connect live: let a paired device view the tmux pane of an agent launched outside the " +
+      "streamer, without adopting or restarting it. Also needs `tb-streamer external-control " +
+      "setup` and a per-device grant made on this machine. Off by default.",
+    default: false,
+    env: "THREADBASE_FEATURE_EXTERNAL_CONTROL",
+  },
 } as const satisfies Record<string, FeatureFlagSpec>;
 
 /**
